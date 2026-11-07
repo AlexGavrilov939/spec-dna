@@ -179,3 +179,15 @@ Diagram source (Mermaid, PlantUML, Structurizr DSL) in fenced blocks inside the 
 - Bad: a move needs `spec-dna mv` or a hand-written alias, for documents and for requirements; slugs need naming discipline.
 - Bad: base-relative gating hides legacy debt from CI. `--all` and the main-branch report keep it visible.
 - Neutral: this repository's own ADR file names carry a number, as the session brief prescribed. The model allows numbers in slugs; it does not require them.
+
+## Amendments
+
+### 2026-11-07: rulings after checkpoint 2
+
+The owner gave these rulings after checkpoint 2. They set the default that the severity table left open, and they add 4 configuration keys and 1 option.
+
+- Hard budget. A document over its hard budget is an error (SD702). The check fails only on a new error, so a document that was over the hard budget in the base does not fail it. When that document grows, the check gives a warning (SD703). The soft budget stays a warning.
+- Legacy status words. A root can map a legacy status word to a status of the model, for example `implemented = "active"` (`status-map`). The file keeps its word, and all rules use the mapped status. The map applies only to a word that the type of the document does not allow.
+- Decision sections. A root can name the headings that contain the outcome of a decision (`decision-sections`). The default is `Decision Outcome` and `Decision`. `check` (SD305) and `context` use the same list, so a repository can write these headings in a different language.
+- Links by URL. `self-urls` lists the URL prefixes of the repository. In a prefix, `*` is one path segment, for example a branch. A link that starts with such a prefix is a path from the root of the repository. A link to a directory refers to the `README.md` or `index.md` document of that directory. The check does not report a self URL that has no path in the tree, because the URL can refer to a different branch or commit.
+- Query. `context --query <text>` puts the sections that match the words of the text first. The ranking uses BM25 and is deterministic. Without `--query`, the order does not change.
