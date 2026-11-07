@@ -790,3 +790,77 @@ fn base_gate_reads_tracked_files_only() {
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("docs/guides/draft.md:3: error SD102"), "{out}");
 }
+
+#[test]
+fn transcript_reports_counts_and_ids_only() {
+    let r = Repo::fixture("corpus");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transcripts");
+    let dir = dir.to_str().unwrap();
+    let (code, out, err) = r.run(&[
+        "transcript",
+        dir,
+        "--expect",
+        "auth/tokens",
+        "--expect",
+        "ADR-1",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let expected = [
+        "spec-dna transcript: 1 session, 2 agents, 3 episodes, 8 requests\n",
+        // Streamed lines repeat the usage of one request. It counts once.
+        "  8 requests; tokens: input 24, cache creation 1700, cache read 8000, output 175\n",
+        "  8 tool calls (Read 4, Bash 2, Edit 1, Grep 1); 1 error; 1 search\n",
+        "    ADR-1-session-store: 1 read, full, via read\n",
+        // A read with a line range gives sections. spec-dna output gives the
+        // sections that it served.
+        "    auth/session: 2 reads, auth/session#requirements, via read+spec-dna\n",
+        "    auth/tokens: 1 read, full, via shell\n",
+        "    guides/logging: 1 read, guides/logging#logging, via spec-dna\n",
+        "    document edits: auth/session 1\n",
+        "  expected: {\"read\":2,\"of\":2,\"first_relevant_ms\":4000}\n",
+        "  episode 1 (main, human), 60 s:\n",
+        "  episode 2 (a1, human), 2 s:\n",
+        "  episode 3 (main, task-notification), 4 s:\n",
+    ];
+    for e in expected {
+        assert!(out.contains(e), "missing {e:?} in\n{out}");
+    }
+    let (code, json, _) = r.run(&["transcript", dir, "--json"]);
+    assert_eq!(code, 0);
+    assert!(json.contains("\"documents_mapped\":true"), "{json}");
+    assert!(
+        json.contains(
+            "\"tokens\":{\"input\":24,\"cache_creation\":1700,\"cache_read\":8000,\"output\":175}"
+        ),
+        "{json}"
+    );
+    assert!(json.contains("\"spec_tokens_estimated\":"), "{json}");
+    // The transcripts hold secret text in prompts, commands, file contents,
+    // paths and answers. None of it reaches the output.
+    for text in [&out, &json] {
+        assert!(!text.contains("SECRET"), "{text}");
+        assert!(!text.contains("/work/export"), "{text}");
+    }
+    // Outside a configured repository, file reads are not mapped. The ids in
+    // spec-dna output still count.
+    let empty = Repo::empty();
+    let (code, out, _) = empty.run(&["transcript", dir]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("no spec-dna.toml, so file reads are not mapped to documents"),
+        "{out}"
+    );
+    assert!(out.contains("other files: 3 reads"), "{out}");
+    assert!(
+        !out.contains("via read") && !out.contains("via shell"),
+        "{out}"
+    );
+    assert_eq!(empty.run(&["transcript", "no/such/file.jsonl"]).0, 2);
+    empty.write("x.jsonl", "{\"not\":\"a transcript\"}\n");
+    let (code, _, err) = empty.run(&["transcript", "x.jsonl"]);
+    assert_eq!(code, 2);
+    assert!(
+        err.contains("no transcript adapter reads this file"),
+        "{err}"
+    );
+}

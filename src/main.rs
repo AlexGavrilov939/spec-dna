@@ -19,6 +19,7 @@ mod mv;
 mod parse;
 mod rank;
 mod repo;
+mod transcript;
 
 use crate::adapters::VERSION;
 use crate::diag::Severity;
@@ -45,6 +46,9 @@ Commands:
         Prints a document, a section or a requirement.
     mv <from> <to>
         Moves a document, or moves <doc-id>#<key> to another document.
+    transcript <file or dir>... [--expect <id>]... [--format claude-code]
+        Reports token usage, tool calls and document reads per session and
+        episode of agent transcripts. It prints counts and ids only.
 
 Options:
     --json        Prints machine-readable output
@@ -67,6 +71,8 @@ struct Args {
     root: Option<String>,
     query: Option<String>,
     include_inactive: bool,
+    expect: Vec<String>,
+    format: Option<String>,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -82,6 +88,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         root: None,
         query: None,
         include_inactive: false,
+        expect: Vec::new(),
+        format: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -106,6 +114,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
+            "--expect" => a.expect.push(value("--expect")?),
+            "--format" => a.format = Some(value("--format")?),
             "--budget" => {
                 let v = value("--budget")?;
                 a.budget = Some(
@@ -158,6 +168,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
+        "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
 }
@@ -520,5 +531,42 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             m.kind, m.from, m.to, m.alias
         );
     }
+    Ok(0)
+}
+
+fn transcript(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    if a.positional.is_empty() {
+        return Err(Fatal::Usage(
+            "`transcript` needs a transcript file or directory".into(),
+        ));
+    }
+    let files = transcript::collect_files(&a.positional).map_err(Fatal::Usage)?;
+    // Without a configured repository, the report has no document ids.
+    let loaded = match Repo::discover(cwd) {
+        Ok(repo) => match load_head(&repo, a) {
+            Ok((_, c)) => Some((repo.root, c)),
+            Err(Fatal::Config(_)) => None,
+            Err(e) => return Err(e),
+        },
+        Err(Fatal::Config(_)) => None,
+        Err(e) => return Err(e),
+    };
+    let expect: Vec<String> = a
+        .expect
+        .iter()
+        .map(|x| match &loaded {
+            Some((_, c)) => match c.resolve(x) {
+                model::Res::Found(d, _, _) => c.docs[d as usize].id.clone(),
+                _ => x.clone(),
+            },
+            None => x.clone(),
+        })
+        .collect();
+    let mut analysis = transcript::Analysis::new(
+        loaded.as_ref().map(|l| &l.1),
+        loaded.as_ref().map(|l| l.0.as_path()),
+    );
+    transcript::read_files(&files, a.format.as_deref(), &mut analysis).map_err(Fatal::Usage)?;
+    print!("{}", analysis.report(&expect, a.json));
     Ok(0)
 }
