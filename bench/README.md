@@ -1,6 +1,15 @@
 # bench
 
-Prototype code for the language decision in [ADR 0002](../docs/adr/0002-language.md). It is not the spec-dna tool.
+Measurements behind the decisions, and of the tool itself:
+
+| Directory | What it measures |
+| --- | --- |
+| [tool/](tool/README.md) | The `spec-dna` binary: full, cold, warm, incremental `check` and `context` |
+| [retrieval/](retrieval/README.md) | Recall, precision, size and latency of `spec-dna context` against tasks with known required sections |
+| [git-access/](git-access/README.md) | Git access through the command line against gix ([ADR 0002](../docs/adr/0002-language.md), confirmation step 2) |
+| `go/`, `rust/`, `run.py` | The scanner prototypes of the language decision, described below |
+
+The rest of this page describes the prototype code for the language decision in [ADR 0002](../docs/adr/0002-language.md). It is not the spec-dna tool.
 
 The same minimal scanner exists twice, in Go (`go/`) and in Rust (`rust/`). Both use the standard library only and follow the same rules:
 
@@ -18,9 +27,9 @@ Output is a fixed list of counts; `--list` adds the broken links and unresolved 
 | --- | --- |
 | `go/main.go` | Go scanner |
 | `rust/src/main.rs` | Rust scanner |
-| `gen/gen.py` | Deterministic synthetic corpus generator (`small`, `medium`, `large`). Writes `expected.json` with the counts a correct scanner reports |
+| `gen/gen.py` | Deterministic synthetic corpus generator (`small`, `medium`, `large`). Writes `expected.json` with the counts a correct scanner reports. With `--model spec-dna` it writes a corpus in the ADR 0001 model, a `spec-dna.toml` and `tasks.json` with retrieval ground truth |
 | `run.py` | Harness. Takes any corpus path, snapshots it, and measures startup, full scan, index build, warm and incremental runs |
-| `results/` | Results for the synthetic corpora and the public corpus |
+| `results/` | Results for the synthetic corpora and the public corpus: prototypes (`small`, `medium`, `large`, `corpus-b`), the tool (`tool-*`) and retrieval (`retrieval-*`) |
 
 ## Run
 

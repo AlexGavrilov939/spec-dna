@@ -6,6 +6,13 @@ domain/capability tree, plus code files that docs link to, and an
 expected.json with the counts a correct scanner must report.
 
     python3 gen.py --size small|medium|large --out DIR [--seed 1]
+
+With --model spec-dna it writes a corpus in the information model of ADR
+0001 instead (specs with requirements, cross-cutting guides, decisions,
+changes and notes), a spec-dna.toml, and tasks.json: retrieval tasks with
+the sections a correct context assembly must serve (ground truth).
+
+    python3 gen.py --model spec-dna --size small|medium|large --out DIR [--tasks 40]
 """
 import argparse
 import json
@@ -50,7 +57,11 @@ def main():
     ap.add_argument("--size", choices=SIZES, required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--model", choices=["scanner", "spec-dna"], default="scanner")
+    ap.add_argument("--tasks", type=int, default=40)
     a = ap.parse_args()
+    if a.model == "spec-dna":
+        return spec_dna_corpus(a)
     rng = random.Random(a.seed)
     n_docs, n_dom, n_cap, n_code = SIZES[a.size]
     pool = [paragraph(rng) for _ in range(3000)]
@@ -137,6 +148,165 @@ def main():
     with open(os.path.join(a.out, "expected.json"), "w") as fh:
         json.dump(exp, fh, indent=1, sort_keys=True)
     print(json.dumps(exp, sort_keys=True))
+
+
+# --- spec-dna model -------------------------------------------------------
+
+SPEC_DNA_SIZES = {
+    # specs, domains, guides, decisions, changes, notes
+    "small": (40, 4, 4, 12, 6, 10),
+    "medium": (600, 12, 24, 180, 90, 300),
+    "large": (6000, 40, 120, 1800, 900, 3000),
+}
+TRIGGERS = [
+    "When a request arrives", "While the cache is warm", "When a token expires", "If the upstream fails",
+    "While a session is active", "When a client retries", "If the queue is full", "When a job starts",
+]
+ACTIONS = [
+    "reject the request with status 429", "write one audit record", "return the cached value",
+    "retry at most 3 times", "close the connection within 5 seconds", "emit a metric",
+    "keep the previous version", "sign the response",
+]
+
+
+def requirement(rng, key, cap):
+    trig = rng.choice(TRIGGERS)
+    then = " then" if trig.startswith("If") else ""
+    return f"- **{key}**: {trig},{then} the {cap} SHALL {rng.choice(ACTIONS)}."
+
+
+def spec_dna_corpus(a):
+    """Writes a corpus in the ADR 0001 model and tasks with ground truth.
+
+    Ground truth of a task with entry spec E (ADR 0001 context order):
+    - every section of E that holds requirements (E#anchor);
+    - every section of each active guide whose applies-to matches E;
+    - the requirement sections of each depends-on target of E, or the one
+        section that holds a referenced key;
+    - the Decision Outcome section of each accepted decision linked with E.
+    Not required: E's overview, rationale and examples, notes, changes,
+    rejected or superseded decisions, unrelated specs.
+    """
+    rng = random.Random(a.seed)
+    n_spec, n_dom, n_guide, n_dec, n_chg, n_note = SPEC_DNA_SIZES[a.size]
+    pool = [paragraph(rng) for _ in range(2000)]
+    doms = [f"d{d:02d}" for d in range(n_dom)]
+    specs = []
+    for i in range(n_spec):
+        dom = rng.choice(doms)
+        specs.append({"id": f"{dom}/cap-{i:05d}", "dom": dom, "keys": {}, "deps": [], "status": "active"})
+    for sp in specs:
+        r = rng.random()
+        sp["status"] = "deprecated" if r < 0.05 else "active"
+        sp["sections"] = []
+        for sec in ("requirements", "errors") if rng.random() < 0.4 else ("requirements",):
+            sp["keys"][sec] = [f"{sec[:3]}-{j}" for j in range(rng.randint(2, 7))]
+            sp["sections"].append(sec)
+    by_id = {s["id"]: s for s in specs}
+    for sp in specs:
+        for _ in range(rng.choice([0, 0, 1, 1, 2])):
+            t = rng.choice(specs)
+            if t is sp or t["status"] != "active":
+                continue
+            if rng.random() < 0.3:
+                sec = rng.choice(t["sections"])
+                sp["deps"].append((t["id"], sec, rng.choice(t["keys"][sec])))
+            else:
+                sp["deps"].append((t["id"], None, None))
+    guides = []
+    for i in range(n_guide):
+        scope = rng.choice(doms)
+        guides.append({
+            "id": f"guides/rule-{i:04d}",
+            "applies": scope if rng.random() < 0.7 else f"{scope}/*",
+            "status": "active" if rng.random() < 0.85 else "retired",
+            "dom": scope,
+        })
+    decisions = []
+    for i in range(n_dec):
+        links = rng.sample(specs, k=rng.randint(1, 2))
+        st = rng.choices(["accepted", "proposed", "rejected", "superseded"], weights=[70, 10, 10, 10])[0]
+        decisions.append({"id": f"decisions/dec-{i:05d}", "links": [s["id"] for s in links], "status": st})
+    # A superseded decision needs an accepted successor.
+    for i, d in enumerate(decisions):
+        if d["status"] == "superseded":
+            succ = rng.choice([x for x in decisions if x["status"] == "accepted"])
+            succ.setdefault("supersedes", []).append(d["id"])
+
+    os.makedirs(a.out, exist_ok=True)
+
+    def write(rel, text):
+        p = os.path.join(a.out, "docs", rel + ".md")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as fh:
+            fh.write(text)
+
+    def prose(n):
+        return "\n\n".join(rng.choice(pool) for _ in range(n))
+
+    for sp in specs:
+        fm = ["---", f"status: {sp['status']}"]
+        if sp["deps"]:
+            fm.append("depends-on:")
+            fm += [f"  - {d}#{k}" if k else f"  - {d}" for d, _, k in sp["deps"]]
+        fm += ["---", ""]
+        cap = sp["id"].split("/")[1]
+        body = [f"# Capability {cap}", "", prose(1), "", "## Overview", "", prose(rng.randint(2, 6)), ""]
+        for sec in sp["sections"]:
+            body += [f"## {sec.capitalize()}", ""]
+            body += [requirement(rng, k, cap) for k in sp["keys"][sec]]
+            body.append("")
+        body += ["## Rationale", "", prose(rng.randint(3, 12)), "", "## Examples", "", "```text", rng.choice(pool), "```", ""]
+        write(sp["id"], "\n".join(fm + body))
+    for g in guides:
+        fm = ["---", "type: guide", f"status: {g['status']}", f"applies-to: [\"{g['applies']}\"]", "---", ""]
+        body = [f"# Rule {g['id'].split('-')[1]}", "", prose(1), "", "## Procedure", "", prose(rng.randint(1, 3)), ""]
+        write(g["id"], "\n".join(fm + body))
+    for d in decisions:
+        fm = ["---", "type: decision", f"status: {d['status']}"]
+        if d.get("supersedes"):
+            fm.append("supersedes: [" + ", ".join(d["supersedes"]) + "]")
+        fm += ["---", ""]
+        refs = " and ".join(f"[[{x}]]" for x in d["links"])
+        body = [f"# Decision {d['id'].split('-')[1]}", "", "## Context and Problem Statement", "", f"This concerns {refs}. " + prose(rng.randint(1, 4)), "",
+                "## Considered Options", "", "- Option one", "- Option two", "", "## Decision Outcome", "", "Chosen option: option one. " + rng.choice(pool), ""]
+        write(d["id"], "\n".join(fm + body))
+    for i in range(n_chg):
+        t = rng.choice(specs)["id"]
+        write(f"changes/chg-{i:05d}", "\n".join(["---", "type: change", "status: proposed", "---", "", f"# Change {i}", "",
+                                                    f"Changes [[{t}]]. " + prose(rng.randint(1, 3)), ""]))
+    for i in range(n_note):
+        t = rng.choice(specs)["id"]
+        write(f"notes/note-{i:05d}", "\n".join(["---", "type: note", "---", "", f"# Note {i}", "", f"About [[{t}]]. " + prose(rng.randint(2, 8)), ""]))
+
+    with open(os.path.join(a.out, "spec-dna.toml"), "w") as fh:
+        fh.write('spec-dna = "0.1.0"\n\n[[roots]]\npath = "docs"\ntype = "mixed"\ndefault-type = "spec"\nstatus = "active"\n')
+
+    # Tasks with ground truth.
+    linked = {}
+    for d in decisions:
+        if d["status"] == "accepted":
+            for x in d["links"]:
+                linked.setdefault(x, []).append(d["id"])
+    tasks = []
+    candidates = [s for s in specs if s["status"] == "active"]
+    for n, sp in enumerate(rng.sample(candidates, k=min(a.tasks, len(candidates)))):
+        req = [f"{sp['id']}#{sec}" for sec in sp["sections"]]
+        for g in guides:
+            if g["status"] == "active" and g["dom"] == sp["dom"]:
+                req.append(f"{g['id']}#procedure")
+                req.append(f"{g['id']}#rule-{g['id'].split('-')[1]}")
+        for d, sec, key in sp["deps"]:
+            if sec:
+                req.append(f"{d}#{sec}")
+            else:
+                req += [f"{d}#{s2}" for s2 in by_id[d]["sections"]]
+        for d in linked.get(sp["id"], []):
+            req.append(f"{d}#decision-outcome")
+        tasks.append({"id": f"s{n:03d}", "entry": [sp["id"]], "required": sorted(set(req))})
+    with open(os.path.join(a.out, "tasks.json"), "w") as fh:
+        json.dump({"size": a.size, "seed": a.seed, "tasks": tasks}, fh, indent=1)
+    print(json.dumps({"specs": n_spec, "guides": n_guide, "decisions": n_dec, "changes": n_chg, "notes": n_note, "tasks": len(tasks)}))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+# spec-dna configuration for corpus B (kubernetes/enhancements), used by the
+# benchmark and the retrieval measurement. KEPs are proposals with their
+# metadata in kep.yaml, so the root types them as changes.
+spec-dna = "0.1.0"
+
+[[roots]]
+path = "keps"
+type = "change"
+status = "accepted"
+legacy-ids = [{ alias = "KEP-{n}", file = "{n}-*" }]

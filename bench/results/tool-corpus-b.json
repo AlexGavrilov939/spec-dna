@@ -1,0 +1,103 @@
+{
+  "files": 2310,
+  "git": "git version 2.50.1 (Apple Git-155)",
+  "host": {
+    "cpus": 16,
+    "machine": "arm64",
+    "system": "Darwin 25.6.0"
+  },
+  "incremental_agrees_with_full": true,
+  "incremental_parsed": 9,
+  "index_mb": 5.44,
+  "label": "corpus-b",
+  "load_avg_1m": [
+    11.49,
+    12.26
+  ],
+  "measured": "2026-11-07 17:47:11 +0100",
+  "modes": {
+    "cold": {
+      "max_ms": 77.36,
+      "median_ms": 74.4,
+      "min_ms": 69.27,
+      "peak_rss_mb": 32.6,
+      "runs": 15,
+      "stdev_ms": 2.14
+    },
+    "context_0": {
+      "max_ms": 46.73,
+      "median_ms": 45.02,
+      "min_ms": 43.07,
+      "peak_rss_mb": 21.9,
+      "runs": 15,
+      "stdev_ms": 1.0,
+      "target": "context 0",
+      "units_full": 16,
+      "units_stub": 28,
+      "used_chars": 11997
+    },
+    "context_1": {
+      "max_ms": 65.58,
+      "median_ms": 42.9,
+      "min_ms": 41.35,
+      "peak_rss_mb": 22.0,
+      "runs": 15,
+      "stdev_ms": 5.96,
+      "target": "context 1",
+      "units_full": 8,
+      "units_stub": 37,
+      "used_chars": 11985
+    },
+    "full": {
+      "max_ms": 68.74,
+      "median_ms": 66.0,
+      "min_ms": 64.92,
+      "peak_rss_mb": 27.6,
+      "runs": 15,
+      "stdev_ms": 1.07
+    },
+    "incremental": {
+      "max_ms": 65.29,
+      "median_ms": 62.74,
+      "min_ms": 57.82,
+      "peak_rss_mb": 27.1,
+      "runs": 15,
+      "stdev_ms": 2.55
+    },
+    "startup": {
+      "max_ms": 2.83,
+      "median_ms": 2.54,
+      "min_ms": 2.16,
+      "peak_rss_mb": 1.8,
+      "runs": 15,
+      "stdev_ms": 0.23
+    },
+    "warm": {
+      "max_ms": 46.39,
+      "median_ms": 44.81,
+      "min_ms": 43.28,
+      "peak_rss_mb": 23.8,
+      "runs": 15,
+      "stdev_ms": 0.89
+    },
+    "warm_base": {
+      "max_ms": 78.05,
+      "median_ms": 54.56,
+      "min_ms": 52.94,
+      "peak_rss_mb": 25.7,
+      "runs": 15,
+      "stdev_ms": 7.93
+    }
+  },
+  "modes_agree": true,
+  "summary": {
+    "documents": 708,
+    "errors": 89,
+    "new_errors": 89,
+    "new_warnings": 737,
+    "warnings": 737
+  },
+  "tool": "spec-dna 0.1.0",
+  "touched": 10,
+  "warm_parsed": 0
+}
