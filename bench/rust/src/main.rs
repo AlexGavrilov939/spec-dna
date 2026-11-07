@@ -1,8 +1,8 @@
-//! scan: the Rust half of the spec-dna language benchmark.
+//! scan is the Rust half of the spec-dna language benchmark.
 //!
 //! It walks a tree, parses Markdown front matter, links and id tokens, and
-//! resolves them. The Go half in ../go implements the same rules; see
-//! ../README.md. Standard library only.
+//! resolves them. The Go half in ../go uses the same rules. See ../README.md.
+//! It uses only the standard library.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -132,7 +132,7 @@ fn run(root: &str, index: &str, excl: &HashSet<String>, list: bool) -> io::Resul
     };
     let mut todo = Vec::new();
     for (k, d) in docs.iter_mut().enumerate() {
-        // Move the cached entry out instead of cloning it.
+        // Move the cached entry out, so that no clone is necessary.
         match cache.remove(&d.path) {
             Some(c) if c.size == d.size && c.mtime == d.mtime => {
                 d.id = c.id;
@@ -178,7 +178,7 @@ fn run(root: &str, index: &str, excl: &HashSet<String>, list: bool) -> io::Resul
         docs[k] = r?;
     }
 
-    // resolve
+    // Resolve the links and the id tokens.
     let mut ids: HashMap<&str, u32> = HashMap::new();
     let mut prefixes: HashSet<&str> = HashSet::new();
     let mut bytes = 0u64;
@@ -265,7 +265,7 @@ fn run(root: &str, index: &str, excl: &HashSet<String>, list: bool) -> io::Resul
     Ok(())
 }
 
-/// Lexical clean like Go's path.Clean, but "" for the root.
+/// Cleans a path lexically, like path.Clean in Go, but returns "" for the root.
 fn clean_path(p: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     for seg in p.split('/') {
@@ -393,7 +393,7 @@ fn strip_code(l: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Pushes inline link targets to `out` and returns the line without them, for the id scan.
+/// Pushes inline link targets to `out`. Returns the line without them, for the id scan.
 fn find_links(l: &str, out: &mut Vec<String>) -> String {
     let mut prose = String::with_capacity(l.len());
     let mut rest = l;
@@ -435,7 +435,7 @@ fn is_word(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'-'
 }
 
-/// Length of an id token PREFIX-NUM at s[i..], or 0. Same rule as the Go half.
+/// Returns the length of an id token PREFIX-NUM at s[i..], or 0. The Go half uses the same rule.
 fn match_id(s: &[u8], i: usize) -> usize {
     let mut j = i;
     if j >= s.len() || !is_upper(s[j]) {

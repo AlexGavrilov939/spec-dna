@@ -1,6 +1,6 @@
-# spec-dna configuration for corpus B (kubernetes/enhancements), used by the
-# benchmark and the retrieval measurement. KEPs are proposals with their
-# metadata in kep.yaml, so the root types them as changes.
+# spec-dna configuration for corpus B (kubernetes/enhancements). The benchmark
+# and the retrieval measurement use it. KEPs are proposals with their metadata
+# in kep.yaml, so the root gives them the type `change`.
 spec-dna = "0.1.0"
 # The KEPs refer to other KEPs with URLs of this repository, not with
 # relative paths. These prefixes make such links internal.

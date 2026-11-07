@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Benchmark harness: runs the Go and Rust scanners on any corpus path.
+"""Benchmark harness: it runs the Go and Rust scanners on any corpus path.
 
-The corpus is never modified. A git repository is exported at --rev with
-`git archive` into <work>/<label>/tree (default work: bench/work); any other directory is copied there.
+The harness never changes the corpus. It exports a git repository at --rev with
+`git archive` into <work>/<label>/tree (default work: bench/work). It copies any other directory there.
 Every measurement runs on that copy.
 
-Modes (each run is one process; wall time and peak RSS come from wait4):
+Modes (each run is one process; the wall time and the peak RSS come from wait4):
     startup      scan --version
-    full         full scan, no index (OS file cache warm, see README)
+    full         full scan without the index (the OS file cache is warm, see README)
     index_build  full scan that also writes the index
-    warm         scan with an up-to-date index, nothing changed
-    incremental  scan with the index after --touch files changed
+    warm         scan with an up-to-date index, when nothing changed
+    incremental  scan with the index, after --touch files changed
 
     python3 run.py --corpus PATH --label NAME [--rev HEAD] [--runs 10] [--touch 10] [--work DIR] --out FILE.json
-Unix only (os.wait4).
+It runs only on Unix (os.wait4).
 """
 import argparse
 import json
@@ -39,7 +39,7 @@ def build():
 
 
 def once(cmd):
-    """Run cmd once. Returns (wall seconds, peak RSS bytes, stdout)."""
+    """Runs cmd once. Returns (wall seconds, peak RSS bytes, stdout)."""
     t0 = time.perf_counter()
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out = p.stdout.read()
@@ -158,8 +158,8 @@ def main():
             with open(p, "wb") as fh:
                 fh.write(b)
 
-    # Each mode alternates the scanners run by run, so load drift on a shared
-    # host hits both the same way.
+    # In each mode, the scanners alternate run by run, so that load drift on a
+    # shared host has the same effect on both.
     modes = [
         ("startup", "version", None, max(a.runs, 20)), ("full", "full", None, a.runs),
         ("index_build", "index", rm_idx, a.runs), ("warm", "index", None, a.runs),
@@ -176,7 +176,7 @@ def main():
             outs = {}
             for i in range(runs + 1):              # run 0 is a warm-up
                 order = list(state.items())
-                if i % 2:                          # alternate who goes first
+                if i % 2:                          # alternate the scanner that goes first
                     order.reverse()
                 for name, st in order:
                     if prep:
@@ -199,8 +199,9 @@ def main():
     res["load_avg_1m"]["end"] = round(load(), 2)
     outs = {n: {k: v for k, v in r["full"]["last_output"].items() if k != "parsed"} for n, r in res["scanners"].items()}
     res["outputs_equal"] = outs["go"] == outs["rust"]
-    # The index must not change the answer: index build and warm runs equal the full scan,
-    # and the incremental run differs only in the bytes the touched files gained.
+    # The index must not change the answer. The index_build and warm runs must give the
+    # output of the full scan. The incremental run can differ only in the bytes that the
+    # touched files gained.
     def same(n, m):
         skip = {"parsed", "bytes"} if m == "incremental" else {"parsed"}
         got = {k: v for k, v in res["scanners"][n][m]["last_output"].items() if k not in skip}

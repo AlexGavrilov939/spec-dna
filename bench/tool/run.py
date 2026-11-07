@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """Benchmark of the spec-dna binary on one corpus.
 
-The corpus is never modified. A git repository is exported at --rev with
-`git archive` (any other directory is copied) into <work>/<label>/repo,
---config is copied in as spec-dna.toml, and the copy becomes a fresh git
-repository with one commit. Every measurement runs there.
+The harness never changes the corpus. It exports a git repository at --rev with
+`git archive` into <work>/<label>/repo (it copies any other directory). It copies
+--config in as spec-dna.toml. Then it makes the copy a new git repository with
+one commit. Every measurement runs there.
 
-Modes (one process per run; wall time and peak RSS from wait4):
+Modes (one process for each run; the wall time and the peak RSS come from wait4):
     startup         spec-dna --version
-    full            check --all --no-cache: parse every document, no index
-    cold            check --all after deleting the index: parse and write it
-    warm            check --all with the index, nothing changed
-    warm_base       check (base HEAD) with the index, nothing changed
-    context         context <id> --json for each --context id, index warm
+    full            check --all --no-cache: parse every document, without the index
+    cold            check --all after the harness deletes the index: parse and write it
+    warm            check --all with the index, when nothing changed
+    warm_base       check (base HEAD) with the index, when nothing changed
+    context         context <id> --json for each --context id, with a warm index
     incremental     check (base HEAD) after --touch documents changed in the
-                    working tree since the index was written
+                    working tree since spec-dna wrote the index
 
     python3 run.py --corpus PATH --config FILE --label NAME [--rev HEAD]
         [--runs 15] [--touch 10] [--context ID ...] [--work DIR] --out FILE.json
-Unix only (os.wait4).
+It runs only on Unix (os.wait4).
 """
 import argparse
 import json
@@ -164,9 +164,9 @@ def main():
             {"target": f"context {i}", "used_chars": d["used"], "units_full": d["full"], "units_stub": d["stubs"]}
         )
 
-    # Incremental: change documents in the working tree after the index was written.
+    # Incremental run: change documents in the working tree after spec-dna wrote the index.
     docs = [p for p in sh("git", "ls-files", cwd=repo).splitlines() if p.endswith(".md")]
-    cfg_roots = json.loads(full[0])  # documents are what check saw
+    cfg_roots = json.loads(full[0])  # the documents that check saw
     touched = docs[:: max(1, len(docs) // a.touch)][: a.touch]
     for p in touched:
         with open(os.path.join(repo, p), "a") as fh:

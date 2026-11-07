@@ -1,6 +1,6 @@
 # Retrieval correctness
 
-`run.py` measures what `spec-dna context` serves against tasks with known required sections. For each task and budget it reports:
+`run.py` measures what `spec-dna context` serves for tasks with known required sections. For each task and budget, it reports these metrics:
 
 | Metric | Meaning |
 | --- | --- |
@@ -9,14 +9,22 @@
 | Precision | Required sections served in full / sections served in full |
 | Critical | Sections that state a critical constraint, served in full (hand-made oracles only) |
 | Size | Characters served, and estimated tokens: ceil(UTF-8 bytes of the text output / 4), the same estimator for every arm |
-| Two-step | Characters of the context output plus `show` of each required section it listed as a stub |
-| Baseline | Characters of every document that holds a required section, read whole |
+| Two-step | Characters of the context output, plus the `show` output of each required section that the context output listed as a stub |
+| Baseline | Characters of every document that holds a required section, read in full |
 | Latency | Median wall time of `spec-dna context`, 3 to 5 runs |
 
 Tasks:
 
-- Synthetic: `bench/gen/gen.py --model spec-dna` writes 40 tasks per corpus. Ground truth follows the context order of [ADR 0001](../../docs/adr/0001-information-model.md): the requirement sections of the entry spec, every section of the active guides whose `applies-to` matches it, the requirement sections of its `depends-on` targets (or the one section holding a referenced key), and the `Decision Outcome` of each accepted decision linked with it. Distractors: overview, rationale and examples sections, notes, changes, rejected and superseded decisions, unrelated specs.
-- Corpus B: 5 tasks written by hand in [corpus-b-oracles.json](corpus-b-oracles.json) before any measurement, by reading the KEPs, without running spec-dna. 4 of them need a second KEP.
+- Synthetic: `bench/gen/gen.py --model spec-dna` writes 40 tasks per corpus. The ground truth follows the context order of [ADR 0001](../../docs/adr/0001-information-model.md):
+
+  - the requirement sections of the entry spec
+  - every section of the active guides whose `applies-to` matches the entry spec
+  - the requirement sections of its `depends-on` targets (or the one section that holds a referenced key)
+  - the `Decision Outcome` of each accepted decision linked with the entry spec
+
+  The distractors are overview, rationale and examples sections, notes, changes, rejected and superseded decisions, and unrelated specs.
+
+- Corpus B: 5 tasks in [corpus-b-oracles.json](corpus-b-oracles.json), written by hand from the KEPs before any measurement and without a run of spec-dna. 4 of them need a second KEP.
 
 ```sh
 cargo build --release
@@ -25,7 +33,7 @@ python3 bench/retrieval/run.py --repo <repository with spec-dna.toml> --tasks <t
 
 ## Results (measured 2026-11-07)
 
-Same host and binary as [the tool benchmark](../tool/README.md); load average 6 to 10. Means over tasks, sizes as medians.
+The host and the binary are the same as in [the tool benchmark](../tool/README.md). The load average was 6 to 10. The table shows means over the tasks, and medians for the sizes.
 
 | Corpus | Budget | Recall full | Recall listed | Precision | Characters | Tokens (estimated) | Two-step characters | Baseline characters | Latency (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -39,15 +47,15 @@ Same host and binary as [the tool benchmark](../tool/README.md); load average 6 
 | Corpus B | 12,000 | 0.00 | 0.50 | 0.00 | 11,985 | 3,066 | 15,908 | 122,784 | 45.2 |
 | Corpus B | 32,000 | 0.03 | 0.65 | 0.02 | 31,980 | 8,053 | 36,184 | 122,784 | 43.0 |
 
-Raw rows, including the missed sections per task: `bench/results/retrieval-*.json`.
+Raw rows, with the missed sections for each task: `bench/results/retrieval-*.json`.
 
 What the numbers show:
 
-1. On a corpus in the ADR 0001 model, the graph order is enough: from 8,000 characters every required section is served in full in 79 of 80 tasks, at less than half the characters of reading the relevant documents whole. Precision stays below 0.8 because each document's title section is served too.
-2. Corpus B is not in that model: KEPs have no front matter, no requirement keys, and they link to each other through absolute GitHub URLs or through `kep.yaml`. Without `self-urls` (see below), spec-dna treats both as external. Its READMEs run to 78,000 to 194,000 characters, and the required sections sit deep inside them. Without a task description, `context` cannot know which deep section a task needs, so full-text recall stays near 0.
-3. The map makes the rest reachable: at 32,000 characters every required section inside the entry KEP is listed (0.65 = the share of required sections that sit in the entry KEP). The other 0.35 are in second KEPs that no relative link reaches.
+1. On a corpus in the ADR 0001 model, the graph order is sufficient. From 8,000 characters, the output has every required section in full in 79 of 80 tasks. This output has less than half the characters of the relevant documents read in full. Precision stays below 0.8, because the output also has the title section of each document.
+2. Corpus B is not in that model: KEPs have no front matter and no requirement keys. They link to each other through absolute GitHub URLs or through `kep.yaml`. Without `self-urls` (see below), spec-dna treats both kinds of link as external. Its READMEs have 78,000 to 194,000 characters, and the required sections are deep inside them. Without a task description, `context` cannot know which deep section a task needs. Thus, full-text recall stays near 0.
+3. The map makes the rest reachable. At 32,000 characters, the output lists every required section inside the entry KEP (0.65 = the share of required sections that are in the entry KEP). The other 0.35 are in second KEPs that no relative link reaches.
 
-The first version of the assembly served the whole entry document and filled leftover budget with remaining sections. On the small synthetic corpus it reached the same recall at 12,000 characters but with precision 0.35 and 8,402 characters, and on corpus B it listed 0.06 of the required sections at 12,000 characters, because full text used the budget before any stub. The current version serves normative sections first, lists the rest, and reserves up to half of the budget for the list.
+The first version of the assembly served the full entry document, and then filled the rest of the budget with the other sections. On the small synthetic corpus, it got the same recall at 12,000 characters, but with precision 0.35 and 8,402 characters. On corpus B, it listed 0.06 of the required sections at 12,000 characters, because full text used the budget before any stub. The current version serves normative sections first and lists the rest. It keeps up to half of the budget for the list.
 
 ### `self-urls` and `--query` (measured 2026-11-07)
 
@@ -64,8 +72,8 @@ These rows use the same oracles and the same snapshot of corpus B. [corpus-b.tom
 
 Raw rows: `bench/results/retrieval-corpus-b-self-urls.json` and `bench/results/retrieval-corpus-b-query.json`.
 
-1. `self-urls` alone changes little. The links now reach the second KEPs, but without a query `context` lists only the title section of a linked document.
-2. With `--query`, `context` ranks all sections of the entry and of the linked KEPs. At 12,000 characters, 0.76 of the required sections are listed and 0.29 are in full (before: 0.50 and 0.00). At 32,000 characters, 0.96 are listed and 0.47 are in full.
+1. `self-urls` alone gives only a small change. The links now reach the second KEPs. But without a query, `context` lists only the title section of a linked document.
+2. With `--query`, `context` ranks all sections of the entry and of the linked KEPs. At 12,000 characters, the output lists 0.76 of the required sections and serves 0.29 in full (before: 0.50 and 0.00). At 32,000 characters, it lists 0.96 and serves 0.47 in full.
 3. For one task, full recall does not always increase with the budget. The packing is greedy: a large section with a high rank can use the space of 2 smaller required sections.
 4. Without `--query`, the output did not change. A new run of the default arm on corpus B and on the synthetic corpora gave the same rows as the table above.
-5. The first version of the ranking put the title section of the entry first. In task b1 that section has 2,904 characters of checklist and table of contents, and mean full recall fell to 0.13 at 8,000 and 0.10 at 12,000 characters. Now only sections that a target names come first. The oracles did not change.
+5. The first version of the ranking put the title section of the entry first. In task b1, that section has 2,904 characters of checklist and table of contents. Mean full recall fell to 0.13 at 8,000 characters and to 0.10 at 12,000 characters. Now only sections that a target names come first. The oracles did not change.

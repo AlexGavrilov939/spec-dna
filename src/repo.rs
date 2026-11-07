@@ -1,5 +1,5 @@
-//! Repository discovery, tree snapshots (the working tree or a commit) and
-//! loading parsed documents through the index.
+//! This module finds the repository, makes tree snapshots (of the working tree
+//! or of a commit), and loads parsed documents through the index.
 
 use crate::config::{self, Config};
 use crate::git::Git;
@@ -44,7 +44,7 @@ pub struct Repo {
 }
 
 impl Repo {
-    /// Finds the enclosing git working tree.
+    /// Finds the git working tree that contains `start`.
     pub fn discover(start: &Path) -> Result<Repo, Fatal> {
         let start = start
             .canonicalize()
@@ -99,9 +99,10 @@ impl Repo {
         Config::parse(&text).map_err(|e| Fatal::Config(format!("{}: {e}", config::FILE_NAME)))
     }
 
-    /// The commit `HEAD` points to, read from the git directory without
-    /// starting git; falls back to `git rev-parse` for layouts it does not
-    /// read (reftable, unusual worktrees). `None` before the first commit.
+    /// Returns the commit that `HEAD` points to. It reads the commit from the
+    /// git directory and does not start git. For layouts that it does not read
+    /// (reftable, unusual worktrees), it uses `git rev-parse`. Before the first
+    /// commit, it returns `None`.
     pub fn head_commit(&self) -> Option<String> {
         let read = |p: PathBuf| {
             std::fs::read_to_string(p)
@@ -154,7 +155,8 @@ fn is_oid(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The status pathspec: the document roots, or nothing for the whole tree.
+/// Returns the status pathspec: the document roots, or nothing for the whole
+/// tree.
 pub fn root_paths(config: &Config) -> Vec<String> {
     if config.roots.iter().any(|r| r.path.is_empty()) {
         return Vec::new();
@@ -176,7 +178,7 @@ pub struct Entry {
 
 #[derive(Default)]
 pub struct Snapshot {
-    /// True for the working tree: clean files are read from disk.
+    /// True for the working tree. Then spec-dna reads clean files from disk.
     pub worktree: bool,
     pub files: Vec<Entry>,
 }
@@ -186,10 +188,10 @@ impl Snapshot {
         Snapshot::default()
     }
 
-    /// The working tree: tracked files (minus deleted ones) and untracked
-    /// files that git does not ignore.
-    /// `paths` limits the search for changed and untracked files (the
-    /// document roots); the file list itself always covers the whole index.
+    /// Returns the working tree: tracked files (but not deleted ones) and
+    /// untracked files that git does not ignore.
+    /// `paths` (the document roots) limits the search for changed and
+    /// untracked files. The file list always covers the whole index.
     pub fn worktree(repo: &Repo, paths: &[String]) -> Result<Snapshot, Fatal> {
         let (files, status) = std::thread::scope(|s| {
             let st = s.spawn(|| repo.git.status(paths));
@@ -246,14 +248,14 @@ impl Snapshot {
     }
 }
 
-/// Where to get a document's text.
+/// The source of the text of a document.
 enum Source {
     Disk(String),
     Blob(String),
 }
 
 /// Loads the parsed documents of several snapshots through the index.
-/// Returns, per snapshot, the corpus files and documents.
+/// Returns the corpus files and documents for each snapshot.
 pub struct Loaded {
     pub corpora: Vec<Corpus>,
     pub parsed: usize,
@@ -373,7 +375,7 @@ pub fn load(
     }
     trace("build corpora", &mut t);
     if use_cache && changed {
-        // The index is a cache: failing to write it is not an error.
+        // The index is a cache. If the write fails, it is not an error.
         let _ = index.save();
         trace("index save", &mut t);
     }
@@ -384,7 +386,8 @@ pub fn load(
     })
 }
 
-/// Phase timings on stderr when `SPEC_DNA_TRACE` is set (for profiling).
+/// If `SPEC_DNA_TRACE` is set, writes the time of each phase to stderr (to
+/// profile spec-dna).
 pub fn trace(phase: &str, since: &mut std::time::Instant) {
     if std::env::var_os("SPEC_DNA_TRACE").is_some() {
         eprintln!(
@@ -395,7 +398,7 @@ pub fn trace(phase: &str, since: &mut std::time::Instant) {
     *since = std::time::Instant::now();
 }
 
-/// Maps items on all cores. Small inputs run on the calling thread.
+/// Maps items on all cores. A small input runs on the current thread.
 pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())

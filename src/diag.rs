@@ -1,5 +1,5 @@
 //! Stable diagnostic codes (docs/diagnostics.md). A code never changes its
-//! meaning; a retired code is not reused.
+//! meaning. spec-dna never uses a retired code again.
 
 use crate::json::Obj;
 
@@ -35,37 +35,37 @@ macro_rules! codes {
 }
 
 codes! {
-    UnresolvedReference = "SD101", "unresolved-reference", Error, "Point the reference at an existing id, alias or `id#key`, or add the old id to the target's `aliases`.";
-    UnresolvedLink = "SD102", "unresolved-link", Error, "Fix the link target; it must be a file or directory tracked by git (exact case).";
-    EvidenceMissing = "SD103", "evidence-missing", Error, "Fix the `verified-by` path; it must exist in the git tree.";
+    UnresolvedReference = "SD101", "unresolved-reference", Error, "Refer to an existing id, alias or `id#key`. As an alternative, add the old id to the `aliases` of the target.";
+    UnresolvedLink = "SD102", "unresolved-link", Error, "Fix the link target. The target must be a file or a directory that git tracks, with the exact case.";
+    EvidenceMissing = "SD103", "evidence-missing", Error, "Fix the `verified-by` path. The path must exist in the git tree.";
     AmbiguousReference = "SD104", "ambiguous-reference", Error, "Use the full document id instead of an alias that names several documents.";
-    DuplicateId = "SD201", "duplicate-id", Error, "Give each document a unique id; remove the alias from all but one document.";
-    IdRemoved = "SD202", "id-removed", Error, "Keep the document (set a final status such as `retired`), or move it with `spec-dna mv` so the old id becomes an alias.";
-    KeyFormat = "SD203", "key-format", Error, "Use a slug key (lowercase letters and digits joined by hyphens), or declare the legacy pattern in `legacy-keys`.";
-    KeyDuplicate = "SD204", "key-duplicate", Error, "Rename one of the requirements; keys are unique within a document.";
-    FrontMatterSyntax = "SD301", "front-matter-syntax", Error, "Use the front matter subset: `key: value` lines, values are strings or lists of strings.";
+    DuplicateId = "SD201", "duplicate-id", Error, "Give each document a unique id. Remove the alias from all documents except one.";
+    IdRemoved = "SD202", "id-removed", Error, "Keep the document and set a final status such as `retired`. As an alternative, use `spec-dna mv` to move it, so that the old id becomes an alias.";
+    KeyFormat = "SD203", "key-format", Error, "Use a slug key (groups of lowercase letters and digits, with a hyphen between groups). As an alternative, add the legacy pattern to `legacy-keys`.";
+    KeyDuplicate = "SD204", "key-duplicate", Error, "Rename one of the requirements. The keys in a document must be unique.";
+    FrontMatterSyntax = "SD301", "front-matter-syntax", Error, "Use the front matter subset: `key: value` lines, where each value is a string or a list of strings.";
     FrontMatterField = "SD302", "front-matter-field", Error, "Give the field a string or a list of strings.";
-    TypeInvalid = "SD303", "type-invalid", Error, "Use one of spec, contract, guide, decision, change, note, matching the root's type.";
+    TypeInvalid = "SD303", "type-invalid", Error, "Use one of these types: spec, contract, guide, decision, change, note. The type must match the type of the root.";
     StatusInvalid = "SD304", "status-invalid", Error, "Set a `status` that the document type allows.";
     SectionMissing = "SD305", "section-missing", Error, "Add the required section heading.";
-    StatusTransition = "SD401", "status-transition", Error, "Statuses only move forward; write a new document instead of moving one back.";
+    StatusTransition = "SD401", "status-transition", Error, "A status can only move forward. To return to an earlier status, write a new document.";
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
-    SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry so the chain ends.";
+    SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
-    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and append the change under `## Amendments`, or write a superseding decision.";
-    AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter; put own text outside the generated block.";
+    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and append the change under `## Amendments`. As an alternative, write a decision that supersedes this one.";
+    AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. Put your own text outside of the generated block.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
-    TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id; a bare token that names no document may be a typo, or plain text such as a ticket number.";
-    AnchorMissing = "SD602", "anchor-missing", Warning, "Point the link at an existing heading anchor or requirement key.";
-    CrossRepoUnpinned = "SD603", "cross-repo-unpinned", Warning, "Cross-repository references resolve only against a pinned index of that repository, which is not supported yet.";
+    TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.";
+    AnchorMissing = "SD602", "anchor-missing", Warning, "Link to an existing heading anchor or requirement key.";
+    CrossRepoUnpinned = "SD603", "cross-repo-unpinned", Warning, "A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.";
     DependsOnDeprecated = "SD604", "depends-on-deprecated", Warning, "Plan a move to the successor of the deprecated document.";
-    AmendmentOutcome = "SD605", "amendment-outcome", Warning, "An amendment that changes the decision outcome needs a new superseding decision.";
+    AmendmentOutcome = "SD605", "amendment-outcome", Warning, "If the amendment changes the decision outcome, write a new decision that supersedes this one.";
     BudgetSoft = "SD701", "budget-soft", Warning, "Split the document or move detail into linked documents.";
-    BudgetHard = "SD702", "budget-hard", Error, "Split the document; it is over the hard budget.";
-    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its budget and grew; split it instead of adding to it.";
-    RequirementKeyword = "SD801", "requirement-keyword", Warning, "State the requirement with an uppercase BCP 14 keyword (MUST, SHALL, SHOULD, MAY).";
-    EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern; an `If` condition is followed by `then`.";
-    SentenceLength = "SD803", "sentence-length", Warning, "Split the requirement; one sentence states one requirement.";
+    BudgetHard = "SD702", "budget-hard", Error, "Split the document. It is over the hard budget.";
+    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its budget and it grew. Split the document. Do not add more text to it.";
+    RequirementKeyword = "SD801", "requirement-keyword", Warning, "Write the requirement with an uppercase BCP 14 keyword (MUST, SHALL, SHOULD, MAY).";
+    EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern. Put `then` after an `If` condition.";
+    SentenceLength = "SD803", "sentence-length", Warning, "Split the requirement. Write one requirement in one sentence.";
     VagueTerm = "SD804", "vague-term", Warning, "Replace the vague term with a testable value or condition.";
     PassiveVoice = "SD805", "passive-voice", Warning, "Name the actor as the subject (`the gateway SHALL reject`, not `SHALL be rejected`).";
 }
@@ -126,7 +126,8 @@ mod tests {
             assert!(seen.insert(c.code()), "duplicate {}", c.code());
             assert!(seen.insert(c.name()), "duplicate {}", c.name());
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
-            // From 600 up, warnings; SD702 became an error (checkpoint 2 ruling).
+            // Codes from 600 up are warnings. SD702 became an error by a decision at
+            // checkpoint 2.
             let is_warning = c.code().as_bytes()[2] >= b'6' && c.code() != "SD702";
             assert_eq!(
                 is_warning,

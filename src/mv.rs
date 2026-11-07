@@ -1,5 +1,5 @@
-//! `spec-dna mv`: moves a document or one requirement and records the old
-//! id as an alias, so existing references keep resolving (ADR 0001,
+//! `spec-dna mv` moves a document or one requirement. It records the old id
+//! as an alias, so that existing references still resolve (ADR 0001,
 //! "Identifiers" and "References and requirements").
 
 use crate::config::Config;
@@ -61,7 +61,7 @@ fn move_document(
             "`{to_path}` (id `{new_id}`) already exists"
         )));
     }
-    // Keep the old id, and legacy aliases the new file name would lose.
+    // Keep the old id, and the legacy aliases that the new file name would lose.
     let new_slug = new_id.rsplit('/').next().unwrap_or(&new_id);
     let regained: Vec<String> = config.roots[new_root]
         .legacy_ids
@@ -203,8 +203,8 @@ fn parent(path: &str) -> &str {
 }
 
 /// Rewrites relative Markdown link destinations of a document that moves
-/// from `old_dir` to `new_dir`, or that links to a moved file. Links that do
-/// not resolve, external links and code blocks are left alone.
+/// from `old_dir` to `new_dir`, or that links to a moved file. It does not
+/// change links that do not resolve, external links or code blocks.
 fn rewrite_links(
     text: &str,
     old_dir: &str,
@@ -315,7 +315,7 @@ fn new_dest(
     format!("{}{suffix}", relative(new_dir, &target))
 }
 
-/// The relative path from a directory to a repository path.
+/// Returns the relative path from a directory to a repository path.
 fn relative(from_dir: &str, to: &str) -> String {
     let a: Vec<&str> = from_dir.split('/').filter(|s| !s.is_empty()).collect();
     let b: Vec<&str> = to.split('/').collect();
@@ -325,7 +325,7 @@ fn relative(from_dir: &str, to: &str) -> String {
     parts.join("/")
 }
 
-/// Whole lines covering the byte range.
+/// Returns the whole lines that cover the byte range.
 fn line_span(text: &str, start: usize, end: usize) -> (usize, usize) {
     let a = text[..start].rfind('\n').map_or(0, |i| i + 1);
     let end = end.max(start + 1).min(text.len());
@@ -374,7 +374,8 @@ pub fn add_req_alias(item: &str, alias: &str) -> String {
     format!("{} <!-- aliases: {alias} -->{rest}", first.trim_end())
 }
 
-/// Adds aliases to the front matter, creating it if needed.
+/// Adds aliases to the front matter. If the front matter does not exist, it
+/// creates it.
 pub fn add_aliases(text: &str, add: &[String]) -> String {
     let Some((fm, body_at)) = frontmatter::split(text) else {
         return format!("---\n{}---\n{text}", alias_block(add));
@@ -393,7 +394,7 @@ pub fn add_aliases(text: &str, add: &[String]) -> String {
             existing.push(a.clone());
         }
     }
-    // Drop the old `aliases` entry (its key line and continuation lines).
+    // Remove the old `aliases` entry (its key line and its continuation lines).
     let mut kept = String::new();
     let mut skipping = false;
     let mut inserted = false;

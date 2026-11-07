@@ -1,8 +1,8 @@
-//! Front matter: a YAML subset that parses the same in YAML 1.1 and 1.2
+//! Front matter is a YAML subset that parses the same in YAML 1.1 and 1.2
 //! (ADR 0001). Keys map to plain strings or lists of strings. Plain scalars
 //! are strings. Anchors, aliases, tags, flow mappings, block scalars and
-//! nested mappings are outside the subset: they are kept as `Unsupported`, so
-//! a key that spec-dna does not use can still hold them.
+//! nested mappings are outside the subset. The parser keeps them as
+//! `Unsupported`, so a key that spec-dna does not use can still contain them.
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -27,9 +27,9 @@ impl FrontMatter {
 }
 
 /// Splits a document into its front matter text and the byte offset where the
-/// body starts. Front matter starts on the first line with `---` and ends at
-/// the next line holding `---` or `...`. Without a closing line there is no
-/// front matter.
+/// body starts. Front matter starts on the first line with `---`. It ends at
+/// the next line that contains `---` or `...`. If no line ends it, the
+/// document has no front matter.
 pub fn split(text: &str) -> Option<(&str, usize)> {
     let rest = text.strip_prefix("---")?;
     let rest = rest
@@ -48,7 +48,7 @@ pub fn split(text: &str) -> Option<(&str, usize)> {
 }
 
 /// Parses front matter text. `first_line` is the 1-based line of the first
-/// front matter line in the file. Errors carry a line number.
+/// front matter line in the file. An error contains a line number.
 pub fn parse(src: &str, first_line: u32) -> Result<FrontMatter, (u32, String)> {
     let lines: Vec<&str> = src.lines().collect();
     let mut fm = FrontMatter::default();
@@ -135,7 +135,7 @@ fn is_blank_or_comment(line: &str) -> bool {
     t.is_empty() || t.starts_with('#')
 }
 
-/// Splits `key: rest` where the key is a plain or quoted scalar without `: `.
+/// Splits `key: rest`, where the key is a plain or quoted scalar without `: `.
 fn split_key(line: &str) -> Option<(&str, &str)> {
     let (key, rest) = if let Some(q) = line.strip_prefix('"') {
         let end = q.find('"')?;

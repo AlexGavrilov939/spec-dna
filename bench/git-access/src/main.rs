@@ -1,22 +1,23 @@
 //! Git access benchmark for ADR 0002, confirmation step 2.
 //!
-//! Reads the git inputs that `check --base <rev>` needs, either through the git CLI
-//! (`cli` mode) or in-process through the `gix` crate (`gix` mode), and prints a
-//! deterministic summary so both modes can be compared byte for byte.
+//! It reads the git inputs that `check --base <rev>` needs. It uses the git CLI
+//! (`cli` mode) or the `gix` crate in the process (`gix` mode). It prints a
+//! deterministic summary, so that you can compare the modes byte for byte.
 //!
 //!     git-access <cli|cli-par|gix> <repo> <base-rev> <changed|md>
 //!
 //! Steps:
-//!   1. head: every index path with its blob id, tracked files changed in the
-//!      working tree, untracked non-ignored files.
-//!   2. base: resolve <base-rev>, the merge base with HEAD, every path and blob id of its tree.
-//!   3. blobs: contents of base blobs. `changed` takes the `.md` blobs of the base tree whose
-//!      path is missing from the index or has another id there; `md` takes every `.md` blob.
+//!   1. head: every index path with its blob id, tracked files that changed in the
+//!      working tree, and untracked files that git does not ignore.
+//!   2. base: resolve <base-rev>, find the merge base with HEAD, and list every path and
+//!      blob id of its tree.
+//!   3. blobs: the contents of base blobs. `changed` takes the `.md` blobs of the base tree
+//!      whose path is not in the index or has another id there. `md` takes every `.md` blob.
 //!
-//! The summary goes to stdout. Step timings and peak RSS go to stderr as one `timing` line.
-//! `cli` runs the steps one after another. `cli-par` starts every git process as early as
-//! its input allows, so the steps overlap. Both run `git` from PATH, or the executable named
-//! by `GIT_ACCESS_GIT`.
+//! The summary goes to stdout. The step times and the peak RSS go to stderr as one `timing`
+//! line. `cli` runs the steps one after another. `cli-par` starts each git process as early
+//! as its input allows, so the steps overlap. Both modes run `git` from PATH, or the
+//! executable that `GIT_ACCESS_GIT` names.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -46,7 +47,7 @@ struct Base {
     tree: Vec<Entry>,
 }
 
-/// Step 3 output: a running checksum over (id, length, bytes) in request order.
+/// Step 3 output: a checksum over (id, length, bytes) of each blob, in request order.
 #[derive(Default)]
 struct Blobs {
     count: usize,
@@ -64,8 +65,8 @@ impl Blobs {
     }
 }
 
-/// Fast non-cryptographic 64-bit checksum (FxHash-style word mixing). Used only to prove
-/// that both modes saw the same bytes; it costs the same in both modes.
+/// Fast non-cryptographic 64-bit checksum (FxHash-style word mixing). The benchmark uses
+/// it only to prove that both modes saw the same bytes. It costs the same in both modes.
 #[derive(Clone, Copy)]
 struct Sum(u64);
 
@@ -123,7 +124,7 @@ fn parse_hex(s: &[u8]) -> Res<Oid> {
     Ok(id)
 }
 
-/// Which base blobs step 3 reads, in sorted id order without duplicates.
+/// Returns the base blobs that step 3 reads, sorted by id, without duplicates.
 fn select_blobs(head: &Head, base: &Base, which: &str) -> Vec<Oid> {
     let index: std::collections::HashMap<&[u8], &Oid> = head
         .index
@@ -161,7 +162,8 @@ fn paths_sum(paths: &mut [Vec<u8>]) -> Sum {
     s
 }
 
-/// Peak resident set size in KiB for this process and for its largest waited-for child.
+/// Returns the peak resident set size in KiB for this process and for the largest child
+/// that it waited for.
 #[cfg(unix)]
 fn peak_rss_kib() -> (u64, u64) {
     #[repr(C)]
@@ -182,7 +184,7 @@ fn peak_rss_kib() -> (u64, u64) {
             rest: [0; 13],
         };
         // SAFETY: RUsage matches `struct rusage` on 64-bit macOS and Linux (two 16-byte
-        // timevals, then 14 longs); getrusage only writes into it.
+        // timevals, then 14 longs). getrusage only writes into it.
         if unsafe { getrusage(who, &mut ru) } != 0 {
             return 0;
         }
@@ -203,8 +205,8 @@ fn peak_rss_kib() -> (u64, u64) {
 
 #[cfg(feature = "cli")]
 mod cli {
-    //! Git CLI plumbing. Every process runs with GIT_OPTIONAL_LOCKS=0 so `git status`
-    //! never rewrites the index.
+    //! Git CLI plumbing commands. Every process runs with GIT_OPTIONAL_LOCKS=0, so that
+    //! `git status` never rewrites the index.
     use super::*;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::path::Path;
@@ -219,7 +221,8 @@ mod cli {
         "--no-renames",
     ];
 
-    /// The git executable: `GIT_ACCESS_GIT` if set, else `git` from PATH.
+    /// Makes a command for the git executable: `GIT_ACCESS_GIT` if it is set, or else `git`
+    /// from PATH.
     fn git(repo: &Path, args: &[&str]) -> Command {
         let exe = std::env::var_os("GIT_ACCESS_GIT").unwrap_or_else(|| "git".into());
         let mut c = Command::new(exe);
@@ -236,7 +239,7 @@ mod cli {
         Ok(git(repo, args).spawn()?)
     }
 
-    /// Wait for a child that was spawned with piped stdout and return its stdout.
+    /// Waits for a child that has a piped stdout, and returns its stdout.
     fn finish(child: Child, what: &str) -> Res<Vec<u8>> {
         let out = child.wait_with_output()?;
         if !out.status.success() {
@@ -245,7 +248,8 @@ mod cli {
         Ok(out.stdout)
     }
 
-    /// Run `finish` on another thread, so several children drain their pipes at once.
+    /// Runs `finish` on another thread, so that several children can empty their pipes at
+    /// the same time.
     fn finish_bg(child: Child, what: &'static str) -> std::thread::JoinHandle<Res<Vec<u8>>> {
         std::thread::spawn(move || finish(child, what))
     }
@@ -338,7 +342,8 @@ mod cli {
             input.extend_from_slice(hex(id).as_bytes());
             input.push(b'\n');
         }
-        // Feed ids from another thread so a full stdout pipe cannot deadlock us.
+        // Write the ids from another thread, so that a full stdout pipe cannot cause a
+        // deadlock.
         let writer = std::thread::spawn(move || stdin.write_all(&input));
         let mut out = BufReader::with_capacity(1 << 16, child.stdout.take().unwrap());
         let mut blobs = Blobs::default();
@@ -393,10 +398,13 @@ mod cli {
         read_batch(spawn_batch(repo)?, ids)
     }
 
-    /// Steps 1 to 3 with every process started as early as its input allows:
-    /// `ls-files`, `status`, `merge-base` and `cat-file` start at once, `ls-tree` starts when
-    /// `merge-base` ends, and `cat-file` gets its ids when head and base are known.
-    /// Returns the time until head and base were both known.
+    /// Steps 1 to 3, with each process started as early as its input allows:
+    ///
+    /// - `ls-files`, `status`, `merge-base` and `cat-file` start immediately.
+    /// - `ls-tree` starts when `merge-base` ends.
+    /// - `cat-file` receives its ids when the head and base results are available.
+    ///
+    /// Returns the time until the head and base results were both available.
     pub fn pipelined(
         repo: &Path,
         rev: &str,
@@ -470,7 +478,8 @@ mod gx {
                 Item::Rewrite { .. } => return Err("unexpected rewrite with renames off".into()),
             }
         }
-        // Conflicted paths repeat once per stage in the status stream; git prints them once.
+        // In the status stream, a conflicted path occurs once for each stage. git prints it
+        // once.
         head.conflicted.sort_unstable();
         head.conflicted.dedup();
         Ok(head)
@@ -535,7 +544,8 @@ fn run(mode: &str, repo: &std::path::Path, rev: &str, which: &str) -> Res<()> {
         }
         #[cfg(feature = "cli")]
         "cli-par" => {
-            // Steps overlap: head_ms is the time until head and base are both known.
+            // The steps overlap. head_ms is the time until the head and base results are
+            // both available.
             open_ms = 0.0;
             base_ms = 0.0;
             let t = Instant::now();

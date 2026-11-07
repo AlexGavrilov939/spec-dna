@@ -1,6 +1,10 @@
-//! Path globs for configuration and `applies-to`: `**` matches any number of
-//! path segments, `*` any run of characters inside one segment, `?` one
-//! character. A pattern is matched against the whole `/`-separated path.
+//! Path globs for the configuration and for `applies-to`:
+//!
+//! - `**` matches any number of path segments;
+//! - `*` matches any run of characters in one segment;
+//! - `?` matches one character.
+//!
+//! spec-dna matches a pattern against the whole `/`-separated path.
 
 pub fn is_glob(pattern: &str) -> bool {
     pattern.contains(['*', '?'])
@@ -12,7 +16,7 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     match_segments(&pat, &segs)
 }
 
-/// A glob matches the path; a plain value matches the path itself or any
+/// A glob matches the path. A plain value matches the path itself or any
 /// path below it (a namespace or a directory).
 pub fn matches_scope(pattern: &str, path: &str) -> bool {
     if is_glob(pattern) {
@@ -38,13 +42,12 @@ fn match_segments(pat: &[&str], segs: &[&str]) -> bool {
 }
 
 fn match_segment(p: &[u8], s: &[u8]) -> bool {
-    // Iterative wildcard matching with one backtrack point.
+    // This is an iterative wildcard match with one backtrack point.
     let (mut pi, mut si) = (0, 0);
     let (mut star, mut mark) = (usize::MAX, 0);
     while si < s.len() {
         if pi < p.len() && (p[pi] == b'?' || p[pi] == s[si]) {
             if p[pi] == b'?' {
-                // Skip a whole UTF-8 character.
                 si += utf8_len(s[si]);
             } else {
                 si += 1;

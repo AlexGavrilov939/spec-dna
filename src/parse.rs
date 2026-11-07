@@ -1,13 +1,14 @@
-//! Parses one Markdown document into the data the index stores: front
+//! Parses one Markdown document into the data that the index stores: front
 //! matter, sections with hashes, references, bare id tokens and requirement
-//! candidates. Parsing does not depend on configuration, so the result is
-//! cached by git blob id alone.
+//! candidates. The parser does not use the configuration, so the index caches
+//! the result by git blob id alone.
 
 use crate::frontmatter::{self, FrontMatter};
 use crate::hash::{Hash, hash_normalized};
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
-/// Bump when the parsed data changes, so old index entries are dropped.
+/// Increase this number when the parsed data changes, so that the index
+/// removes old entries.
 pub const PARSER_VERSION: u32 = 1;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
@@ -26,14 +27,15 @@ pub struct ParsedDoc {
     pub reqs: Vec<Req>,
     /// Characters of the body without fenced or indented code blocks.
     pub body_chars: u32,
-    /// Hash of the body above a level-2 `Amendments` heading (all of it if none).
+    /// Hash of the body above a level-2 `Amendments` heading. If there is no
+    /// such heading, it is the hash of all of the body.
     pub frozen_hash: Hash,
     /// Index of the first chunk of the `Amendments` section, if any.
     pub amendments: Option<u32>,
 }
 
 /// A section unit: one heading and its text up to the next heading of any
-/// level. Level 0 is text before the first heading.
+/// level. Level 0 is the text before the first heading.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Chunk {
     pub level: u8,
@@ -68,12 +70,12 @@ pub struct Token {
     pub line: u32,
 }
 
-/// A list item that starts with a bold one-word key followed by a colon.
+/// A list item that starts with a bold one-word key and then a colon.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Req {
     pub key: String,
     pub line: u32,
-    /// Byte range of the whole list item, including nested content.
+    /// Byte range of the whole list item, with its nested content.
     pub start: u32,
     pub end: u32,
     pub chunk: u32,
@@ -143,7 +145,7 @@ pub fn parse(text: &str) -> ParsedDoc {
                 }
             }
             Event::Start(Tag::List(_)) => {
-                // A nested list ends the sentence of the enclosing item.
+                // A nested list ends the sentence of the parent item.
                 let n = items.len();
                 if n >= 2 {
                     let parent = &mut items[n - 2];
@@ -198,7 +200,7 @@ pub fn parse(text: &str) -> ParsedDoc {
         }
     }
 
-    // Build chunks. The level-0 chunk is kept only if it holds text.
+    // Build the chunks. Keep the level-0 chunk only if it contains text.
     let mut seen: Vec<String> = Vec::new();
     for (i, (level, head, start)) in starts.iter().enumerate() {
         let end = starts.get(i + 1).map_or(body.len(), |s| s.2);
@@ -230,7 +232,7 @@ pub fn parse(text: &str) -> ParsedDoc {
         .map(|c| c.heading.clone())
         .unwrap_or_default();
 
-    // Requirements, attached to the chunk that holds them.
+    // Attach each requirement to the chunk that contains it.
     for c in cands {
         let abs_start = body_start + c.start;
         let chunk = doc
@@ -266,7 +268,7 @@ pub fn parse(text: &str) -> ParsedDoc {
 struct Item {
     start: usize,
     end: usize,
-    /// 0: expecting the bold key, 1: inside it, 2: expecting `:`, 3: done.
+    /// 0: wait for the bold key, 1: in the key, 2: wait for `:`, 3: done.
     phase: u8,
     key: String,
     sentence_start: usize,
@@ -409,7 +411,7 @@ fn word_flags(text: &str) -> u8 {
     flags
 }
 
-/// Collects `PREFIX-NUMBER` tokens: an uppercase ASCII prefix, a hyphen,
+/// Collects `PREFIX-NUMBER` tokens: an uppercase ASCII prefix, a hyphen and
 /// digits, at word boundaries.
 fn scan_tokens(text: &str, line: u32, out: &mut Vec<Token>) {
     let b = text.as_bytes();
@@ -446,8 +448,9 @@ fn is_word_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c >= 0x80
 }
 
-/// GitHub-style heading anchor: lowercase, letters, digits, `-` and `_`
-/// kept, spaces become `-`, everything else dropped.
+/// Makes a GitHub-style heading anchor. It converts the heading to lowercase,
+/// keeps letters, digits, `-` and `_`, changes spaces to `-`, and removes all
+/// other characters.
 pub fn slugify(heading: &str) -> String {
     let mut out = String::with_capacity(heading.len());
     for ch in heading.trim().chars() {
@@ -590,7 +593,7 @@ mod tests {
     #[test]
     fn body_chars_skip_code_blocks() {
         let d = parse("# T\n\n```\ncode\n```\n");
-        // The fence lines are code; the final line end is not.
+        // The fence lines are code. The final line end is not code.
         assert_eq!(d.body_chars, "# T\n\n\n".chars().count() as u32);
     }
 }

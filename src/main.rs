@@ -1,5 +1,5 @@
-//! spec-dna: keeps engineering specifications small, linked and
-//! machine-checked, and serves AI coding agents the minimum sufficient
+//! spec-dna keeps engineering specifications small, linked and
+//! machine-checked. It serves AI coding agents the minimum sufficient
 //! context. See README.md for commands, exit codes and diagnostics.
 
 mod adapters;
@@ -30,23 +30,23 @@ const USAGE: &str = "usage: spec-dna <command> [options]
 
 Commands:
     init [--root <dir>]
-        Write spec-dna.toml (if absent) and the agent adapters.
+        Writes spec-dna.toml (if it does not exist) and the agent adapters.
     check [--base <rev>] [--all]
-        Report diagnostics that are new against the merge base of <rev> and
-        HEAD (default: HEAD). --all reports every diagnostic.
+        Reports the diagnostics that are new against the merge base of <rev>
+        and HEAD (default: HEAD). With --all, it reports every diagnostic.
     context <target>... [--path <file>]... [--budget <chars>] [--query <text>]
-        Assemble the sections an agent needs for the targets. With --query,
-        sections that match the words of the text come first.
+        Assembles the sections that an agent needs for the targets. With
+        --query, the sections that match the words of the text come first.
     show <id>[#<anchor>]
-        Print a document, a section or a requirement.
+        Prints a document, a section or a requirement.
     mv <from> <to>
-        Move a document, or <doc-id>#<key> to another document.
+        Moves a document, or moves <doc-id>#<key> to another document.
 
 Options:
-    --json        Machine-readable output
-    --no-cache    Do not read or write the index
-    -h, --help    Print this help
-    -V, --version Print the version
+    --json        Prints machine-readable output
+    --no-cache    Does not read or write the index
+    -h, --help    Prints this help
+    -V, --version Prints the version
 
 Exit codes: 0 ok, 1 check found new errors, 2 usage, 3 configuration,
 4 git or I/O, 5 not found.";
@@ -179,8 +179,8 @@ fn warn_pin(cfg: &config::Config) {
 const DEFAULT_CONFIG: &str = "# spec-dna configuration. Reference: https://github.com/AlexGavrilov939/spec-dna/blob/master/docs/config.md
 spec-dna = \"{version}\"
 
-# Each root is a directory of documents. A document's id is its path under
-# the root without the extension.
+# Each root is a directory of documents. The id of a document is its path
+# under the root, without the extension.
 [[roots]]
 path = \"{root}\"
 type = \"mixed\"
@@ -290,7 +290,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             pin = cfg.pin
         )));
     }
-    // The base: the merge base of --base and HEAD, or HEAD. None without commits.
+    // The base is the merge base of --base and HEAD, or HEAD. If there is no
+    // commit, the base is None.
     let mut t = std::time::Instant::now();
     let base_commit = if a.all {
         None
@@ -311,7 +312,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
     };
     repo::trace("resolve base", &mut t);
-    // The working tree and the base tree are listed in parallel.
+    // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
     let (head_snap, base_snap) = std::thread::scope(|s| {
         let base = s.spawn(|| match &base_commit {
@@ -339,7 +340,6 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let base = loaded.corpora.get(1);
     let mut outcome = check::gate(&cfg, base, head);
     repo::trace("diagnose", &mut t);
-    // Adapters.
     let head_ad = adapters::check(&adapter_texts(repo, &head_snap)?);
     let base_ad: Vec<_> = if use_base {
         adapters::check(&adapter_texts(repo, &base_snap)?)

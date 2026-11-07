@@ -1,10 +1,10 @@
-//! The controlled-language lint on requirement sentences
-//! (docs/research/matrix.md, "Controlled-language lint"). Every finding is
-//! a warning. The word lists are this project's own.
+//! This module does the controlled-language lint of requirement sentences
+//! (docs/research/matrix.md, "Controlled-language lint"). Each problem that
+//! the lint finds is a warning. This project wrote its own word lists.
 
 use crate::diag::Code;
 
-/// Terms that cannot be tested, escape clauses, open endings and loose
+/// Terms that you cannot test, escape clauses, open-ended phrases and loose
 /// quantities.
 const VAGUE: &[&str] = &[
     "adequate",
@@ -61,7 +61,7 @@ const IRREGULAR: &[&str] = &[
     "sent", "set", "shown", "sold", "spent", "taken", "taught", "thrown", "told", "written",
 ];
 
-/// Words ending in `-ed` or `-en` that are not participles.
+/// Words that end in `-ed` or `-en` but are not participles.
 const NOT_PARTICIPLE: &[&str] = &[
     "open", "even", "often", "token", "seven", "eleven", "need", "speed", "feed", "seed",
 ];

@@ -1,5 +1,6 @@
-//! The information model of ADR 0001 over one tree: documents with ids,
-//! types, statuses and aliases, and the resolution of references.
+//! This module applies the information model of ADR 0001 to one tree. It
+//! contains documents with ids, types, statuses and aliases, and it resolves
+//! references.
 
 use crate::config::Config;
 use crate::diag::Code;
@@ -57,7 +58,7 @@ impl DocType {
     }
 }
 
-/// A problem found while reading a document's metadata.
+/// A problem that spec-dna finds when it reads the metadata of a document.
 #[derive(Clone, Debug)]
 pub struct Issue {
     pub code: Code,
@@ -123,7 +124,7 @@ pub fn is_slug(key: &str) -> bool {
         })
 }
 
-/// The document id for a path under a root (ADR 0001, "Identifiers").
+/// Returns the document id for a path under a root (ADR 0001, "Identifiers").
 pub fn doc_id(rel: &str) -> String {
     let stem = rel.rsplit_once('.').map_or(rel, |(s, _)| s);
     if let Some((dir, last)) = stem.rsplit_once('/')
@@ -134,8 +135,9 @@ pub fn doc_id(rel: &str) -> String {
     stem.to_string()
 }
 
-/// The id of a document under a root. A `README.md` or `index.md` takes the
-/// name of its directory, so one directly in a root takes the root's name.
+/// Returns the id of a document under a root. A `README.md` or `index.md`
+/// takes the name of its directory. Thus such a file directly in a root takes
+/// the name of the root.
 pub fn root_doc_id(root: &crate::config::Root, path: &str) -> String {
     let rel = root.rel(path);
     let id = doc_id(rel);
@@ -152,7 +154,7 @@ pub fn is_doc_path(path: &str) -> bool {
     path.ends_with(".md") || path.ends_with(".markdown")
 }
 
-/// Canonical lookup form: NFC, and `PREFIX-0012` becomes `PREFIX-12`.
+/// Returns the canonical lookup form: NFC, and `PREFIX-0012` becomes `PREFIX-12`.
 pub fn canonical(name: &str) -> String {
     let name = nfc(name);
     if let Some((p, n)) = name.rsplit_once('-')
@@ -202,8 +204,8 @@ pub struct Corpus {
 }
 
 impl Corpus {
-    /// `files` is every path in the tree; `docs` the document paths with
-    /// their parsed data (already filtered by roots and excludes).
+    /// `files` is every path in the tree. `docs` contains the document paths
+    /// with their parsed data, after the filter by roots and excludes.
     pub fn build(
         config: &Config,
         files: Vec<String>,
@@ -263,7 +265,8 @@ impl Corpus {
         }
     }
 
-    /// Resolves an id reference: `id`, `id#fragment`, either with `@hash`.
+    /// Resolves an id reference: `id` or `id#fragment`, each with an optional
+    /// `@hash`.
     pub fn resolve(&self, target: &str) -> Res {
         let target = strip_hash_suffix(target.trim());
         if let Some((repo, rest)) = target.split_once(':')
@@ -299,8 +302,9 @@ impl Corpus {
                 Res::Found(*d, frag.map(str::to_string), ok)
             }
             Some(many) => {
-                // A document's own id wins over another document's alias; the
-                // clash itself is reported as a duplicate id.
+                // The id of the document itself has priority over the alias of
+                // another document. Another check reports the clash as a
+                // duplicate id.
                 let own: Vec<u32> = many
                     .iter()
                     .copied()
@@ -371,7 +375,7 @@ impl Corpus {
             return LinkRes::Dir(index);
         }
         if absolute {
-            // It may name another branch or commit; leave it unchecked.
+            // It can name another branch or commit. Do not check it.
             return LinkRes::External;
         }
         LinkRes::Missing(joined)
@@ -476,7 +480,8 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     let status = match fm_status {
         Some((s, line)) => {
             let allowed = |x: &str| ty == DocType::Note || ty.statuses().contains(&x);
-            // A legacy word the root maps stands for its status; the file keeps it.
+            // If the root maps a legacy word, use the mapped status. The file
+            // keeps the legacy word.
             let canon = if allowed(&s) {
                 s.clone()
             } else {
@@ -593,7 +598,8 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     }
 }
 
-/// Headings compare without case (any script) and surrounding space.
+/// Compares headings without case (in any script), and ignores the space at
+/// the start and at the end.
 pub fn same_heading(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
@@ -606,7 +612,8 @@ fn canonical_ref(r: &str) -> String {
     }
 }
 
-/// Removes a trailing `@<hex>` (a hash pin reserved for suspect links).
+/// Removes a `@<hex>` at the end (a hash pin that spec-dna reserves for
+/// suspect links).
 pub fn strip_hash_suffix(s: &str) -> &str {
     if let Some((head, tail)) = s.rsplit_once('@')
         && (4..=64).contains(&tail.len())
@@ -617,8 +624,8 @@ pub fn strip_hash_suffix(s: &str) -> &str {
     s
 }
 
-/// The rest of `url` after a `self-urls` prefix, where `*` is one whole path
-/// segment (such as a branch name).
+/// Returns the rest of `url` after a `self-urls` prefix. In the prefix, `*` is
+/// one whole path segment (such as a branch name).
 fn strip_url_prefix<'a>(pattern: &str, url: &'a str) -> Option<&'a str> {
     let mut parts = pattern.split('*');
     let mut rest = url.strip_prefix(parts.next()?)?;
@@ -671,8 +678,8 @@ fn hexval(c: u8) -> Option<u8> {
     (c as char).to_digit(16).map(|d| d as u8)
 }
 
-/// Joins a relative path to a base directory, resolving `.` and `..`.
-/// Returns `None` when the path leaves the repository.
+/// Joins a relative path to a base directory, and resolves `.` and `..`.
+/// Returns `None` if the path goes out of the repository.
 pub fn join(base: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = if base.is_empty() {
         Vec::new()
@@ -726,7 +733,7 @@ mod tests {
         };
         assert_eq!(c.docs[0].status.as_deref(), Some("active"));
         assert!(issues(0).is_empty(), "{:?}", issues(0));
-        // `signed-off` stands for `accepted`, which a spec does not allow.
+        // `signed-off` maps to `accepted`, which a spec does not allow.
         assert_eq!(
             issues(1),
             [
@@ -781,7 +788,8 @@ mod tests {
             c.resolve_link("docs/z.md", "../docs/x"),
             LinkRes::Dir(Some(0))
         );
-        // Gone at HEAD, maybe present on the named branch: left unchecked.
+        // The file is not at HEAD, but it can be on the named branch. Do not
+        // check it.
         assert_eq!(
             c.resolve_link(
                 "docs/z.md",

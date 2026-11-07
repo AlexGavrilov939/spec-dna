@@ -6,7 +6,7 @@ body:
     id: problem
     attributes:
       label: Problem
-      description: What is hard or impossible today, and who runs into it.
+      description: What is difficult or not possible today, and who has this problem.
     validations:
       required: true
 
@@ -14,11 +14,11 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: What should change. Examples of specs, prompts or commands help.
+      description: The change that you propose. Examples of specs, prompts or commands help.
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
+      label: Alternatives that you considered

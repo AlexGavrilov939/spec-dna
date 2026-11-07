@@ -4,19 +4,25 @@
     python3 run.py prepare --source DIR|GIT_DIR --rev REV|- --out REPO
     python3 run.py measure --repo REPO --label NAME --cli BIN --gix BIN [--git-direct GIT] [--runs 15] --out FILE.json
 
-prepare: builds a fresh repository from a snapshot and never writes to the source.
-    A git source is exported with `git archive REV`; with `--rev -` the directory is
-    copied. Then: commit "base", change 10 .md files and commit "change", pack with
-    `git gc`, change 10 other .md files in the working tree and add 3 untracked .md
-    files. The base revision for measurements is the tag `bench-base`.
+prepare: builds a new repository from a snapshot. It never writes to the source.
+    It exports a git source with `git archive REV`. With `--rev -`, it copies the
+    directory. Then it does these steps in sequence:
+    - commit "base";
+    - change 10 .md files and commit "change";
+    - pack with `git gc`;
+    - change 10 other .md files in the working tree;
+    - add 3 untracked .md files.
+    The base revision for measurements is the tag `bench-base`.
 
-measure: for each blob selection (`changed`, `md`) runs 1 warm-up per mode, then
-    --runs runs per mode, interleaved run by run, rotating which mode goes first.
+measure: for each blob selection (`changed`, `md`), it runs 1 warm-up for each mode.
+    Then it does --runs runs for each mode. The modes interleave run by run, and the
+    mode that goes first rotates.
     Modes: `cli` and `cli-par` (git from PATH), `cli-direct` and `cli-par-direct`
-    (the same with --git-direct, optional), `gix`. Wall time is measured here around
-    each process; step times and peak RSS (getrusage, self and largest child) come
-    from the binary's stderr. Every stdout must be identical across runs and modes.
-    Unix only.
+    (the same with --git-direct, optional), `gix`. This script measures the wall time
+    around each process. The step times and the peak RSS (getrusage, self and largest
+    child) come from the stderr of the binary. Every stdout must be the same in all
+    runs and modes.
+    It runs only on Unix.
 """
 import argparse
 import json
@@ -51,7 +57,7 @@ def append(path, text):
 
 
 def tree_bytes(repo):
-    """Sum of blob sizes in the base tree."""
+    """Returns the sum of the blob sizes in the base tree."""
     total = 0
     for rec in git(repo, "ls-tree", "-r", "-l", "-z", "bench-base").split("\0"):
         if rec:
@@ -96,7 +102,7 @@ def prepare(a):
         os.makedirs(os.path.join(out, os.path.dirname(p)) or out, exist_ok=True)
         with open(os.path.join(out, p), "w", encoding="utf-8") as fh:
             fh.write("# Untracked\n\nCreated by the benchmark.\n")
-    # Refresh the stat data once (with locks) after a pause, so no index entry is racily clean.
+    # After a pause, refresh the stat data once (with locks), so that no index entry is racily clean.
     time.sleep(1.2)
     git(out, "status", "--porcelain")
     st = git(out, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored").split("\0")
@@ -170,7 +176,7 @@ def measure(a):
         for m in names:
             run(m, "warm-up")
         for i in range(a.runs):
-            k = i % len(names)  # rotate the order so each mode goes first equally often
+            k = i % len(names)  # rotate the order, so that each mode goes first the same number of times
             for m in names[k:] + names[:k]:
                 rows[m].append(run(m, f"run {i}"))
         equal = len(outputs) == 1

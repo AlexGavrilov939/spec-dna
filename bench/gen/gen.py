@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Synthetic spec corpus generator for the spec-dna benchmark.
 
-Deterministic for a given --size and --seed. Writes Markdown docs in a
-domain/capability tree, plus code files that docs link to, and an
-expected.json with the counts a correct scanner must report.
+The output is deterministic for a given --size and --seed. It writes Markdown docs
+in a domain/capability tree and code files that docs link to. It also writes an
+expected.json with the counts that a correct scanner must report.
 
     python3 gen.py --size small|medium|large --out DIR [--seed 1]
 
-With --model spec-dna it writes a corpus in the information model of ADR
+With --model spec-dna, it writes a corpus in the information model of ADR
 0001 instead (specs with requirements, cross-cutting guides, decisions,
-changes and notes), a spec-dna.toml, and tasks.json: retrieval tasks with
-the sections a correct context assembly must serve (ground truth).
+changes and notes). It also writes a spec-dna.toml and tasks.json. tasks.json
+contains retrieval tasks with the sections that a correct context assembly
+must serve (ground truth).
 
     python3 gen.py --model spec-dna --size small|medium|large --out DIR [--tasks 40]
 """
@@ -106,7 +107,8 @@ def main():
             para = rng.choice(pool)
             r = rng.random()
             if r < 0.35:
-                # internal link: mostly to a hub or a nearby doc, sometimes code, rarely broken
+                # An internal link goes to a hub (30%) or to a random doc.
+                # 15% of the links go to code instead, and 0.5% are broken.
                 j = rng.choice(hubs) if rng.random() < 0.3 else rng.randrange(n_docs)
                 tgt = docs[j]["path"]
                 if rng.random() < 0.15:
@@ -130,7 +132,7 @@ def main():
                 exp["idrefs"] += 1
                 exp["idrefs_unresolved"] += unresolved
             elif r < 0.60:
-                # decoys a scanner must ignore: links and ids in code
+                # Decoys that a scanner must ignore: links and ids in code.
                 para += f" Use `[x](missing-{i}.md)` and `ADR-999999` as written."
                 lines += [para, "", "```md", f"[decoy](decoy-{i}.md) SPEC-999999", "```", ""]
                 size += len(para) + 40
@@ -176,16 +178,16 @@ def requirement(rng, key, cap):
 
 
 def spec_dna_corpus(a):
-    """Writes a corpus in the ADR 0001 model and tasks with ground truth.
+    """Writes a corpus in the ADR 0001 model, and tasks with ground truth.
 
-    Ground truth of a task with entry spec E (ADR 0001 context order):
-    - every section of E that holds requirements (E#anchor);
+    The ground truth of a task with entry spec E (ADR 0001 context order):
+    - every section of E that contains requirements (E#anchor);
     - every section of each active guide whose applies-to matches E;
     - the requirement sections of each depends-on target of E, or the one
-        section that holds a referenced key;
-    - the Decision Outcome section of each accepted decision linked with E.
-    Not required: E's overview, rationale and examples, notes, changes,
-    rejected or superseded decisions, unrelated specs.
+        section that contains a referenced key;
+    - the Decision Outcome section of each accepted decision that links with E.
+    The ground truth does not contain the overview, rationale and examples of E,
+    notes, changes, rejected or superseded decisions, or unrelated specs.
     """
     rng = random.Random(a.seed)
     n_spec, n_dom, n_guide, n_dec, n_chg, n_note = SPEC_DNA_SIZES[a.size]
@@ -282,7 +284,7 @@ def spec_dna_corpus(a):
     with open(os.path.join(a.out, "spec-dna.toml"), "w") as fh:
         fh.write('spec-dna = "0.1.0"\n\n[[roots]]\npath = "docs"\ntype = "mixed"\ndefault-type = "spec"\nstatus = "active"\n')
 
-    # Tasks with ground truth.
+    # Make the tasks with their ground truth.
     linked = {}
     for d in decisions:
         if d["status"] == "accepted":

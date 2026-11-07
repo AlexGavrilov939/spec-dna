@@ -1,10 +1,10 @@
 # git-access results
 
-Measured 2026-11-07 for [ADR 0002](../../docs/adr/0002-language.md), confirmation step 2. Method and limits: [README.md](README.md). The raw JSON is not committed; rerun the harness to get it.
+Measured 2026-11-07 for [ADR 0002](../../docs/adr/0002-language.md), confirmation step 2. Method and limits: [README.md](README.md). The raw JSON is not in the repository. To get it, run the harness again.
 
-Host: Apple M4 Max, 16 cores, 128 GB, macOS 26.6.1, APFS SSD, shared with other work. Toolchain: rustc 1.99.1, release profile with LTO, 1 codegen unit, stripped. git 2.50.1 (Apple Git-155), run as `/usr/bin/git` (the `xcrun` shim) and as the Xcode binary it forwards to. gix 0.90.0 (released 2026-10-22, MSRV 1.88).
+Host: Apple M4 Max, 16 cores, 128 GB, macOS 26.6.1, APFS SSD. Other work used the host at the same time. Toolchain: rustc 1.99.1, release profile with LTO, 1 codegen unit, stripped. Git: 2.50.1 (Apple Git-155), run as `/usr/bin/git` (the `xcrun` shim) and as the Xcode binary that the shim forwards to. Crate: gix 0.90.0 (released 2026-10-22, MSRV 1.88).
 
-Cells show the median of 15 runs, with the minimum in brackets, in milliseconds. Every number is measured unless marked estimated. Treat differences under about 20% as ties.
+Each cell shows the median of 15 runs in milliseconds, with the minimum in brackets. All numbers are measured values, unless the text marks a number as estimated. Treat results that differ by less than about 20% as equal.
 
 ## Corpora
 
@@ -14,11 +14,11 @@ Cells show the median of 15 runs, with the minimum in brackets, in milliseconds.
 | Synthetic large | 24,001 | 20,000 | 159.1 | 7.63 to 7.79 | yes / yes |
 | Corpus B | 2,308 | 722 | 56.6 | 7.79 to 7.59 | yes / yes |
 
-Corpus B is the public `kubernetes/enhancements` repository at `72907deaa85eae6e208bc95c5f74dd27c1911345`. Synthetic corpora come from `bench/gen/gen.py`. Each corpus is a fresh repository built by `run.py prepare`: 10 `.md` files changed in a commit after the base, 10 more changed in the working tree, 3 untracked `.md` files.
+Corpus B is the public `kubernetes/enhancements` repository at `72907deaa85eae6e208bc95c5f74dd27c1911345`. The synthetic corpora come from `bench/gen/gen.py`. Each corpus is a new repository that `run.py prepare` builds. It has 10 `.md` files changed in a commit after the base, 10 more changed in the working tree, and 3 untracked `.md` files.
 
 ## Total per check (measured)
 
-Process wall time for steps 1 to 3, including process start and the summary.
+Process wall time for steps 1 to 3. It includes process start and the summary.
 
 | Corpus | Blobs read | cli | cli-direct | cli-par | cli-par-direct | gix |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -29,11 +29,11 @@ Process wall time for steps 1 to 3, including process start and the summary.
 | Corpus B | 10 changed `.md` | 73.9 (72.0) | 39.8 (38.0) | 38.3 (36.4) | 27.0 (25.9) | 21.1 (20.5) |
 | Corpus B | all 721 `.md` | 104.8 (103.2) | 71.2 (67.6) | 69.9 (67.0) | 57.8 (55.6) | 57.6 (56.0) |
 
-`cli` and `cli-par` use `git` from `PATH` (the macOS shim); the `-direct` columns use the Xcode git binary. Corpus B has 722 `.md` files but 721 distinct blobs.
+`cli` and `cli-par` use `git` from `PATH` (the macOS shim). The `-direct` columns use the Xcode git binary. Corpus B has 722 `.md` files, but only 721 unique blobs.
 
 ## Per step (measured)
 
-Step 1 is head, step 2 is base, step 3 is blobs. In `cli-par` the first two steps overlap, so their time is shown together. "Open" is `gix::open`. Peak RSS is for the bench process and for its largest git child.
+Step 1 is head, step 2 is base and step 3 is blobs. In `cli-par`, the first two steps overlap, so the table shows one time for both steps. "Open" is `gix::open`. Peak RSS is for the bench process and for its largest git child.
 
 ### Synthetic medium
 
@@ -80,18 +80,18 @@ Step 1 is head, step 2 is base, step 3 is blobs. In `cli-par` the first two step
 | md | cli-par-direct | | 25.7 (22.7), steps 1 and 2 | | 29.5 (29.1) | 54.8 (52.1) | 57.8 (55.6) | 3.6 / 16.0 |
 | md | gix | 0.3 (0.3) | 17.0 (15.1) | 0.9 (0.8) | 36.0 (35.6) | 54.1 (52.2) | 57.6 (56.0) | 14.8 / none |
 
-gix's own RSS includes the pages of the memory-mapped pack; in the CLI modes that cost sits in the `cat-file` child.
+The RSS of gix itself includes the pages of the memory-mapped pack. In the CLI modes, that cost is in the `cat-file` child.
 
 ## Cost of a git process (measured)
 
-`git rev-parse HEAD` in the corpus B repository, 30 runs each after 1 warm-up, alternating, load 12.6:
+`git rev-parse HEAD` in the corpus B repository: 30 runs of each executable after 1 warm-up, in alternation, at load 12.6:
 
 | Executable | Median | Minimum |
 | --- | ---: | ---: |
 | `/usr/bin/git` (`xcrun` shim) | 11.3 | 10.7 |
 | Xcode git binary, called directly | 4.0 | 3.4 |
 
-The shim costs about 7 ms per process here. The tool can skip it by resolving `$(git --exec-path)/git` once and caching the path. Linux has no such shim.
+Here, the shim costs about 7 ms per process. The tool can skip the shim if it resolves `$(git --exec-path)/git` one time and caches the path. Linux does not have this shim.
 
 ## Build and size (measured)
 
@@ -102,11 +102,11 @@ The shim costs about 7 ms per process here. The tool can skip it by resolving `$
 | Packages in `Cargo.lock` (all targets) | 0 | 139 |
 | Clean build, empty target directory, sources already downloaded, 2 runs | 2.1 s, 2.3 s | 31.4 s, 28.2 s |
 
-Load (1 min avg) during the builds: 7.2 to 12.4. gix released 0.87.1, 0.88.0, 0.89.0 and 0.90.0 between 2026-08-24 and 2026-10-22 (from the crates.io index); each minor version of a 0.x crate may break its API.
+Load (1 min avg) during the builds: 7.2 to 12.4. Between 2026-08-24 and 2026-10-22, gix released 0.87.1, 0.88.0, 0.89.0 and 0.90.0 (data from the crates.io index). Each minor version of a 0.x crate can break its API.
 
 ## gix feature choice (measured, exploratory)
 
-7 runs per variant after 1 discarded, interleaved, median process wall in ms, load 8 to 12. All variants printed identical summaries.
+Each variant ran 7 times after 1 discarded run, interleaved with the other variants. Each cell shows the median process wall time in ms. The load was 8 to 12. All variants printed identical summaries.
 
 | Corpus, blobs | `sha1`, `status`, `revision` | + `parallel` (chosen) | + `max-performance` (`parallel` and pack caches) |
 | --- | ---: | ---: | ---: |
@@ -119,8 +119,8 @@ Load (1 min avg) during the builds: 7.2 to 12.4. gix released 0.87.1, 0.88.0, 0.
 ## Reading
 
 - All 5 modes printed byte-identical summaries on every run of every corpus, for both blob selections.
-- Warm path (10 changed blobs): gix is fastest everywhere. The best CLI variant, `cli-par-direct`, is 6.6, 9.4 and 6.0 ms slower (medium, large, corpus B). Through the macOS shim (`cli-par`) the gap is 25.7, 22.6 and 17.3 ms. The sequential `cli` as first specified is 54.8, 67.2 and 52.9 ms slower.
-- Cold path (all `.md` blobs): reading and inflating blobs dominates. gix is ahead of `cli-par-direct` by 0.2 ms (0%) on corpus B, 18.7 ms (6%) on the large corpus and 7.4 ms (26%) on the medium one. On corpus B, `git cat-file` alone reads the blobs faster than gix (29.5 against 36.0 ms).
-- Step 1 (index and status) takes 4.8, 40.1 and 15.4 ms in gix against 10.3, 52.8 and 21.4 ms in `cli-direct`, which includes about 4 ms of process start. On the large corpus gix's status itself is faster.
-- The rest of the CLI gap is likely process start: about 4 ms per direct git process here, with 2 to 3 process lifetimes on the critical path of `cli-par` (estimated, not profiled).
-- gix costs 111 crates, an 8.3 times larger binary (3.65 against 0.44 MB) and a 12 to 15 times longer clean build.
+- Warm path (10 changed blobs): gix is the fastest on all corpora. The best CLI variant, `cli-par-direct`, is 6.6, 9.4 and 6.0 ms slower (medium, large, corpus B). Through the macOS shim (`cli-par`), the gap is 25.7, 22.6 and 17.3 ms. The sequential `cli` of the first specification is 54.8, 67.2 and 52.9 ms slower.
+- Cold path (all `.md` blobs): the read and the inflation of blobs take most of the time. gix is faster than `cli-par-direct` by 0.2 ms (0%) on corpus B, 18.7 ms (6%) on the large corpus and 7.4 ms (26%) on the medium corpus. On corpus B, `git cat-file` alone reads the blobs faster than gix (29.5 against 36.0 ms).
+- Step 1 (index and status) takes 4.8, 40.1 and 15.4 ms in gix. In `cli-direct`, it takes 10.3, 52.8 and 21.4 ms, with about 4 ms of process start. On the large corpus, the status of gix itself is faster.
+- The rest of the CLI gap is probably process start. Here, each direct git process costs about 4 ms, and the critical path of `cli-par` has 2 to 3 process lifetimes (estimated, not profiled).
+- The cost of gix is 111 crates, an 8.3 times larger binary (3.65 against 0.44 MB) and a 12 to 15 times longer clean build.

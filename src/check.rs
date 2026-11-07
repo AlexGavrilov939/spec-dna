@@ -1,5 +1,6 @@
-//! `spec-dna check`: the controls of ADR 0001 over one tree, the
-//! transitions between the base and the head tree, and base-relative gating.
+//! `spec-dna check` applies the controls of ADR 0001 to one tree. It also
+//! checks the transitions between the base tree and the head tree, and it does
+//! base-relative gating.
 
 use crate::config::Config;
 use crate::diag::{Code, Diag};
@@ -24,7 +25,7 @@ fn diag(
     }
 }
 
-/// Every diagnostic of one tree.
+/// Returns every diagnostic of one tree.
 pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
     let per_doc = crate::repo::par_map(&c.docs, |d| doc_diags(config, c, d));
     let mut out: Vec<Diag> = per_doc.into_iter().flatten().collect();
@@ -233,7 +234,6 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
         ));
     }
 
-    // Budgets.
     let (soft, hard) = config.budgets[d.ty as usize];
     if hard > 0 && p.body_chars > hard {
         out.push(diag(
@@ -259,7 +259,6 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
         ));
     }
 
-    // Requirement lint.
     for &ri in &d.reqs {
         let r = &p.reqs[ri];
         for (code, sub, msg) in crate::lint::lint(&r.text, config.max_words) {
@@ -320,13 +319,13 @@ fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
     }
 }
 
-/// Diagnostics that compare the base tree with the head tree. They are new
-/// by definition.
+/// Returns the diagnostics that compare the base tree with the head tree. All
+/// of them are new by definition.
 pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
     let _ = config;
     let mut out = Vec::new();
     for b in &base.docs {
-        // The same document in head: by id, or kept as an alias after a move.
+        // Find the same document in head: by its id, or by an alias that a move kept.
         let h = match head.lookup.get(&canonical(&b.id)).map(Vec::as_slice) {
             Some([i]) => Some(&head.docs[*i as usize]),
             Some(_) => None,
@@ -400,7 +399,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
             ));
         }
     }
-    // New amendment text that may change a decision's outcome.
+    // Find new amendment text that can change the outcome of a decision.
     for h in head.docs.iter().filter(|d| d.ty == DocType::Decision) {
         let base_hashes: HashSet<[u8; 8]> = match head_to_base(base, h) {
             Some(b) => amendment_chunks(b)
@@ -437,7 +436,7 @@ fn head_to_base<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
     None
 }
 
-/// Chunk indices of the `## Amendments` section.
+/// Returns the chunk indices of the `## Amendments` section.
 fn amendment_chunks(d: &Doc) -> impl Iterator<Item = usize> + '_ {
     let start = d.parsed.amendments.map_or(usize::MAX, |a| a as usize);
     let chunks = &d.parsed.chunks;
@@ -467,14 +466,15 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
     }
     match (rank(from), rank(to)) {
         (Some(a), Some(b)) => !terminal(from) && b > a,
-        _ => true, // an invalid status is reported elsewhere
+        _ => true, // another check reports an invalid status
     }
 }
 
 /// The result of base-relative gating.
 pub struct Outcome {
     pub head: Vec<Diag>,
-    /// Indices into `head` of diagnostics not present in the base.
+    /// One flag for each index into `head`: true if the base does not have
+    /// that diagnostic.
     pub new: Vec<bool>,
 }
 
@@ -492,7 +492,7 @@ pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
     for d in &base_diags {
         *base_fp.entry(d.fingerprint()).or_default() += 1;
     }
-    // A moved document keeps its old id as an alias: compare under the old id.
+    // A moved document keeps its old id as an alias. Compare it under the old id.
     let renamed: HashMap<&str, &str> = head
         .docs
         .iter()

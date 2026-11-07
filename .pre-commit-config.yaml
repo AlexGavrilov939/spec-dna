@@ -1,6 +1,6 @@
-# Run `pre-commit install` once after cloning.
+# After you clone the repository, run `pre-commit install` once.
 # CI runs the same hooks: .github/workflows/ci.yml
-# Revisions are bumped by Dependabot (.github/dependabot.yml).
+# Dependabot updates the revisions (.github/dependabot.yml).
 minimum_pre_commit_version: "4.0.0"
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
