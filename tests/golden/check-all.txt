@@ -1,0 +1,20 @@
+docs/auth/alias-clash.md:1: error SD201 duplicate-id: `auth/session` also names docs/auth/session.md
+docs/auth/legacy.md:1: error SD402 superseded-without-successor: no active document names `auth/legacy` in `supersedes`
+docs/auth/session.md:1: error SD201 duplicate-id: `auth/session` also names docs/auth/alias-clash.md
+docs/auth/session.md:2: warning SD604 depends-on-deprecated: `auth/tokens` is deprecated
+docs/auth/session.md:3: error SD103 evidence-missing: `verified-by` path `tests/session.rs` is not in the git tree
+docs/auth/session.md:13: warning SD804 vague-term: `renewal`: vague term `if possible`
+docs/auth/session.md:13: warning SD804 vague-term: `renewal`: vague term `quickly`
+docs/auth/session.md:13: warning SD805 passive-voice: `renewal`: passive voice `be renewed`; name the actor
+docs/auth/session.md:15: error SD203 key-format: requirement key `Bad_Key` is not a slug (lowercase letters and digits joined by hyphens) and matches no legacy key pattern
+docs/auth/session.md:19: warning SD602 anchor-missing: `docs/auth/tokens.md` has no heading or requirement `nowhere`
+docs/auth/tokens.md:10: warning SD802 ears-pattern: `lifetime`: an `If` requirement has no `then`
+docs/billing/invoice.md:1: error SD402 superseded-without-successor: no active document names `billing/invoice` in `supersedes`
+docs/changes/add-mfa.md:4: error SD101 unresolved-reference: `auth/session` has no section or requirement `mfa`
+docs/changes/add-mfa.md:8: warning SD601 token-unresolved: `ADR-9` names no document
+docs/changes/add-mfa.md:8: warning SD603 cross-repo-unpinned: `platform:identity/mfa` points into repository `platform`, which is not listed under `[repos]` in spec-dna.toml
+docs/decisions/ADR-2-retry.md:1: error SD305 section-missing: a decision needs a `Decision Outcome` (or `Decision`) section
+docs/notes/research.md:1: warning SD701 budget-soft: 401 characters, over the soft budget of 300
+docs/notes/research.md:6: error SD102 unresolved-link: link target `../../design/old.md` is not in the git tree (resolved to `design/old.md`)
+docs/notes/research.md:8: error SD102 unresolved-link: link target `images/flow.png` is not in the git tree (resolved to `docs/notes/images/flow.png`)
+spec-dna check: 10 documents; 10 errors and 9 warnings all diagnostics (10 errors and 9 warnings in total)

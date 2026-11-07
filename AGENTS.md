@@ -12,7 +12,7 @@ Rule zero: never put a consumer project's name, paths, ids, text, metrics or con
 - Decisions: `docs/adr/` (information model, language, distribution)
 - Language benchmark prototype, not the tool: `bench/`
 
-Early stage: no tool code yet. Do not add structure, languages or tooling that the task does not ask for.
+Early stage: one Rust crate at the repository root (`src/`, `tests/`), version 0.1.0, not released. Do not add structure, languages or tooling that the task does not ask for. Every new dependency needs a one-line reason in the README's dependency table.
 
 ## Done means checked
 
@@ -20,6 +20,7 @@ Run before every commit:
 
 ```sh
 pre-commit run --all-files
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 CI runs the same hooks (`.github/workflows/ci.yml`). A change is not done until they pass.

@@ -1,0 +1,12 @@
+<!-- ADR-1-session-store#session-store h:6c84b3751c541aa2 decision/accepted docs/decisions/ADR-1-session-store.md -->
+# Session store
+
+<!-- ADR-1-session-store#context-and-problem-statement h:101141999816be1d decision/accepted docs/decisions/ADR-1-session-store.md -->
+## Context and Problem Statement
+
+Where do sessions live? See [[auth/session#expiry]].
+
+<!-- ADR-1-session-store#decision-outcome h:1dcdaa1914651473 decision/accepted docs/decisions/ADR-1-session-store.md -->
+## Decision Outcome
+
+Chosen option: signed stateless tokens.
