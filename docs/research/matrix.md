@@ -53,13 +53,13 @@ Consequence: the spec-dna standard uses its own words, under the repository lice
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | GitHub Spec Kit | v1.3.2, 2026-11-06 | MIT | `specs/NNN-feature/{spec,plan,tasks,...}.md`, `.specify/memory/constitution.md` | One folder per change; retention is a team convention | None for spec content in core; `analyze` and `converge` are LLM prompts | No archive or supersede command | Python 3.11+, uv; per-agent command files |
 | OpenSpec | v1.16.1, 2026-11-07 | MIT | `openspec/specs/<capability>/spec.md` as current truth; `openspec/changes/<name>/` with deltas | Delta specs (ADDED, MODIFIED, REMOVED, RENAMED) that OpenSpec merges on archive | `openspec validate --strict --json`: sections, SHALL/MUST, scenario per requirement, delta grammar | `archive` moves changes to a dated folder | TypeScript; binary or Node 22.12+; telemetry on by default |
-| BMAD Method | v6.12.4, 2026-10-14 (v7 in alpha) | MIT code, trade-marked names | `_bmad-output/` planning artifacts per initiative | Persona-driven workflow; epics and stories | No gate for spec content; narrow helper scripts | Retrospectives; no supersede metadata | Node 20.12+, Python 3.10+, 30+ skills per tool |
+| BMAD Method | v6.12.4, 2026-10-14 (v7 in alpha) | MIT code, trade-marked names | `_bmad-output/` plan files for each initiative | Persona-driven workflow; epics and stories | No gate for spec content; narrow helper scripts | Retrospectives; no supersede metadata | Node 20.12+, Python 3.10+, 30+ skills per tool |
 
 | Tool | Applicability | Scalability at thousands of docs | Complexity | Maintainability | Machine validation | Agent efficiency | Adoption cost |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Spec Kit | M (greenfield features) | L (no merged current spec, per-project `NNN` numbering, no link checker) | M | M (5 releases in 10 days rewrite managed files) | L | M | M |
+| Spec Kit | M (greenfield features) | L (no merged current spec, a `NNN` number for each project, no link checker) | M | M (5 releases in 10 days rewrite managed files) | L | M | M |
 | OpenSpec | H (brownfield-first) | M (flat namespaces; parallel MODIFIED deltas can drop scenarios, as the project documents; current fix **unverified**) | M | M | H for its own grammar | H (index of spec id, purpose, fetch command) | M |
-| BMAD | L (process, not a spec store) | L | H | L (the stable line is frozen; main is a breaking alpha) | L | L (persona prompts) | H |
+| BMAD | L (process, not a spec store) | L | H | L (the stable line is frozen; main is an incompatible alpha) | L | L (persona prompts) | H |
 
 Other approaches in the study:
 
@@ -75,7 +75,7 @@ Other tools and ideas that this research considered, but did not evaluate in dep
 
 | Tool or idea | Why it matters | Position |
 | --- | --- | --- |
-| Doorstop | Requirements as files in git; suspect links store the hash of the target | Model for a later blocking R2 check (ADR 0001) |
+| Doorstop | Requirements as files in git; suspect links store the hash of the target | Model for a later R2 check that blocks a merge (ADR 0001) |
 | Sphinx-needs, StrictDoc, OpenFastTrace | Requirement objects with ids and traceability to code and tests | They confirm the requirement-key approach; each tool has its own markup or runtime (Python, Java) |
 | lychee | Fast link checker | External links stay out of spec-dna gates; projects can run it |
 | Vale | Prose linter with rule packages | Optional external step for style; not a gate dependency |
@@ -111,7 +111,7 @@ Integration decision: spec-dna stays independent of all three frameworks. No fra
 3. Quality rules: a small controlled-language lint of this project (see below). All its checks are warnings, except where an ADR proves that a check is exact.
 4. Decisions: MADR 4.0.0 minimal.
 5. Structure: DITA concepts without DITA XML: typed topics (the 6 document types of ADR 0001), generated maps, and keys (path ids with aliases). spec-dna defers includes. Diátaxis modes and C4 levels are optional `x-` metadata.
-6. Serving: an llms.txt-shaped index; the CLI fetches bodies by id.
+6. Delivery: an index in the shape of llms.txt; the CLI fetches bodies by id.
 7. Versioning: SemVer 2.0.0 for the tool and the standard; Conventional Commits 1.0.0 in this repository.
 
 ### Controlled-language lint
@@ -121,7 +121,7 @@ ASD-STE100, INCOSE GtWR and ISO/IEC/IEEE 29148 stay as references only. spec-dna
 | Check | What it flags | Maps to |
 | --- | --- | --- |
 | Sentence length | A requirement sentence of more than 30 words (configurable). A long sentence usually has more than one requirement | 29148 characteristic "singular"; GtWR R18 (single thought sentence); ASD-STE100 sets its own length limits; spec-dna uses them only as inspiration |
-| Vague terms | A word or phrase from spec-dna's own list. The list has terms that a test cannot verify ("adequate", "appropriate", "fast", "user-friendly", "robust", "efficient", "seamless", "reasonable", "sufficient"), escape clauses ("if possible", "as appropriate", "where practical"), open endings ("etc.", "and so on", "including but not limited to"), and loose quantities ("some", "several", "various", "many", "few") | 29148 characteristics "unambiguous" and "verifiable"; GtWR R7 (vague terms), R8 (escape clauses), R9 (open-ended clauses) |
+| Vague terms | A word or phrase from spec-dna's own list. The list has 4 groups. Terms that a test cannot verify: "adequate", "appropriate", "fast", "user-friendly", "robust", "efficient", "seamless", "reasonable", "sufficient". Escape clauses: "if possible", "as appropriate", "where practical". Open endings: "etc.", "and so on", "including but not limited to". Loose quantities: "some", "several", "various", "many", "few". | 29148 characteristics "unambiguous" and "verifiable"; GtWR R7 (vague terms), R8 (escape clauses), R9 (open-ended clauses) |
 | Passive voice | A form of "be" before a past participle (a word that ends in "-ed" or "-en", or a word from a short list of irregular forms), as in "the request SHALL be rejected". This check is a heuristic: it misses some forms and flags some adjectives | 29148 characteristic "unambiguous" (the actor is missing); GtWR R2 (active voice) |
 
 The GtWR rule ids come from the v4 rule list, as secondary sources cite it. This research did not check the paid text (see section 2). The 29148 characteristic names come from the official preview.

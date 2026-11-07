@@ -65,7 +65,7 @@ impl Blobs {
     }
 }
 
-/// Fast non-cryptographic 64-bit checksum (FxHash-style word mixing). The benchmark uses
+/// Fast non-cryptographic 64-bit checksum, in the style of FxHash. The benchmark uses
 /// it only to prove that both modes saw the same bytes. It costs the same in both modes.
 #[derive(Clone, Copy)]
 struct Sum(u64);

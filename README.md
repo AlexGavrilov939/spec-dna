@@ -30,6 +30,7 @@ spec-dna context auth/session --query "renew a session after a password change"
 spec-dna show auth/session#token-expiry
 spec-dna mv auth/session auth/sessions          # the old id becomes an alias
 spec-dna mv auth/session#token-expiry auth/tokens
+spec-dna --help                     # commands and options (-h); --version (-V) prints the version
 ```
 
 Every command accepts `--json`. spec-dna does not use the network. It reads documents through local git plumbing.
@@ -38,7 +39,7 @@ Every command accepts `--json`. spec-dna does not use the network. It reads docu
 | --- | --- |
 | `init [--root <dir>]` | Writes `spec-dna.toml` if it is missing. Generates the adapters: a block in `AGENTS.md`, an `@AGENTS.md` import in `CLAUDE.md` (only if the file has no such import), and the skill `.claude/skills/spec-dna/SKILL.md`. Each adapter has the generator version and a hash. `check` reports a manual edit or an old version. A second run updates the adapters. |
 | `check [--base <rev>] [--all]` | Runs the controls of ADR 0001 on the working tree. Without `--all`, it reports only the diagnostics that are new against the base. The base is the merge base of `<rev>` and `HEAD`, or `HEAD` itself. Codes: [docs/diagnostics.md](docs/diagnostics.md). |
-| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>]` | Prints the sections that an agent needs: the entry documents (or sections), documents whose `applies-to` matches an entry or a path, `depends-on` targets at depth 1, linked accepted decisions as summaries, then the rest. If a section does not fit the budget, the command lists its id, hash and size. Every section has its id and hash. With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. This option is for long documents without requirement lists. |
+| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>]` | Prints the sections that an agent needs. First come the entry documents (or sections) and the documents whose `applies-to` matches an entry or a path. Then come the `depends-on` targets at depth 1, the linked accepted decisions as summaries, and the rest. If a section does not fit the budget, the command lists its id, hash and size. Every section has its id and hash. With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. This option is for long documents without requirement lists. |
 | `show <id>[#<anchor>]` | Prints a document, a section with its subsections, or one requirement, with ids and hashes. |
 | `mv <from> <to>` | Moves a document (`git mv`), adds the old id to its `aliases`, and rewrites relative links to the document. `mv <doc-id>#<key> <doc-id>` moves one requirement and adds an inline `<!-- aliases: ... -->` marker. |
 

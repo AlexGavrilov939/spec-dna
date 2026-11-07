@@ -195,3 +195,7 @@ The owner gave these rulings after checkpoint 2. They set the default that the s
 - Decision sections. A root can name the headings that contain the outcome of a decision (`decision-sections`). The default is `Decision Outcome` and `Decision`. `check` (SD305) and `context` use the same list, so a repository can write these headings in a different language.
 - Links by URL. `self-urls` lists the URL prefixes of the repository. In a prefix, `*` is one path segment, for example a branch. A link that starts with such a prefix is a path from the root of the repository. A link to a directory refers to the `README.md` or `index.md` document of that directory. The check does not report a self URL without a path in the tree, because the URL can refer to another branch or commit.
 - Query. `context --query <text>` puts the sections that match the words of the text first. The ranking uses BM25 and is deterministic. Without `--query`, the order does not change.
+
+### 2026-11-07: untracked documents in the working tree
+
+The implementation differs from "tracked files only" in one case. When the head is the working tree, spec-dna also reads untracked files that git does not ignore. Thus `check` sees a new document before `git add`. A base is always a commit, and CI uses a clean checkout, so the result of a gate in CI does not change. Checkpoint 2 reported this difference as deviation 4.
