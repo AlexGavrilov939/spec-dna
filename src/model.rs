@@ -972,7 +972,7 @@ mod tests {
         let c = corpus(&[
             (
                 "docs/s.md",
-                "# S\n\n## Intro\n\n- **Goal** a bold label in prose\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2:** The server SHALL log.\n- **ok-key**: The system MUST run.\n- **other** no colon and not a legacy key\n",
+                "# S\n\n## Intro\n\n- **Goal** a bold label in prose\n- **Step.** a numbered label in prose\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2:** The server SHALL log.\n- **R-3.** The cache MAY drop entries.\n- **ok-key**: The system MUST run.\n- **other** no colon and not a legacy key\n",
             ),
             (
                 "docs/table.md",
@@ -989,7 +989,7 @@ mod tests {
             .iter()
             .map(|&r| s.parsed.reqs[r].key.as_str())
             .collect();
-        assert_eq!(keys, ["R-1", "R-2", "ok-key"]);
+        assert_eq!(keys, ["R-1", "R-2", "R-3", "ok-key"]);
         assert!(s.issues.is_empty(), "{:?}", s.issues);
         assert!(!s.has_req_in(1) && s.has_req_in(2));
         // A spec with legacy-key tokens and no recognized requirement gets a

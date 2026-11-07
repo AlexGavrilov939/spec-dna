@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 2;
+pub const PARSER_VERSION: u32 = 3;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -330,6 +330,11 @@ impl Item {
                     // `**key:** sentence`
                     self.key = k.to_string();
                     self.finish_key(end, true);
+                } else if let Some(k) = self.key.strip_suffix('.') {
+                    // `**R-12.** sentence`: a numbered legacy form. Only a
+                    // legacy key makes it a requirement.
+                    self.key = k.to_string();
+                    self.finish_key(end, false);
                 } else {
                     self.phase = 2;
                 }
@@ -586,7 +591,7 @@ mod tests {
     #[test]
     fn legacy_requirements_without_a_colon() {
         let d = parse(
-            "# S\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2** — The server SHALL log.\n- **R-3:** The cache MAY drop entries.\n- **R-4**\n- See **R-5** in the text.\n\n## Notes\n\n- **Note** prose with a bold label.\n",
+            "# S\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2** — The server SHALL log.\n- **R-3:** The cache MAY drop entries.\n- **R-4**\n- See **R-5** in the text.\n- **R-6.** The proxy MUST strip the header.\n\n## Notes\n\n- **Note** prose with a bold label.\n",
         );
         let reqs: Vec<(&str, bool, &str)> = d
             .reqs
@@ -600,6 +605,7 @@ mod tests {
                 ("R-2", false, "The server SHALL log."),
                 ("R-3", true, "The cache MAY drop entries."),
                 ("R-4", false, ""),
+                ("R-6", false, "The proxy MUST strip the header."),
                 ("Note", false, "prose with a bold label."),
             ]
         );
