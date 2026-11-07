@@ -102,7 +102,7 @@ Full scans were 20 to 27% faster in Rust on corpora A and B, under load average 
 
 Secondary factors decide. The first version of this decision also counted the parser. But goldmark also exposes source byte ranges, so the parser does not separate the languages and is no longer a criterion.
 
-- Memory. With the default garbage collector, the peak RSS of Go on a full scan was 2.5 to 5.5 times that of Rust. It was 78.5 against 14.2 MB on Corpus A, and 237 against 44 MB on the large synthetic corpus. On the warm path, the values are close. Full scans occur in CI, after a branch switch, and in a possible long-lived mode (language server or MCP adapter), where Rust leaves more headroom. Go can make the difference smaller with `GOMEMLIMIT`, but this needs tuning.
+- Memory. With the default garbage collector, the peak RSS of Go on a full scan was 2.5 to 5.5 times that of Rust. It was 78.5 against 14.2 MB on Corpus A, and 237 against 44 MB on the large synthetic corpus. On the warm path, the values are close. Full scans occur in CI, after a branch switch, and in a possible long-lived mode (language server or MCP adapter), where Rust leaves more headroom. Go can make the difference smaller with `GOMEMLIMIT`, but you must tune that setting.
 - Types. Enums with exhaustive matching fit the lifecycle states and diagnostic codes of ADR 0001, where a missed state is a bug.
 - Size. The binary is 3.5 times smaller.
 

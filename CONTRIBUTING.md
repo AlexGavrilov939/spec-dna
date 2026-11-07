@@ -6,24 +6,24 @@
 pre-commit install
 ```
 
-This installs 2 git hooks. `pre-commit` runs the checks from `.pre-commit-config.yaml` on staged files. `commit-msg` checks the commit message format. CI runs the same checks on every push and pull request.
+This command installs 2 git hooks. The `pre-commit` hook runs the checks from `.pre-commit-config.yaml` on staged files. The `commit-msg` hook checks the format of the commit message. CI runs the same checks on each push and pull request.
 
-To run everything by hand:
+To run all checks manually:
 
 ```sh
 pre-commit run --all-files
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Golden outputs of the integration tests live in `tests/golden/`. After an intended output change, regenerate them with `UPDATE_GOLDEN=1 cargo test` and review the diff.
+The golden outputs of the integration tests are in `tests/golden/`. After an intended change of the output, run `UPDATE_GOLDEN=1 cargo test` to regenerate them. Then examine the diff.
 
 ## Formatting
 
-`.editorconfig` holds the whitespace rules: 2-space indent by default, 4 spaces for Python, TOML and Rust, tabs for Go. Format Go with `gofmt` and Rust with `cargo fmt`.
+`.editorconfig` contains the whitespace rules: a 2-space indent by default, 4 spaces for Python, TOML and Rust, and tabs for Go. Use `gofmt` to format Go and `cargo fmt` to format Rust.
 
 ## Writing
 
-Write all specifications, documentation and code comments in ASD-STE100 Simplified Technical English (STE). Make the text clear and concise. This rule applies to Markdown files, ADRs, JSON Schema descriptions, comments and doc comments in code and scripts, and the text that `spec-dna init` writes for agents.
+Write all specifications, documentation and code comments in ASD-STE100 Simplified Technical English (STE). Make the text clear and concise. This rule applies to Markdown files, ADRs and JSON Schema descriptions. It also applies to comments and doc comments in code and scripts, and to the text that `spec-dna init` writes for agents.
 
 - Write one topic in one sentence.
 - Use 20 words or fewer in a procedural sentence and 25 words or fewer in a descriptive sentence. Use 6 sentences or fewer in a paragraph.
@@ -40,29 +40,32 @@ Write all specifications, documentation and code comments in ASD-STE100 Simplifi
 
 Code names, commands, configuration keys and diagnostic codes are technical names. Write them as they are, in backticks.
 
-Write a code comment only when it gives information that the code and its names cannot give: a reason, a constraint, an invariant, a format, an edge case or a reference to an ADR. Do not write a comment that repeats the code. Remove a comment that is wrong or that has no use. A doc comment on a public item states its contract: what it means, its inputs, its outputs and its errors.
+Write a code comment only when it gives information that the code and its names cannot give. Examples are a reason, a constraint, an invariant, a format, an edge case or a reference to an ADR. Do not write a comment that repeats the code. Remove a comment that is wrong or that has no use. A doc comment on a public item states its contract: what it means, its inputs, its outputs and its errors.
 
 ## Branches
 
-- `master` is the default branch. Changes land through pull requests only. The `no-commit-to-branch` hook blocks local commits to `master`.
-- Name branches `<type>/<short-description>`, for example `feat/spec-template` or `fix/readme-links`.
+- `master` is the default branch. Changes go into `master` only through pull requests. The `no-commit-to-branch` hook stops local commits to `master`.
+- Give each branch a name of the form `<type>/<short-description>`, for example `feat/spec-template` or `fix/readme-links`.
 
 ## Commits
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): subject`. The scope is optional.
 - Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `style`, `revert`.
-- Subject: imperative mood, lowercase first letter, no trailing period.
+- Subject: imperative mood, lowercase first letter, no period at the end.
 - Sign your commits (`git config commit.gpgsign true`).
 
 ## Pull requests
 
-- One logical change per pull request. Fill in the template.
+- Put one logical change in each pull request. Complete the template.
 - The PR title must be a Conventional Commit. The `PR title` workflow checks it.
-- Pull requests are squash-merged, so the PR title becomes the commit message on `master`.
-- Merge only with green CI. If GitHub Actions does not start the jobs (for example, because of account billing), run the same jobs locally, put the results in the pull request, and merge only if all jobs pass.
+- GitHub squash-merges pull requests, so the PR title becomes the commit message on `master`.
+- Merge only when all CI jobs pass. If GitHub Actions does not start the jobs (for example, because of account billing), do these steps:
+    1. Run the same jobs locally.
+    2. Put the results in the pull request.
+    3. Merge only if all jobs pass.
 
 ## Dependencies
 
-Dependabot opens weekly grouped pull requests for GitHub Actions and pre-commit hooks, and waits 7 days after a release before proposing it.
+Dependabot opens grouped pull requests each week for GitHub Actions and pre-commit hooks. It waits 7 days after a release before it proposes that release.
 
-Every `uses:` in a workflow is pinned to a full commit SHA, with the version tag in a trailing comment. Keep that format when you add or edit a workflow, `zizmor` and Dependabot rely on it.
+Pin each `uses:` in a workflow to a full commit SHA, with the version tag in a trailing comment. Keep this format when you add or change a workflow, because `zizmor` and Dependabot need it.
