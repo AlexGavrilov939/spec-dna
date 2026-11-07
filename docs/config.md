@@ -15,7 +15,7 @@ status = "draft"                # status of a default-type document without `sta
 exclude = ["drafts/**"]         # globs relative to the root
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
 legacy-keys = ["R-{n}"]
-status-map = { implemented = "active", approved = "accepted" }  # legacy status words
+status-map = { released = "active", wip = "draft" }            # legacy status words
 decision-sections = ["Decision Outcome", "Decision"]           # outcome headings
 
 [budgets.spec]                  # characters of body text, per type
@@ -47,7 +47,7 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `roots.exclude` | list of globs | `[]` | Paths relative to the root that are not documents |
 | `roots.legacy-ids` | list | `[]` | Patterns that make existing file names aliases. A string `ADR-{n}` means alias `ADR-{n}` from a slug that starts with it. A table sets the slug pattern with `file` |
 | `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that stay as written, such as `R-{n}` |
-| `roots.status-map` | table | `{}` | Legacy status words and the status each stands for, such as `implemented = "active"`. The file keeps its word; every rule reads the mapped status. A word applies only to a document whose type does not allow it; the target must be a status of the root's type (of any type in a mixed root) |
+| `roots.status-map` | table | `{}` | Legacy status words and the status each stands for, such as `released = "active"`. The file keeps its word; every rule reads the mapped status. A word applies only to a document whose type does not allow it; the target must be a status of the root's type (of any type in a mixed root) |
 | `roots.decision-sections` | list of strings | `["Decision Outcome", "Decision"]` | Headings that hold a decision's outcome, compared without case. The list replaces the default. `check` requires one of them (SD305); `context` serves it as the decision's summary |
 | `budgets.<type>` | table | see below | `soft` and `hard` character budgets |
 | `lint.max-words` | integer | `30` | Requirement sentence length before a `sentence-length` warning |

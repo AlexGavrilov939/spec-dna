@@ -104,8 +104,8 @@ mod tests {
             ["enable", "feature", "gate", "default", "stays", "v1", "35"]
         );
         assert_eq!(
-            terms("Проверить таймаут сессии"),
-            ["проверить", "таймаут", "сессии"]
+            terms("ÜBERSICHT der Sitzung prüfen"),
+            ["übersicht", "der", "sitzung", "prüfen"]
         );
         assert!(terms("a to of").is_empty());
     }

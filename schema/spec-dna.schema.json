@@ -141,7 +141,7 @@
           "items": { "$ref": "#/$defs/pattern" }
         },
         "status-map": {
-          "description": "Legacy status words and the status each stands for, such as `implemented = \"active\"`. The target must be a status of the root's type, or of any type in a mixed root.",
+          "description": "Legacy status words and the status each stands for, such as `released = \"active\"`. The target must be a status of the root's type, or of any type in a mixed root.",
           "type": "object",
           "additionalProperties": {
             "enum": ["draft", "active", "deprecated", "superseded", "retired", "proposed", "accepted", "rejected", "done"]

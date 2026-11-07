@@ -608,8 +608,8 @@ spec-dna = "0.1.0"
 self-urls = ["https://example.org/acme/specs/blob/*/"]
 [[roots]]
 path = "docs"
-status-map = { implemented = "active", approved = "accepted" }
-decision-sections = ["Решение"]
+status-map = { released = "active", wip = "draft" }
+decision-sections = ["Lösung"]
 [[roots]]
 path = "adr"
 type = "decision"
@@ -621,11 +621,11 @@ type = "decision"
         assert_eq!(
             r.status_map,
             [
-                ("approved".to_string(), "accepted".to_string()),
-                ("implemented".to_string(), "active".to_string())
+                ("released".to_string(), "active".to_string()),
+                ("wip".to_string(), "draft".to_string())
             ]
         );
-        assert_eq!(r.decision_sections, ["Решение"]);
+        assert_eq!(r.decision_sections, ["Lösung"]);
         assert_eq!(c.roots[1].decision_sections, DEFAULT_DECISION_SECTIONS);
         assert!(c.roots[1].status_map.is_empty());
 
@@ -638,9 +638,9 @@ type = "decision"
         // `active` is already a spec status; `accepted` is not one.
         assert!(err("status-map = { active = \"draft\" }").contains("already a status"));
         assert!(
-            err("status-map = { shipped = \"accepted\" }").contains("not a status of type `spec`")
+            err("status-map = { frozen = \"accepted\" }").contains("not a status of type `spec`")
         );
-        assert!(err("status-map = { shipped = 1 }").contains("must be a string"));
+        assert!(err("status-map = { frozen = 1 }").contains("must be a string"));
         assert!(err("decision-sections = []").contains("at least one heading"));
         assert!(err("decision-sections = [\" \"]").contains("at least one heading"));
         // In a mixed root a word that some type lacks may be mapped.

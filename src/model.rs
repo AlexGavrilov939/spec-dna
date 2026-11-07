@@ -710,15 +710,15 @@ mod tests {
     #[test]
     fn legacy_statuses_map_per_root() {
         let c = corpus_with(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { implemented = \"active\", approved = \"accepted\" }\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\n",
             &[
-                ("docs/a.md", "---\nstatus: implemented\n---\n# A\n"),
-                ("docs/b.md", "---\nstatus: approved\n---\n# B\n"),
+                ("docs/a.md", "---\nstatus: released\n---\n# A\n"),
+                ("docs/b.md", "---\nstatus: signed-off\n---\n# B\n"),
                 (
                     "docs/d.md",
-                    "---\ntype: decision\nstatus: approved\n---\n# D\n",
+                    "---\ntype: decision\nstatus: signed-off\n---\n# D\n",
                 ),
-                ("docs/e.md", "---\nstatus: shipped\n---\n# E\n"),
+                ("docs/e.md", "---\nstatus: frozen\n---\n# E\n"),
             ],
         );
         let issues = |i: usize| -> Vec<String> {
@@ -726,11 +726,11 @@ mod tests {
         };
         assert_eq!(c.docs[0].status.as_deref(), Some("active"));
         assert!(issues(0).is_empty(), "{:?}", issues(0));
-        // `approved` stands for `accepted`, which a spec does not allow.
+        // `signed-off` stands for `accepted`, which a spec does not allow.
         assert_eq!(
             issues(1),
             [
-                "`approved` maps to `accepted`, which is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
+                "`signed-off` maps to `accepted`, which is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
             ]
         );
         assert_eq!(c.docs[2].status.as_deref(), Some("accepted"));
@@ -738,16 +738,16 @@ mod tests {
         assert_eq!(
             issues(3),
             [
-                "`shipped` is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
+                "`frozen` is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
             ]
         );
     }
 
     #[test]
     fn decision_sections_per_root() {
-        let text = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Context\n\nX.\n\n## РЕШЕНИЕ\n\nY.\n";
+        let text = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Context\n\nX.\n\n## LÖSUNG\n\nY.\n";
         let c = corpus_with(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndecision-sections = [\"Решение\"]\n[[roots]]\npath = \"adr\"\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndecision-sections = [\"Lösung\"]\n[[roots]]\npath = \"adr\"\n",
             &[("docs/d.md", text), ("adr/d.md", text)],
         );
         assert_eq!(c.docs[0].outcome, [2]);

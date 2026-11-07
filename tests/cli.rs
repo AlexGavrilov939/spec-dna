@@ -499,15 +499,15 @@ fn legacy_statuses_and_decision_sections_follow_the_root() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { implemented = \"active\", approved = \"accepted\" }\ndecision-sections = [\"Решение\"]\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\ndecision-sections = [\"Lösung\"]\n",
     );
     r.write(
         "docs/cache.md",
-        "---\nstatus: implemented\n---\n# Cache\n\n## Requirements\n\n- **ttl**: The cache SHALL drop an entry after 60 seconds.\n",
+        "---\nstatus: released\n---\n# Cache\n\n## Requirements\n\n- **ttl**: The cache SHALL drop an entry after 60 seconds.\n",
     );
     r.write(
         "docs/cache-store.md",
-        "---\ntype: decision\nstatus: approved\n---\n# Cache store\n\n## Контекст\n\nНужен общий кэш для [[cache]].\n\n## Решение\n\nRedis.\n",
+        "---\ntype: decision\nstatus: signed-off\n---\n# Cache store\n\n## Kontext\n\nEin gemeinsamer Cache für [[cache]].\n\n## Lösung\n\nRedis.\n",
     );
     r.write(
         "docs/old-store.md",
@@ -520,7 +520,7 @@ fn legacy_statuses_and_decision_sections_follow_the_root() {
     assert_eq!(
         found,
         [
-            "docs/old-store.md:1: error SD305 section-missing: a decision needs a section headed `Решение`"
+            "docs/old-store.md:1: error SD305 section-missing: a decision needs a section headed `Lösung`"
         ],
         "{out}"
     );
@@ -529,7 +529,7 @@ fn legacy_statuses_and_decision_sections_follow_the_root() {
     let (code, out, _) = r.run(&["context", "cache"]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("decision/accepted decision -->\n## Решение\n\nRedis."),
+        out.contains("decision/accepted decision -->\n## Lösung\n\nRedis."),
         "{out}"
     );
 }
