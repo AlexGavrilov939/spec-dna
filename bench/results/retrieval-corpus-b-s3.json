@@ -1,0 +1,366 @@
+{
+  "tasks_file": "corpus-b-oracles.json",
+  "query": false,
+  "load_avg_1m": 7.94,
+  "summary": [
+    {
+      "budget": 4000,
+      "tasks": 5,
+      "recall_full_mean": 0.029,
+      "recall_listed_mean": 0.029,
+      "precision_mean": 0.033,
+      "critical_full_mean": 0.029,
+      "tasks_all_required_full": 0,
+      "chars_median": 3996,
+      "two_step_chars_median": 3996,
+      "baseline_chars_median": 122784,
+      "tokens_est_median": 1069,
+      "latency_ms_median": 37.8
+    },
+    {
+      "budget": 12000,
+      "tasks": 5,
+      "recall_full_mean": 0.0,
+      "recall_listed_mean": 0.501,
+      "precision_mean": 0.0,
+      "critical_full_mean": 0.0,
+      "tasks_all_required_full": 0,
+      "chars_median": 11985,
+      "two_step_chars_median": 15908,
+      "baseline_chars_median": 122784,
+      "tokens_est_median": 3066,
+      "latency_ms_median": 36.6
+    },
+    {
+      "budget": 32000,
+      "tasks": 5,
+      "recall_full_mean": 0.062,
+      "recall_listed_mean": 0.65,
+      "precision_mean": 0.029,
+      "critical_full_mean": 0.062,
+      "tasks_all_required_full": 0,
+      "chars_median": 31990,
+      "two_step_chars_median": 36182,
+      "baseline_chars_median": 122784,
+      "tokens_est_median": 8055,
+      "latency_ms_median": 38.9
+    }
+  ],
+  "rows": [
+    {
+      "task": "b1-crashloop-max-beta",
+      "budget": 4000,
+      "required": 7,
+      "recall_full": 0.14285714285714285,
+      "recall_listed": 0.14285714285714285,
+      "precision": 0.16666666666666666,
+      "critical_full": 0.14285714285714285,
+      "missed": [
+        "sig-node/4603-tune-crashloopbackoff#alpha",
+        "sig-node/4603-tune-crashloopbackoff#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#alpha",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#does-enabling-the-feature-change-any-default-behavior"
+      ],
+      "chars": 3999,
+      "two_step_chars": 3999,
+      "baseline_chars": 193636,
+      "tokens_est": 1075,
+      "latency_ms": 45.0
+    },
+    {
+      "task": "b1-crashloop-max-beta",
+      "budget": 12000,
+      "required": 7,
+      "recall_full": 0.0,
+      "recall_listed": 0.5714285714285714,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-node/4603-tune-crashloopbackoff#alpha",
+        "sig-node/4603-tune-crashloopbackoff#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#alpha",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#beta",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#does-enabling-the-feature-change-any-default-behavior"
+      ],
+      "chars": 11936,
+      "two_step_chars": 15545,
+      "baseline_chars": 193636,
+      "tokens_est": 3061,
+      "latency_ms": 43.8
+    },
+    {
+      "task": "b1-crashloop-max-beta",
+      "budget": 32000,
+      "required": 7,
+      "recall_full": 0.14285714285714285,
+      "recall_listed": 0.7142857142857143,
+      "precision": 0.09090909090909091,
+      "critical_full": 0.14285714285714285,
+      "missed": [
+        "sig-node/4603-tune-crashloopbackoff#alpha",
+        "sig-node/4603-tune-crashloopbackoff#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#alpha",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#does-enabling-the-feature-change-any-default-behavior"
+      ],
+      "chars": 31994,
+      "two_step_chars": 36182,
+      "baseline_chars": 193636,
+      "tokens_est": 8059,
+      "latency_ms": 39.2
+    },
+    {
+      "task": "b2-job-failindex-tests",
+      "budget": 4000,
+      "required": 6,
+      "recall_full": 0.0,
+      "recall_listed": 0.0,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-apps/3329-retriable-and-non-retriable-failures#evaluation",
+        "sig-apps/3329-retriable-and-non-retriable-failures#jobspec-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#failindex-action",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-completion",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#tracking-the-number-of-failures-per-index"
+      ],
+      "chars": 3892,
+      "two_step_chars": 3892,
+      "baseline_chars": 189865,
+      "tokens_est": 1049,
+      "latency_ms": 37.8
+    },
+    {
+      "task": "b2-job-failindex-tests",
+      "budget": 12000,
+      "required": 6,
+      "recall_full": 0.0,
+      "recall_listed": 0.6666666666666666,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-apps/3329-retriable-and-non-retriable-failures#evaluation",
+        "sig-apps/3329-retriable-and-non-retriable-failures#jobspec-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#failindex-action",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-completion",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#tracking-the-number-of-failures-per-index"
+      ],
+      "chars": 11996,
+      "two_step_chars": 18178,
+      "baseline_chars": 189865,
+      "tokens_est": 3076,
+      "latency_ms": 40.3
+    },
+    {
+      "task": "b2-job-failindex-tests",
+      "budget": 32000,
+      "required": 6,
+      "recall_full": 0.16666666666666666,
+      "recall_listed": 0.6666666666666666,
+      "precision": 0.05263157894736842,
+      "critical_full": 0.16666666666666666,
+      "missed": [
+        "sig-apps/3329-retriable-and-non-retriable-failures#evaluation",
+        "sig-apps/3329-retriable-and-non-retriable-failures#jobspec-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-completion",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#tracking-the-number-of-failures-per-index"
+      ],
+      "chars": 31970,
+      "two_step_chars": 37889,
+      "baseline_chars": 189865,
+      "tokens_est": 8052,
+      "latency_ms": 40.0
+    },
+    {
+      "task": "b3-sa-token-pull-verification",
+      "budget": 4000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.0,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-auth/4412-projected-service-account-tokens-for-kubelet-image-credential-providers#how-will-this-work-with-the-ensure-secret-pull-images-kep",
+        "sig-node/2535-ensure-secret-pulled-images#beta",
+        "sig-node/2535-ensure-secret-pulled-images#credential-verification-policies",
+        "sig-node/2535-ensure-secret-pulled-images#summary",
+        "sig-node/2535-ensure-secret-pulled-images#writing-to-the-cache"
+      ],
+      "chars": 3919,
+      "two_step_chars": 3919,
+      "baseline_chars": 122784,
+      "tokens_est": 1062,
+      "latency_ms": 39.1
+    },
+    {
+      "task": "b3-sa-token-pull-verification",
+      "budget": 12000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.2,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-auth/4412-projected-service-account-tokens-for-kubelet-image-credential-providers#how-will-this-work-with-the-ensure-secret-pull-images-kep",
+        "sig-node/2535-ensure-secret-pulled-images#beta",
+        "sig-node/2535-ensure-secret-pulled-images#credential-verification-policies",
+        "sig-node/2535-ensure-secret-pulled-images#summary",
+        "sig-node/2535-ensure-secret-pulled-images#writing-to-the-cache"
+      ],
+      "chars": 11859,
+      "two_step_chars": 14433,
+      "baseline_chars": 122784,
+      "tokens_est": 3048,
+      "latency_ms": 36.6
+    },
+    {
+      "task": "b3-sa-token-pull-verification",
+      "budget": 32000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.2,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-auth/4412-projected-service-account-tokens-for-kubelet-image-credential-providers#how-will-this-work-with-the-ensure-secret-pull-images-kep",
+        "sig-node/2535-ensure-secret-pulled-images#beta",
+        "sig-node/2535-ensure-secret-pulled-images#credential-verification-policies",
+        "sig-node/2535-ensure-secret-pulled-images#summary",
+        "sig-node/2535-ensure-secret-pulled-images#writing-to-the-cache"
+      ],
+      "chars": 31962,
+      "two_step_chars": 34536,
+      "baseline_chars": 122784,
+      "tokens_est": 8059,
+      "latency_ms": 36.5
+    },
+    {
+      "task": "b4-nftables-rollback-cleanup",
+      "budget": 4000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.0,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-network/3866-nftables-proxy#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-network/3866-nftables-proxy#switching-between-kube-proxy-modes",
+        "sig-network/3866-nftables-proxy#tables",
+        "sig-network/3866-nftables-proxy#were-upgrade-and-rollback-tested-was-the-upgrade-downgrade-upgrade-path-tested",
+        "sig-network/3866-nftables-proxy#what-are-the-slis-service-level-indicators-an-operator-can-use-to-determine-the-health-of-the-service"
+      ],
+      "chars": 3998,
+      "two_step_chars": 3998,
+      "baseline_chars": 78568,
+      "tokens_est": 1069,
+      "latency_ms": 35.8
+    },
+    {
+      "task": "b4-nftables-rollback-cleanup",
+      "budget": 12000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.4,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-network/3866-nftables-proxy#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-network/3866-nftables-proxy#switching-between-kube-proxy-modes",
+        "sig-network/3866-nftables-proxy#tables",
+        "sig-network/3866-nftables-proxy#were-upgrade-and-rollback-tested-was-the-upgrade-downgrade-upgrade-path-tested",
+        "sig-network/3866-nftables-proxy#what-are-the-slis-service-level-indicators-an-operator-can-use-to-determine-the-health-of-the-service"
+      ],
+      "chars": 11985,
+      "two_step_chars": 15908,
+      "baseline_chars": 78568,
+      "tokens_est": 3066,
+      "latency_ms": 36.1
+    },
+    {
+      "task": "b4-nftables-rollback-cleanup",
+      "budget": 32000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 1.0,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-network/3866-nftables-proxy#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-network/3866-nftables-proxy#switching-between-kube-proxy-modes",
+        "sig-network/3866-nftables-proxy#tables",
+        "sig-network/3866-nftables-proxy#were-upgrade-and-rollback-tested-was-the-upgrade-downgrade-upgrade-path-tested",
+        "sig-network/3866-nftables-proxy#what-are-the-slis-service-level-indicators-an-operator-can-use-to-determine-the-health-of-the-service"
+      ],
+      "chars": 31993,
+      "two_step_chars": 39915,
+      "baseline_chars": 78568,
+      "tokens_est": 8052,
+      "latency_ms": 38.9
+    },
+    {
+      "task": "b5-pod-resize-metric-deprecation",
+      "budget": 4000,
+      "required": 3,
+      "recall_full": 0.0,
+      "recall_listed": 0.0,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-instrumentation/1209-metrics-stability/kubernetes-control-plane-metrics-stability#deprecation-lifecycle",
+        "sig-node/5419-pod-level-resources-in-place-resize#extended-metrics-from-kep-1287",
+        "sig-node/5419-pod-level-resources-in-place-resize#new-metrics"
+      ],
+      "chars": 3996,
+      "two_step_chars": 3996,
+      "baseline_chars": 87803,
+      "tokens_est": 1073,
+      "latency_ms": 37.4
+    },
+    {
+      "task": "b5-pod-resize-metric-deprecation",
+      "budget": 12000,
+      "required": 3,
+      "recall_full": 0.0,
+      "recall_listed": 0.6666666666666666,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-instrumentation/1209-metrics-stability/kubernetes-control-plane-metrics-stability#deprecation-lifecycle",
+        "sig-node/5419-pod-level-resources-in-place-resize#extended-metrics-from-kep-1287",
+        "sig-node/5419-pod-level-resources-in-place-resize#new-metrics"
+      ],
+      "chars": 11993,
+      "two_step_chars": 16124,
+      "baseline_chars": 87803,
+      "tokens_est": 3073,
+      "latency_ms": 33.6
+    },
+    {
+      "task": "b5-pod-resize-metric-deprecation",
+      "budget": 32000,
+      "required": 3,
+      "recall_full": 0.0,
+      "recall_listed": 0.6666666666666666,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-instrumentation/1209-metrics-stability/kubernetes-control-plane-metrics-stability#deprecation-lifecycle",
+        "sig-node/5419-pod-level-resources-in-place-resize#extended-metrics-from-kep-1287",
+        "sig-node/5419-pod-level-resources-in-place-resize#new-metrics"
+      ],
+      "chars": 31990,
+      "two_step_chars": 36121,
+      "baseline_chars": 87803,
+      "tokens_est": 8055,
+      "latency_ms": 36.6
+    }
+  ]
+}

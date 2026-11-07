@@ -22,16 +22,63 @@ Tasks:
   - the requirement sections of its `depends-on` targets (or the one section that holds a referenced key)
   - the `Decision Outcome` of each accepted decision linked with the entry spec
 
-  The distractors are overview, rationale and examples sections, notes, changes, rejected and superseded decisions, and unrelated specs.
+  The distractors are overview, rationale and examples sections, notes, changes, rejected and superseded decisions, and unrelated specs. The context assembly was changed after the first measurement on these tasks, and the same generator wrote the tasks and the corpus. Thus the synthetic numbers show only that the tool follows its own model. They are not a measure of retrieval quality.
 
 - Corpus B: 5 tasks in [corpus-b-oracles.json](corpus-b-oracles.json), written by hand from the KEPs before any measurement and without a run of spec-dna. 4 of them need a second KEP.
+- Corpus D (rust-lang/rfcs): 3 tasks in [corpus-d-oracles.json](corpus-d-oracles.json), written by hand without a run of spec-dna. Commit `073bfde` added them with their SHA-256 hash, before the first measurement on corpus D. 2 of them need a second RFC. [corpus-d.toml](corpus-d.toml) is the configuration.
 
 ```sh
 cargo build --release
 python3 bench/retrieval/run.py --repo <repository with spec-dna.toml> --tasks <tasks.json> [--query] --out <result.json>
 ```
 
-## Results (measured 2026-11-07)
+## Results
+
+### Headline: public corpora, oracles written before the measurement (measured 2026-11-08)
+
+These are the numbers to quote. Nothing was tuned on corpus D. Corpus B was the only public corpus during the work on `--query`, and its oracles did not change. Binary: commit `df64974` (session 3 fixes). Host: Apple M4 Max, shared, load average 6.7 to 9.4. Each row is the mean over the tasks; sizes are medians.
+
+| Corpus | Arm | Budget | Recall full | Recall listed | Critical full | Precision | Characters | Tokens (estimated) | Two-step characters | Baseline characters | Latency (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| B (5 tasks) | default | 4,000 | 0.03 | 0.03 | 0.03 | 0.03 | 3,996 | 1,069 | 3,996 | 122,784 | 37.8 |
+| B (5 tasks) | default | 12,000 | 0.00 | 0.50 | 0.00 | 0.00 | 11,985 | 3,066 | 15,908 | 122,784 | 36.6 |
+| B (5 tasks) | default | 32,000 | 0.06 | 0.65 | 0.06 | 0.03 | 31,990 | 8,055 | 36,182 | 122,784 | 38.9 |
+| B (5 tasks) | `--query` | 4,000 | 0.20 | 0.57 | 0.20 | 0.45 | 3,932 | 1,104 | 6,928 | 122,784 | 40.4 |
+| B (5 tasks) | `--query` | 12,000 | **0.29** | **0.76** | 0.29 | 0.31 | 11,994 | 3,125 | 18,018 | 122,784 | 40.5 |
+| B (5 tasks) | `--query` | 32,000 | 0.47 | 0.96 | 0.47 | 0.21 | 31,993 | 8,114 | 37,845 | 122,784 | 43.3 |
+| D (3 tasks) | default | 4,000 | 0.00 | 0.34 | 0.00 | 0.00 | 3,917 | 1,047 | 6,947 | 89,751 | 17.8 |
+| D (3 tasks) | default | 12,000 | 0.05 | 0.68 | 0.00 | 0.03 | 11,969 | 3,060 | 18,456 | 89,751 | 17.8 |
+| D (3 tasks) | default | 32,000 | 0.68 | 0.77 | 0.58 | 0.17 | 31,968 | 8,043 | 31,998 | 89,751 | 18.2 |
+| D (3 tasks) | `--query` | 4,000 | 0.11 | 0.63 | 0.00 | 0.28 | 3,939 | 1,120 | 12,463 | 89,751 | 22.8 |
+| D (3 tasks) | `--query` | 12,000 | **0.19** | **0.82** | 0.17 | 0.30 | 11,917 | 3,115 | 18,099 | 89,751 | 22.5 |
+| D (3 tasks) | `--query` | 32,000 | 0.56 | 0.87 | 0.67 | 0.33 | 31,983 | 8,117 | 33,240 | 89,751 | 22.7 |
+
+Raw rows, with the missed sections for each task: `bench/results/retrieval-corpus-b-s3.json`, `retrieval-corpus-b-query-s3.json`, `retrieval-corpus-d.json` and `retrieval-corpus-d-query.json`.
+
+What the numbers show:
+
+1. On long proposals without requirement keys, `context` is a map, not a final answer. At 12,000 characters with `--query`, it serves 0.19 to 0.29 of the required sections in full and lists 0.76 to 0.82. An agent then needs one `show` call for each listed section (the two-step column). That is 15% to 20% of the characters of the relevant documents read in full.
+2. Corpus D repeats the pattern of corpus B. The result on corpus B is thus not only a result of the work on that corpus.
+3. Task d2 never lists the sections of its second RFC. The entry RFC links to it only through the published site (`rust-lang.github.io/rfcs/<number>-<slug>.html`). That URL does not contain the repository path, so `self-urls` cannot map it. A URL rewrite rule could map it. This is a finding, not a change: a change now would tune the tool on these oracles.
+4. The fixes of session 3 did not change the corpus B rows. The KEPs have no requirements, so the requirement-first order does not apply to them.
+5. Critical full recall follows full recall. No arm serves every critical section in full on any public task at 12,000 characters.
+
+### Synthetic corpora (measured 2026-11-08, after tuning)
+
+Same binary. These rows check that the tool follows the ADR 0001 model. They are not the headline, because the assembly was tuned on this generator (see "Tasks").
+
+| Corpus | Budget | Recall full | Recall listed | Precision | Characters | Tokens (estimated) | Two-step characters | Baseline characters | Latency (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Synthetic medium | 4,000 | 0.73 | 1.00 | 0.74 | 3,780 | 993 | 5,204 | 11,115 | 18.2 |
+| Synthetic medium | 8,000 | 1.00 | 1.00 | 0.76 | 5,227 | 1,356 | 5,227 | 11,115 | 18.1 |
+| Synthetic medium | 12,000 | 1.00 | 1.00 | 0.76 | 5,227 | 1,356 | 5,227 | 11,115 | 18.4 |
+| Synthetic large | 4,000 | 0.77 | 1.00 | 0.76 | 3,779 | 993 | 4,455 | 10,485 | 61.7 |
+| Synthetic large | 8,000 | 0.99 | 1.00 | 0.78 | 4,537 | 1,183 | 4,537 | 10,485 | 60.9 |
+| Synthetic large | 12,000 | 1.00 | 1.00 | 0.78 | 4,537 | 1,184 | 4,537 | 10,485 | 60.5 |
+
+Raw rows: `bench/results/retrieval-synthetic-medium-s3.json` and `retrieval-synthetic-large-s3.json`. The small change against session 2 at 4,000 characters probably comes from the requirement-first order.
+
+### History (measured 2026-11-07)
 
 The host and the binary are the same as in [the tool benchmark](../tool/README.md). The load average was 6 to 10. The table shows means over the tasks, and medians for the sizes.
 
@@ -57,7 +104,7 @@ What the numbers show:
 
 The first version of the assembly served the full entry document, and then filled the rest of the budget with the other sections. On the small synthetic corpus, it got the same recall at 12,000 characters, but with precision 0.35 and 8,402 characters. On corpus B, it listed 0.06 of the required sections at 12,000 characters, because full text used the budget before any stub. The current version serves normative sections first and lists the rest. It keeps up to half of the budget for the list.
 
-### `self-urls` and `--query` (measured 2026-11-07)
+#### `self-urls` and `--query` (measured 2026-11-07)
 
 These rows use the same oracles and the same snapshot of corpus B. [corpus-b.toml](corpus-b.toml) now lists the URL prefixes of the repository in `self-urls`. With the harness flag `--query`, each task gives its task text to `context --query`. Load average: 3.6 for `self-urls`, 7.2 for `--query`.
 
