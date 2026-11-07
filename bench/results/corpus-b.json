@@ -1,0 +1,233 @@
+{
+  "binaries": {
+    "go": 1740194,
+    "rust": 502096
+  },
+  "corpus": {
+    "bytes": 22907143,
+    "docs": 714,
+    "files_walked": 2300,
+    "id_dups": 0,
+    "idrefs": 0,
+    "idrefs_unresolved": 0,
+    "ids": 0,
+    "links": 32861,
+    "links_broken": 55,
+    "links_internal": 485
+  },
+  "hardware": {
+    "cpu": "Apple M4 Max",
+    "cpus": 16,
+    "go": "go version go1.25.4 darwin/arm64",
+    "machine": "arm64",
+    "mem_gb": 128,
+    "platform": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)"
+  },
+  "label": "corpus-b",
+  "load_avg_1m": {
+    "end": 20.91,
+    "start": 22.15
+  },
+  "modes_agree": true,
+  "outputs_equal": true,
+  "rev": "72907deaa85eae6e208bc95c5f74dd27c1911345",
+  "scanners": {
+    "go": {
+      "first_full_run_ms": 75.88,
+      "full": {
+        "last_output": {
+          "bytes": 22907143,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 714
+        },
+        "max_ms": 101.31,
+        "median_ms": 73.89,
+        "min_ms": 66.47,
+        "peak_rss_mb": 28.2,
+        "runs": 15,
+        "stdev_ms": 9.17
+      },
+      "incremental": {
+        "last_output": {
+          "bytes": 22911123,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 10
+        },
+        "max_ms": 84.46,
+        "median_ms": 53.74,
+        "min_ms": 43.13,
+        "peak_rss_mb": 13.2,
+        "runs": 15,
+        "stdev_ms": 10.58
+      },
+      "index_build": {
+        "last_output": {
+          "bytes": 22907143,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 714
+        },
+        "max_ms": 144.98,
+        "median_ms": 89.05,
+        "min_ms": 78.75,
+        "peak_rss_mb": 25.9,
+        "runs": 15,
+        "stdev_ms": 16.14
+      },
+      "index_bytes": 1247235,
+      "startup": {
+        "last_output": {},
+        "max_ms": 6.12,
+        "median_ms": 3.66,
+        "min_ms": 3.4,
+        "peak_rss_mb": 3.9,
+        "runs": 20,
+        "stdev_ms": 0.58
+      },
+      "warm": {
+        "last_output": {
+          "bytes": 22907143,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 0
+        },
+        "max_ms": 36.58,
+        "median_ms": 34.12,
+        "min_ms": 32.17,
+        "peak_rss_mb": 11.8,
+        "runs": 15,
+        "stdev_ms": 1.15
+      }
+    },
+    "rust": {
+      "first_full_run_ms": 49.4,
+      "full": {
+        "last_output": {
+          "bytes": 22907143,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 714
+        },
+        "max_ms": 59.22,
+        "median_ms": 54.3,
+        "min_ms": 41.57,
+        "peak_rss_mb": 11.5,
+        "runs": 15,
+        "stdev_ms": 5.52
+      },
+      "incremental": {
+        "last_output": {
+          "bytes": 22910993,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 10
+        },
+        "max_ms": 104.7,
+        "median_ms": 47.7,
+        "min_ms": 42.37,
+        "peak_rss_mb": 8.5,
+        "runs": 15,
+        "stdev_ms": 18.87
+      },
+      "index_build": {
+        "last_output": {
+          "bytes": 22907143,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 714
+        },
+        "max_ms": 88.79,
+        "median_ms": 65.94,
+        "min_ms": 59.84,
+        "peak_rss_mb": 11.3,
+        "runs": 15,
+        "stdev_ms": 9.97
+      },
+      "index_bytes": 1247235,
+      "startup": {
+        "last_output": {},
+        "max_ms": 5.17,
+        "median_ms": 3.24,
+        "min_ms": 2.78,
+        "peak_rss_mb": 1.5,
+        "runs": 20,
+        "stdev_ms": 0.61
+      },
+      "warm": {
+        "last_output": {
+          "bytes": 22907143,
+          "docs": 714,
+          "files_walked": 2300,
+          "id_dups": 0,
+          "idrefs": 0,
+          "idrefs_unresolved": 0,
+          "ids": 0,
+          "links": 32861,
+          "links_broken": 55,
+          "links_internal": 485,
+          "parsed": 0
+        },
+        "max_ms": 35.71,
+        "median_ms": 31.79,
+        "min_ms": 30.58,
+        "peak_rss_mb": 7.6,
+        "runs": 15,
+        "stdev_ms": 1.71
+      }
+    }
+  },
+  "snapshot_s": 3.03,
+  "touch": 10
+}

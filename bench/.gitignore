@@ -1,0 +1,5 @@
+# Build outputs and local benchmark runs.
+rust/target/
+go/scan-go
+work/
+__pycache__/

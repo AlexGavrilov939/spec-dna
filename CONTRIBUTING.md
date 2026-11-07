@@ -14,6 +14,10 @@ To run everything by hand:
 pre-commit run --all-files
 ```
 
+## Formatting
+
+`.editorconfig` holds the whitespace rules: 2-space indent by default, 4 spaces for Python, TOML and Rust, tabs for Go. Format Go with `gofmt` and Rust with `cargo fmt`.
+
 ## Branches
 
 - `master` is the default branch. Changes land through pull requests only. The `no-commit-to-branch` hook blocks local commits to `master`.

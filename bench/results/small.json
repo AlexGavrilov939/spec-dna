@@ -1,0 +1,234 @@
+{
+  "binaries": {
+    "go": 1740194,
+    "rust": 502096
+  },
+  "corpus": {
+    "bytes": 479782,
+    "docs": 60,
+    "files_walked": 81,
+    "id_dups": 0,
+    "idrefs": 162,
+    "idrefs_unresolved": 4,
+    "ids": 39,
+    "links": 659,
+    "links_broken": 1,
+    "links_internal": 515
+  },
+  "hardware": {
+    "cpu": "Apple M4 Max",
+    "cpus": 16,
+    "go": "go version go1.25.4 darwin/arm64",
+    "machine": "arm64",
+    "mem_gb": 128,
+    "platform": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)"
+  },
+  "label": "small",
+  "load_avg_1m": {
+    "end": 6.85,
+    "start": 7.36
+  },
+  "matches_expected": true,
+  "modes_agree": true,
+  "outputs_equal": true,
+  "rev": null,
+  "scanners": {
+    "go": {
+      "first_full_run_ms": 5.17,
+      "full": {
+        "last_output": {
+          "bytes": 479782,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 60
+        },
+        "max_ms": 4.75,
+        "median_ms": 4.47,
+        "min_ms": 4.31,
+        "peak_rss_mb": 10.9,
+        "runs": 15,
+        "stdev_ms": 0.13
+      },
+      "incremental": {
+        "last_output": {
+          "bytes": 483762,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 10
+        },
+        "max_ms": 4.18,
+        "median_ms": 4.06,
+        "min_ms": 3.88,
+        "peak_rss_mb": 7.3,
+        "runs": 15,
+        "stdev_ms": 0.1
+      },
+      "index_build": {
+        "last_output": {
+          "bytes": 479782,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 60
+        },
+        "max_ms": 5.68,
+        "median_ms": 5.19,
+        "min_ms": 4.73,
+        "peak_rss_mb": 11.1,
+        "runs": 15,
+        "stdev_ms": 0.24
+      },
+      "index_bytes": 26982,
+      "startup": {
+        "last_output": {},
+        "max_ms": 2.91,
+        "median_ms": 2.67,
+        "min_ms": 2.43,
+        "peak_rss_mb": 3.9,
+        "runs": 20,
+        "stdev_ms": 0.13
+      },
+      "warm": {
+        "last_output": {
+          "bytes": 479782,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 0
+        },
+        "max_ms": 3.94,
+        "median_ms": 3.35,
+        "min_ms": 3.16,
+        "peak_rss_mb": 4.8,
+        "runs": 15,
+        "stdev_ms": 0.22
+      }
+    },
+    "rust": {
+      "first_full_run_ms": 4.71,
+      "full": {
+        "last_output": {
+          "bytes": 479782,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 60
+        },
+        "max_ms": 4.33,
+        "median_ms": 4.05,
+        "min_ms": 3.74,
+        "peak_rss_mb": 3.2,
+        "runs": 15,
+        "stdev_ms": 0.16
+      },
+      "incremental": {
+        "last_output": {
+          "bytes": 483632,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 10
+        },
+        "max_ms": 4.02,
+        "median_ms": 3.81,
+        "min_ms": 3.5,
+        "peak_rss_mb": 3.0,
+        "runs": 15,
+        "stdev_ms": 0.13
+      },
+      "index_build": {
+        "last_output": {
+          "bytes": 479782,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 60
+        },
+        "max_ms": 4.74,
+        "median_ms": 4.42,
+        "min_ms": 4.13,
+        "peak_rss_mb": 3.3,
+        "runs": 15,
+        "stdev_ms": 0.18
+      },
+      "index_bytes": 26982,
+      "startup": {
+        "last_output": {},
+        "max_ms": 2.66,
+        "median_ms": 2.31,
+        "min_ms": 2.06,
+        "peak_rss_mb": 1.5,
+        "runs": 20,
+        "stdev_ms": 0.16
+      },
+      "warm": {
+        "last_output": {
+          "bytes": 479782,
+          "docs": 60,
+          "files_walked": 81,
+          "id_dups": 0,
+          "idrefs": 162,
+          "idrefs_unresolved": 4,
+          "ids": 39,
+          "links": 659,
+          "links_broken": 1,
+          "links_internal": 515,
+          "parsed": 0
+        },
+        "max_ms": 3.34,
+        "median_ms": 3.16,
+        "min_ms": 2.9,
+        "peak_rss_mb": 2.4,
+        "runs": 15,
+        "stdev_ms": 0.13
+      }
+    }
+  },
+  "snapshot_s": 0.03,
+  "touch": 10
+}

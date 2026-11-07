@@ -12,8 +12,12 @@ trim_trailing_whitespace = true
 [Makefile]
 indent_style = tab
 
-[*.{py,toml}]
+[*.{py,toml,rs}]
 indent_size = 4
+
+# gofmt indents Go with tabs.
+[{*.go,go.mod}]
+indent_style = tab
 
 # Verbatim upstream text, its indentation is not ours to change.
 [LICENSE]
