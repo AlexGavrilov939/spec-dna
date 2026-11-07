@@ -1,0 +1,14 @@
+# Store text with LF in the repo and check it out with LF everywhere.
+* text=auto eol=lf
+
+# Binary files: no diff, no line ending conversion.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
