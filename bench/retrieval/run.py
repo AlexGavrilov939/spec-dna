@@ -21,8 +21,11 @@ Tasks come in two formats: generator tasks (`required` holds section ids)
 and hand-made oracles (`required` holds doc, heading and line; the line is
 mapped to a section id through `spec-dna show --json`).
 
+With `--query`, each task that has a `task` text also gives that text to
+`context --query`. Only the hand-made oracles have a task text.
+
     python3 run.py --repo DIR --tasks FILE [--budgets 4000,8000,12000,16000]
-        [--runs 5] --out FILE.json
+        [--runs 5] [--query] --out FILE.json
 """
 import argparse
 import json
@@ -76,6 +79,7 @@ def main():
     ap.add_argument("--tasks", required=True)
     ap.add_argument("--budgets", default="4000,8000,12000,16000")
     ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--query", action="store_true", help="give the task text to --query")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     tasks = json.load(open(a.tasks))["tasks"]
@@ -92,8 +96,9 @@ def main():
     for t in tasks:
         required, critical = section_ids(a.repo, t)
         baseline = sum(whole(d) for d in {r.split("#")[0] for r in required})
+        query = ["--query", t["task"]] if a.query and t.get("task") else []
         for b in budgets:
-            d = json.loads(run(a.repo, "context", *t["entry"], "--budget", str(b), "--json"))
+            d = json.loads(run(a.repo, "context", *t["entry"], "--budget", str(b), *query, "--json"))
             full = {u["id"] for u in d["units"] if u["mode"] == "full"}
             listed = {u["id"] for u in d["units"]}
             stub_chars = sum(u["chars"] for u in d["units"] if u["mode"] == "stub" and u["id"] in required)
@@ -101,7 +106,7 @@ def main():
             text = ""
             for _ in range(a.runs):
                 t0 = time.perf_counter()
-                text = run(a.repo, "context", *t["entry"], "--budget", str(b))
+                text = run(a.repo, "context", *t["entry"], "--budget", str(b), *query)
                 walls.append((time.perf_counter() - t0) * 1000)
             rows.append(
                 {
@@ -140,7 +145,7 @@ def main():
                 "latency_ms_median": statistics.median(r["latency_ms"] for r in rs),
             }
         )
-    out = {"tasks_file": os.path.basename(a.tasks), "load_avg_1m": round(os.getloadavg()[0], 2), "summary": summary, "rows": rows}
+    out = {"tasks_file": os.path.basename(a.tasks), "query": a.query, "load_avg_1m": round(os.getloadavg()[0], 2), "summary": summary, "rows": rows}
     with open(a.out, "w") as fh:
         json.dump(out, fh, indent=2)
         fh.write("\n")

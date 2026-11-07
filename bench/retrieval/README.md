@@ -20,7 +20,7 @@ Tasks:
 
 ```sh
 cargo build --release
-python3 bench/retrieval/run.py --repo <repository with spec-dna.toml> --tasks <tasks.json> --out <result.json>
+python3 bench/retrieval/run.py --repo <repository with spec-dna.toml> --tasks <tasks.json> [--query] --out <result.json>
 ```
 
 ## Results (measured 2026-11-07)
@@ -44,7 +44,28 @@ Raw rows, including the missed sections per task: `bench/results/retrieval-*.jso
 What the numbers show:
 
 1. On a corpus in the ADR 0001 model, the graph order is enough: from 8,000 characters every required section is served in full in 79 of 80 tasks, at less than half the characters of reading the relevant documents whole. Precision stays below 0.8 because each document's title section is served too.
-2. Corpus B is not in that model: KEPs have no front matter, no requirement keys, and they link to each other through absolute GitHub URLs or through `kep.yaml`, which spec-dna treats as external. Its READMEs run to 78,000 to 194,000 characters, and the required sections sit deep inside them. Without a task description, `context` cannot know which deep section a task needs, so full-text recall stays near 0.
-3. The map makes the rest reachable: at 32,000 characters every required section inside the entry KEP is listed (0.65 = the share of required sections that sit in the entry KEP). The other 0.35 are in second KEPs that no explicit link reaches.
+2. Corpus B is not in that model: KEPs have no front matter, no requirement keys, and they link to each other through absolute GitHub URLs or through `kep.yaml`. Without `self-urls` (see below), spec-dna treats both as external. Its READMEs run to 78,000 to 194,000 characters, and the required sections sit deep inside them. Without a task description, `context` cannot know which deep section a task needs, so full-text recall stays near 0.
+3. The map makes the rest reachable: at 32,000 characters every required section inside the entry KEP is listed (0.65 = the share of required sections that sit in the entry KEP). The other 0.35 are in second KEPs that no relative link reaches.
 
 The first version of the assembly served the whole entry document and filled leftover budget with remaining sections. On the small synthetic corpus it reached the same recall at 12,000 characters but with precision 0.35 and 8,402 characters, and on corpus B it listed 0.06 of the required sections at 12,000 characters, because full text used the budget before any stub. The current version serves normative sections first, lists the rest, and reserves up to half of the budget for the list.
+
+### `self-urls` and `--query` (measured 2026-11-07)
+
+These rows use the same oracles and the same snapshot of corpus B. [corpus-b.toml](corpus-b.toml) now lists the URL prefixes of the repository in `self-urls`. With the harness flag `--query`, each task gives its task text to `context --query`. Load average: 3.6 for `self-urls`, 7.2 for `--query`.
+
+| Corpus | Budget | Recall full | Recall listed | Precision | Characters | Tokens (estimated) | Two-step characters | Baseline characters | Latency (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Corpus B, `self-urls` | 4,000 | 0.03 | 0.03 | 0.03 | 3,996 | 1,069 | 3,996 | 122,784 | 39.6 |
+| Corpus B, `self-urls` | 12,000 | 0.00 | 0.50 | 0.00 | 11,985 | 3,066 | 15,908 | 122,784 | 38.4 |
+| Corpus B, `self-urls` | 32,000 | 0.06 | 0.65 | 0.03 | 31,990 | 8,055 | 36,182 | 122,784 | 38.6 |
+| Corpus B, `self-urls` and `--query` | 4,000 | 0.20 | 0.57 | 0.45 | 3,932 | 1,104 | 6,928 | 122,784 | 44.0 |
+| Corpus B, `self-urls` and `--query` | 12,000 | 0.29 | 0.76 | 0.31 | 11,994 | 3,125 | 18,018 | 122,784 | 46.2 |
+| Corpus B, `self-urls` and `--query` | 32,000 | 0.47 | 0.96 | 0.20 | 31,993 | 8,114 | 37,845 | 122,784 | 45.5 |
+
+Raw rows: `bench/results/retrieval-corpus-b-self-urls.json` and `bench/results/retrieval-corpus-b-query.json`.
+
+1. `self-urls` alone changes little. The links now reach the second KEPs, but without a query `context` lists only the title section of a linked document.
+2. With `--query`, `context` ranks all sections of the entry and of the linked KEPs. At 12,000 characters, 0.76 of the required sections are listed and 0.29 are in full (before: 0.50 and 0.00). At 32,000 characters, 0.96 are listed and 0.47 are in full.
+3. For one task, full recall does not always increase with the budget. The packing is greedy: a large section with a high rank can use the space of 2 smaller required sections.
+4. Without `--query`, the output did not change. A new run of the default arm on corpus B and on the synthetic corpora gave the same rows as the table above.
+5. The first version of the ranking put the title section of the entry first. In task b1 that section has 2,904 characters of checklist and table of contents, and mean full recall fell to 0.13 at 8,000 and 0.10 at 12,000 characters. Now only sections that a target names come first. The oracles did not change.
