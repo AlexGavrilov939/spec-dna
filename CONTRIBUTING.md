@@ -40,6 +40,8 @@ Write all specifications, documentation and code comments in ASD-STE100 Simplifi
 
 Code names, commands, configuration keys and diagnostic codes are technical names. Write them as they are, in backticks.
 
+Write a code comment only when it gives information that the code and its names cannot give: a reason, a constraint, an invariant, a format, an edge case or a reference to an ADR. Do not write a comment that repeats the code. Remove a comment that is wrong or that has no use. A doc comment on a public item states its contract: what it means, its inputs, its outputs and its errors.
+
 ## Branches
 
 - `master` is the default branch. Changes land through pull requests only. The `no-commit-to-branch` hook blocks local commits to `master`.
