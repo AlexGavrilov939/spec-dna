@@ -4,10 +4,12 @@
 //! Order of assembly: the entry documents (or the requested sections), then
 //! the documents whose `applies-to` matches an entry or a given path, then
 //! the entries' `depends-on` targets (depth 1), then linked accepted
-//! decisions as summaries, then the remaining sections of those documents,
-//! then other documents the entries link to. A section that does not fit the
-//! character budget is listed as a stub with its id, hash and size, so it is
-//! one `show` call away.
+//! decisions as summaries. For a spec or contract with requirements, only its
+//! title section and its requirement sections are served in full; a document
+//! without requirements is served in order. The remaining sections of these
+//! documents, and other documents the entries link to, are listed as stubs
+//! with id, hash and size, so each is one `show` call away. A section that
+//! does not fit the character budget is listed as a stub too.
 
 use crate::hash::hex;
 use crate::json::{self, Obj};
@@ -148,7 +150,7 @@ pub fn assemble(
                 }
                 rest.extend((0..chunks.len()).map(|j| (*d, j)));
             }
-            None => (0..chunks.len()).for_each(|j| add(&mut plan, *d, j, Tier::Entry)),
+            None => normative_units(c, *d, Tier::Entry, &mut plan, &mut rest, &mut add),
         }
     }
 
@@ -257,30 +259,49 @@ pub fn assemble(
         }
     }
 
-    // Packing: full text while it fits, then stubs, then omitted.
-    let mut units = Vec::new();
+    // Packing, in 2 passes. First the map: every planned section is listed
+    // as a stub, in priority order, within half of the budget. Then full
+    // text, in the same order, with what remains; a section in full replaces
+    // its stub. So every listed section is one `show` call away, however
+    // long the documents are.
+    let costs: Vec<(u32, u32)> = plan
+        .iter()
+        .map(|&(d, ch, tier)| {
+            let doc = &c.docs[d as usize];
+            let full =
+                doc.parsed.chunks[ch].chars + header(doc, ch, tier.name()).chars().count() as u32;
+            (full, stub_line(doc, ch, tier).chars().count() as u32)
+        })
+        .collect();
+    let mut listed = vec![false; plan.len()];
     let mut used = 0u32;
+    for (i, &(_, stub)) in costs.iter().enumerate() {
+        if used + stub <= budget / 2 {
+            used += stub;
+            listed[i] = true;
+        }
+    }
+    let mut full = vec![false; plan.len()];
+    for (i, &(_, _, tier)) in plan.iter().enumerate() {
+        if matches!(tier, Tier::Rest | Tier::Related) {
+            continue;
+        }
+        let (f, stub) = costs[i];
+        let extra = if listed[i] { f.saturating_sub(stub) } else { f };
+        if used + extra <= budget {
+            used += extra;
+            full[i] = true;
+        }
+    }
+    let mut units = Vec::new();
     let mut omitted = 0;
-    for (d, ch, tier) in plan {
-        let doc = &c.docs[d as usize];
-        let full_cost =
-            doc.parsed.chunks[ch].chars + header(doc, ch, tier.name()).chars().count() as u32;
-        let stub_cost = stub_line(doc, ch, tier).chars().count() as u32;
-        if tier != Tier::Related && used + full_cost <= budget {
-            used += full_cost;
+    for (i, &(d, ch, tier)) in plan.iter().enumerate() {
+        if full[i] || listed[i] {
             units.push(Unit {
                 doc: d,
                 chunk: ch,
                 tier,
-                full: true,
-            });
-        } else if used + stub_cost <= budget {
-            used += stub_cost;
-            units.push(Unit {
-                doc: d,
-                chunk: ch,
-                tier,
-                full: false,
+                full: full[i],
             });
         } else {
             omitted += 1;
@@ -453,7 +474,7 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
     let chunks = &doc.parsed.chunks;
-    let (kind, items): (&str, Vec<(String, String, String)>) = match frag {
+    let (kind, items): (&str, Vec<(String, String, u32, String)>) = match frag {
         Some(f) if doc.req(f).is_some() && !chunks.iter().any(|ch| ch.anchor == f) => {
             let r = &doc.parsed.reqs[doc.req(f).unwrap()];
             let body = text
@@ -463,7 +484,7 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
                 .to_string();
             (
                 "requirement",
-                vec![(format!("{}#{}", doc.id, r.key), hex(&r.hash), body)],
+                vec![(format!("{}#{}", doc.id, r.key), hex(&r.hash), r.line, body)],
             )
         }
         _ => {
@@ -483,6 +504,7 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
                     (
                         section_id(doc, j),
                         hex(&chunks[j].hash),
+                        chunks[j].line,
                         chunk_text(&text, doc, j).to_string(),
                     )
                 })
@@ -498,9 +520,14 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         }
     };
     if as_json {
-        let units = items
-            .iter()
-            .map(|(id, h, t)| Obj::new().str("id", id).str("hash", h).str("text", t).end());
+        let units = items.iter().map(|(id, h, line, t)| {
+            Obj::new()
+                .str("id", id)
+                .str("hash", h)
+                .num("line", line)
+                .str("text", t)
+                .end()
+        });
         return format!(
             "{}\n",
             Obj::new()
@@ -520,7 +547,7 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         .map(|s| format!("/{s}"))
         .unwrap_or_default();
     let mut out = String::new();
-    for (id, h, t) in items {
+    for (id, h, _, t) in items {
         out.push_str(&format!(
             "<!-- {id} h:{h} {}{status} {} -->\n{t}\n\n",
             doc.ty.name(),

@@ -1,4 +1,4 @@
-<!-- spec-dna context 0.1.0: auth/session; 9 sections in full, 0 listed; 1692 of 2500 characters; about 424 tokens (estimated) -->
+<!-- spec-dna context 0.1.0: auth/session; 7 sections in full, 2 listed; 1473 of 2500 characters; about 383 tokens (estimated) -->
 
 <!-- auth/session#sessions h:958433b88811cebb spec/active entry -->
 # Sessions
@@ -12,11 +12,6 @@ A session keeps a user signed in between requests. The store is chosen in ADR-1.
 - **renewal**: The session SHALL be renewed quickly, if possible.
 - **R-7**: While a session is active, the gateway SHALL refresh its expiry on each request.
 - **Bad_Key**: The gateway MUST log the session id.
-
-<!-- auth/session#rationale h:d3002214dbba40b7 spec/active entry -->
-## Rationale
-
-Short sessions limit the damage of a stolen cookie. See [the token rules](tokens.md#requirements) and [a missing anchor](tokens.md#nowhere).
 
 <!-- guides/logging#logging h:e819cae7e80b46c9 guide/active applies -->
 # Logging
@@ -40,7 +35,6 @@ Log every rejected request with its request id and the reason.
 
 Chosen option: signed stateless tokens.
 
-<!-- ADR-1-session-store#context-and-problem-statement h:101141999816be1d decision/accepted more -->
-## Context and Problem Statement
-
-Where do sessions live? See [[auth/session#expiry]].
+<!-- not loaded; read one with `spec-dna show <id>` -->
+- `auth/session#rationale` h:d3002214dbba40b7 155 chars (more): Rationale
+- `ADR-1-session-store#context-and-problem-statement` h:101141999816be1d 88 chars (more): Context and Problem Statement
