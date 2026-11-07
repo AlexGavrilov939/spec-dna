@@ -1,0 +1,234 @@
+{
+  "binaries": {
+    "go": 1740194,
+    "rust": 502096
+  },
+  "corpus": {
+    "bytes": 159038749,
+    "docs": 20000,
+    "files_walked": 24001,
+    "id_dups": 0,
+    "idrefs": 48092,
+    "idrefs_unresolved": 502,
+    "ids": 15081,
+    "links": 214904,
+    "links_broken": 815,
+    "links_internal": 167118
+  },
+  "hardware": {
+    "cpu": "Apple M4 Max",
+    "cpus": 16,
+    "go": "go version go1.25.4 darwin/arm64",
+    "machine": "arm64",
+    "mem_gb": 128,
+    "platform": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)"
+  },
+  "label": "large",
+  "load_avg_1m": {
+    "end": 13.08,
+    "start": 4.58
+  },
+  "matches_expected": true,
+  "modes_agree": true,
+  "outputs_equal": true,
+  "rev": null,
+  "scanners": {
+    "go": {
+      "first_full_run_ms": 1183.98,
+      "full": {
+        "last_output": {
+          "bytes": 159038749,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 20000
+        },
+        "max_ms": 945.61,
+        "median_ms": 755.43,
+        "min_ms": 677.64,
+        "peak_rss_mb": 215.2,
+        "runs": 15,
+        "stdev_ms": 81.16
+      },
+      "incremental": {
+        "last_output": {
+          "bytes": 159042729,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 10
+        },
+        "max_ms": 203.68,
+        "median_ms": 146.3,
+        "min_ms": 142.78,
+        "peak_rss_mb": 53.4,
+        "runs": 15,
+        "stdev_ms": 15.31
+      },
+      "index_build": {
+        "last_output": {
+          "bytes": 159038749,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 20000
+        },
+        "max_ms": 1427.57,
+        "median_ms": 844.81,
+        "min_ms": 737.21,
+        "peak_rss_mb": 221.8,
+        "runs": 15,
+        "stdev_ms": 218.86
+      },
+      "index_bytes": 9559717,
+      "startup": {
+        "last_output": {},
+        "max_ms": 3.68,
+        "median_ms": 3.09,
+        "min_ms": 2.59,
+        "peak_rss_mb": 3.9,
+        "runs": 20,
+        "stdev_ms": 0.28
+      },
+      "warm": {
+        "last_output": {
+          "bytes": 159038749,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 0
+        },
+        "max_ms": 144.49,
+        "median_ms": 124.99,
+        "min_ms": 119.89,
+        "peak_rss_mb": 52.3,
+        "runs": 15,
+        "stdev_ms": 6.87
+      }
+    },
+    "rust": {
+      "first_full_run_ms": 802.98,
+      "full": {
+        "last_output": {
+          "bytes": 159038749,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 20000
+        },
+        "max_ms": 1344.43,
+        "median_ms": 765.39,
+        "min_ms": 658.06,
+        "peak_rss_mb": 43.7,
+        "runs": 15,
+        "stdev_ms": 195.24
+      },
+      "incremental": {
+        "last_output": {
+          "bytes": 159042599,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 10
+        },
+        "max_ms": 197.54,
+        "median_ms": 156.45,
+        "min_ms": 152.38,
+        "peak_rss_mb": 52.0,
+        "runs": 15,
+        "stdev_ms": 11.76
+      },
+      "index_build": {
+        "last_output": {
+          "bytes": 159038749,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 20000
+        },
+        "max_ms": 1380.56,
+        "median_ms": 848.97,
+        "min_ms": 713.95,
+        "peak_rss_mb": 44.5,
+        "runs": 15,
+        "stdev_ms": 188.71
+      },
+      "index_bytes": 9559717,
+      "startup": {
+        "last_output": {},
+        "max_ms": 3.32,
+        "median_ms": 2.7,
+        "min_ms": 2.25,
+        "peak_rss_mb": 1.5,
+        "runs": 20,
+        "stdev_ms": 0.29
+      },
+      "warm": {
+        "last_output": {
+          "bytes": 159038749,
+          "docs": 20000,
+          "files_walked": 24001,
+          "id_dups": 0,
+          "idrefs": 48092,
+          "idrefs_unresolved": 502,
+          "ids": 15081,
+          "links": 214904,
+          "links_broken": 815,
+          "links_internal": 167118,
+          "parsed": 0
+        },
+        "max_ms": 152.14,
+        "median_ms": 134.72,
+        "min_ms": 130.08,
+        "peak_rss_mb": 53.6,
+        "runs": 15,
+        "stdev_ms": 5.6
+      }
+    }
+  },
+  "snapshot_s": 4.61,
+  "touch": 10
+}
