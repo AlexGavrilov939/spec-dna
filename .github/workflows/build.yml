@@ -1,0 +1,131 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUSTUP_TOOLCHAIN: "1.99.1"
+  ZIG_VERSION: "0.17.0"
+  CARGO_ZIGBUILD_VERSION: "0.24.0"
+  MANIFEST_PATH: Cargo.toml
+  BIN: spec-dna
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update --component rustfmt,clippy
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  targets:
+    name: List targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # scripts/cross-build.sh holds the target list.
+      - name: List targets
+        id: list
+        run: echo "targets=$(scripts/cross-build.sh --list | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # GitHub's runner images ship rustup; a bare Linux host gets it here.
+      - name: Install rustup
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update --target "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+
+      # Zig asks automation to download from community mirrors, in random
+      # order. The SHA-256 pins come from https://ziglang.org/download/index.json
+      # and must change with ZIG_VERSION.
+      - name: Install zig ${{ env.ZIG_VERSION }}
+        run: |
+          case "$(uname -m)" in
+            x86_64) sum=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026 ;;
+            aarch64) sum=9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8 ;;
+            *) echo "no pinned zig for $(uname -m)" >&2; exit 1 ;;
+          esac
+          name=zig-$(uname -m)-linux-$ZIG_VERSION
+          mirrors=$(curl -fsS --max-time 30 https://ziglang.org/download/community-mirrors.txt | shuf) || mirrors=
+          for base in $mirrors "https://ziglang.org/download/$ZIG_VERSION"; do
+            if curl -fsSL --max-time 300 -o "$RUNNER_TEMP/$name.tar.xz" "$base/$name.tar.xz?source=spec-dna-ci" &&
+              echo "$sum  $RUNNER_TEMP/$name.tar.xz" | sha256sum -c -; then
+              echo "zig from $base"
+              tar -xJf "$RUNNER_TEMP/$name.tar.xz" -C "$RUNNER_TEMP"
+              echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+              exit 0
+            fi
+          done
+          echo "no mirror served $name.tar.xz with the pinned SHA-256" >&2
+          exit 1
+
+      - name: Install cargo-zigbuild ${{ env.CARGO_ZIGBUILD_VERSION }}
+        run: cargo install --locked "cargo-zigbuild@$CARGO_ZIGBUILD_VERSION"
+
+      - name: Build
+        run: scripts/cross-build.sh --manifest-path "$MANIFEST_PATH" --bin "$BIN" "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}

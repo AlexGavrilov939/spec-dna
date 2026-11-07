@@ -12,7 +12,10 @@ To run everything by hand:
 
 ```sh
 pre-commit run --all-files
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
+
+Golden outputs of the integration tests live in `tests/golden/`. After an intended output change, regenerate them with `UPDATE_GOLDEN=1 cargo test` and review the diff.
 
 ## Formatting
 

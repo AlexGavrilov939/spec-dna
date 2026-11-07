@@ -1,0 +1,596 @@
+//! Parses one Markdown document into the data the index stores: front
+//! matter, sections with hashes, references, bare id tokens and requirement
+//! candidates. Parsing does not depend on configuration, so the result is
+//! cached by git blob id alone.
+
+use crate::frontmatter::{self, FrontMatter};
+use crate::hash::{Hash, hash_normalized};
+use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+
+/// Bump when the parsed data changes, so old index entries are dropped.
+pub const PARSER_VERSION: u32 = 1;
+
+pub const FLAG_REQUIREMENT: u8 = 1;
+pub const FLAG_BCP14: u8 = 2;
+pub const FLAG_STATUS_WORD: u8 = 4;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParsedDoc {
+    pub front_matter: Option<FrontMatter>,
+    pub front_matter_error: Option<(u32, String)>,
+    pub body_start: u32,
+    pub title: String,
+    pub chunks: Vec<Chunk>,
+    pub refs: Vec<Ref>,
+    pub tokens: Vec<Token>,
+    pub reqs: Vec<Req>,
+    /// Characters of the body without fenced or indented code blocks.
+    pub body_chars: u32,
+    /// Hash of the body above a level-2 `Amendments` heading (all of it if none).
+    pub frozen_hash: Hash,
+    /// Index of the first chunk of the `Amendments` section, if any.
+    pub amendments: Option<u32>,
+}
+
+/// A section unit: one heading and its text up to the next heading of any
+/// level. Level 0 is text before the first heading.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Chunk {
+    pub level: u8,
+    pub heading: String,
+    pub anchor: String,
+    pub start: u32,
+    pub end: u32,
+    pub line: u32,
+    pub chars: u32,
+    pub hash: Hash,
+    pub flags: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefKind {
+    Link = 0,
+    Image = 1,
+    Wiki = 2,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ref {
+    pub kind: RefKind,
+    pub target: String,
+    pub line: u32,
+}
+
+/// A bare `PREFIX-NUMBER` token in prose.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Token {
+    pub text: String,
+    pub line: u32,
+}
+
+/// A list item that starts with a bold one-word key followed by a colon.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Req {
+    pub key: String,
+    pub line: u32,
+    /// Byte range of the whole list item, including nested content.
+    pub start: u32,
+    pub end: u32,
+    pub chunk: u32,
+    /// Hash of the sentence without the key and the alias marker.
+    pub hash: Hash,
+    pub aliases: Vec<String>,
+    /// The sentence, whitespace-normalized, without the alias marker.
+    pub text: String,
+}
+
+pub fn parse(text: &str) -> ParsedDoc {
+    let mut doc = ParsedDoc::default();
+    let lines = LineIndex::new(text);
+    let mut body_start = 0usize;
+    if let Some((fm, start)) = frontmatter::split(text) {
+        body_start = start;
+        match frontmatter::parse(fm, 2) {
+            Ok(v) => doc.front_matter = Some(v),
+            Err(e) => doc.front_matter_error = Some(e),
+        }
+    }
+    doc.body_start = body_start as u32;
+    let body = &text[body_start..];
+
+    let opts = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_WIKILINKS;
+
+    let mut code_chars = 0usize;
+    let mut in_code = false;
+    let mut heading: Option<(u8, usize, String)> = None;
+    let mut chunk_flags: Vec<u8> = vec![0];
+    // Chunk starts: (level, heading, start offset in body).
+    let mut starts: Vec<(u8, String, usize)> = vec![(0, String::new(), 0)];
+    let mut items: Vec<Item> = Vec::new();
+    let mut cands: Vec<Cand> = Vec::new();
+
+    for (ev, range) in Parser::new_ext(body, opts).into_offset_iter() {
+        // Requirement detection looks at the first events of the innermost item.
+        if let Some(item) = items.last_mut() {
+            item.step(&ev, range.start, range.end);
+        }
+        match ev {
+            Event::Start(Tag::Heading { level, .. }) => {
+                heading = Some((level as u8, range.start, String::new()));
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some((level, start, text)) = heading.take() {
+                    starts.push((level, text.trim().to_string(), start));
+                    chunk_flags.push(0);
+                }
+            }
+            Event::Start(Tag::CodeBlock(_)) => {
+                in_code = true;
+                code_chars += body[range.clone()].chars().count();
+            }
+            Event::End(TagEnd::CodeBlock) => in_code = false,
+            Event::Start(Tag::Item) => items.push(Item::new(range.start, range.end)),
+            Event::End(TagEnd::Item) => {
+                if let Some(item) = items.pop()
+                    && let Some(c) = item.finish()
+                {
+                    *chunk_flags.last_mut().unwrap() |= FLAG_REQUIREMENT;
+                    cands.push(c);
+                }
+            }
+            Event::Start(Tag::List(_)) => {
+                // A nested list ends the sentence of the enclosing item.
+                let n = items.len();
+                if n >= 2 {
+                    let parent = &mut items[n - 2];
+                    if parent.first_list.is_none() {
+                        parent.first_list = Some(range.start);
+                    }
+                } else if let Some(parent) = items.last_mut()
+                    && parent.first_list.is_none()
+                    && range.start > parent.start
+                {
+                    parent.first_list = Some(range.start);
+                }
+            }
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            }) => {
+                let kind = match link_type {
+                    LinkType::Autolink | LinkType::Email => None,
+                    LinkType::WikiLink { .. } => Some(RefKind::Wiki),
+                    _ => Some(RefKind::Link),
+                };
+                if let Some(kind) = kind {
+                    doc.refs.push(Ref {
+                        kind,
+                        target: dest_url.to_string(),
+                        line: lines.line(body_start + range.start),
+                    });
+                }
+            }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                doc.refs.push(Ref {
+                    kind: RefKind::Image,
+                    target: dest_url.to_string(),
+                    line: lines.line(body_start + range.start),
+                });
+            }
+            Event::Text(t) if !in_code => {
+                if let Some((_, _, h)) = heading.as_mut() {
+                    h.push_str(&t);
+                }
+                *chunk_flags.last_mut().unwrap() |= word_flags(&t);
+                scan_tokens(&t, lines.line(body_start + range.start), &mut doc.tokens);
+            }
+            Event::Code(t) => {
+                if let Some((_, _, h)) = heading.as_mut() {
+                    h.push_str(&t);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Build chunks. The level-0 chunk is kept only if it holds text.
+    let mut seen: Vec<String> = Vec::new();
+    for (i, (level, head, start)) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).map_or(body.len(), |s| s.2);
+        let slice = &body[*start..end];
+        if *level == 0 && slice.trim().is_empty() {
+            continue;
+        }
+        let anchor = if *level == 0 {
+            String::new()
+        } else {
+            unique_anchor(&slugify(head), &mut seen)
+        };
+        doc.chunks.push(Chunk {
+            level: *level,
+            heading: head.clone(),
+            anchor,
+            start: (body_start + start) as u32,
+            end: (body_start + end) as u32,
+            line: lines.line(body_start + start),
+            chars: slice.chars().count() as u32,
+            hash: hash_normalized(slice),
+            flags: chunk_flags[i],
+        });
+    }
+    doc.title = doc
+        .chunks
+        .iter()
+        .find(|c| c.level == 1)
+        .map(|c| c.heading.clone())
+        .unwrap_or_default();
+
+    // Requirements, attached to the chunk that holds them.
+    for c in cands {
+        let abs_start = body_start + c.start;
+        let chunk = doc
+            .chunks
+            .iter()
+            .rposition(|ch| ch.start as usize <= abs_start)
+            .unwrap_or(0) as u32;
+        let raw = &body[c.sentence_start..c.sentence_end];
+        let (clean, aliases) = strip_alias_marker(raw);
+        doc.reqs.push(Req {
+            key: c.key,
+            line: lines.line(abs_start),
+            start: abs_start as u32,
+            end: (body_start + c.end) as u32,
+            chunk,
+            hash: hash_normalized(&clean),
+            aliases,
+            text: crate::hash::normalize(&clean),
+        });
+    }
+
+    doc.body_chars = (body.chars().count() - code_chars) as u32;
+    let amend = doc
+        .chunks
+        .iter()
+        .position(|c| c.level == 2 && c.heading.eq_ignore_ascii_case("amendments"));
+    doc.amendments = amend.map(|i| i as u32);
+    let frozen_end = amend.map_or(text.len(), |i| doc.chunks[i].start as usize);
+    doc.frozen_hash = hash_normalized(&text[body_start..frozen_end]);
+    doc
+}
+
+struct Item {
+    start: usize,
+    end: usize,
+    /// 0: expecting the bold key, 1: inside it, 2: expecting `:`, 3: done.
+    phase: u8,
+    key: String,
+    sentence_start: usize,
+    first_list: Option<usize>,
+    candidate: bool,
+}
+
+struct Cand {
+    key: String,
+    start: usize,
+    end: usize,
+    sentence_start: usize,
+    sentence_end: usize,
+}
+
+impl Item {
+    fn new(start: usize, end: usize) -> Self {
+        Item {
+            start,
+            end,
+            phase: 0,
+            key: String::new(),
+            sentence_start: 0,
+            first_list: None,
+            candidate: false,
+        }
+    }
+
+    fn step(&mut self, ev: &Event, start: usize, end: usize) {
+        match (self.phase, ev) {
+            (0, Event::Start(Tag::Item)) if start == self.start => {}
+            (0, Event::Start(Tag::Paragraph)) => {}
+            (0, Event::Start(Tag::Strong)) => self.phase = 1,
+            (1, Event::Text(t)) => self.key.push_str(t),
+            (1, Event::End(TagEnd::Strong)) => {
+                if let Some(k) = self.key.strip_suffix(':') {
+                    // `**key:** sentence`
+                    self.key = k.to_string();
+                    self.finish_key(end);
+                } else {
+                    self.phase = 2;
+                }
+            }
+            (2, Event::Text(t)) if t.starts_with(':') => self.finish_key(start + 1),
+            (0..=2, _) => self.phase = 3,
+            _ => {}
+        }
+    }
+
+    fn finish_key(&mut self, sentence_start: usize) {
+        self.phase = 3;
+        let k = self.key.trim();
+        if !k.is_empty() && !k.contains(char::is_whitespace) {
+            self.key = k.to_string();
+            self.sentence_start = sentence_start;
+            self.candidate = true;
+        }
+    }
+
+    fn finish(self) -> Option<Cand> {
+        if !self.candidate {
+            return None;
+        }
+        let sentence_end = self.first_list.unwrap_or(self.end).max(self.sentence_start);
+        Some(Cand {
+            key: self.key,
+            start: self.start,
+            end: self.end,
+            sentence_start: self.sentence_start,
+            sentence_end,
+        })
+    }
+}
+
+/// Removes `<!-- aliases: a#b, c#d -->` and returns the aliases it lists.
+pub fn strip_alias_marker(raw: &str) -> (String, Vec<String>) {
+    let mut aliases = Vec::new();
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(pos) = rest.find("<!--") {
+        let after = &rest[pos + 4..];
+        let Some(close) = after.find("-->") else {
+            break;
+        };
+        let inner = after[..close].trim();
+        out.push_str(&rest[..pos]);
+        if let Some(list) = inner.strip_prefix("aliases:") {
+            aliases.extend(
+                list.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            );
+        } else {
+            out.push_str(&rest[pos..pos + 4 + close + 3]);
+        }
+        rest = &after[close + 3..];
+    }
+    out.push_str(rest);
+    (out, aliases)
+}
+
+const BCP14: [&str; 7] = [
+    "MUST",
+    "SHALL",
+    "SHOULD",
+    "MAY",
+    "REQUIRED",
+    "RECOMMENDED",
+    "OPTIONAL",
+];
+const STATUS_WORDS: [&str; 9] = [
+    "accepted",
+    "rejected",
+    "superseded",
+    "deprecated",
+    "retired",
+    "proposed",
+    "active",
+    "draft",
+    "done",
+];
+
+pub fn has_bcp14(text: &str) -> bool {
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .any(|w| BCP14.contains(&w))
+}
+
+fn word_flags(text: &str) -> u8 {
+    let mut flags = 0;
+    for w in text.split(|c: char| !c.is_ascii_alphabetic()) {
+        if w.is_empty() {
+            continue;
+        }
+        if BCP14.contains(&w) {
+            flags |= FLAG_BCP14;
+        } else if w.len() >= 4 && STATUS_WORDS.iter().any(|s| s.eq_ignore_ascii_case(w)) {
+            flags |= FLAG_STATUS_WORD;
+        }
+    }
+    flags
+}
+
+/// Collects `PREFIX-NUMBER` tokens: an uppercase ASCII prefix, a hyphen,
+/// digits, at word boundaries.
+fn scan_tokens(text: &str, line: u32, out: &mut Vec<Token>) {
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_uppercase() && (i == 0 || !is_word_byte(b[i - 1])) {
+            let start = i;
+            let mut j = i;
+            while j < b.len() && (b[j].is_ascii_uppercase() || b[j].is_ascii_digit()) {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'-' && j + 1 < b.len() && b[j + 1].is_ascii_digit() {
+                let mut k = j + 1;
+                while k < b.len() && b[k].is_ascii_digit() {
+                    k += 1;
+                }
+                if k == b.len() || !is_word_byte(b[k]) {
+                    out.push(Token {
+                        text: text[start..k].to_string(),
+                        line,
+                    });
+                }
+                i = k;
+                continue;
+            }
+            i = j.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn is_word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c >= 0x80
+}
+
+/// GitHub-style heading anchor: lowercase, letters, digits, `-` and `_`
+/// kept, spaces become `-`, everything else dropped.
+pub fn slugify(heading: &str) -> String {
+    let mut out = String::with_capacity(heading.len());
+    for ch in heading.trim().chars() {
+        if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+            out.extend(ch.to_lowercase());
+        } else if ch == ' ' {
+            out.push('-');
+        }
+    }
+    out
+}
+
+fn unique_anchor(base: &str, seen: &mut Vec<String>) -> String {
+    let mut anchor = base.to_string();
+    let mut n = 0;
+    while seen.contains(&anchor) {
+        n += 1;
+        anchor = format!("{base}-{n}");
+    }
+    seen.push(anchor.clone());
+    anchor
+}
+
+/// Maps byte offsets to 1-based line numbers.
+pub struct LineIndex {
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    pub fn new(text: &str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(memchr_iter(b'\n', text.as_bytes()).map(|i| i + 1));
+        LineIndex { starts }
+    }
+
+    pub fn line(&self, offset: usize) -> u32 {
+        match self.starts.binary_search(&offset) {
+            Ok(i) => i as u32 + 1,
+            Err(i) => i as u32,
+        }
+    }
+}
+
+fn memchr_iter(needle: u8, hay: &[u8]) -> impl Iterator<Item = usize> + '_ {
+    hay.iter()
+        .enumerate()
+        .filter(move |(_, b)| **b == needle)
+        .map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DOC: &str = "---\nstatus: active\n---\n# Session tokens\n\nIntro with ADR-12 and `ADR-13` in code.\n\n## Requirements\n\n- **token-expiry**: When a session token expires, the gateway SHALL reject the request. <!-- aliases: auth/old#ttl -->\n- **R-12**: The client MUST retry.\n  - nested note\n- plain item\n- **Note** this is not a key\n\n```md\n- **in-code**: ignored SHALL\n```\n\nSee [the guide](../guide.md#setup) and [[auth/session#token-expiry@3f2a9c1b7e0d4a11]].\n\n## Requirements\n\n## Amendments\n\nText.\n";
+
+    #[test]
+    fn sections_anchors_and_lines() {
+        let d = parse(DOC);
+        let heads: Vec<(&str, &str, u32)> = d
+            .chunks
+            .iter()
+            .map(|c| (c.heading.as_str(), c.anchor.as_str(), c.line))
+            .collect();
+        assert_eq!(
+            heads,
+            vec![
+                ("Session tokens", "session-tokens", 4),
+                ("Requirements", "requirements", 8),
+                ("Requirements", "requirements-1", 22),
+                ("Amendments", "amendments", 24)
+            ]
+        );
+        assert_eq!(d.title, "Session tokens");
+        assert_eq!(d.amendments, Some(3));
+        assert!(d.chunks[1].flags & FLAG_REQUIREMENT != 0);
+        assert!(d.chunks[1].flags & FLAG_BCP14 != 0);
+    }
+
+    #[test]
+    fn requirements_and_aliases() {
+        let d = parse(DOC);
+        let keys: Vec<&str> = d.reqs.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["token-expiry", "R-12"]);
+        let r = &d.reqs[0];
+        assert_eq!(r.aliases, vec!["auth/old#ttl".to_string()]);
+        assert_eq!(
+            r.text,
+            "When a session token expires, the gateway SHALL reject the request."
+        );
+        assert_eq!(r.line, 10);
+        assert_eq!(d.reqs[1].text, "The client MUST retry.");
+        // The alias marker does not change the hash.
+        let moved = DOC.replace(" <!-- aliases: auth/old#ttl -->", "");
+        assert_eq!(parse(&moved).reqs[0].hash, r.hash);
+    }
+
+    #[test]
+    fn references_and_tokens() {
+        let d = parse(DOC);
+        let refs: Vec<(RefKind, &str, u32)> = d
+            .refs
+            .iter()
+            .map(|r| (r.kind, r.target.as_str(), r.line))
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                (RefKind::Link, "../guide.md#setup", 20),
+                (
+                    RefKind::Wiki,
+                    "auth/session#token-expiry@3f2a9c1b7e0d4a11",
+                    20
+                )
+            ]
+        );
+        let toks: Vec<&str> = d.tokens.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(toks, vec!["ADR-12", "R-12"]);
+    }
+
+    #[test]
+    fn frozen_hash_ignores_amendments() {
+        let a = parse(DOC);
+        let b = parse(&format!("{DOC}More amendment text.\n"));
+        assert_eq!(a.frozen_hash, b.frozen_hash);
+        let c = parse(&DOC.replace("Intro with", "Changed intro with"));
+        assert_ne!(a.frozen_hash, c.frozen_hash);
+    }
+
+    #[test]
+    fn slugs() {
+        assert_eq!(
+            slugify("Context and Problem Statement"),
+            "context-and-problem-statement"
+        );
+        assert_eq!(slugify("Q&A: `foo()` / bar"), "qa-foo--bar");
+        assert_eq!(slugify("Привет, мир"), "привет-мир");
+    }
+
+    #[test]
+    fn body_chars_skip_code_blocks() {
+        let d = parse("# T\n\n```\ncode\n```\n");
+        // The fence lines are code; the final line end is not.
+        assert_eq!(d.body_chars, "# T\n\n\n".chars().count() as u32);
+    }
+}

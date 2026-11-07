@@ -1,0 +1,558 @@
+//! `spec-dna context` and `spec-dna show`: section-level serving with ids and
+//! hashes (ADR 0001, "Document types"; session 2 scope item 4).
+//!
+//! Order of assembly: the entry documents (or the requested sections), then
+//! the documents whose `applies-to` matches an entry or a given path, then
+//! the entries' `depends-on` targets (depth 1), then linked accepted
+//! decisions as summaries. For a spec or contract with requirements, only its
+//! title section and its requirement sections are served in full; a document
+//! without requirements is served in order. The remaining sections of these
+//! documents, and other documents the entries link to, are listed as stubs
+//! with id, hash and size, so each is one `show` call away. A section that
+//! does not fit the character budget is listed as a stub too.
+
+use crate::hash::hex;
+use crate::json::{self, Obj};
+use crate::model::{Corpus, Doc, DocType, LinkRes, Res};
+use crate::parse::{FLAG_REQUIREMENT, RefKind};
+use std::collections::HashSet;
+use std::path::Path;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tier {
+    Entry,
+    Concern,
+    Dependency,
+    Decision,
+    Rest,
+    Related,
+}
+
+impl Tier {
+    fn name(self) -> &'static str {
+        match self {
+            Tier::Entry => "entry",
+            Tier::Concern => "applies",
+            Tier::Dependency => "depends",
+            Tier::Decision => "decision",
+            Tier::Rest => "more",
+            Tier::Related => "linked",
+        }
+    }
+}
+
+pub struct Unit {
+    pub doc: u32,
+    pub chunk: usize,
+    pub tier: Tier,
+    pub full: bool,
+}
+
+pub struct Assembly {
+    pub entries: Vec<String>,
+    pub units: Vec<Unit>,
+    pub omitted: usize,
+    pub budget: u32,
+    pub used: u32,
+}
+
+/// A resolved target: a document and an optional fragment.
+pub fn resolve_target(c: &Corpus, t: &str) -> Option<(u32, Option<String>)> {
+    if let Some(&i) = c.by_path.get(t.trim_start_matches("./")) {
+        return Some((i, None));
+    }
+    match c.resolve(t) {
+        Res::Found(d, frag, true) => Some((d, frag)),
+        _ => None,
+    }
+}
+
+/// The section id of a chunk.
+pub fn section_id(d: &Doc, chunk: usize) -> String {
+    let a = &d.parsed.chunks[chunk].anchor;
+    if a.is_empty() {
+        d.id.clone()
+    } else {
+        format!("{}#{a}", d.id)
+    }
+}
+
+fn header(d: &Doc, chunk: usize, tier: &str) -> String {
+    let ch = &d.parsed.chunks[chunk];
+    let status = d
+        .status
+        .as_deref()
+        .map(|s| format!("/{s}"))
+        .unwrap_or_default();
+    format!(
+        "<!-- {} h:{} {}{status} {tier} -->\n",
+        section_id(d, chunk),
+        hex(&ch.hash),
+        d.ty.name()
+    )
+}
+
+fn stub_line(d: &Doc, chunk: usize, tier: Tier) -> String {
+    let ch = &d.parsed.chunks[chunk];
+    let title = if ch.heading.is_empty() {
+        d.parsed.title.as_str()
+    } else {
+        ch.heading.as_str()
+    };
+    format!(
+        "- `{}` h:{} {} chars ({}): {title}\n",
+        section_id(d, chunk),
+        hex(&ch.hash),
+        ch.chars,
+        tier.name()
+    )
+}
+
+pub fn assemble(
+    c: &Corpus,
+    targets: &[(u32, Option<String>)],
+    paths: &[String],
+    budget: u32,
+) -> Assembly {
+    let mut plan: Vec<(u32, usize, Tier)> = Vec::new();
+    let mut seen: HashSet<(u32, usize)> = HashSet::new();
+    let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
+        if seen.insert((d, ch)) {
+            plan.push((d, ch, t));
+        }
+    };
+    let entry_docs: Vec<u32> = {
+        let mut v: Vec<u32> = targets.iter().map(|t| t.0).collect();
+        v.dedup();
+        v
+    };
+    let mut rest: Vec<(u32, usize)> = Vec::new();
+
+    // 1. Entries.
+    for (d, frag) in targets {
+        let doc = &c.docs[*d as usize];
+        let chunks = &doc.parsed.chunks;
+        match frag {
+            Some(f) => {
+                let start = chunks
+                    .iter()
+                    .position(|ch| &ch.anchor == f)
+                    .or_else(|| doc.req(f).map(|r| doc.parsed.reqs[r].chunk as usize));
+                if let Some(s) = start {
+                    add(&mut plan, *d, s, Tier::Entry);
+                    let lvl = chunks[s].level;
+                    for (j, ch) in chunks.iter().enumerate().skip(s + 1) {
+                        if ch.level <= lvl {
+                            break;
+                        }
+                        add(&mut plan, *d, j, Tier::Entry);
+                    }
+                }
+                rest.extend((0..chunks.len()).map(|j| (*d, j)));
+            }
+            None => normative_units(c, *d, Tier::Entry, &mut plan, &mut rest, &mut add),
+        }
+    }
+
+    // 2. Documents whose `applies-to` matches an entry or a path.
+    let scopes: Vec<&str> = entry_docs
+        .iter()
+        .flat_map(|&d| {
+            [
+                c.docs[d as usize].id.as_str(),
+                c.docs[d as usize].path.as_str(),
+            ]
+        })
+        .chain(paths.iter().map(String::as_str))
+        .collect();
+    let mut concerns: Vec<u32> = c
+        .docs
+        .iter()
+        .enumerate()
+        .filter(|(i, d)| {
+            d.ty.is_normative()
+                && !d.is_inactive()
+                && !entry_docs.contains(&(*i as u32))
+                && d.applies_to
+                    .iter()
+                    .any(|p| scopes.iter().any(|s| crate::glob::matches_scope(p, s)))
+        })
+        .map(|(i, _)| i as u32)
+        .collect();
+    concerns.sort_by(|a, b| c.docs[*a as usize].id.cmp(&c.docs[*b as usize].id));
+    for d in concerns {
+        normative_units(c, d, Tier::Concern, &mut plan, &mut rest, &mut add);
+    }
+
+    // 3. Dependencies, depth 1.
+    for &e in &entry_docs {
+        for (t, _) in &c.docs[e as usize].depends_on {
+            if let Res::Found(d, frag, true) = c.resolve(t) {
+                match frag.and_then(|f| {
+                    let doc = &c.docs[d as usize];
+                    doc.parsed
+                        .chunks
+                        .iter()
+                        .position(|ch| ch.anchor == f)
+                        .or_else(|| doc.req(&f).map(|r| doc.parsed.reqs[r].chunk as usize))
+                }) {
+                    Some(ch) => {
+                        add(&mut plan, d, ch, Tier::Dependency);
+                        rest.extend((0..c.docs[d as usize].parsed.chunks.len()).map(|j| (d, j)));
+                    }
+                    None => normative_units(c, d, Tier::Dependency, &mut plan, &mut rest, &mut add),
+                }
+            }
+        }
+    }
+
+    // 4. Accepted decisions linked with an entry, in either direction.
+    let mut decisions: Vec<u32> = Vec::new();
+    for &e in &entry_docs {
+        for d in linked_docs(c, e) {
+            if is_accepted_decision(&c.docs[d as usize]) {
+                decisions.push(d);
+            }
+        }
+    }
+    for (i, d) in c.docs.iter().enumerate() {
+        if is_accepted_decision(d)
+            && linked_docs(c, i as u32)
+                .iter()
+                .any(|t| entry_docs.contains(t))
+        {
+            decisions.push(i as u32);
+        }
+    }
+    decisions.sort_by(|a, b| c.docs[*a as usize].id.cmp(&c.docs[*b as usize].id));
+    decisions.dedup();
+    for d in decisions {
+        let chunks = &c.docs[d as usize].parsed.chunks;
+        for (j, ch) in chunks.iter().enumerate() {
+            let summary = ch.level <= 1
+                || ch.heading.eq_ignore_ascii_case("decision outcome")
+                || ch.heading.eq_ignore_ascii_case("decision");
+            if summary {
+                add(&mut plan, d, j, Tier::Decision);
+            } else {
+                rest.push((d, j));
+            }
+        }
+    }
+
+    // 5. The rest of the documents above.
+    for (d, j) in rest {
+        add(&mut plan, d, j, Tier::Rest);
+    }
+
+    // 6. Other documents the entries link to, as stubs.
+    let mut related = 0;
+    for &e in &entry_docs {
+        for d in linked_docs(c, e) {
+            if related >= 20 {
+                break;
+            }
+            if !c.docs[d as usize].parsed.chunks.is_empty() && !plan.iter().any(|p| p.0 == d) {
+                add(&mut plan, d, 0, Tier::Related);
+                related += 1;
+            }
+        }
+    }
+
+    // Packing, in 2 passes. First the map: every planned section is listed
+    // as a stub, in priority order, within half of the budget. Then full
+    // text, in the same order, with what remains; a section in full replaces
+    // its stub. So every listed section is one `show` call away, however
+    // long the documents are.
+    let costs: Vec<(u32, u32)> = plan
+        .iter()
+        .map(|&(d, ch, tier)| {
+            let doc = &c.docs[d as usize];
+            let full =
+                doc.parsed.chunks[ch].chars + header(doc, ch, tier.name()).chars().count() as u32;
+            (full, stub_line(doc, ch, tier).chars().count() as u32)
+        })
+        .collect();
+    let mut listed = vec![false; plan.len()];
+    let mut used = 0u32;
+    for (i, &(_, stub)) in costs.iter().enumerate() {
+        if used + stub <= budget / 2 {
+            used += stub;
+            listed[i] = true;
+        }
+    }
+    let mut full = vec![false; plan.len()];
+    for (i, &(_, _, tier)) in plan.iter().enumerate() {
+        if matches!(tier, Tier::Rest | Tier::Related) {
+            continue;
+        }
+        let (f, stub) = costs[i];
+        let extra = if listed[i] { f.saturating_sub(stub) } else { f };
+        if used + extra <= budget {
+            used += extra;
+            full[i] = true;
+        }
+    }
+    let mut units = Vec::new();
+    let mut omitted = 0;
+    for (i, &(d, ch, tier)) in plan.iter().enumerate() {
+        if full[i] || listed[i] {
+            units.push(Unit {
+                doc: d,
+                chunk: ch,
+                tier,
+                full: full[i],
+            });
+        } else {
+            omitted += 1;
+        }
+    }
+    Assembly {
+        entries: entry_docs
+            .iter()
+            .map(|&d| c.docs[d as usize].id.clone())
+            .collect(),
+        units,
+        omitted,
+        budget,
+        used,
+    }
+}
+
+fn is_accepted_decision(d: &Doc) -> bool {
+    d.ty == DocType::Decision && d.status_str() == "accepted"
+}
+
+/// Requirement sections first; for a document without requirements, all of it.
+fn normative_units(
+    c: &Corpus,
+    d: u32,
+    tier: Tier,
+    plan: &mut Vec<(u32, usize, Tier)>,
+    rest: &mut Vec<(u32, usize)>,
+    add: &mut impl FnMut(&mut Vec<(u32, usize, Tier)>, u32, usize, Tier),
+) {
+    let doc = &c.docs[d as usize];
+    let has_reqs = doc
+        .parsed
+        .chunks
+        .iter()
+        .any(|ch| ch.flags & FLAG_REQUIREMENT != 0)
+        && doc.ty.has_requirements();
+    for (j, ch) in doc.parsed.chunks.iter().enumerate() {
+        if !has_reqs || ch.flags & FLAG_REQUIREMENT != 0 || ch.level <= 1 {
+            add(plan, d, j, tier);
+        } else {
+            rest.push((d, j));
+        }
+    }
+}
+
+/// Documents a document references explicitly (links, `[[ ]]`, front matter).
+pub fn linked_docs(c: &Corpus, d: u32) -> Vec<u32> {
+    let doc = &c.docs[d as usize];
+    let mut out = Vec::new();
+    for r in &doc.parsed.refs {
+        let hit = match r.kind {
+            RefKind::Wiki => match c.resolve(&r.target) {
+                Res::Found(t, _, _) => Some(t),
+                _ => None,
+            },
+            _ => match c.resolve_link(&doc.path, &r.target) {
+                LinkRes::File(_, Some(t), _) => Some(t),
+                _ => None,
+            },
+        };
+        out.extend(hit);
+    }
+    for (t, _) in doc.depends_on.iter().chain(&doc.supersedes) {
+        if let Res::Found(t, _, _) = c.resolve(t) {
+            out.push(t);
+        }
+    }
+    out.retain(|&t| t != d);
+    let mut seen = HashSet::new();
+    out.retain(|t| seen.insert(*t));
+    out
+}
+
+pub fn estimate_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+fn chunk_text<'a>(text: &'a str, d: &Doc, chunk: usize) -> &'a str {
+    let ch = &d.parsed.chunks[chunk];
+    text.get(ch.start as usize..ch.end as usize)
+        .unwrap_or("")
+        .trim_end()
+}
+
+pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
+    let mut texts: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    for u in a.units.iter().filter(|u| u.full) {
+        texts.entry(u.doc).or_insert_with(|| {
+            std::fs::read(root.join(&c.docs[u.doc as usize].path))
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default()
+        });
+    }
+    let full = a.units.iter().filter(|u| u.full).count();
+    let stubs = a.units.len() - full;
+    if as_json {
+        let units = a.units.iter().map(|u| {
+            let d = &c.docs[u.doc as usize];
+            let ch = &d.parsed.chunks[u.chunk];
+            let mut o = Obj::new()
+                .str("id", &section_id(d, u.chunk))
+                .str("doc", &d.id)
+                .str("path", &d.path)
+                .str("type", d.ty.name())
+                .opt_str("status", d.status.as_deref())
+                .str("anchor", &ch.anchor)
+                .str("heading", &ch.heading)
+                .num("line", ch.line)
+                .str("tier", u.tier.name())
+                .str("hash", &hex(&ch.hash))
+                .num("chars", ch.chars)
+                .str("mode", if u.full { "full" } else { "stub" });
+            if u.full {
+                o = o.str("text", chunk_text(&texts[&u.doc], d, u.chunk));
+            }
+            o.end()
+        });
+        let body = Obj::new()
+            .str("version", crate::adapters::VERSION)
+            .strs("entries", &a.entries)
+            .num("budget", a.budget)
+            .num("used", a.used)
+            .num("full", full)
+            .num("stubs", stubs)
+            .num("omitted", a.omitted)
+            .raw("units", &json::array(units))
+            .end();
+        let tokens = estimate_tokens(&body);
+        return format!(
+            "{}\n",
+            body.replacen('{', &format!("{{\"estimated_tokens\":{tokens},"), 1)
+        );
+    }
+    let mut out = String::new();
+    for u in a.units.iter().filter(|u| u.full) {
+        let d = &c.docs[u.doc as usize];
+        out.push_str(&header(d, u.chunk, u.tier.name()));
+        out.push_str(chunk_text(&texts[&u.doc], d, u.chunk));
+        out.push_str("\n\n");
+    }
+    if stubs > 0 {
+        out.push_str("<!-- not loaded; read one with `spec-dna show <id>` -->\n");
+        for u in a.units.iter().filter(|u| !u.full) {
+            out.push_str(&stub_line(&c.docs[u.doc as usize], u.chunk, u.tier));
+        }
+    }
+    if a.omitted > 0 {
+        out.push_str(&format!(
+            "<!-- {} more sections did not fit; raise --budget to list them -->\n",
+            a.omitted
+        ));
+    }
+    let head = format!(
+        "<!-- spec-dna context {}: {}; {full} sections in full, {stubs} listed; {} of {} characters; about {} tokens (estimated) -->\n\n",
+        crate::adapters::VERSION,
+        a.entries.join(", "),
+        a.used,
+        a.budget,
+        estimate_tokens(&out)
+    );
+    format!("{head}{}\n", out.trim_end())
+}
+
+/// `spec-dna show`: a document, a section with its subsections, or one
+/// requirement.
+pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) -> String {
+    let doc = &c.docs[d as usize];
+    let text = std::fs::read(root.join(&doc.path))
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let chunks = &doc.parsed.chunks;
+    let (kind, items): (&str, Vec<(String, String, u32, String)>) = match frag {
+        Some(f) if doc.req(f).is_some() && !chunks.iter().any(|ch| ch.anchor == f) => {
+            let r = &doc.parsed.reqs[doc.req(f).unwrap()];
+            let body = text
+                .get(r.start as usize..r.end as usize)
+                .unwrap_or("")
+                .trim_end()
+                .to_string();
+            (
+                "requirement",
+                vec![(format!("{}#{}", doc.id, r.key), hex(&r.hash), r.line, body)],
+            )
+        }
+        _ => {
+            let range: Vec<usize> =
+                match frag.and_then(|f| chunks.iter().position(|ch| ch.anchor == f)) {
+                    Some(s) => {
+                        let lvl = chunks[s].level;
+                        std::iter::once(s)
+                            .chain((s + 1..chunks.len()).take_while(|&j| chunks[j].level > lvl))
+                            .collect()
+                    }
+                    None => (0..chunks.len()).collect(),
+                };
+            let items = range
+                .into_iter()
+                .map(|j| {
+                    (
+                        section_id(doc, j),
+                        hex(&chunks[j].hash),
+                        chunks[j].line,
+                        chunk_text(&text, doc, j).to_string(),
+                    )
+                })
+                .collect();
+            (
+                if frag.is_some() {
+                    "section"
+                } else {
+                    "document"
+                },
+                items,
+            )
+        }
+    };
+    if as_json {
+        let units = items.iter().map(|(id, h, line, t)| {
+            Obj::new()
+                .str("id", id)
+                .str("hash", h)
+                .num("line", line)
+                .str("text", t)
+                .end()
+        });
+        return format!(
+            "{}\n",
+            Obj::new()
+                .str("doc", &doc.id)
+                .str("path", &doc.path)
+                .str("type", doc.ty.name())
+                .opt_str("status", doc.status.as_deref())
+                .opt_str("owner", doc.owner.as_deref())
+                .str("kind", kind)
+                .raw("units", &json::array(units))
+                .end()
+        );
+    }
+    let status = doc
+        .status
+        .as_deref()
+        .map(|s| format!("/{s}"))
+        .unwrap_or_default();
+    let mut out = String::new();
+    for (id, h, _, t) in items {
+        out.push_str(&format!(
+            "<!-- {id} h:{h} {}{status} {} -->\n{t}\n\n",
+            doc.ty.name(),
+            doc.path
+        ));
+    }
+    format!("{}\n", out.trim_end())
+}

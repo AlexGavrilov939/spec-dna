@@ -1,0 +1,22 @@
+[package]
+name = "git-access"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["cli"]
+cli = []
+gix = ["dep:gix"]
+
+[dependencies]
+gix = { version = "0.90.0", optional = true, default-features = false, features = ["sha1", "status", "revision", "parallel"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# gix names a field `rela_path` (repository-relative path); keep typos from rewriting it.
+[package.metadata.typos.default.extend-identifiers]
+rela_path = "rela_path"

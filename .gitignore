@@ -26,3 +26,6 @@ tmp/
 .claude/settings.local.json
 CLAUDE.local.md
 .playwright-mcp/
+
+# Rust build output
+/target/

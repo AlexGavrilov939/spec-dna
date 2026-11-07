@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0001. Information model
@@ -14,6 +14,7 @@ Evidence used (details in [the research matrix](../research/matrix.md); consumer
 - Corpus B (public proposal process, about 700 proposals): typed metadata with enums, cross-field rules and supersede links, validated on changed files only, works at this scale.
 - Corpus C (synthetic, 60 to 20,000 docs): used for performance, see [ADR 0002](0002-language.md).
 - An independent architecture review of the first draft found adoption, merge-safety and false-error risks. This version addresses them.
+- The owner's review of that version added requirement aliases, legacy requirement keys, budgets for amendments, content hashes from the first release, and a rule against automatic deletion. They are part of the decision below.
 
 ## Considered Options
 
@@ -30,7 +31,7 @@ Chosen option: 3. Option 1 fails at scale (matrix, section 3). Option 2 adds met
 | Layer | Content | Owner | Location |
 | --- | --- | --- | --- |
 | Standard | Rules, schemas, document types, diagnostic codes | spec-dna, versioned with SemVer | Inside the binary. The project pins a version |
-| Project configuration | Roots, per-root defaults, legacy id patterns, budgets, language policy, repository aliases | Project | `spec-dna.toml` at the repository root |
+| Project configuration | Roots, per-root defaults, legacy id and requirement key patterns, excluded paths, budgets, language policy, repository aliases | Project | `spec-dna.toml` at the repository root |
 | Project knowledge | The documents | Project | Where they already are. `init` proposes `docs/` for a new project |
 | Derived data | Index cache, maps, context bundles, diagnostics, statistics | Generated | Local cache, never committed |
 | Agent adapters | Entry points that call the CLI, plus a namespace-level index | Generated | `AGENTS.md` block, `CLAUDE.md` import, one skill. No normative rules |
@@ -52,7 +53,7 @@ A cross-cutting concern (security, logging, error handling) is one `spec` or `gu
 
 ### Metadata
 
-Each root in `spec-dna.toml` sets defaults: the type, the initial status, and legacy id patterns. A legacy document therefore needs no edit on adoption. Front matter overrides a default only where the root allows mixed types; a front-matter `type` that disagrees with a single-type root is an error.
+Each root in `spec-dna.toml` sets defaults: the type, the initial status, legacy id patterns and legacy requirement key patterns. A legacy document therefore needs no edit on adoption. Excluded paths (vendored or generated documents) are configured generically, globally or per root; they are not documents, although links to them still resolve as files. Front matter overrides a default only where the root allows mixed types; a front-matter `type` that disagrees with a single-type root is an error.
 
 | Field | Required for | Meaning |
 | --- | --- | --- |
@@ -90,15 +91,25 @@ A requirement is a list item that starts with a bold key, inside a `spec` or `co
 - **token-expiry**: When a session token expires, the gateway SHALL reject the request with status 401.
 ```
 
-The key is a slug unique within the document (never a counter); its global form is `<doc-id>#<key>`. The sentence uses BCP 14 keywords in uppercase and an EARS pattern. Pattern conformance is checked as a warning.
+The key is unique within the document (never a counter); its global form is `<doc-id>#<key>`. The sentence uses BCP 14 keywords in uppercase and an EARS pattern. Pattern conformance is checked as a warning.
+
+- New keys are slugs: lowercase ASCII letters and digits in hyphen-separated groups. An existing key such as `R-12` is kept as written: each root declares its legacy key patterns (for example `R-{n}`), and a key that matches one is valid. A key that is neither a slug nor a legacy key is an error.
+- A requirement can move to another document, for example when a document is split or merged. `spec-dna mv <doc-id>#<key> <doc-id>` moves the list item and records the old global form as an alias of the requirement, inline on one line of the item:
+
+  ```md
+  - **token-expiry**: When a session token expires, the gateway SHALL reject the request with status 401. <!-- aliases: auth/session#token-expiry -->
+  ```
+
+  The marker is an HTML comment, so rendered views do not show it. It lists one or more earlier global forms, separated by commas. A reference to an alias resolves to the requirement, and uniqueness is checked over global forms and their aliases together. A document alias also carries its keys: after a document moves, `<old-id>#<key>` keeps resolving.
+- Removing a requirement is allowed. A removed requirement that something still cites is an unresolved explicit reference.
 
 ### Lifecycle
 
 | Type | States | Checked between base and head |
 | --- | --- | --- |
 | `spec`, `contract`, `guide` | `draft` → `active` → `deprecated` → `superseded` or `retired` (`deprecated` is optional) | `superseded` needs a successor in `active` whose `supersedes` names it. No supersede cycles. A new `depends-on` to a `deprecated` document is a warning; to `superseded` or `retired`, an error |
-| `decision` | `proposed` → `accepted` → `superseded`; or `rejected` | `superseded` needs an `accepted` successor. Text above an `## Amendments` section is frozen once `accepted`; amendments are appended |
-| `change` | `proposed` → `accepted` → `done`; or `rejected` | Only the state order. A `done` or `rejected` change is deleted once nothing cites it; git history is the archive |
+| `decision` | `proposed` → `accepted` → `superseded`; or `rejected` | `superseded` needs an `accepted` successor. Text above an `## Amendments` section is frozen once `accepted`; amendments are appended and count toward the decision budget. An amendment that changes the outcome needs a new superseding decision: new amendment text that states a requirement, uses a BCP 14 keyword or uses a status word is a warning |
+| `change` | `proposed` → `accepted` → `done`; or `rejected` | Only the state order. spec-dna never deletes a document. A migration may propose deleting a `done` or `rejected` change once nothing cites it and only after its decisions exist as `decision` documents. Each deletion batch needs explicit owner approval; git history is the archive |
 | `note` | none | none |
 
 "Implementing" and "verified" are not typed states; typed progress states go stale. Superseded, retired and deprecated documents stay in place while anything cites them, so links keep working. Context assembly skips them unless asked.
@@ -114,6 +125,8 @@ spec-dna parses the requirement map (key to whitespace-normalized sentence) of e
 | R2 | Requirements change in a document with dependents, a contract's structure changes, or a decision changes status | R1, plus an impact report: every transitive dependent through `depends-on` and explicit references, grouped by `owner` |
 
 The impact report does not block. The break worth blocking, a removed `<doc-id>#<key>` that something still cites, is already an unresolved explicit reference. Stored suspect links (the target's hash at review time, as in Doorstop) are a later option if a blocking R2 check proves necessary.
+
+Hashes exist from the first release, so suspect links need no format change later. The index stores a normalized hash for every requirement and every section, and `context` and `show` print it next to the id. Normalization: Unicode NFC, LF line ends, runs of whitespace collapsed to one space, leading and trailing whitespace removed. A requirement's hash covers its sentence without the key and without the alias marker, so a move or a key rename keeps it. The hash is the first 16 hexadecimal digits of SHA-256 over the normalized UTF-8 text. A reference MAY end with `@<hash>` (`[[auth/session#token-expiry@3f2a9c1b7e0d4a11]]`). spec-dna parses that suffix and ignores it until suspect links are added.
 
 ### Knowledge boundaries
 
@@ -145,7 +158,7 @@ CI fails only on error diagnostics that are new relative to the merge base, fing
 
 No check reads a human-typed date.
 
-Budgets count Unicode characters of body text, excluding front matter and code blocks, so they work for every script. Defaults: `spec` and `change` 10,000 soft and 20,000 hard (about 1,500 and 3,000 English words); `decision` 7,000 and 14,000; `guide` 14,000 and 28,000. Context assembly serves sections by heading anchor, so a long file costs less than its size, but it still has to be read and maintained.
+Budgets count Unicode characters of body text, excluding front matter and code blocks, so they work for every script. Text under `## Amendments` counts. Defaults: `spec` and `change` 10,000 soft and 20,000 hard (about 1,500 and 3,000 English words); `decision` 7,000 and 14,000; `guide` 14,000 and 28,000. Context assembly serves sections by heading anchor, so a long file costs less than its size, but it still has to be read and maintained.
 
 ### Diagrams
 
@@ -163,6 +176,6 @@ Diagram source (Mermaid, PlantUML, Structurizr DSL) in fenced blocks inside the 
 
 - Good: zero edits to adopt; ids cannot drift from paths; legacy ids keep resolving; gates are reproducible from the repository and two git trees.
 - Good: the context unit is a section with an id and a hash, so agents can cite and re-check what they loaded.
-- Bad: a move needs `spec-dna mv` or a hand-written alias; slugs need naming discipline.
+- Bad: a move needs `spec-dna mv` or a hand-written alias, for documents and for requirements; slugs need naming discipline.
 - Bad: base-relative gating hides legacy debt from CI. `--all` and the main-branch report keep it visible.
 - Neutral: this repository's own ADR file names carry a number, as the session brief prescribed. The model allows numbers in slugs; it does not require them.

@@ -1,0 +1,21 @@
+spec-dna = "0.1.0"
+exclude = ["docs/vendor/**"]
+
+[[roots]]
+path = "docs"
+type = "mixed"
+default-type = "spec"
+status = "active"
+legacy-keys = ["R-{n}"]
+
+[[roots]]
+path = "docs/decisions"
+type = "decision"
+legacy-ids = ["ADR-{n}"]
+
+[budgets.note]
+soft = 300
+hard = 600
+
+[context]
+budget = 2500

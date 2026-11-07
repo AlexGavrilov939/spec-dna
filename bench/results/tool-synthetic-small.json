@@ -1,0 +1,91 @@
+{
+  "files": 75,
+  "git": "git version 2.50.1 (Apple Git-155)",
+  "host": {
+    "cpus": 16,
+    "machine": "arm64",
+    "system": "Darwin 25.6.0"
+  },
+  "incremental_agrees_with_full": true,
+  "incremental_parsed": 10,
+  "index_mb": 0.06,
+  "label": "synthetic-small",
+  "load_avg_1m": [
+    6.38,
+    6.35
+  ],
+  "measured": "2026-11-07 17:46:29 +0100",
+  "modes": {
+    "cold": {
+      "max_ms": 22.79,
+      "median_ms": 21.09,
+      "min_ms": 19.32,
+      "peak_rss_mb": 5.4,
+      "runs": 15,
+      "stdev_ms": 0.92
+    },
+    "context_0": {
+      "max_ms": 20.4,
+      "median_ms": 18.61,
+      "min_ms": 17.25,
+      "peak_rss_mb": 5.4,
+      "runs": 15,
+      "stdev_ms": 0.88,
+      "target": "context 0",
+      "units_full": 10,
+      "units_stub": 8,
+      "used_chars": 4193
+    },
+    "full": {
+      "max_ms": 20.8,
+      "median_ms": 19.88,
+      "min_ms": 18.16,
+      "peak_rss_mb": 5.4,
+      "runs": 15,
+      "stdev_ms": 0.97
+    },
+    "incremental": {
+      "max_ms": 22.33,
+      "median_ms": 21.53,
+      "min_ms": 19.63,
+      "peak_rss_mb": 5.4,
+      "runs": 15,
+      "stdev_ms": 0.82
+    },
+    "startup": {
+      "max_ms": 2.86,
+      "median_ms": 2.47,
+      "min_ms": 2.12,
+      "peak_rss_mb": 1.8,
+      "runs": 15,
+      "stdev_ms": 0.2
+    },
+    "warm": {
+      "max_ms": 19.73,
+      "median_ms": 18.85,
+      "min_ms": 17.89,
+      "peak_rss_mb": 5.4,
+      "runs": 15,
+      "stdev_ms": 0.57
+    },
+    "warm_base": {
+      "max_ms": 23.91,
+      "median_ms": 22.5,
+      "min_ms": 20.34,
+      "peak_rss_mb": 5.4,
+      "runs": 15,
+      "stdev_ms": 1.06
+    }
+  },
+  "modes_agree": true,
+  "summary": {
+    "documents": 72,
+    "errors": 0,
+    "new_errors": 0,
+    "new_warnings": 0,
+    "warnings": 0
+  },
+  "tool": "spec-dna 0.1.0",
+  "touched": 10,
+  "warm_parsed": 0
+}

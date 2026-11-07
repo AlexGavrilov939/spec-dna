@@ -1,0 +1,29 @@
+[package]
+name = "spec-dna"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Keeps engineering specifications small, linked and machine-checked, and serves AI coding agents the minimum sufficient context."
+license = "Apache-2.0"
+repository = "https://github.com/AlexGavrilov939/spec-dna"
+readme = "README.md"
+include = ["src/**", "schema/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+
+[[bin]]
+name = "spec-dna"
+path = "src/main.rs"
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
+unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# The benchmark prototypes under bench/ are separate packages.
+[workspace]
+exclude = ["bench"]
