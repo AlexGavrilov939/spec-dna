@@ -1,5 +1,5 @@
 name: Bug report
-description: Something does not work as documented.
+description: Something does not work as the documentation says.
 labels: [bug]
 body:
   - type: textarea
@@ -31,5 +31,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Relevant output. Remove secrets first.
+      description: The output that relates to the problem. Remove secrets before you add it.
       render: text
