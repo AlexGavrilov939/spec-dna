@@ -99,9 +99,71 @@ impl Repo {
         Config::parse(&text).map_err(|e| Fatal::Config(format!("{}: {e}", config::FILE_NAME)))
     }
 
+    /// The commit `HEAD` points to, read from the git directory without
+    /// starting git; falls back to `git rev-parse` for layouts it does not
+    /// read (reftable, unusual worktrees). `None` before the first commit.
+    pub fn head_commit(&self) -> Option<String> {
+        let read = |p: PathBuf| {
+            std::fs::read_to_string(p)
+                .ok()
+                .map(|s| s.trim().to_string())
+        };
+        let common = read(self.git_dir.join("commondir"))
+            .map_or(self.git_dir.clone(), |c| self.git_dir.join(c));
+        let fallback = || self.git.commit("HEAD");
+        if common.join("reftable").exists() {
+            return fallback();
+        }
+        let head = read(self.git_dir.join("HEAD"))?;
+        let Some(name) = head.strip_prefix("ref: ") else {
+            return if is_oid(&head) {
+                Some(head)
+            } else {
+                fallback()
+            };
+        };
+        for dir in [&self.git_dir, &common] {
+            if let Some(oid) = read(dir.join(name)).filter(|o| is_oid(o)) {
+                return Some(oid);
+            }
+        }
+        if let Some(packed) = read(common.join("packed-refs")) {
+            for line in packed.lines() {
+                if let Some((oid, r)) = line.split_once(' ')
+                    && r == name
+                    && is_oid(oid)
+                {
+                    return Some(oid.to_string());
+                }
+            }
+            return None;
+        }
+        if common.join("refs").is_dir() {
+            None
+        } else {
+            fallback()
+        }
+    }
+
     pub fn index_path(&self) -> PathBuf {
         self.git_dir.join("spec-dna").join("index-v1.bin")
     }
+}
+
+fn is_oid(s: &str) -> bool {
+    (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The status pathspec: the document roots, or nothing for the whole tree.
+pub fn root_paths(config: &Config) -> Vec<String> {
+    if config.roots.iter().any(|r| r.path.is_empty()) {
+        return Vec::new();
+    }
+    config
+        .roots
+        .iter()
+        .map(|r| format!(":(literal){}", r.path))
+        .collect()
 }
 
 /// One file of a tree. `blob` is `None` for a working-tree file whose
@@ -126,9 +188,11 @@ impl Snapshot {
 
     /// The working tree: tracked files (minus deleted ones) and untracked
     /// files that git does not ignore.
-    pub fn worktree(repo: &Repo) -> Result<Snapshot, Fatal> {
+    /// `paths` limits the search for changed and untracked files (the
+    /// document roots); the file list itself always covers the whole index.
+    pub fn worktree(repo: &Repo, paths: &[String]) -> Result<Snapshot, Fatal> {
         let (files, status) = std::thread::scope(|s| {
-            let st = s.spawn(|| repo.git.status());
+            let st = s.spawn(|| repo.git.status(paths));
             let files = repo.git.ls_files();
             (
                 files,
@@ -203,6 +267,7 @@ pub fn load(
     use_cache: bool,
     prune: bool,
 ) -> Result<Loaded, Fatal> {
+    let mut t = std::time::Instant::now();
     let mut index = if use_cache {
         Index::load(repo.index_path())
     } else {
@@ -243,6 +308,7 @@ pub fn load(
         per_snap.push(docs);
     }
 
+    trace("index load", &mut t);
     let blob_ids: Vec<String> = jobs
         .iter()
         .filter_map(|(s, _)| {
@@ -266,6 +332,7 @@ pub fn load(
         Ok(parse(&String::from_utf8_lossy(&bytes)))
     });
 
+    trace("read and parse", &mut t);
     let mut worktree_docs: HashMap<String, Arc<ParsedDoc>> = HashMap::new();
     let parsed = results.len();
     for ((src, blob), res) in jobs.into_iter().zip(results) {
@@ -304,15 +371,28 @@ pub fn load(
             .collect();
         corpora.push(Corpus::build(config, files, docs));
     }
+    trace("build corpora", &mut t);
     if use_cache && changed {
         // The index is a cache: failing to write it is not an error.
         let _ = index.save();
+        trace("index save", &mut t);
     }
     Ok(Loaded {
         corpora,
         parsed,
         cached,
     })
+}
+
+/// Phase timings on stderr when `SPEC_DNA_TRACE` is set (for profiling).
+pub fn trace(phase: &str, since: &mut std::time::Instant) {
+    if std::env::var_os("SPEC_DNA_TRACE").is_some() {
+        eprintln!(
+            "trace {phase:<18} {:7.2} ms",
+            since.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    *since = std::time::Instant::now();
 }
 
 /// Maps items on all cores. Small inputs run on the calling thread.

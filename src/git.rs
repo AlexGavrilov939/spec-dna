@@ -76,15 +76,19 @@ impl Git {
         Ok(v)
     }
 
-    pub fn status(&self) -> Result<Status, String> {
-        let out = self.run(&[
+    /// Working-tree changes, limited to `paths` (all of the tree if empty).
+    pub fn status(&self, paths: &[String]) -> Result<Status, String> {
+        let mut args = vec![
             "status",
             "--porcelain=v2",
             "-z",
             "--untracked-files=all",
             "--no-renames",
             "--ignore-submodules=all",
-        ])?;
+            "--",
+        ];
+        args.extend(paths.iter().map(String::as_str));
+        let out = self.run(&args)?;
         let mut st = Status::default();
         let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
         while let Some(rec) = recs.next() {

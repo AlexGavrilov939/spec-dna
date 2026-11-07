@@ -286,38 +286,54 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         )));
     }
     // The base: the merge base of --base and HEAD, or HEAD. None without commits.
-    let head_commit = repo.git.commit("HEAD");
+    let mut t = std::time::Instant::now();
     let base_commit = if a.all {
         None
     } else {
         match &a.base {
             Some(rev) => {
                 let c = repo.git.commit(rev).ok_or_else(|| {
-                    Fatal::Config(format!("base `{rev}` is not a commit here; fetch it first (a depth-1 fetch of the base commit is enough)"))
+                    Fatal::Config(format!(
+                        "base `{rev}` is not a commit here; fetch it first (a depth-1 fetch of the base commit is enough)"
+                    ))
                 })?;
-                Some(match &head_commit {
-                    Some(h) => repo.git.merge_base(&c, h).unwrap_or(c),
+                Some(match repo.head_commit() {
+                    Some(h) => repo.git.merge_base(&c, &h).unwrap_or(c),
                     None => c,
                 })
             }
-            None => head_commit.clone(),
+            None => repo.head_commit(),
         }
     };
-    let head_snap = Snapshot::worktree(repo)?;
-    let base_snap = match &base_commit {
-        Some(c) => Snapshot::at(repo, c)?,
-        None => Snapshot::empty(),
-    };
+    repo::trace("resolve base", &mut t);
+    // The working tree and the base tree are listed in parallel.
+    let roots = repo::root_paths(&cfg);
+    let (head_snap, base_snap) = std::thread::scope(|s| {
+        let base = s.spawn(|| match &base_commit {
+            Some(c) => Snapshot::at(repo, c),
+            None => Ok(Snapshot::empty()),
+        });
+        let head = Snapshot::worktree(repo, &roots);
+        (
+            head,
+            base.join()
+                .unwrap_or_else(|_| Err(Fatal::Io("listing the base tree failed".into()))),
+        )
+    });
+    let (head_snap, base_snap) = (head_snap?, base_snap?);
     let use_base = base_commit.is_some();
     let snaps: Vec<&Snapshot> = if use_base {
         vec![&head_snap, &base_snap]
     } else {
         vec![&head_snap]
     };
+    repo::trace("git base tree", &mut t);
     let loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
+    t = std::time::Instant::now();
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
     let mut outcome = check::gate(&cfg, base, head);
+    repo::trace("diagnose", &mut t);
     // Adapters.
     let head_ad = adapters::check(&adapter_texts(repo, &head_snap)?);
     let base_ad: Vec<_> = if use_base {
@@ -394,7 +410,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 fn load_head(repo: &Repo, a: &Args) -> Result<(config::Config, model::Corpus), Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
-    let snap = Snapshot::worktree(repo)?;
+    let snap = Snapshot::worktree(repo, &repo::root_paths(&cfg))?;
     let mut loaded = repo::load(repo, &cfg, &[&snap], !a.no_cache, false)?;
     Ok((cfg, loaded.corpora.remove(0)))
 }
