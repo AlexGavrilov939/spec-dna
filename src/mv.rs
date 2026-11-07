@@ -4,7 +4,7 @@
 
 use crate::config::Config;
 use crate::frontmatter::{self, Value};
-use crate::model::{Corpus, doc_id, is_doc_path};
+use crate::model::{Corpus, is_doc_path};
 use crate::repo::{Fatal, Repo};
 use std::path::Path;
 
@@ -49,7 +49,7 @@ fn move_document(
                 "`{to_path}` is not under a document root of spec-dna.toml"
             ))
         })?;
-    let new_id = doc_id(config.roots[new_root].rel(&to_path));
+    let new_id = crate::model::root_doc_id(&config.roots[new_root], &to_path);
     if new_id == doc.id {
         return Err(Fatal::Usage(format!(
             "`{to_path}` has the same id `{new_id}`"

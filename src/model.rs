@@ -131,6 +131,20 @@ pub fn doc_id(rel: &str) -> String {
     stem.to_string()
 }
 
+/// The id of a document under a root. A `README.md` or `index.md` takes the
+/// name of its directory, so one directly in a root takes the root's name.
+pub fn root_doc_id(root: &crate::config::Root, path: &str) -> String {
+    let rel = root.rel(path);
+    let id = doc_id(rel);
+    if !id.contains('/')
+        && (id.eq_ignore_ascii_case("readme") || id.eq_ignore_ascii_case("index"))
+        && let Some(name) = root.path.rsplit('/').next().filter(|n| !n.is_empty())
+    {
+        return name.to_string();
+    }
+    id
+}
+
 pub fn is_doc_path(path: &str) -> bool {
     path.ends_with(".md") || path.ends_with(".markdown")
 }
@@ -338,7 +352,7 @@ impl Corpus {
 fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     let root_i = config.root_of(&path).expect("documents are inside a root");
     let root = &config.roots[root_i];
-    let id = nfc(&doc_id(root.rel(&path))).into_owned();
+    let id = nfc(&root_doc_id(root, &path)).into_owned();
     let slug = id.rsplit('/').next().unwrap_or(&id).to_string();
     let mut issues = Vec::new();
     if let Some((line, msg)) = &parsed.front_matter_error {
@@ -621,6 +635,13 @@ mod tests {
         assert_eq!(doc_id("auth/session.md"), "auth/session");
         assert_eq!(doc_id("auth/README.md"), "auth");
         assert_eq!(doc_id("README.md"), "README");
+        let cfg = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"a/agents\"\n[[roots]]\npath = \".\"\n",
+        )
+        .unwrap();
+        assert_eq!(root_doc_id(&cfg.roots[0], "a/agents/README.md"), "agents");
+        assert_eq!(root_doc_id(&cfg.roots[0], "a/agents/x/README.md"), "x");
+        assert_eq!(root_doc_id(&cfg.roots[1], "README.md"), "README");
         assert_eq!(canonical("ADR-012"), "ADR-12");
         assert_eq!(canonical("auth/session"), "auth/session");
     }

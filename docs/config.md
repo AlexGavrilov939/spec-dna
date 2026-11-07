@@ -57,4 +57,4 @@ Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000;
 
 ## Documents
 
-A document is a tracked or untracked, not ignored, `.md` or `.markdown` file under a root and outside every exclude. Its id is its path under the root without the extension; a `README.md` or `index.md` takes the id of its directory. Front matter is described in [ADR 0001](adr/0001-information-model.md), section "Metadata".
+A document is a tracked or untracked, not ignored, `.md` or `.markdown` file under a root and outside every exclude. Its id is its path under the root without the extension; a `README.md` or `index.md` takes the id of its directory, and one directly in a root takes the name of the root directory. Front matter is described in [ADR 0001](adr/0001-information-model.md), section "Metadata".
