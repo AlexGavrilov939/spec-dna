@@ -120,7 +120,7 @@ Each variant ran 7 times after 1 discarded run, interleaved with the other varia
 
 - All 5 modes printed byte-identical summaries on every run of every corpus, for both blob selections.
 - Warm path (10 changed blobs): gix is the fastest on all corpora. The best CLI variant, `cli-par-direct`, is 6.6, 9.4 and 6.0 ms slower (medium, large, corpus B). Through the macOS shim (`cli-par`), the gap is 25.7, 22.6 and 17.3 ms. The sequential `cli` of the first specification is 54.8, 67.2 and 52.9 ms slower.
-- Cold path (all `.md` blobs): the read and the inflation of blobs take most of the time. gix is faster than `cli-par-direct` by 0.2 ms (0%) on corpus B, 18.7 ms (6%) on the large corpus and 7.4 ms (26%) on the medium corpus. On corpus B, `git cat-file` alone reads the blobs faster than gix (29.5 against 36.0 ms).
+- Cold path (all `.md` blobs): the read and the inflation of blobs take most of the time. gix is faster than `cli-par-direct` on each corpus. The difference is 0.2 ms (0%) on corpus B, 18.7 ms (6%) on the large corpus and 7.4 ms (26%) on the medium corpus. On corpus B, `git cat-file` alone reads the blobs faster than gix (29.5 against 36.0 ms).
 - Step 1 (index and status) takes 4.8, 40.1 and 15.4 ms in gix. In `cli-direct`, it takes 10.3, 52.8 and 21.4 ms, with about 4 ms of process start. On the large corpus, the status of gix itself is faster.
 - The rest of the CLI gap is probably process start. Here, each direct git process costs about 4 ms, and the critical path of `cli-par` has 2 to 3 process lifetimes (estimated, not profiled).
 - The cost of gix is 111 crates, an 8.3 times larger binary (3.65 against 0.44 MB) and a 12 to 15 times longer clean build.

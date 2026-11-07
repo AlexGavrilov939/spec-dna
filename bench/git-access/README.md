@@ -22,7 +22,7 @@ Modes:
 | --- | --- |
 | `cli` | `git ls-files -s -z` and `git status --porcelain=v2 -z --untracked-files=all --no-renames` at the same time, then `git merge-base HEAD <rev>`, then `git ls-tree -r -z --full-tree <base>`, then one `git cat-file --batch` with the ids on stdin. Every process runs with `GIT_OPTIONAL_LOCKS=0`, so git never writes the index. |
 | `cli-par` | The same processes. Each process starts as early as its input allows: `ls-files`, `status`, `merge-base` and `cat-file` at once, and `ls-tree` when `merge-base` ends. |
-| `gix` | In-process: `gix::open`, the index, `status` (index against the working tree, untracked files listed one by one, renames off), `rev_parse_single`, `merge_base`, a breadth-first tree traversal, and `find_object` for each blob. |
+| `gix` | In-process. It uses `gix::open`, the index and `status` (index against the working tree, untracked files listed one by one, renames off). It also uses `rev_parse_single`, `merge_base`, a breadth-first tree traversal, and `find_object` for each blob. |
 
 Both CLI modes run `git` from `PATH`, or the executable in `GIT_ACCESS_GIT`. On macOS, `/usr/bin/git` is an `xcrun` shim that adds about 7 ms to each process (see results). Thus, the harness also runs both CLI modes with the real binary (`cli-direct`, `cli-par-direct`).
 
