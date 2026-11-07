@@ -17,6 +17,7 @@ mod lint;
 mod model;
 mod mv;
 mod parse;
+mod rank;
 mod repo;
 
 use crate::adapters::VERSION;
@@ -33,8 +34,9 @@ Commands:
     check [--base <rev>] [--all]
         Report diagnostics that are new against the merge base of <rev> and
         HEAD (default: HEAD). --all reports every diagnostic.
-    context <target>... [--path <file>]... [--budget <chars>]
-        Assemble the sections an agent needs for the targets.
+    context <target>... [--path <file>]... [--budget <chars>] [--query <text>]
+        Assemble the sections an agent needs for the targets. With --query,
+        sections that match the words of the text come first.
     show <id>[#<anchor>]
         Print a document, a section or a requirement.
     mv <from> <to>
@@ -59,6 +61,7 @@ struct Args {
     paths: Vec<String>,
     budget: Option<u32>,
     root: Option<String>,
+    query: Option<String>,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -72,6 +75,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         paths: Vec::new(),
         budget: None,
         root: None,
+        query: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -94,6 +98,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
+            "--query" => a.query = Some(value("--query")?),
             "--budget" => {
                 let v = value("--budget")?;
                 a.budget = Some(
@@ -437,7 +442,17 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             }
         }
     }
-    let asm = context::assemble(&c, &targets, &paths, a.budget.unwrap_or(cfg.context_budget));
+    let query = a.query.as_deref().map(|q| context::Query {
+        root: &repo.root,
+        terms: rank::terms(q),
+    });
+    let asm = context::assemble(
+        &c,
+        &targets,
+        &paths,
+        a.budget.unwrap_or(cfg.context_budget),
+        query.as_ref(),
+    );
     print!("{}", context::render(&c, &repo.root, &asm, a.json));
     Ok(0)
 }

@@ -86,6 +86,9 @@ pub struct Doc {
     pub issues: Vec<Issue>,
     /// Indices into `parsed.reqs` of the valid requirements.
     pub reqs: Vec<usize>,
+    /// For a decision, the chunks whose heading is one of the root's
+    /// decision sections.
+    pub outcome: Vec<usize>,
 }
 
 impl Doc {
@@ -180,7 +183,8 @@ pub enum LinkRes {
     External,
     /// A tracked file (and the document index if it is one) with a fragment.
     File(String, Option<u32>, Option<String>),
-    Dir,
+    /// A directory, with the document of its `README.md` or `index.md`.
+    Dir(Option<u32>),
     SelfAnchor(String),
     Missing(String),
 }
@@ -194,6 +198,7 @@ pub struct Corpus {
     pub req_aliases: HashMap<String, Vec<(u32, usize)>>,
     pub token_prefixes: Vec<String>,
     pub repos: Vec<String>,
+    pub self_urls: Vec<String>,
 }
 
 impl Corpus {
@@ -254,6 +259,7 @@ impl Corpus {
             req_aliases,
             token_prefixes: config.token_prefixes(),
             repos: config.repos.iter().map(|r| r.0.clone()).collect(),
+            self_urls: config.self_urls.clone(),
         }
     }
 
@@ -314,22 +320,31 @@ impl Corpus {
     /// Resolves a Markdown link target from the document at `from`.
     pub fn resolve_link(&self, from: &str, target: &str) -> LinkRes {
         let t = target.trim();
-        if t.is_empty() || t.starts_with("//") || has_scheme(t) {
+        if t.is_empty() {
             return LinkRes::External;
         }
+        // A URL under one of `self-urls` is a path from the repository root.
+        let (t, absolute) = if t.starts_with("//") || has_scheme(t) {
+            match self.self_urls.iter().find_map(|p| strip_url_prefix(p, t)) {
+                Some(rest) => (rest, true),
+                None => return LinkRes::External,
+            }
+        } else {
+            (t, false)
+        };
         let (path_part, frag) = match t.split_once('#') {
             Some((p, f)) => (p, Some(percent_decode(f))),
             None => (t, None),
         };
         let path_part = path_part.split('?').next().unwrap_or("");
-        if path_part.is_empty() {
+        if path_part.is_empty() && !absolute {
             return match frag {
                 Some(f) => LinkRes::SelfAnchor(f),
                 None => LinkRes::External,
             };
         }
         let decoded = percent_decode(path_part);
-        let base = if decoded.starts_with('/') {
+        let base = if absolute || decoded.starts_with('/') {
             ""
         } else {
             from.rsplit_once('/').map_or("", |(d, _)| d)
@@ -343,7 +358,21 @@ impl Corpus {
             return LinkRes::File(joined, doc, frag);
         }
         if joined.is_empty() || self.dirs.contains(&joined) {
-            return LinkRes::Dir;
+            let index = ["README.md", "readme.md", "Readme.md", "index.md"]
+                .iter()
+                .find_map(|n| {
+                    let p = if joined.is_empty() {
+                        n.to_string()
+                    } else {
+                        format!("{joined}/{n}")
+                    };
+                    self.by_path.get(&p).copied()
+                });
+            return LinkRes::Dir(index);
+        }
+        if absolute {
+            // It may name another branch or commit; leave it unchecked.
+            return LinkRes::External;
         }
         LinkRes::Missing(joined)
     }
@@ -446,19 +475,34 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     }
     let status = match fm_status {
         Some((s, line)) => {
-            if ty != DocType::Note && !ty.statuses().contains(&s.as_str()) {
+            let allowed = |x: &str| ty == DocType::Note || ty.statuses().contains(&x);
+            // A legacy word the root maps stands for its status; the file keeps it.
+            let canon = if allowed(&s) {
+                s.clone()
+            } else {
+                root.status_map
+                    .iter()
+                    .find(|(from, _)| *from == s)
+                    .map_or_else(|| s.clone(), |(_, to)| to.clone())
+            };
+            if !allowed(&canon) {
+                let what = if canon == s {
+                    format!("`{s}`")
+                } else {
+                    format!("`{s}` maps to `{canon}`, which")
+                };
                 issues.push(Issue {
                     code: Code::StatusInvalid,
                     line,
                     target: s.clone(),
                     message: format!(
-                        "`{s}` is not a status of type `{}` ({})",
+                        "{what} is not a status of type `{}` ({})",
                         ty.name(),
                         ty.statuses().join(", ")
                     ),
                 });
             }
-            Some(s)
+            Some(canon)
         }
         None if ty == root.default_type => root.status.clone(),
         None => None,
@@ -514,6 +558,21 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             reqs.push(i);
         }
     }
+    let outcome = if ty == DocType::Decision {
+        parsed
+            .chunks
+            .iter()
+            .enumerate()
+            .filter(|(_, ch)| {
+                root.decision_sections
+                    .iter()
+                    .any(|s| same_heading(&ch.heading, s))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        Vec::new()
+    };
     Doc {
         path,
         id,
@@ -530,7 +589,13 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         owner,
         issues,
         reqs,
+        outcome,
     }
+}
+
+/// Headings compare without case (any script) and surrounding space.
+pub fn same_heading(a: &str, b: &str) -> bool {
+    a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
 fn canonical_ref(r: &str) -> String {
@@ -550,6 +615,21 @@ pub fn strip_hash_suffix(s: &str) -> &str {
         return head;
     }
     s
+}
+
+/// The rest of `url` after a `self-urls` prefix, where `*` is one whole path
+/// segment (such as a branch name).
+fn strip_url_prefix<'a>(pattern: &str, url: &'a str) -> Option<&'a str> {
+    let mut parts = pattern.split('*');
+    let mut rest = url.strip_prefix(parts.next()?)?;
+    for lit in parts {
+        let end = rest.find(['/', '#', '?']).unwrap_or(rest.len());
+        if end == 0 {
+            return None;
+        }
+        rest = rest[end..].strip_prefix(lit)?;
+    }
+    Some(rest)
 }
 
 fn has_scheme(s: &str) -> bool {
@@ -615,6 +695,120 @@ pub fn join(base: &str, rel: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::parse::parse;
+
+    fn corpus_with(config: &str, files: &[(&str, &str)]) -> Corpus {
+        let cfg = Config::parse(config).unwrap();
+        let mut all: Vec<String> = files.iter().map(|f| f.0.to_string()).collect();
+        all.push("src/main.rs".into());
+        let docs = files
+            .iter()
+            .map(|(p, t)| (p.to_string(), Arc::new(parse(t))))
+            .collect();
+        Corpus::build(&cfg, all, docs)
+    }
+
+    #[test]
+    fn legacy_statuses_map_per_root() {
+        let c = corpus_with(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\n",
+            &[
+                ("docs/a.md", "---\nstatus: released\n---\n# A\n"),
+                ("docs/b.md", "---\nstatus: signed-off\n---\n# B\n"),
+                (
+                    "docs/d.md",
+                    "---\ntype: decision\nstatus: signed-off\n---\n# D\n",
+                ),
+                ("docs/e.md", "---\nstatus: frozen\n---\n# E\n"),
+            ],
+        );
+        let issues = |i: usize| -> Vec<String> {
+            c.docs[i].issues.iter().map(|x| x.message.clone()).collect()
+        };
+        assert_eq!(c.docs[0].status.as_deref(), Some("active"));
+        assert!(issues(0).is_empty(), "{:?}", issues(0));
+        // `signed-off` stands for `accepted`, which a spec does not allow.
+        assert_eq!(
+            issues(1),
+            [
+                "`signed-off` maps to `accepted`, which is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
+            ]
+        );
+        assert_eq!(c.docs[2].status.as_deref(), Some("accepted"));
+        assert!(issues(2).is_empty(), "{:?}", issues(2));
+        assert_eq!(
+            issues(3),
+            [
+                "`frozen` is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
+            ]
+        );
+    }
+
+    #[test]
+    fn decision_sections_per_root() {
+        let text = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Context\n\nX.\n\n## LÖSUNG\n\nY.\n";
+        let c = corpus_with(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndecision-sections = [\"Lösung\"]\n[[roots]]\npath = \"adr\"\n",
+            &[("docs/d.md", text), ("adr/d.md", text)],
+        );
+        assert_eq!(c.docs[0].outcome, [2]);
+        assert!(c.docs[1].outcome.is_empty());
+    }
+
+    #[test]
+    fn self_urls_resolve_inside_the_repository() {
+        let c = corpus_with(
+            "spec-dna = \"0.1.0\"\nself-urls = [\"https://example.org/acme/specs/blob/*/\", \"https://example.org/acme/specs/tree/*/\"]\n[[roots]]\npath = \"docs\"\n",
+            &[
+                ("docs/x/README.md", "# X\n"),
+                ("docs/z.md", "# Z\n\n## Part\n"),
+            ],
+        );
+        assert_eq!(
+            c.resolve_link(
+                "docs/x/README.md",
+                "https://example.org/acme/specs/blob/main/docs/z.md#part"
+            ),
+            LinkRes::File("docs/z.md".into(), Some(1), Some("part".into()))
+        );
+        assert_eq!(
+            c.resolve_link(
+                "docs/z.md",
+                "https://example.org/acme/specs/tree/v1.2/docs/x/"
+            ),
+            LinkRes::Dir(Some(0))
+        );
+        assert_eq!(
+            c.resolve_link("docs/z.md", "../docs/x"),
+            LinkRes::Dir(Some(0))
+        );
+        // Gone at HEAD, maybe present on the named branch: left unchecked.
+        assert_eq!(
+            c.resolve_link(
+                "docs/z.md",
+                "https://example.org/acme/specs/blob/old/docs/gone.md"
+            ),
+            LinkRes::External
+        );
+        assert_eq!(
+            c.resolve_link(
+                "docs/z.md",
+                "https://example.org/acme/other/blob/main/docs/z.md"
+            ),
+            LinkRes::External
+        );
+        assert_eq!(
+            strip_url_prefix("https://h/o/r/blob/*/", "https://h/o/r/blob/main/a/b.md"),
+            Some("a/b.md")
+        );
+        assert_eq!(
+            strip_url_prefix("https://h/o/r/blob/*/", "https://h/o/r/blob//a.md"),
+            None
+        );
+        assert_eq!(
+            strip_url_prefix("https://h/o/r/blob/*/", "https://h/o/r/blob/main"),
+            None
+        );
+    }
 
     fn corpus(files: &[(&str, &str)]) -> Corpus {
         let cfg = Config::parse(
@@ -696,7 +890,10 @@ mod tests {
             c.resolve_link("docs/a/x.md", "/src/main.rs"),
             LinkRes::File("src/main.rs".into(), None, None)
         );
-        assert_eq!(c.resolve_link("docs/a/x.md", "../../src"), LinkRes::Dir);
+        assert_eq!(
+            c.resolve_link("docs/a/x.md", "../../src"),
+            LinkRes::Dir(None)
+        );
         assert_eq!(
             c.resolve_link("docs/a/x.md", "https://x.org/a"),
             LinkRes::External

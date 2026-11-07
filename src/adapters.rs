@@ -31,7 +31,7 @@ description: Loads the specifications that apply to a task and checks edits to t
 const SKILL_BODY: &str = "# spec-dna
 
 1. Find the entry: a document id (`<namespace>/<slug>`), a legacy alias such as `ADR-12`, or a file you will change.
-2. Run `spec-dna context <id> --path <file>`. It prints the entry document first, then the documents whose `applies-to` matches, then the documents the entry depends on, then linked accepted decisions as summaries. Every section carries its id and hash.
+2. Run `spec-dna context <id> --path <file>`. It prints the entry document first, then the documents whose `applies-to` matches, then the documents the entry depends on, then linked accepted decisions as summaries. Every section carries its id and hash. If the entry is a long document without requirements, add `--query \"<the task in plain words>\"`. Then the sections that match the task come first.
 3. A section listed as not loaded is one call away: `spec-dna show <id>#<anchor>`.
 4. Cite requirements as `<doc-id>#<key>`. Write a new requirement as `- **<key>**: <sentence>`, where the key is a lowercase slug and the sentence uses an EARS pattern with an uppercase BCP 14 keyword.
 5. After editing documents, run `spec-dna check` and fix every error. Move a document with `spec-dna mv <old> <new>`, and a requirement with `spec-dna mv <doc-id>#<key> <doc-id>`.";

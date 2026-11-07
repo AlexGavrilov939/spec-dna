@@ -2,6 +2,14 @@
 # benchmark and the retrieval measurement. KEPs are proposals with their
 # metadata in kep.yaml, so the root types them as changes.
 spec-dna = "0.1.0"
+# The KEPs refer to other KEPs with URLs of this repository, not with
+# relative paths. These prefixes make such links internal.
+self-urls = [
+    "https://github.com/kubernetes/enhancements/blob/*/",
+    "https://github.com/kubernetes/enhancements/tree/*/",
+    "https://git.k8s.io/enhancements/",
+    "http://git.k8s.io/enhancements/",
+]
 
 [[roots]]
 path = "keps"

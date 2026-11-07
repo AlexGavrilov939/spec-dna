@@ -16,6 +16,14 @@
       "description": "Repository path globs that are never documents (vendored or generated text). Links to them still resolve as files.",
       "$ref": "#/$defs/globs"
     },
+    "self-urls": {
+      "description": "URL prefixes that address this repository; a link under one resolves as a path from the repository root. `*` stands for one whole path segment, such as a branch.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^https?://[^*]+/((\\*|[^*/]+)/)*$"
+      }
+    },
     "roots": {
       "description": "Directories of documents. A path belongs to the deepest root that contains it.",
       "type": "array",
@@ -131,6 +139,19 @@
           "description": "Patterns of existing requirement keys that are kept as written, such as `R-{n}`.",
           "type": "array",
           "items": { "$ref": "#/$defs/pattern" }
+        },
+        "status-map": {
+          "description": "Legacy status words and the status each stands for, such as `released = \"active\"`. The target must be a status of the root's type, or of any type in a mixed root.",
+          "type": "object",
+          "additionalProperties": {
+            "enum": ["draft", "active", "deprecated", "superseded", "retired", "proposed", "accepted", "rejected", "done"]
+          }
+        },
+        "decision-sections": {
+          "description": "Headings that hold a decision's outcome, compared without case. Replaces the default `[\"Decision Outcome\", \"Decision\"]`.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "\\S" }
         }
       }
     }

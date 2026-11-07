@@ -13,7 +13,7 @@ docs/billing/invoice.md:1: error SD402 superseded-without-successor: no active d
 docs/changes/add-mfa.md:4: error SD101 unresolved-reference: `auth/session` has no section or requirement `mfa`
 docs/changes/add-mfa.md:8: warning SD601 token-unresolved: `ADR-9` names no document
 docs/changes/add-mfa.md:8: warning SD603 cross-repo-unpinned: `platform:identity/mfa` points into repository `platform`, which is not listed under `[repos]` in spec-dna.toml
-docs/decisions/ADR-2-retry.md:1: error SD305 section-missing: a decision needs a `Decision Outcome` (or `Decision`) section
+docs/decisions/ADR-2-retry.md:1: error SD305 section-missing: a decision needs a section headed `Decision Outcome` or `Decision`
 docs/notes/research.md:1: warning SD701 budget-soft: 401 characters, over the soft budget of 300
 docs/notes/research.md:6: error SD102 unresolved-link: link target `../../design/old.md` is not in the git tree (resolved to `design/old.md`)
 docs/notes/research.md:8: error SD102 unresolved-link: link target `images/flow.png` is not in the git tree (resolved to `docs/notes/images/flow.png`)

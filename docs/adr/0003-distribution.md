@@ -65,3 +65,9 @@ Rejected:
 - Good: the central repository holds the tool and the standard only.
 - Bad: a release pipeline for 7 targets with checksums and attestations, plus the dispatch shim, must exist before a second consumer adopts the tool or the first public release. Until then the first consumer builds from source and trusts the tag, not a checksum.
 - Bad: the standard cannot change without a release. That is intended, because it keeps the standard reviewable and reproducible.
+
+## Amendments
+
+### 2026-11-07: Windows ABI
+
+The owner selected the GNU ABI for the Windows binaries: `x86_64-pc-windows-gnu` and `aarch64-pc-windows-gnullvm`. One host builds them with zig, as it builds the other 5 targets. This build does not need the Microsoft SDK or a Windows runner. No test ran the Windows binaries on Windows yet.
