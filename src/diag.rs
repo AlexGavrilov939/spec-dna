@@ -61,13 +61,15 @@ codes! {
     DependsOnDeprecated = "SD604", "depends-on-deprecated", Warning, "Plan a move to the successor of the deprecated document.";
     AmendmentOutcome = "SD605", "amendment-outcome", Warning, "If the amendment changes the decision outcome, write a new decision that supersedes this one.";
     BudgetSoft = "SD701", "budget-soft", Warning, "Split the document or move detail into linked documents.";
-    BudgetHard = "SD702", "budget-hard", Error, "Split the document. It is over the hard budget.";
-    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its budget and it grew. Split the document. Do not add more text to it.";
+    BudgetHard = "SD702", "budget-hard", Error, "Split the document. It is new, or it went over the hard budget, or it grew while over the hard budget.";
+    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its soft budget and it grew. Split the document. Do not add more text to it.";
+    BudgetHardKept = "SD704", "budget-hard-kept", Warning, "The document was over its hard budget in the base and did not grow, or its root does not enforce budgets. Split it before you add text: growth is an error.";
     RequirementKeyword = "SD801", "requirement-keyword", Warning, "Write the requirement with an uppercase BCP 14 keyword (MUST, SHALL, SHOULD, MAY).";
     EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern. Put `then` after an `If` condition.";
     SentenceLength = "SD803", "sentence-length", Warning, "Split the requirement. Write one requirement in one sentence.";
     VagueTerm = "SD804", "vague-term", Warning, "Replace the vague term with a testable value or condition.";
     PassiveVoice = "SD805", "passive-voice", Warning, "Name the actor as the subject (`the gateway SHALL reject`, not `SHALL be rejected`).";
+    RequirementsUnrecognized = "SD806", "requirements-unrecognized", Warning, "Write each requirement as a list item that starts with its bold key: `- **R-12**: sentence` or `- **R-12** sentence`. A key in a table, a heading or a paragraph is not a requirement.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

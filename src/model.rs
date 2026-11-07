@@ -87,8 +87,8 @@ pub struct Doc {
     pub issues: Vec<Issue>,
     /// Indices into `parsed.reqs` of the valid requirements.
     pub reqs: Vec<usize>,
-    /// For a decision, the chunks whose heading is one of the root's
-    /// decision sections.
+    /// For a decision, the chunks whose heading is one of the required
+    /// section headings of the root (the outcome).
     pub outcome: Vec<usize>,
 }
 
@@ -110,6 +110,13 @@ impl Doc {
 
     pub fn is_inactive(&self) -> bool {
         matches!(self.status_str(), "superseded" | "retired" | "rejected")
+    }
+
+    /// Returns true if the chunk holds at least one valid requirement.
+    pub fn has_req_in(&self, chunk: usize) -> bool {
+        self.reqs
+            .iter()
+            .any(|&r| self.parsed.reqs[r].chunk as usize == chunk)
     }
 }
 
@@ -535,7 +542,13 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     if ty.has_requirements() {
         let mut seen: Vec<&str> = Vec::new();
         for (i, r) in parsed.reqs.iter().enumerate() {
-            let valid = is_slug(&r.key) || root.legacy_keys.iter().any(|p| p.is_match(&r.key));
+            let legacy = root.legacy_keys.iter().any(|p| p.is_match(&r.key));
+            // Without a colon, only a legacy key makes a requirement. Other
+            // bold labels are prose.
+            if !r.colon && !legacy {
+                continue;
+            }
+            let valid = legacy || is_slug(&r.key);
             if !valid {
                 if crate::parse::has_bcp14(&r.text) {
                     issues.push(Issue {
@@ -562,19 +575,49 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             seen.push(&r.key);
             reqs.push(i);
         }
+        if reqs.is_empty() {
+            let legacy: Vec<&crate::parse::Token> = parsed
+                .tokens
+                .iter()
+                .filter(|t| root.legacy_keys.iter().any(|p| p.is_match(&t.text)))
+                .collect();
+            if let Some(first) = legacy.first() {
+                issues.push(Issue {
+                    code: Code::RequirementsUnrecognized,
+                    line: first.line,
+                    target: String::new(),
+                    message: format!(
+                        "{} tokens match `legacy-keys` (first: `{}`), but no requirement is recognized; write each one as a list item that starts with its bold key",
+                        legacy.len(),
+                        first.text
+                    ),
+                });
+            }
+        }
+    }
+    let required = &root.required_sections[ty as usize];
+    let matched: Vec<usize> = parsed
+        .chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, ch)| ch.level > 0 && required.iter().any(|s| same_heading(&ch.heading, s)))
+        .map(|(i, _)| i)
+        .collect();
+    if !required.is_empty() && matched.is_empty() {
+        let names: Vec<String> = required.iter().map(|s| format!("`{s}`")).collect();
+        issues.push(Issue {
+            code: Code::SectionMissing,
+            line: 1,
+            target: format!("{}-section", ty.name()),
+            message: format!(
+                "a {} needs a section headed {}",
+                ty.name(),
+                names.join(" or ")
+            ),
+        });
     }
     let outcome = if ty == DocType::Decision {
-        parsed
-            .chunks
-            .iter()
-            .enumerate()
-            .filter(|(_, ch)| {
-                root.decision_sections
-                    .iter()
-                    .any(|s| same_heading(&ch.heading, s))
-            })
-            .map(|(i, _)| i)
-            .collect()
+        matched
     } else {
         Vec::new()
     };
@@ -723,7 +766,7 @@ mod tests {
                 ("docs/b.md", "---\nstatus: signed-off\n---\n# B\n"),
                 (
                     "docs/d.md",
-                    "---\ntype: decision\nstatus: signed-off\n---\n# D\n",
+                    "---\ntype: decision\nstatus: signed-off\n---\n# D\n\n## Decision\n\nX.\n",
                 ),
                 ("docs/e.md", "---\nstatus: frozen\n---\n# E\n"),
             ],
@@ -751,10 +794,10 @@ mod tests {
     }
 
     #[test]
-    fn decision_sections_per_root() {
+    fn required_sections_per_root() {
         let text = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Context\n\nX.\n\n## LÖSUNG\n\nY.\n";
         let c = corpus_with(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndecision-sections = [\"Lösung\"]\n[[roots]]\npath = \"adr\"\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nrequired-sections = { decision = [\"Lösung\"] }\n[[roots]]\npath = \"adr\"\n",
             &[("docs/d.md", text), ("adr/d.md", text)],
         );
         assert_eq!(c.docs[0].outcome, [2]);
@@ -922,6 +965,39 @@ mod tests {
             c.resolve_link("docs/a/x.md", "../../../out.md"),
             LinkRes::Missing("../../../out.md".into())
         );
+    }
+
+    #[test]
+    fn legacy_keys_need_no_colon() {
+        let c = corpus(&[
+            (
+                "docs/s.md",
+                "# S\n\n## Intro\n\n- **Goal** a bold label in prose\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2:** The server SHALL log.\n- **ok-key**: The system MUST run.\n- **other** no colon and not a legacy key\n",
+            ),
+            (
+                "docs/table.md",
+                "# T\n\n| Key | Rule |\n| --- | --- |\n| R-1 | The client MUST retry. |\n| R-2 | The server SHALL log. |\n",
+            ),
+            (
+                "docs/notes/n.md",
+                "---\ntype: note\n---\n# N\n\nSee R-1 and R-2.\n",
+            ),
+        ]);
+        let s = &c.docs[0];
+        let keys: Vec<&str> = s
+            .reqs
+            .iter()
+            .map(|&r| s.parsed.reqs[r].key.as_str())
+            .collect();
+        assert_eq!(keys, ["R-1", "R-2", "ok-key"]);
+        assert!(s.issues.is_empty(), "{:?}", s.issues);
+        assert!(!s.has_req_in(1) && s.has_req_in(2));
+        // A spec with legacy-key tokens and no recognized requirement gets a
+        // warning. A note does not.
+        let t: Vec<(Code, u32)> = c.docs[1].issues.iter().map(|i| (i.code, i.line)).collect();
+        assert_eq!(t, [(Code::RequirementsUnrecognized, 5)]);
+        assert!(c.docs[1].issues[0].message.starts_with("2 tokens match"));
+        assert!(c.docs[2].issues.is_empty());
     }
 
     #[test]

@@ -219,34 +219,10 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
             ));
         }
     }
-    if d.ty == DocType::Decision && d.outcome.is_empty() {
-        let names: Vec<String> = config.roots[d.root]
-            .decision_sections
-            .iter()
-            .map(|s| format!("`{s}`"))
-            .collect();
-        out.push(diag(
-            d,
-            1,
-            Code::SectionMissing,
-            "decision-outcome",
-            format!("a decision needs a section headed {}", names.join(" or ")),
-        ));
-    }
 
+    // `hard_budget` compares a document over the hard budget with the base.
     let (soft, hard) = config.budgets[d.ty as usize];
-    if hard > 0 && p.body_chars > hard {
-        out.push(diag(
-            d,
-            1,
-            Code::BudgetHard,
-            "",
-            format!(
-                "{} characters, over the hard budget of {hard}",
-                p.body_chars
-            ),
-        ));
-    } else if soft > 0 && p.body_chars > soft {
+    if soft > 0 && p.body_chars > soft && (hard == 0 || p.body_chars <= hard) {
         out.push(diag(
             d,
             1,
@@ -385,8 +361,9 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
                 "the text above `## Amendments` changed after the decision was accepted",
             ));
         }
-        let (soft, _) = config.budgets[h.ty as usize];
-        if soft > 0 && h.parsed.body_chars > soft && h.parsed.body_chars > b.parsed.body_chars {
+        let (soft, hard) = config.budgets[h.ty as usize];
+        let chars = h.parsed.body_chars;
+        if soft > 0 && chars > soft && (hard == 0 || chars <= hard) && chars > b.parsed.body_chars {
             out.push(diag(
                 h,
                 1,
@@ -423,6 +400,54 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
         }
     }
     out.sort();
+    out
+}
+
+/// Applies the hard budget against the base (ADR 0001, amendment of
+/// 2026-11-08). A document over the hard budget is an error (SD702) if it is
+/// new, if it was under the budget in the base, or if it grew. A document that
+/// was over the budget in the base and did not grow gives a warning (SD704).
+/// A root with `enforce-budgets = false` gives SD704 in all cases. Returns
+/// each diagnostic with its "new" flag.
+fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Diag, bool)> {
+    let mut out = Vec::new();
+    for h in &head.docs {
+        let (_, hard) = config.budgets[h.ty as usize];
+        let chars = h.parsed.body_chars;
+        if hard == 0 || chars <= hard {
+            continue;
+        }
+        let before = base
+            .and_then(|b| head_to_base(b, h))
+            .map(|b| b.parsed.body_chars);
+        let (why, new) = match before {
+            None => ("a new document".to_string(), true),
+            Some(b) if b <= hard => (format!("{b} characters in the base"), true),
+            Some(b) if chars > b => (format!("grew from {b} characters in the base"), true),
+            Some(_) => ("no growth against the base".to_string(), false),
+        };
+        let enforce = config.roots[h.root].enforce_budgets;
+        let (code, why) = if !enforce {
+            (
+                Code::BudgetHardKept,
+                format!("{why}; the root does not enforce budgets"),
+            )
+        } else if new {
+            (Code::BudgetHard, why)
+        } else {
+            (Code::BudgetHardKept, why)
+        };
+        out.push((
+            diag(
+                h,
+                1,
+                code,
+                "",
+                format!("{chars} characters, over the hard budget of {hard} ({why})"),
+            ),
+            new,
+        ));
+    }
     out
 }
 
@@ -480,11 +505,16 @@ pub struct Outcome {
 
 pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
     let mut head_diags = diagnose(config, head);
+    let budget = hard_budget(config, base, head);
     let Some(base) = base else {
-        let n = head_diags.len();
+        let mut new = vec![true; head_diags.len()];
+        for (d, n) in budget {
+            head_diags.push(d);
+            new.push(n);
+        }
         return Outcome {
             head: head_diags,
-            new: vec![true; n],
+            new,
         };
     };
     let base_diags = diagnose(config, base);
@@ -516,6 +546,10 @@ pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
             _ => true,
         })
         .collect();
+    for (d, n) in budget {
+        head_diags.push(d);
+        new.push(n);
+    }
     let trans = transitions(config, base, head);
     new.extend(std::iter::repeat_n(true, trans.len()));
     head_diags.extend(trans);

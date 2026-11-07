@@ -16,7 +16,8 @@ exclude = ["drafts/**"]         # globs relative to the root
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
 legacy-keys = ["R-{n}"]
 status-map = { released = "active", wip = "draft" }            # legacy status words
-decision-sections = ["Decision Outcome", "Decision"]           # outcome headings
+required-sections = { decision = ["Decision Outcome", "Decision"], spec = ["Requirements"] }
+enforce-budgets = true          # false: the hard budget gives warnings only
 
 [budgets.spec]                  # characters of body text, per type
 soft = 10000
@@ -46,9 +47,10 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type. |
 | `roots.exclude` | list of globs | `[]` | Paths, relative to the root, that are not documents. |
 | `roots.legacy-ids` | list | `[]` | Patterns that make existing file names into aliases. A string `ADR-{n}` makes the alias `ADR-{n}` from a slug that starts with it. In a table, `file` sets the slug pattern. |
-| `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. |
+| `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. For a legacy key, the colon after the bold key is optional: `- **R-12** sentence`, `- **R-12**: sentence` and `- **R-12:** sentence` are requirements. A spec or contract with tokens that match a pattern but no recognized requirement gets SD806. |
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the root's type (in a mixed root, a status of any type). |
-| `roots.decision-sections` | list of strings | `["Decision Outcome", "Decision"]` | Headings that hold the outcome of a decision. The comparison ignores case. The list replaces the default. `check` requires one of these headings (SD305). `context` serves that section as the summary of the decision. |
+| `roots.required-sections` | table | `{ decision = ["Decision Outcome", "Decision"] }` | For each type, the headings of its required section, in any language. A document of that type needs a section with one of these headings (SD305). The comparison ignores case. A list replaces the default of its type, and an empty list removes the requirement. The other types have no required section by default. For a decision, `context` serves this section as the summary. |
+| `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
 | `context.budget` | integer | `12000` | The default budget of `spec-dna context`, in characters. |
@@ -56,7 +58,14 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 
 Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `note` none. A budget counts the Unicode characters of the body, without front matter and code blocks. Text under `## Amendments` counts.
 
-A document over the soft budget gives a warning. A document over the hard budget gives an error. This error fails `check` only when it is new against the base. A document that was already over the hard budget does not cause a failure, and its growth gives a warning ([ADR 0001](adr/0001-information-model.md), "Amendments").
+A document over the soft budget gives a warning (SD701), and SD703 if it also grew against the base. The hard budget compares the document with the base ([ADR 0001](adr/0001-information-model.md), "Amendments"):
+
+- A new document over the hard budget is an error (SD702).
+- A document that was under the hard budget in the base and is over it now is an error (SD702).
+- A document that was over the hard budget in the base and grew is an error (SD702). The comparison uses the body characters of the two versions.
+- A document that was over the hard budget in the base and did not grow gives a warning (SD704).
+
+In a root with `enforce-budgets = false`, all of these give SD704. `check --all` uses the same base, so a document that did not change does not give SD702.
 
 ## Patterns and globs
 
@@ -69,4 +78,4 @@ A link with a scheme (`https:`) or a `//` prefix is external, unless it starts w
 
 ## Documents
 
-A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.
+A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does: an untracked document is not part of that gate until `git add`. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.

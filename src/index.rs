@@ -197,6 +197,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
     w.u32(d.reqs.len() as u32);
     for r in &d.reqs {
         w.str(&r.key);
+        w.u8(r.colon as u8);
         for v in [r.line, r.start, r.end, r.chunk] {
             w.u32(v);
         }
@@ -270,6 +271,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
     for _ in 0..r.u32()? {
         d.reqs.push(Req {
             key: r.str()?,
+            colon: r.u8()? == 1,
             line: r.u32()?,
             start: r.u32()?,
             end: r.u32()?,
@@ -292,7 +294,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n\n[l](x.md) [[a/b]] ADR-1\n\n## Amendments\n";
+        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n[l](x.md) [[a/b]] ADR-1\n\n## Amendments\n";
         let mut m = HashMap::new();
         m.insert("abc".to_string(), Arc::new(crate::parse::parse(text)));
         m.insert(

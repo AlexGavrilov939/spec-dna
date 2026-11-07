@@ -35,10 +35,16 @@ pub struct Root {
     pub legacy_keys: Vec<Pattern>,
     /// Legacy status words, each with the status that it maps to.
     pub status_map: Vec<(String, String)>,
-    /// Headings that contain the outcome of a decision.
-    pub decision_sections: Vec<String>,
+    /// For each type (index `DocType as usize`), the headings of its required
+    /// section. A document of that type needs one of them. An empty list means
+    /// no required section.
+    pub required_sections: [Vec<String>; 6],
+    /// If false, a document over the hard budget gives a warning, not an
+    /// error.
+    pub enforce_budgets: bool,
 }
 
+/// The default required section of a decision: its outcome.
 pub const DEFAULT_DECISION_SECTIONS: [&str; 2] = ["Decision Outcome", "Decision"];
 
 #[derive(Clone, Debug)]
@@ -412,16 +418,36 @@ impl Root {
                 status_map.push((from.clone(), to.to_string()));
             }
         }
-        let decision_sections = if tbl.contains_key("decision-sections") {
-            let v = f.opt_strs("decision-sections")?;
-            if v.is_empty() || v.iter().any(|s| s.trim().is_empty()) {
-                return Err(format!(
-                    "`{prefix}decision-sections` needs at least one heading, and no empty one"
-                ));
+        let mut required_sections: [Vec<String>; 6] = Default::default();
+        required_sections[DocType::Decision as usize] =
+            DEFAULT_DECISION_SECTIONS.map(str::to_string).to_vec();
+        if let Some(v) = f.take("required-sections") {
+            let tbl = v
+                .as_table()
+                .ok_or_else(|| format!("`{prefix}required-sections` must be a table"))?;
+            for (name, list) in tbl {
+                let key = format!("{prefix}required-sections.{name}");
+                let ty = DocType::from_name(name)
+                    .filter(|t| types.contains(t))
+                    .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+                let headings = list
+                    .as_array()
+                    .and_then(|a| {
+                        a.iter()
+                            .map(|h| h.as_str().map(str::to_string))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+                if headings.iter().any(|h| h.trim().is_empty()) {
+                    return Err(format!("`{key}` has an empty heading"));
+                }
+                required_sections[ty as usize] = headings;
             }
-            v
-        } else {
-            DEFAULT_DECISION_SECTIONS.map(str::to_string).to_vec()
+        }
+        let enforce_budgets = match f.take("enforce-budgets") {
+            None => true,
+            Some(Value::Boolean(b)) => *b,
+            Some(_) => return Err(format!("`{prefix}enforce-budgets` must be true or false")),
         };
         f.done()?;
         Ok(Root {
@@ -433,7 +459,8 @@ impl Root {
             legacy_ids,
             legacy_keys,
             status_map,
-            decision_sections,
+            required_sections,
+            enforce_budgets,
         })
     }
 
@@ -606,7 +633,7 @@ budget = 9000
     }
 
     #[test]
-    fn status_map_decision_sections_and_self_urls() {
+    fn status_map_required_sections_and_self_urls() {
         let c = Config::parse(
             r#"
 spec-dna = "0.1.0"
@@ -614,7 +641,8 @@ self-urls = ["https://example.org/acme/specs/blob/*/"]
 [[roots]]
 path = "docs"
 status-map = { released = "active", wip = "draft" }
-decision-sections = ["Lösung"]
+required-sections = { decision = ["Lösung"], spec = ["Requirements", "Anforderungen"] }
+enforce-budgets = false
 [[roots]]
 path = "adr"
 type = "decision"
@@ -630,8 +658,18 @@ type = "decision"
                 ("wip".to_string(), "draft".to_string())
             ]
         );
-        assert_eq!(r.decision_sections, ["Lösung"]);
-        assert_eq!(c.roots[1].decision_sections, DEFAULT_DECISION_SECTIONS);
+        assert_eq!(r.required_sections[DocType::Decision as usize], ["Lösung"]);
+        assert_eq!(
+            r.required_sections[DocType::Spec as usize],
+            ["Requirements", "Anforderungen"]
+        );
+        assert!(r.required_sections[DocType::Guide as usize].is_empty());
+        assert!(!r.enforce_budgets);
+        assert_eq!(
+            c.roots[1].required_sections[DocType::Decision as usize],
+            DEFAULT_DECISION_SECTIONS
+        );
+        assert!(c.roots[1].enforce_budgets);
         assert!(c.roots[1].status_map.is_empty());
 
         let err = |extra: &str| {
@@ -646,8 +684,19 @@ type = "decision"
             err("status-map = { frozen = \"accepted\" }").contains("not a status of type `spec`")
         );
         assert!(err("status-map = { frozen = 1 }").contains("must be a string"));
-        assert!(err("decision-sections = []").contains("at least one heading"));
-        assert!(err("decision-sections = [\" \"]").contains("at least one heading"));
+        assert!(err("required-sections = { spec = [\" \"] }").contains("empty heading"));
+        assert!(
+            err("required-sections = { decision = [\"Outcome\"] }")
+                .contains("not a type of this root")
+        );
+        assert!(err("required-sections = { spec = \"Requirements\" }").contains("array"));
+        assert!(err("enforce-budgets = \"no\"").contains("true or false"));
+        // An empty list removes the required section.
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nrequired-sections = { decision = [] }\n",
+        )
+        .unwrap();
+        assert!(c.roots[0].required_sections[DocType::Decision as usize].is_empty());
         // In a mixed root, you can map a word that some type does not allow.
         assert!(
             Config::parse(

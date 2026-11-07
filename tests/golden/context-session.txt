@@ -1,10 +1,5 @@
 <!-- spec-dna context 0.1.0: auth/session; 7 sections in full, 2 listed; 1473 of 2500 characters; about 383 tokens (estimated) -->
 
-<!-- auth/session#sessions h:958433b88811cebb spec/active entry -->
-# Sessions
-
-A session keeps a user signed in between requests. The store is chosen in ADR-1.
-
 <!-- auth/session#requirements h:c45e6a10f2970c6b spec/active entry -->
 ## Requirements
 
@@ -13,19 +8,24 @@ A session keeps a user signed in between requests. The store is chosen in ADR-1.
 - **R-7**: While a session is active, the gateway SHALL refresh its expiry on each request.
 - **Bad_Key**: The gateway MUST log the session id.
 
+<!-- auth/session#sessions h:958433b88811cebb spec/active entry -->
+# Sessions
+
+A session keeps a user signed in between requests. The store is chosen in ADR-1.
+
 <!-- guides/logging#logging h:e819cae7e80b46c9 guide/active applies -->
 # Logging
 
 Log every rejected request with its request id and the reason.
-
-<!-- auth/tokens#tokens h:6860bfc09e21e7a5 spec/deprecated depends -->
-# Tokens
 
 <!-- auth/tokens#requirements h:120b874381208450 spec/deprecated depends -->
 ## Requirements
 
 - **signing**: The issuer SHALL sign every token with Ed25519.
 - **lifetime**: If a token is older than 15 minutes, the gateway SHALL reject it.
+
+<!-- auth/tokens#tokens h:6860bfc09e21e7a5 spec/deprecated depends -->
+# Tokens
 
 <!-- ADR-1-session-store#session-store h:6c84b3751c541aa2 decision/accepted decision -->
 # Session store

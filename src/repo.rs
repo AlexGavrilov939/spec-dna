@@ -201,13 +201,14 @@ impl Snapshot {
         Snapshot::default()
     }
 
-    /// Returns the working tree: tracked files (but not deleted ones) and
-    /// untracked files that git does not ignore.
-    /// `paths` (the document roots) limits the search for changed and
-    /// untracked files. The file list always covers the whole index.
-    pub fn worktree(repo: &Repo, paths: &[String]) -> Result<Snapshot, Fatal> {
+    /// Returns the working tree: tracked files (but not deleted ones) and,
+    /// with `untracked`, the untracked files that git does not ignore
+    /// (ADR 0001, amendments). `paths` (the document roots) limits the search
+    /// for changed and untracked files. The file list always covers the whole
+    /// index.
+    pub fn worktree(repo: &Repo, paths: &[String], untracked: bool) -> Result<Snapshot, Fatal> {
         let (files, status) = std::thread::scope(|s| {
-            let st = s.spawn(|| repo.git.status(paths));
+            let st = s.spawn(|| repo.git.status(paths, untracked));
             let files = repo.git.ls_files();
             (
                 files,
