@@ -4,9 +4,15 @@ Rules for AI coding agents (Claude Code, Codex and others) working in this repos
 
 ## Project
 
-spec-dna: spec-driven development for AI coding agents.
+spec-dna is a small, project-agnostic CLI that keeps engineering specifications small, linked and machine-checked, and serves AI coding agents the minimum sufficient context. It must work for any repository (greenfield or mature, any stack, any agent).
 
-Early stage: there is a skeleton and conventions, no code yet. Do not add structure, languages or tooling that the task does not ask for.
+Rule zero: never put a consumer project's name, paths, ids, text, metrics or conventions into this repository: not in code, docs, ADRs, tests, fixtures or commit messages. Cite a consumer corpus only as an anonymized profile, for example "corpus A: mature product, about 2.3k docs".
+
+- Standards and prior art: `docs/research/matrix.md`
+- Decisions: `docs/adr/` (information model, language, distribution)
+- Language benchmark prototype, not the tool: `bench/`
+
+Early stage: no tool code yet. Do not add structure, languages or tooling that the task does not ask for.
 
 ## Done means checked
 
@@ -20,7 +26,7 @@ CI runs the same hooks (`.github/workflows/ci.yml`). A change is not done until 
 
 ## Conventions
 
-- Text files: UTF-8, LF, final newline, no trailing whitespace, 2-space indent. `.editorconfig` is the source of truth.
+- Text files: UTF-8, LF, final newline, no trailing whitespace, 2-space indent (Python, TOML and Rust: 4 spaces; Go: tabs, as gofmt writes them). `.editorconfig` is the source of truth.
 - Docs, comments and commit messages in English.
 - Commits and PR titles follow Conventional Commits, see `CONTRIBUTING.md`.
 - Work on a branch. Never commit to `master` directly.
