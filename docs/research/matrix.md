@@ -108,11 +108,23 @@ Integration decision: spec-dna stays independent of all three frameworks. None s
 
 1. Format: CommonMark plus GFM tables; YAML front matter in a JSON-compatible subset; JSON Schema 2020-12 for front matter; TOML for tool configuration.
 2. Language: BCP 14 uppercase keywords as the only normative vocabulary. Requirements use EARS patterns. EARS, INCOSE and 29148 use lowercase "shall" with goal semantics for "should"; spec-dna uses BCP 14 meanings and matches EARS trigger words without regard to case.
-3. Quality rules: own lexical checks (vague terms, escape clauses, combinators, sentence length), each traced to an INCOSE rule id or 29148 characteristic name. All are warnings except where an ADR proves a check exact.
+3. Quality rules: a small own controlled-language lint, described below. All its checks are warnings except where an ADR proves a check exact.
 4. Decisions: MADR 4.0.0 minimal.
 5. Structure: DITA concepts without DITA XML: typed topics (the 6 document types of ADR 0001), generated maps, and keys (path ids with aliases). Includes are deferred. Diátaxis modes and C4 levels are optional `x-` metadata.
 6. Serving: an llms.txt-shaped index; bodies fetched by id through the CLI.
 7. Versioning: SemVer 2.0.0 for the tool and the standard; Conventional Commits 1.0.0 in this repository.
+
+### Controlled-language lint
+
+ASD-STE100, INCOSE GtWR and ISO/IEC/IEEE 29148 stay reference only. spec-dna claims compliance with none of them. The lint is written in this project's own words and runs on requirement sentences (the list items with a bold key in a `spec` or `contract`, ADR 0001). Every finding is a warning.
+
+| Check | What it flags | Maps to |
+| --- | --- | --- |
+| Sentence length | A requirement sentence over 30 words (configurable). A long sentence usually holds more than one requirement | 29148 characteristic "singular"; GtWR R18 (single thought sentence); ASD-STE100 sets its own length limits, used as inspiration only |
+| Vague terms | A word or phrase from spec-dna's own list: terms that cannot be tested ("adequate", "appropriate", "fast", "user-friendly", "robust", "efficient", "seamless", "reasonable", "sufficient"), escape clauses ("if possible", "as appropriate", "where practical"), open endings ("etc.", "and so on", "including but not limited to"), and loose quantities ("some", "several", "various", "many", "few") | 29148 characteristics "unambiguous" and "verifiable"; GtWR R7 (vague terms), R8 (escape clauses), R9 (open-ended clauses) |
+| Passive voice | A form of "be" followed by a past participle (a word ending in "-ed" or "-en", or a short list of irregular forms), as in "the request SHALL be rejected". A heuristic: it misses some forms and flags some adjectives | 29148 characteristic "unambiguous" (the actor is missing); GtWR R2 (active voice) |
+
+GtWR rule ids are from the v4 rule list as cited in secondary sources; the paid text was not checked (see section 2). The 29148 characteristic names are from the official preview.
 
 ## 6. Rejected alternatives
 
