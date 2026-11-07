@@ -21,6 +21,25 @@ Golden outputs of the integration tests live in `tests/golden/`. After an intend
 
 `.editorconfig` holds the whitespace rules: 2-space indent by default, 4 spaces for Python, TOML and Rust, tabs for Go. Format Go with `gofmt` and Rust with `cargo fmt`.
 
+## Writing
+
+Write all specifications, documentation and code comments in ASD-STE100 Simplified Technical English (STE). Make the text clear and concise. This rule applies to Markdown files, ADRs, JSON Schema descriptions, comments and doc comments in code and scripts, and the text that `spec-dna init` writes for agents.
+
+- Write one topic in one sentence.
+- Use 20 words or fewer in a procedural sentence and 25 words or fewer in a descriptive sentence. Use 6 sentences or fewer in a paragraph.
+- Use the active voice. Name the actor: "`check` reports SD702", not "SD702 is reported".
+- Use only the simple tenses: present, past and future.
+- Do not use -ing forms, except in technical names such as "heading".
+- Use the imperative in an instruction. Give one instruction in one sentence.
+- Use a single verb, not a phrasal verb: "start", not "set up".
+- Use one word for one meaning, and one term for one thing.
+- Use 3 nouns or fewer in a noun cluster.
+- Do not remove articles or verbs to make a sentence shorter.
+- Use a vertical list for a sequence of steps or for many conditions.
+- Do not use idioms, metaphors or vague words such as "quickly" or "etc.".
+
+Code names, commands, configuration keys and diagnostic codes are technical names. Write them as they are, in backticks.
+
 ## Branches
 
 - `master` is the default branch. Changes land through pull requests only. The `no-commit-to-branch` hook blocks local commits to `master`.
@@ -38,7 +57,7 @@ Golden outputs of the integration tests live in `tests/golden/`. After an intend
 - One logical change per pull request. Fill in the template.
 - The PR title must be a Conventional Commit. The `PR title` workflow checks it.
 - Pull requests are squash-merged, so the PR title becomes the commit message on `master`.
-- Merge only with green CI.
+- Merge only with green CI. If GitHub Actions does not start the jobs (for example, because of account billing), run the same jobs locally, put the results in the pull request, and merge only if all jobs pass.
 
 ## Dependencies
 

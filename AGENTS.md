@@ -29,6 +29,7 @@ CI runs the same hooks (`.github/workflows/ci.yml`). A change is not done until 
 
 - Text files: UTF-8, LF, final newline, no trailing whitespace, 2-space indent (Python, TOML and Rust: 4 spaces; Go: tabs, as gofmt writes them). `.editorconfig` is the source of truth.
 - Docs, comments and commit messages in English.
+- Write specifications, docs and code comments in ASD-STE100 Simplified Technical English: clear and concise. The rules are in `CONTRIBUTING.md`, section "Writing".
 - Commits and PR titles follow Conventional Commits, see `CONTRIBUTING.md`.
 - Work on a branch. Never commit to `master` directly.
 - GitHub Actions: pin every `uses:` to a full commit SHA with the version tag in a trailing comment. Set `permissions: {}` at workflow level and grant the minimum per job.
