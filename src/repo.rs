@@ -43,6 +43,19 @@ pub struct Repo {
     pub git: Git,
 }
 
+/// A path for a message. On Windows, `canonicalize` adds a `\\?\` prefix that a
+/// user does not type; this function removes it.
+pub fn shown(p: &Path) -> String {
+    let s = p.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s
+    }
+}
+
 impl Repo {
     /// Finds the git working tree that contains `start`.
     pub fn discover(start: &Path) -> Result<Repo, Fatal> {
@@ -69,7 +82,7 @@ impl Repo {
             dir = dir.parent().ok_or_else(|| {
                 Fatal::Config(format!(
                     "{} is not inside a git working tree; spec-dna reads documents through git",
-                    start.display()
+                    shown(&start)
                 ))
             })?;
         }
@@ -93,7 +106,7 @@ impl Repo {
             Fatal::Config(format!(
                 "no {} at {}; run `spec-dna init`",
                 config::FILE_NAME,
-                self.root.display()
+                shown(&self.root)
             ))
         })?;
         Config::parse(&text).map_err(|e| Fatal::Config(format!("{}: {e}", config::FILE_NAME)))
@@ -437,4 +450,19 @@ pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
     out.into_iter()
         .map(|r| r.expect("every item mapped"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shown_drops_the_windows_verbatim_prefix() {
+        assert_eq!(shown(Path::new(r"\\?\C:\repo")), r"C:\repo");
+        assert_eq!(
+            shown(Path::new(r"\\?\UNC\server\share\repo")),
+            r"\\server\share\repo"
+        );
+        assert_eq!(shown(Path::new("/home/u/repo")), "/home/u/repo");
+    }
 }
