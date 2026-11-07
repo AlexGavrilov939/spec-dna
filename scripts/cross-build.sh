@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Cross-build release binaries for the 7 targets of ADR 0003 with cargo-zigbuild.
+# Cross-builds release binaries for the 7 targets of ADR 0003 with cargo-zigbuild.
 #
 # Usage: scripts/cross-build.sh [--manifest-path PATH] [--bin NAME] [TARGET...]
 #        scripts/cross-build.sh --list
 #
-# With no TARGET it builds all 7. CI (.github/workflows/build.yml) calls it
-# once per target. Needs rustup with its cargo first on PATH, zig and
-# cargo-zigbuild. Honors CARGO_TARGET_DIR. Prints `file` output and the
-# SHA-256 of each binary.
+# If you give no TARGET, it builds all 7. CI (.github/workflows/build.yml)
+# calls it once for each target. It needs zig, cargo-zigbuild, and rustup with
+# its cargo first on PATH. It uses CARGO_TARGET_DIR if it is set. It prints the
+# `file` output and the SHA-256 of each binary.
 set -euo pipefail
 
 targets_all=(
@@ -20,10 +20,12 @@ targets_all=(
   aarch64-pc-windows-gnullvm
 )
 
-# Oldest glibc the *-linux-gnu binaries may need. 2.17 is Rust's own minimum.
+# The *-linux-gnu binaries need this glibc or a newer one. 2.17 is the minimum
+# for Rust itself.
 glibc=2.17
-# Oldest macOS the binaries may need. Without it zig stamps its own, newer
-# default (15.0 with zig 0.17). 11.0 is the first release on Apple silicon.
+# The binaries need this macOS or a newer one. Without this setting, zig writes
+# its own newer default (15.0 with zig 0.17). 11.0 is the first release on Apple
+# silicon.
 export MACOSX_DEPLOYMENT_TARGET=11.0
 
 manifest=Cargo.toml

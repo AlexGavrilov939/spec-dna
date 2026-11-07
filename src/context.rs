@@ -1,21 +1,29 @@
-//! `spec-dna context` and `spec-dna show`: section-level serving with ids and
-//! hashes (ADR 0001, "Document types"; session 2 scope item 4).
+//! `spec-dna context` and `spec-dna show` serve sections with ids and hashes
+//! (ADR 0001, "Document types").
 //!
-//! Order of assembly: the entry documents (or the requested sections), then
-//! the documents whose `applies-to` matches an entry or a given path, then
-//! the entries' `depends-on` targets (depth 1), then linked accepted
-//! decisions as summaries. For a spec or contract with requirements, only its
-//! title section and its requirement sections are served in full; a document
-//! without requirements is served in order. The remaining sections of these
-//! documents, and other documents the entries link to, are listed as stubs
-//! with id, hash and size, so each is one `show` call away. A section that
-//! does not fit the character budget is listed as a stub too.
+//! The assembly uses this order:
 //!
-//! With `--query`, the planned sections, and every section of the linked
-//! documents, are ranked by BM25 against the words of the query (`rank.rs`).
-//! Sections that a target names come first, then sections that match, best
-//! first, then the rest of the plan in order. A listed-only section (`more`,
-//! `linked`) is served in full only if it matches.
+//! - the entry documents (or the requested sections);
+//! - the documents whose `applies-to` matches an entry or a given path;
+//! - the `depends-on` targets of the entries (depth 1);
+//! - linked accepted decisions, as summaries.
+//!
+//! For a spec or contract with requirements, the assembly serves only the
+//! title section and the requirement sections in full. It serves a document
+//! without requirements in order. It lists the other sections of these
+//! documents, and other documents that the entries link to, as stubs with id,
+//! hash and size. Thus one `show` call can read each of them. If a section
+//! does not fit the character budget, the assembly lists it as a stub too.
+//!
+//! With `--query`, BM25 ranks the planned sections, and every section of the
+//! linked documents, against the words of the query (`rank.rs`). The order is:
+//!
+//! - the sections that a target names;
+//! - the sections that match, best first;
+//! - the rest of the plan, in order.
+//!
+//! The assembly serves a listed-only section (`more`, `linked`) in full only
+//! if it matches.
 
 use crate::hash::hex;
 use crate::json::{self, Obj};
@@ -60,17 +68,17 @@ pub struct Assembly {
     pub omitted: usize,
     pub budget: u32,
     pub used: u32,
-    /// The query terms the sections were ranked by.
+    /// The query terms that the ranking used.
     pub query: Option<Vec<String>>,
 }
 
-/// A query for ranking: its terms, and the working tree to read sections from.
+/// A query for the ranking: its terms, and the working tree that spec-dna
+/// reads the sections from.
 pub struct Query<'a> {
     pub root: &'a Path,
     pub terms: Vec<String>,
 }
 
-/// A resolved target: a document and an optional fragment.
 pub fn resolve_target(c: &Corpus, t: &str) -> Option<(u32, Option<String>)> {
     if let Some(&i) = c.by_path.get(t.trim_start_matches("./")) {
         return Some((i, None));
@@ -81,7 +89,6 @@ pub fn resolve_target(c: &Corpus, t: &str) -> Option<(u32, Option<String>)> {
     }
 }
 
-/// The section id of a chunk.
 pub fn section_id(d: &Doc, chunk: usize) -> String {
     let a = &d.parsed.chunks[chunk].anchor;
     if a.is_empty() {
@@ -142,7 +149,7 @@ pub fn assemble(
         v
     };
     let mut rest: Vec<(u32, usize)> = Vec::new();
-    // Sections a target names explicitly; they lead the order under a query.
+    // Sections that a target names explicitly. Under a query, they come first.
     let mut pinned: HashSet<(u32, usize)> = HashSet::new();
 
     // 1. Entries.
@@ -262,7 +269,7 @@ pub fn assemble(
         add(&mut plan, d, j, Tier::Rest);
     }
 
-    // 6. Other documents the entries link to, as stubs.
+    // 6. Other documents that the entries link to, as stubs.
     let mut related = 0;
     for &e in &entry_docs {
         for d in linked_docs(c, e) {
@@ -271,7 +278,8 @@ pub fn assemble(
             }
             let n = c.docs[d as usize].parsed.chunks.len();
             if n > 0 && !plan.iter().any(|p| p.0 == d) {
-                // Under a query every section is a candidate; otherwise the title.
+                // Under a query, every section is a candidate. Without a query,
+                // only the title is a candidate.
                 let take = if query.is_some() { n } else { 1 };
                 for j in 0..take {
                     add(&mut plan, d, j, Tier::Related);
@@ -281,7 +289,7 @@ pub fn assemble(
         }
     }
 
-    // The order of packing: the plan's order, or under a query the ranking.
+    // The packing order: the order of the plan, or the ranking under a query.
     let terms = query.map(|q| q.terms.clone()).filter(|t| !t.is_empty());
     let (order, eligible) = match (query, &terms) {
         (Some(q), Some(terms)) => rank_plan(c, q.root, terms, &plan, &pinned),
@@ -293,11 +301,13 @@ pub fn assemble(
         ),
     };
 
-    // Packing, in 2 passes. First the map: every planned section is listed
-    // as a stub, in priority order, within half of the budget. Then full
-    // text, in the same order, with what remains; a section in full replaces
-    // its stub. So every listed section is one `show` call away, however
-    // long the documents are.
+    // Packing has 2 passes:
+    // - First the map. List every planned section as a stub, in priority
+    //   order, within half of the budget.
+    // - Then the full text, in the same order, with the remaining budget. A
+    //   section in full replaces its stub.
+    // Thus one `show` call can read each listed section, for documents of
+    // any length.
     let costs: Vec<(u32, u32)> = plan
         .iter()
         .map(|&(d, ch, tier)| {
@@ -355,10 +365,14 @@ pub fn assemble(
     }
 }
 
-/// The packing order under a query, and which sections can be served in
-/// full. Order: sections that a target names, then sections that match, best
-/// first, then the other sections of the plan in plan order. Ties keep plan
-/// order, so the result is deterministic.
+/// Returns the packing order under a query, and the sections that the
+/// assembly can serve in full. The order is:
+///
+/// - the sections that a target names;
+/// - the sections that match, best first;
+/// - the other sections of the plan, in plan order.
+///
+/// Ties keep the plan order, so the result is deterministic.
 fn rank_plan(
     c: &Corpus,
     root: &Path,
@@ -422,7 +436,8 @@ fn is_accepted_decision(d: &Doc) -> bool {
     d.ty == DocType::Decision && d.status_str() == "accepted"
 }
 
-/// Requirement sections first; for a document without requirements, all of it.
+/// Plans the requirement sections first. For a document without requirements,
+/// it plans all sections.
 fn normative_units(
     c: &Corpus,
     d: u32,
@@ -447,7 +462,8 @@ fn normative_units(
     }
 }
 
-/// Documents a document references explicitly (links, `[[ ]]`, front matter).
+/// Returns the documents that a document references explicitly (links, `[[ ]]`,
+/// front matter).
 pub fn linked_docs(c: &Corpus, d: u32) -> Vec<u32> {
     let doc = &c.docs[d as usize];
     let mut out = Vec::new();
@@ -571,7 +587,7 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     format!("{head}{}\n", out.trim_end())
 }
 
-/// `spec-dna show`: a document, a section with its subsections, or one
+/// `spec-dna show` gives a document, a section with its subsections, or one
 /// requirement.
 pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) -> String {
     let doc = &c.docs[d as usize];

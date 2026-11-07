@@ -1,8 +1,9 @@
-//! Ranking of sections against the words of a task, for
-//! `spec-dna context --query`: Okapi BM25 over the sections the assembly
-//! planned. Deterministic, with no network, model or stored index.
+//! This module ranks sections against the words of a task, for
+//! `spec-dna context --query`. It uses Okapi BM25 over the sections that the
+//! assembly planned. The ranking is deterministic. It uses no network, no
+//! model and no stored index.
 
-/// English function words that carry no topic.
+/// English function words, which do not show the topic.
 const STOP: &[&str] = &[
     "a", "about", "after", "all", "also", "an", "and", "any", "are", "as", "at", "be", "been",
     "before", "but", "by", "can", "could", "do", "does", "each", "for", "from", "had", "has",
@@ -18,15 +19,15 @@ const B: f64 = 0.75;
 /// A heading word counts this many times.
 const HEADING_WEIGHT: u32 = 3;
 
-/// Lowercase words: runs of letters and digits in any script.
+/// Returns the lowercase words: runs of letters and digits in any script.
 fn words(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
 }
 
-/// The distinct terms of a query, in first-seen order: words of at least 2
-/// characters that are not function words.
+/// Returns the distinct terms of a query, in the order that they first occur.
+/// A term is a word of at least 2 characters that is not a function word.
 pub fn terms(query: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for w in words(query) {
@@ -37,9 +38,14 @@ pub fn terms(query: &str) -> Vec<String> {
     out
 }
 
-/// A word matches a term when they are equal, or when the shorter one has
-/// at least 4 characters, begins the longer one, and the longer one adds at
-/// most 3 (`gate` and `gates`, `restart` and `restarting`).
+/// A word matches a term if they are equal. A word also matches a term if all
+/// of these conditions are true:
+///
+/// - The shorter one has at least 4 characters.
+/// - The longer one starts with the shorter one.
+/// - The longer one has at most 3 more characters.
+///
+/// Examples: `gate` and `gates`, `restart` and `restarting`.
 fn matches(word: &str, term: &str) -> bool {
     if word == term {
         return true;
@@ -53,7 +59,8 @@ fn matches(word: &str, term: &str) -> bool {
     s >= 4 && l - s <= 3 && long.starts_with(short)
 }
 
-/// BM25 score of each section, given as (heading, body), for `terms`.
+/// Returns the BM25 score of each section for `terms`. Each section is a
+/// (heading, body) pair.
 pub fn bm25(terms: &[String], sections: &[(&str, &str)]) -> Vec<f64> {
     let n = sections.len();
     if n == 0 || terms.is_empty() {
@@ -134,7 +141,7 @@ mod tests {
         assert_eq!(s[0], 0.0);
         assert_eq!(s[2], 0.0);
         assert!(s[1] > 0.0);
-        // Same input, same scores.
+        // The same input gives the same scores.
         assert_eq!(
             s,
             bm25(

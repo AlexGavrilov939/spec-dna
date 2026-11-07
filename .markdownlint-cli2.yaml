@@ -1,9 +1,9 @@
 # https://github.com/DavidAnson/markdownlint-cli2#configuration
 config:
   default: true
-  # Prose is not hard-wrapped; editors soft-wrap.
+  # The prose has no hard wrap. Editors soft-wrap it.
   MD013: false
-  # Repeated headings are fine in different sections (e.g. changelogs).
+  # Different sections can repeat a heading (for example, in changelogs).
   MD024:
     siblings_only: true
   # Templates and CLAUDE.md do not start with an H1.

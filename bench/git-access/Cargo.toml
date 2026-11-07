@@ -17,6 +17,6 @@ lto = true
 codegen-units = 1
 strip = true
 
-# gix names a field `rela_path` (repository-relative path); keep typos from rewriting it.
+# gix names a field `rela_path` (repository-relative path). This entry tells typos to accept it.
 [package.metadata.typos.default.extend-identifiers]
 rela_path = "rela_path"

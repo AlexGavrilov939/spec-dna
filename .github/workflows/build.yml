@@ -62,7 +62,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # scripts/cross-build.sh holds the target list.
+      # scripts/cross-build.sh contains the target list.
       - name: List targets
         id: list
         run: echo "targets=$(scripts/cross-build.sh --list | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
@@ -84,7 +84,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # GitHub's runner images ship rustup; a bare Linux host gets it here.
+      # The GitHub runner images include rustup. This step installs it on a bare Linux host.
       - name: Install rustup
         run: |
           if ! command -v rustup >/dev/null; then
@@ -99,8 +99,8 @@ jobs:
           TARGET: ${{ matrix.target }}
 
       # Zig asks automation to download from community mirrors, in random
-      # order. The SHA-256 pins come from https://ziglang.org/download/index.json
-      # and must change with ZIG_VERSION.
+      # order. The SHA-256 pins come from https://ziglang.org/download/index.json.
+      # Change them when ZIG_VERSION changes.
       - name: Install zig ${{ env.ZIG_VERSION }}
         run: |
           case "$(uname -m)" in

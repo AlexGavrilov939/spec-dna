@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """Retrieval correctness of `spec-dna context`.
 
-For each task and each budget, runs `spec-dna context <entry> --budget B`
-and compares the served sections with the task's required sections:
+For each task and each budget, the script runs `spec-dna context <entry> --budget B`.
+It compares the served sections with the required sections of the task:
 
     recall (full)       required sections served in full / required sections
     recall (listed)     required sections served in full or listed as a stub
     precision           required sections served in full / sections served in full
-    critical            sections stating a critical constraint served in full
+    critical            sections that state a critical constraint, served in full
     size                characters served (the `used` count) and an estimated
                         token count: ceil(UTF-8 bytes of the text output / 4)
     two-step            the context output plus `show` of each required section
-                        it listed as a stub: characters, and recall (= listed)
-    baseline            characters of every document that holds a required
+                        that it listed as a stub: characters, and recall (= listed)
+    baseline            characters of every document that contains a required
                         section, read whole (an agent that knows which files to
-                        open and reads them fully)
+                        open and reads each of them completely)
     latency             median wall time of the text command, ms
 
-Tasks come in two formats: generator tasks (`required` holds section ids)
-and hand-made oracles (`required` holds doc, heading and line; the line is
-mapped to a section id through `spec-dna show --json`).
+Tasks have two formats: generator tasks (`required` contains section ids)
+and hand-made oracles (`required` contains doc, heading and line). For an
+oracle, `spec-dna show --json` maps the line to a section id.
 
 With `--query`, each task that has a `task` text also gives that text to
 `context --query`. Only the hand-made oracles have a task text.
@@ -46,7 +46,7 @@ def run(repo, *args):
 
 
 def section_ids(repo, task):
-    """Required and critical section ids of a task."""
+    """Returns the required and critical section ids of a task."""
     req = task["required"]
     if req and isinstance(req[0], str):
         return set(req), set()

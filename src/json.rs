@@ -1,4 +1,4 @@
-//! A minimal JSON writer for `--json` output. Keys keep insertion order.
+//! A minimal JSON writer for `--json` output. Keys keep the insertion order.
 
 use std::fmt::Write;
 
@@ -20,7 +20,6 @@ pub fn string(out: &mut String, s: &str) {
     out.push('"');
 }
 
-/// Builds one JSON object.
 pub struct Obj {
     buf: String,
     first: bool,

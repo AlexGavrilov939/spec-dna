@@ -1,6 +1,6 @@
-//! Git access through CLI plumbing (ADR 0002, git access decision). Every
-//! command runs with `GIT_OPTIONAL_LOCKS=0`, so reading never writes the
-//! repository's index. No command touches the network.
+//! This module accesses git through the CLI plumbing commands (ADR 0002, git
+//! access decision). Every command runs with `GIT_OPTIONAL_LOCKS=0`, so that a
+//! read never writes the index of the repository. No command uses the network.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -56,8 +56,8 @@ impl Git {
         Ok(out.stdout)
     }
 
-    /// Paths and blob ids of the git index (stage 0, or the first stage of a
-    /// conflicted path).
+    /// Returns the paths and blob ids of the git index (stage 0, or the first
+    /// stage of a conflicted path).
     pub fn ls_files(&self) -> Result<Vec<Entry>, String> {
         let out = self.run(&["ls-files", "-s", "-z"])?;
         let mut v: Vec<Entry> = Vec::new();
@@ -76,7 +76,8 @@ impl Git {
         Ok(v)
     }
 
-    /// Working-tree changes, limited to `paths` (all of the tree if empty).
+    /// Returns the working-tree changes in `paths`. If `paths` is empty, it
+    /// returns the changes in all of the tree.
     pub fn status(&self, paths: &[String]) -> Result<Status, String> {
         let mut args = vec![
             "status",
@@ -105,7 +106,7 @@ impl Git {
                     let xy = it.nth(1).unwrap_or("..");
                     let path = it.last().unwrap_or("").to_string();
                     if kind == b'2' {
-                        recs.next(); // the original path of a rename
+                        recs.next(); // skip the original path of a rename
                     }
                     let y = xy.as_bytes().get(1).copied().unwrap_or(b'.');
                     if kind == b'u' || y == b'M' || y == b'T' || y == b'A' {
@@ -136,7 +137,8 @@ impl Git {
         Ok(v)
     }
 
-    /// The commit id of a revision, or `None` if it does not name a commit.
+    /// Returns the commit id of a revision, or `None` if the revision does not
+    /// name a commit.
     pub fn commit(&self, rev: &str) -> Option<String> {
         let spec = format!("{rev}^{{commit}}");
         let out = self

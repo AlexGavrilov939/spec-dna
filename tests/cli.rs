@@ -1,5 +1,5 @@
-//! Integration tests: the binary on generic fixture repositories.
-//! Golden files live in tests/golden; regenerate them with
+//! Integration tests: they run the binary on generic fixture repositories.
+//! The golden files are in tests/golden. To regenerate them, run
 //! `UPDATE_GOLDEN=1 cargo test`.
 
 use std::fs;
@@ -69,7 +69,7 @@ impl Repo {
         Repo { dir }
     }
 
-    /// A repository with the fixture committed.
+    /// Makes a repository and commits the fixture to it.
     fn fixture(name: &str) -> Repo {
         let r = Repo::empty();
         copy_dir(
@@ -137,7 +137,8 @@ fn golden(name: &str, actual: &str) {
     );
 }
 
-/// Drops the cache counters, which differ between modes by design.
+/// Removes the cache counters, because their values differ between modes by
+/// design.
 fn without_counters(json: &str) -> String {
     let mut s = json.to_string();
     for key in ["\"parsed\":", "\"cached\":"] {
@@ -204,7 +205,7 @@ fn full_warm_and_incremental_runs_agree() {
         assert_eq!(cold, reference);
         assert_eq!(without_counters(&warm), reference);
     }
-    // Incremental: change documents after the index was written.
+    // Incremental run: change documents after spec-dna wrote the index.
     r.append(
         "docs/auth/tokens.md",
         "- **rotation**: The issuer SHALL rotate keys every 90 days.\n",
@@ -223,7 +224,7 @@ fn full_warm_and_incremental_runs_agree() {
         let incremental = without_counters(&r.run(args).1);
         assert_eq!(incremental, full(&r, args), "{args:?}");
     }
-    // The new and changed files are visible, the deleted one is reported.
+    // `check` sees the new and changed files, and it reports the deleted file.
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
     assert!(
@@ -231,7 +232,7 @@ fn full_warm_and_incremental_runs_agree() {
         "{out}"
     );
     assert!(out.contains("SD202 id-removed"), "{out}");
-    // The index lives inside the git directory: nothing to commit.
+    // The index is in the git directory, so git status shows nothing to commit.
     assert!(!git(&r.dir, &["status", "--porcelain"]).contains("spec-dna/"));
 }
 
@@ -278,14 +279,14 @@ fn moves_keep_ids_resolving() {
         r.read("docs/security/credentials.md")
             .contains("aliases:\n  - auth/tokens\n")
     );
-    // Relative links to the moved file follow it.
+    // `mv` updates the relative links to the moved file.
     assert!(
         r.read("docs/auth/session.md")
             .contains("[the token rules](../security/credentials.md#requirements)")
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "a move adds no error: {out}");
-    // Old forms resolve to the moved requirement.
+    // The old forms of the id resolve to the moved requirement.
     let (_, out, _) = r.run(&["show", "auth/session#expiry"]);
     assert!(
         out.starts_with("<!-- security/credentials#expiry h:"),
@@ -469,7 +470,8 @@ fn hard_budget_fails_only_when_newly_crossed() {
     r.write("docs/big.md", &format!("# Big\n\n{}\n", words(50)));
     r.write("docs/small.md", "# Small\n\nShort.\n");
     r.commit("docs");
-    // Over the hard budget in the base: an error, but not a new one.
+    // The document is over the hard budget in the base. This is an error, but
+    // not a new one.
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     let (code, out, _) = r.run(&["check", "--all"]);
@@ -478,13 +480,13 @@ fn hard_budget_fails_only_when_newly_crossed() {
         out.contains("docs/big.md:1: error SD702 budget-hard"),
         "{out}"
     );
-    // Growing it is a new warning, not an error.
+    // If the document grows, it is a new warning, not an error.
     r.append("docs/big.md", &format!("\n{}\n", words(10)));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("warning SD703 budget-grew"), "{out}");
     assert!(!out.contains("error SD702"), "{out}");
-    // A document that newly crosses the hard budget fails the check.
+    // A document that goes over the hard budget in this change fails the check.
     r.append("docs/small.md", &format!("\n{}\n", words(50)));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
@@ -524,8 +526,8 @@ fn legacy_statuses_and_decision_sections_follow_the_root() {
         ],
         "{out}"
     );
-    // The mapped status counts as `accepted`, so the decision is served
-    // with its outcome section.
+    // The mapped status is equal to `accepted`, so `context` serves the
+    // decision with its outcome section.
     let (code, out, _) = r.run(&["context", "cache"]);
     assert_eq!(code, 0);
     assert!(
@@ -589,7 +591,7 @@ fn query_ranks_matching_sections_first() {
     let (code, out, _) = r.run(&args);
     assert_eq!(code, 0);
     assert!(full(&out, "gamma") && !full(&out, "alpha"), "{out}");
-    // A section that the target names comes first, match or not.
+    // A section that the target names comes first, whether it matches or not.
     let (_, named, _) = r.run(&[
         "context",
         "long#beta",

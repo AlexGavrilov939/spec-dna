@@ -1,8 +1,12 @@
 //! Normalized content hashes (ADR 0001, "Hashes exist from the first release").
 //!
-//! Normalization: Unicode NFC, runs of whitespace (including line ends)
-//! collapsed to one space, leading and trailing whitespace removed. The hash
-//! is the first 8 bytes (16 hexadecimal digits) of SHA-256 over the
+//! The normalization does these steps:
+//!
+//! - It converts the text to Unicode NFC.
+//! - It replaces each run of whitespace (also line ends) with one space.
+//! - It removes whitespace at the start and at the end.
+//!
+//! The hash is the first 8 bytes (16 hexadecimal digits) of SHA-256 over the
 //! normalized UTF-8 text.
 
 use sha2::{Digest, Sha256};
@@ -11,7 +15,8 @@ use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
 
 pub type Hash = [u8; 8];
 
-/// Returns the text in Unicode NFC, borrowing when it already is.
+/// Returns the text in Unicode NFC. If the text is already in NFC, it borrows
+/// the text.
 pub fn nfc(text: &str) -> Cow<'_, str> {
     if text.is_ascii() || matches!(is_nfc_quick(text.chars()), IsNormalized::Yes) {
         Cow::Borrowed(text)
@@ -20,7 +25,8 @@ pub fn nfc(text: &str) -> Cow<'_, str> {
     }
 }
 
-/// NFC, whitespace runs collapsed to one space, trimmed.
+/// Converts the text to NFC, replaces each whitespace run with one space, and
+/// trims the result.
 pub fn normalize(text: &str) -> String {
     let text = nfc(text);
     let mut out = String::with_capacity(text.len());
@@ -73,7 +79,7 @@ mod tests {
 
     #[test]
     fn normalization_is_nfc() {
-        // "é" as e + combining acute (NFD) and as one code point (NFC).
+        // Compare "é" as e + combining acute (NFD) with "é" as one code point (NFC).
         assert_eq!(
             hash_normalized("calf\u{65}\u{301}"),
             hash_normalized("calf\u{e9}")
@@ -88,7 +94,6 @@ mod tests {
             h.chars()
                 .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         );
-        // SHA-256("x") starts with 2d711642b726b044.
         assert_eq!(h, "2d711642b726b044");
     }
 }

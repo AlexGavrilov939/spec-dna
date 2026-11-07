@@ -1,7 +1,8 @@
-//! The index: parsed documents keyed by git blob id (ADR 0001,
-//! "Concurrency"). It is a disposable cache inside the git directory, so it
-//! is never committed. Writes go to a temporary file that is renamed into
-//! place, so a reader sees the old or the new index, never a partial one.
+//! The index contains parsed documents, keyed by git blob id (ADR 0001,
+//! "Concurrency"). It is a disposable cache in the git directory, so it is
+//! never part of a commit. A write goes to a temporary file, and then a rename
+//! puts that file in place. Thus a reader sees the old or the new index, never
+//! a partial one.
 
 use crate::frontmatter::{FrontMatter, Value};
 use crate::parse::{Chunk, PARSER_VERSION, ParsedDoc, Ref, RefKind, Req, Token};
@@ -25,7 +26,7 @@ impl Index {
         }
     }
 
-    /// Loads the index; a missing, old or damaged file gives an empty index.
+    /// Loads the index. A missing, old or damaged file gives an empty index.
     pub fn load(path: PathBuf) -> Index {
         let entries = std::fs::read(&path)
             .ok()

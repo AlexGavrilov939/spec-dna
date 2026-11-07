@@ -1,8 +1,8 @@
 // Command scan is the Go half of the spec-dna language benchmark.
 //
 // It walks a tree, parses Markdown front matter, links and id tokens, and
-// resolves them. The Rust half in ../rust implements the same rules; see
-// ../README.md. Standard library only.
+// resolves them. The Rust half in ../rust uses the same rules. See
+// ../README.md. It uses only the standard library.
 package main
 
 import (
@@ -131,7 +131,7 @@ func run(root, index string, excl map[string]bool, list bool) error {
 					mu.Unlock()
 					continue
 				}
-				// No copy: b is not modified after this point.
+				// Do not copy: no code changes b after this point.
 				parse(d, unsafe.String(unsafe.SliceData(b), len(b)))
 			}
 		}()
@@ -145,7 +145,7 @@ func run(root, index string, excl map[string]bool, list bool) error {
 		return firstErr
 	}
 
-	// resolve
+	// Resolve the links and the id tokens.
 	ids := map[string]int{}
 	prefixes := map[string]bool{}
 	var bytes, links, internal, idrefs int64
@@ -265,7 +265,7 @@ func parse(d *doc, s string) {
 		}
 		l = stripCode(l)
 		links, prose := findLinks(l)
-		// Clone: a substring would keep the whole file buffer alive.
+		// Clone each link: a substring would keep the whole file buffer in memory.
 		for _, x := range links {
 			d.links = append(d.links, strings.Clone(x))
 		}
@@ -275,7 +275,7 @@ func parse(d *doc, s string) {
 	}
 }
 
-// fence returns the fence char and run length when l opens or closes a fence.
+// fence returns the fence char and run length if l opens or closes a fence.
 func fence(l string) (byte, int) {
 	i := 0
 	for i < len(l) && i < 3 && l[i] == ' ' {
@@ -338,8 +338,8 @@ func stripCode(l string) string {
 	return b.String()
 }
 
-// findLinks returns inline link targets (the text after "](" up to ")" or a
-// space) and the line with those targets removed, for the id scan.
+// findLinks returns the inline link targets (the text after "](" up to ")" or
+// a space). It also returns the line without those targets, for the id scan.
 func findLinks(l string) ([]string, string) {
 	var out []string
 	var prose strings.Builder
@@ -434,8 +434,8 @@ func idPrefix(id string) string {
 	return ""
 }
 
-// internalTarget strips fragment and query and decodes %XX; ok is false for
-// external links and same-file anchors.
+// internalTarget removes the fragment and the query, and decodes %XX. ok is
+// false for external links and same-file anchors.
 func internalTarget(t string) (string, bool) {
 	if strings.HasPrefix(t, "#") {
 		return "", false

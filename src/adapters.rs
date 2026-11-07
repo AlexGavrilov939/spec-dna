@@ -1,7 +1,7 @@
 //! Generated agent adapters (ADR 0003): an `AGENTS.md` block, a `CLAUDE.md`
-//! import line and one skill. Each carries the generator version and a hash
-//! of its normalized text, so `check` can report a hand edit or an old
-//! version.
+//! import line and one skill. Each adapter contains the generator version and
+//! a hash of its normalized text. Thus `check` can report a manual edit or an
+//! old version.
 
 use crate::diag::{Code, Diag};
 use crate::hash::{hash_normalized, hex};
@@ -14,27 +14,33 @@ pub const PATHS: [&str; 3] = [AGENTS, CLAUDE, SKILL];
 
 const AGENTS_BODY: &str = "## Specifications
 
-This repository keeps its specifications with spec-dna. The document roots are listed in `spec-dna.toml`.
+This repository uses spec-dna for its specifications. `spec-dna.toml` lists the document roots.
 
-- Before you change behavior that a spec, contract, guide or decision covers, run `spec-dna context <id or path>` and read what it prints. Fetch a section it lists as not loaded with `spec-dna show <id>#<anchor>`.
-- Cite a requirement as `<doc-id>#<key>`. Move a document or a requirement with `spec-dna mv`, so its old id keeps resolving.
-- Run `spec-dna check` before you commit, and fix every error it reports.";
+- Before you change behavior that a spec, contract, guide or decision covers, run `spec-dna context <id or path>`. Read what it prints. If it lists a section as not loaded, run `spec-dna show <id>#<anchor>` to read that section.
+- Cite a requirement as `<doc-id>#<key>`. Use `spec-dna mv` to move a document or a requirement, so that its old id still resolves.
+- Run `spec-dna check` before you commit. Fix every error that it reports.";
 
 const CLAUDE_BODY: &str = "@AGENTS.md";
 
 const SKILL_FRONT: &str = "---
 name: spec-dna
-description: Loads the specifications that apply to a task and checks edits to them with the spec-dna CLI. Use before changing behavior that a spec, contract, guide or decision covers, when citing or moving a requirement, and before committing a change to a document under a spec-dna root.
+description: Uses the spec-dna CLI to load the specifications that apply to a task and to check changes to them. Use it before you change behavior that a spec, contract, guide or decision covers. Use it when you cite or move a requirement. Use it before you commit a change to a document under a spec-dna root.
 ---
 ";
 
 const SKILL_BODY: &str = "# spec-dna
 
-1. Find the entry: a document id (`<namespace>/<slug>`), a legacy alias such as `ADR-12`, or a file you will change.
-2. Run `spec-dna context <id> --path <file>`. It prints the entry document first, then the documents whose `applies-to` matches, then the documents the entry depends on, then linked accepted decisions as summaries. Every section carries its id and hash. If the entry is a long document without requirements, add `--query \"<the task in plain words>\"`. Then the sections that match the task come first.
-3. A section listed as not loaded is one call away: `spec-dna show <id>#<anchor>`.
-4. Cite requirements as `<doc-id>#<key>`. Write a new requirement as `- **<key>**: <sentence>`, where the key is a lowercase slug and the sentence uses an EARS pattern with an uppercase BCP 14 keyword.
-5. After editing documents, run `spec-dna check` and fix every error. Move a document with `spec-dna mv <old> <new>`, and a requirement with `spec-dna mv <doc-id>#<key> <doc-id>`.";
+1. Find the entry. The entry is a document id (`<namespace>/<slug>`), a legacy alias such as `ADR-12`, or a file that you will change.
+2. Run `spec-dna context <id> --path <file>`. It prints the documents in this sequence:
+    - the entry document
+    - the documents whose `applies-to` matches
+    - the documents that the entry depends on
+    - the linked accepted decisions, as summaries
+
+    The output shows the id and the hash of each section. If the entry is a long document without requirements, add `--query \"<the task in plain words>\"`. This puts the sections that match the task first.
+3. If the output lists a section as not loaded, run `spec-dna show <id>#<anchor>` to read that section.
+4. Cite requirements as `<doc-id>#<key>`. Write a new requirement as `- **<key>**: <sentence>`. Use a lowercase slug as the key. In the sentence, use an EARS pattern with an uppercase BCP 14 keyword.
+5. After you edit documents, run `spec-dna check`. Fix every error. To move a document, run `spec-dna mv <old> <new>`. To move a requirement, run `spec-dna mv <doc-id>#<key> <doc-id>`.";
 
 fn body(name: &str) -> &'static str {
     match name {
@@ -64,7 +70,7 @@ pub fn skill_file() -> String {
     format!("{SKILL_FRONT}\n{}", block("skill"))
 }
 
-/// The generated block in a file: (start, end, version, recorded hash, body).
+/// Finds the generated block in a file. Returns (start, end, version, recorded hash, body).
 fn find_block<'a>(text: &'a str, name: &str) -> Option<(usize, usize, &'a str, &'a str, &'a str)> {
     let begin = format!("<!-- spec-dna:begin {name} ");
     let start = text.find(&begin)?;
@@ -84,7 +90,7 @@ fn find_block<'a>(text: &'a str, name: &str) -> Option<(usize, usize, &'a str, &
     Some((start, end, version, hash, body))
 }
 
-/// Checks the adapters present in a tree. `files` holds (path, text).
+/// Checks the adapters that are in a tree. `files` contains (path, text).
 pub fn check(files: &[(&str, String)]) -> Vec<Diag> {
     let mut out = Vec::new();
     for (path, text) in files {
@@ -138,7 +144,7 @@ pub fn upsert(text: &str, name: &str) -> String {
     format!("{text}{sep}{new}")
 }
 
-/// True if `CLAUDE.md` already imports `AGENTS.md` outside a generated block.
+/// Returns true if `CLAUDE.md` already imports `AGENTS.md` outside of a generated block.
 pub fn imports_agents(text: &str) -> bool {
     let stripped = match find_block(text, "claude") {
         Some((s, e, ..)) => format!("{}{}", &text[..s], &text[e..]),

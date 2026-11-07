@@ -39,5 +39,5 @@ jobs:
       - name: Run pre-commit
         run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure --color=always
         env:
-          # The local guard against committing to master does not apply to CI.
+          # The local guard that stops commits to master does not apply to CI.
           SKIP: no-commit-to-branch

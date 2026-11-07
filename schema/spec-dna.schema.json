@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/AlexGavrilov939/spec-dna/blob/master/schema/spec-dna.schema.json",
   "title": "spec-dna.toml",
-  "description": "Project configuration of spec-dna, read as TOML. See docs/config.md.",
+  "description": "The project configuration of spec-dna. spec-dna reads it as TOML. See docs/config.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec-dna", "roots"],
   "properties": {
     "spec-dna": {
-      "description": "The pinned spec-dna version. `check` refuses to run with a binary of another version.",
+      "description": "The pinned spec-dna version. `check` does not run with a binary of another version.",
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
     },
@@ -17,7 +17,7 @@
       "$ref": "#/$defs/globs"
     },
     "self-urls": {
-      "description": "URL prefixes that address this repository; a link under one resolves as a path from the repository root. `*` stands for one whole path segment, such as a branch.",
+      "description": "URL prefixes that address this repository. A link under one of them resolves as a path from the repository root. `*` is one whole path segment, such as a branch.",
       "type": "array",
       "items": {
         "type": "string",
@@ -48,7 +48,7 @@
       "additionalProperties": false,
       "properties": {
         "max-words": {
-          "description": "Longest requirement sentence, in words, before a warning. Default 30.",
+          "description": "The maximum number of words in a requirement sentence. A longer sentence causes a warning. Default 30.",
           "type": "integer",
           "minimum": 0
         }
@@ -59,7 +59,7 @@
       "additionalProperties": false,
       "properties": {
         "budget": {
-          "description": "Default character budget of `spec-dna context`. Default 12000.",
+          "description": "The default character budget of `spec-dna context`. Default 12000.",
           "type": "integer",
           "minimum": 0
         }
@@ -80,7 +80,7 @@
       "enum": ["spec", "contract", "guide", "decision", "change", "note"]
     },
     "pattern": {
-      "description": "Literal text with exactly one `{n}` (one or more digits); `*` matches any text.",
+      "description": "Literal text with exactly one `{n}` (one or more digits). `*` matches any text.",
       "type": "string",
       "pattern": "^[^{}]*\\{n\\}[^{}]*$"
     },
@@ -98,19 +98,19 @@
       "required": ["path"],
       "properties": {
         "path": {
-          "description": "Directory relative to the repository root; `.` for the whole repository.",
+          "description": "Directory relative to the repository root. Use `.` for the whole repository.",
           "type": "string"
         },
         "type": {
-          "description": "The type of every document in the root, or `mixed` (the default) to let front matter choose.",
+          "description": "The type of every document in the root. With `mixed` (the default), the front matter of each document gives the type.",
           "anyOf": [{ "$ref": "#/$defs/type" }, { "const": "mixed" }]
         },
         "default-type": {
-          "description": "Mixed roots only: the type of a document without a `type` field. Default `note`.",
+          "description": "For mixed roots only: the type of a document that has no `type` field. Default `note`.",
           "$ref": "#/$defs/type"
         },
         "status": {
-          "description": "Status of a document of the root's default type that has no `status` field.",
+          "description": "The status of a document that has the default type of the root and no `status` field.",
           "type": "string"
         },
         "exclude": {
@@ -118,7 +118,7 @@
           "$ref": "#/$defs/globs"
         },
         "legacy-ids": {
-          "description": "Patterns that turn existing file names into aliases, such as `ADR-{n}`.",
+          "description": "Patterns that make aliases from existing file names, such as `ADR-{n}`.",
           "type": "array",
           "items": {
             "anyOf": [
@@ -136,19 +136,19 @@
           }
         },
         "legacy-keys": {
-          "description": "Patterns of existing requirement keys that are kept as written, such as `R-{n}`.",
+          "description": "Patterns of existing requirement keys that spec-dna keeps as written, such as `R-{n}`.",
           "type": "array",
           "items": { "$ref": "#/$defs/pattern" }
         },
         "status-map": {
-          "description": "Legacy status words and the status each stands for, such as `released = \"active\"`. The target must be a status of the root's type, or of any type in a mixed root.",
+          "description": "Legacy status words, each with the status that it maps to, such as `released = \"active\"`. The target must be a status of the root's type, or of any type in a mixed root.",
           "type": "object",
           "additionalProperties": {
             "enum": ["draft", "active", "deprecated", "superseded", "retired", "proposed", "accepted", "rejected", "done"]
           }
         },
         "decision-sections": {
-          "description": "Headings that hold a decision's outcome, compared without case. Replaces the default `[\"Decision Outcome\", \"Decision\"]`.",
+          "description": "Headings that contain the outcome of a decision. spec-dna compares them without case. This list replaces the default `[\"Decision Outcome\", \"Decision\"]`.",
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "pattern": "\\S" }

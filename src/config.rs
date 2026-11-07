@@ -1,5 +1,6 @@
-//! `spec-dna.toml`: the project configuration (ADR 0001, "Layers").
-//! Documented in docs/config.md; JSON Schema in schema/spec-dna.schema.json.
+//! `spec-dna.toml` is the project configuration (ADR 0001, "Layers").
+//! docs/config.md describes it. schema/spec-dna.schema.json contains its JSON
+//! Schema.
 
 use crate::model::DocType;
 use toml::{Table, Value};
@@ -17,7 +18,8 @@ pub struct Config {
     pub max_words: u32,
     pub context_budget: u32,
     pub repos: Vec<(String, String)>,
-    /// URL prefixes that address this repository; links under them are internal.
+    /// URL prefixes that address this repository. A link under one of them is
+    /// internal.
     pub self_urls: Vec<String>,
 }
 
@@ -31,9 +33,9 @@ pub struct Root {
     pub exclude: Vec<String>,
     pub legacy_ids: Vec<LegacyId>,
     pub legacy_keys: Vec<Pattern>,
-    /// Legacy status words and the status each one stands for.
+    /// Legacy status words, each with the status that it maps to.
     pub status_map: Vec<(String, String)>,
-    /// Headings that hold a decision's outcome.
+    /// Headings that contain the outcome of a decision.
     pub decision_sections: Vec<String>,
 }
 
@@ -46,7 +48,7 @@ pub struct LegacyId {
 }
 
 impl LegacyId {
-    /// The alias for a document slug, if the slug matches.
+    /// Returns the alias for a document slug, if the slug matches.
     pub fn alias_for(&self, slug: &str) -> Option<String> {
         let n = self.file.capture(slug)?;
         let n = n.trim_start_matches('0');
@@ -54,7 +56,8 @@ impl LegacyId {
         Some(self.alias.replace("{n}", n))
     }
 
-    /// The prefix of a `PREFIX-{n}` alias, used to recognize bare tokens.
+    /// Returns the prefix of a `PREFIX-{n}` alias. spec-dna uses it to find
+    /// bare tokens.
     pub fn token_prefix(&self) -> Option<&str> {
         let p = self.alias.strip_suffix("-{n}")?;
         (!p.is_empty()
@@ -115,7 +118,7 @@ impl Pattern {
         match_parts(&self.parts, s, &mut cap)
     }
 
-    /// The digits matched by the first `{n}`.
+    /// Returns the digits that the first `{n}` matches.
     pub fn capture(&self, s: &str) -> Option<String> {
         let mut cap = None;
         match_parts(&self.parts, s, &mut cap).then(|| cap.unwrap_or_default())
@@ -130,7 +133,7 @@ fn match_parts(parts: &[Part], s: &str, cap: &mut Option<String>) -> bool {
             .is_some_and(|r| match_parts(rest, r, cap)),
         Some((Part::Num, rest)) => {
             let digits = s.bytes().take_while(u8::is_ascii_digit).count();
-            // Longest run first, so `{n}*` keeps all digits.
+            // Try the longest run first, so that `{n}*` keeps all digits.
             for len in (1..=digits).rev() {
                 let mut c = cap.clone();
                 if c.is_none() {
@@ -262,7 +265,8 @@ impl Config {
         })
     }
 
-    /// The root a repository path belongs to: the deepest root that contains it.
+    /// Returns the root of a repository path: the deepest root that contains
+    /// the path.
     pub fn root_of(&self, path: &str) -> Option<usize> {
         let mut best: Option<(usize, usize)> = None;
         for (i, r) in self.roots.iter().enumerate() {
@@ -284,7 +288,8 @@ impl Config {
                 .any(|g| crate::glob::matches(g, rel))
     }
 
-    /// Prefixes of legacy `PREFIX-{n}` aliases, for bare-token checks.
+    /// Returns the prefixes of legacy `PREFIX-{n}` aliases, for bare-token
+    /// checks.
     pub fn token_prefixes(&self) -> Vec<String> {
         let mut v: Vec<String> = self
             .roots
@@ -389,7 +394,7 @@ impl Root {
                 let to = to
                     .as_str()
                     .ok_or_else(|| format!("`{prefix}status-map.{from}` must be a string"))?;
-                // A word every type of the root already allows is never mapped.
+                // Do not map a word that every type of the root already allows.
                 if types.iter().all(|t| t.statuses().contains(&from.as_str())) {
                     return Err(format!(
                         "`{prefix}status-map.{from}`: `{from}` is already a status"
@@ -432,7 +437,7 @@ impl Root {
         })
     }
 
-    /// The path relative to this root.
+    /// Returns the path relative to this root.
     pub fn rel<'a>(&self, path: &'a str) -> &'a str {
         if self.path.is_empty() {
             path
@@ -635,7 +640,7 @@ type = "decision"
             ))
             .unwrap_err()
         };
-        // `active` is already a spec status; `accepted` is not one.
+        // `active` is already a spec status. `accepted` is not a spec status.
         assert!(err("status-map = { active = \"draft\" }").contains("already a status"));
         assert!(
             err("status-map = { frozen = \"accepted\" }").contains("not a status of type `spec`")
@@ -643,7 +648,7 @@ type = "decision"
         assert!(err("status-map = { frozen = 1 }").contains("must be a string"));
         assert!(err("decision-sections = []").contains("at least one heading"));
         assert!(err("decision-sections = [\" \"]").contains("at least one heading"));
-        // In a mixed root a word that some type lacks may be mapped.
+        // In a mixed root, you can map a word that some type does not allow.
         assert!(
             Config::parse(
                 "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nstatus-map = { accepted = \"active\" }\n"
