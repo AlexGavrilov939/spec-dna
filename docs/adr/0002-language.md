@@ -6,11 +6,13 @@ status: accepted
 
 ## Context and Problem Statement
 
-The brief prefers Rust or Go and asks for a choice from evidence, not preference. The tool must start fast, scan fast cold and warm, process changes incrementally, stay small in memory, and ship as one native binary on macOS, Linux and Windows.
+The brief prefers Rust or Go. It asks for a choice that comes from evidence, not from preference. The tool must start fast and scan fast in cold and warm runs. It must process changes incrementally and use little memory. It must ship as one native binary on macOS, Linux and Windows.
 
-To get evidence, the same minimal scanner was written in both languages ([bench/](../../bench/README.md)). It walks a tree, parses front matter, links and id tokens, and resolves them. Both use the standard library only, the same algorithm, the same worker-pool parallelism and the same index format. A test oracle keeps them honest: on every corpus both print identical counts; on synthetic corpora the counts equal the generator's ground truth; and the index build, warm and incremental runs agree with the full scan.
+For evidence, the same minimal scanner exists in both languages ([bench/](../../bench/README.md)). Each scanner walks a tree, parses front matter, links and id tokens, and resolves them. Both scanners use only the standard library, the same algorithm, the same worker-pool parallelism and the same index format.
 
-An independent review of the first run found prototype artifacts that favored Rust (Go copied every file buffer, Rust deep-cloned cached entries, the Go binary was not stripped, Go always ran first). They were fixed before the run reported here.
+A test oracle checks that both scanners are correct. On every corpus, both scanners print identical counts. On synthetic corpora, the counts are equal to the ground truth of the generator. The index build, warm and incremental runs agree with the full scan.
+
+An independent review of the first run found prototype artifacts that favored Rust. Go copied every file buffer, and Rust deep-cloned cached entries. Also, the build did not strip the Go binary, and Go always ran first. The fixes for these artifacts came before the run that this decision reports.
 
 ## Considered Options
 
@@ -19,17 +21,17 @@ An independent review of the first run found prototype artifacts that favored Ru
 
 ## Measurements
 
-Hardware: Apple M4 Max, 16 cores, 128 GB, macOS 26.6.1, APFS SSD. Toolchains: go1.25.4 darwin/arm64 (`-trimpath -ldflags=-s -w`); rustc 1.99.1 (release, LTO, 1 codegen unit). Measured 2026-11-07.
+Hardware: Apple M4 Max, 16 cores, 128 GB, macOS 26.6.1, APFS SSD. Toolchains: go1.25.4 darwin/arm64 (`-trimpath -ldflags=-s -w`); rustc 1.99.1 (release, LTO, 1 codegen unit). The measurement date is 2026-11-07.
 
-Method: `bench/run.py` exports a snapshot of the corpus (`git archive` for a repository), then runs each mode 15 times after 1 warm-up, and startup 20 times. Go and Rust alternate run by run, and the one that goes first alternates too. Wall time and peak RSS come from `wait4` per process. Cells show the median, with the minimum in brackets, in milliseconds.
+Method: `bench/run.py` exports a snapshot of the corpus (`git archive` for a repository). Then it runs each mode 15 times after 1 warm-up, and it runs startup 20 times. Go and Rust alternate run by run, and the scanner that runs first also alternates. Wall time and peak RSS come from `wait4` per process. Cells show the median in milliseconds, with the minimum in brackets.
 
 - Startup: `scan --version`.
-- Full scan: no index. The OS file cache is warm; dropping it needs root on macOS, so a true cold cache was not measured.
-- Index build: full scan that also writes the index.
-- Warm: index present, nothing changed. Walk, stat, load the index, resolve.
-- Incremental: 10 documents changed since the index was written.
+- Full scan: no index. The OS file cache is warm. On macOS, a drop of that cache needs root, so the benchmark did not measure a true cold cache.
+- Index build: a full scan that also writes the index.
+- Warm: the index is present, and nothing changed. The steps are walk, stat, load the index and resolve.
+- Incremental: 10 documents changed after the scanner wrote the index.
 
-The host was shared with other work. The 1-minute load average on 16 cores is in the first table. Treat differences under about 20% as ties.
+Other work also used the host. The first table shows the 1-minute load average on 16 cores. Treat differences under about 20% as ties.
 
 | Corpus | Docs | Files | MB | Load (1 min avg) | Equal / modes agree |
 | --- | ---: | ---: | ---: | --- | --- |
@@ -39,7 +41,7 @@ The host was shared with other work. The 1-minute load average on 16 cores is in
 | Corpus B | 714 | 2,300 | 22.9 | 22.15 to 20.91 | yes / yes |
 | Corpus A | 2,309 | 6,537 | 39.0 | 20.91 to 21.64 | yes / yes |
 
-Corpus A is a mature product repository with mixed languages (anonymized, tracked files at a pinned revision). Corpus B is the public `kubernetes/enhancements` repository at `72907deaa85eae6e208bc95c5f74dd27c1911345`, about 700 proposals with YAML metadata.
+Corpus A is a mature product repository with mixed languages (anonymized, tracked files at a pinned revision). Corpus B is the public `kubernetes/enhancements` repository at `72907deaa85eae6e208bc95c5f74dd27c1911345`. It has about 700 proposals with YAML metadata.
 
 | Corpus | Scanner | Startup | Full scan | Index build | Warm | Incremental (10 changed) | Peak RSS full / warm (MB) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -54,7 +56,7 @@ Corpus A is a mature product repository with mixed languages (anonymized, tracke
 | Corpus A | Go | 3.8 (3.3) | 123.1 (96.8) | 103.8 (96.8) | 35.1 (33.0) | 45.0 (39.5) | 78.5 / 12.1 |
 | Corpus A | Rust | 3.3 (2.9) | 95.5 (73.8) | 79.8 (74.3) | 31.2 (29.4) | 39.4 (34.4) | 14.2 / 8.3 |
 
-Index size is the same for both: 0.03, 0.68, 9.56, 1.25 and 0.68 MB in table order.
+The index size is the same for both scanners: 0.03, 0.68, 9.56, 1.25 and 0.68 MB, in the order of the table.
 
 Other measured facts (same host):
 
@@ -65,7 +67,7 @@ Other measured facts (same host):
 | Cross-build to Linux x86-64 from macOS | 1.6 s, no extra setup (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0`) | Works with cargo-zigbuild and zig; see Confirmation |
 | Prototype size | 534 lines | 601 lines |
 
-Reproduce:
+To reproduce the measurements:
 
 ```sh
 cd bench
@@ -76,7 +78,7 @@ git -C work/enhancements fetch -q --depth 1 https://github.com/kubernetes/enhanc
 python3 run.py --corpus work/enhancements --rev FETCH_HEAD --label corpus-b --runs 15 --out results/corpus-b.json
 ```
 
-Raw results: `bench/results/*.json`. Corpus A results stay with its owner.
+The raw results are in `bench/results/*.json`. The results for corpus A stay with its owner.
 
 ## Ecosystem (not measured)
 
@@ -86,36 +88,48 @@ Raw results: `bench/results/*.json`. Corpus A results stay with its owner.
 | YAML front matter | `go-yaml` archived 2025-04-01, continued as `yaml/go-yaml` v4 | `serde_yaml` deprecated; successors yaml-rust2, saphyr |
 | TOML configuration | BurntSushi/toml | toml |
 | Git trees for base-relative checks | `git` CLI plumbing or go-git | `git` CLI plumbing or gix |
-| Release tooling | GoReleaser; trivial cross-compilation | cargo-dist; cross-compilation needs per-target linkers or native runners |
+| Release tooling | GoReleaser; simple cross-compilation | cargo-dist; cross-compilation needs per-target linkers or native runners |
 
-[ADR 0001](0001-information-model.md) restricts front matter to a small YAML subset, so a small own parser is an option in either language.
+[ADR 0001](0001-information-model.md) limits front matter to a small YAML subset, so a small custom parser is an option in either language.
 
 ## Decision Outcome
 
 Chosen option: Rust, by a small margin.
 
-Latency does not decide. Startup is 2 to 4 ms in both. Warm and incremental runs, the path agent hooks use, differ by less than 15% everywhere, with Go slightly ahead on the large synthetic corpus and Rust slightly ahead on the real ones. Full scans were 20 to 27% faster in Rust on corpora A and B, under load average 21, and tied on the large synthetic corpus. Every median on corpora A and B is under 125 ms.
+Latency does not decide. Startup is 2 to 4 ms in both languages. Agent hooks use the warm and incremental runs, and these runs differ by less than 15% on every corpus. Go is slightly faster on the large synthetic corpus, and Rust is slightly faster on the real corpora.
 
-The deciding factors are secondary. The first version also counted the parser; goldmark exposes source byte ranges too, so the parser does not separate the languages and is no longer a criterion.
+Full scans were 20 to 27% faster in Rust on corpora A and B, under load average 21, and tied on the large synthetic corpus. Every median on corpora A and B is under 125 ms.
 
-- Memory. With the default garbage collector, Go's peak RSS on a full scan was 2.5 to 5.5 times Rust's (Corpus A 78.5 against 14.2 MB; large synthetic 237 against 44 MB). On the warm path they are close. Full scans happen in CI, after a branch switch, and in a possible long-lived mode (language server or MCP adapter), where Rust leaves more headroom. Go can narrow the gap with `GOMEMLIMIT`, at the cost of tuning.
+Secondary factors decide. The first version of this decision also counted the parser. But goldmark also exposes source byte ranges, so the parser does not separate the languages and is no longer a criterion.
+
+- Memory. With the default garbage collector, the peak RSS of Go on a full scan was 2.5 to 5.5 times that of Rust. It was 78.5 against 14.2 MB on Corpus A, and 237 against 44 MB on the large synthetic corpus. On the warm path, the values are close. Full scans occur in CI, after a branch switch, and in a possible long-lived mode (language server or MCP adapter), where Rust leaves more headroom. Go can make the difference smaller with `GOMEMLIMIT`, but this needs tuning.
 - Types. Enums with exhaustive matching fit the lifecycle states and diagnostic codes of ADR 0001, where a missed state is a bug.
 - Size. The binary is 3.5 times smaller.
 
-Go wins on build simplicity: cross-compilation needs no setup, and builds are faster. That cost is paid once, in the release pipeline of [ADR 0003](0003-distribution.md).
+Go is better for build simplicity: cross-compilation needs no setup, and builds are faster. The project pays that cost once, in the release pipeline of [ADR 0003](0003-distribution.md).
 
 ### Confirmation
 
 Two steps had to pass before acceptance. Both passed on 2026-11-07.
 
-1. CI cross-builds the 7 targets of ADR 0003 without manual steps. `scripts/cross-build.sh` holds the target list and is the only build recipe; `.github/workflows/build.yml` runs it once per target on `ubuntu-24.04` with Rust 1.99.1, zig 0.17.0 (from a community mirror, checked against a pinned SHA-256) and cargo-zigbuild 0.24.0. One Linux host builds all 7: `aarch64-apple-darwin` and `x86_64-apple-darwin` (minimum macOS 11.0, no Apple SDK), `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (glibc 2.17), `x86_64-unknown-linux-musl` (static), `x86_64-pc-windows-gnu` and `aarch64-pc-windows-gnullvm`. The Windows targets use the GNU ABI so that no MSVC SDK is needed. Proof, measured: on the macOS host the script built all 7 targets of the tool crate in 120 s; the workflow's `run:` steps, copied verbatim, passed in a clean `ubuntu:24.04` container (arm64 in 117 s, and amd64 under emulation in 317 s, for the prototype); the tool's Linux binaries run on Ubuntu 24.04 (the prototype's also on CentOS 7), and its macOS binaries run on macOS 26 (x86-64 under Rosetta). The workflow has not run on GitHub yet, because the branch is not pushed.
-2. Git access uses the git command line. [bench/git-access](../../bench/git-access/results.md) performs the inputs of a base-relative check (head listing with blob ids and working-tree changes, base tree listing, blob reads) both ways, with equal output on every run. With git processes started in parallel, gix was 6 to 9 ms faster when 10 blobs are read, and 0 to 26% faster when every Markdown blob is read (synthetic and corpus B, macOS). Most of the difference is process start: `/usr/bin/git` on macOS is an `xcrun` shim that costs 11.3 ms per process, the git binary itself 4.0 ms. gix would add 111 crates, grow the binary from 0.44 to 3.65 MB and the clean build from 2 to about 30 s, and it shipped 4 breaking 0.x releases in 2 months. The CLI also behaves exactly like the user's git.
+1. CI cross-builds the 7 targets of ADR 0003 without manual steps. `scripts/cross-build.sh` holds the target list and is the only build recipe. `.github/workflows/build.yml` runs it once per target on `ubuntu-24.04` with Rust 1.99.1, zig 0.17.0 and cargo-zigbuild 0.24.0. Zig comes from a community mirror, and the workflow checks it against a pinned SHA-256.
 
-Profile of the real tool (`SPEC_DNA_TRACE=1`), measured on corpus B in an incremental check with 9 changed documents (median of 9 runs, load average 7): about 43 ms go to the parallel git listings of the working tree and the base tree; loading the index, parsing, building both corpora and diagnosing take about 10 ms together. The warm path is limited by git process work, which is the same in both languages, not by a language cause, so the choice does not flip. Timings of the tool on every corpus: [bench/tool](../../bench/tool/README.md); corpus A results stay with its owner.
+    One Linux host builds all 7 targets: `aarch64-apple-darwin` and `x86_64-apple-darwin` (minimum macOS 11.0, no Apple SDK), `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (glibc 2.17), `x86_64-unknown-linux-musl` (static), `x86_64-pc-windows-gnu` and `aarch64-pc-windows-gnullvm`. The Windows targets use the GNU ABI, so the build does not need an MSVC SDK.
 
-The choice flips to Go only if a later profile shows the warm path limited by a language cause. Revisit gix if measurements on Linux or Windows show git process start dominating the warm path.
+    Measured proof: on the macOS host, the script built all 7 targets of the tool crate in 120 s. The `run:` steps of the workflow, copied verbatim, passed in a clean `ubuntu:24.04` container. For the prototype, this took 117 s on arm64 and 317 s on amd64 under emulation. The Linux binaries of the tool run on Ubuntu 24.04, and the Linux binaries of the prototype also run on CentOS 7. The macOS binaries of the tool run on macOS 26 (x86-64 under Rosetta). The workflow did not run on GitHub yet, because the branch is still local.
+2. Git access uses the git command line. [bench/git-access](../../bench/git-access/results.md) runs the inputs of a base-relative check in both ways. These inputs are a head listing with blob ids and working-tree changes, a base tree listing, and blob reads. The output was equal on every run. With git processes in parallel, gix was 6 to 9 ms faster for a read of 10 blobs. It was 0 to 26% faster for a read of every Markdown blob (synthetic and corpus B, macOS).
 
-The owner asked for a rerun of the prototype benchmark when the 1-minute load average is below 4. Other sessions shared the host, and the load stayed between 4.1 and 20 for about an hour. It dropped to 3.2 at 17:59 and the rerun started then, with the same method. The small and medium corpora ran at load 3.4 to 4.4; during the large corpus the load rose again to 13, and corpus B ran at 12 to 13. Medians in ms, minimum in brackets; raw results in `bench/results/rerun-*.json`:
+    Most of the difference comes from process start. On macOS, `/usr/bin/git` is an `xcrun` shim that costs 11.3 ms per process, and the git binary itself costs 4.0 ms. gix would add 111 crates. It would increase the binary from 0.44 to 3.65 MB and the clean build from 2 to about 30 s. It also shipped 4 incompatible 0.x releases in 2 months. The CLI also behaves exactly like the user's git.
+
+This profile of the real tool (`SPEC_DNA_TRACE=1`) comes from an incremental check on corpus B with 9 changed documents. The values are the median of 9 runs, at load average 7. About 43 ms go to the parallel git listings of the working tree and the base tree. The index load, the parse, the build of both corpora and the diagnosis take about 10 ms together.
+
+Git process work limits the warm path, and this work is the same in both languages. A language cause does not limit the warm path, so the choice does not change. [bench/tool](../../bench/tool/README.md) gives the timings of the tool on every corpus. The results for corpus A stay with its owner.
+
+The choice changes to Go only if a later profile shows that a language cause limits the warm path. If Linux or Windows measurements show that git process start is the largest cost of the warm path, examine gix again.
+
+The owner asked for a rerun of the prototype benchmark when the 1-minute load average is below 4. Other sessions shared the host, and the load stayed between 4.1 and 20 for about an hour. The load decreased to 3.2 at 17:59, and the rerun started at that time with the same method. The small and medium corpora ran at load 3.4 to 4.4. During the run of the large corpus, the load increased again to 13, and corpus B ran at 12 to 13.
+
+The table shows the medians in ms, with the minimum in brackets. The raw results are in `bench/results/rerun-*.json`:
 
 | Corpus | Load (1 min avg) | Scanner | Full scan | Warm | Incremental (10 changed) | Peak RSS full (MB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
@@ -128,10 +142,12 @@ The owner asked for a rerun of the prototype benchmark when the 1-minute load av
 | Corpus B | 13.08 to 12.36 | Go | 42.7 (41.4) | 22.6 (21.6) | 26.9 (24.2) | 22.8 |
 | Corpus B | 13.08 to 12.36 | Rust | 29.5 (28.3) | 21.1 (20.0) | 24.7 (23.2) | 12.0 |
 
-Both scanners printed identical counts on every corpus, equal to the generator's ground truth on the synthetic ones, and every mode agreed with the full scan. The picture is the one above: warm and incremental runs tie within 10%, Rust's full scan is faster on corpus B (31% less) and tied on the synthetic corpora, and Go's peak RSS on a full scan is 1.9 to 4.9 times Rust's. Corpus A was rerun too and shows the same ordering; its numbers stay with its owner.
+Both scanners printed identical counts on every corpus. On the synthetic corpora, the counts were equal to the ground truth of the generator. Every mode agreed with the full scan.
+
+The results show the same pattern as the results above. Warm and incremental runs tie within 10%. The full scan of Rust is faster on corpus B (31% less) and ties on the synthetic corpora. On a full scan, the peak RSS of Go is 1.9 to 4.9 times that of Rust. Corpus A also had a rerun, and it shows the same order. Its numbers stay with its owner.
 
 ### Consequences
 
-- Good: lower memory and binary size; strong typing for the information model; a mature CommonMark parser with offsets.
-- Bad: slower builds as dependencies arrive (the tool's clean release build with 4 direct dependencies takes 13 to 20 s per target in the cross-build, measured), and cross-platform release work.
-- Follow-up: measure a true cold cache on a Linux CI runner, where dropping the page cache is allowed, and repeat the benchmark on an idle host before tuning.
+- Good: lower memory and binary size; strong types for the information model; a mature CommonMark parser with offsets.
+- Bad: builds become slower as the project adds dependencies. Measured: the clean release build of the tool with 4 direct dependencies takes 13 to 20 s per target in the cross-build. Cross-platform release work is also necessary.
+- Follow-up: measure a true cold cache on a Linux CI runner, which allows a drop of the page cache. Before you tune, repeat the benchmark on an idle host.
