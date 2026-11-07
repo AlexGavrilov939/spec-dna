@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0003. Distribution
@@ -32,17 +32,24 @@ Assessment (H good, L poor; this project's judgment, not measurements):
 
 ## Decision Outcome
 
-Primary model: option 4.
+Primary model: option 4, delivered in 2 phases.
+
+| Phase | Starts | Delivery | Pin in `spec-dna.toml` |
+| --- | --- | --- | --- |
+| 1 | Before the first consumer | `cargo install --locked --git <spec-dna repository> --tag v<version> spec-dna`, from a signed git tag | The version only |
+| 2 | Before a second consumer or a public release | Release artifacts for the 7 targets, per-target SHA-256 sums in the pin, build-provenance attestations, the dispatch shim | The version and the per-target sums |
+
+The pin is enforced in both phases: a binary whose version differs from the pin refuses to run a gate. Checksum verification starts in phase 2. The bullets below describe the target state after phase 2.
 
 - spec-dna ships as versioned release artifacts: static binaries for macOS (arm64, x86-64), Linux (x86-64, arm64, musl) and Windows (x86-64, arm64), with SHA-256 checksums and build-provenance attestations. The standard (rules, schemas, type definitions, diagnostic codes) is embedded in the binary, so one version number names both.
-- Each project pins the exact version and the per-target SHA-256 sums in `spec-dna.toml`, written by `spec-dna upgrade`. The sums are committed, so a binary can be verified offline against the repository rather than against the host that served it.
+- Each project pins the exact version and, from phase 2, the per-target SHA-256 sums in `spec-dna.toml`, written by `spec-dna upgrade`. The sums are committed, so a binary can be verified offline against the repository rather than against the host that served it.
 - The pin is enforced. A binary whose version differs from the pin refuses to run a gate and prints the install command. Side-by-side versions live in a per-version directory behind a small dispatch shim that reads the pin, or in a tool manager such as mise or aqua. CI installs through an action pinned by commit SHA, verifies the committed checksum, and verifies again after restoring the binary from its cache.
 - `spec-dna init` writes the configuration, proposes a layout for a new project or maps existing paths of a mature one ([ADR 0001](0001-information-model.md)), and generates the agent adapters: an `AGENTS.md` block, a `CLAUDE.md` import line, one skill that calls the CLI, and a namespace-level index. Each adapter carries the generator version and a content hash. `check` reports a hand-edited or outdated adapter, and `spec-dna upgrade` regenerates it as a reviewable diff.
 - Normal operation needs no network. If the central repository or the release host is down, an installed binary and the project files are enough.
 - Upgrade: `spec-dna upgrade --to <version>` changes the pin, the sums and the adapters in one reviewable commit. A new rule enters as a warning in a minor release and becomes an error only in a major release. A fix to an existing error rule can still change results in a minor release; release notes list such fixes. Rollback: revert the commit.
 - Uninstall: delete the binary, `spec-dna.toml` and the generated adapters. Project knowledge is plain Markdown and stays.
 
-Alternative (one): build from source with `cargo install --locked --version <pin> spec-dna`, for a platform without a prebuilt binary or a policy that forbids downloaded binaries. It uses the same source and the same locked dependency versions, but it is not byte-identical to the release binary, so the committed sums do not apply; such users opt out of checksum verification explicitly.
+Build from source (the phase 1 channel, and later an alternative): `cargo install --locked` from the tag, for the first consumer, for a platform without a prebuilt binary, or for a policy that forbids downloaded binaries. It uses the same source and the same locked dependency versions, but it is not byte-identical to a release binary, so after phase 2 the committed sums do not apply; such users opt out of checksum verification explicitly.
 
 Package managers (Homebrew tap, crates.io) are installation conveniences for option 4. The pin in `spec-dna.toml` stays authoritative. Thin npm or pip wrappers are deferred until a consumer needs one.
 
@@ -56,5 +63,5 @@ Rejected:
 
 - Good: one command to install, an exact and enforced pin per project, offline verification and operation, reversible upgrades, and nothing to delete from project knowledge on removal.
 - Good: the central repository holds the tool and the standard only.
-- Bad: a release pipeline for 7 targets with checksums and attestations, plus the dispatch shim, must exist before the first consumer adopts the tool.
+- Bad: a release pipeline for 7 targets with checksums and attestations, plus the dispatch shim, must exist before a second consumer adopts the tool or the first public release. Until then the first consumer builds from source and trusts the tag, not a checksum.
 - Bad: the standard cannot change without a release. That is intended, because it keeps the standard reviewable and reproducible.
