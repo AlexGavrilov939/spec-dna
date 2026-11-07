@@ -26,6 +26,7 @@ spec-dna check                      # new diagnostics against HEAD; exit 1 on a 
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
 spec-dna check --all                # every diagnostic
 spec-dna context auth/session --path src/gateway.rs
+spec-dna context auth/session --query "renew a session after a password change"
 spec-dna show auth/session#token-expiry
 spec-dna mv auth/session auth/sessions          # the old id becomes an alias
 spec-dna mv auth/session#token-expiry auth/tokens
@@ -37,7 +38,7 @@ Every command takes `--json`. Nothing uses the network: documents are read throu
 | --- | --- |
 | `init [--root <dir>]` | Writes `spec-dna.toml` if it is missing, and generates the adapters: a block in `AGENTS.md`, an `@AGENTS.md` import in `CLAUDE.md` (skipped if one exists), and the skill `.claude/skills/spec-dna/SKILL.md`. Each carries the generator version and a hash; `check` reports a hand edit or an old version. Running it again updates them |
 | `check [--base <rev>] [--all]` | Runs the controls of ADR 0001 on the working tree. Without `--all` it reports only diagnostics that are new against the base: the merge base of `<rev>` and `HEAD`, or `HEAD` itself. Codes: [docs/diagnostics.md](docs/diagnostics.md) |
-| `context <target>... [--path <file>]... [--budget <chars>]` | Prints the sections an agent needs: the entry documents (or sections), documents whose `applies-to` matches an entry or a path, `depends-on` targets at depth 1, linked accepted decisions as summaries, then the rest. A section that does not fit the budget is listed with its id, hash and size. Every section carries its id and hash |
+| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>]` | Prints the sections an agent needs: the entry documents (or sections), documents whose `applies-to` matches an entry or a path, `depends-on` targets at depth 1, linked accepted decisions as summaries, then the rest. A section that does not fit the budget is listed with its id, hash and size. Every section carries its id and hash. With `--query` (the task in plain words), the sections that match its words come first, ranked by BM25 without a network or a model; for long documents without requirement lists |
 | `show <id>[#<anchor>]` | Prints a document, a section with its subsections, or one requirement, with ids and hashes |
 | `mv <from> <to>` | Moves a document (`git mv`) and adds the old id to its `aliases`, and rewrites relative links to it. `mv <doc-id>#<key> <doc-id>` moves one requirement and adds an inline `<!-- aliases: ... -->` marker |
 

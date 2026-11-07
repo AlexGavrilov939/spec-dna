@@ -218,18 +218,18 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
             ));
         }
     }
-    if d.ty == DocType::Decision
-        && !p.chunks.iter().any(|ch| {
-            ch.heading.eq_ignore_ascii_case("decision outcome")
-                || ch.heading.eq_ignore_ascii_case("decision")
-        })
-    {
+    if d.ty == DocType::Decision && d.outcome.is_empty() {
+        let names: Vec<String> = config.roots[d.root]
+            .decision_sections
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect();
         out.push(diag(
             d,
             1,
             Code::SectionMissing,
             "decision-outcome",
-            "a decision needs a `Decision Outcome` (or `Decision`) section",
+            format!("a decision needs a section headed {}", names.join(" or ")),
         ));
     }
 

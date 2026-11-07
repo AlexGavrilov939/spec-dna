@@ -457,3 +457,155 @@ fn exit_codes() {
         b"spec-dna 0.1.0\n"
     );
 }
+
+#[test]
+fn hard_budget_fails_only_when_newly_crossed() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n[budgets.spec]\nsoft = 100\nhard = 200\n",
+    );
+    let words = |n: usize| "word ".repeat(n);
+    r.write("docs/big.md", &format!("# Big\n\n{}\n", words(50)));
+    r.write("docs/small.md", "# Small\n\nShort.\n");
+    r.commit("docs");
+    // Over the hard budget in the base: an error, but not a new one.
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/big.md:1: error SD702 budget-hard"),
+        "{out}"
+    );
+    // Growing it is a new warning, not an error.
+    r.append("docs/big.md", &format!("\n{}\n", words(10)));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD703 budget-grew"), "{out}");
+    assert!(!out.contains("error SD702"), "{out}");
+    // A document that newly crosses the hard budget fails the check.
+    r.append("docs/small.md", &format!("\n{}\n", words(50)));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/small.md:1: error SD702 budget-hard"),
+        "{out}"
+    );
+}
+
+#[test]
+fn legacy_statuses_and_decision_sections_follow_the_root() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { implemented = \"active\", approved = \"accepted\" }\ndecision-sections = [\"Решение\"]\n",
+    );
+    r.write(
+        "docs/cache.md",
+        "---\nstatus: implemented\n---\n# Cache\n\n## Requirements\n\n- **ttl**: The cache SHALL drop an entry after 60 seconds.\n",
+    );
+    r.write(
+        "docs/cache-store.md",
+        "---\ntype: decision\nstatus: approved\n---\n# Cache store\n\n## Контекст\n\nНужен общий кэш для [[cache]].\n\n## Решение\n\nRedis.\n",
+    );
+    r.write(
+        "docs/old-store.md",
+        "---\ntype: decision\nstatus: accepted\n---\n# Old store\n\n## Decision Outcome\n\nMemory.\n",
+    );
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    let found: Vec<&str> = out.lines().filter(|l| l.contains(" SD")).collect();
+    assert_eq!(
+        found,
+        [
+            "docs/old-store.md:1: error SD305 section-missing: a decision needs a section headed `Решение`"
+        ],
+        "{out}"
+    );
+    // The mapped status counts as `accepted`, so the decision is served
+    // with its outcome section.
+    let (code, out, _) = r.run(&["context", "cache"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("decision/accepted decision -->\n## Решение\n\nRedis."),
+        "{out}"
+    );
+}
+
+#[test]
+fn self_urls_link_documents_inside_the_repository() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\nself-urls = [\"https://example.org/acme/specs/blob/*/\", \"https://example.org/acme/specs/tree/*/\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"guide\"\nstatus = \"active\"\n",
+    );
+    r.write(
+        "docs/x/README.md",
+        "# X\n\nSee [Y](https://example.org/acme/specs/tree/main/docs/y) and [Z](https://example.org/acme/specs/blob/main/docs/z.md#part), not [W](https://example.org/acme/specs/blob/old/docs/w.md).\n",
+    );
+    r.write("docs/y/README.md", "# Y\n\nY text.\n");
+    r.write("docs/z.md", "# Z\n\n## Part\n\nZ text.\n");
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out, _) = r.run(&["context", "x"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("(linked): Y\n"), "{out}");
+    assert!(out.contains("(linked): Z\n"), "{out}");
+}
+
+#[test]
+fn query_ranks_matching_sections_first() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"guide\"\nstatus = \"active\"\n",
+    );
+    let filler = |w: &str| format!("{w} ").repeat(120);
+    r.write(
+        "docs/long.md",
+        &format!(
+            "# Long\n\nIntro.\n\n## Alpha\n\n{}\n\n## Beta\n\n{}\n\n## Gamma\n\nThe restart backoff limit is 300 seconds. {}\n",
+            filler("apples"),
+            filler("pears"),
+            filler("plums")
+        ),
+    );
+    r.commit("docs");
+    let full = |out: &str, s: &str| out.contains(&format!("<!-- long#{s} h:"));
+    let (code, out, _) = r.run(&["context", "long", "--budget", "1200"]);
+    assert_eq!(code, 0);
+    assert!(full(&out, "alpha") && !full(&out, "gamma"), "{out}");
+    let args = [
+        "context",
+        "long",
+        "--budget",
+        "1200",
+        "--query",
+        "Lower the restart backoff",
+    ];
+    let (code, out, _) = r.run(&args);
+    assert_eq!(code, 0);
+    assert!(full(&out, "gamma") && !full(&out, "alpha"), "{out}");
+    // A section that the target names comes first, match or not.
+    let (_, named, _) = r.run(&[
+        "context",
+        "long#beta",
+        "--budget",
+        "1200",
+        "--query",
+        "restart backoff",
+    ]);
+    assert!(full(&named, "beta"), "{named}");
+    assert!(out.contains("(query: lower restart backoff);"), "{out}");
+    assert_eq!(r.run(&args).1, out, "same input, same output");
+    let mut json = args.to_vec();
+    json.push("--json");
+    let (_, out, _) = r.run(&json);
+    assert!(
+        out.contains("\"query\":[\"lower\",\"restart\",\"backoff\"]"),
+        "{out}"
+    );
+}

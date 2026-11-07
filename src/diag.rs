@@ -61,7 +61,7 @@ codes! {
     DependsOnDeprecated = "SD604", "depends-on-deprecated", Warning, "Plan a move to the successor of the deprecated document.";
     AmendmentOutcome = "SD605", "amendment-outcome", Warning, "An amendment that changes the decision outcome needs a new superseding decision.";
     BudgetSoft = "SD701", "budget-soft", Warning, "Split the document or move detail into linked documents.";
-    BudgetHard = "SD702", "budget-hard", Warning, "Split the document; it is over the hard budget.";
+    BudgetHard = "SD702", "budget-hard", Error, "Split the document; it is over the hard budget.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its budget and grew; split it instead of adding to it.";
     RequirementKeyword = "SD801", "requirement-keyword", Warning, "State the requirement with an uppercase BCP 14 keyword (MUST, SHALL, SHOULD, MAY).";
     EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern; an `If` condition is followed by `then`.";
@@ -126,7 +126,8 @@ mod tests {
             assert!(seen.insert(c.code()), "duplicate {}", c.code());
             assert!(seen.insert(c.name()), "duplicate {}", c.name());
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
-            let is_warning = c.code().as_bytes()[2] >= b'6';
+            // From 600 up, warnings; SD702 became an error (checkpoint 2 ruling).
+            let is_warning = c.code().as_bytes()[2] >= b'6' && c.code() != "SD702";
             assert_eq!(
                 is_warning,
                 c.severity() == Severity::Warning,

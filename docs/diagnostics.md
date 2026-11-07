@@ -17,8 +17,8 @@ Base-relative gating compares diagnostics by the fingerprint (code, document id,
 | SD301 | front-matter-syntax | error | The front matter is not in the supported YAML subset |
 | SD302 | front-matter-field | error | A known field holds the wrong kind of value |
 | SD303 | type-invalid | error | Unknown `type`, or one that disagrees with a single-type root |
-| SD304 | status-invalid | error | A missing status, or one the type does not allow |
-| SD305 | section-missing | error | A decision has no `Decision Outcome` (or `Decision`) section |
+| SD304 | status-invalid | error | A missing status, or one the type does not allow, after the root's `status-map` |
+| SD305 | section-missing | error | A decision has no section headed with one of the root's `decision-sections` (default `Decision Outcome` or `Decision`) |
 | SD401 | status-transition | error | A status moved backwards or left a final state |
 | SD402 | superseded-without-successor | error | A superseded document has no active (or accepted) successor that names it in `supersedes` |
 | SD403 | supersede-cycle | error | The `supersedes` chain returns to its start |
@@ -32,7 +32,7 @@ Base-relative gating compares diagnostics by the fingerprint (code, document id,
 | SD604 | depends-on-deprecated | warning | `depends-on` names a deprecated document |
 | SD605 | amendment-outcome | warning | New amendment text states a requirement, a BCP 14 keyword or a status word |
 | SD701 | budget-soft | warning | A document is over its soft budget |
-| SD702 | budget-hard | warning | A document is over its hard budget |
+| SD702 | budget-hard | error | A document is over its hard budget. A document that was over it in the base is not new, so it does not fail `check`; its growth is SD703 |
 | SD703 | budget-grew | warning | An over-budget document grew against the base |
 | SD801 | requirement-keyword | warning | A requirement has no uppercase BCP 14 keyword |
 | SD802 | ears-pattern | warning | An `If` requirement has no `then` |

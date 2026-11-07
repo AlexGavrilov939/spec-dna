@@ -10,6 +10,12 @@
 //! documents, and other documents the entries link to, are listed as stubs
 //! with id, hash and size, so each is one `show` call away. A section that
 //! does not fit the character budget is listed as a stub too.
+//!
+//! With `--query`, the planned sections, and every section of the linked
+//! documents, are ranked by BM25 against the words of the query (`rank.rs`).
+//! Sections that a target names come first, then sections that match, best
+//! first, then the rest of the plan in order. A listed-only section (`more`,
+//! `linked`) is served in full only if it matches.
 
 use crate::hash::hex;
 use crate::json::{self, Obj};
@@ -54,6 +60,14 @@ pub struct Assembly {
     pub omitted: usize,
     pub budget: u32,
     pub used: u32,
+    /// The query terms the sections were ranked by.
+    pub query: Option<Vec<String>>,
+}
+
+/// A query for ranking: its terms, and the working tree to read sections from.
+pub struct Query<'a> {
+    pub root: &'a Path,
+    pub terms: Vec<String>,
 }
 
 /// A resolved target: a document and an optional fragment.
@@ -113,6 +127,7 @@ pub fn assemble(
     targets: &[(u32, Option<String>)],
     paths: &[String],
     budget: u32,
+    query: Option<&Query>,
 ) -> Assembly {
     let mut plan: Vec<(u32, usize, Tier)> = Vec::new();
     let mut seen: HashSet<(u32, usize)> = HashSet::new();
@@ -127,6 +142,8 @@ pub fn assemble(
         v
     };
     let mut rest: Vec<(u32, usize)> = Vec::new();
+    // Sections a target names explicitly; they lead the order under a query.
+    let mut pinned: HashSet<(u32, usize)> = HashSet::new();
 
     // 1. Entries.
     for (d, frag) in targets {
@@ -140,12 +157,14 @@ pub fn assemble(
                     .or_else(|| doc.req(f).map(|r| doc.parsed.reqs[r].chunk as usize));
                 if let Some(s) = start {
                     add(&mut plan, *d, s, Tier::Entry);
+                    pinned.insert((*d, s));
                     let lvl = chunks[s].level;
                     for (j, ch) in chunks.iter().enumerate().skip(s + 1) {
                         if ch.level <= lvl {
                             break;
                         }
                         add(&mut plan, *d, j, Tier::Entry);
+                        pinned.insert((*d, j));
                     }
                 }
                 rest.extend((0..chunks.len()).map(|j| (*d, j)));
@@ -229,9 +248,7 @@ pub fn assemble(
     for d in decisions {
         let chunks = &c.docs[d as usize].parsed.chunks;
         for (j, ch) in chunks.iter().enumerate() {
-            let summary = ch.level <= 1
-                || ch.heading.eq_ignore_ascii_case("decision outcome")
-                || ch.heading.eq_ignore_ascii_case("decision");
+            let summary = ch.level <= 1 || c.docs[d as usize].outcome.contains(&j);
             if summary {
                 add(&mut plan, d, j, Tier::Decision);
             } else {
@@ -252,12 +269,29 @@ pub fn assemble(
             if related >= 20 {
                 break;
             }
-            if !c.docs[d as usize].parsed.chunks.is_empty() && !plan.iter().any(|p| p.0 == d) {
-                add(&mut plan, d, 0, Tier::Related);
+            let n = c.docs[d as usize].parsed.chunks.len();
+            if n > 0 && !plan.iter().any(|p| p.0 == d) {
+                // Under a query every section is a candidate; otherwise the title.
+                let take = if query.is_some() { n } else { 1 };
+                for j in 0..take {
+                    add(&mut plan, d, j, Tier::Related);
+                }
                 related += 1;
             }
         }
     }
+
+    // The order of packing: the plan's order, or under a query the ranking.
+    let terms = query.map(|q| q.terms.clone()).filter(|t| !t.is_empty());
+    let (order, eligible) = match (query, &terms) {
+        (Some(q), Some(terms)) => rank_plan(c, q.root, terms, &plan, &pinned),
+        _ => (
+            (0..plan.len()).collect(),
+            plan.iter()
+                .map(|p| !matches!(p.2, Tier::Rest | Tier::Related))
+                .collect(),
+        ),
+    };
 
     // Packing, in 2 passes. First the map: every planned section is listed
     // as a stub, in priority order, within half of the budget. Then full
@@ -275,15 +309,16 @@ pub fn assemble(
         .collect();
     let mut listed = vec![false; plan.len()];
     let mut used = 0u32;
-    for (i, &(_, stub)) in costs.iter().enumerate() {
+    for &i in &order {
+        let stub = costs[i].1;
         if used + stub <= budget / 2 {
             used += stub;
             listed[i] = true;
         }
     }
     let mut full = vec![false; plan.len()];
-    for (i, &(_, _, tier)) in plan.iter().enumerate() {
-        if matches!(tier, Tier::Rest | Tier::Related) {
+    for &i in &order {
+        if !eligible[i] {
             continue;
         }
         let (f, stub) = costs[i];
@@ -316,7 +351,71 @@ pub fn assemble(
         omitted,
         budget,
         used,
+        query: terms,
     }
+}
+
+/// The packing order under a query, and which sections can be served in
+/// full. Order: sections that a target names, then sections that match, best
+/// first, then the other sections of the plan in plan order. Ties keep plan
+/// order, so the result is deterministic.
+fn rank_plan(
+    c: &Corpus,
+    root: &Path,
+    terms: &[String],
+    plan: &[(u32, usize, Tier)],
+    pinned: &HashSet<(u32, usize)>,
+) -> (Vec<usize>, Vec<bool>) {
+    let mut texts: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    for &(d, _, _) in plan {
+        texts.entry(d).or_insert_with(|| read_doc(c, root, d));
+    }
+    let sections: Vec<(&str, &str)> = plan
+        .iter()
+        .map(|&(d, ch, _)| {
+            let doc = &c.docs[d as usize];
+            let heading = if doc.parsed.chunks[ch].heading.is_empty() {
+                doc.parsed.title.as_str()
+            } else {
+                doc.parsed.chunks[ch].heading.as_str()
+            };
+            (heading, chunk_text(&texts[&d], doc, ch))
+        })
+        .collect();
+    let scores = crate::rank::bm25(terms, &sections);
+    let class = |i: usize| -> u8 {
+        let (d, ch, tier) = plan[i];
+        if pinned.contains(&(d, ch)) {
+            0
+        } else if scores[i] > 0.0 {
+            1
+        } else if matches!(tier, Tier::Rest | Tier::Related) {
+            3
+        } else {
+            2
+        }
+    };
+    let mut order: Vec<usize> = (0..plan.len()).collect();
+    order.sort_by(|&a, &b| {
+        class(a)
+            .cmp(&class(b))
+            .then_with(|| {
+                if class(a) == 1 {
+                    scores[b].total_cmp(&scores[a])
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then(a.cmp(&b))
+    });
+    let eligible = (0..plan.len()).map(|i| class(i) != 3).collect();
+    (order, eligible)
+}
+
+fn read_doc(c: &Corpus, root: &Path, d: u32) -> String {
+    std::fs::read(root.join(&c.docs[d as usize].path))
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
 }
 
 fn is_accepted_decision(d: &Doc) -> bool {
@@ -359,7 +458,7 @@ pub fn linked_docs(c: &Corpus, d: u32) -> Vec<u32> {
                 _ => None,
             },
             _ => match c.resolve_link(&doc.path, &r.target) {
-                LinkRes::File(_, Some(t), _) => Some(t),
+                LinkRes::File(_, Some(t), _) | LinkRes::Dir(Some(t)) => Some(t),
                 _ => None,
             },
         };
@@ -390,11 +489,9 @@ fn chunk_text<'a>(text: &'a str, d: &Doc, chunk: usize) -> &'a str {
 pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     let mut texts: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
     for u in a.units.iter().filter(|u| u.full) {
-        texts.entry(u.doc).or_insert_with(|| {
-            std::fs::read(root.join(&c.docs[u.doc as usize].path))
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .unwrap_or_default()
-        });
+        texts
+            .entry(u.doc)
+            .or_insert_with(|| read_doc(c, root, u.doc));
     }
     let full = a.units.iter().filter(|u| u.full).count();
     let stubs = a.units.len() - full;
@@ -420,9 +517,13 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
             }
             o.end()
         });
-        let body = Obj::new()
+        let mut body = Obj::new()
             .str("version", crate::adapters::VERSION)
-            .strs("entries", &a.entries)
+            .strs("entries", &a.entries);
+        if let Some(q) = &a.query {
+            body = body.strs("query", q);
+        }
+        let body = body
             .num("budget", a.budget)
             .num("used", a.used)
             .num("full", full)
@@ -455,8 +556,12 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
             a.omitted
         ));
     }
+    let query = a
+        .query
+        .as_ref()
+        .map_or(String::new(), |q| format!(" (query: {})", q.join(" ")));
     let head = format!(
-        "<!-- spec-dna context {}: {}; {full} sections in full, {stubs} listed; {} of {} characters; about {} tokens (estimated) -->\n\n",
+        "<!-- spec-dna context {}: {}{query}; {full} sections in full, {stubs} listed; {} of {} characters; about {} tokens (estimated) -->\n\n",
         crate::adapters::VERSION,
         a.entries.join(", "),
         a.used,

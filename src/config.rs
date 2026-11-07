@@ -17,6 +17,8 @@ pub struct Config {
     pub max_words: u32,
     pub context_budget: u32,
     pub repos: Vec<(String, String)>,
+    /// URL prefixes that address this repository; links under them are internal.
+    pub self_urls: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -29,7 +31,13 @@ pub struct Root {
     pub exclude: Vec<String>,
     pub legacy_ids: Vec<LegacyId>,
     pub legacy_keys: Vec<Pattern>,
+    /// Legacy status words and the status each one stands for.
+    pub status_map: Vec<(String, String)>,
+    /// Headings that hold a decision's outcome.
+    pub decision_sections: Vec<String>,
 }
+
+pub const DEFAULT_DECISION_SECTIONS: [&str; 2] = ["Decision Outcome", "Decision"];
 
 #[derive(Clone, Debug)]
 pub struct LegacyId {
@@ -226,6 +234,21 @@ impl Config {
                 repos.push((k.clone(), s.to_string()));
             }
         }
+        let self_urls = t.opt_strs("self-urls")?;
+        for u in &self_urls {
+            let scheme = u.starts_with("https://") || u.starts_with("http://");
+            // `*` is a whole path segment after the host, never the host.
+            let stars_ok = u.match_indices('*').all(|(i, _)| {
+                u[..i].ends_with('/')
+                    && u[..i].matches('/').count() >= 3
+                    && u[i + 1..].starts_with('/')
+            });
+            if !scheme || !u.ends_with('/') || !stars_ok {
+                return Err(format!(
+                    "`self-urls`: `{u}` must be an http(s) URL that ends in `/`, with `*` only as a whole path segment"
+                ));
+            }
+        }
         t.done()?;
         Ok(Config {
             pin,
@@ -235,6 +258,7 @@ impl Config {
             max_words,
             context_budget,
             repos,
+            self_urls,
         })
     }
 
@@ -352,6 +376,48 @@ impl Root {
             .iter()
             .map(|s| Pattern::new(s))
             .collect::<Result<Vec<_>, _>>()?;
+        let types: Vec<DocType> = match single_type {
+            Some(t) => vec![t],
+            None => DocType::ALL.to_vec(),
+        };
+        let mut status_map = Vec::new();
+        if let Some(v) = f.take("status-map") {
+            let tbl = v
+                .as_table()
+                .ok_or_else(|| format!("`{prefix}status-map` must be a table"))?;
+            for (from, to) in tbl {
+                let to = to
+                    .as_str()
+                    .ok_or_else(|| format!("`{prefix}status-map.{from}` must be a string"))?;
+                // A word every type of the root already allows is never mapped.
+                if types.iter().all(|t| t.statuses().contains(&from.as_str())) {
+                    return Err(format!(
+                        "`{prefix}status-map.{from}`: `{from}` is already a status"
+                    ));
+                }
+                if !types.iter().any(|t| t.statuses().contains(&to)) {
+                    return Err(format!(
+                        "`{prefix}status-map.{from}`: `{to}` is not a status of {}",
+                        match single_type {
+                            Some(t) => format!("type `{}`", t.name()),
+                            None => "any type".into(),
+                        }
+                    ));
+                }
+                status_map.push((from.clone(), to.to_string()));
+            }
+        }
+        let decision_sections = if tbl.contains_key("decision-sections") {
+            let v = f.opt_strs("decision-sections")?;
+            if v.is_empty() || v.iter().any(|s| s.trim().is_empty()) {
+                return Err(format!(
+                    "`{prefix}decision-sections` needs at least one heading, and no empty one"
+                ));
+            }
+            v
+        } else {
+            DEFAULT_DECISION_SECTIONS.map(str::to_string).to_vec()
+        };
         f.done()?;
         Ok(Root {
             path,
@@ -361,6 +427,8 @@ impl Root {
             exclude,
             legacy_ids,
             legacy_keys,
+            status_map,
+            decision_sections,
         })
     }
 
@@ -530,5 +598,70 @@ budget = 9000
                 .contains("spec-dna")
         );
         assert!(Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"spec\"\nstatus = \"accepted\"\n").is_err());
+    }
+
+    #[test]
+    fn status_map_decision_sections_and_self_urls() {
+        let c = Config::parse(
+            r#"
+spec-dna = "0.1.0"
+self-urls = ["https://example.org/acme/specs/blob/*/"]
+[[roots]]
+path = "docs"
+status-map = { implemented = "active", approved = "accepted" }
+decision-sections = ["Решение"]
+[[roots]]
+path = "adr"
+type = "decision"
+"#,
+        )
+        .unwrap();
+        assert_eq!(c.self_urls, ["https://example.org/acme/specs/blob/*/"]);
+        let r = &c.roots[0];
+        assert_eq!(
+            r.status_map,
+            [
+                ("approved".to_string(), "accepted".to_string()),
+                ("implemented".to_string(), "active".to_string())
+            ]
+        );
+        assert_eq!(r.decision_sections, ["Решение"]);
+        assert_eq!(c.roots[1].decision_sections, DEFAULT_DECISION_SECTIONS);
+        assert!(c.roots[1].status_map.is_empty());
+
+        let err = |extra: &str| {
+            Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"spec\"\n{extra}\n"
+            ))
+            .unwrap_err()
+        };
+        // `active` is already a spec status; `accepted` is not one.
+        assert!(err("status-map = { active = \"draft\" }").contains("already a status"));
+        assert!(
+            err("status-map = { shipped = \"accepted\" }").contains("not a status of type `spec`")
+        );
+        assert!(err("status-map = { shipped = 1 }").contains("must be a string"));
+        assert!(err("decision-sections = []").contains("at least one heading"));
+        assert!(err("decision-sections = [\" \"]").contains("at least one heading"));
+        // In a mixed root a word that some type lacks may be mapped.
+        assert!(
+            Config::parse(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nstatus-map = { accepted = \"active\" }\n"
+            )
+            .is_ok()
+        );
+        for bad in [
+            "ftp://example.org/x/",
+            "https://example.org/x",
+            "https://example.org/x*/",
+            "https://example.org/*x/",
+            "https://*/x/",
+        ] {
+            let e = Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\nself-urls = [\"{bad}\"]\n[[roots]]\npath = \"d\"\n"
+            ))
+            .unwrap_err();
+            assert!(e.contains("self-urls"), "{bad}: {e}");
+        }
     }
 }
