@@ -2,6 +2,20 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.2.1 - 2026-11-08
+
+Fewer agent requests and a better detection of common layouts.
+
+### Added
+
+- `spec-dna <command> --help` and `spec-dna help <command>` print the help of one command only.
+- `init` detects more layouts: a top-level type directory such as `rfcs/`, `adr/` or `runbooks/` keeps its type; `validation` gives `reference`; files such as `0001-use-postgres.md` (adr-tools, `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }` for decisions and `RFC-{n}` for changes.
+
+### Changed
+
+- A directory of numbered files takes its type from its own files: the prefix (`ADR`, `RFC`, `INC`), the front matter `type` of most files, or their sections (`Decision`, `Root cause` as a heading or a table field, `Steps`). Before, it took the type of the enclosing root. If the files show no type, the type is `note`.
+- The skill: split a document only for SD702, and do not split again a document in its hard budget. The fix texts of SD701 and SD703 no longer ask for a split.
+
 ## 0.2.0 - 2026-11-08
 
 Profiles, 4 knowledge types, requirement evidence and an interactive `init`. The goal: a growing corpus stays orderly, so agents stay fast and cheap.

@@ -32,7 +32,7 @@ const SKILL_BODY: &str = "# spec-dna
     - Amend the decision if its outcome stays: add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
     - Supersede the decision if its outcome changes: write a new decision with `supersedes: [<old id>]`, and set the status of the old one to `superseded`.
 6. Before you commit, run `spec-dna check` once. Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix.
-7. Move a document or requirements only with `spec-dna mv <from>... <to>`, so that the old ids stay as aliases. When `check` reports SD702, split the document: move several keys or sections into a new spec with one `mv`.";
+7. Move a document or requirements only with `spec-dna mv <from>... <to>`, so that the old ids stay as aliases. Split a document only when `check` reports SD702 for it: move several keys or sections into a new spec with one `mv`. Do not split a document again when it is in its hard budget. SD701, SD703 and SD704 need no split.";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {

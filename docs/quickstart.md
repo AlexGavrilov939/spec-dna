@@ -97,7 +97,7 @@ Amend an accepted decision when its outcome stays: add a detail, a limit or a ne
 
 `check` lists errors and drift warnings first, and then the fix of each listed code. The prose lint warnings (SD801 to SD805) are one count for each code; `spec-dna check --lint` lists them. The lint is on in the `strict` profile only.
 
-When `check` reports SD702 (a document over its hard budget), split the document with one `mv`: name the keys or the sections, and a new or an existing spec. The old ids of `HEAD` stay as aliases (a key that is new in the change needs none), and a preservation check runs before any file changes.
+When `check` reports SD702 (a document over its hard budget), split the document with one `mv`: name the keys or the sections, and a new or an existing spec. The old ids of `HEAD` stay as aliases (a key that is new in the change needs none), and a preservation check runs before any file changes. Split only for SD702. A document in its hard budget needs no split: SD701, SD703 and SD704 are warnings only.
 
 ## CI
 

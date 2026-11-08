@@ -27,5 +27,5 @@ SD601 fix: Check the id. A bare token that names no document can be a typo, or p
 SD602 fix: Link to an existing heading anchor or requirement key.
 SD603 fix: A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.
 SD604 fix: Plan a move to the successor of the deprecated document.
-SD701 fix: Split the document or move detail into linked documents.
+SD701 fix: No change is necessary in this task. Split the document only when `check` reports SD702.
 spec-dna check: 10 documents; 10 errors and 9 warnings
