@@ -5,7 +5,9 @@
 //! A transcript can contain secrets. Thus this module prints counts, names of
 //! tools and models, and spec-dna ids only. It never prints prompt, command,
 //! path or file text. It reads that text in memory to find document reads,
-//! and then drops it.
+//! and then drops it. A session id, agent id, origin, model name or tool name
+//! that does not match the strict pattern of its field prints as
+//! `<redacted>` (`safe`).
 //!
 //! An adapter converts one transcript format into `Record`s. The analysis does
 //! not depend on the format. `ClaudeCode` reads Claude Code JSONL files.
@@ -13,6 +15,66 @@
 use crate::json::{self, Obj, Value};
 use crate::model::{Corpus, Res};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+/// The text that replaces a value that does not match its pattern.
+pub const REDACTED: &str = "<redacted>";
+
+/// A transcript field that the report prints.
+#[derive(Clone, Copy, Debug)]
+enum Field {
+    /// A UUID in lowercase hexadecimal.
+    Session,
+    /// `main`, `sidechain` or 1 to 32 lowercase hexadecimal digits.
+    Agent,
+    /// 1 to 32 lowercase ASCII letters and hyphens.
+    Origin,
+    /// 1 to 64 lowercase ASCII letters, digits and `.`, `-`, `_`, `:`, `@`,
+    /// with a letter first.
+    Model,
+    /// The tool name pattern of the Anthropic API, with a letter first: 1 to
+    /// 64 ASCII letters, digits, `_` and `-`.
+    Tool,
+}
+
+/// Returns the value if it matches the pattern of its field, or `REDACTED`.
+/// Thus a malformed or hostile transcript cannot put free text into the
+/// output.
+fn safe(field: Field, v: &str) -> String {
+    let b = v.as_bytes();
+    let len = |max: usize| (1..=max).contains(&b.len());
+    let hex = |c: &u8| c.is_ascii_digit() || (b'a'..=b'f').contains(c);
+    let ok = match field {
+        Field::Session => {
+            b.len() == 36
+                && b.iter().enumerate().all(|(i, c)| match i {
+                    8 | 13 | 18 | 23 => *c == b'-',
+                    _ => hex(c),
+                })
+        }
+        Field::Agent => v == "main" || v == "sidechain" || (len(32) && b.iter().all(hex)),
+        Field::Origin => len(32) && b.iter().all(|c| c.is_ascii_lowercase() || *c == b'-'),
+        Field::Model => {
+            len(64)
+                && b[0].is_ascii_lowercase()
+                && b.iter().all(|c| {
+                    c.is_ascii_lowercase()
+                        || c.is_ascii_digit()
+                        || matches!(c, b'.' | b'-' | b'_' | b':' | b'@')
+                })
+        }
+        Field::Tool => {
+            len(64)
+                && b[0].is_ascii_alphabetic()
+                && b.iter()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+        }
+    };
+    if ok {
+        v.to_string()
+    } else {
+        REDACTED.to_string()
+    }
+}
 
 /// What a tool call reads or writes.
 #[derive(Clone, Debug, PartialEq)]
@@ -469,9 +531,9 @@ impl<'a> Analysis<'a> {
         let start_new = matches!(r.event, Event::Prompt { .. }) || agent.current.is_none();
         if start_new {
             s.episodes.push(Episode {
-                agent: r.agent.clone(),
+                agent: safe(Field::Agent, &r.agent),
                 origin: match &r.event {
-                    Event::Prompt { origin, .. } => origin.clone(),
+                    Event::Prompt { origin, .. } => safe(Field::Origin, origin),
                     _ => "unknown".into(),
                 },
                 ..Episode::default()
@@ -492,12 +554,12 @@ impl<'a> Analysis<'a> {
                 e.tokens.add(&tokens);
                 s.requests.insert(request, (ei, tokens));
                 if !model.is_empty() {
-                    s.episodes[ei].models.insert(model);
+                    s.episodes[ei].models.insert(safe(Field::Model, &model));
                 }
             }
             Event::Call { id, name, target } => {
                 let e = &mut s.episodes[ei];
-                *e.tools.entry(name.clone()).or_default() += 1;
+                *e.tools.entry(safe(Field::Tool, &name)).or_default() += 1;
                 match &target {
                     Target::Search => e.searches += 1,
                     Target::Shell { command } => e.searches += shell_searches(command),
@@ -552,7 +614,8 @@ impl<'a> Analysis<'a> {
         let mut out = String::new();
         let mut sessions_json = Vec::new();
         let (mut n_agents, mut n_episodes, mut n_requests) = (0, 0, 0);
-        for (id, s) in &self.sessions {
+        for (raw_id, s) in &self.sessions {
+            let id = &safe(Field::Session, raw_id);
             // An episode without a request or a tool call did nothing, for
             // example a prompt that a local command answered.
             let mut episodes: Vec<&Episode> = s
@@ -1269,6 +1332,38 @@ pub fn collect_files(args: &[String]) -> Result<Vec<(std::path::PathBuf, bool)>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsafe_names_are_redacted() {
+        let ok = [
+            (Field::Session, "0b7e2c1a-5f3d-4c8e-9a6b-1d2e3f4a5b6c"),
+            (Field::Agent, "main"),
+            (Field::Agent, "a4c8a27e0135498c0"),
+            (Field::Origin, "task-notification"),
+            (Field::Model, "claude-opus-5-5"),
+            (Field::Model, "vendor.model-v1:0"),
+            (Field::Tool, "Read"),
+            (Field::Tool, "mcp__docs__search-pages"),
+        ];
+        for (f, v) in ok {
+            assert_eq!(safe(f, v), v, "{f:?}");
+        }
+        let bad = [
+            (Field::Session, "s-0001"),
+            (Field::Session, "0B7E2C1A-5F3D-4C8E-9A6B-1D2E3F4A5B6C"),
+            (Field::Agent, "agent-x"),
+            (Field::Agent, ""),
+            (Field::Origin, "Human"),
+            (Field::Model, "SECRET-KEY"),
+            (Field::Model, "model with spaces"),
+            (Field::Tool, "rm -rf /"),
+            (Field::Tool, "_hidden"),
+            (Field::Tool, &"x".repeat(65)),
+        ];
+        for (f, v) in bad {
+            assert_eq!(safe(f, v), REDACTED, "{f:?} {v}");
+        }
+    }
 
     #[test]
     fn times() {
