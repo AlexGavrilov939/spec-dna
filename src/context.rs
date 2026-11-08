@@ -4,9 +4,15 @@
 //! The assembly uses this order:
 //!
 //! - the entry documents (or the requested sections);
+//! - the sections that cite a given code path by its path or by an identifier
+//!   (`cite.rs`), for the first 8 such documents, and then the requirement
+//!   sections and the summary of the first 5;
 //! - the documents whose `applies-to` matches an entry or a given path;
-//! - the `depends-on` targets of the entries (depth 1);
-//! - linked accepted decisions, as summaries.
+//! - the sections that cite only a directory of a given path, for the first 5
+//!   such documents;
+//! - the `depends-on` targets of the entries and of the first 5 normative
+//!   citing documents (depth 1);
+//! - accepted decisions linked to these documents, as summaries.
 //!
 //! For a spec or contract with requirements, the assembly serves the
 //! requirement sections first, then the title section, in full. It serves a
@@ -39,6 +45,7 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
     Entry,
+    Cites,
     Concern,
     Dependency,
     Decision,
@@ -50,6 +57,7 @@ impl Tier {
     fn name(self) -> &'static str {
         match self {
             Tier::Entry => "entry",
+            Tier::Cites => "cites",
             Tier::Concern => "applies",
             Tier::Dependency => "depends",
             Tier::Decision => "decision",
@@ -68,6 +76,8 @@ pub struct Unit {
 
 pub struct Assembly {
     pub entries: Vec<String>,
+    /// The code paths of the request.
+    pub paths: Vec<String>,
     pub units: Vec<Unit>,
     pub omitted: usize,
     pub budget: u32,
@@ -165,10 +175,20 @@ fn successors(c: &Corpus, d: &Doc) -> Vec<u32> {
         .collect()
 }
 
+/// The number of citing documents whose citing sections `context` plans, and
+/// the number of those whose summary it also plans. The other citing sections
+/// are listed only. Thus a common identifier or a mention of a large directory
+/// cannot fill the budget.
+const CITING_DOCS: usize = 8;
+const CITING_SUMMARIES: usize = 5;
+
+/// Plans and packs the sections for the targets and the code paths. `cited`
+/// contains the sections that cite the paths, best first (`cite::citing`).
 pub fn assemble(
     c: &Corpus,
     targets: &[(u32, Option<String>)],
     paths: &[String],
+    cited: &[(u32, u8, Vec<usize>)],
     budget: u32,
     query: Option<&Query>,
     include_inactive: bool,
@@ -217,7 +237,52 @@ pub fn assemble(
         }
     }
 
-    // 2. Documents whose `applies-to` matches an entry or a path.
+    // 2. Sections that cite a code path by its path or by an identifier,
+    // then the summary of the best citing documents: the requirement
+    // sections, or the outcome of a decision, and the title. A change or a
+    // note is only listed (ADR 0001, "Document types").
+    let mut scope_docs = entry_docs.clone();
+    let listed_only = |d: u32| matches!(c.docs[d as usize].ty, DocType::Change | DocType::Note);
+    let strong: Vec<&(u32, u8, Vec<usize>)> = cited
+        .iter()
+        .filter(|x| x.1 < crate::cite::BY_DIR && !entry_docs.contains(&x.0))
+        .collect();
+    let mut served = 0;
+    for (d, _, chunks) in &strong {
+        let plan_it = !listed_only(*d) && served < CITING_DOCS;
+        served += usize::from(plan_it);
+        for &j in chunks {
+            if plan_it {
+                add(&mut plan, *d, j, Tier::Cites);
+            } else {
+                rest.push((*d, j));
+            }
+        }
+    }
+    let mut summaries = 0;
+    for (d, _, _) in &strong {
+        let doc = &c.docs[*d as usize];
+        if listed_only(*d) {
+            continue;
+        }
+        for (j, ch) in doc.parsed.chunks.iter().enumerate() {
+            let summary = ch.level <= 1
+                || doc.has_req_in(j)
+                || doc.outcome.contains(&j)
+                || doc.amendments.contains(&j);
+            if summary && summaries < CITING_SUMMARIES {
+                add(&mut plan, *d, j, Tier::Cites);
+            } else {
+                rest.push((*d, j));
+            }
+        }
+        summaries += 1;
+        if doc.ty.is_normative() && !doc.is_inactive() && scope_docs.len() < entry_docs.len() + 5 {
+            scope_docs.push(*d);
+        }
+    }
+
+    // 3. Documents whose `applies-to` matches an entry or a path.
     let scopes: Vec<&str> = entry_docs
         .iter()
         .flat_map(|&d| {
@@ -247,9 +312,27 @@ pub fn assemble(
         normative_units(c, d, Tier::Concern, &mut plan, &mut rest, &mut add);
     }
 
-    // 3. Dependencies, depth 1. A superseded, retired or rejected target is
+    // Sections that cite only a directory of a given path: a weak citation,
+    // so it comes after `applies-to`, without a summary.
+    let mut served = 0;
+    for (d, class, chunks) in cited {
+        if *class != crate::cite::BY_DIR || entry_docs.contains(d) {
+            continue;
+        }
+        let plan_it = !listed_only(*d) && served < CITING_SUMMARIES;
+        served += usize::from(plan_it);
+        for &j in chunks {
+            if plan_it {
+                add(&mut plan, *d, j, Tier::Cites);
+            } else {
+                rest.push((*d, j));
+            }
+        }
+    }
+
+    // 4. Dependencies, depth 1. A superseded, retired or rejected target is
     // only listed, with its status and successor (ADR 0001, "Lifecycle").
-    for &e in &entry_docs {
+    for &e in &scope_docs {
         for (t, _) in &c.docs[e as usize].depends_on {
             if let Res::Found(d, frag, true) = c.resolve(t) {
                 if !include_inactive && c.docs[d as usize].is_inactive() {
@@ -276,9 +359,10 @@ pub fn assemble(
         }
     }
 
-    // 4. Accepted decisions linked with an entry, in either direction.
+    // 5. Accepted decisions linked with an entry or a citing document, in
+    // either direction.
     let mut decisions: Vec<u32> = Vec::new();
-    for &e in &entry_docs {
+    for &e in &scope_docs {
         for d in linked_docs(c, e) {
             if is_accepted_decision(&c.docs[d as usize]) {
                 decisions.push(d);
@@ -289,7 +373,7 @@ pub fn assemble(
         if is_accepted_decision(d)
             && linked_docs(c, i as u32)
                 .iter()
-                .any(|t| entry_docs.contains(t))
+                .any(|t| scope_docs.contains(t))
         {
             decisions.push(i as u32);
         }
@@ -311,12 +395,12 @@ pub fn assemble(
         }
     }
 
-    // 5. The rest of the documents above.
+    // 6. The rest of the documents above.
     for (d, j) in rest {
         add(&mut plan, d, j, Tier::Rest);
     }
 
-    // 6. Other documents that the entries link to, as stubs.
+    // 7. Other documents that the entries link to, as stubs.
     let mut related = 0;
     for &e in &entry_docs {
         for d in linked_docs(c, e) {
@@ -412,6 +496,7 @@ pub fn assemble(
             .iter()
             .map(|&d| c.docs[d as usize].id.clone())
             .collect(),
+        paths: paths.to_vec(),
         units,
         omitted,
         budget,
@@ -605,7 +690,8 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
         });
         let mut body = Obj::new()
             .str("version", crate::adapters::VERSION)
-            .strs("entries", &a.entries);
+            .strs("entries", &a.entries)
+            .strs("paths", &a.paths);
         if let Some(q) = &a.query {
             body = body.strs("query", q);
         }
@@ -636,6 +722,12 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
             out.push_str(&stub_line(c, &c.docs[u.doc as usize], u.chunk, u.tier));
         }
     }
+    if a.units.is_empty() && !a.paths.is_empty() {
+        out.push_str(&format!(
+            "<!-- no document cites or applies to {}; to search by words, add --query \"<the task>\" -->\n",
+            a.paths.join(", ")
+        ));
+    }
     if a.omitted > 0 {
         out.push_str(&format!(
             "<!-- {} more sections did not fit; raise --budget to list them -->\n",
@@ -649,7 +741,12 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     let head = format!(
         "<!-- spec-dna context {}: {}{query}; {full} sections in full, {stubs} listed; {} of {} characters; about {} tokens (estimated) -->\n\n",
         crate::adapters::VERSION,
-        a.entries.join(", "),
+        a.entries
+            .iter()
+            .chain(&a.paths)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", "),
         a.used,
         a.budget,
         estimate_tokens(&out)

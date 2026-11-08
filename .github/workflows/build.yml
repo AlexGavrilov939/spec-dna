@@ -48,6 +48,26 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  demo:
+    name: Demo replay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+
+      # docs/demo.md describes the replay: setup from the quickstart, upgrade
+      # with a rollback, and uninstall, without an agent.
+      - name: Replay the demo
+        run: scripts/demo-replay.sh "$RUNNER_TEMP/demo"
+
   targets:
     name: List targets
     runs-on: ubuntu-24.04

@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 4;
+pub const PARSER_VERSION: u32 = 7;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -29,6 +29,13 @@ pub struct ParsedDoc {
     /// contains a digit. The model compares these words with `legacy-keys` to
     /// find requirements in a syntax that it does not read (SD806).
     pub leads: Vec<Token>,
+    /// Inline code spans that can cite code: a path, a `path:line`, or an
+    /// identifier (ADR 0001, amendment of 2026-11-08 "code citations"). The
+    /// model resolves them against the tree.
+    pub code_spans: Vec<Token>,
+    /// Words of prose that contain a `/`. The model keeps a word as a citation
+    /// only if it names a file or a directory of the tree.
+    pub path_words: Vec<Token>,
     /// Characters of the body without fenced or indented code blocks.
     pub body_chars: u32,
 }
@@ -45,6 +52,9 @@ pub struct Chunk {
     pub line: u32,
     pub chars: u32,
     pub hash: Hash,
+    /// Hash of the text without link destinations. SD405 compares it, so a
+    /// move that rewrites a link does not change the frozen text.
+    pub frozen: Hash,
     pub flags: u8,
 }
 
@@ -110,6 +120,9 @@ pub fn parse(text: &str) -> ParsedDoc {
 
     let mut code_chars = 0usize;
     let mut in_code = false;
+    // The text of a link is not a code citation of its own: the link target
+    // is the citation.
+    let mut in_link = 0u32;
     let mut heading: Option<(u8, usize, String)> = None;
     let mut chunk_flags: Vec<u8> = vec![0];
     // Chunk starts: (level, heading, start offset in body).
@@ -182,11 +195,13 @@ pub fn parse(text: &str) -> ParsedDoc {
                     parent.first_list = Some(range.start);
                 }
             }
+            Event::End(TagEnd::Link) => in_link = in_link.saturating_sub(1),
             Event::Start(Tag::Link {
                 link_type,
                 dest_url,
                 ..
             }) => {
+                in_link += 1;
                 let kind = match link_type {
                     LinkType::Autolink | LinkType::Email => None,
                     LinkType::WikiLink { .. } => Some(RefKind::Wiki),
@@ -212,11 +227,22 @@ pub fn parse(text: &str) -> ParsedDoc {
                     h.push_str(&t);
                 }
                 *chunk_flags.last_mut().unwrap() |= word_flags(&t);
-                scan_tokens(&t, lines.line(body_start + range.start), &mut doc.tokens);
+                let line = lines.line(body_start + range.start);
+                scan_tokens(&t, line, &mut doc.tokens);
+                if in_link == 0 {
+                    scan_path_words(&t, line, &mut doc.path_words);
+                }
             }
             Event::Code(t) => {
                 if let Some((_, _, h)) = heading.as_mut() {
                     h.push_str(&t);
+                }
+                let span = t.trim();
+                if in_link == 0 && is_code_candidate(span) {
+                    doc.code_spans.push(Token {
+                        text: span.to_string(),
+                        line: lines.line(body_start + range.start),
+                    });
                 }
             }
             _ => {}
@@ -245,6 +271,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             line: lines.line(body_start + start),
             chars: slice.chars().count() as u32,
             hash: hash_normalized(slice),
+            frozen: hash_normalized(&strip_link_destinations(slice)),
             flags: chunk_flags[i],
         });
     }
@@ -522,6 +549,96 @@ fn scan_tokens(text: &str, line: u32, out: &mut Vec<Token>) {
     }
 }
 
+/// Removes the destinations of inline links and images (`](dest)`) and of
+/// reference definitions (`[label]: dest`). The link text stays.
+pub fn strip_link_destinations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('[')
+            && let Some(i) = t.find("]: ")
+        {
+            out.push_str(&line[..line.len() - t.len() + i + 1]);
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+            continue;
+        }
+        let mut rest = line;
+        while let Some(i) = rest.find("](") {
+            out.push_str(&rest[..=i]);
+            let after = &rest[i + 2..];
+            let mut depth = 1;
+            let close = after.char_indices().find_map(|(j, ch)| {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(j)
+            });
+            match close {
+                Some(j) => rest = &after[j + 1..],
+                None => {
+                    out.push('(');
+                    rest = after;
+                    break;
+                }
+            }
+        }
+        out.push_str(rest);
+    }
+    out
+}
+
+/// Returns true if an inline code span can be a path or an identifier: 1 to
+/// 200 bytes with a letter, and no whitespace before the first `(`.
+fn is_code_candidate(span: &str) -> bool {
+    let head = span.split('(').next().unwrap_or("");
+    !span.is_empty()
+        && span.len() <= 200
+        && span.bytes().any(|b| b.is_ascii_alphabetic())
+        && !head.contains(char::is_whitespace)
+}
+
+/// Collects the words of prose that contain a `/` and a letter, without the
+/// punctuation around them. A URL is not a word of this kind.
+fn scan_path_words(text: &str, line: u32, out: &mut Vec<Token>) {
+    for w in text.split_whitespace() {
+        let w = w.trim_matches(|c: char| {
+            matches!(
+                c,
+                '(' | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | ','
+                    | ';'
+                    | '"'
+                    | '\''
+                    | '!'
+                    | '?'
+                    | '*'
+            )
+        });
+        let w = w.trim_end_matches(['.', ':']);
+        if w.len() >= 3
+            && w.len() <= 200
+            && w.contains('/')
+            && !w.contains("://")
+            && w.bytes().any(|b| b.is_ascii_alphabetic())
+        {
+            out.push(Token {
+                text: w.to_string(),
+                line,
+            });
+        }
+    }
+}
+
 fn is_word_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c >= 0x80
 }
@@ -582,6 +699,20 @@ fn memchr_iter(needle: u8, hay: &[u8]) -> impl Iterator<Item = usize> + '_ {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_destinations_are_not_frozen_text() {
+        assert_eq!(
+            strip_link_destinations("See [a](../a.md#x) and ![i](i (1).png).\n[r]: ../r.md\n"),
+            "See [a] and ![i].\n[r]\n"
+        );
+        let a = parse("# D\n\nUse [loans](../loans.md#k).\n");
+        let b = parse("# D\n\nUse [loans](../circulation/loans.md#k).\n");
+        let c = parse("# D\n\nUse [lending](../loans.md#k).\n");
+        assert_ne!(a.chunks[0].hash, b.chunks[0].hash);
+        assert_eq!(a.chunks[0].frozen, b.chunks[0].frozen);
+        assert_ne!(a.chunks[0].frozen, c.chunks[0].frozen);
+    }
 
     const DOC: &str = "---\nstatus: active\n---\n# Session tokens\n\nIntro with ADR-12 and `ADR-13` in code.\n\n## Requirements\n\n- **token-expiry**: When a session token expires, the gateway SHALL reject the request. <!-- aliases: auth/old#ttl -->\n- **R-12**: The client MUST retry.\n  - nested note\n- plain item\n- **Note** this is not a key\n\n```md\n- **in-code**: ignored SHALL\n```\n\nSee [the guide](../guide.md#setup) and [[auth/session#token-expiry@3f2a9c1b7e0d4a11]].\n\n## Requirements\n\n## Amendments\n\nText.\n";
 

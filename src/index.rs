@@ -181,6 +181,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
             w.u32(v);
         }
         w.0.extend_from_slice(&c.hash);
+        w.0.extend_from_slice(&c.frozen);
         w.u8(c.flags);
     }
     w.u32(d.refs.len() as u32);
@@ -205,10 +206,12 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.strs(&r.aliases);
         w.str(&r.text);
     }
-    w.u32(d.leads.len() as u32);
-    for t in &d.leads {
-        w.str(&t.text);
-        w.u32(t.line);
+    for list in [&d.leads, &d.code_spans, &d.path_words] {
+        w.u32(list.len() as u32);
+        for t in list {
+            w.str(&t.text);
+            w.u32(t.line);
+        }
     }
     w.u32(d.body_chars);
 }
@@ -250,6 +253,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             line: r.u32()?,
             chars: r.u32()?,
             hash: r.hash()?,
+            frozen: r.hash()?,
             flags: r.u8()?,
         });
     }
@@ -284,11 +288,13 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             text: r.str()?,
         });
     }
-    for _ in 0..r.u32()? {
-        d.leads.push(Token {
-            text: r.str()?,
-            line: r.u32()?,
-        });
+    for list in [&mut d.leads, &mut d.code_spans, &mut d.path_words] {
+        for _ in 0..r.u32()? {
+            list.push(Token {
+                text: r.str()?,
+                line: r.u32()?,
+            });
+        }
     }
     d.body_chars = r.u32()?;
     Some(d)
@@ -300,7 +306,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1\n\n## Amendments\n";
+        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1 `src/a.rs:12` `loadUser()` see src/b.rs.\n\n## Amendments\n";
         let mut m = HashMap::new();
         m.insert("abc".to_string(), Arc::new(crate::parse::parse(text)));
         m.insert(

@@ -41,6 +41,7 @@ Thus a malformed or hostile transcript cannot put free text into the report.
 | `tokens.input`, `cache_creation`, `cache_read`, `output` | The usage record of each request | Measured |
 | `requests`, `tool_calls`, `tools`, `errors` | Tool calls and their results | Measured |
 | `searches` | Search tools, and shell commands that start with `grep`, `rg`, `find`, `ag` or `fd` (not after a `\|`) | Measured for tools, heuristic for shell commands |
+| `spec_dna_commands` | Shell runs of spec-dna, by subcommand: `init`, `check`, `context`, `show`, `mv`, `transcript`, `help`, `version`. Any other word counts as `other` | Measured |
 | `documents`, `doc_reads`, `repeated_reads` | See "Document reads" | Measured for read tools and spec-dna output, heuristic for shell commands |
 | `spec_chars` | Characters of the tool results that the report gives to documents | Measured for read tools; estimated for a shell result that names more than one document (its size is split evenly) |
 | `spec_tokens_estimated` | `ceil(spec_chars / 4)` | Estimated. The same estimator applies to every arm. |

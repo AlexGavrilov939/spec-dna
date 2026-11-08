@@ -16,12 +16,13 @@ This is phase 1 of [ADR 0003](docs/adr/0003-distribution.md): build from a tag w
 cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v<version> spec-dna
 ```
 
-The project pins the version in `spec-dna.toml`. `check` does not run with a binary of a different version.
+The project pins the version in `spec-dna.toml`. `check` and `init` do not run with a binary of a different version. [docs/quickstart.md](docs/quickstart.md) gives the steps from install to uninstall, with a CI job and the upgrade.
 
 ## Use
 
 ```sh
 spec-dna init                       # spec-dna.toml (if absent) and the agent adapters
+spec-dna context src/gateway.rs     # the sections that cite a code file
 spec-dna check                      # new diagnostics against HEAD; exit 1 on a new error
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
 spec-dna check --all                # every diagnostic
@@ -38,9 +39,9 @@ Every command accepts `--json`. spec-dna does not use the network. It reads docu
 
 | Command | What it does |
 | --- | --- |
-| `init [--root <dir>]` | Writes `spec-dna.toml` if it is missing. Generates the adapters: a block in `AGENTS.md`, an `@AGENTS.md` import in `CLAUDE.md` (only if the file has no such import), and the skill `.claude/skills/spec-dna/SKILL.md`. Each adapter has the generator version and a hash. `check` reports a manual edit or an old version. A second run updates the adapters. |
-| `check [--base <rev>] [--all]` | Runs the controls of ADR 0001 on the working tree. Without `--all`, it reports only the diagnostics that are new against the base. The base is the merge base of `<rev>` and `HEAD`, or `HEAD` itself. `--all` uses the same base, but it reports every diagnostic and fails on any error. Without `--base`, `check` also reads untracked documents that git does not ignore. With `--base`, it reads tracked files only, as CI does. `--json` also lists each document with its number of recognized requirements. Codes: [docs/diagnostics.md](docs/diagnostics.md). |
-| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]` | Prints the sections that an agent needs. First come the entry documents (or sections) and the documents whose `applies-to` matches an entry or a path. Then come the `depends-on` targets at depth 1, the linked accepted decisions as summaries, and the rest. In a document with requirements, the requirement sections come first, then the title section; the other sections are listed. A superseded, retired or rejected document is listed with its status and successor, but not served, unless a target names it or `--include-inactive` is set. If a section does not fit the budget, the command lists its id, hash and size. Every section has its id and hash. With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. This option is for long documents without requirement lists. |
+| `init [--root <dir>]` | Writes `spec-dna.toml` if it is missing. Generates the adapters: one line in `AGENTS.md` and one line in `CLAUDE.md`, and the skill `.claude/skills/spec-dna/SKILL.md`. The line never imports another file. `AGENTS.md` gets the line if the file exists, or if neither file exists. `CLAUDE.md` gets the line, unless it imports such an `AGENTS.md`. Each adapter has the generator version and a hash. `check` reports a manual edit or an old version. A second run updates the adapters and replaces the multi-line blocks of earlier versions. `init` prints the bytes that the adapters add to the prompt prefix of each agent request (`--json`: `prefix_bytes`), and the `git add` command for the files that it wrote. It does not run if the pin in `spec-dna.toml` is a different version. |
+| `check [--base <rev>] [--all]` | Runs the controls of ADR 0001 on the working tree. Without `--all`, it reports only the diagnostics that are new against the base. The base is the merge base of `<rev>` and `HEAD`, or `HEAD` itself. `--all` uses the same base, but it reports every diagnostic and fails on any error. Without `--base`, `check` also reads untracked documents that git does not ignore. With `--base`, it reads tracked files only, as CI does. `--json` also lists each document with its number of recognized requirements. If the change removes or renames a path or an identifier that a document cites, `check` gives a warning that names the document (SD606, SD607). Codes: [docs/diagnostics.md](docs/diagnostics.md). |
+| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]` | Prints the sections that an agent needs. First come the entry documents (or sections). For a code path (a target or `--path`, also an untracked file), the sections that cite the file by its path or by an identifier that occurs in the file come next ([docs/diagnostics.md](docs/diagnostics.md#code-citations)). No `applies-to` is necessary. The requirement sections and the summary of the best citing documents follow. Then come the documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path. The command serves at most 8 citing documents and 5 summaries; it lists the other citing sections. Then come the `depends-on` targets at depth 1, the linked accepted decisions as summaries, and the rest. A citing change or note is only listed. In a document with requirements, the requirement sections come first, then the title section; the other sections are listed. A superseded, retired or rejected document is listed with its status and successor, but not served, unless a target names it or `--include-inactive` is set. If a section does not fit the budget, the command lists its id, hash and size. Every section has its id and hash. With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. This option is for long documents without requirement lists. |
 | `show <id>[#<anchor>]` | Prints a document, a section with its subsections, or one requirement, with ids and hashes. For a spec or contract, it also prints the number of recognized requirements (`--json`: their keys). |
 | `mv <from> <to>` | Moves a document (`git mv`), adds the old id to its `aliases`, and rewrites relative links to the document. `mv <doc-id>#<key> <doc-id>` moves one requirement and adds an inline `<!-- aliases: ... -->` marker. |
 | `transcript <file or dir>... [--expect <id>]... [--format <name>]` | Reads agent transcripts (Claude Code JSONL first). For each session and episode, it reports input, cache-creation, cache-read and output tokens, tool calls, and the documents and sections that the agent read. It prints counts and ids only, never prompt, command or file text. See [docs/transcript.md](docs/transcript.md). |
@@ -67,12 +68,12 @@ spec-dna keeps parsed documents in a cache at `<git-dir>/spec-dna/index-v1.bin`,
 Delete these items:
 
 - `spec-dna.toml`
-- the generated `AGENTS.md` block
-- the `CLAUDE.md` import, if `init` added it
+- the generated line in `AGENTS.md` and in `CLAUDE.md` (it ends with `<!-- spec-dna v<version> h:<hash> -->`)
 - `.claude/skills/spec-dna/`
 - `<git-dir>/spec-dna/`
+- the binary: `cargo uninstall spec-dna`
 
-The documents are plain Markdown files. They do not change.
+The documents are plain Markdown files. They do not change. [docs/quickstart.md](docs/quickstart.md#uninstall) gives the commands.
 
 ## Dependencies
 
