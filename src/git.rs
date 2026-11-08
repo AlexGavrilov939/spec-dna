@@ -202,6 +202,66 @@ impl Git {
         Ok(out)
     }
 
+    /// Returns the tracked files whose working-tree content differs from the
+    /// git index, in all of the tree.
+    pub fn unstaged(&self) -> Result<HashSet<String>, String> {
+        let out = self.run(&[
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--ignore-submodules=all",
+        ])?;
+        Ok(out
+            .split(|b| *b == 0)
+            .filter(|r| !r.is_empty())
+            .map(|r| String::from_utf8_lossy(r).into_owned())
+            .collect())
+    }
+
+    /// Returns the words that occur as whole words in the working tree, outside
+    /// of Markdown files. It searches tracked files, and with `untracked` also
+    /// the untracked files that git does not ignore. Binary files do not count.
+    pub fn grep_words(&self, words: &[String], untracked: bool) -> Result<HashSet<String>, String> {
+        let mut found = HashSet::new();
+        if words.is_empty() {
+            return Ok(found);
+        }
+        let mut args: Vec<&str> = vec!["grep", "-I", "-w", "-F", "-o", "-h", "--no-color"];
+        if untracked {
+            args.push("--untracked");
+        }
+        for w in words {
+            args.push("-e");
+            args.push(w);
+        }
+        args.extend([
+            "--",
+            ".",
+            ":(exclude,glob)**/*.md",
+            ":(exclude,glob)**/*.markdown",
+        ]);
+        let out = self
+            .cmd(&args)
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        // `git grep` exits with 1 when nothing matches.
+        match out.status.code() {
+            Some(0) | Some(1) => {}
+            _ => {
+                return Err(format!(
+                    "git grep failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
+        }
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            found.insert(line.to_string());
+        }
+        Ok(found)
+    }
+
     pub fn mv(&self, from: &str, to: &str) -> Result<(), String> {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }

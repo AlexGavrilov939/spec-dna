@@ -425,10 +425,14 @@ fn fresh_project_init_check_uninstall() {
     let r = Repo::empty();
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(
-        out,
-        "wrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\n"
+    assert!(
+        out.starts_with(
+            "wrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nper-request prefix: "
+        ),
+        "{out}"
     );
+    assert_eq!(r.read("AGENTS.md").lines().count(), 1);
+    assert_eq!(r.read("CLAUDE.md"), r.read("AGENTS.md"));
     let docs = [
         (
             "docs/api/orders.md",
@@ -481,25 +485,25 @@ fn adapters_are_checked() {
     r.write("AGENTS.md", "# Rules\n\nOwn text stays.\n");
     r.write("CLAUDE.md", "@AGENTS.md\n");
     r.run(&["init"]);
-    assert!(
-        r.read("AGENTS.md")
-            .starts_with("# Rules\n\nOwn text stays.\n\n<!-- spec-dna:begin agents v")
-    );
+    let agents = r.read("AGENTS.md");
+    assert!(agents.starts_with("# Rules\n\nOwn text stays.\n\nBefore you change a file"));
+    assert_eq!(agents.lines().count(), 5);
     assert_eq!(
         r.read("CLAUDE.md"),
         "@AGENTS.md\n",
-        "an existing import is kept"
+        "an existing import is kept and gets no line"
     );
     r.commit("init");
     let (code, out, _) = r.run(&["init"]);
-    assert_eq!(
-        (code, out.as_str()),
-        (0, "spec-dna init: everything is up to date\n")
+    assert_eq!(code, 0);
+    assert!(
+        out.starts_with("spec-dna init: everything is up to date\nper-request prefix: "),
+        "{out}"
     );
     r.write(
         "AGENTS.md",
         &r.read("AGENTS.md")
-            .replace("before you commit", "before you push"),
+            .replace("Before you commit", "Before you push"),
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
@@ -523,7 +527,14 @@ fn exit_codes() {
     );
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3);
-    assert!(err.contains("cargo install --locked --git"), "{err}");
+    assert!(
+        err.contains("cargo install --locked --force --git"),
+        "{err}"
+    );
+    assert!(err.contains("set `spec-dna = \"0.1.0\"`"), "{err}");
+    let (code, _, err) = r.run(&["init"]);
+    assert_eq!(code, 3, "init does not regenerate adapters for another pin");
+    assert!(err.contains("pins version 9.9.9"), "{err}");
     r.write(
         "spec-dna.toml",
         "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nkind = \"spec\"\n",
@@ -992,5 +1003,232 @@ fn transcript_reports_counts_and_ids_only() {
     assert!(
         err.contains("no transcript adapter reads this file"),
         "{err}"
+    );
+}
+
+/// Reads the byte counts from the `init` summary line.
+fn prefix_bytes(out: &str) -> usize {
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("per-request prefix: "))
+        .unwrap();
+    line["per-request prefix: ".len()..]
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn init_on_an_existing_project_adds_one_line() {
+    let r = Repo::empty();
+    let own = "# Project rules\n\n- Run the tests before a commit.\n";
+    r.write("CLAUDE.md", own);
+    r.commit("existing project");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{err}");
+    let claude = r.read("CLAUDE.md");
+    let added = claude.strip_prefix(own).expect("the own text stays first");
+    assert_eq!(added.trim_start().lines().count(), 1, "{claude}");
+    assert!(!claude.contains('@'), "no import: {claude}");
+    assert!(added.len() <= 160, "{} bytes", added.len());
+    assert!(
+        !r.dir.join("AGENTS.md").exists(),
+        "no new AGENTS.md when CLAUDE.md exists"
+    );
+    let bytes = prefix_bytes(&out);
+    assert!(bytes <= 300, "{out}");
+    assert!(out.contains(", 0 bytes for AGENTS.md"), "{out}");
+    let (code, out, _) = r.run(&["init", "--json"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(&format!("\"prefix_bytes\":{{\"claude_code\":{bytes},")),
+        "{out}"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+
+    // An AGENTS.md without CLAUDE.md: the line goes into AGENTS.md, and
+    // CLAUDE.md gets its own line, not an import.
+    let r = Repo::empty();
+    r.write("AGENTS.md", "# Agents\n");
+    r.run(&["init"]);
+    assert_eq!(r.read("AGENTS.md").lines().count(), 3);
+    assert_eq!(r.read("CLAUDE.md").lines().count(), 1);
+    assert!(!r.read("CLAUDE.md").contains("@AGENTS.md"));
+}
+
+#[test]
+fn init_replaces_the_blocks_of_older_versions() {
+    let r = Repo::empty();
+    r.run(&["init"]);
+    let block = "<!-- spec-dna:begin agents v0.0.9 h:0000000000000000 -->\n## Specifications\n\nOld text.\n<!-- spec-dna:end agents -->\n";
+    r.write("AGENTS.md", &format!("# Rules\n\n{block}"));
+    r.write(
+        "CLAUDE.md",
+        "<!-- spec-dna:begin claude v0.0.9 h:0000000000000000 -->\n@AGENTS.md\n<!-- spec-dna:end claude -->\n",
+    );
+    r.commit("old adapters");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1);
+    assert!(out.contains("AGENTS.md:3: error SD502"), "{out}");
+    assert!(out.contains("CLAUDE.md:1: error SD502"), "{out}");
+    r.run(&["init"]);
+    assert_eq!(r.read("AGENTS.md").lines().count(), 3);
+    assert!(!r.read("CLAUDE.md").contains("@AGENTS.md"));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+const LOANS_PY: &str = "MAX_RENEWALS = 1\n\n\ndef renew_loan(loan):\n    return loan\n\n\ndef checkoutBook(member, book):\n    return (member, book)\n";
+
+fn code_project() -> Repo {
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write("src/library/loans.py", LOANS_PY);
+    r.write(
+        "src/library/books.py",
+        "def find_book(isbn):\n    return isbn\n",
+    );
+    r.write("src/library/fees.py", "def daily_fee():\n    return 1\n");
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\nThe loan module.\n\n## Renewals\n\n- **renew-limit**: The library SHALL allow at most `MAX_RENEWALS` renewals of a loan.\n\n## Checkout\n\n- **checkout**: When a member borrows a book, the library SHALL record the loan.\n\n## History\n\nOld notes.\n\n## Code\n\nSee `src/library/loans.py:4`.\n",
+    );
+    r.write(
+        "docs/books.md",
+        "# Books\n\n## Catalog\n\nThe catalog uses `find_book()`.\n\n## Lending\n\nA loan calls `checkoutBook()` from the books page.\n",
+    );
+    r.write(
+        "docs/layout.md",
+        "---\ntype: guide\nstatus: active\n---\n# Layout\n\nAll library code is in src/library/.\n",
+    );
+    r.write(
+        "docs/notes/idea.md",
+        "---\ntype: note\n---\n# Idea\n\nRewrite [loans](../../src/library/loans.py).\n",
+    );
+    r.commit("project");
+    r
+}
+
+#[test]
+fn context_serves_the_sections_that_cite_a_code_path() {
+    let r = code_project();
+    let (code, out, err) = r.run(&["context", "src/library/loans.py"]);
+    assert_eq!(code, 0, "{err}");
+    let order: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("<!-- ") && l.contains(" h:"))
+        .map(|l| l.split(' ').nth(1).unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "loans#code",
+            "loans#renewals",
+            "books#lending",
+            "layout#layout",
+            "loans#loans",
+            "loans#checkout",
+            "books#books",
+        ],
+        "{out}"
+    );
+    assert!(out.contains("<!-- loans#code h:"), "{out}");
+    assert!(out.contains(" cites -->"), "{out}");
+    assert!(
+        out.contains("- `notes/idea#idea`"),
+        "a note is only listed: {out}"
+    );
+    assert!(out.contains("- `loans#history`"), "{out}");
+    assert!(
+        out.contains("- `books#catalog`") && !out.contains("<!-- books#catalog h:"),
+        "the other sections of a citing document are only listed: {out}"
+    );
+    // `--path` gives the same sections after an entry.
+    let (_, out, _) = r.run(&["context", "books", "--path", "src/library/loans.py"]);
+    assert!(out.contains("<!-- loans#code h:"), "{out}");
+    // A file that no document cites gives a hint.
+    r.write("src/other.py", "x = 1\n");
+    r.commit("other");
+    let (code, out, _) = r.run(&["context", "src/other.py"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("<!-- no document cites or applies to src/other.py;"),
+        "{out}"
+    );
+}
+
+#[test]
+fn check_warns_when_a_change_removes_cited_code() {
+    let r = code_project();
+    let base = git(&r.dir, &["rev-parse", "HEAD"]).trim().to_string();
+    // Rename a cited function, remove a cited constant, and move the module.
+    r.write(
+        "src/library/loans.py",
+        &LOANS_PY
+            .replace("MAX_RENEWALS = 1\n", "")
+            .replace("renew_loan", "extend_loan")
+            .replace("checkoutBook", "lend_book"),
+    );
+    git(
+        &r.dir,
+        &["mv", "src/library/fees.py", "src/library/fines.py"],
+    );
+    r.append("docs/loans.md", "\nFees: `src/library/fees.py`.\n");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "drift is a warning: {out}");
+    assert!(
+        out.contains("docs/loans.md:7: warning SD607 cited-symbol-removed: `MAX_RENEWALS` was removed from `src/library/loans.py` in this change"),
+        "{out}"
+    );
+    assert!(
+        out.contains("docs/books.md:9: warning SD607 cited-symbol-removed: `checkoutBook` was removed from `src/library/loans.py`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("warning SD606 cited-path-removed: `src/library/fees.py` was removed in this change (renamed to `src/library/fines.py`)"),
+        "{out}"
+    );
+    assert!(!out.contains("renew_loan"), "not cited: {out}");
+    // The documents are fixed in the same change: no warning.
+    r.write(
+        "docs/books.md",
+        &r.read("docs/books.md")
+            .replace("checkoutBook()", "lend_book()"),
+    );
+    r.write(
+        "docs/loans.md",
+        &r.read("docs/loans.md")
+            .replace("`MAX_RENEWALS`", "one")
+            .replace("fees.py", "fines.py"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0);
+    assert!(!out.contains("SD60"), "{out}");
+    // A cited identifier that still occurs in another file is not removed.
+    r.write(
+        "docs/books.md",
+        &r.read("docs/books.md")
+            .replace("lend_book()", "checkoutBook()"),
+    );
+    r.write("src/library/legacy.py", "def checkoutBook():\n    pass\n");
+    r.commit("change");
+    let (code, out, _) = r.run(&["check", "--base", &base]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD607"), "{out}");
+    // CI-like mode against the base: the rename of the constant is drift.
+    r.write(
+        "docs/loans.md",
+        &r.read("docs/loans.md")
+            .replace("at most one", "at most `MAX_RENEWALS`"),
+    );
+    r.commit("cite again");
+    let (code, out, _) = r.run(&["check", "--base", &base]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("warning SD607 cited-symbol-removed: `MAX_RENEWALS`"),
+        "{out}"
     );
 }

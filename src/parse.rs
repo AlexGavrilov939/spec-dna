@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 4;
+pub const PARSER_VERSION: u32 = 5;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -29,6 +29,13 @@ pub struct ParsedDoc {
     /// contains a digit. The model compares these words with `legacy-keys` to
     /// find requirements in a syntax that it does not read (SD806).
     pub leads: Vec<Token>,
+    /// Inline code spans that can cite code: a path, a `path:line`, or an
+    /// identifier (ADR 0001, amendment of 2026-11-08 "code citations"). The
+    /// model resolves them against the tree.
+    pub code_spans: Vec<Token>,
+    /// Words of prose that contain a `/`. The model keeps a word as a citation
+    /// only if it names a file or a directory of the tree.
+    pub path_words: Vec<Token>,
     /// Characters of the body without fenced or indented code blocks.
     pub body_chars: u32,
 }
@@ -212,11 +219,20 @@ pub fn parse(text: &str) -> ParsedDoc {
                     h.push_str(&t);
                 }
                 *chunk_flags.last_mut().unwrap() |= word_flags(&t);
-                scan_tokens(&t, lines.line(body_start + range.start), &mut doc.tokens);
+                let line = lines.line(body_start + range.start);
+                scan_tokens(&t, line, &mut doc.tokens);
+                scan_path_words(&t, line, &mut doc.path_words);
             }
             Event::Code(t) => {
                 if let Some((_, _, h)) = heading.as_mut() {
                     h.push_str(&t);
+                }
+                let span = t.trim();
+                if is_code_candidate(span) {
+                    doc.code_spans.push(Token {
+                        text: span.to_string(),
+                        line: lines.line(body_start + range.start),
+                    });
                 }
             }
             _ => {}
@@ -518,6 +534,54 @@ fn scan_tokens(text: &str, line: u32, out: &mut Vec<Token>) {
             i = j.max(i + 1);
         } else {
             i += 1;
+        }
+    }
+}
+
+/// Returns true if an inline code span can be a path or an identifier: 1 to
+/// 200 bytes with a letter, and no whitespace before the first `(`.
+fn is_code_candidate(span: &str) -> bool {
+    let head = span.split('(').next().unwrap_or("");
+    !span.is_empty()
+        && span.len() <= 200
+        && span.bytes().any(|b| b.is_ascii_alphabetic())
+        && !head.contains(char::is_whitespace)
+}
+
+/// Collects the words of prose that contain a `/` and a letter, without the
+/// punctuation around them. A URL is not a word of this kind.
+fn scan_path_words(text: &str, line: u32, out: &mut Vec<Token>) {
+    for w in text.split_whitespace() {
+        let w = w.trim_matches(|c: char| {
+            matches!(
+                c,
+                '(' | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | ','
+                    | ';'
+                    | '"'
+                    | '\''
+                    | '!'
+                    | '?'
+                    | '*'
+            )
+        });
+        let w = w.trim_end_matches(['.', ':']);
+        if w.len() >= 3
+            && w.len() <= 200
+            && w.contains('/')
+            && !w.contains("://")
+            && w.bytes().any(|b| b.is_ascii_alphabetic())
+        {
+            out.push(Token {
+                text: w.to_string(),
+                line,
+            });
         }
     }
 }

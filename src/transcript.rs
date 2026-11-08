@@ -436,6 +436,8 @@ struct Episode {
     tools: BTreeMap<String, u32>,
     errors: u32,
     searches: u32,
+    /// Shell runs of spec-dna, by subcommand.
+    spec_dna: BTreeMap<&'static str, u32>,
     other_reads: u32,
     docs: BTreeMap<String, DocStat>,
     writes: BTreeMap<String, u32>,
@@ -562,7 +564,12 @@ impl<'a> Analysis<'a> {
                 *e.tools.entry(safe(Field::Tool, &name)).or_default() += 1;
                 match &target {
                     Target::Search => e.searches += 1,
-                    Target::Shell { command } => e.searches += shell_searches(command),
+                    Target::Shell { command } => {
+                        e.searches += shell_searches(command);
+                        for sub in spec_dna_runs(command) {
+                            *e.spec_dna.entry(sub).or_default() += 1;
+                        }
+                    }
                     Target::Write { path } => {
                         let c = self.corpus;
                         if let Some(d) = map_path(c, self.root.as_deref(), r.cwd.as_deref(), path)
@@ -633,6 +640,9 @@ impl<'a> Analysis<'a> {
                 total.tokens.add(&e.tokens);
                 total.errors += e.errors;
                 total.searches += e.searches;
+                for (k, v) in &e.spec_dna {
+                    *total.spec_dna.entry(k).or_default() += v;
+                }
                 total.other_reads += e.other_reads;
                 total.models.extend(e.models.iter().cloned());
                 total.touch(e.start);
@@ -775,6 +785,10 @@ fn episode_text(e: &Episode, indent: &str) -> String {
             via.join("+")
         ));
     }
+    if !e.spec_dna.is_empty() {
+        let runs: Vec<String> = e.spec_dna.iter().map(|(k, n)| format!("{k} {n}")).collect();
+        out.push_str(&format!("{indent}spec-dna commands: {}\n", runs.join(", ")));
+    }
     if !e.writes.is_empty() {
         let w: Vec<String> = e.writes.iter().map(|(k, n)| format!("{k} {n}")).collect();
         out.push_str(&format!("{indent}  document edits: {}\n", w.join(", ")));
@@ -827,6 +841,13 @@ fn episode_json(e: &Episode, index: usize, expect: &[String]) -> String {
         .raw("tools", &json::array(tools))
         .num("errors", e.errors)
         .num("searches", e.searches)
+        .raw("spec_dna_commands", &{
+            let mut o = Obj::new();
+            for (k, n) in &e.spec_dna {
+                o = o.num(k, n);
+            }
+            o.end()
+        })
         .num("doc_reads", e.doc_reads())
         .num(
             "repeated_reads",
@@ -1135,6 +1156,31 @@ fn shell_commands(command: &str) -> Vec<Vec<String>> {
 
 /// Returns the program name of a simple command, after any `NAME=value`
 /// assignments, without its directory.
+/// The spec-dna subcommands that the report names. Any other word counts as
+/// `other`, so the report never prints text from a command.
+const SPEC_DNA_COMMANDS: &[&str] = &["init", "check", "context", "show", "mv", "transcript"];
+
+/// Returns the subcommand of each spec-dna run in a shell command.
+fn spec_dna_runs(command: &str) -> Vec<&'static str> {
+    shell_commands(command)
+        .iter()
+        .filter(|c| program(c) == Some("spec-dna"))
+        .map(|c| {
+            let at = c.iter().position(|w| !w.contains('=')).unwrap_or(0);
+            let sub = c.get(at + 1).map(String::as_str).unwrap_or("");
+            match sub {
+                "-h" | "--help" | "help" | "" => "help",
+                "-V" | "--version" => "version",
+                s => SPEC_DNA_COMMANDS
+                    .iter()
+                    .find(|k| **k == s)
+                    .copied()
+                    .unwrap_or("other"),
+            }
+        })
+        .collect()
+}
+
 fn program(cmd: &[String]) -> Option<&str> {
     let w = cmd.iter().find(|w| !w.contains('='))?;
     Some(w.rsplit('/').next().unwrap_or(w))
@@ -1397,6 +1443,12 @@ mod tests {
         assert_eq!(
             program(&shell_commands("X=1 ~/.cargo/bin/spec-dna context a")[0]),
             Some("spec-dna")
+        );
+        assert_eq!(
+            spec_dna_runs(
+                "X=1 spec-dna context a && spec-dna check --base main; spec-dna secret-word; spec-dna --help | head"
+            ),
+            ["context", "check", "other", "help"]
         );
         assert!(is_plain_id("auth/session#requirements") && is_plain_id("Ünterlagen/x"));
         for bad in ["KEY=value", "/home/u/a", "./a", "a.md", "a b", "a:b"] {

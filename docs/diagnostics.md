@@ -2,7 +2,7 @@
 
 Every diagnostic has a stable code. A code keeps its meaning. spec-dna does not use a retired code again. An error fails `check` when the error is new against the base. A warning never causes a failure. `check --json` prints `code`, `name`, `severity`, `new`, `doc`, `path`, `line`, `target`, `message` and `fix` for each diagnostic. It also prints `documents`: the id, path, type, status, body characters and number of recognized requirements of each document.
 
-Base-relative gating compares diagnostics by their fingerprint (code, document id, target). For a moved document, the comparison uses its old id, which the document keeps as an alias. Codes in the 400 range and SD202, SD605, SD702 and SD703 compare the base tree with the head tree. Thus, these diagnostics are always new. SD704 is new only when the root does not enforce budgets and the document is new or grew.
+Base-relative gating compares diagnostics by their fingerprint (code, document id, target). For a moved document, the comparison uses its old id, which the document keeps as an alias. Codes in the 400 range and SD202, SD605, SD606, SD607, SD702 and SD703 compare the base tree with the head tree. Thus, these diagnostics are always new. SD704 is new only when the root does not enforce budgets and the document is new or grew.
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
@@ -24,13 +24,15 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD403 | supersede-cycle | error | The `supersedes` chain returns to its start. |
 | SD404 | depends-on-inactive | error | `depends-on` names a superseded or retired document. |
 | SD405 | decision-frozen | error | Text outside the amendment sections (`amendment-sections`, default `## Amendments`) changed after the decision became accepted. |
-| SD501 | adapter-modified | error | A generated adapter block has a manual edit. |
-| SD502 | adapter-outdated | error | A generated adapter is different from the adapter that this version generates. |
+| SD501 | adapter-modified | error | A generated adapter (the line in `AGENTS.md` or `CLAUDE.md`, or the skill block) has a manual edit. |
+| SD502 | adapter-outdated | error | A generated adapter is different from the adapter that this version generates. The multi-line block of an earlier version also gives SD502: `spec-dna init` replaces it with one line. |
 | SD601 | token-unresolved | warning | A bare `PREFIX-NUMBER` token with a configured legacy prefix names no document. |
 | SD602 | anchor-missing | warning | A Markdown link fragment names no heading or requirement of its target. |
 | SD603 | cross-repo-unpinned | warning | spec-dna cannot check a `<repo>:<id>` reference without a pinned index. |
 | SD604 | depends-on-deprecated | warning | `depends-on` names a deprecated document. |
 | SD605 | amendment-outcome | warning | New amendment text states a requirement, a BCP 14 keyword or a status word. |
+| SD606 | cited-path-removed | warning | A document cites a file or a directory that the change removed or renamed. The message names the new path of a file with the same content. A link gives SD102 instead. |
+| SD607 | cited-symbol-removed | warning | A document cites an identifier in an inline code span. The change removed the identifier from a file, and no other file outside of Markdown has it. If the file has exactly one new identifier, the message names it as a possible new name. |
 | SD701 | budget-soft | warning | A document is over its soft budget. |
 | SD702 | budget-hard | error | A document is over its hard budget, and against the base it is new, it was under the hard budget, or it grew. |
 | SD703 | budget-grew | warning | A document over its soft budget (but not over its hard budget) grew against the base. |
@@ -45,3 +47,13 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 The requirement lint (SD801 to SD805) has the severity that `lint-severity` of the root sets: `off`, `warning` (default) or `error`.
 
 The [research matrix](research/matrix.md), section "Controlled-language lint", describes the lint warnings SD803 to SD805 and their sources.
+
+## Code citations
+
+SD606 and SD607 use the code citations of a document ([ADR 0001](adr/0001-information-model.md), amendment "code citations"). `context <code path>` uses the same citations. A document cites code in these ways:
+
+- A link to a file that is not a document.
+- A path in an inline code span or in prose, with an optional location: `src/loans.py`, `src/loans.py:42`, `src/loans.py#L3-L9`. A path is relative to the repository root or to the document. A file name or a path tail that only one file has also resolves: `loans.py`.
+- A distinctive identifier in an inline code span: a name with an inner `_` (`max_loans`), a name with a lowercase letter before an uppercase letter (`loanBook`), or a called name with 4 characters or more (`renew()`). Words such as `status` or `HTTP` are not identifier citations.
+
+Only current documents give SD606 and SD607. A superseded, retired or rejected document, a `done` change and a note can cite code that is gone.

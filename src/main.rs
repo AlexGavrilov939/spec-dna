@@ -4,9 +4,11 @@
 
 mod adapters;
 mod check;
+mod cite;
 mod config;
 mod context;
 mod diag;
+mod drift;
 mod frontmatter;
 mod git;
 mod glob;
@@ -206,12 +208,22 @@ default-type = \"spec\"
 status = \"draft\"
 ";
 
+/// The error for a binary whose version differs from the pin (ADR 0003).
+fn pin_mismatch(pin: &str) -> Fatal {
+    Fatal::Config(format!(
+        "spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n  To use {pin}, install it:\n    cargo install --locked --force --git https://github.com/AlexGavrilov939/spec-dna --tag v{pin} spec-dna\n  To upgrade the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+    ))
+}
+
 fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let mut written = Vec::new();
     let cfg_path = repo.config_path();
     if cfg_path.exists() {
-        repo.load_config()?;
+        let cfg = repo.load_config()?;
+        if cfg.pin != VERSION {
+            return Err(pin_mismatch(&cfg.pin));
+        }
     } else {
         let root = a.root.as_deref().unwrap_or("docs").trim_matches('/');
         let text = DEFAULT_CONFIG
@@ -220,19 +232,28 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         mv::write(&cfg_path, &text)?;
         written.push(config::FILE_NAME.to_string());
     }
+    // One line in each root instruction file that an agent reads (ADR 0003,
+    // amendment of 2026-11-08). AGENTS.md gets it if the file exists, or if
+    // there is no instruction file. CLAUDE.md gets it, unless it imports an
+    // AGENTS.md that has the line.
     let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).unwrap_or_default();
-    let agents = read(adapters::AGENTS);
-    let new_agents = adapters::upsert(&agents, "agents");
-    if new_agents != agents {
-        mv::write(&repo.root.join(adapters::AGENTS), &new_agents)?;
-        written.push(adapters::AGENTS.to_string());
-    }
+    let exists = |p: &str| repo.root.join(p).exists();
+    let agents_target = exists(adapters::AGENTS) || !exists(adapters::CLAUDE);
     let claude = read(adapters::CLAUDE);
-    if !adapters::imports_agents(&claude) {
-        let new_claude = adapters::upsert(&claude, "claude");
-        if new_claude != claude {
-            mv::write(&repo.root.join(adapters::CLAUDE), &new_claude)?;
-            written.push(adapters::CLAUDE.to_string());
+    let imports = adapters::imports_agents(&claude);
+    let claude_target = !(agents_target && imports);
+    for (path, target) in [
+        (adapters::AGENTS, agents_target),
+        (adapters::CLAUDE, claude_target),
+    ] {
+        if !target {
+            continue;
+        }
+        let old = read(path);
+        let new = adapters::upsert_line(&old);
+        if new != old {
+            mv::write(&repo.root.join(path), &new)?;
+            written.push(path.to_string());
         }
     }
     let skill_path = repo.root.join(adapters::SKILL);
@@ -249,20 +270,40 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         mv::write(&skill_path, &adapters::skill_file())?;
         written.push(adapters::SKILL.to_string());
     }
+    // The bytes that spec-dna adds to the prompt prefix of each request.
+    // Claude Code reads one copy of the line (in CLAUDE.md, or in AGENTS.md
+    // through an import) and the skill descriptions. Other agents read
+    // AGENTS.md.
+    let line = adapters::line().len() + 1;
+    let claude_line = line;
+    let skill_bytes = adapters::skill_prefix_bytes();
+    let agents_bytes = if agents_target { line } else { 0 };
     if a.json {
         println!(
             "{}",
             Obj::new()
                 .str("version", VERSION)
                 .strs("written", &written)
+                .raw(
+                    "prefix_bytes",
+                    &Obj::new()
+                        .num("claude_code", claude_line + skill_bytes)
+                        .num("agents_md", agents_bytes)
+                        .end()
+                )
                 .end()
         );
-    } else if written.is_empty() {
-        println!("spec-dna init: everything is up to date");
     } else {
+        if written.is_empty() {
+            println!("spec-dna init: everything is up to date");
+        }
         for w in &written {
             println!("wrote {w}");
         }
+        println!(
+            "per-request prefix: {} bytes for Claude Code (line {claude_line}, skill description {skill_bytes}), {agents_bytes} bytes for AGENTS.md",
+            claude_line + skill_bytes
+        );
     }
     Ok(0)
 }
@@ -303,10 +344,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let cfg = repo.load_config()?;
     if cfg.pin != VERSION {
-        return Err(Fatal::Config(format!(
-            "spec-dna.toml pins version {pin}, but this binary is {VERSION}; install the pinned version:\n  cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v{pin} spec-dna",
-            pin = cfg.pin
-        )));
+        return Err(pin_mismatch(&cfg.pin));
     }
     // The base is the merge base of --base and HEAD, or HEAD. If there is no
     // commit, the base is None. `--all` uses the same base: it changes only
@@ -357,6 +395,17 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let base = loaded.corpora.get(1);
     let mut outcome = check::gate(&cfg, base, head);
     repo::trace("diagnose", &mut t);
+    if let Some(base) = base {
+        let drift = drift::check(
+            repo,
+            (base, &base_snap),
+            (head, &head_snap),
+            a.base.is_none(),
+        )?;
+        outcome.new.extend(std::iter::repeat_n(true, drift.len()));
+        outcome.head.extend(drift);
+        repo::trace("drift", &mut t);
+    }
     let head_ad = adapters::check(&adapter_texts(repo, &head_snap)?);
     let base_ad: Vec<_> = if use_base {
         adapters::check(&adapter_texts(repo, &base_snap)?)
@@ -484,10 +533,20 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         root: &repo.root,
         terms: rank::terms(q),
     });
+    let paths: Vec<String> = paths
+        .iter()
+        .map(|p| p.trim_start_matches("./").to_string())
+        .collect();
+    let cited = if paths.is_empty() {
+        Vec::new()
+    } else {
+        cite::citing(&c, &cite::Citations::build(&c), &repo.root, &paths)
+    };
     let asm = context::assemble(
         &c,
         &targets,
         &paths,
+        &cited,
         a.budget.unwrap_or(cfg.context_budget),
         query.as_ref(),
         a.include_inactive,

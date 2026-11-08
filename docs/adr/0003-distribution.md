@@ -75,3 +75,10 @@ The owner selected the GNU ABI for the Windows binaries: `x86_64-pc-windows-gnu`
 ### 2026-11-08: one build target in phase 1
 
 The owner ruled that phase 1 needs a build for one platform only: `aarch64-apple-darwin`, the platform of the first consumer. CI builds only this target. `scripts/cross-build.sh --all` keeps the 7 targets of phase 2, so phase 2 needs no new build recipe. ADR 0002 recorded the proof that one Linux host builds all 7 targets.
+
+### 2026-11-08: adapters and upgrade in phase 1
+
+The owner gave these rulings after checkpoint 4.
+
+- Adapters. This rule replaces "an `AGENTS.md` block, a `CLAUDE.md` import line" in "Decision Outcome". `init` writes one line into each root instruction file, and one skill ([ADR 0001](0001-information-model.md), amendment "code citations"). The line never imports another file, so it adds only its own bytes to each request.
+- Upgrade in phase 1. `spec-dna upgrade` does not exist yet. An upgrade has 4 steps: install the new version from its tag, set the pin in `spec-dna.toml`, run `spec-dna init`, and commit the result. A rollback installs the old version and reverts that commit. `init` does not run if the pin and the binary have different versions. Thus it cannot write adapters of the wrong version. The message of a pin mismatch gives the command for each direction.

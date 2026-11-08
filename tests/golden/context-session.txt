@@ -1,4 +1,4 @@
-<!-- spec-dna context 0.1.0: auth/session; 7 sections in full, 2 listed; 1473 of 2500 characters; about 383 tokens (estimated) -->
+<!-- spec-dna context 0.1.0: auth/session, src/gateway.rs; 7 sections in full, 3 listed; 1559 of 2500 characters; about 405 tokens (estimated) -->
 
 <!-- auth/session#requirements h:c45e6a10f2970c6b spec/active entry -->
 ## Requirements
@@ -37,4 +37,5 @@ Chosen option: signed stateless tokens.
 
 <!-- not loaded; read one with `spec-dna show <id>` -->
 - `auth/session#rationale` h:d3002214dbba40b7 155 chars (more): Rationale
+- `notes/research#research-notes` h:7f61ae640ebf936a 401 chars (more): Research notes
 - `ADR-1-session-store#context-and-problem-statement` h:101141999816be1d 88 chars (more): Context and Problem Statement
