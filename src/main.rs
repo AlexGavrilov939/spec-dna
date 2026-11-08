@@ -211,7 +211,7 @@ status = \"draft\"
 /// The error for a binary whose version differs from the pin (ADR 0003).
 fn pin_mismatch(pin: &str) -> Fatal {
     Fatal::Config(format!(
-        "spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n  To use {pin}, install it:\n    cargo install --locked --force --git https://github.com/AlexGavrilov939/spec-dna --tag v{pin} spec-dna\n  To upgrade the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+        "spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n  To use {pin}, install it:\n    cargo install --locked --force --git https://github.com/AlexGavrilov939/spec-dna --tag v{pin} spec-dna\n  To move the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
     ))
 }
 

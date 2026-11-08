@@ -100,6 +100,7 @@ If the pin and the binary have different versions, `check` and `init` stop with 
 ```sh
 rm spec-dna.toml
 rm -r .claude/skills/spec-dna "$(git rev-parse --git-dir)/spec-dna"
+rmdir -p .claude/skills 2>/dev/null || true
 for f in AGENTS.md CLAUDE.md; do
   [ -f "$f" ] || continue
   awk '/<!-- spec-dna v/ { held = 0; next } $0 == "" { held++; next }
