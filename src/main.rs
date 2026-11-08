@@ -254,7 +254,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         } else {
             a.command.as_str()
         };
-        if name.is_empty() || name == "version" {
+        if name.is_empty() || name == "version" || name == "help" {
             println!("{}", usage());
             return Ok(0);
         }

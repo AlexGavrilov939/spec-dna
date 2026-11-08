@@ -9,12 +9,12 @@ Fewer agent requests and a better detection of common layouts.
 ### Added
 
 - `spec-dna <command> --help` and `spec-dna help <command>` print the help of one command only.
-- `init` detects more layouts: a top-level type directory such as `rfcs/`, `adr/` or `runbooks/` keeps its type; `validation` gives `reference`; files such as `0001-use-postgres.md` (adr-tools, `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }` for decisions and `RFC-{n}` for changes.
+- `init` detects more layouts: a top-level type directory such as `rfcs/`, `adr/` or `runbooks/` keeps its type. New type words: `validation` and `validations` (`reference`), `incident` and `postmortem` (`incident`); a directory with one of these names must be in a documentation tree or be mostly Markdown. Decision files such as `0001-use-postgres.md` (adr-tools, `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }`, if each number of the root is unique, no file of the root starts with a date, and no other root makes the same alias.
 
 ### Changed
 
-- A directory of numbered files takes its type from its own files: the prefix (`ADR`, `RFC`, `INC`), the front matter `type` of most files, or their sections (`Decision`, `Root cause` as a heading or a table field, `Steps`). Before, it took the type of the enclosing root. If the files show no type, the type is `note`.
-- The skill: split a document only for SD702, and do not split again a document in its hard budget. The fix texts of SD701 and SD703 no longer ask for a split.
+- A directory of numbered files takes its type from its own files: the prefix (`ADR`, `RFC`, `INC`), the front matter `type` of most files, or their content (`Decision`, or `Context` and `Consequences`; `Root cause` as a heading or a table field, or `Timeline` and `Impact`; `Steps`; requirements with a BCP 14 keyword). If the files show no type, the type is the type of a typed enclosing root, or `note` in a mixed root. Before, it took the default type of the enclosing root. A mixed tree takes the type of its numbered files only if it has no other documents. Files numbered without a prefix (`0001-*.md`) make a root only for decisions and changes.
+- The skill: split a document only for a size error (SD702, and in the `strict` profile also SD701, SD703 and SD704). A size warning needs no split, and a split document needs no second split. The fix texts of SD701 and SD703 no longer ask for a split.
 
 ## 0.2.0 - 2026-11-08
 

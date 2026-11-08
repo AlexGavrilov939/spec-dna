@@ -609,6 +609,8 @@ fn help_of_one_command_is_short() {
         all.contains("Commands:") && all.contains("transcript"),
         "{all}"
     );
+    let (code, again) = run(&["help", "help"]);
+    assert_eq!((code, again), (Some(0), all.clone()));
     for args in [&["mv", "--help"][..], &["help", "mv"], &["mv", "-h"]] {
         let (code, one) = run(args);
         assert_eq!(code, Some(0), "{args:?}");
@@ -2310,7 +2312,7 @@ fn init_detects_common_layouts() {
     assert_eq!(code, 0, "{out}{err}");
     for want in [
         "path = \"doc/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nlegacy-ids = [{ alias = \"ADR-{n}\", file = \"{n}-*\" }]\n",
-        "path = \"rfcs\"\ntype = \"change\"\nstatus = \"accepted\"\nlegacy-ids = [{ alias = \"RFC-{n}\", file = \"{n}-*\" }]\n",
+        "path = \"rfcs\"\ntype = \"change\"\nstatus = \"accepted\"\n",
         "path = \"runbooks\"\ntype = \"runbook\"\n",
         "path = \"incidents\"\ntype = \"incident\"\n",
         "path = \"postmortems\"\ntype = \"incident\"\n",

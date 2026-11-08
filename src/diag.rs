@@ -72,9 +72,9 @@ codes! {
     CitedSymbolRemoved = "SD607", "cited-symbol-removed", Warning, "Update the document: cite the new identifier, or change the text about the removed code.";
     RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, decisions and runbooks that the incident involves, with `[[<id>]]` or a Markdown link.";
-    BudgetSoft = "SD701", "budget-soft", Warning, "No change is necessary in this task. Split the document only when `check` reports SD702.";
+    BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Split the document only when `check` reports a size error.";
     BudgetHard = "SD702", "budget-hard", Error, "Split the document. It is new, or it went over the hard budget, or it grew while over the hard budget.";
-    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its soft budget and it grew. Add only the text that the task needs. Split the document only when `check` reports SD702.";
+    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its soft budget and it grew. Add only the text that the task needs. Split the document only when `check` reports a size error.";
     BudgetHardKept = "SD704", "budget-hard-kept", Warning, "The document was over its hard budget in the base and did not grow, or its root does not enforce budgets. Split it before you add text: growth is an error.";
     RequirementKeyword = "SD801", "requirement-keyword", Warning, "Write the requirement with an uppercase BCP 14 keyword (MUST, SHALL, SHOULD, MAY).";
     EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern. Put `then` after an `If` condition.";
