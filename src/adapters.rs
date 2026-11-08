@@ -14,32 +14,25 @@ pub const CLAUDE: &str = "CLAUDE.md";
 pub const SKILL: &str = ".claude/skills/spec-dna/SKILL.md";
 pub const PATHS: [&str; 3] = [AGENTS, CLAUDE, SKILL];
 
-const LINE_BODY: &str = "Before you change a file, run `spec-dna context <file>`. Before you commit, run `spec-dna check`.";
+const LINE_BODY: &str = "If a task edits code or docs, run `spec-dna context <files>` once first. Before a commit, run `spec-dna check`.";
 
 /// The skill description. An agent loads the description of each skill into
 /// every request, so it must stay short.
-const SKILL_DESCRIPTION: &str = "Loads and checks the specs for a file or task. Use it before you change code or docs, and before a commit.";
+const SKILL_DESCRIPTION: &str = "Loads and checks the specs for a task. Use it before you change code or docs, and before a commit.";
 
+/// The skill body. The agent reads it once per session, and every later
+/// request carries it, so each line must change what the agent does.
 const SKILL_BODY: &str = "# spec-dna
 
-1. Find the entry: the file that you will change, or a document id (`<namespace>/<slug>`, or an alias such as `ADR-12`).
-2. Run `spec-dna context <file or id>`. It prints the sections in this sequence:
-    - the entry document, or the sections that cite the file (by its path or by its identifiers)
-    - the requirement sections and the summary of each citing document
-    - the documents whose `applies-to` matches
-    - the documents that these depend on, and the linked accepted decisions as summaries
-
-    Each section has its id and hash. For a long document without requirements, add `--query \"<the task in plain words>\"`.
-3. If the output lists a section as not loaded, run `spec-dna show <id>#<anchor>` to read that section.
-4. Keep the documents true. If your change makes a spec, contract or guide wrong, change the document in the same commit. Cite a requirement as `<doc-id>#<key>`. Write a new requirement as `- **<key>**: <sentence>`. Use a lowercase slug as the key. In the sentence, use an EARS pattern with an uppercase BCP 14 keyword.
-5. Write a new decision in a new file. Do not change the text of an accepted decision outside its amendment sections (default heading `## Amendments`).
-    - Amend the decision if its outcome stays: a new detail, a limit, a fix after an incident, or a new path or identifier of the code that it cites. Add the text under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
-    - Supersede the decision if its outcome changes or is replaced: write a new decision with `supersedes: [<old id>]`, and set the status of the old decision to `superseded`.
-6. Before you commit, run `spec-dna check`. Fix every error. SD606 and SD607 warn that a document cites a path or an identifier that your change removed: update that document. For an accepted decision, name the new path or identifier in its amendment section.
-7. Move a document or a requirement only with `spec-dna mv`. Thus its old id still resolves.
-    - To move a document, run `spec-dna mv <old-id> <new-id>`.
-    - To move a requirement to another spec, run `spec-dna mv <doc-id>#<key> <doc-id>`.
-    - To split a document, move several keys or whole sections in one command: `spec-dna mv <doc-id>#<key or section anchor>... <spec-id>`. A new spec id creates the spec. Do this when `check` reports SD702 (a document over its hard budget).";
+1. If the task changes code or docs, run `spec-dna context <file>...` once, with all the files that you plan to change (or a document id). Skip it for a question without edits. The output gives the sections in priority order: invariants, the entry, the sections that cite the files, their decisions. Each section has an id.
+2. Read a listed section with `spec-dna show <id>#<anchor>` only if the task needs it.
+3. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`, with a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. In a test, `covers: <doc-id>#<key>` links the test to it.
+4. For a new document, run `spec-dna new <type> <id>` and replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
+5. Do not change the text of an accepted decision outside its amendment sections (default `## Amendments`).
+    - Amend the decision if its outcome stays: add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
+    - Supersede the decision if its outcome changes: write a new decision with `supersedes: [<old id>]`, and set the status of the old one to `superseded`.
+6. Before you commit, run `spec-dna check` once. Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix.
+7. Move a document or requirements only with `spec-dna mv <from>... <to>`, so that the old ids stay as aliases. When `check` reports SD702, split the document: move several keys or sections into a new spec with one `mv`.";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {
@@ -268,8 +261,7 @@ mod tests {
         ];
         assert!(check(&files).is_empty());
 
-        let edited = agents.replace("before you commit", "Before you push");
-        let edited = edited.replace("Before you commit", "Before you push");
+        let edited = agents.replace("Before a commit", "Before a push");
         let d = check(&[(AGENTS, edited)]);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, Code::AdapterModified);

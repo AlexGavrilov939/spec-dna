@@ -3,25 +3,33 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.1.2"              # required: the pinned version
+spec-dna = "0.2.0"              # required: the pinned version
+profile = "standard"            # "lite", "standard" (default) or "strict"
+types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
 
+[rules]                         # severity overrides (docs/profiles.md)
+drift = "error"                 # a rule group, or a code such as SD704
+
+[evidence]
+tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
+
 [[roots]]                       # required: one table per document root
 path = "docs"
-type = "mixed"                  # one of the 6 types, or "mixed" (default)
+type = "mixed"                  # one of the 10 types, or "mixed" (default)
 default-type = "spec"           # mixed roots: type when front matter has none (default "note")
 status = "draft"                # status of a default-type document without `status`
 exclude = ["drafts/**"]         # globs relative to the root
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
 legacy-keys = ["R-{n}"]
 status-map = { released = "active", wip = "draft" }            # legacy status words
-required-sections = { decision = ["Decision Outcome", "Decision"], spec = ["Requirements"] }
+required-sections = { decision = ["Decision Outcome", "Decision"], incident = [["Summary"], ["Root cause"]] }
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
 enforce-budgets = true          # false: the hard budget gives warnings only
-lint-severity = "warning"       # "off", "warning" or "error" for SD801 to SD805
-drift-severity = "warning"      # "off", "warning" or "error" for SD606 and SD607
+profile = "lite"                # the profile of this root
+rules = { lint = "off" }        # severity overrides for this root
 
 [budgets.spec]                  # characters of body text, per type
 soft = 10000
@@ -31,7 +39,7 @@ hard = 20000
 max-words = 30                  # longest requirement sentence before a warning
 
 [context]
-budget = 12000                  # default character budget of `spec-dna context`
+budget = 8000                   # default character budget of `spec-dna context`
 
 [repos]
 platform = "https://example.org/platform.git"   # alias for `platform:<namespace>/<slug>`
@@ -42,29 +50,35 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
+| `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule wins over a group rule. |
+| `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` refuses it. |
+| `evidence.tests` | list of globs | the usual test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list turns the tags off. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`: a URL such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`, without spaces. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
 | `roots` | list of tables | required | The document roots. A path belongs to the deepest root that contains it. |
 | `roots.path` | string | required | The directory, relative to the repository root. `.` is the full repository. |
-| `roots.type` | string | `mixed` | The type of every document in the root, or `mixed`. |
+| `roots.type` | string | `mixed` | The type of every document in the root (one of the 10 types of [docs/types.md](types.md)), or `mixed`. |
 | `roots.default-type` | string | `note` | For a mixed root: the type of a document that has no `type` field. |
 | `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type. |
 | `roots.exclude` | list of globs | `[]` | Paths, relative to the root, that are not documents. |
 | `roots.legacy-ids` | list | `[]` | Patterns that make existing file names into aliases. A string `ADR-{n}` makes the alias `ADR-{n}` from a slug that starts with it. In a table, `file` sets the slug pattern. |
 | `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. For a legacy key, the colon after the bold key is optional: `- **R-12** sentence`, `- **R-12**: sentence`, `- **R-12:** sentence` and `- **R-12.** sentence` are requirements. A spec or contract gets SD806 if it has tokens that match a pattern but no recognized requirement. It also gets SD806 if a list item or a table row starts with a token that matches a pattern, and no recognized requirement of the document has that key. |
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the root's type (in a mixed root, a status of any type). |
-| `roots.required-sections` | table | `{ decision = ["Decision Outcome", "Decision"] }` | For each type, the headings of its required section, in any language. A document of that type needs a section with one of these headings (SD305). The comparison ignores case. A list replaces the default of its type, and an empty list removes the requirement. The other types have no required section by default. For a decision, `context` serves this section as the summary. |
+| `roots.required-sections` | table | see [docs/types.md](types.md) | For each type, its required sections, in any language. The value is a list of headings (one section, with alternative headings) or a list of such lists (several sections). A document of that type needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type, and an empty list removes the requirement. Defaults: decision `["Decision Outcome", "Decision"]`, invariant `["Rules"]`, runbook `["Steps"]`, incident `[["Summary"], ["Root cause"]]`. For a decision, `context` serves the first required section as the summary. |
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit: `## Nachtrag 2026-01-02: TTL` matches `Nachtrag`, and `## Nachtragsplan` does not. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. After a decision is accepted, the text outside its amendment sections is frozen (SD405), and new amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
-| `roots.lint-severity` | string | `"warning"` | The severity of the requirement lint (SD801 to SD805) in this root: `"off"`, `"warning"` or `"error"`. Use `"off"` for a legacy root whose requirements you do not reword now. With `"error"`, a new lint finding fails `check`. |
-| `roots.drift-severity` | string | `"warning"` | The severity of the drift diagnostics SD606 and SD607 for the documents of this root: `"off"`, `"warning"` or `"error"`. With `"error"`, a change that removes or renames a path or an identifier that a document cites fails `check`. |
+| `roots.profile` | string | the project profile | The profile of the documents of this root. |
+| `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They win over `[rules]` and over every profile. |
+| `roots.lint-severity` | string | none | The key of 0.1 for the rule `lint` of this root (SD801 to SD805). `roots.rules` wins over it. |
+| `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` wins over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
-| `context.budget` | integer | `12000` | The default budget of `spec-dna context`, in characters. |
+| `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
 
-Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `note` none. A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
+Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `invariant` 3,000 and 6,000; `runbook` 8,000 and 16,000; `incident` 6,000 and 12,000; `note` and `reference` none. A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 
 A document over the soft budget gives a warning (SD701), and SD703 if it also grew against the base. The hard budget compares the document with the base ([ADR 0001](adr/0001-information-model.md), "Amendments"):
 
@@ -73,7 +87,17 @@ A document over the soft budget gives a warning (SD701), and SD703 if it also gr
 - A document that was over the hard budget in the base and grew is an error (SD702). The comparison uses the body characters of the two versions.
 - A document that was over the hard budget in the base and did not grow gives a warning (SD704).
 
-In a root with `enforce-budgets = false`, all of these give SD704. `check --all` uses the same base, so a document that did not change does not give SD702.
+In a root with `enforce-budgets = false`, all of these give SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
+
+## Evidence
+
+A requirement has evidence if a test or a verification record links to it. `check` resolves 3 links:
+
+- `verified-by` in the front matter: paths that cover every requirement of the document;
+- an inline marker at the end of a requirement: `- **renew**: The library SHALL ... <!-- verified-by: tests/renew.py -->`;
+- a `covers: <doc-id>#<key>` tag in a test file (`evidence.tests`). The tag is plain text, so it works in a comment of any language: `// covers: loans#renew`, `# covers: loans#renew, loans#fines`. The ids follow the tag, separated by commas or spaces. The first word that is not an id ends the tag.
+
+A `verified-by` path that is not in the git tree gives SD103. A tag that names no requirement gives SD105. An active requirement (of a `spec`, `contract` or `invariant` with the status `active`) without evidence gives SD608. The profile sets the severities. `show` lists the evidence of each requirement. A moved requirement keeps its tags, because its old id is an alias. spec-dna does not run the tests.
 
 ## Patterns and globs
 

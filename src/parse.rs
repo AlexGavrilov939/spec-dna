@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 8;
+pub const PARSER_VERSION: u32 = 10;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -36,6 +36,8 @@ pub struct ParsedDoc {
     /// Words of prose that contain a `/`. The model keeps a word as a citation
     /// only if it names a file or a directory of the tree.
     pub path_words: Vec<Token>,
+    /// Template placeholders (`{{text}}`) in prose, outside code (SD306).
+    pub placeholders: Vec<Token>,
     /// Characters of the body without fenced or indented code blocks.
     pub body_chars: u32,
 }
@@ -98,6 +100,8 @@ pub struct Req {
     /// links to a moved key or section.
     pub frozen: Hash,
     pub aliases: Vec<String>,
+    /// The paths of an inline `<!-- verified-by: <path>, ... -->` marker.
+    pub verified_by: Vec<String>,
     /// The sentence, whitespace-normalized, without the alias marker.
     pub text: String,
 }
@@ -233,6 +237,7 @@ pub fn parse(text: &str) -> ParsedDoc {
                 *chunk_flags.last_mut().unwrap() |= word_flags(&t);
                 let line = lines.line(body_start + range.start);
                 scan_tokens(&t, line, &mut doc.tokens);
+                scan_placeholders(&t, line, &mut doc.placeholders);
                 if in_link == 0 {
                     scan_path_words(&t, line, &mut doc.path_words);
                 }
@@ -302,7 +307,7 @@ pub fn parse(text: &str) -> ParsedDoc {
                 ch.is_whitespace() || matches!(ch, ':' | '.' | '-' | '–' | '—')
             });
         }
-        let (clean, aliases) = strip_alias_marker(raw);
+        let (clean, aliases, verified_by) = strip_markers(raw);
         doc.reqs.push(Req {
             key: c.key,
             colon: c.colon,
@@ -313,6 +318,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             hash: hash_normalized(&clean),
             frozen: hash_normalized(&strip_link_destinations(&clean)),
             aliases,
+            verified_by,
             text: crate::hash::normalize(&clean),
         });
     }
@@ -453,9 +459,13 @@ impl Item {
     }
 }
 
-/// Removes `<!-- aliases: a#b, c#d -->` and returns the aliases it lists.
-pub fn strip_alias_marker(raw: &str) -> (String, Vec<String>) {
+/// Removes the markers `<!-- aliases: a#b, c#d -->` and
+/// `<!-- verified-by: tests/a.rs, tests/b.rs -->` from a requirement, and
+/// returns the aliases and the evidence paths that they list. The hash of a
+/// requirement does not cover the markers.
+pub fn strip_markers(raw: &str) -> (String, Vec<String>, Vec<String>) {
     let mut aliases = Vec::new();
+    let mut verified_by = Vec::new();
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(pos) = rest.find("<!--") {
@@ -465,19 +475,23 @@ pub fn strip_alias_marker(raw: &str) -> (String, Vec<String>) {
         };
         let inner = after[..close].trim();
         out.push_str(&rest[..pos]);
-        if let Some(list) = inner.strip_prefix("aliases:") {
-            aliases.extend(
-                list.split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty()),
-            );
+        let list = |l: &str| -> Vec<String> {
+            l.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+        if let Some(l) = inner.strip_prefix("aliases:") {
+            aliases.extend(list(l));
+        } else if let Some(l) = inner.strip_prefix("verified-by:") {
+            verified_by.extend(list(l));
         } else {
             out.push_str(&rest[pos..pos + 4 + close + 3]);
         }
         rest = &after[close + 3..];
     }
     out.push_str(rest);
-    (out, aliases)
+    (out, aliases, verified_by)
 }
 
 const BCP14: [&str; 7] = [
@@ -519,6 +533,40 @@ fn word_flags(text: &str) -> u8 {
         }
     }
     flags
+}
+
+/// Collects template placeholders: `{{` and a character that is not a space,
+/// then text without braces, then a character that is not a space and `}}`.
+/// `${{ x }}` (GitHub Actions) and `{{ x }}` (Jinja) are not placeholders.
+fn scan_placeholders(text: &str, line: u32, out: &mut Vec<Token>) {
+    let mut rest = text;
+    let mut offset = 0;
+    while let Some(i) = rest.find("{{") {
+        let start = offset + i;
+        let after = &rest[i + 2..];
+        let dollar = text[..start].ends_with('$');
+        let end = after.find("}}");
+        match end {
+            Some(e)
+                if !dollar
+                    && e > 0
+                    && !after[..e].contains(['{', '}'])
+                    && !after.starts_with(char::is_whitespace)
+                    && !after[..e].ends_with(char::is_whitespace) =>
+            {
+                out.push(Token {
+                    text: format!("{{{{{}}}}}", &after[..e]),
+                    line,
+                });
+                offset = start + 2 + e + 2;
+                rest = &text[offset..];
+            }
+            _ => {
+                offset = start + 2;
+                rest = &text[offset..];
+            }
+        }
+    }
 }
 
 /// Collects `PREFIX-NUMBER` tokens: an uppercase ASCII prefix, a hyphen and
@@ -854,5 +902,14 @@ mod tests {
         let d = parse("# T\n\n```\ncode\n```\n");
         // The fence lines are code. The final line end is not code.
         assert_eq!(d.body_chars, "# T\n\n\n".chars().count() as u32);
+    }
+
+    #[test]
+    fn template_placeholders() {
+        let d = parse(
+            "# T\n\n- **{{key}}**: When {{trigger}}, x.\n\nUse `{{code}}` and ${{ github.ref }} and {{ jinja }}.\n\n```\n{{block}}\n```\n",
+        );
+        let p: Vec<&str> = d.placeholders.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(p, ["{{key}}", "{{trigger}}"]);
     }
 }

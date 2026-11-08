@@ -7,13 +7,16 @@ mod check;
 mod cite;
 mod config;
 mod context;
+mod detect;
 mod diag;
 mod drift;
+mod evidence;
 mod frontmatter;
 mod git;
 mod glob;
 mod hash;
 mod index;
+mod init;
 mod json;
 mod lint;
 mod model;
@@ -22,6 +25,7 @@ mod parse;
 mod rank;
 mod repo;
 mod split;
+mod templates;
 mod transcript;
 
 use crate::adapters::VERSION;
@@ -33,8 +37,13 @@ use std::process::ExitCode;
 const USAGE: &str = "usage: spec-dna <command> [options]
 
 Commands:
-    init [--root <dir>]
-        Writes spec-dna.toml (if it does not exist) and the agent adapters.
+    init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
+        [--root <dir>]
+        Detects the repository, asks at most 8 questions with the detected
+        defaults, shows spec-dna.toml and the files to change, and writes
+        them after a confirmation. Without a terminal, it uses the defaults.
+        If spec-dna.toml exists, it updates the agent adapters only, unless
+        --reconfigure is set.
     check [--base <rev>] [--all] [--lint]
         Reports the diagnostics that are new against the merge base of <rev>
         and HEAD (default: HEAD). With --all, it reports every diagnostic.
@@ -49,7 +58,10 @@ Commands:
         A superseded, retired or rejected document is only listed, unless
         --include-inactive is set or a target names it.
     show <id>[#<anchor>]
-        Prints a document, a section or a requirement.
+        Prints a document, a section or a requirement, with the evidence of
+        each requirement.
+    new <type> <id> [--root <dir>]
+        Writes a new document from the template of its type.
     mv <from> <to>
     mv <doc-id>#<key or section>... <spec-id>
         Moves a document. Or moves requirements and whole sections to an
@@ -83,6 +95,10 @@ struct Args {
     expect: Vec<String>,
     format: Option<String>,
     lint: bool,
+    non_interactive: bool,
+    answers: Option<String>,
+    reconfigure: bool,
+    dry_run: bool,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -101,6 +117,10 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         expect: Vec::new(),
         format: None,
         lint: false,
+        non_interactive: false,
+        answers: None,
+        reconfigure: false,
+        dry_run: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -122,6 +142,10 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--lint" => a.lint = true,
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
+            "--non-interactive" => a.non_interactive = true,
+            "--reconfigure" => a.reconfigure = true,
+            "--dry-run" => a.dry_run = true,
+            "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
@@ -179,6 +203,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "check" => check(&Repo::discover(&cwd)?, &a),
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
+        "new" => new_doc(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
@@ -206,21 +231,6 @@ fn warn_pin(cfg: &config::Config) {
     }
 }
 
-const DEFAULT_CONFIG: &str = "# spec-dna configuration. Reference: https://github.com/AlexGavrilov939/spec-dna/blob/master/docs/config.md
-spec-dna = \"{version}\"
-# The git source of spec-dna for `cargo install --git`, for example a local or
-# private clone in phase 1. The message of a version mismatch uses it.
-# install-source = \"https://github.com/AlexGavrilov939/spec-dna\"
-
-# Each root is a directory of documents. The id of a document is its path
-# under the root, without the extension.
-[[roots]]
-path = \"{root}\"
-type = \"mixed\"
-default-type = \"spec\"
-status = \"draft\"
-";
-
 /// The error for a binary whose version differs from the pin (ADR 0003).
 fn pin_mismatch(cfg: &config::Config) -> Fatal {
     let (pin, source) = (&cfg.pin, &cfg.install_source);
@@ -231,110 +241,22 @@ fn pin_mismatch(cfg: &config::Config) -> Fatal {
 
 fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
-    let mut written = Vec::new();
-    let cfg_path = repo.config_path();
-    if cfg_path.exists() {
-        let cfg = repo.load_config()?;
-        if cfg.pin != VERSION {
-            return Err(pin_mismatch(&cfg));
-        }
-    } else {
-        let root = a.root.as_deref().unwrap_or("docs").trim_matches('/');
-        let text = DEFAULT_CONFIG
-            .replace("{version}", VERSION)
-            .replace("{root}", if root.is_empty() { "." } else { root });
-        mv::write(&cfg_path, &text)?;
-        written.push(config::FILE_NAME.to_string());
+    if a.non_interactive && a.answers.is_some() {
+        return Err(Fatal::Usage(
+            "use --non-interactive or --answers, not both".into(),
+        ));
     }
-    // One line in each root instruction file that an agent reads (ADR 0003,
-    // amendment of 2026-11-08). AGENTS.md gets it if the file exists, or if
-    // there is no instruction file. CLAUDE.md gets it, unless it imports an
-    // AGENTS.md that has the line.
-    // An older version wrote a `claude` block that imported AGENTS.md. If
-    // AGENTS.md has text of its own, the import stays as a plain line.
-    let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).unwrap_or_default();
-    let exists = |p: &str| repo.root.join(p).exists();
-    let agents_target = exists(adapters::AGENTS) || !exists(adapters::CLAUDE);
-    let claude = adapters::migrate_claude(
-        &read(adapters::CLAUDE),
-        adapters::has_own_text(&read(adapters::AGENTS)),
-    );
-    let imports = adapters::imports_agents(&claude);
-    let claude_target = !(agents_target && imports);
-    for (path, target) in [
-        (adapters::AGENTS, agents_target),
-        (adapters::CLAUDE, claude_target),
-    ] {
-        let old = read(path);
-        let current = if path == adapters::CLAUDE {
-            claude.clone()
-        } else {
-            old.clone()
-        };
-        // A file that the agent reads through an import keeps no second copy.
-        let new = if target {
-            adapters::upsert_line(&current)
-        } else {
-            adapters::remove_line(&current)
-        };
-        if new != old {
-            mv::write(&repo.root.join(path), &new)?;
-            written.push(path.to_string());
-        }
-    }
-    let skill_path = repo.root.join(adapters::SKILL);
-    let skill = read(adapters::SKILL);
-    if !skill.is_empty() && !skill.contains("<!-- spec-dna:begin skill ") {
-        return Err(Fatal::Usage(format!(
-            "{} exists and was not generated by spec-dna; move it first",
-            adapters::SKILL
-        )));
-    }
-    if skill != adapters::skill_file() {
-        std::fs::create_dir_all(skill_path.parent().unwrap())
-            .map_err(|e| Fatal::Io(e.to_string()))?;
-        mv::write(&skill_path, &adapters::skill_file())?;
-        written.push(adapters::SKILL.to_string());
-    }
-    // The bytes that spec-dna adds to the prompt prefix of each request.
-    // Claude Code reads one copy of the line (in CLAUDE.md, or in AGENTS.md
-    // through an import) and the skill descriptions. Other agents read
-    // AGENTS.md.
-    let line = adapters::line().len() + 1;
-    let claude_line = line;
-    let skill_bytes = adapters::skill_prefix_bytes();
-    let agents_bytes = if agents_target { line } else { 0 };
-    if a.json {
-        println!(
-            "{}",
-            Obj::new()
-                .str("version", VERSION)
-                .strs("written", &written)
-                .raw(
-                    "prefix_bytes",
-                    &Obj::new()
-                        .num("claude_code", claude_line + skill_bytes)
-                        .num("agents_md", agents_bytes)
-                        .end()
-                )
-                .end()
-        );
-    } else {
-        if written.is_empty() {
-            println!("spec-dna init: everything is up to date");
-        }
-        for w in &written {
-            println!("wrote {w}");
-        }
-        println!(
-            "per-request prefix: {} bytes for Claude Code (line {claude_line}, skill description {skill_bytes}), {agents_bytes} bytes for AGENTS.md",
-            claude_line + skill_bytes
-        );
-        if !written.is_empty() {
-            println!("to commit: git add {}", written.join(" "));
-        }
-    }
-    Ok(0)
+    init::run(
+        repo,
+        &init::Opts {
+            root: a.root.clone(),
+            non_interactive: a.non_interactive,
+            answers: a.answers.clone(),
+            reconfigure: a.reconfigure,
+            dry_run: a.dry_run,
+            json: a.json,
+        },
+    )
 }
 
 fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, String)>, Fatal> {
@@ -418,7 +340,31 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         vec![&head_snap]
     };
     repo::trace("git base tree", &mut t);
-    let loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
+    let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
+    // The `covers:` tags of the test files, for the evidence checks.
+    if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
+    {
+        // The working tree and the base, in parallel. The snapshots do not
+        // tell whether a test file outside the document roots changed, so
+        // both trees are read.
+        let (head_covers, base_covers) = std::thread::scope(|s| {
+            let base = s.spawn(|| match &base_commit {
+                Some(c) => evidence::load(repo, &cfg, Some(c), false).map(Some),
+                None => Ok(None),
+            });
+            let head = evidence::load(repo, &cfg, None, a.base.is_none());
+            (
+                head,
+                base.join()
+                    .unwrap_or_else(|_| Err(Fatal::Io("reading the base tests failed".into()))),
+            )
+        });
+        loaded.corpora[0].covers = head_covers?;
+        if let (Some(b), Some(covers)) = (loaded.corpora.get_mut(1), base_covers?) {
+            b.covers = covers;
+        }
+        repo::trace("evidence", &mut t);
+    }
     t = std::time::Instant::now();
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
@@ -436,9 +382,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.head.extend(drift);
         repo::trace("drift", &mut t);
     }
-    let head_ad = adapters::check(&adapter_texts(repo, &head_snap)?);
+    let head_ad = check::apply_severity(&cfg, adapters::check(&adapter_texts(repo, &head_snap)?));
     let base_ad: Vec<_> = if use_base {
-        adapters::check(&adapter_texts(repo, &base_snap)?)
+        check::apply_severity(&cfg, adapters::check(&adapter_texts(repo, &base_snap)?))
     } else {
         Vec::new()
     };
@@ -575,6 +521,17 @@ fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
             code.name()
         ));
     }
+    // The fix of each listed code, once, so that an agent needs no lookup.
+    let mut fixes: Vec<Code> = Vec::new();
+    for d in diags {
+        if (lint || !d.code.is_prose_lint()) && !fixes.contains(&d.code) {
+            fixes.push(d.code);
+        }
+    }
+    fixes.sort();
+    for code in fixes {
+        out.push(format!("{} fix: {}", code.code(), code.fix()));
+    }
     out
 }
 
@@ -652,7 +609,8 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 1, 1)?;
-    let (_cfg, c) = load_head(repo, a)?;
+    let (cfg, mut c) = load_head(repo, a)?;
+    c.covers = evidence::load(repo, &cfg, None, true)?;
     let t = &a.positional[0];
     let (d, frag) = context::resolve_target(&c, t).ok_or_else(|| {
         Fatal::NotFound(format!("`{t}` names no document, section or requirement"))
@@ -661,6 +619,104 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         "{}",
         context::show(&c, &repo.root, d, frag.as_deref(), a.json)
     );
+    Ok(0)
+}
+
+/// Writes a new document from the template of its type. The root is
+/// `--root`, or the first root of that single type, or the first mixed root.
+/// In a mixed root, an id without a namespace gets the namespace of its type,
+/// such as `decisions/<id>`.
+fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    use model::DocType;
+    expect_args(a, 2, 2)?;
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    let name = &a.positional[0];
+    let ty = DocType::from_name(name).ok_or_else(|| {
+        Fatal::Usage(format!(
+            "unknown type `{name}`; use one of {}",
+            DocType::names()
+        ))
+    })?;
+    if !cfg.allows(ty) {
+        return Err(Fatal::Usage(format!(
+            "type `{name}` is not a type of this project (`types` in spec-dna.toml)"
+        )));
+    }
+    let id = a.positional[1].trim_matches('/');
+    let id = id.strip_suffix(".md").unwrap_or(id);
+    if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
+        return Err(Fatal::Usage(format!(
+            "`{id}` is not a document id (`<namespace>/<slug>`)"
+        )));
+    }
+    let root_i = match &a.root {
+        Some(r) => {
+            let r = r.trim_matches('/');
+            let r = if r == "." { "" } else { r };
+            cfg.roots
+                .iter()
+                .position(|x| x.path == r)
+                .ok_or_else(|| Fatal::Usage(format!("`{r}` is not a root of spec-dna.toml")))?
+        }
+        None => cfg
+            .roots
+            .iter()
+            .position(|r| r.single_type == Some(ty))
+            .or_else(|| cfg.roots.iter().position(|r| r.single_type.is_none()))
+            .ok_or_else(|| {
+                Fatal::Usage(format!(
+                    "no root takes a `{}`; add a root to spec-dna.toml or use --root",
+                    ty.name()
+                ))
+            })?,
+    };
+    let root = &cfg.roots[root_i];
+    let id = match templates::namespace(ty) {
+        Some(ns) if root.single_type.is_none() && !id.contains('/') => format!("{ns}/{id}"),
+        _ => id.to_string(),
+    };
+    let id = id.as_str();
+    if let Some(t) = root.single_type.filter(|&t| t != ty) {
+        return Err(Fatal::Usage(format!(
+            "root `{}` holds only `{}` documents",
+            root.path,
+            t.name()
+        )));
+    }
+    let path = if root.path.is_empty() {
+        format!("{id}.md")
+    } else {
+        format!("{}/{id}.md", root.path)
+    };
+    if cfg.root_of(&path) != Some(root_i) || cfg.is_excluded(root_i, &path) {
+        return Err(Fatal::Usage(format!(
+            "`{path}` is in another root or excluded; use --root"
+        )));
+    }
+    let file = repo.root.join(&path);
+    if file.exists() {
+        return Err(Fatal::Usage(format!("`{path}` exists")));
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
+    }
+    mv::write(&file, &templates::render(ty, &templates::title_of(id)))?;
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("path", &path)
+                .str("type", ty.name())
+                .str("id", &model::root_doc_id(root, &path))
+                .end()
+        );
+    } else {
+        println!(
+            "wrote {path} ({} template); replace each <placeholder>",
+            ty.name()
+        );
+    }
     Ok(0)
 }
 

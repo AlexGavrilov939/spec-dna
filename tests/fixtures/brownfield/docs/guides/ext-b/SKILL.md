@@ -1,0 +1,3 @@
+# Vendored B
+
+Upstream text.

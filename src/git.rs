@@ -324,6 +324,118 @@ impl Git {
         Ok(found)
     }
 
+    /// Returns each line that contains `text`, as (path, line number, line).
+    /// Without `rev`, it searches the working tree: tracked files, and with
+    /// `untracked` also the untracked files that git does not ignore. With
+    /// `rev`, it searches that commit. Binary files do not count.
+    /// `globs` limits the search to the paths that match one of them (git
+    /// `glob` pathspecs: `*` stays in one segment, `**` crosses segments).
+    pub fn grep_lines(
+        &self,
+        text: &str,
+        rev: Option<&str>,
+        untracked: bool,
+        globs: &[String],
+    ) -> Result<Vec<(String, u32, String)>, String> {
+        let mut args: Vec<&str> = vec![
+            "grep",
+            "-I",
+            "-F",
+            "-z",
+            "-n",
+            "--no-color",
+            "--no-column",
+            "-e",
+            text,
+        ];
+        if untracked && rev.is_none() {
+            args.push("--untracked");
+        }
+        if let Some(r) = rev {
+            args.push(r);
+        }
+        args.push("--");
+        // A glob that git does not accept as a pathspec (with `..`, or empty
+        // after the slashes) turns the limit off; the caller filters the paths.
+        let specs: Vec<String> = globs
+            .iter()
+            .map(|g| g.trim_matches('/'))
+            .map(|g| format!(":(glob){g}"))
+            .collect();
+        let limit = globs.iter().all(|g| {
+            let g = g.trim_matches('/');
+            !g.is_empty() && !g.split('/').any(|s| s == ".." || s == ".")
+        });
+        if limit {
+            args.extend(specs.iter().map(String::as_str));
+        }
+        let out = self
+            .cmd(&args)
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        // `git grep` exits with 1 when nothing matches.
+        match out.status.code() {
+            Some(0) | Some(1) => {}
+            _ => {
+                return Err(format!(
+                    "git grep failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
+        }
+        // Each record is `path NUL line NUL text LF`. With a revision, the
+        // path starts with `<rev>:`.
+        let prefix = rev.map(|r| format!("{r}:")).unwrap_or_default();
+        let mut found = Vec::new();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for rec in stdout.split_terminator('\n') {
+            let mut parts = rec.splitn(3, '\0');
+            let (Some(path), Some(line), Some(body)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let path = path.strip_prefix(prefix.as_str()).unwrap_or(path);
+            if let Ok(n) = line.parse() {
+                found.push((path.to_string(), n, body.to_string()));
+            }
+        }
+        Ok(found)
+    }
+
+    /// Returns the default branch: the branch of `origin/HEAD`, or a local
+    /// `main` or `master`, or the current branch, or `main`. It reads local
+    /// refs only, without the network.
+    pub fn default_branch(&self) -> String {
+        let out = |args: &[&str]| {
+            self.run(args)
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+        if let Some(b) = out(&[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ]) {
+            return b.strip_prefix("origin/").unwrap_or(&b).to_string();
+        }
+        for b in ["main", "master"] {
+            if out(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{b}"),
+            ])
+            .is_some()
+            {
+                return b.to_string();
+            }
+        }
+        out(&["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|| "main".to_string())
+    }
+
     pub fn mv(&self, from: &str, to: &str) -> Result<(), String> {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }

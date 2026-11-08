@@ -2,7 +2,7 @@
 //! docs/config.md describes it. schema/spec-dna.schema.json contains its JSON
 //! Schema.
 
-use crate::diag::Severity;
+use crate::diag::{Code, Severity};
 use crate::model::DocType;
 use toml::{Table, Value};
 
@@ -15,7 +15,7 @@ pub struct Config {
     pub exclude: Vec<String>,
     pub roots: Vec<Root>,
     /// Soft and hard budgets in characters, per document type.
-    pub budgets: [(u32, u32); 6],
+    pub budgets: [(u32, u32); DocType::COUNT],
     pub max_words: u32,
     pub context_budget: u32,
     pub repos: Vec<(String, String)>,
@@ -25,6 +25,14 @@ pub struct Config {
     /// The git source of spec-dna for `cargo install --git`. The message of a
     /// pin mismatch uses it.
     pub install_source: String,
+    /// The profile: the default severity of each diagnostic code.
+    pub profile: Profile,
+    /// Severity overrides for every root (`[rules]`).
+    pub rules: Rules,
+    /// Globs of the files where `check` reads `covers:` tags.
+    pub evidence_tests: Vec<String>,
+    /// The document types of the project. Empty: every type.
+    pub types: Vec<DocType>,
 }
 
 /// The public repository of spec-dna: the install source by default.
@@ -45,37 +53,116 @@ pub struct Root {
     /// For each type (index `DocType as usize`), the headings of its required
     /// section. A document of that type needs one of them. An empty list means
     /// no required section.
-    pub required_sections: [Vec<String>; 6],
+    pub required_sections: [Vec<Vec<String>>; DocType::COUNT],
     /// For each type, the names of its amendment sections. A heading that is
     /// a name, or that starts with a name and a character that is not a letter
     /// or a digit, starts an amendment section.
-    pub amendment_sections: [Vec<String>; 6],
+    pub amendment_sections: [Vec<String>; DocType::COUNT],
     /// If false, a document over the hard budget gives a warning, not an
     /// error.
     pub enforce_budgets: bool,
-    /// The severity of the requirement lint (SD801 to SD805). `None` turns
-    /// the lint off.
-    pub lint_severity: Option<Severity>,
-    /// The severity of the drift diagnostics (SD606, SD607). `None` turns
-    /// them off.
-    pub drift_severity: Option<Severity>,
+    /// The profile of this root, if it differs from the project profile.
+    pub profile: Option<Profile>,
+    /// Severity overrides for this root. They replace `[rules]`.
+    pub rules: Rules,
 }
 
-/// Reads a severity key of a root: `"off"` (`None`), `"warning"` (the
-/// default) or `"error"`.
-fn severity<'a>(
-    f: &mut Fields<'a>,
-    prefix: &str,
-    key: &'a str,
-) -> Result<Option<Severity>, String> {
-    match f.take(key).map(|v| v.as_str()) {
-        None | Some(Some("warning")) => Ok(Some(Severity::Warning)),
-        Some(Some("error")) => Ok(Some(Severity::Error)),
-        Some(Some("off")) => Ok(None),
-        Some(_) => Err(format!(
-            "`{prefix}{key}` must be \"off\", \"warning\" or \"error\""
-        )),
+/// The profiles (docs/profiles.md). A profile gives the default severity of
+/// each diagnostic code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    Lite,
+    Standard,
+    Strict,
+}
+
+impl Profile {
+    pub const ALL: [Profile; 3] = [Profile::Lite, Profile::Standard, Profile::Strict];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Profile::Lite => "lite",
+            Profile::Standard => "standard",
+            Profile::Strict => "strict",
+        }
     }
+
+    pub fn from_name(s: &str) -> Option<Profile> {
+        Profile::ALL.into_iter().find(|p| p.name() == s)
+    }
+
+    /// The default severity of a code in this profile. `None` turns the code
+    /// off. A code that is not in the table keeps the severity of its
+    /// definition in every profile.
+    pub fn severity(self, code: Code) -> Option<Severity> {
+        use Severity::{Error as E, Warning as W};
+        let (lite, standard, strict) = match code.code() {
+            "SD101" | "SD102" | "SD103" | "SD104" | "SD105" | "SD201" | "SD202" | "SD203"
+            | "SD204" | "SD702" => (Some(W), Some(E), Some(E)),
+            "SD701" | "SD703" | "SD704" => (Some(W), Some(W), Some(E)),
+            "SD606" | "SD607" | "SD608" => (None, Some(W), Some(E)),
+            "SD801" | "SD802" | "SD803" | "SD804" | "SD805" => (None, None, Some(W)),
+            _ => return Some(code.severity()),
+        };
+        match self {
+            Profile::Lite => lite,
+            Profile::Standard => standard,
+            Profile::Strict => strict,
+        }
+    }
+}
+
+/// Severity overrides: a rule group or a diagnostic code, and its severity
+/// (`None` is "off").
+pub type Rules = Vec<(String, Option<Severity>)>;
+
+/// The rule groups. A rule with a group name sets every code of the group.
+pub const GROUPS: [(&str, &[&str]); 6] = [
+    ("references", &["SD101", "SD102", "SD104"]),
+    ("ids", &["SD201", "SD202", "SD203", "SD204"]),
+    ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
+    ("drift", &["SD606", "SD607"]),
+    ("evidence", &["SD103", "SD105", "SD608"]),
+    ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
+];
+
+/// Reads a severity value: `"off"` (`None`), `"warning"` or `"error"`.
+fn severity_value(v: &Value, key: &str) -> Result<Option<Severity>, String> {
+    match v.as_str() {
+        Some("warning") => Ok(Some(Severity::Warning)),
+        Some("error") => Ok(Some(Severity::Error)),
+        Some("off") => Ok(None),
+        _ => Err(format!("`{key}` must be \"off\", \"warning\" or \"error\"")),
+    }
+}
+
+/// Reads a rules table: each key is a group name or a code.
+fn rules_table(v: &Value, key: &str) -> Result<Rules, String> {
+    let tbl = v
+        .as_table()
+        .ok_or_else(|| format!("`{key}` must be a table"))?;
+    let mut out = Vec::new();
+    for (name, sev) in tbl {
+        if !GROUPS.iter().any(|g| g.0 == name) && Code::from_code(name).is_none() {
+            let groups: Vec<&str> = GROUPS.iter().map(|g| g.0).collect();
+            return Err(format!(
+                "`{key}.{name}` is not a rule group ({}) or a diagnostic code",
+                groups.join(", ")
+            ));
+        }
+        out.push((name.clone(), severity_value(sev, &format!("{key}.{name}"))?));
+    }
+    Ok(out)
+}
+
+/// Returns the override of a code in one rules table. A code rule wins over a
+/// group rule.
+fn rule_for(rules: &Rules, code: Code) -> Option<Option<Severity>> {
+    if let Some((_, s)) = rules.iter().find(|r| r.0 == code.code()) {
+        return Some(*s);
+    }
+    let group = GROUPS.iter().find(|g| g.1.contains(&code.code()))?.0;
+    rules.iter().find(|r| r.0 == group).map(|r| r.1)
 }
 
 /// The default required section of a decision: its outcome.
@@ -114,6 +201,8 @@ impl LegacyId {
 #[derive(Clone, Debug)]
 pub struct Pattern {
     parts: Vec<Part>,
+    /// The text of the pattern, as the configuration writes it.
+    pub source: String,
 }
 
 #[derive(Clone, Debug)]
@@ -153,7 +242,10 @@ impl Pattern {
         if !lit.is_empty() {
             parts.push(Part::Lit(lit));
         }
-        Ok(Pattern { parts })
+        Ok(Pattern {
+            parts,
+            source: source.to_string(),
+        })
     }
 
     pub fn is_match(&self, s: &str) -> bool {
@@ -197,13 +289,44 @@ fn match_parts(parts: &[Part], s: &str, cap: &mut Option<String>) -> bool {
     }
 }
 
-pub const DEFAULT_BUDGETS: [(u32, u32); 6] = [
+pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
     (10_000, 20_000), // spec
     (10_000, 20_000), // contract
     (14_000, 28_000), // guide
     (7_000, 14_000),  // decision
     (10_000, 20_000), // change
     (0, 0),           // note: no budget
+    (3_000, 6_000),   // invariant: `context` serves it first, so it stays short
+    (8_000, 16_000),  // runbook
+    (6_000, 12_000),  // incident
+    (0, 0),           // reference: cold material, no budget
+];
+
+/// The default required sections of each type: a list of groups. A document
+/// needs one heading of each group.
+pub fn default_required_sections() -> [Vec<Vec<String>>; DocType::COUNT] {
+    let mut out: [Vec<Vec<String>>; DocType::COUNT] = Default::default();
+    let group = |h: &[&str]| h.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    out[DocType::Decision as usize] = vec![group(&DEFAULT_DECISION_SECTIONS)];
+    out[DocType::Invariant as usize] = vec![group(&["Rules"])];
+    out[DocType::Runbook as usize] = vec![group(&["Steps"])];
+    out[DocType::Incident as usize] = vec![group(&["Summary"]), group(&["Root cause"])];
+    out
+}
+
+/// The default globs of test files, for `covers:` tags. They cover the usual
+/// test directories and file names of common stacks.
+pub const DEFAULT_TEST_GLOBS: [&str; 10] = [
+    "**/tests/**",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/*_test.*",
+    "**/*_tests.*",
+    "**/test_*.*",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/*Test.*",
+    "**/*_spec.*",
 ];
 
 impl Config {
@@ -263,7 +386,9 @@ impl Config {
             max_words = f.opt_u32("max-words")?.unwrap_or(max_words);
             f.done()?;
         }
-        let mut context_budget = 12_000;
+        // 8,000 characters (about 2,000 tokens): every later request of an
+        // agent carries the output again.
+        let mut context_budget = 8_000;
         if let Some(v) = t.take("context") {
             let tbl = v.as_table().ok_or("`context` must be a table")?;
             let mut f = Fields::new(tbl, "context.");
@@ -306,6 +431,34 @@ impl Config {
                 );
             }
         };
+        let profile = match t.opt_str("profile")? {
+            None => Profile::Standard,
+            Some(p) => Profile::from_name(&p).ok_or_else(|| {
+                format!("`profile` must be \"lite\", \"standard\" or \"strict\", not `{p}`")
+            })?,
+        };
+        let rules = match t.take("rules") {
+            Some(v) => rules_table(v, "rules")?,
+            None => Vec::new(),
+        };
+        let mut types = Vec::new();
+        for name in t.opt_strs("types")? {
+            let ty = DocType::from_name(&name).ok_or_else(|| {
+                format!("`types`: unknown type `{name}`; use {}", DocType::names())
+            })?;
+            if !types.contains(&ty) {
+                types.push(ty);
+            }
+        }
+        let mut evidence_tests = DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
+        if let Some(v) = t.take("evidence") {
+            let tbl = v.as_table().ok_or("`evidence` must be a table")?;
+            let mut f = Fields::new(tbl, "evidence.");
+            if f.table.contains_key("tests") {
+                evidence_tests = f.opt_strs("tests")?;
+            }
+            f.done()?;
+        }
         t.done()?;
         Ok(Config {
             pin,
@@ -317,7 +470,46 @@ impl Config {
             repos,
             self_urls,
             install_source,
+            profile,
+            rules,
+            evidence_tests,
+            types,
         })
+    }
+
+    /// Returns the severity of a code for a file of a root (`None` for a file
+    /// outside every root), or `None` if the code is off. The order is: the
+    /// rules of the root, `[rules]`, the profile of the root, the profile of
+    /// the project.
+    pub fn severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
+        let root = root.map(|r| &self.roots[r]);
+        if let Some(s) = root.and_then(|r| rule_for(&r.rules, code)) {
+            return s;
+        }
+        if let Some(s) = rule_for(&self.rules, code) {
+            return s;
+        }
+        root.and_then(|r| r.profile)
+            .unwrap_or(self.profile)
+            .severity(code)
+    }
+
+    /// Returns true if a code is off in every root and outside the roots.
+    pub fn is_off(&self, code: Code) -> bool {
+        self.severity(code, None).is_none()
+            && (0..self.roots.len()).all(|r| self.severity(code, Some(r)).is_none())
+    }
+
+    /// Returns true if the project uses a document type (`types`).
+    pub fn allows(&self, ty: DocType) -> bool {
+        self.types.is_empty() || self.types.contains(&ty)
+    }
+
+    /// Returns true if a path is a test file for `covers:` tags.
+    pub fn is_test_file(&self, path: &str) -> bool {
+        self.evidence_tests
+            .iter()
+            .any(|g| crate::glob::matches(g, path))
     }
 
     /// Returns the root of a repository path: the deepest root that contains
@@ -467,18 +659,16 @@ impl Root {
                 status_map.push((from.clone(), to.to_string()));
             }
         }
-        let mut required_sections: [Vec<String>; 6] = Default::default();
-        required_sections[DocType::Decision as usize] =
-            DEFAULT_DECISION_SECTIONS.map(str::to_string).to_vec();
+        let mut required_sections = default_required_sections();
         if let Some(v) = f.take("required-sections") {
-            headings_per_type(
+            section_groups_per_type(
                 v,
                 &format!("{prefix}required-sections"),
                 &types,
                 &mut required_sections,
             )?;
         }
-        let mut amendment_sections: [Vec<String>; 6] = Default::default();
+        let mut amendment_sections: [Vec<String>; DocType::COUNT] = Default::default();
         amendment_sections[DocType::Decision as usize] =
             DEFAULT_AMENDMENT_SECTIONS.map(str::to_string).to_vec();
         if let Some(v) = f.take("amendment-sections") {
@@ -494,8 +684,26 @@ impl Root {
             Some(Value::Boolean(b)) => *b,
             Some(_) => return Err(format!("`{prefix}enforce-budgets` must be true or false")),
         };
-        let lint_severity = severity(&mut f, prefix, "lint-severity")?;
-        let drift_severity = severity(&mut f, prefix, "drift-severity")?;
+        let profile = match f.opt_str("profile")? {
+            None => None,
+            Some(p) => Some(Profile::from_name(&p).ok_or_else(|| {
+                format!("`{prefix}profile` must be \"lite\", \"standard\" or \"strict\", not `{p}`")
+            })?),
+        };
+        let mut rules = match f.take("rules") {
+            Some(v) => rules_table(v, &format!("{prefix}rules"))?,
+            None => Vec::new(),
+        };
+        // `lint-severity` and `drift-severity` are the rules `lint` and
+        // `drift` of 0.1 configurations. A rule in `rules` wins.
+        for (key, group) in [("lint-severity", "lint"), ("drift-severity", "drift")] {
+            if let Some(v) = f.take(key) {
+                let s = severity_value(v, &format!("{prefix}{key}"))?;
+                if !rules.iter().any(|r| r.0 == group) {
+                    rules.push((group.to_string(), s));
+                }
+            }
+        }
         f.done()?;
         Ok(Root {
             path,
@@ -509,8 +717,8 @@ impl Root {
             required_sections,
             amendment_sections,
             enforce_budgets,
-            lint_severity,
-            drift_severity,
+            profile,
+            rules,
         })
     }
 
@@ -524,13 +732,60 @@ impl Root {
     }
 }
 
-/// Reads a table of heading lists per type, such as `required-sections`, into
-/// `out`. A list replaces the default of its type.
+/// Reads `required-sections` into `out`. For each type, the value is a list
+/// of headings (one required section, with alternative headings) or a list of
+/// such lists (several required sections). A value replaces the default of
+/// its type.
+fn section_groups_per_type(
+    v: &Value,
+    key: &str,
+    types: &[DocType],
+    out: &mut [Vec<Vec<String>>; DocType::COUNT],
+) -> Result<(), String> {
+    let tbl = v
+        .as_table()
+        .ok_or_else(|| format!("`{key}` must be a table"))?;
+    for (name, list) in tbl {
+        let key = format!("{key}.{name}");
+        let ty = DocType::from_name(name)
+            .filter(|t| types.contains(t))
+            .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+        let items = list
+            .as_array()
+            .ok_or_else(|| format!("`{key}` must be an array of strings or of arrays"))?;
+        let strs = |a: &Vec<Value>| -> Option<Vec<String>> {
+            a.iter().map(|h| h.as_str().map(str::to_string)).collect()
+        };
+        let groups: Vec<Vec<String>> = if items.iter().all(|i| i.is_str()) {
+            if items.is_empty() {
+                Vec::new()
+            } else {
+                vec![strs(items).unwrap_or_default()]
+            }
+        } else {
+            items
+                .iter()
+                .map(|i| i.as_array().and_then(strs).filter(|g| !g.is_empty()))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    format!("`{key}` must be an array of strings or an array of non-empty arrays of strings")
+                })?
+        };
+        if groups.iter().flatten().any(|h| h.trim().is_empty()) {
+            return Err(format!("`{key}` has an empty heading"));
+        }
+        out[ty as usize] = groups;
+    }
+    Ok(())
+}
+
+/// Reads a table of heading lists per type, such as `amendment-sections`,
+/// into `out`. A list replaces the default of its type.
 fn headings_per_type(
     v: &Value,
     key: &str,
     types: &[DocType],
-    out: &mut [Vec<String>; 6],
+    out: &mut [Vec<String>; DocType::COUNT],
 ) -> Result<(), String> {
     let tbl = v
         .as_table()
@@ -740,16 +995,19 @@ type = "decision"
                 ("wip".to_string(), "draft".to_string())
             ]
         );
-        assert_eq!(r.required_sections[DocType::Decision as usize], ["Lösung"]);
+        assert_eq!(
+            r.required_sections[DocType::Decision as usize],
+            [["Lösung"]]
+        );
         assert_eq!(
             r.required_sections[DocType::Spec as usize],
-            ["Requirements", "Anforderungen"]
+            [["Requirements", "Anforderungen"]]
         );
         assert!(r.required_sections[DocType::Guide as usize].is_empty());
         assert!(!r.enforce_budgets);
         assert_eq!(
             c.roots[1].required_sections[DocType::Decision as usize],
-            DEFAULT_DECISION_SECTIONS
+            [DEFAULT_DECISION_SECTIONS]
         );
         assert!(c.roots[1].enforce_budgets);
         assert!(c.roots[1].status_map.is_empty());
@@ -794,15 +1052,25 @@ type = "decision"
         assert!(err("lint-severity = \"warn\"").contains("\"off\", \"warning\" or \"error\""));
         assert!(err("lint-severity = false").contains("lint-severity"));
         assert!(err("drift-severity = \"fatal\"").contains("`roots[0].drift-severity` must be"));
+        assert!(err("profile = \"loose\"").contains("`roots[0].profile` must be"));
+        assert!(err("rules = { drfit = \"off\" }").contains("not a rule group"));
+        assert!(err("rules = { SD999 = \"off\" }").contains("not a rule group"));
+        assert!(err("rules = { drift = \"loud\" }").contains("`roots[0].rules.drift` must be"));
         let c = Config::parse(
             "spec-dna = \"0.1.0\"\ninstall-source = \"file:///srv/git/spec-dna\"\n[[roots]]\npath = \"d\"\ndrift-severity = \"error\"\n",
         )
         .unwrap();
         assert_eq!(c.install_source, "file:///srv/git/spec-dna");
-        assert_eq!(c.roots[0].drift_severity, Some(Severity::Error));
+        assert_eq!(
+            c.severity(Code::CitedPathRemoved, Some(0)),
+            Some(Severity::Error)
+        );
         let c = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n").unwrap();
         assert_eq!(c.install_source, DEFAULT_INSTALL_SOURCE);
-        assert_eq!(c.roots[0].drift_severity, Some(Severity::Warning));
+        assert_eq!(
+            c.severity(Code::CitedPathRemoved, Some(0)),
+            Some(Severity::Warning)
+        );
         assert!(
             Config::parse(
                 "spec-dna = \"0.1.0\"\ninstall-source = \"a b\"\n[[roots]]\npath = \"d\"\n"
@@ -845,10 +1113,118 @@ path = "notes"
         .unwrap();
         let d = DocType::Decision as usize;
         assert_eq!(c.roots[0].amendment_sections[d], ["Nachtrag", "Amendments"]);
-        assert_eq!(c.roots[0].lint_severity, None);
+        assert_eq!(c.severity(Code::SentenceLength, Some(0)), None);
         assert_eq!(c.roots[1].amendment_sections[d], DEFAULT_AMENDMENT_SECTIONS);
         assert!(c.roots[1].amendment_sections[DocType::Spec as usize].is_empty());
-        assert_eq!(c.roots[1].lint_severity, Some(Severity::Error));
-        assert_eq!(c.roots[2].lint_severity, Some(Severity::Warning));
+        assert_eq!(
+            c.severity(Code::SentenceLength, Some(1)),
+            Some(Severity::Error)
+        );
+        // Without a rule, the profile decides: `standard` has no lint.
+        assert_eq!(c.severity(Code::SentenceLength, Some(2)), None);
+    }
+
+    #[test]
+    fn profiles_and_rules_set_severities() {
+        use Severity::{Error as E, Warning as W};
+        let c = Config::parse(
+            r#"
+spec-dna = "0.1.0"
+profile = "lite"
+[rules]
+SD606 = "error"
+[[roots]]
+path = "docs"
+[[roots]]
+path = "strict"
+profile = "strict"
+rules = { lint = "off", evidence = "warning" }
+[[roots]]
+path = "legacy"
+lint-severity = "warning"
+rules = { lint = "error" }
+"#,
+        )
+        .unwrap();
+        assert_eq!(c.profile, Profile::Lite);
+        let sev = |code, root| c.severity(code, root);
+        // Lite: references, ids and budgets are warnings; drift and evidence
+        // are off. A code rule of `[rules]` wins over every profile.
+        assert_eq!(sev(Code::UnresolvedReference, Some(0)), Some(W));
+        assert_eq!(sev(Code::DuplicateId, Some(0)), Some(W));
+        assert_eq!(sev(Code::BudgetHard, Some(0)), Some(W));
+        assert_eq!(sev(Code::CitedSymbolRemoved, Some(0)), None);
+        assert_eq!(sev(Code::CitedPathRemoved, Some(0)), Some(E));
+        assert_eq!(sev(Code::RequirementUnverified, Some(0)), None);
+        assert_eq!(sev(Code::SentenceLength, Some(0)), None);
+        // Codes outside the table keep their own severity.
+        assert_eq!(sev(Code::DecisionFrozen, Some(0)), Some(E));
+        assert_eq!(sev(Code::TokenUnresolved, Some(0)), Some(W));
+        // A strict root: errors for drift, budgets and evidence, warnings for
+        // the lint. Its own rules win over its profile.
+        assert_eq!(sev(Code::CitedSymbolRemoved, Some(1)), Some(E));
+        assert_eq!(sev(Code::BudgetHardKept, Some(1)), Some(E));
+        assert_eq!(sev(Code::BudgetSoft, Some(1)), Some(E));
+        assert_eq!(sev(Code::SentenceLength, Some(1)), None);
+        assert_eq!(sev(Code::RequirementUnverified, Some(1)), Some(W));
+        assert_eq!(sev(Code::EvidenceMissing, Some(1)), Some(W));
+        // `rules` wins over the old `lint-severity` key of the same root.
+        assert_eq!(sev(Code::SentenceLength, Some(2)), Some(E));
+        // Outside the roots, the project profile and rules apply.
+        assert_eq!(sev(Code::AdapterModified, None), Some(E));
+        // The default profile is `standard`.
+        let c = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n").unwrap();
+        assert_eq!(c.profile, Profile::Standard);
+        assert_eq!(c.severity(Code::BudgetHard, Some(0)), Some(E));
+        assert_eq!(c.severity(Code::BudgetHardKept, Some(0)), Some(W));
+        assert_eq!(c.severity(Code::CitedPathRemoved, Some(0)), Some(W));
+        assert_eq!(c.severity(Code::RequirementUnverified, Some(0)), Some(W));
+        assert_eq!(c.severity(Code::RequirementKeyword, Some(0)), None);
+        assert!(c.is_off(Code::PassiveVoice));
+        assert!(!c.is_off(Code::CitedPathRemoved));
+        assert!(
+            Config::parse("spec-dna = \"0.1.0\"\nprofile = \"max\"\n[[roots]]\npath = \"d\"\n")
+                .unwrap_err()
+                .contains("`profile` must be")
+        );
+    }
+
+    #[test]
+    fn required_sections_groups_and_evidence_globs() {
+        let c = Config::parse(
+            r#"
+spec-dna = "0.1.0"
+[evidence]
+tests = ["spec/**"]
+[[roots]]
+path = "ops"
+required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]], runbook = [] }
+"#,
+        )
+        .unwrap();
+        let r = &c.roots[0];
+        assert_eq!(
+            r.required_sections[DocType::Incident as usize],
+            [vec!["Summary", "Zusammenfassung"], vec!["Root cause"]]
+        );
+        assert!(r.required_sections[DocType::Runbook as usize].is_empty());
+        assert_eq!(
+            r.required_sections[DocType::Invariant as usize],
+            [["Rules"]]
+        );
+        assert_eq!(c.evidence_tests, ["spec/**"]);
+        assert!(c.is_test_file("spec/a_spec.rb"));
+        assert!(!c.is_test_file("tests/a.rs"));
+        let c = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n").unwrap();
+        assert!(c.is_test_file("tests/cli.rs"));
+        assert!(c.is_test_file("src/loans_test.go"));
+        assert!(c.is_test_file("web/app.test.ts"));
+        assert!(c.is_test_file("lib/test_loans.py"));
+        assert!(!c.is_test_file("src/loans.py"));
+        let e = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nrequired-sections = { spec = [[]] }\n",
+        )
+        .unwrap_err();
+        assert!(e.contains("non-empty arrays"), "{e}");
     }
 }

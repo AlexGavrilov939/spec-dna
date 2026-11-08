@@ -1,6 +1,10 @@
 spec-dna = "0.1.0"
 exclude = ["docs/vendor/**"]
 
+# The fixture shows the requirement lint, which the default profile turns off.
+[rules]
+lint = "warning"
+
 [[roots]]
 path = "docs"
 type = "mixed"

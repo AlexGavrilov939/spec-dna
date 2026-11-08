@@ -352,7 +352,7 @@ fn lifecycle_rules_compare_base_and_head() {
     r.append(adr, "\n## Amendments\n\n### Cookie scope\n\nThe gateway MUST set the cookie on the parent domain.\n\n### Typo\n\nFixed a typo.\n");
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    let warnings: Vec<&str> = out.lines().filter(|l| l.contains("SD605")).collect();
+    let warnings: Vec<&str> = out.lines().filter(|l| l.contains(" SD605")).collect();
     assert_eq!(warnings.len(), 1, "{out}");
     assert!(
         warnings[0].contains(":16: warning SD605 amendment-outcome"),
@@ -385,7 +385,7 @@ fn localized_amendments_are_not_frozen_text() {
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    let warnings: Vec<&str> = out.lines().filter(|l| l.contains("SD605")).collect();
+    let warnings: Vec<&str> = out.lines().filter(|l| l.contains(" SD605")).collect();
     assert_eq!(warnings.len(), 1, "{out}");
     assert!(warnings[0].contains("adr/d1.md:14: warning SD605"), "{out}");
     // `context` serves the amendments with the outcome of a linked decision.
@@ -418,9 +418,9 @@ fn lint_severity_follows_the_root() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"spec\"\nstatus = \"active\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"spec\"\nstatus = \"active\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"spec\"\nstatus = \"draft\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"spec\"\nstatus = \"draft\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"draft\"\nprofile = \"strict\"\n[[roots]]\npath = \"std\"\ntype = \"spec\"\nstatus = \"draft\"\n",
     );
-    for root in ["old", "new", "docs"] {
+    for root in ["old", "new", "docs", "std"] {
         r.write(
             &format!("{root}/{root}-spec.md"),
             "# S\n\n- **retry**: The client retries.\n",
@@ -438,6 +438,8 @@ fn lint_severity_follows_the_root() {
         ),
         "{out}"
     );
+    // The `standard` profile has no lint.
+    assert!(!out.contains("std/std-spec.md"), "{out}");
     let (_, out, _) = r.run(&["check", "--all", "--lint"]);
     assert!(out.contains("docs/docs-spec.md:3: warning SD801"), "{out}");
     // The base has the same error, so the gate passes.
@@ -457,7 +459,7 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "wrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nper-request prefix: "
+            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nper-request prefix: "
         ),
         "{out}"
     );
@@ -520,7 +522,7 @@ fn adapters_are_checked() {
     r.write("CLAUDE.md", "@AGENTS.md\n");
     r.run(&["init"]);
     let agents = r.read("AGENTS.md");
-    assert!(agents.starts_with("# Rules\n\nOwn text stays.\n\nBefore you change a file"));
+    assert!(agents.starts_with("# Rules\n\nOwn text stays.\n\nIf a task edits code or docs"));
     assert_eq!(agents.lines().count(), 5);
     assert_eq!(
         r.read("CLAUDE.md"),
@@ -537,7 +539,7 @@ fn adapters_are_checked() {
     r.write(
         "AGENTS.md",
         &r.read("AGENTS.md")
-            .replace("Before you commit", "Before you push"),
+            .replace("Before a commit", "Before a push"),
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
@@ -681,7 +683,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     r.commit("docs");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}");
-    let found: Vec<&str> = out.lines().filter(|l| l.contains(" SD")).collect();
+    let found: Vec<&str> = out.lines().filter(|l| l.contains(" error SD")).collect();
     assert_eq!(
         found,
         [
@@ -1826,22 +1828,32 @@ fn check_lists_errors_and_drift_before_the_prose_lint() {
     rules.push_str("\nSee [the terms](terms.md).\n");
     r.write("docs/imported.md", &rules);
     r.write(
+        "spec-dna.toml",
+        &format!("{}\n[rules]\nlint = \"warning\"\n", r.read("spec-dna.toml")),
+    );
+    r.write(
         "src/library/loans.py",
         &LOANS_PY.replace("MAX_RENEWALS = 1\n", ""),
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 4, "{out}");
+    assert_eq!(lines.len(), 6, "{out}");
     assert!(lines[0].contains("error SD102"), "{out}");
     assert!(lines[1].contains("warning SD607"), "{out}");
     assert_eq!(
         lines[2],
         "warning SD805 passive-voice: 12 in docs/imported.md (`check --lint` lists them)"
     );
-    assert!(lines[3].starts_with("spec-dna check: "), "{out}");
+    // The fix of each listed code follows, once.
     assert!(
-        lines[3].contains("13 new warnings"),
+        lines[3].starts_with("SD102 fix: Fix the link target."),
+        "{out}"
+    );
+    assert!(lines[4].starts_with("SD607 fix: "), "{out}");
+    assert!(lines[5].starts_with("spec-dna check: "), "{out}");
+    assert!(
+        lines[5].contains("13 new warnings"),
         "the count is the same: {out}"
     );
     let (_, out, _) = r.run(&["check", "--lint"]);
@@ -1871,4 +1883,578 @@ fn a_bold_slug_without_a_colon_warns() {
         "{out}"
     );
     assert!(!out.contains("`**note**`"), "{out}");
+}
+
+/// A repository with one mixed root `docs` and the given profile line.
+fn profile_repo(profile: &str) -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"0.1.0\"\n{profile}\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n"
+        ),
+    );
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **loan-period**: When a member borrows a book, the library SHALL set the due date 14 days later.\n- **renew-limit**: The library SHALL allow at most 1 renewal. <!-- verified-by: tests/renew.py -->\n- **fines**: the fine is collected daily.\n",
+    );
+    r.write("tests/renew.py", "def test_renew():\n    pass\n");
+    r.write(
+        "tests/test_loans.py",
+        "# covers: loans#loan-period\ndef test_period():\n    pass\n",
+    );
+    r.commit("start");
+    r
+}
+
+#[test]
+fn profiles_set_the_severity_of_each_rule_group() {
+    // standard (the default): a broken link is an error, a requirement
+    // without evidence is a warning, and there is no lint.
+    let r = profile_repo("");
+    r.append("docs/loans.md", "\nSee [the terms](terms.md).\n");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD102"), "{out}");
+    assert!(
+        out.contains("docs/loans.md:7: warning SD608 requirement-unverified: `loans#fines` is active but no test covers it"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("SD608 requirement-unverified: `loans#loan-period`"),
+        "{out}"
+    );
+    assert!(!out.contains("`loans#renew-limit` is active"), "{out}");
+    assert!(!out.contains("SD80"), "{out}");
+
+    // lite: the broken link is a warning; evidence and lint are off.
+    let r = profile_repo("profile = \"lite\"");
+    r.append("docs/loans.md", "\nSee [the terms](terms.md).\n");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD102"), "{out}");
+    assert!(!out.contains("SD608"), "{out}");
+
+    // strict: a requirement without evidence is an error, and the lint gives
+    // warnings. A rule of a root or of the project wins over the profile.
+    let r = profile_repo("profile = \"strict\"");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD608"), "{out}");
+    assert!(
+        out.contains("warning SD801 requirement-keyword: 1 in"),
+        "{out}"
+    );
+    let r = profile_repo("profile = \"strict\"\n[rules]\nevidence = \"warning\"\nlint = \"off\"");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD608"), "{out}");
+    assert!(!out.contains("SD801"), "{out}");
+}
+
+#[test]
+fn evidence_resolves_covers_tags_and_verified_by() {
+    let r = profile_repo("");
+    // A tag in any comment syntax, and a tag that names no requirement.
+    r.write(
+        "tests/fines.test.ts",
+        "/* covers: loans#fines */\ntest('x', () => {}) // covers: loans#fine, loans#loan-period\n",
+    );
+    r.write(
+        "src/app.py",
+        "# covers: loans#nothing (not a test file, so not a tag)\n",
+    );
+    r.append(
+        "docs/loans.md",
+        "- **holds**: The library SHALL keep a hold for 3 days. <!-- verified-by: tests/holds.py -->\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("tests/fines.test.ts:2: error SD105 covers-unresolved: `covers:` tag: `loans` has no requirement `fine`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("docs/loans.md:8: error SD103 evidence-missing: `holds`: `verified-by` path `tests/holds.py` is not in the git tree"),
+        "{out}"
+    );
+    assert!(!out.contains("SD608"), "{out}");
+    assert!(!out.contains("src/app.py"), "{out}");
+    // `show` lists the evidence of a requirement and of a document.
+    let (code, out, _) = r.run(&["show", "loans#loan-period"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(
+            "<!-- evidence -->\n- loans#loan-period: tests/fines.test.ts:2, tests/test_loans.py:1"
+        ),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "loans"]);
+    assert!(
+        out.contains("- loans#renew-limit: tests/renew.py\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("- loans#fines: tests/fines.test.ts:1\n"),
+        "{out}"
+    );
+    // The evidence check is base-relative: an old requirement without
+    // evidence is not new.
+    r.write("tests/fines.test.ts", "test('x', () => {})\n");
+    r.write("tests/holds.py", "def test_holds():\n    pass\n");
+    r.commit("tests");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(
+        out.contains("warning SD608 requirement-unverified: `loans#fines`"),
+        "{out}"
+    );
+    // A moved requirement keeps its tag through the alias.
+    let (code, out, _) = r.run(&["mv", "loans#loan-period", "periods"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD105"), "{out}");
+}
+
+#[test]
+fn knowledge_types_have_templates_sections_and_context_rules() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n[[roots]]\npath = \"docs/decisions\"\ntype = \"decision\"\n",
+    );
+    r.write("src/pay/charge.py", "def charge_card():\n    pass\n");
+    r.write(
+        "docs/pay.md",
+        "# Pay\n\n## Requirements\n\n- **charge**: The service SHALL charge the card once. See `src/pay/charge.py`.\n",
+    );
+    r.commit("start");
+    // `new` writes each type into the right root, from its template.
+    for (ty, id, path) in [
+        ("invariant", "rules/money", "docs/rules/money.md"),
+        ("runbook", "ops/restart", "docs/ops/restart.md"),
+        ("incident", "ops/double-charge", "docs/ops/double-charge.md"),
+        ("reference", "research/psp", "docs/research/psp.md"),
+        ("decision", "psp-choice", "docs/decisions/psp-choice.md"),
+    ] {
+        let (code, out, err) = r.run(&["new", ty, id]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.starts_with(&format!("wrote {path} ({ty} template)")),
+            "{out}"
+        );
+    }
+    let (code, _, err) = r.run(&["new", "spec", "decisions/x"]);
+    assert_eq!(code, 2, "{err}");
+    let (code, _, err) = r.run(&["new", "invariant", "rules/money"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("exists"), "{err}");
+    let inv = r.read("docs/rules/money.md");
+    assert!(
+        inv.starts_with(
+            "---\ntype: invariant\nstatus: draft\napplies-to: [\"**\"]\n---\n# Money\n\n## Rules\n"
+        ),
+        "{inv}"
+    );
+    // The placeholders of a template stay errors until an author fills them.
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("docs/ops/double-charge.md"), "{out}");
+    // Fill the documents.
+    r.write(
+        "docs/rules/money.md",
+        "---\ntype: invariant\nstatus: active\napplies-to: [\"src/pay/**\"]\n---\n# Money\n\n## Rules\n\n- **minor-units**: The system SHALL store amounts in minor units.\n",
+    );
+    r.write(
+        "docs/ops/restart.md",
+        "---\ntype: runbook\nstatus: active\n---\n# Restart\n\n## When to use\n\nThe queue stops.\n",
+    );
+    r.write(
+        "docs/ops/double-charge.md",
+        "---\ntype: incident\n---\n# Double charge\n\n## Summary\n\nTwo charges for one order.\n\n## Root cause\n\nA retry without a key.\n",
+    );
+    r.write(
+        "docs/research/psp.md",
+        "---\ntype: reference\n---\n# PSP research\n\nThe notes cite `src/pay/charge.py` many times.\n",
+    );
+    r.write(
+        "docs/decisions/psp-choice.md",
+        "---\nstatus: accepted\n---\n# PSP choice\n\n## Decision Outcome\n\nOne PSP.\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/ops/restart.md:1: error SD305 section-missing: a runbook needs a section headed `Steps`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("docs/ops/double-charge.md:1: warning SD609 incident-unlinked"),
+        "{out}"
+    );
+    r.append(
+        "docs/ops/restart.md",
+        "\n## Steps\n\n1. Restart the worker.\n",
+    );
+    r.append(
+        "docs/ops/double-charge.md",
+        "\n## Links\n\n- [[pay#charge]], [[psp-choice]], [[ops/restart]]\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD609"), "{out}");
+    // `context` serves the matching invariant first, lists the incident, and
+    // never serves the reference.
+    let (code, out, _) = r.run(&["context", "src/pay/charge.py"]);
+    assert_eq!(code, 0, "{out}");
+    let first = out.lines().filter(|l| l.starts_with("<!-- ")).nth(1);
+    assert!(
+        first.is_some_and(|l| l.starts_with("<!-- rules/money")),
+        "{out}"
+    );
+    assert!(out.contains("invariant/active invariant -->"), "{out}");
+    assert!(!out.contains("research/psp"), "{out}");
+    let (_, out, _) = r.run(&["context", "pay", "--path", "src/pay/charge.py"]);
+    assert!(out.contains("rules/money"), "{out}");
+    let (_, out, _) = r.run(&["context", "research/psp"]);
+    assert!(out.contains("The notes cite"), "{out}");
+    // An invariant out of scope is not served.
+    r.write("src/web/page.py", "def page():\n    pass\n");
+    let (_, out, _) = r.run(&["context", "src/web/page.py"]);
+    assert!(!out.contains("rules/money"), "{out}");
+}
+
+#[test]
+fn init_answers_file_on_a_new_project() {
+    let r = Repo::empty();
+    let answers = r.dir.join("../answers-new.toml");
+    fs::write(
+        &answers,
+        "profile = \"strict\"\ntypes = [\"spec\", \"decision\", \"runbook\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\n",
+    )
+    .unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    for want in [
+        "profile = \"strict\"",
+        "types = [\"spec\", \"decision\", \"runbook\"]",
+        "[rules]  # overrides of the profile, by rule group or by code\nevidence = \"warning\"\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    ] {
+        assert!(cfg.contains(want), "{want}:\n{cfg}");
+    }
+    assert!(!r.dir.join("AGENTS.md").exists());
+    assert!(!r.dir.join("CLAUDE.md").exists());
+    assert!(r.dir.join(".claude/skills/spec-dna/SKILL.md").exists());
+    let ci = r.read(".github/workflows/spec-dna.yml");
+    assert!(
+        ci.contains("spec-dna check --base \"origin/${GITHUB_BASE_REF:-trunk}\""),
+        "{ci}"
+    );
+    assert!(out.contains("to commit: git add spec-dna.toml .claude/skills/spec-dna/SKILL.md .github/workflows/spec-dna.yml"), "{out}");
+    // `new` follows the types: a runbook goes into its namespace, a
+    // contract is not a type of this project.
+    let (code, out, _) = r.run(&["new", "runbook", "restart"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.starts_with("wrote docs/runbooks/restart.md"), "{out}");
+    let (code, _, err) = r.run(&["new", "contract", "api"]);
+    assert_eq!(code, 2, "{err}");
+    r.write(
+        "docs/api.md",
+        "---\ntype: contract\nstatus: draft\n---\n# Api\n",
+    );
+    let (_, out, _) = r.run(&["check"]);
+    assert!(
+        out.contains("error SD303 type-invalid: type `contract` is not a type of this project"),
+        "{out}"
+    );
+    // A second `init` updates the adapters only.
+    let (code, out, _) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("spec-dna.toml"), "{out}");
+}
+
+#[test]
+fn init_detects_a_brownfield_repository() {
+    let r = Repo::fixture("brownfield");
+    let (code, out, err) = r.run(&["init", "--dry-run", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for want in [
+        "[evidence]\ntests = [\"**/tests/**\"]",
+        "path = \"docs\"\ntype = \"mixed\"\ndefault-type = \"guide\"\nstatus = \"active\"\nstatus-map = { current = \"active\" }\n",
+        "path = \"docs/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nexclude = [\"ADR-*-implementation-plan.md\", \"README.md\"]\nlegacy-ids = [\"ADR-{n}\"]\nrequired-sections = { decision = [\"Решение\", \"Decision Outcome\", \"Decision\"] }\n",
+        "path = \"docs/guides\"\ntype = \"guide\"\nstatus = \"active\"\nexclude = [\"ext-*/**\"]\n",
+        "path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\n",
+        "  change AGENTS.md (one generated line)",
+        "  change .pre-commit-config.yaml (a local hook at the end: `spec-dna check`)",
+        "dry run: nothing written",
+    ] {
+        assert!(out.contains(want), "{want}:\n{out}");
+    }
+    assert!(!out.contains("path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\nrequired-sections"), "{out}");
+    assert!(!r.dir.join("spec-dna.toml").exists());
+    let (code, out, _) = r.run(&["init", "--dry-run", "--non-interactive", "--json"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("\"kind\":\"brownfield\""), "{out}");
+    assert!(out.contains("\"stack\":[\"Rust\"]"), "{out}");
+    assert!(out.contains("\"ci\":[\"GitHub Actions\"]"), "{out}");
+    assert!(out.contains("\"hooks\":[\"pre-commit\"]"), "{out}");
+    assert!(out.contains("\"written\":[]"), "{out}");
+
+    // An answers file: drop a root, relax the budgets, no CI file.
+    let answers = r.dir.join("../answers-brown.toml");
+    fs::write(
+        &answers,
+        "mapping = \"accept\"\ndrop = [\"docs/guides\"]\nbudgets = \"relaxed\"\nci = \"none\"\n",
+    )
+    .unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(!cfg.contains("docs/guides"), "{cfg}");
+    assert!(
+        cfg.contains("[budgets.spec]\nsoft = 20000\nhard = 40000\n"),
+        "{cfg}"
+    );
+    assert!(!r.dir.join(".github/workflows/spec-dna.yml").exists());
+    assert!(
+        r.read(".pre-commit-config.yaml")
+            .ends_with("  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n")
+    );
+    assert!(
+        r.read("AGENTS.md")
+            .starts_with("# Agents\n\nRun the tests before a commit.\n")
+    );
+    // The documents did not change, and `check` finds no error in them.
+    assert_eq!(git(&r.dir, &["status", "--porcelain", "--", "docs"]), "");
+    r.commit("adopt");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD305"), "{out}");
+    assert!(
+        out.contains("4 documents") || out.contains("documents;"),
+        "{out}"
+    );
+
+    // --reconfigure: the current values are the defaults, and the keys that
+    // no question asks for stay.
+    r.write(
+        "spec-dna.toml",
+        &r.read("spec-dna.toml").replace(
+            "# install-source = \"https://github.com/AlexGavrilov939/spec-dna\"  # a local or private clone\n",
+            "install-source = \"file:///srv/git/spec-dna\"\n\n[context]\nbudget = 9000\n",
+        ),
+    );
+    fs::write(&answers, "profile = \"lite\"\n").unwrap();
+    let (code, out, err) = r.run(&[
+        "init",
+        "--reconfigure",
+        "--answers",
+        answers.to_str().unwrap(),
+    ]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("profile = \"lite\""), "{cfg}");
+    assert!(
+        cfg.contains("install-source = \"file:///srv/git/spec-dna\""),
+        "{cfg}"
+    );
+    assert!(cfg.contains("[context]\nbudget = 9000\n"), "{cfg}");
+    assert!(
+        cfg.contains("path = \"docs/adr\"\ntype = \"decision\""),
+        "{cfg}"
+    );
+    assert!(cfg.contains("legacy-ids = [\"ADR-{n}\"]"), "{cfg}");
+    assert!(
+        cfg.contains("[budgets.spec]\nsoft = 20000\nhard = 40000\n"),
+        "{cfg}"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+/// Runs `spec-dna init` on a pseudo-terminal, writes the answers, and returns
+/// the exit code and the output.
+#[cfg(unix)]
+fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
+    use std::io::{Read, Write};
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::process::Stdio;
+    let (mut master, mut slave) = (0, 0);
+    // SAFETY: openpty writes two new file descriptors; the null pointers ask
+    // for no name and the default terminal settings.
+    let rc = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            // `*mut` also coerces to the `*const` arguments of Linux.
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0, "openpty");
+    // SAFETY: the descriptors are new and owned here only.
+    let (master, slave) = unsafe {
+        (
+            std::fs::File::from_raw_fd(master),
+            OwnedFd::from_raw_fd(slave),
+        )
+    };
+    let mut child = {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args)
+            .current_dir(dir)
+            .stdin(Stdio::from(slave.try_clone().unwrap()))
+            .stdout(Stdio::from(slave.try_clone().unwrap()))
+            .stderr(Stdio::from(slave));
+        cmd.spawn().expect("binary runs")
+    };
+    let mut reader = master.try_clone().unwrap();
+    let out = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        // The read ends with EOF or EIO when the child closes the terminal.
+        while let Ok(n) = reader.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        buf
+    });
+    let mut writer = master;
+    for line in answers.lines() {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        writer.write_all(format!("{line}\n").as_bytes()).unwrap();
+    }
+    let start = std::time::Instant::now();
+    let code = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s.code().unwrap_or(-1);
+        }
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            let _ = child.kill();
+            panic!("init waited for more input");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    drop(writer);
+    let text = String::from_utf8_lossy(&out.join().unwrap()).replace("\r\n", "\n");
+    (code, text)
+}
+
+#[cfg(unix)]
+#[test]
+fn init_asks_on_a_terminal() {
+    let r = Repo::fixture("brownfield");
+    // 1 profile, 2 types, 3 evidence, 4 language, 5 mapping (4 roots), 6
+    // budgets, 7 adapters, 8 CI, hook and base, then the confirmation.
+    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=spec\n\noff\nclaude-md, skill\nnone, none, main\ny\n";
+    let (code, out) = on_terminal(&r.dir, &["init"], answers);
+    assert_eq!(code, 0, "{out}");
+    for want in [
+        "1/8 Profile (lite, standard, strict) [standard]: ",
+        "    Types in use: spec, guide, decision, note. A shorter list makes each document of another type an error.",
+        "2/8 Knowledge types [spec, contract, guide, decision, change, note, invariant, runbook, incident, reference]: ",
+        "5/8 Mapping: 4 roots.",
+        "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-implementation-plan.md, README.md) [accept]: ",
+        "6/8 Budget level (default, relaxed, tight, off) [default]: ",
+        "8/8 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
+        "--- spec-dna.toml ---",
+        "Write these files? [y/N]: ",
+        "wrote spec-dna.toml",
+    ] {
+        assert!(out.contains(want), "{want}:\n{out}");
+    }
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("profile = \"strict\""), "{cfg}");
+    assert!(
+        cfg.contains("evidence = \"error\"\nbudgets = \"off\"\n"),
+        "{cfg}"
+    );
+    assert!(!cfg.contains("path = \"docs/adr\""), "{cfg}");
+    assert!(
+        cfg.contains("path = \"docs/specs\"\ntype = \"spec\""),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains("path = \"docs/guides\"\ntype = \"guide\""),
+        "{cfg}"
+    );
+    assert!(r.read("CLAUDE.md").contains("spec-dna check"));
+    assert!(!r.read("AGENTS.md").contains("spec-dna"));
+    assert!(!r.read(".pre-commit-config.yaml").contains("spec-dna"));
+
+    // A "no" at the confirmation writes nothing.
+    let r = Repo::empty();
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\nn\n");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("nothing written"), "{out}");
+    assert!(!r.dir.join("spec-dna.toml").exists());
+}
+
+#[test]
+fn review_fixes_on_the_command_line() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[evidence]\ntests = [\"/tests/**\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/rules/money.md",
+        "---\ntype: invariant\nstatus: active\n---\n# Money\n\n## Rules\n\n- **minor-units**: The system SHALL store amounts in minor units.\n",
+    );
+    r.write("tests/money.py", "# covers: rules/money#minor-units\n");
+    r.commit("start");
+    // A test glob with a leading slash works (git rejects it as a pathspec).
+    let (code, out, err) = r.run(&["show", "rules/money"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("- rules/money#minor-units: tests/money.py:1"),
+        "{out}"
+    );
+    // An invariant cannot move back to draft.
+    r.write(
+        "docs/rules/money.md",
+        &r.read("docs/rules/money.md")
+            .replace("status: active", "status: draft"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD401 status-transition"), "{out}");
+    git(&r.dir, &["checkout", "-q", "--", "."]);
+    // A placeholder of a template that stays is an error.
+    let (code, _, _) = r.run(&["new", "spec", "loans"]);
+    assert_eq!(code, 0);
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/loans.md:9: error SD306 placeholder-left: the template placeholder `{{trigger}}` is still in the document"),
+        "{out}"
+    );
+    // init does not replace a workflow of the project, and `write = false`
+    // shows the preview.
+    r.write(".github/workflows/spec-dna.yml", "name: Own\n");
+    let answers = r.dir.join("../answers-review.toml");
+    fs::write(&answers, "ci = \"github\"\nwrite = false\n").unwrap();
+    let (code, out, err) = r.run(&[
+        "init",
+        "--reconfigure",
+        "--answers",
+        answers.to_str().unwrap(),
+    ]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("--- spec-dna.toml ---"), "{out}");
+    assert!(
+        out.contains(".github/workflows/spec-dna.yml exists and differs"),
+        "{out}"
+    );
+    assert!(out.contains("dry run: nothing written"), "{out}");
+    assert_eq!(r.read(".github/workflows/spec-dna.yml"), "name: Own\n");
 }

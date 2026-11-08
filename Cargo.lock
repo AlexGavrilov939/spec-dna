@@ -167,8 +167,9 @@ dependencies = [
 
 [[package]]
 name = "spec-dna"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
+ "libc",
  "pulldown-cmark",
  "sha2",
  "toml",

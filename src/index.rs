@@ -205,9 +205,10 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.0.extend_from_slice(&r.hash);
         w.0.extend_from_slice(&r.frozen);
         w.strs(&r.aliases);
+        w.strs(&r.verified_by);
         w.str(&r.text);
     }
-    for list in [&d.leads, &d.code_spans, &d.path_words] {
+    for list in [&d.leads, &d.code_spans, &d.path_words, &d.placeholders] {
         w.u32(list.len() as u32);
         for t in list {
             w.str(&t.text);
@@ -287,10 +288,16 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             hash: r.hash()?,
             frozen: r.hash()?,
             aliases: r.strs()?,
+            verified_by: r.strs()?,
             text: r.str()?,
         });
     }
-    for list in [&mut d.leads, &mut d.code_spans, &mut d.path_words] {
+    for list in [
+        &mut d.leads,
+        &mut d.code_spans,
+        &mut d.path_words,
+        &mut d.placeholders,
+    ] {
         for _ in 0..r.u32()? {
             list.push(Token {
                 text: r.str()?,
