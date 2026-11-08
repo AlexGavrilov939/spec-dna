@@ -1,13 +1,13 @@
 [package]
 name = "spec-dna"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Keeps engineering specifications small, linked and machine-checked, and serves AI coding agents the minimum sufficient context."
 license = "Apache-2.0"
 repository = "https://github.com/AlexGavrilov939/spec-dna"
 readme = "README.md"
-include = ["src/**", "schema/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+include = ["src/**", "schema/**", "Cargo.toml", "Cargo.lock", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [[bin]]
 name = "spec-dna"

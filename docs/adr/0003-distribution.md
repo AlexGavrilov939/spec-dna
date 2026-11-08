@@ -82,3 +82,7 @@ The owner gave these rulings after checkpoint 4.
 
 - Adapters. This rule replaces "an `AGENTS.md` block, a `CLAUDE.md` import line" in "Decision Outcome". `init` writes one line into each root instruction file, and one skill ([ADR 0001](0001-information-model.md), amendment "code citations"). The line never imports another file, so it adds only its own bytes to each request.
 - Upgrade in phase 1. `spec-dna upgrade` does not exist yet. An upgrade has 4 steps: install the new version from its tag, set the pin in `spec-dna.toml`, run `spec-dna init`, and commit the result. A rollback installs the old version and reverts that commit. `init` does not run if the pin and the binary have different versions. Thus it cannot write adapters of the wrong version. The message of a pin mismatch gives the command for each direction.
+
+### 2026-11-08: install source
+
+The owner approved this rule after checkpoint 5. In phase 1, a project can install spec-dna from a local or a private git clone. The optional key `install-source` in `spec-dna.toml` gives that git URL. The message of a pin mismatch and the CI job of the quickstart use it. Without the key, they use the public repository.

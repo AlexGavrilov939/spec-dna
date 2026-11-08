@@ -22,7 +22,13 @@ pub struct Config {
     /// URL prefixes that address this repository. A link under one of them is
     /// internal.
     pub self_urls: Vec<String>,
+    /// The git source of spec-dna for `cargo install --git`. The message of a
+    /// pin mismatch uses it.
+    pub install_source: String,
 }
+
+/// The public repository of spec-dna: the install source by default.
+pub const DEFAULT_INSTALL_SOURCE: &str = "https://github.com/AlexGavrilov939/spec-dna";
 
 #[derive(Clone, Debug)]
 pub struct Root {
@@ -50,6 +56,26 @@ pub struct Root {
     /// The severity of the requirement lint (SD801 to SD805). `None` turns
     /// the lint off.
     pub lint_severity: Option<Severity>,
+    /// The severity of the drift diagnostics (SD606, SD607). `None` turns
+    /// them off.
+    pub drift_severity: Option<Severity>,
+}
+
+/// Reads a severity key of a root: `"off"` (`None`), `"warning"` (the
+/// default) or `"error"`.
+fn severity<'a>(
+    f: &mut Fields<'a>,
+    prefix: &str,
+    key: &'a str,
+) -> Result<Option<Severity>, String> {
+    match f.take(key).map(|v| v.as_str()) {
+        None | Some(Some("warning")) => Ok(Some(Severity::Warning)),
+        Some(Some("error")) => Ok(Some(Severity::Error)),
+        Some(Some("off")) => Ok(None),
+        Some(_) => Err(format!(
+            "`{prefix}{key}` must be \"off\", \"warning\" or \"error\""
+        )),
+    }
 }
 
 /// The default required section of a decision: its outcome.
@@ -269,6 +295,17 @@ impl Config {
                 ));
             }
         }
+        let install_source = match t.take("install-source") {
+            None => DEFAULT_INSTALL_SOURCE.to_string(),
+            Some(Value::String(s)) if !s.trim().is_empty() && !s.contains(char::is_whitespace) => {
+                s.clone()
+            }
+            Some(_) => {
+                return Err(
+                    "`install-source` must be a git URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`".into(),
+                );
+            }
+        };
         t.done()?;
         Ok(Config {
             pin,
@@ -279,6 +316,7 @@ impl Config {
             context_budget,
             repos,
             self_urls,
+            install_source,
         })
     }
 
@@ -456,16 +494,8 @@ impl Root {
             Some(Value::Boolean(b)) => *b,
             Some(_) => return Err(format!("`{prefix}enforce-budgets` must be true or false")),
         };
-        let lint_severity = match f.take("lint-severity").map(|v| v.as_str()) {
-            None | Some(Some("warning")) => Some(Severity::Warning),
-            Some(Some("error")) => Some(Severity::Error),
-            Some(Some("off")) => None,
-            Some(_) => {
-                return Err(format!(
-                    "`{prefix}lint-severity` must be \"off\", \"warning\" or \"error\""
-                ));
-            }
-        };
+        let lint_severity = severity(&mut f, prefix, "lint-severity")?;
+        let drift_severity = severity(&mut f, prefix, "drift-severity")?;
         f.done()?;
         Ok(Root {
             path,
@@ -480,6 +510,7 @@ impl Root {
             amendment_sections,
             enforce_budgets,
             lint_severity,
+            drift_severity,
         })
     }
 
@@ -762,6 +793,23 @@ type = "decision"
         assert!(err("amendment-sections = { spec = [\"\"] }").contains("empty heading"));
         assert!(err("lint-severity = \"warn\"").contains("\"off\", \"warning\" or \"error\""));
         assert!(err("lint-severity = false").contains("lint-severity"));
+        assert!(err("drift-severity = \"fatal\"").contains("`roots[0].drift-severity` must be"));
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\ninstall-source = \"file:///srv/git/spec-dna\"\n[[roots]]\npath = \"d\"\ndrift-severity = \"error\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.install_source, "file:///srv/git/spec-dna");
+        assert_eq!(c.roots[0].drift_severity, Some(Severity::Error));
+        let c = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n").unwrap();
+        assert_eq!(c.install_source, DEFAULT_INSTALL_SOURCE);
+        assert_eq!(c.roots[0].drift_severity, Some(Severity::Warning));
+        assert!(
+            Config::parse(
+                "spec-dna = \"0.1.0\"\ninstall-source = \"a b\"\n[[roots]]\npath = \"d\"\n"
+            )
+            .unwrap_err()
+            .contains("install-source")
+        );
         for bad in [
             "ftp://example.org/x/",
             "https://example.org/x",

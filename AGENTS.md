@@ -12,7 +12,7 @@ Rule zero: do not put the name, paths, ids, text, metrics or conventions of a co
 - Decisions: `docs/adr/` (information model, language, distribution)
 - Language benchmark prototype, not the tool: `bench/`
 
-The project is at an early stage: one Rust crate at the repository root (`src/`, `tests/`), version 0.1.0, not released. Do not add structure, languages or tools that the task does not ask for. Give each new dependency a one-line reason in the dependency table of the README.
+The project is at an early stage: one Rust crate at the repository root (`src/`, `tests/`), version 0.1.1, not publicly released. Do not add structure, languages or tools that the task does not ask for. Give each new dependency a one-line reason in the dependency table of the README.
 
 ## Done means checked
 

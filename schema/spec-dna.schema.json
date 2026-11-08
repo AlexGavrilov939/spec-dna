@@ -24,6 +24,11 @@
         "pattern": "^https?://[^*]+/((\\*|[^*/]+)/)*$"
       }
     },
+    "install-source": {
+      "description": "The git source of spec-dna for `cargo install --git`, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch uses it. Default: the public repository.",
+      "type": "string",
+      "pattern": "^\\S+$"
+    },
     "roots": {
       "description": "Directories of documents. A path belongs to the deepest root that contains it.",
       "type": "array",
@@ -171,6 +176,10 @@
         },
         "lint-severity": {
           "description": "The severity of the requirement lint (SD801 to SD805) in this root. Default `warning`.",
+          "enum": ["off", "warning", "error"]
+        },
+        "drift-severity": {
+          "description": "The severity of the drift diagnostics (SD606, SD607) in this root. Default `warning`. With `error`, a change that removes or renames cited code fails `check`.",
           "enum": ["off", "warning", "error"]
         }
       }
