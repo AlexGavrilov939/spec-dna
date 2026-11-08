@@ -8,12 +8,16 @@
 //! - the `depends-on` targets of the entries (depth 1);
 //! - linked accepted decisions, as summaries.
 //!
-//! For a spec or contract with requirements, the assembly serves only the
-//! title section and the requirement sections in full. It serves a document
-//! without requirements in order. It lists the other sections of these
-//! documents, and other documents that the entries link to, as stubs with id,
-//! hash and size. Thus one `show` call can read each of them. If a section
-//! does not fit the character budget, the assembly lists it as a stub too.
+//! For a spec or contract with requirements, the assembly serves the
+//! requirement sections first, then the title section, in full. It serves a
+//! document without requirements in heading order. It lists the other sections
+//! of these documents, and other documents that the entries link to, as stubs
+//! with id, hash and size. Thus one `show` call can read each of them. If a
+//! section does not fit the character budget, the assembly lists it as a stub
+//! too.
+//!
+//! A superseded, retired or rejected document that no target names is only
+//! listed, with its status and successor, unless `--include-inactive` is set.
 //!
 //! With `--query`, BM25 ranks the planned sections, and every section of the
 //! linked documents, against the words of the query (`rank.rs`). The order is:
@@ -28,7 +32,7 @@
 use crate::hash::hex;
 use crate::json::{self, Obj};
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res};
-use crate::parse::{FLAG_REQUIREMENT, RefKind};
+use crate::parse::RefKind;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -113,7 +117,7 @@ fn header(d: &Doc, chunk: usize, tier: &str) -> String {
     )
 }
 
-fn stub_line(d: &Doc, chunk: usize, tier: Tier) -> String {
+fn stub_line(c: &Corpus, d: &Doc, chunk: usize, tier: Tier) -> String {
     let ch = &d.parsed.chunks[chunk];
     let title = if ch.heading.is_empty() {
         d.parsed.title.as_str()
@@ -121,12 +125,44 @@ fn stub_line(d: &Doc, chunk: usize, tier: Tier) -> String {
         ch.heading.as_str()
     };
     format!(
-        "- `{}` h:{} {} chars ({}): {title}\n",
+        "- `{}` h:{} {} chars ({}): {title}{}\n",
         section_id(d, chunk),
         hex(&ch.hash),
         ch.chars,
-        tier.name()
+        tier.name(),
+        inactive_note(c, d)
     )
+}
+
+/// For an inactive document: its status and its successors, for a stub line.
+fn inactive_note(c: &Corpus, d: &Doc) -> String {
+    if !d.is_inactive() {
+        return String::new();
+    }
+    let next: Vec<String> = successors(c, d)
+        .iter()
+        .map(|&s| format!("`{}`", c.docs[s as usize].id))
+        .collect();
+    if next.is_empty() {
+        format!(" [{}]", d.status_str())
+    } else {
+        format!(" [{}; successor: {}]", d.status_str(), next.join(", "))
+    }
+}
+
+/// Returns the documents whose `supersedes` names `d`.
+fn successors(c: &Corpus, d: &Doc) -> Vec<u32> {
+    let me = c.by_path.get(&d.path).copied();
+    c.docs
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            s.supersedes
+                .iter()
+                .any(|(t, _)| matches!(c.resolve(t), Res::Found(i, _, _) if Some(i) == me))
+        })
+        .map(|(i, _)| i as u32)
+        .collect()
 }
 
 pub fn assemble(
@@ -135,6 +171,7 @@ pub fn assemble(
     paths: &[String],
     budget: u32,
     query: Option<&Query>,
+    include_inactive: bool,
 ) -> Assembly {
     let mut plan: Vec<(u32, usize, Tier)> = Vec::new();
     let mut seen: HashSet<(u32, usize)> = HashSet::new();
@@ -210,10 +247,17 @@ pub fn assemble(
         normative_units(c, d, Tier::Concern, &mut plan, &mut rest, &mut add);
     }
 
-    // 3. Dependencies, depth 1.
+    // 3. Dependencies, depth 1. A superseded, retired or rejected target is
+    // only listed, with its status and successor (ADR 0001, "Lifecycle").
     for &e in &entry_docs {
         for (t, _) in &c.docs[e as usize].depends_on {
             if let Res::Found(d, frag, true) = c.resolve(t) {
+                if !include_inactive && c.docs[d as usize].is_inactive() {
+                    if !c.docs[d as usize].parsed.chunks.is_empty() {
+                        add(&mut plan, d, 0, Tier::Dependency);
+                    }
+                    continue;
+                }
                 match frag.and_then(|f| {
                     let doc = &c.docs[d as usize];
                     doc.parsed
@@ -291,15 +335,23 @@ pub fn assemble(
 
     // The packing order: the order of the plan, or the ranking under a query.
     let terms = query.map(|q| q.terms.clone()).filter(|t| !t.is_empty());
-    let (order, eligible) = match (query, &terms) {
+    let (order, mut eligible) = match (query, &terms) {
         (Some(q), Some(terms)) => rank_plan(c, q.root, terms, &plan, &pinned),
         _ => (
             (0..plan.len()).collect(),
             plan.iter()
                 .map(|p| !matches!(p.2, Tier::Rest | Tier::Related))
-                .collect(),
+                .collect::<Vec<bool>>(),
         ),
     };
+    // An inactive document that no target names is only listed.
+    if !include_inactive {
+        for (i, &(d, _, _)) in plan.iter().enumerate() {
+            if c.docs[d as usize].is_inactive() && !entry_docs.contains(&d) {
+                eligible[i] = false;
+            }
+        }
+    }
 
     // Packing has 2 passes:
     // - First the map. List every planned section as a stub, in priority
@@ -314,7 +366,7 @@ pub fn assemble(
             let doc = &c.docs[d as usize];
             let full =
                 doc.parsed.chunks[ch].chars + header(doc, ch, tier.name()).chars().count() as u32;
-            (full, stub_line(doc, ch, tier).chars().count() as u32)
+            (full, stub_line(c, doc, ch, tier).chars().count() as u32)
         })
         .collect();
     let mut listed = vec![false; plan.len()];
@@ -436,8 +488,10 @@ fn is_accepted_decision(d: &Doc) -> bool {
     d.ty == DocType::Decision && d.status_str() == "accepted"
 }
 
-/// Plans the requirement sections first. For a document without requirements,
-/// it plans all sections.
+/// Plans the sections of a document. For a document with requirements, the
+/// sections that hold valid requirements come first, then the title section.
+/// The other sections are narrative: they go to `rest`. A document without
+/// requirements keeps the heading order.
 fn normative_units(
     c: &Corpus,
     d: u32,
@@ -447,14 +501,20 @@ fn normative_units(
     add: &mut impl FnMut(&mut Vec<(u32, usize, Tier)>, u32, usize, Tier),
 ) {
     let doc = &c.docs[d as usize];
-    let has_reqs = doc
-        .parsed
-        .chunks
-        .iter()
-        .any(|ch| ch.flags & FLAG_REQUIREMENT != 0)
-        && doc.ty.has_requirements();
-    for (j, ch) in doc.parsed.chunks.iter().enumerate() {
-        if !has_reqs || ch.flags & FLAG_REQUIREMENT != 0 || ch.level <= 1 {
+    let chunks = &doc.parsed.chunks;
+    if doc.reqs.is_empty() {
+        for j in 0..chunks.len() {
+            add(plan, d, j, tier);
+        }
+        return;
+    }
+    let (with_reqs, narrative): (Vec<usize>, Vec<usize>) =
+        (0..chunks.len()).partition(|&j| doc.has_req_in(j));
+    for j in with_reqs {
+        add(plan, d, j, tier);
+    }
+    for j in narrative {
+        if chunks[j].level <= 1 {
             add(plan, d, j, tier);
         } else {
             rest.push((d, j));
@@ -528,6 +588,13 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
                 .str("hash", &hex(&ch.hash))
                 .num("chars", ch.chars)
                 .str("mode", if u.full { "full" } else { "stub" });
+            if d.is_inactive() {
+                let next: Vec<String> = successors(c, d)
+                    .iter()
+                    .map(|&s| c.docs[s as usize].id.clone())
+                    .collect();
+                o = o.strs("successors", &next);
+            }
             if u.full {
                 o = o.str("text", chunk_text(&texts[&u.doc], d, u.chunk));
             }
@@ -563,7 +630,7 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     if stubs > 0 {
         out.push_str("<!-- not loaded; read one with `spec-dna show <id>` -->\n");
         for u in a.units.iter().filter(|u| !u.full) {
-            out.push_str(&stub_line(&c.docs[u.doc as usize], u.chunk, u.tier));
+            out.push_str(&stub_line(c, &c.docs[u.doc as usize], u.chunk, u.tier));
         }
     }
     if a.omitted > 0 {
@@ -640,6 +707,13 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
             )
         }
     };
+    // The recognized requirements. They show a reader whether spec-dna found
+    // each requirement of a legacy syntax.
+    let keys: Vec<String> = doc
+        .reqs
+        .iter()
+        .map(|&r| doc.parsed.reqs[r].key.clone())
+        .collect();
     if as_json {
         let units = items.iter().map(|(id, h, line, t)| {
             Obj::new()
@@ -658,6 +732,7 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
                 .opt_str("status", doc.status.as_deref())
                 .opt_str("owner", doc.owner.as_deref())
                 .str("kind", kind)
+                .strs("requirements", &keys)
                 .raw("units", &json::array(units))
                 .end()
         );
@@ -668,6 +743,13 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         .map(|s| format!("/{s}"))
         .unwrap_or_default();
     let mut out = String::new();
+    if kind == "document" && doc.ty.has_requirements() {
+        out.push_str(&format!(
+            "<!-- {}: {} requirements -->\n",
+            doc.id,
+            keys.len()
+        ));
+    }
     for (id, h, _, t) in items {
         out.push_str(&format!(
             "<!-- {id} h:{h} {}{status} {} -->\n{t}\n\n",

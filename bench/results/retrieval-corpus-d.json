@@ -1,0 +1,238 @@
+{
+  "tasks_file": "corpus-d-oracles.json",
+  "query": false,
+  "load_avg_1m": 7.93,
+  "summary": [
+    {
+      "budget": 4000,
+      "tasks": 3,
+      "recall_full_mean": 0.0,
+      "recall_listed_mean": 0.343,
+      "precision_mean": 0.0,
+      "critical_full_mean": 0.0,
+      "tasks_all_required_full": 0,
+      "chars_median": 3917,
+      "two_step_chars_median": 6947,
+      "baseline_chars_median": 89751,
+      "tokens_est_median": 1047,
+      "latency_ms_median": 17.8
+    },
+    {
+      "budget": 12000,
+      "tasks": 3,
+      "recall_full_mean": 0.048,
+      "recall_listed_mean": 0.676,
+      "precision_mean": 0.033,
+      "critical_full_mean": 0.0,
+      "tasks_all_required_full": 0,
+      "chars_median": 11969,
+      "two_step_chars_median": 18456,
+      "baseline_chars_median": 89751,
+      "tokens_est_median": 3060,
+      "latency_ms_median": 17.8
+    },
+    {
+      "budget": 32000,
+      "tasks": 3,
+      "recall_full_mean": 0.676,
+      "recall_listed_mean": 0.771,
+      "precision_mean": 0.171,
+      "critical_full_mean": 0.583,
+      "tasks_all_required_full": 0,
+      "chars_median": 31968,
+      "two_step_chars_median": 31998,
+      "baseline_chars_median": 89751,
+      "tokens_est_median": 8043,
+      "latency_ms_median": 18.2
+    }
+  ],
+  "rows": [
+    {
+      "task": "d1-rpit-capture-migration-lint",
+      "budget": 4000,
+      "required": 7,
+      "recall_full": 0.0,
+      "recall_listed": 0.2857142857142857,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "3498-lifetime-capture-rules-2024#capturing-lifetimes-from-an-inherent-method-signature",
+        "3498-lifetime-capture-rules-2024#return-position-impl-trait-in-trait-rpitit",
+        "3617-precise-capturing#avoiding-capture-of-higher-ranked-lifetimes-in-nested-opaques",
+        "3617-precise-capturing#lifetime-capture-rules-2024",
+        "3617-precise-capturing#migration-strategy-for-lifetime-capture-rules-2024",
+        "3617-precise-capturing#stabilization-strategy",
+        "3617-precise-capturing#syntax"
+      ],
+      "chars": 3930,
+      "two_step_chars": 6947,
+      "baseline_chars": 89751,
+      "tokens_est": 1050,
+      "latency_ms": 18.0
+    },
+    {
+      "task": "d1-rpit-capture-migration-lint",
+      "budget": 12000,
+      "required": 7,
+      "recall_full": 0.14285714285714285,
+      "recall_listed": 0.7142857142857143,
+      "precision": 0.1,
+      "critical_full": 0.0,
+      "missed": [
+        "3498-lifetime-capture-rules-2024#capturing-lifetimes-from-an-inherent-method-signature",
+        "3498-lifetime-capture-rules-2024#return-position-impl-trait-in-trait-rpitit",
+        "3617-precise-capturing#avoiding-capture-of-higher-ranked-lifetimes-in-nested-opaques",
+        "3617-precise-capturing#migration-strategy-for-lifetime-capture-rules-2024",
+        "3617-precise-capturing#stabilization-strategy",
+        "3617-precise-capturing#syntax"
+      ],
+      "chars": 11969,
+      "two_step_chars": 16703,
+      "baseline_chars": 89751,
+      "tokens_est": 3060,
+      "latency_ms": 17.8
+    },
+    {
+      "task": "d1-rpit-capture-migration-lint",
+      "budget": 32000,
+      "required": 7,
+      "recall_full": 0.7142857142857143,
+      "recall_listed": 0.7142857142857143,
+      "precision": 0.16129032258064516,
+      "critical_full": 0.75,
+      "missed": [
+        "3498-lifetime-capture-rules-2024#capturing-lifetimes-from-an-inherent-method-signature",
+        "3498-lifetime-capture-rules-2024#return-position-impl-trait-in-trait-rpitit"
+      ],
+      "chars": 31968,
+      "two_step_chars": 31968,
+      "baseline_chars": 89751,
+      "tokens_est": 8043,
+      "latency_ms": 18.2
+    },
+    {
+      "task": "d2-build-std-implicit-explicit-deps",
+      "budget": 4000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.6,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "3874-build-std-always#standard-library-crate-stability",
+        "3874-build-std-always#why-use-nounused-with---extern",
+        "3875-build-std-explicit-dependencies#dev-dependencies-and-build-dependencies",
+        "3875-build-std-explicit-dependencies#proposal",
+        "3875-build-std-explicit-dependencies#public-and-private-dependencies"
+      ],
+      "chars": 3864,
+      "two_step_chars": 13670,
+      "baseline_chars": 135336,
+      "tokens_est": 1036,
+      "latency_ms": 17.7
+    },
+    {
+      "task": "d2-build-std-implicit-explicit-deps",
+      "budget": 12000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.6,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "3874-build-std-always#standard-library-crate-stability",
+        "3874-build-std-always#why-use-nounused-with---extern",
+        "3875-build-std-explicit-dependencies#dev-dependencies-and-build-dependencies",
+        "3875-build-std-explicit-dependencies#proposal",
+        "3875-build-std-explicit-dependencies#public-and-private-dependencies"
+      ],
+      "chars": 11940,
+      "two_step_chars": 21746,
+      "baseline_chars": 135336,
+      "tokens_est": 3056,
+      "latency_ms": 17.3
+    },
+    {
+      "task": "d2-build-std-implicit-explicit-deps",
+      "budget": 32000,
+      "required": 5,
+      "recall_full": 0.6,
+      "recall_listed": 0.6,
+      "precision": 0.2,
+      "critical_full": 0.5,
+      "missed": [
+        "3874-build-std-always#standard-library-crate-stability",
+        "3874-build-std-always#why-use-nounused-with---extern"
+      ],
+      "chars": 31998,
+      "two_step_chars": 31998,
+      "baseline_chars": 135336,
+      "tokens_est": 8056,
+      "latency_ms": 17.9
+    },
+    {
+      "task": "d3-default-field-values-typeck",
+      "budget": 4000,
+      "required": 7,
+      "recall_full": 0.0,
+      "recall_listed": 0.14285714285714285,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "3681-default-field-values#defaults-for-enums",
+        "3681-default-field-values#defining-defaults",
+        "3681-default-field-values#derivedefault",
+        "3681-default-field-values#empty-types-and-types-without-default-field-values",
+        "3681-default-field-values#grammar",
+        "3681-default-field-values#non_exhaustive-interactions",
+        "3681-default-field-values#privacy-building-structs-with-private-defaulted-fields"
+      ],
+      "chars": 3917,
+      "two_step_chars": 6349,
+      "baseline_chars": 60969,
+      "tokens_est": 1047,
+      "latency_ms": 17.8
+    },
+    {
+      "task": "d3-default-field-values-typeck",
+      "budget": 12000,
+      "required": 7,
+      "recall_full": 0.0,
+      "recall_listed": 0.7142857142857143,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "3681-default-field-values#defaults-for-enums",
+        "3681-default-field-values#defining-defaults",
+        "3681-default-field-values#derivedefault",
+        "3681-default-field-values#empty-types-and-types-without-default-field-values",
+        "3681-default-field-values#grammar",
+        "3681-default-field-values#non_exhaustive-interactions",
+        "3681-default-field-values#privacy-building-structs-with-private-defaulted-fields"
+      ],
+      "chars": 12000,
+      "two_step_chars": 18456,
+      "baseline_chars": 60969,
+      "tokens_est": 3069,
+      "latency_ms": 18.0
+    },
+    {
+      "task": "d3-default-field-values-typeck",
+      "budget": 32000,
+      "required": 7,
+      "recall_full": 0.7142857142857143,
+      "recall_listed": 1.0,
+      "precision": 0.15151515151515152,
+      "critical_full": 0.5,
+      "missed": [
+        "3681-default-field-values#empty-types-and-types-without-default-field-values",
+        "3681-default-field-values#privacy-building-structs-with-private-defaulted-fields"
+      ],
+      "chars": 31960,
+      "two_step_chars": 35855,
+      "baseline_chars": 60969,
+      "tokens_est": 8042,
+      "latency_ms": 19.0
+    }
+  ]
+}

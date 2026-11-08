@@ -1,0 +1,66 @@
+{
+  "corpus": "rust-lang/rfcs@3bdcd22feea6848a7920fa06d17ad4c6ada9db89",
+  "root": "text",
+  "written": "2026-11-08",
+  "method": "Each entry RFC and every RFC the task depends on (found through links in the text: absolute github.com URLs, rust-lang.github.io/rfcs URLs or RFC NNNN references) was read in full, and a section was kept only if its own text, from its heading to the next real heading of any level (lines starting with # inside code fences do not count), states a fact the task cannot be done correctly without; when a fact is repeated, the most specific section that states it was kept.",
+  "tasks": [
+    {
+      "id": "d1-rpit-capture-migration-lint",
+      "task": "Write the Rust 2024 edition migration lint for return position impl Trait from RFC 3617: wherever the 2024 lifetime capture rules would make an opaque type capture lifetime parameters that it does not capture in Rust 2021, suggest a use<..> bound that keeps the 2021 set of captured parameters. Add UI tests for a free function with a named and an elided lifetime, an inherent method of a type with a lifetime parameter, a method in a trait impl, a function with an argument position impl Trait, and a nested impl Trait under a for<'a> binder.",
+      "entry": ["3617-precise-capturing"],
+      "required": [
+        {"doc": "3617-precise-capturing", "heading": "Lifetime Capture Rules 2024", "line": 39, "why": "Rust 2021 rule (all type parameters, lifetimes only when named in the bounds) for RPIT on free and inherent functions, the 2024 change, and that RPITIT and ATPIT capture everything in all editions"},
+        {"doc": "3617-precise-capturing", "heading": "Syntax", "line": 177, "why": "grammar of the suggestion: use<..> right after impl and before the bounds, lifetimes and identifiers only, may be empty"},
+        {"doc": "3617-precise-capturing", "heading": "Avoiding capture of higher ranked lifetimes in nested opaques", "line": 303, "why": "in 2024 a nested opaque under for<..> captures the higher ranked lifetime and fails to compile; use<> avoids it"},
+        {"doc": "3617-precise-capturing", "heading": "Migration strategy for Lifetime Capture Rules 2024", "line": 628, "why": "the lint inserts use<..> to keep the captured set and turns argument position impl Trait into named type parameters"},
+        {"doc": "3617-precise-capturing", "heading": "Stabilization strategy", "line": 686, "why": "use<..> must list every in-scope type and const parameter; both were already captured in 2021"},
+        {"doc": "3498-lifetime-capture-rules-2024", "heading": "Capturing lifetimes from an inherent method signature", "line": 278, "why": "in 2024 the elided lifetime of &self is captured together with the named and outer parameters"},
+        {"doc": "3498-lifetime-capture-rules-2024", "heading": "Return position `impl Trait` in Trait (RPITIT)", "line": 372, "why": "RPIT in a trait impl captures all outer impl and signature parameters in all editions, so those methods need no migration"}
+      ],
+      "critical": [
+        {"constraint": "RPIT in a trait impl and RPITIT in a trait already capture every in-scope parameter in all editions, so the lint must not fire on them; only RPIT on free functions and inherent associated functions and methods changes", "doc": "3498-lifetime-capture-rules-2024", "heading": "Return position `impl Trait` in Trait (RPITIT)"},
+        {"constraint": "The suggested use<..> keeps exactly the set captured in Rust 2021, and an argument position impl Trait must first become a named type parameter because use<..> can only list named parameters", "doc": "3617-precise-capturing", "heading": "Migration strategy for Lifetime Capture Rules 2024"},
+        {"constraint": "use<..> must list every in-scope type and const parameter; only lifetimes may be left out", "doc": "3617-precise-capturing", "heading": "Stabilization strategy"},
+        {"constraint": "A nested impl Trait under a for<'a> binder fails in Rust 2024 because it captures the higher ranked lifetime; the fix is use<> or a list without that lifetime", "doc": "3617-precise-capturing", "heading": "Avoiding capture of higher ranked lifetimes in nested opaques"}
+      ]
+    },
+    {
+      "id": "d2-build-std-implicit-explicit-deps",
+      "task": "For RFC 3875, make Cargo work out the standard library dependencies of each package for the current target and pass them to rustc: the implicit ones when the package declares none, otherwise the explicit builtin ones from every dependency table that applies to the target, each with the right --extern modifiers and public or private status. Add tests for a target whose default is only core, a target-specific alloc dependency, an optional std behind a feature, and a std dependency declared only in dev-dependencies.",
+      "entry": ["3875-build-std-explicit-dependencies"],
+      "required": [
+        {"doc": "3875-build-std-explicit-dependencies", "heading": "Proposal", "line": 62, "why": "builtin source rules, the implicit set and what turns it off, noprelude only for implicit dependencies, the test crate, optional dependency checks, -Zcrate-attr=no_std, target-specific tables"},
+        {"doc": "3875-build-std-explicit-dependencies", "heading": "Public and private dependencies", "line": 365, "why": "implicit dependencies are public, explicit ones private by default"},
+        {"doc": "3875-build-std-explicit-dependencies", "heading": "`dev-dependencies` and `build-dependencies`", "line": 407, "why": "a builtin entry in dev-dependencies also turns off the implicit set; build-dependencies cannot have builtin entries and build scripts and proc macros use the pre-built std"},
+        {"doc": "3874-build-std-always", "heading": "Standard library crate stability", "line": 262, "why": "the target's default set comes from standard_library_support.default, read with rustc --print target-standard-library-support"},
+        {"doc": "3874-build-std-always", "heading": "Why use `nounused` with `--extern`?", "line": 1249, "why": "every standard library crate passed with --extern also gets the nounused modifier so unused_crate_dependencies does not fire"}
+      ],
+      "critical": [
+        {"constraint": "Any explicit standard library dependency, builtin or path, in a dependency table that applies to the current target turns off all implicit standard library dependencies", "doc": "3875-build-std-explicit-dependencies", "heading": "Proposal"},
+        {"constraint": "Explicit builtin dependencies are passed without noprelude and implicit ones with it; this overrides the RFC 3874 rule that every standard library crate gets noprelude", "doc": "3875-build-std-explicit-dependencies", "heading": "Proposal"},
+        {"constraint": "core can never be optional, an optional std needs a non-optional core or alloc, and when std is optional or missing Cargo passes -Zcrate-attr=no_std", "doc": "3875-build-std-explicit-dependencies", "heading": "Proposal"},
+        {"constraint": "The implicit set is the target's standard_library_support.default (core only for armv7a-none-eabi, std for aarch64-unknown-linux-gnu); the JSON example that prints default core for aarch64-unknown-linux-gnu is wrong", "doc": "3874-build-std-always", "heading": "Standard library crate stability"}
+      ]
+    },
+    {
+      "id": "d3-default-field-values-typeck",
+      "task": "Implement default field values from RFC 3681 in rustc: accept field: Type = expr on named fields of structs and enum variants, type-check struct expressions that end in .. without a base, and make #[derive(Default)] on a struct use the field defaults. Add UI tests for a default whose value panics, a struct with private defaulted fields built from another module, a #[non_exhaustive] struct with a defaulted field, and a struct without defaults written as S { .. }.",
+      "entry": ["3681-default-field-values"],
+      "required": [
+        {"doc": "3681-default-field-values", "heading": "`#[non_exhaustive]` interactions", "line": 522, "why": "default field values are allowed only on types without #[non_exhaustive]"},
+        {"doc": "3681-default-field-values", "heading": "Defaults for `enum`s", "line": 605, "why": "variant fields can have defaults; #[non_exhaustive] on the enum has no effect on them, on a variant it acts as on a struct"},
+        {"doc": "3681-default-field-values", "heading": "Grammar", "line": 691, "why": "the = expr field syntax and the two new struct expression forms that end in .. without a base"},
+        {"doc": "3681-default-field-values", "heading": "Defining defaults", "line": 736, "why": "a default must be a constant expression that coerces to the field type, may use generic parameters, and is evaluated only at instantiation"},
+        {"doc": "3681-default-field-values", "heading": "`#[derive(Default)]`", "line": 790, "why": "the derived default() leaves out defaulted fields and uses Default::default() for the others"},
+        {"doc": "3681-default-field-values", "heading": "Privacy: building `struct`s with private defaulted fields", "line": 1655, "why": "visibility rules do not change: every defaulted field must be visible where S { .. } is written"},
+        {"doc": "3681-default-field-values", "heading": "\"Empty\" types and types without default field values", "line": 1740, "why": ".. without a base is allowed only when the type has at least one defaulted field"}
+      ],
+      "critical": [
+        {"constraint": "A default must be a constant expression that coerces to the field type, and it is evaluated only when a struct expression uses it, so field: usize = panic!() compiles as long as each use gives that field", "doc": "3681-default-field-values", "heading": "Defining defaults"},
+        {"constraint": "S { .. } is rejected where a defaulted field is not visible; the Java prior-art remark that the RFC permits defaults for private fields is wrong", "doc": "3681-default-field-values", "heading": "Privacy: building `struct`s with private defaulted fields"},
+        {"constraint": "Default field values are not allowed on #[non_exhaustive] types; the unresolved question's idea of accepting Config { width: 640, height: 480, .. } is not adopted", "doc": "3681-default-field-values", "heading": "`#[non_exhaustive]` interactions"},
+        {"constraint": ".. without a base needs at least one defaulted field, so S { .. } on a struct without defaults is an error", "doc": "3681-default-field-values", "heading": "\"Empty\" types and types without default field values"}
+      ]
+    }
+  ]
+}

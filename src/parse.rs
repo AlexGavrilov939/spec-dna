@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 1;
+pub const PARSER_VERSION: u32 = 3;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -70,10 +70,13 @@ pub struct Token {
     pub line: u32,
 }
 
-/// A list item that starts with a bold one-word key and then a colon.
+/// A list item that starts with a bold one-word key. `colon` is false for the
+/// legacy form `**key** sentence`, which a model accepts only for a key that
+/// matches a `legacy-keys` pattern.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Req {
     pub key: String,
+    pub colon: bool,
     pub line: u32,
     /// Byte range of the whole list item, with its nested content.
     pub start: u32,
@@ -140,7 +143,11 @@ pub fn parse(text: &str) -> ParsedDoc {
                 if let Some(item) = items.pop()
                     && let Some(c) = item.finish()
                 {
-                    *chunk_flags.last_mut().unwrap() |= FLAG_REQUIREMENT;
+                    // A bold label without a colon is usual in prose. Only the
+                    // model can tell if it is a legacy key.
+                    if c.colon {
+                        *chunk_flags.last_mut().unwrap() |= FLAG_REQUIREMENT;
+                    }
                     cands.push(c);
                 }
             }
@@ -240,10 +247,18 @@ pub fn parse(text: &str) -> ParsedDoc {
             .iter()
             .rposition(|ch| ch.start as usize <= abs_start)
             .unwrap_or(0) as u32;
-        let raw = &body[c.sentence_start..c.sentence_end];
+        let mut raw = &body[c.sentence_start..c.sentence_end];
+        if !c.colon {
+            // `**R-12** — text` and `**R-12**. text`: the separator is not
+            // part of the sentence.
+            raw = raw.trim_start_matches(|ch: char| {
+                ch.is_whitespace() || matches!(ch, ':' | '.' | '-' | '–' | '—')
+            });
+        }
         let (clean, aliases) = strip_alias_marker(raw);
         doc.reqs.push(Req {
             key: c.key,
+            colon: c.colon,
             line: lines.line(abs_start),
             start: abs_start as u32,
             end: (body_start + c.end) as u32,
@@ -271,13 +286,17 @@ struct Item {
     /// 0: wait for the bold key, 1: in the key, 2: wait for `:`, 3: done.
     phase: u8,
     key: String,
+    /// The offset after the closing `**` of the key.
+    key_end: usize,
     sentence_start: usize,
     first_list: Option<usize>,
     candidate: bool,
+    colon: bool,
 }
 
 struct Cand {
     key: String,
+    colon: bool,
     start: usize,
     end: usize,
     sentence_start: usize,
@@ -291,9 +310,11 @@ impl Item {
             end,
             phase: 0,
             key: String::new(),
+            key_end: 0,
             sentence_start: 0,
             first_list: None,
             candidate: false,
+            colon: false,
         }
     }
 
@@ -304,37 +325,51 @@ impl Item {
             (0, Event::Start(Tag::Strong)) => self.phase = 1,
             (1, Event::Text(t)) => self.key.push_str(t),
             (1, Event::End(TagEnd::Strong)) => {
+                self.key_end = end;
                 if let Some(k) = self.key.strip_suffix(':') {
                     // `**key:** sentence`
                     self.key = k.to_string();
-                    self.finish_key(end);
+                    self.finish_key(end, true);
+                } else if let Some(k) = self.key.strip_suffix('.') {
+                    // `**R-12.** sentence`: a numbered legacy form. Only a
+                    // legacy key makes it a requirement.
+                    self.key = k.to_string();
+                    self.finish_key(end, false);
                 } else {
                     self.phase = 2;
                 }
             }
-            (2, Event::Text(t)) if t.starts_with(':') => self.finish_key(start + 1),
-            (0..=2, _) => self.phase = 3,
+            (2, Event::Text(t)) if t.starts_with(':') => self.finish_key(start + 1, true),
+            // `**key** sentence`: a legacy form without a colon.
+            (2, _) => self.finish_key(self.key_end, false),
+            (0..=1, _) => self.phase = 3,
             _ => {}
         }
     }
 
-    fn finish_key(&mut self, sentence_start: usize) {
+    fn finish_key(&mut self, sentence_start: usize, colon: bool) {
         self.phase = 3;
         let k = self.key.trim();
         if !k.is_empty() && !k.contains(char::is_whitespace) {
             self.key = k.to_string();
             self.sentence_start = sentence_start;
             self.candidate = true;
+            self.colon = colon;
         }
     }
 
-    fn finish(self) -> Option<Cand> {
+    fn finish(mut self) -> Option<Cand> {
+        if self.phase == 2 {
+            // The item has only the bold key.
+            self.finish_key(self.key_end, false);
+        }
         if !self.candidate {
             return None;
         }
         let sentence_end = self.first_list.unwrap_or(self.end).max(self.sentence_start);
         Some(Cand {
             key: self.key,
+            colon: self.colon,
             start: self.start,
             end: self.end,
             sentence_start: self.sentence_start,
@@ -533,8 +568,13 @@ mod tests {
     #[test]
     fn requirements_and_aliases() {
         let d = parse(DOC);
-        let keys: Vec<&str> = d.reqs.iter().map(|r| r.key.as_str()).collect();
-        assert_eq!(keys, vec!["token-expiry", "R-12"]);
+        let keys: Vec<(&str, bool)> = d.reqs.iter().map(|r| (r.key.as_str(), r.colon)).collect();
+        // `**Note** this is not a key` is a candidate without a colon. The
+        // model accepts it only if it matches a legacy key pattern.
+        assert_eq!(
+            keys,
+            vec![("token-expiry", true), ("R-12", true), ("Note", false)]
+        );
         let r = &d.reqs[0];
         assert_eq!(r.aliases, vec!["auth/old#ttl".to_string()]);
         assert_eq!(
@@ -546,6 +586,36 @@ mod tests {
         // The alias marker does not change the hash.
         let moved = DOC.replace(" <!-- aliases: auth/old#ttl -->", "");
         assert_eq!(parse(&moved).reqs[0].hash, r.hash);
+    }
+
+    #[test]
+    fn legacy_requirements_without_a_colon() {
+        let d = parse(
+            "# S\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2** — The server SHALL log.\n- **R-3:** The cache MAY drop entries.\n- **R-4**\n- See **R-5** in the text.\n- **R-6.** The proxy MUST strip the header.\n\n## Notes\n\n- **Note** prose with a bold label.\n",
+        );
+        let reqs: Vec<(&str, bool, &str)> = d
+            .reqs
+            .iter()
+            .map(|r| (r.key.as_str(), r.colon, r.text.as_str()))
+            .collect();
+        assert_eq!(
+            reqs,
+            vec![
+                ("R-1", false, "The client MUST retry."),
+                ("R-2", false, "The server SHALL log."),
+                ("R-3", true, "The cache MAY drop entries."),
+                ("R-4", false, ""),
+                ("R-6", false, "The proxy MUST strip the header."),
+                ("Note", false, "prose with a bold label."),
+            ]
+        );
+        // Only a candidate with a colon marks its section. The model marks the
+        // others after it checks the key.
+        assert_eq!(d.chunks[1].flags & FLAG_REQUIREMENT, FLAG_REQUIREMENT);
+        assert_eq!(d.chunks[2].flags & FLAG_REQUIREMENT, 0);
+        // The separator after the key does not change the hash.
+        let plain = parse("- **R-2** The server SHALL log.\n");
+        assert_eq!(plain.reqs[0].hash, d.reqs[1].hash);
     }
 
     #[test]

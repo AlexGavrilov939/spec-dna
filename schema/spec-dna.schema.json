@@ -147,11 +147,18 @@
             "enum": ["draft", "active", "deprecated", "superseded", "retired", "proposed", "accepted", "rejected", "done"]
           }
         },
-        "decision-sections": {
-          "description": "Headings that contain the outcome of a decision. spec-dna compares them without case. This list replaces the default `[\"Decision Outcome\", \"Decision\"]`.",
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "pattern": "\\S" }
+        "required-sections": {
+          "description": "For each type, the headings of its required section. A document of that type needs one of them (SD305). spec-dna compares them without case. A list replaces the default of its type. The default is `decision = [\"Decision Outcome\", \"Decision\"]`; the other types have no required section. An empty list removes the required section. For a decision, `context` serves this section as the summary.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/type" },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "\\S" }
+          }
+        },
+        "enforce-budgets": {
+          "description": "If false, a document over its hard budget gives the warning SD704, never the error SD702. Default true.",
+          "type": "boolean"
         }
       }
     }

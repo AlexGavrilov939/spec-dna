@@ -78,12 +78,18 @@ impl Git {
 
     /// Returns the working-tree changes in `paths`. If `paths` is empty, it
     /// returns the changes in all of the tree.
-    pub fn status(&self, paths: &[String]) -> Result<Status, String> {
+    /// Lists changed files under `paths`. With `untracked`, it also lists the
+    /// untracked files that git does not ignore.
+    pub fn status(&self, paths: &[String], untracked: bool) -> Result<Status, String> {
         let mut args = vec![
             "status",
             "--porcelain=v2",
             "-z",
-            "--untracked-files=all",
+            if untracked {
+                "--untracked-files=all"
+            } else {
+                "--untracked-files=no"
+            },
             "--no-renames",
             "--ignore-submodules=all",
             "--",

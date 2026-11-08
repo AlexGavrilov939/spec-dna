@@ -1,0 +1,345 @@
+{
+  "tasks_file": "corpus-b-oracles.json",
+  "query": true,
+  "load_avg_1m": 7.62,
+  "summary": [
+    {
+      "budget": 4000,
+      "tasks": 5,
+      "recall_full_mean": 0.197,
+      "recall_listed_mean": 0.568,
+      "precision_mean": 0.45,
+      "critical_full_mean": 0.197,
+      "tasks_all_required_full": 0,
+      "chars_median": 3932,
+      "two_step_chars_median": 6928,
+      "baseline_chars_median": 122784,
+      "tokens_est_median": 1104,
+      "latency_ms_median": 40.4
+    },
+    {
+      "budget": 12000,
+      "tasks": 5,
+      "recall_full_mean": 0.292,
+      "recall_listed_mean": 0.756,
+      "precision_mean": 0.307,
+      "critical_full_mean": 0.292,
+      "tasks_all_required_full": 0,
+      "chars_median": 11994,
+      "two_step_chars_median": 18018,
+      "baseline_chars_median": 122784,
+      "tokens_est_median": 3125,
+      "latency_ms_median": 40.5
+    },
+    {
+      "budget": 32000,
+      "tasks": 5,
+      "recall_full_mean": 0.466,
+      "recall_listed_mean": 0.96,
+      "precision_mean": 0.205,
+      "critical_full_mean": 0.466,
+      "tasks_all_required_full": 1,
+      "chars_median": 31993,
+      "two_step_chars_median": 37845,
+      "baseline_chars_median": 122784,
+      "tokens_est_median": 8114,
+      "latency_ms_median": 43.3
+    }
+  ],
+  "rows": [
+    {
+      "task": "b1-crashloop-max-beta",
+      "budget": 4000,
+      "required": 7,
+      "recall_full": 0.2857142857142857,
+      "recall_listed": 0.5714285714285714,
+      "precision": 0.6666666666666666,
+      "critical_full": 0.2857142857142857,
+      "missed": [
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#alpha",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#beta",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#does-enabling-the-feature-change-any-default-behavior"
+      ],
+      "chars": 3883,
+      "two_step_chars": 6928,
+      "baseline_chars": 193636,
+      "tokens_est": 1096,
+      "latency_ms": 42.8
+    },
+    {
+      "task": "b1-crashloop-max-beta",
+      "budget": 12000,
+      "required": 7,
+      "recall_full": 0.42857142857142855,
+      "recall_listed": 0.7142857142857143,
+      "precision": 0.6,
+      "critical_full": 0.42857142857142855,
+      "missed": [
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#beta",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#does-enabling-the-feature-change-any-default-behavior"
+      ],
+      "chars": 11996,
+      "two_step_chars": 14403,
+      "baseline_chars": 193636,
+      "tokens_est": 3125,
+      "latency_ms": 42.8
+    },
+    {
+      "task": "b1-crashloop-max-beta",
+      "budget": 32000,
+      "required": 7,
+      "recall_full": 0.42857142857142855,
+      "recall_listed": 1.0,
+      "precision": 0.3333333333333333,
+      "critical_full": 0.42857142857142855,
+      "missed": [
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#beta",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#conflict-resolution",
+        "sig-node/5593-configure-the-max-crashloopbackoff-delay#does-enabling-the-feature-change-any-default-behavior"
+      ],
+      "chars": 31939,
+      "two_step_chars": 34910,
+      "baseline_chars": 193636,
+      "tokens_est": 8111,
+      "latency_ms": 42.4
+    },
+    {
+      "task": "b2-job-failindex-tests",
+      "budget": 4000,
+      "required": 6,
+      "recall_full": 0.16666666666666666,
+      "recall_listed": 0.6666666666666666,
+      "precision": 0.25,
+      "critical_full": 0.16666666666666666,
+      "missed": [
+        "sig-apps/3329-retriable-and-non-retriable-failures#evaluation",
+        "sig-apps/3329-retriable-and-non-retriable-failures#jobspec-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-completion",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#tracking-the-number-of-failures-per-index"
+      ],
+      "chars": 3912,
+      "two_step_chars": 16945,
+      "baseline_chars": 189865,
+      "tokens_est": 1118,
+      "latency_ms": 40.4
+    },
+    {
+      "task": "b2-job-failindex-tests",
+      "budget": 12000,
+      "required": 6,
+      "recall_full": 0.16666666666666666,
+      "recall_listed": 0.6666666666666666,
+      "precision": 0.3333333333333333,
+      "critical_full": 0.16666666666666666,
+      "missed": [
+        "sig-apps/3329-retriable-and-non-retriable-failures#evaluation",
+        "sig-apps/3329-retriable-and-non-retriable-failures#jobspec-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#failindex-action",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-completion"
+      ],
+      "chars": 11994,
+      "two_step_chars": 22807,
+      "baseline_chars": 189865,
+      "tokens_est": 3139,
+      "latency_ms": 40.5
+    },
+    {
+      "task": "b2-job-failindex-tests",
+      "budget": 32000,
+      "required": 6,
+      "recall_full": 0.5,
+      "recall_listed": 1.0,
+      "precision": 0.25,
+      "critical_full": 0.5,
+      "missed": [
+        "sig-apps/3329-retriable-and-non-retriable-failures#evaluation",
+        "sig-apps/3329-retriable-and-non-retriable-failures#jobspec-api",
+        "sig-apps/3850-backoff-limits-per-index-for-indexed-jobs#job-completion"
+      ],
+      "chars": 31993,
+      "two_step_chars": 41949,
+      "baseline_chars": 189865,
+      "tokens_est": 8139,
+      "latency_ms": 43.3
+    },
+    {
+      "task": "b3-sa-token-pull-verification",
+      "budget": 4000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.2,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-auth/4412-projected-service-account-tokens-for-kubelet-image-credential-providers#how-will-this-work-with-the-ensure-secret-pull-images-kep",
+        "sig-node/2535-ensure-secret-pulled-images#beta",
+        "sig-node/2535-ensure-secret-pulled-images#credential-verification-policies",
+        "sig-node/2535-ensure-secret-pulled-images#summary",
+        "sig-node/2535-ensure-secret-pulled-images#writing-to-the-cache"
+      ],
+      "chars": 3932,
+      "two_step_chars": 6506,
+      "baseline_chars": 122784,
+      "tokens_est": 1121,
+      "latency_ms": 40.1
+    },
+    {
+      "task": "b3-sa-token-pull-verification",
+      "budget": 12000,
+      "required": 5,
+      "recall_full": 0.2,
+      "recall_listed": 0.6,
+      "precision": 0.2,
+      "critical_full": 0.2,
+      "missed": [
+        "sig-node/2535-ensure-secret-pulled-images#beta",
+        "sig-node/2535-ensure-secret-pulled-images#credential-verification-policies",
+        "sig-node/2535-ensure-secret-pulled-images#summary",
+        "sig-node/2535-ensure-secret-pulled-images#writing-to-the-cache"
+      ],
+      "chars": 11995,
+      "two_step_chars": 20353,
+      "baseline_chars": 122784,
+      "tokens_est": 3137,
+      "latency_ms": 39.9
+    },
+    {
+      "task": "b3-sa-token-pull-verification",
+      "budget": 32000,
+      "required": 5,
+      "recall_full": 0.2,
+      "recall_listed": 0.8,
+      "precision": 0.1,
+      "critical_full": 0.2,
+      "missed": [
+        "sig-node/2535-ensure-secret-pulled-images#beta",
+        "sig-node/2535-ensure-secret-pulled-images#credential-verification-policies",
+        "sig-node/2535-ensure-secret-pulled-images#summary",
+        "sig-node/2535-ensure-secret-pulled-images#writing-to-the-cache"
+      ],
+      "chars": 31942,
+      "two_step_chars": 41162,
+      "baseline_chars": 122784,
+      "tokens_est": 8125,
+      "latency_ms": 47.0
+    },
+    {
+      "task": "b4-nftables-rollback-cleanup",
+      "budget": 4000,
+      "required": 5,
+      "recall_full": 0.2,
+      "recall_listed": 0.4,
+      "precision": 1.0,
+      "critical_full": 0.2,
+      "missed": [
+        "sig-network/3866-nftables-proxy#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-network/3866-nftables-proxy#tables",
+        "sig-network/3866-nftables-proxy#were-upgrade-and-rollback-tested-was-the-upgrade-downgrade-upgrade-path-tested",
+        "sig-network/3866-nftables-proxy#what-are-the-slis-service-level-indicators-an-operator-can-use-to-determine-the-health-of-the-service"
+      ],
+      "chars": 3963,
+      "two_step_chars": 5944,
+      "baseline_chars": 78568,
+      "tokens_est": 1104,
+      "latency_ms": 39.4
+    },
+    {
+      "task": "b4-nftables-rollback-cleanup",
+      "budget": 12000,
+      "required": 5,
+      "recall_full": 0.0,
+      "recall_listed": 0.8,
+      "precision": 0.0,
+      "critical_full": 0.0,
+      "missed": [
+        "sig-network/3866-nftables-proxy#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-network/3866-nftables-proxy#switching-between-kube-proxy-modes",
+        "sig-network/3866-nftables-proxy#tables",
+        "sig-network/3866-nftables-proxy#were-upgrade-and-rollback-tested-was-the-upgrade-downgrade-upgrade-path-tested",
+        "sig-network/3866-nftables-proxy#what-are-the-slis-service-level-indicators-an-operator-can-use-to-determine-the-health-of-the-service"
+      ],
+      "chars": 11949,
+      "two_step_chars": 18018,
+      "baseline_chars": 78568,
+      "tokens_est": 3101,
+      "latency_ms": 39.6
+    },
+    {
+      "task": "b4-nftables-rollback-cleanup",
+      "budget": 32000,
+      "required": 5,
+      "recall_full": 0.2,
+      "recall_listed": 1.0,
+      "precision": 0.07142857142857142,
+      "critical_full": 0.2,
+      "missed": [
+        "sig-network/3866-nftables-proxy#can-the-feature-be-disabled-once-it-has-been-enabled-ie-can-we-roll-back-the-enablement",
+        "sig-network/3866-nftables-proxy#tables",
+        "sig-network/3866-nftables-proxy#were-upgrade-and-rollback-tested-was-the-upgrade-downgrade-upgrade-path-tested",
+        "sig-network/3866-nftables-proxy#what-are-the-slis-service-level-indicators-an-operator-can-use-to-determine-the-health-of-the-service"
+      ],
+      "chars": 31993,
+      "two_step_chars": 37845,
+      "baseline_chars": 78568,
+      "tokens_est": 8112,
+      "latency_ms": 40.2
+    },
+    {
+      "task": "b5-pod-resize-metric-deprecation",
+      "budget": 4000,
+      "required": 3,
+      "recall_full": 0.3333333333333333,
+      "recall_listed": 1.0,
+      "precision": 0.3333333333333333,
+      "critical_full": 0.3333333333333333,
+      "missed": [
+        "sig-instrumentation/1209-metrics-stability/kubernetes-control-plane-metrics-stability#deprecation-lifecycle",
+        "sig-node/5419-pod-level-resources-in-place-resize#extended-metrics-from-kep-1287"
+      ],
+      "chars": 3959,
+      "two_step_chars": 10390,
+      "baseline_chars": 87803,
+      "tokens_est": 1104,
+      "latency_ms": 45.6
+    },
+    {
+      "task": "b5-pod-resize-metric-deprecation",
+      "budget": 12000,
+      "required": 3,
+      "recall_full": 0.6666666666666666,
+      "recall_listed": 1.0,
+      "precision": 0.4,
+      "critical_full": 0.6666666666666666,
+      "missed": [
+        "sig-instrumentation/1209-metrics-stability/kubernetes-control-plane-metrics-stability#deprecation-lifecycle"
+      ],
+      "chars": 11950,
+      "two_step_chars": 15154,
+      "baseline_chars": 87803,
+      "tokens_est": 3102,
+      "latency_ms": 45.7
+    },
+    {
+      "task": "b5-pod-resize-metric-deprecation",
+      "budget": 32000,
+      "required": 3,
+      "recall_full": 1.0,
+      "recall_listed": 1.0,
+      "precision": 0.2727272727272727,
+      "critical_full": 1.0,
+      "missed": [],
+      "chars": 31998,
+      "two_step_chars": 31998,
+      "baseline_chars": 87803,
+      "tokens_est": 8114,
+      "latency_ms": 45.8
+    }
+  ]
+}

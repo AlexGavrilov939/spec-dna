@@ -19,6 +19,7 @@ mod mv;
 mod parse;
 mod rank;
 mod repo;
+mod transcript;
 
 use crate::adapters::VERSION;
 use crate::diag::Severity;
@@ -34,13 +35,20 @@ Commands:
     check [--base <rev>] [--all]
         Reports the diagnostics that are new against the merge base of <rev>
         and HEAD (default: HEAD). With --all, it reports every diagnostic.
+        With --base, it reads tracked files only, as CI does.
     context <target>... [--path <file>]... [--budget <chars>] [--query <text>]
+            [--include-inactive]
         Assembles the sections that an agent needs for the targets. With
         --query, the sections that match the words of the text come first.
+        A superseded, retired or rejected document is only listed, unless
+        --include-inactive is set or a target names it.
     show <id>[#<anchor>]
         Prints a document, a section or a requirement.
     mv <from> <to>
         Moves a document, or moves <doc-id>#<key> to another document.
+    transcript <file or dir>... [--expect <id>]... [--format claude-code]
+        Reports token usage, tool calls and document reads per session and
+        episode of agent transcripts. It prints counts and ids only.
 
 Options:
     --json        Prints machine-readable output
@@ -62,6 +70,9 @@ struct Args {
     budget: Option<u32>,
     root: Option<String>,
     query: Option<String>,
+    include_inactive: bool,
+    expect: Vec<String>,
+    format: Option<String>,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -76,6 +87,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         budget: None,
         root: None,
         query: None,
+        include_inactive: false,
+        expect: Vec::new(),
+        format: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -95,10 +109,13 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--json" => a.json = true,
             "--all" => a.all = true,
             "--no-cache" => a.no_cache = true,
+            "--include-inactive" => a.include_inactive = true,
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
+            "--expect" => a.expect.push(value("--expect")?),
+            "--format" => a.format = Some(value("--format")?),
             "--budget" => {
                 let v = value("--budget")?;
                 a.budget = Some(
@@ -151,6 +168,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
+        "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
 }
@@ -291,25 +309,22 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         )));
     }
     // The base is the merge base of --base and HEAD, or HEAD. If there is no
-    // commit, the base is None.
+    // commit, the base is None. `--all` uses the same base: it changes only
+    // which diagnostics `check` prints and which errors fail it.
     let mut t = std::time::Instant::now();
-    let base_commit = if a.all {
-        None
-    } else {
-        match &a.base {
-            Some(rev) => {
-                let c = repo.git.commit(rev).ok_or_else(|| {
-                    Fatal::Config(format!(
-                        "base `{rev}` is not a commit here; fetch it first (a depth-1 fetch of the base commit is enough)"
-                    ))
-                })?;
-                Some(match repo.head_commit() {
-                    Some(h) => repo.git.merge_base(&c, &h).unwrap_or(c),
-                    None => c,
-                })
-            }
-            None => repo.head_commit(),
+    let base_commit = match &a.base {
+        Some(rev) => {
+            let c = repo.git.commit(rev).ok_or_else(|| {
+                Fatal::Config(format!(
+                    "base `{rev}` is not a commit here; fetch it first (a depth-1 fetch of the base commit is enough)"
+                ))
+            })?;
+            Some(match repo.head_commit() {
+                Some(h) => repo.git.merge_base(&c, &h).unwrap_or(c),
+                None => c,
+            })
         }
+        None => repo.head_commit(),
     };
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
@@ -319,7 +334,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             Some(c) => Snapshot::at(repo, c),
             None => Ok(Snapshot::empty()),
         });
-        let head = Snapshot::worktree(repo, &roots);
+        // A gate against `--base` reads tracked files only, as CI does
+        // (ADR 0001, amendments).
+        let head = Snapshot::worktree(repo, &roots, a.base.is_none());
         (
             head,
             base.join()
@@ -379,9 +396,23 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .num("warnings", warnings)
             .num("new_errors", new_errors)
             .num("new_warnings", new_warnings)
+            .num(
+                "requirements",
+                head.docs.iter().map(|d| d.reqs.len()).sum::<usize>(),
+            )
             .num("parsed", loaded.parsed)
             .num("cached", loaded.cached)
             .end();
+        let docs = head.docs.iter().map(|d| {
+            Obj::new()
+                .str("id", &d.id)
+                .str("path", &d.path)
+                .str("type", d.ty.name())
+                .opt_str("status", d.status.as_deref())
+                .num("chars", d.parsed.body_chars)
+                .num("requirements", d.reqs.len())
+                .end()
+        });
         println!(
             "{}",
             Obj::new()
@@ -391,6 +422,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .bool("ok", !failed)
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
+                .raw("documents", &json::array(docs))
                 .end()
         );
     } else {
@@ -399,15 +431,21 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 println!("{}", outcome.head[i].text());
             }
         }
-        let base_text = match (&base_commit, a.all) {
-            (_, true) => "all diagnostics".to_string(),
-            (Some(c), false) => format!("new against {}", &c[..c.len().min(12)]),
-            (None, false) => "no base commit, all are new".to_string(),
+        let n = |count: usize, what: &str| {
+            format!("{count} {what}{}", if count == 1 { "" } else { "s" })
         };
-        println!(
-            "spec-dna check: {} documents; {new_errors} errors and {new_warnings} warnings {base_text} ({errors} errors and {warnings} warnings in total)",
-            head.docs.len()
-        );
+        let total = format!("{} and {}", n(errors, "error"), n(warnings, "warning"));
+        let counts = match (&base_commit, a.all) {
+            (_, true) => total,
+            (Some(c), false) => format!(
+                "{} and {} against {} ({total} in total)",
+                n(new_errors, "new error"),
+                n(new_warnings, "new warning"),
+                &c[..c.len().min(12)]
+            ),
+            (None, false) => format!("{total} (no base commit, so all are new)"),
+        };
+        println!("spec-dna check: {} documents; {counts}", head.docs.len());
     }
     Ok(if failed { 1 } else { 0 })
 }
@@ -415,7 +453,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 fn load_head(repo: &Repo, a: &Args) -> Result<(config::Config, model::Corpus), Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
-    let snap = Snapshot::worktree(repo, &repo::root_paths(&cfg))?;
+    let snap = Snapshot::worktree(repo, &repo::root_paths(&cfg), true)?;
     let mut loaded = repo::load(repo, &cfg, &[&snap], !a.no_cache, false)?;
     Ok((cfg, loaded.corpora.remove(0)))
 }
@@ -452,6 +490,7 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         &paths,
         a.budget.unwrap_or(cfg.context_budget),
         query.as_ref(),
+        a.include_inactive,
     );
     print!("{}", context::render(&c, &repo.root, &asm, a.json));
     Ok(0)
@@ -492,5 +531,42 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             m.kind, m.from, m.to, m.alias
         );
     }
+    Ok(0)
+}
+
+fn transcript(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    if a.positional.is_empty() {
+        return Err(Fatal::Usage(
+            "`transcript` needs a transcript file or directory".into(),
+        ));
+    }
+    let files = transcript::collect_files(&a.positional).map_err(Fatal::Usage)?;
+    // Without a configured repository, the report has no document ids.
+    let loaded = match Repo::discover(cwd) {
+        Ok(repo) => match load_head(&repo, a) {
+            Ok((_, c)) => Some((repo.root, c)),
+            Err(Fatal::Config(_)) => None,
+            Err(e) => return Err(e),
+        },
+        Err(Fatal::Config(_)) => None,
+        Err(e) => return Err(e),
+    };
+    let expect: Vec<String> = a
+        .expect
+        .iter()
+        .map(|x| match &loaded {
+            Some((_, c)) => match c.resolve(x) {
+                model::Res::Found(d, _, _) => c.docs[d as usize].id.clone(),
+                _ => x.clone(),
+            },
+            None => x.clone(),
+        })
+        .collect();
+    let mut analysis = transcript::Analysis::new(
+        loaded.as_ref().map(|l| &l.1),
+        loaded.as_ref().map(|l| l.0.as_path()),
+    );
+    transcript::read_files(&files, a.format.as_deref(), &mut analysis).map_err(Fatal::Usage)?;
+    print!("{}", analysis.report(&expect, a.json));
     Ok(0)
 }

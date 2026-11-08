@@ -242,7 +242,10 @@ fn gating_is_relative_to_the_base() {
     // Errors that exist in the base do not fail the check.
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("0 errors and 0 warnings new against"), "{out}");
+    assert!(
+        out.contains("0 new errors and 0 new warnings against"),
+        "{out}"
+    );
     git(&r.dir, &["checkout", "-q", "-b", "feature"]);
     r.append(
         "docs/auth/session.md",
@@ -460,48 +463,73 @@ fn exit_codes() {
 }
 
 #[test]
-fn hard_budget_fails_only_when_newly_crossed() {
+fn hard_budget_is_an_error_for_new_and_growing_documents() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n[budgets.spec]\nsoft = 100\nhard = 200\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n[[roots]]\npath = \"lax\"\ndefault-type = \"spec\"\nstatus = \"active\"\nenforce-budgets = false\n[budgets.spec]\nsoft = 100\nhard = 200\n",
     );
     let words = |n: usize| "word ".repeat(n);
     r.write("docs/big.md", &format!("# Big\n\n{}\n", words(50)));
     r.write("docs/small.md", "# Small\n\nShort.\n");
-    r.commit("docs");
-    // The document is over the hard budget in the base. This is an error, but
-    // not a new one.
+    r.write("lax/wide.md", &format!("# Wide\n\n{}\n", words(50)));
+    // Without a base commit, every document is new.
     let (code, out, _) = r.run(&["check"]);
-    assert_eq!(code, 0, "{out}");
-    let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("docs/big.md:1: error SD702 budget-hard"),
+        out.contains("docs/big.md:1: error SD702 budget-hard: 258 characters, over the hard budget of 200 (a new document)"),
         "{out}"
     );
-    // If the document grows, it is a new warning, not an error.
-    r.append("docs/big.md", &format!("\n{}\n", words(10)));
+    assert!(
+        out.contains("lax/wide.md:1: warning SD704 budget-hard-kept"),
+        "{out}"
+    );
+    r.commit("docs");
+    // An overage that the base has and that does not grow is a warning, also
+    // with --all.
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("docs/big.md:1: warning SD704 budget-hard-kept: 258 characters, over the hard budget of 200 (no growth against the base)"),
+        "{out}"
+    );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("warning SD703 budget-grew"), "{out}");
-    assert!(!out.contains("error SD702"), "{out}");
-    // A document that goes over the hard budget in this change fails the check.
+    assert!(!out.contains("SD704"), "an old warning is not new: {out}");
+    // Net growth of a document over the hard budget is an error.
+    r.append("docs/big.md", &format!("\n{}\n", words(10)));
+    r.append("lax/wide.md", &format!("\n{}\n", words(10)));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/big.md:1: error SD702 budget-hard: 310 characters, over the hard budget of 200 (grew from 258 characters in the base)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("lax/wide.md:1: warning SD704 budget-hard-kept: 311 characters, over the hard budget of 200 (grew from 259 characters in the base; the root does not enforce budgets)"),
+        "{out}"
+    );
+    // A document that shrinks but stays over the budget is not an error.
+    git(&r.dir, &["checkout", "-q", "--", "."]);
+    r.write("docs/big.md", &format!("# Big\n\n{}\n", words(45)));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    // A document that goes over the hard budget in this change is an error.
     r.append("docs/small.md", &format!("\n{}\n", words(50)));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("docs/small.md:1: error SD702 budget-hard"),
+        out.contains("docs/small.md:1: error SD702 budget-hard: 268 characters, over the hard budget of 200 (16 characters in the base)"),
         "{out}"
     );
 }
 
 #[test]
-fn legacy_statuses_and_decision_sections_follow_the_root() {
+fn legacy_statuses_and_required_sections_follow_the_root() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\ndecision-sections = [\"Lösung\"]\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\nrequired-sections = { decision = [\"Lösung\"], spec = [\"Requirements\", \"Anforderungen\"] }\n",
     );
     r.write(
         "docs/cache.md",
@@ -510,6 +538,11 @@ fn legacy_statuses_and_decision_sections_follow_the_root() {
     r.write(
         "docs/cache-store.md",
         "---\ntype: decision\nstatus: signed-off\n---\n# Cache store\n\n## Kontext\n\nEin gemeinsamer Cache für [[cache]].\n\n## Lösung\n\nRedis.\n",
+    );
+    r.write("docs/notes.md", "# Notes\n\nNo requirements here.\n");
+    r.write(
+        "docs/de.md",
+        "# De\n\n## Anforderungen\n\n- **ttl**: The cache SHALL drop an entry after 60 seconds.\n",
     );
     r.write(
         "docs/old-store.md",
@@ -522,6 +555,7 @@ fn legacy_statuses_and_decision_sections_follow_the_root() {
     assert_eq!(
         found,
         [
+            "docs/notes.md:1: error SD305 section-missing: a spec needs a section headed `Requirements` or `Anforderungen`",
             "docs/old-store.md:1: error SD305 section-missing: a decision needs a section headed `Lösung`"
         ],
         "{out}"
@@ -609,5 +643,249 @@ fn query_ranks_matching_sections_first() {
     assert!(
         out.contains("\"query\":[\"lower\",\"restart\",\"backoff\"]"),
         "{out}"
+    );
+}
+
+#[test]
+fn legacy_requirements_without_a_colon_are_recognized() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
+    );
+    r.write(
+        "docs/orders.md",
+        "# Orders\n\n## Rules\n\n- **R-1** The API SHALL return the order id.\n- **R-2:** The client MAY cancel an open order.\n- **Note** a bold label is prose.\n",
+    );
+    r.write(
+        "docs/table.md",
+        "# Table\n\n| Key | Rule |\n| --- | --- |\n| R-3 | The API SHALL log. |\n",
+    );
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("{\"id\":\"orders\",\"path\":\"docs/orders.md\",\"type\":\"spec\",\"status\":\"active\",\"chars\":"),
+        "{out}"
+    );
+    assert!(out.contains(",\"requirements\":2}"), "{out}");
+    assert!(
+        out.contains("\"requirements\":2,"),
+        "the summary counts them: {out}"
+    );
+    assert!(
+        out.contains("\"code\":\"SD806\",\"name\":\"requirements-unrecognized\""),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "orders"]);
+    assert!(
+        out.starts_with("<!-- orders: 2 requirements -->\n"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "orders", "--json"]);
+    assert!(out.contains("\"requirements\":[\"R-1\",\"R-2\"]"), "{out}");
+    let (code, out, _) = r.run(&["show", "orders#R-1"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("- **R-1** The API SHALL return the order id."),
+        "{out}"
+    );
+}
+
+#[test]
+fn context_lists_inactive_dependencies() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n",
+    );
+    r.write(
+        "docs/app.md",
+        "---\ndepends-on: [old-store, store]\n---\n# App\n\n## Requirements\n\n- **save**: The app SHALL save each order.\n",
+    );
+    r.write(
+        "docs/old-store.md",
+        "---\nstatus: superseded\n---\n# Old store\n\n## Requirements\n\n- **disk**: The store SHALL write to local disk.\n",
+    );
+    r.write(
+        "docs/store.md",
+        "---\nsupersedes: [old-store]\n---\n# Store\n\n## Requirements\n\n- **db**: The store SHALL write to the database.\n",
+    );
+    r.commit("docs");
+    let (code, out, _) = r.run(&["context", "app"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("<!-- store#requirements h:"), "{out}");
+    assert!(!out.contains("local disk"), "{out}");
+    assert!(
+        out.contains("(depends): Old store [superseded; successor: `store`]\n"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["context", "app", "--json"]);
+    assert!(
+        out.contains("\"status\":\"superseded\",\"anchor\":\"old-store\""),
+        "{out}"
+    );
+    assert!(out.contains("\"successors\":[\"store\"]"), "{out}");
+    let (_, out, _) = r.run(&["context", "app", "--include-inactive"]);
+    assert!(out.contains("local disk"), "{out}");
+    // A target that names the document serves it.
+    let (_, out, _) = r.run(&["context", "old-store"]);
+    assert!(out.contains("local disk"), "{out}");
+}
+
+#[test]
+fn context_serves_requirement_sections_first() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
+    );
+    r.write(
+        "docs/pay.md",
+        "# Payments\n\nIntro.\n\n## Background\n\n- **Note**: a label, not a requirement.\n\n## Rules\n\n- **R-1** The service SHALL retry a failed payment once.\n\n## History\n\nOld text.\n\n## Limits\n\n- **R-2** The service SHALL refuse amounts over 10,000.\n",
+    );
+    r.write(
+        "docs/guide.md",
+        "---\ntype: guide\n---\n# Guide\n\n## First\n\nA.\n\n## Second\n\nB.\n",
+    );
+    r.commit("docs");
+    let (code, out, _) = r.run(&["context", "pay"]);
+    assert_eq!(code, 0);
+    let order: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("<!-- pay"))
+        .map(|l| l.split(' ').nth(1).unwrap())
+        .collect();
+    assert_eq!(order, ["pay#rules", "pay#limits", "pay#payments"], "{out}");
+    assert!(out.contains("- `pay#background` h:"), "{out}");
+    assert!(out.contains("- `pay#history` h:"), "{out}");
+    // A document without requirements keeps the heading order.
+    let (_, out, _) = r.run(&["context", "guide"]);
+    let order: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("<!-- guide"))
+        .map(|l| l.split(' ').nth(1).unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        ["guide#guide", "guide#first", "guide#second"],
+        "{out}"
+    );
+}
+
+#[test]
+fn base_gate_reads_tracked_files_only() {
+    let r = Repo::fixture("corpus");
+    r.write("docs/guides/draft.md", "# Draft\n\nSee [gone](gone.md).\n");
+    // The working-tree check sees an untracked document.
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("docs/guides/draft.md:3: error SD102"), "{out}");
+    // A gate against a base reads tracked files only, as CI does.
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("draft.md"), "{out}");
+    git(&r.dir, &["add", "docs/guides/draft.md"]);
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("docs/guides/draft.md:3: error SD102"), "{out}");
+}
+
+#[test]
+fn transcript_reports_counts_and_ids_only() {
+    let r = Repo::fixture("corpus");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transcripts");
+    let dir = dir.to_str().unwrap();
+    let (code, out, err) = r.run(&[
+        "transcript",
+        dir,
+        "--expect",
+        "auth/tokens",
+        "--expect",
+        "ADR-1",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let expected = [
+        "spec-dna transcript: 1 session, 2 agents, 3 episodes, 10 requests\n",
+        // Streamed lines repeat the usage of one request, and a forked
+        // subagent repeats a request and a tool call of its parent. Each
+        // counts once. A `<synthetic>` message is not a request.
+        "  10 requests; tokens: input 26, cache creation 1700, cache read 10930, output 185\n",
+        "  11 tool calls (Read 5, Bash 4, Edit 1, Grep 1); 1 error; 1 search\n",
+        "    ADR-1-session-store: 1 read, full, via read\n",
+        // A read with a line range gives sections. spec-dna output gives the
+        // sections that it served, and only ids that are documents.
+        "    auth/session: 2 reads, auth/session#requirements, via read+spec-dna\n",
+        // One of the 2 reads covers the front matter only.
+        "    auth/tokens: 2 reads, full, via read+shell\n",
+        // A shell path relative to the working directory of the agent.
+        "    billing/invoice: 1 read, full, via shell\n",
+        "    guides/logging: 1 read, guides/logging#logging, via spec-dna\n",
+        "    document edits: auth/session 1\n",
+        "  expected: {\"read\":2,\"of\":2,\"first_relevant_ms\":4000}\n",
+        // A compaction summary does not start an episode.
+        "  episode 1 (main, human), 60 s:\n",
+        "  episode 2 (a1, human), 2 s:\n",
+        "  episode 3 (main, task-notification), 6 s:\n",
+    ];
+    for e in expected {
+        assert!(out.contains(e), "missing {e:?} in\n{out}");
+    }
+    assert!(!out.contains("ghost/missing"), "{out}");
+    // A workflow journal in the directory is not a transcript: a warning only.
+    assert!(
+        err.contains("journal.jsonl: no transcript adapter reads this file"),
+        "{err}"
+    );
+    // A file that two arguments give is read once.
+    let file = format!("{dir}/session-1.jsonl");
+    let (_, twice, _) = r.run(&[
+        "transcript",
+        dir,
+        &file,
+        "--expect",
+        "auth/tokens",
+        "--expect",
+        "ADR-1",
+    ]);
+    assert_eq!(twice, out);
+    let (code, json, _) = r.run(&["transcript", dir, "--json"]);
+    assert_eq!(code, 0);
+    assert!(json.contains("\"documents_mapped\":true"), "{json}");
+    assert!(
+        json.contains(
+            "\"tokens\":{\"input\":26,\"cache_creation\":1700,\"cache_read\":10930,\"output\":185}"
+        ),
+        "{json}"
+    );
+    assert!(json.contains("\"spec_tokens_estimated\":"), "{json}");
+    // The transcripts hold secret text in prompts, commands, file contents,
+    // paths and answers. None of it reaches the output.
+    for text in [&out, &json] {
+        assert!(!text.contains("SECRET"), "{text}");
+        assert!(!text.contains("/work/export"), "{text}");
+    }
+    // Outside a configured repository, file reads are not mapped. The ids in
+    // spec-dna output still count.
+    let empty = Repo::empty();
+    let (code, out, _) = empty.run(&["transcript", dir]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("no spec-dna.toml, so file reads are not mapped to documents"),
+        "{out}"
+    );
+    assert!(out.contains("other files: 4 reads"), "{out}");
+    assert!(!out.contains("SECRET"), "{out}");
+    assert!(
+        !out.contains("via read") && !out.contains("via shell"),
+        "{out}"
+    );
+    assert_eq!(empty.run(&["transcript", "no/such/file.jsonl"]).0, 2);
+    empty.write("x.jsonl", "{\"not\":\"a transcript\"}\n");
+    let (code, _, err) = empty.run(&["transcript", "x.jsonl"]);
+    assert_eq!(code, 2);
+    assert!(
+        err.contains("no transcript adapter reads this file"),
+        "{err}"
     );
 }

@@ -30,6 +30,7 @@ spec-dna context auth/session --query "renew a session after a password change"
 spec-dna show auth/session#token-expiry
 spec-dna mv auth/session auth/sessions          # the old id becomes an alias
 spec-dna mv auth/session#token-expiry auth/tokens
+spec-dna transcript ~/.claude/projects/<project> --expect auth/session
 spec-dna --help                     # commands and options (-h); --version (-V) prints the version
 ```
 
@@ -38,10 +39,11 @@ Every command accepts `--json`. spec-dna does not use the network. It reads docu
 | Command | What it does |
 | --- | --- |
 | `init [--root <dir>]` | Writes `spec-dna.toml` if it is missing. Generates the adapters: a block in `AGENTS.md`, an `@AGENTS.md` import in `CLAUDE.md` (only if the file has no such import), and the skill `.claude/skills/spec-dna/SKILL.md`. Each adapter has the generator version and a hash. `check` reports a manual edit or an old version. A second run updates the adapters. |
-| `check [--base <rev>] [--all]` | Runs the controls of ADR 0001 on the working tree. Without `--all`, it reports only the diagnostics that are new against the base. The base is the merge base of `<rev>` and `HEAD`, or `HEAD` itself. Codes: [docs/diagnostics.md](docs/diagnostics.md). |
-| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>]` | Prints the sections that an agent needs. First come the entry documents (or sections) and the documents whose `applies-to` matches an entry or a path. Then come the `depends-on` targets at depth 1, the linked accepted decisions as summaries, and the rest. If a section does not fit the budget, the command lists its id, hash and size. Every section has its id and hash. With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. This option is for long documents without requirement lists. |
-| `show <id>[#<anchor>]` | Prints a document, a section with its subsections, or one requirement, with ids and hashes. |
+| `check [--base <rev>] [--all]` | Runs the controls of ADR 0001 on the working tree. Without `--all`, it reports only the diagnostics that are new against the base. The base is the merge base of `<rev>` and `HEAD`, or `HEAD` itself. `--all` uses the same base, but it reports every diagnostic and fails on any error. Without `--base`, `check` also reads untracked documents that git does not ignore. With `--base`, it reads tracked files only, as CI does. `--json` also lists each document with its number of recognized requirements. Codes: [docs/diagnostics.md](docs/diagnostics.md). |
+| `context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]` | Prints the sections that an agent needs. First come the entry documents (or sections) and the documents whose `applies-to` matches an entry or a path. Then come the `depends-on` targets at depth 1, the linked accepted decisions as summaries, and the rest. In a document with requirements, the requirement sections come first, then the title section; the other sections are listed. A superseded, retired or rejected document is listed with its status and successor, but not served, unless a target names it or `--include-inactive` is set. If a section does not fit the budget, the command lists its id, hash and size. Every section has its id and hash. With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. This option is for long documents without requirement lists. |
+| `show <id>[#<anchor>]` | Prints a document, a section with its subsections, or one requirement, with ids and hashes. For a spec or contract, it also prints the number of recognized requirements (`--json`: their keys). |
 | `mv <from> <to>` | Moves a document (`git mv`), adds the old id to its `aliases`, and rewrites relative links to the document. `mv <doc-id>#<key> <doc-id>` moves one requirement and adds an inline `<!-- aliases: ... -->` marker. |
+| `transcript <file or dir>... [--expect <id>]... [--format <name>]` | Reads agent transcripts (Claude Code JSONL first). For each session and episode, it reports input, cache-creation, cache-read and output tokens, tool calls, and the documents and sections that the agent read. It prints counts and ids only, never prompt, command or file text. See [docs/transcript.md](docs/transcript.md). |
 
 A target is a document id, an alias such as `ADR-12`, `<id>#<anchor or key>`, or a repository path.
 
@@ -93,7 +95,7 @@ Transitive dependencies of the crates above:
 | `serde_core`, `serde_spanned`, `toml_datetime`, `toml_parser`, `winnow` (2 versions) | `toml`: value model, spans, date values and the parser |
 | `tinyvec` | `unicode-normalization`: small buffers for combining characters |
 
-This repository has its own code, without dependencies, for argument parsing, front matter (a YAML subset), globs, JSON output, parallelism and git access. Git access uses the `git` command line ([ADR 0002](docs/adr/0002-language.md)).
+This repository has its own code, without dependencies, for argument parsing, front matter (a YAML subset), globs, JSON output and input, parallelism and git access. Git access uses the `git` command line ([ADR 0002](docs/adr/0002-language.md)).
 
 ## Repository layout
 
