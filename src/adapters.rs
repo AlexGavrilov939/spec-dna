@@ -32,8 +32,10 @@ const SKILL_BODY: &str = "# spec-dna
     Each section has its id and hash. For a long document without requirements, add `--query \"<the task in plain words>\"`.
 3. If the output lists a section as not loaded, run `spec-dna show <id>#<anchor>` to read that section.
 4. Keep the documents true. If your change makes a spec, contract or guide wrong, change the document in the same commit. Cite a requirement as `<doc-id>#<key>`. Write a new requirement as `- **<key>**: <sentence>`. Use a lowercase slug as the key. In the sentence, use an EARS pattern with an uppercase BCP 14 keyword.
-5. Write a new decision in a new file. Do not change the text of an accepted decision. To replace it, write a new decision with `supersedes: [<old id>]`, and set the status of the old decision to `superseded`.
-6. Before you commit, run `spec-dna check`. Fix every error. SD606 and SD607 warn that a document cites a path or an identifier that your change removed: update that document.
+5. Write a new decision in a new file. Do not change the text of an accepted decision outside its amendment sections (default heading `## Amendments`).
+    - Amend the decision if its outcome stays: a new detail, a limit, a fix after an incident, or a new path or identifier of the code that it cites. Add the text under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
+    - Supersede the decision if its outcome changes or is replaced: write a new decision with `supersedes: [<old id>]`, and set the status of the old decision to `superseded`.
+6. Before you commit, run `spec-dna check`. Fix every error. SD606 and SD607 warn that a document cites a path or an identifier that your change removed: update that document. For an accepted decision, name the new path or identifier in its amendment section.
 7. Move a document or a requirement only with `spec-dna mv`. Thus its old id still resolves.
     - To move a document, run `spec-dna mv <old-id> <new-id>`.
     - To move a requirement to another spec, run `spec-dna mv <doc-id>#<key> <doc-id>`.
@@ -313,6 +315,29 @@ mod tests {
     fn detects_an_existing_import() {
         assert!(imports_agents("# X\n@AGENTS.md\n"));
         assert!(!imports_agents("# X\n"));
+    }
+
+    #[test]
+    fn the_skill_says_when_to_amend_and_when_to_supersede() {
+        // An agent read "amend the decision" as a supersede (defect D2 of
+        // 0.1.1), and it learned the amendment section only from SD405.
+        let skill = skill_file();
+        assert!(
+            skill.contains("Amend the decision if its outcome stays"),
+            "{skill}"
+        );
+        assert!(
+            skill.contains("under `## Amendments` of the same file"),
+            "{skill}"
+        );
+        assert!(
+            skill.contains("Supersede the decision if its outcome changes"),
+            "{skill}"
+        );
+        assert!(
+            skill.contains("For an accepted decision, name the new path or identifier in its amendment section."),
+            "{skill}"
+        );
     }
 
     #[test]

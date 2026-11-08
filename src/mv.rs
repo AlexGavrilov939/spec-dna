@@ -20,7 +20,13 @@ pub struct Moved {
 
 /// Moves one document, or requirements and sections (`split.rs`). The last
 /// argument is the destination.
-pub fn run(repo: &Repo, config: &Config, c: &Corpus, args: &[String]) -> Result<Moved, Fatal> {
+pub fn run(
+    repo: &Repo,
+    config: &Config,
+    c: &Corpus,
+    base: Option<&Corpus>,
+    args: &[String],
+) -> Result<Moved, Fatal> {
     let (sources, to) = args.split_at(args.len() - 1);
     let to = &to[0];
     if let [from] = sources
@@ -30,7 +36,7 @@ pub fn run(repo: &Repo, config: &Config, c: &Corpus, args: &[String]) -> Result<
             .ok_or_else(|| Fatal::NotFound(format!("`{from}` names no document")))?;
         return move_document(repo, config, c, d, to);
     }
-    let s = crate::split::run(repo, config, c, sources, to)?;
+    let s = crate::split::run(repo, config, c, base, sources, to)?;
     let one = s.moved.len() == 1 && s.sections == 0;
     let (kind, from, to) = if one {
         let key = s.moved[0].rsplit('#').next().unwrap_or("");
@@ -42,7 +48,7 @@ pub fn run(repo: &Repo, config: &Config, c: &Corpus, args: &[String]) -> Result<
         kind,
         from,
         to,
-        alias: s.moved.join(", "),
+        alias: s.aliases.join(", "),
         files: s.files.clone(),
         split: Some(s),
     })

@@ -237,3 +237,12 @@ The owner gave these rulings after checkpoint 5. These changes apply.
 - Preservation check. Before `mv` writes a file, it compares the result with the current tree. The requirement hashes must be the same multiset, and every requirement id must resolve to a requirement with the same hash. The frozen text of every accepted decision must not change, and no error diagnostic can be new. If a check fails, `mv` changes no file.
 - Missing colon. In a spec or contract, a list item that starts with a bold slug key and has a BCP 14 keyword, but no colon after the key, gives SD807 (warning). The item is not a requirement.
 - Drift severity. SD606 and SD607 stay warnings by default. A root can set `drift-severity` to `off`, `warning` or `error`.
+
+### 2026-11-08: rulings after checkpoint 7
+
+The owner gave these rulings after checkpoint 7. A playground product of 12 agent tasks found 5 defects in 0.1.1. These changes apply.
+
+- Aliases of a batch split. This rule replaces "each moved requirement gets an alias marker with its old global id" in the amendment "batch split". A moved requirement gets an alias marker only if its old id is in the base tree (`HEAD`). A key that is new in the change has no old id that a reference can use.
+- Preservation hash. The preservation check of `mv` compares the requirement text without link destinations, because the move rewrites links. A refused move names each requirement whose text would change, and the reason.
+- Drift of an accepted decision. The frozen text of an accepted decision cannot change (SD405). When it cites a removed path or identifier, an amendment section of the decision that cites new code clears SD606 and SD607 for that decision. New code is a path that the head tree has (the rename target, if git found one), or an identifier that the code has, that the base text of the decision does not cite.
+- Text output of `check`. The errors come first, then the drift warnings, then the other warnings. The prose lint warnings (SD801 to SD805) are one count for each code, and `--lint` lists them. The JSON output lists all diagnostics.

@@ -7,15 +7,15 @@ This page gives the steps from install to uninstall. You need git, and Rust 1.88
 Build the version that you want from its tag (phase 1 of [ADR 0003](adr/0003-distribution.md)):
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.1.1 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.1.2 spec-dna
 spec-dna --version
 ```
 
 In phase 1, a team often installs from a local or a private clone. Give its git URL to `--git`. A plain path does not work. Keep the package name `spec-dna` at the end, because the repository has other packages.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.1.1 spec-dna            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.1.1 spec-dna  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.1.2 spec-dna            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.1.2 spec-dna  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source, and the CI job below uses it.
@@ -67,9 +67,13 @@ spec-dna mv loans#loan-period policy    # move a requirement into the spec `poli
 spec-dna mv loans#holds loans#fines circulation  # split: move 2 sections into a new spec
 ```
 
-`check` warns when a change removes a path or an identifier that a document cites (SD606, SD607). Update that document in the same change. To make these warnings errors in a root, set `drift-severity = "error"`.
+`check` warns when a change removes a path or an identifier that a document cites (SD606, SD607). Update that document in the same change. For an accepted decision, do not change its text: add an amendment section (`## Amendments`) that names the new path or identifier. To make these warnings errors in a root, set `drift-severity = "error"`.
 
-When `check` reports SD702 (a document over its hard budget), split the document with one `mv`: name the keys or the sections, and a new or an existing spec. The old ids stay as aliases, and a preservation check runs before any file changes.
+Amend an accepted decision when its outcome stays: add a detail, a limit or a new code path under `## Amendments`. Supersede it when its outcome changes: write a new decision with `supersedes: [<old id>]` and set the old one to `superseded`.
+
+`check` lists errors and drift warnings first. The prose lint warnings (SD801 to SD805) are one count for each code; `spec-dna check --lint` lists them.
+
+When `check` reports SD702 (a document over its hard budget), split the document with one `mv`: name the keys or the sections, and a new or an existing spec. The old ids of `HEAD` stay as aliases (a key that is new in the change needs none), and a preservation check runs before any file changes.
 
 ## CI
 

@@ -59,4 +59,6 @@ SD606 and SD607 use the code citations of a document ([ADR 0001](adr/0001-inform
 
 An identifier matches a file if it occurs in the file as a whole word, also in a comment or a string. A citation that still resolves after the change, such as a file name after a move, gives no SD606.
 
+An accepted decision cannot change its frozen text (SD405). Thus, when the frozen text of an accepted decision cites a removed path or identifier, an amendment section of the decision clears SD606 and SD607 for that decision if it cites new code: a path that the head tree has (the rename target, if git found one) or an identifier that the code has, and that the base text of the decision does not cite. A citation of removed code in the amendment section itself still gives a warning, because that text can change.
+
 The `drift-severity` of the root sets the severity of SD606 and SD607 (default `warning`), or turns them off. Only current documents give SD606 and SD607. A superseded, retired or rejected document, a `done` change and a note can cite code that is gone.
