@@ -344,25 +344,24 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // The `covers:` tags of the test files, for the evidence checks.
     if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
     {
-        loaded.corpora[0].covers = evidence::load(repo, &cfg, None, a.base.is_none())?;
-        // The base has the same tags if no test file changed: the same
-        // paths with the same blobs, and no file of the working tree.
-        let tests = |s: &Snapshot| -> Vec<(String, Option<String>)> {
-            s.files
-                .iter()
-                .filter(|e| cfg.is_test_file(&e.path))
-                .map(|e| (e.path.clone(), e.blob.clone()))
-                .collect()
-        };
-        let head_tests = tests(&head_snap);
-        let same = head_tests.iter().all(|t| t.1.is_some()) && head_tests == tests(&base_snap);
-        let head_covers = loaded.corpora[0].covers.clone();
-        if let (Some(b), Some(commit)) = (loaded.corpora.get_mut(1), &base_commit) {
-            b.covers = if same {
-                head_covers
-            } else {
-                evidence::load(repo, &cfg, Some(commit), false)?
-            };
+        // The working tree and the base, in parallel. The snapshots do not
+        // tell whether a test file outside the document roots changed, so
+        // both trees are read.
+        let (head_covers, base_covers) = std::thread::scope(|s| {
+            let base = s.spawn(|| match &base_commit {
+                Some(c) => evidence::load(repo, &cfg, Some(c), false).map(Some),
+                None => Ok(None),
+            });
+            let head = evidence::load(repo, &cfg, None, a.base.is_none());
+            (
+                head,
+                base.join()
+                    .unwrap_or_else(|_| Err(Fatal::Io("reading the base tests failed".into()))),
+            )
+        });
+        loaded.corpora[0].covers = head_covers?;
+        if let (Some(b), Some(covers)) = (loaded.corpora.get_mut(1), base_covers?) {
+            b.covers = covers;
         }
         repo::trace("evidence", &mut t);
     }
