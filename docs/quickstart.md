@@ -11,7 +11,7 @@ cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v
 spec-dna --version
 ```
 
-To build from a local clone, give its path to `--git`.
+To build from a local clone, give its URL to `--git`, for example `--git file:///home/me/spec-dna`. A plain path does not work. Keep the package name `spec-dna` at the end: the repository has other packages.
 
 ## Start
 
@@ -20,7 +20,7 @@ Run these commands in the root of your git repository:
 ```sh
 spec-dna init                # or: spec-dna init --root <documents directory>
 spec-dna check
-git add spec-dna.toml AGENTS.md CLAUDE.md .claude/skills/spec-dna
+git add spec-dna.toml CLAUDE.md .claude/skills/spec-dna   # and AGENTS.md, if init wrote it
 git commit -m "build: adopt spec-dna"
 ```
 
@@ -30,7 +30,7 @@ git commit -m "build: adopt spec-dna"
 - One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` before a change and `spec-dna check` before a commit. On an existing project, `init` adds only this line. It never imports other files.
 - The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
 
-`init` prints the bytes that it adds to the prompt prefix of each agent request.
+`init` prints the bytes that it adds to the prompt prefix of each agent request, and the `git add` command for the files that it wrote.
 
 ## Write documents
 
@@ -46,7 +46,7 @@ The id of a document is its path under the root, without `.md`: `docs/loans.md` 
 The code is in `src/library/loans.py` (`checkout_book()`).
 ```
 
-For a decision, set `type: decision` and `status: accepted` in the front matter, and write a `## Decision Outcome` section. [ADR 0001](adr/0001-information-model.md) gives the types and their states.
+Set another type in the front matter: `type: contract`, `guide`, `decision`, `change` or `note`. For a decision, also set `status: accepted` and write a `## Decision Outcome` section. [ADR 0001](adr/0001-information-model.md) gives the types and their states.
 
 ## Daily use
 
@@ -56,7 +56,7 @@ spec-dna context loans                  # a document, its dependencies and its d
 spec-dna show loans#loan-period         # one section or requirement
 spec-dna check                          # before a commit: exit 1 on a new error
 spec-dna mv loans circulation/loans     # move a document; the old id stays as an alias
-spec-dna mv loans#loan-period policy    # move a requirement into the spec `policy`
+spec-dna mv loans#loan-period policy    # move a requirement into the existing spec `policy`
 ```
 
 `check` warns when a change removes a path or an identifier that a document cites (SD606, SD607). Update that document in the same change.
