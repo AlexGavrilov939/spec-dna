@@ -16,4 +16,16 @@ docs/notes/research.md:1: warning SD701 budget-soft: 401 characters, over the so
 warning SD802 ears-pattern: 1 in docs/auth/tokens.md (`check --lint` lists them)
 warning SD804 vague-term: 2 in docs/auth/session.md (`check --lint` lists them)
 warning SD805 passive-voice: 1 in docs/auth/session.md (`check --lint` lists them)
+SD101 fix: Refer to an existing id, alias or `id#key`. As an alternative, add the old id to the `aliases` of the target.
+SD102 fix: Fix the link target. The target must be a file or a directory that git tracks, with the exact case.
+SD103 fix: Fix the `verified-by` path. The path must exist in the git tree.
+SD201 fix: Give each document a unique id. Remove the alias from all documents except one.
+SD203 fix: Use a slug key (groups of lowercase letters and digits, with a hyphen between groups). As an alternative, add the legacy pattern to `legacy-keys`.
+SD305 fix: Add the required section heading.
+SD402 fix: Name this id in the `supersedes` field of an active (or accepted) successor.
+SD601 fix: Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.
+SD602 fix: Link to an existing heading anchor or requirement key.
+SD603 fix: A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.
+SD604 fix: Plan a move to the successor of the deprecated document.
+SD701 fix: Split the document or move detail into linked documents.
 spec-dna check: 10 documents; 10 errors and 9 warnings

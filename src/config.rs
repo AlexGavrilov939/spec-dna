@@ -386,7 +386,9 @@ impl Config {
             max_words = f.opt_u32("max-words")?.unwrap_or(max_words);
             f.done()?;
         }
-        let mut context_budget = 12_000;
+        // 8,000 characters (about 2,000 tokens): every later request of an
+        // agent carries the output again.
+        let mut context_budget = 8_000;
         if let Some(v) = t.take("context") {
             let tbl = v.as_table().ok_or("`context` must be a table")?;
             let mut f = Fields::new(tbl, "context.");

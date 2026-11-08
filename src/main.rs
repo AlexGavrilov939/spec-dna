@@ -506,6 +506,17 @@ fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
             code.name()
         ));
     }
+    // The fix of each listed code, once, so that an agent needs no lookup.
+    let mut fixes: Vec<Code> = Vec::new();
+    for d in diags {
+        if (lint || !d.code.is_prose_lint()) && !fixes.contains(&d.code) {
+            fixes.push(d.code);
+        }
+    }
+    fixes.sort();
+    for code in fixes {
+        out.push(format!("{} fix: {}", code.code(), code.fix()));
+    }
     out
 }
 

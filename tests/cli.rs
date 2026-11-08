@@ -352,7 +352,7 @@ fn lifecycle_rules_compare_base_and_head() {
     r.append(adr, "\n## Amendments\n\n### Cookie scope\n\nThe gateway MUST set the cookie on the parent domain.\n\n### Typo\n\nFixed a typo.\n");
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    let warnings: Vec<&str> = out.lines().filter(|l| l.contains("SD605")).collect();
+    let warnings: Vec<&str> = out.lines().filter(|l| l.contains(" SD605")).collect();
     assert_eq!(warnings.len(), 1, "{out}");
     assert!(
         warnings[0].contains(":16: warning SD605 amendment-outcome"),
@@ -385,7 +385,7 @@ fn localized_amendments_are_not_frozen_text() {
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    let warnings: Vec<&str> = out.lines().filter(|l| l.contains("SD605")).collect();
+    let warnings: Vec<&str> = out.lines().filter(|l| l.contains(" SD605")).collect();
     assert_eq!(warnings.len(), 1, "{out}");
     assert!(warnings[0].contains("adr/d1.md:14: warning SD605"), "{out}");
     // `context` serves the amendments with the outcome of a linked decision.
@@ -522,7 +522,7 @@ fn adapters_are_checked() {
     r.write("CLAUDE.md", "@AGENTS.md\n");
     r.run(&["init"]);
     let agents = r.read("AGENTS.md");
-    assert!(agents.starts_with("# Rules\n\nOwn text stays.\n\nBefore you change a file"));
+    assert!(agents.starts_with("# Rules\n\nOwn text stays.\n\nIf a task edits code or docs"));
     assert_eq!(agents.lines().count(), 5);
     assert_eq!(
         r.read("CLAUDE.md"),
@@ -539,7 +539,7 @@ fn adapters_are_checked() {
     r.write(
         "AGENTS.md",
         &r.read("AGENTS.md")
-            .replace("Before you commit", "Before you push"),
+            .replace("Before a commit", "Before a push"),
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
@@ -1838,16 +1838,22 @@ fn check_lists_errors_and_drift_before_the_prose_lint() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 4, "{out}");
+    assert_eq!(lines.len(), 6, "{out}");
     assert!(lines[0].contains("error SD102"), "{out}");
     assert!(lines[1].contains("warning SD607"), "{out}");
     assert_eq!(
         lines[2],
         "warning SD805 passive-voice: 12 in docs/imported.md (`check --lint` lists them)"
     );
-    assert!(lines[3].starts_with("spec-dna check: "), "{out}");
+    // The fix of each listed code follows, once.
     assert!(
-        lines[3].contains("13 new warnings"),
+        lines[3].starts_with("SD102 fix: Fix the link target."),
+        "{out}"
+    );
+    assert!(lines[4].starts_with("SD607 fix: "), "{out}");
+    assert!(lines[5].starts_with("spec-dna check: "), "{out}");
+    assert!(
+        lines[5].contains("13 new warnings"),
         "the count is the same: {out}"
     );
     let (_, out, _) = r.run(&["check", "--lint"]);
