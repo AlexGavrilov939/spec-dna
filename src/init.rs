@@ -89,17 +89,6 @@ pub struct Plan {
     pub kept_budgets: Vec<String>,
 }
 
-/// The types that a new project gets by default.
-const DEFAULT_TYPES: [DocType; 7] = [
-    DocType::Spec,
-    DocType::Guide,
-    DocType::Decision,
-    DocType::Invariant,
-    DocType::Runbook,
-    DocType::Incident,
-    DocType::Reference,
-];
-
 /// The roots of a new project: one mixed root. `spec-dna new` puts each type
 /// into its own namespace there (`decisions/<id>`), so that the ids of
 /// different types cannot clash.
@@ -148,11 +137,9 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
     let layout = rows.is_empty();
     let docs_root = root.unwrap_or("docs").trim_matches('/');
     let docs_root = if docs_root.is_empty() { "." } else { docs_root };
-    let types: Vec<DocType> = if layout {
-        DEFAULT_TYPES.to_vec()
-    } else {
-        facts.types.clone()
-    };
+    // Every type by default: a list that leaves out a type makes each
+    // document of that type an error, so a narrower list is the user's choice.
+    let types: Vec<DocType> = DocType::ALL.to_vec();
     let mut adapters_default = vec![Adapter::Skill];
     let agents = facts.agent_files.iter().any(|f| f == "AGENTS.md");
     let claude = facts.agent_files.iter().any(|f| f == "CLAUDE.md");
@@ -1040,7 +1027,15 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
     plan.profile =
         Profile::from_name(&p).ok_or(format!("profile `{p}`: use lite, standard or strict"))?;
 
-    io.say(&format!("    Types: {}.", DocType::names()));
+    let found: Vec<String> = type_names(&facts.types);
+    io.say(&format!(
+        "    Types in use: {}. A shorter list makes each document of another type an error.",
+        if found.is_empty() {
+            "none yet".to_string()
+        } else {
+            list(&found)
+        }
+    ));
     let t = io.line("2/8 Knowledge types", &list(&type_names(&plan.types)));
     plan.types = parse_types(&words(&t))?;
     apply_types(plan, root);
@@ -1624,8 +1619,8 @@ mod tests {
         let cfg = Config::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
         assert_eq!(cfg.roots.len(), 1);
         assert_eq!(cfg.roots[0].path, "docs");
-        assert_eq!(cfg.types.len(), 7);
-        assert!(!cfg.allows(DocType::Contract));
+        assert!(cfg.types.is_empty(), "every type by default");
+        assert!(cfg.allows(DocType::Contract));
         assert_eq!(
             cfg.roots[0].required_sections[DocType::Decision as usize],
             [["Решение", "Decision Outcome", "Decision"]]

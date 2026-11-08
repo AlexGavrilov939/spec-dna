@@ -52,7 +52,7 @@ codes! {
     KeyDuplicate = "SD204", "key-duplicate", Error, "Rename one of the requirements. The keys in a document must be unique.";
     FrontMatterSyntax = "SD301", "front-matter-syntax", Error, "Use the front matter subset: `key: value` lines, where each value is a string or a list of strings.";
     FrontMatterField = "SD302", "front-matter-field", Error, "Give the field a string or a list of strings.";
-    TypeInvalid = "SD303", "type-invalid", Error, "Use one of these types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference. The type must match the type of the root.";
+    TypeInvalid = "SD303", "type-invalid", Error, "Use a type of the root and of the `types` list of spec-dna.toml (without the list: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference), or add the type to the list.";
     StatusInvalid = "SD304", "status-invalid", Error, "Set a `status` that the document type allows.";
     SectionMissing = "SD305", "section-missing", Error, "Add the required section heading.";
     StatusTransition = "SD401", "status-transition", Error, "A status can only move forward. To return to an earlier status, write a new document.";

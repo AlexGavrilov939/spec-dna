@@ -42,7 +42,7 @@ Detection reads only. It uses no network.
 | # | Question | Default |
 | --- | --- | --- |
 | 1 | The profile: `lite`, `standard` or `strict` ([profiles.md](profiles.md)) | `standard` |
-| 2 | The knowledge types of the project | The detected types; a new project gets spec, guide, decision, invariant, runbook, incident and reference |
+| 2 | The knowledge types of the project. A shorter list writes `types` into `spec-dna.toml`: then a document of another type is an error | Every type (no `types` key). The question shows the detected types |
 | 3 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 4 | The normative language and the heading aliases: `en; outcome: Решение; amendments: Поправки` | The detected aliases |
 | 5 | The mapping: each detected root, to accept (Enter), to drop (`drop`), or to edit (`type=spec status=active exclude=a/**,b.md`) | Accept |

@@ -2183,7 +2183,6 @@ fn init_detects_a_brownfield_repository() {
     let (code, out, err) = r.run(&["init", "--dry-run", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     for want in [
-        "types = [\"spec\", \"guide\", \"decision\", \"note\"]",
         "[evidence]\ntests = [\"**/tests/**\"]",
         "path = \"docs\"\ntype = \"mixed\"\ndefault-type = \"guide\"\nstatus = \"active\"\nstatus-map = { current = \"active\" }\n",
         "path = \"docs/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nexclude = [\"ADR-*-implementation-plan.md\", \"README.md\"]\nlegacy-ids = [\"ADR-{n}\"]\nrequired-sections = { decision = [\"Решение\", \"Decision Outcome\", \"Decision\"] }\n",
@@ -2360,7 +2359,8 @@ fn init_asks_on_a_terminal() {
     assert_eq!(code, 0, "{out}");
     for want in [
         "1/8 Profile (lite, standard, strict) [standard]: ",
-        "2/8 Knowledge types [spec, guide, decision, note]: ",
+        "    Types in use: spec, guide, decision, note. A shorter list makes each document of another type an error.",
+        "2/8 Knowledge types [spec, contract, guide, decision, change, note, invariant, runbook, incident, reference]: ",
         "5/8 Mapping: 4 roots.",
         "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-implementation-plan.md, README.md) [accept]: ",
         "6/8 Budget level (default, relaxed, tight, off) [default]: ",
