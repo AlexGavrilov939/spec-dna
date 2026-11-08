@@ -1,7 +1,7 @@
 //! The template of each document type (docs/types.md). `spec-dna new` writes a
 //! document from it. A template has the front matter, the title and the
-//! required sections of its type. The placeholders in angle brackets are not
-//! valid ids or keys, so `check` reports a placeholder that stays.
+//! required sections of its type. `check` reports each placeholder
+//! (`{{text}}`) that stays in a document (SD306).
 
 use crate::model::DocType;
 
@@ -11,114 +11,114 @@ fn body(ty: DocType) -> &'static str {
         DocType::Spec => {
             "## Requirements
 
-- **<key>**: When <trigger>, the <system> SHALL <response>.
+- **{{key}}**: When {{trigger}}, the {{system}} SHALL {{response}}.
 
 ## Notes
 
-Cite the code in inline code spans, such as `src/<path>`.
+{{Notes. Cite the code of the requirements in inline code spans.}}
 "
         }
         DocType::Contract => {
             "## Interface
 
-<The operations, or a link to the OpenAPI, AsyncAPI or schema file.>
+{{The operations, or a link to the OpenAPI, AsyncAPI or schema file.}}
 
 ## Requirements
 
-- **<key>**: The <service> SHALL <behavior of the interface>.
+- **{{key}}**: The {{service}} SHALL {{behavior of the interface}}.
 "
         }
         DocType::Guide => {
             "## Rules
 
-- <One convention for each item.>
+- {{One convention for each item.}}
 
 ## Procedure
 
-1. <Step.>
+1. {{Step.}}
 "
         }
         DocType::Decision => {
             "## Context and Problem Statement
 
-<The problem in 2 or 3 sentences.>
+{{The problem in 2 or 3 sentences.}}
 
 ## Decision Outcome
 
-Chosen option: <option>, because <reason>.
+Chosen option: {{option}}, because {{reason}}.
 
 ## Consequences
 
-- Good: <effect>.
-- Bad: <effect>.
+- Good: {{effect}}.
+- Bad: {{effect}}.
 "
         }
         DocType::Change => {
             "## Proposal
 
-<What changes, and why.>
+{{What changes, and why.}}
 
 ## Plan
 
-1. <Step.>
+1. {{Step.}}
 "
         }
-        DocType::Note => "<Observations, research or reference material.>\n",
+        DocType::Note => "{{Observations, research or reference material.}}\n",
         DocType::Invariant => {
             "## Rules
 
-- **<key>**: The <system> SHALL <rule that every change in the scope keeps>.
+- **{{key}}**: The {{system}} SHALL {{rule that every change in the scope keeps}}.
 
 ## Rationale
 
-<Why the rule exists. Link the decision.>
+{{Why the rule exists. Link the decision.}}
 "
         }
         DocType::Runbook => {
             "## When to use
 
-<The alert, symptom or request that starts this runbook.>
+{{The alert, symptom or request that starts this runbook.}}
 
 ## Steps
 
-1. <Command or action.>
-2. <Check.>
+1. {{Command or action.}}
+2. {{Check.}}
 
 ## Verify
 
-<How to see that the system is healthy again.>
+{{How to see that the system is healthy again.}}
 
 ## Rollback
 
-<How to undo the steps.>
+{{How to undo the steps.}}
 "
         }
         DocType::Incident => {
             "## Summary
 
-<What happened, when, and the impact, in 2 or 3 sentences.>
+{{What happened, when, and the impact, in 2 or 3 sentences.}}
 
 ## Timeline
 
-- <Time>: <event>.
+- {{Time}}: {{event}}.
 
 ## Root cause
 
-<The cause.>
+{{The cause.}}
 
 ## Links
 
-- Requirements: [[<doc-id>#<key>]]
-- Decisions: [[<decision-id>]]
-- Runbooks: [[<runbook-id>]]
+- Requirements: {{links to the requirements, such as [[doc-id#key]]}}
+- Decisions: {{links to the decisions}}
+- Runbooks: {{links to the runbooks}}
 
 ## Follow-ups
 
-- <Action.>
+- {{Action.}}
 "
         }
         DocType::Reference => {
-            "<Research, data or other cold material. `spec-dna context` does not serve this document unless a target names it.>\n"
+            "{{Research, data or other cold material. spec-dna context does not serve this document unless a target names it.}}\n"
         }
     }
 }
@@ -198,6 +198,7 @@ mod tests {
             let codes: Vec<&str> = d.issues.iter().map(|i| i.code.code()).collect();
             assert!(!codes.contains(&"SD305"), "{}: {codes:?}", ty.name());
             assert!(!codes.contains(&"SD304"), "{}: {codes:?}", ty.name());
+            assert!(!d.parsed.placeholders.is_empty(), "{}", ty.name());
             assert!(text.len() < 700, "{}: {} bytes", ty.name(), text.len());
         }
         assert_eq!(title_of("ops/cache-policy"), "Cache policy");

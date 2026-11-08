@@ -208,7 +208,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.strs(&r.verified_by);
         w.str(&r.text);
     }
-    for list in [&d.leads, &d.code_spans, &d.path_words] {
+    for list in [&d.leads, &d.code_spans, &d.path_words, &d.placeholders] {
         w.u32(list.len() as u32);
         for t in list {
             w.str(&t.text);
@@ -292,7 +292,12 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             text: r.str()?,
         });
     }
-    for list in [&mut d.leads, &mut d.code_spans, &mut d.path_words] {
+    for list in [
+        &mut d.leads,
+        &mut d.code_spans,
+        &mut d.path_words,
+        &mut d.placeholders,
+    ] {
         for _ in 0..r.u32()? {
             list.push(Token {
                 text: r.str()?,

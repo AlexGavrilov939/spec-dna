@@ -99,6 +99,17 @@ const GENERATED: &[&str] = &[
     ".next",
 ];
 
+/// Directory names of test fixtures: example documents of tests, often broken
+/// on purpose.
+const FIXTURES: &[&str] = &[
+    "fixtures",
+    "__fixtures__",
+    "testdata",
+    "test-data",
+    "__snapshots__",
+    "golden",
+];
+
 /// Name prefixes of vendored sibling directories, such as `ext-<name>`.
 const VENDOR_PREFIXES: &[&str] = &[
     "ext-",
@@ -310,10 +321,9 @@ fn is_md(path: &str) -> bool {
 fn skipped(path: &str) -> bool {
     let segs = segments(path);
     let dirs = &segs[..segs.len().saturating_sub(1)];
-    if dirs
-        .iter()
-        .any(|s| VENDORED.contains(s) || GENERATED.contains(s) || *s == ".git")
-    {
+    if dirs.iter().any(|s| {
+        VENDORED.contains(s) || GENERATED.contains(s) || FIXTURES.contains(s) || *s == ".git"
+    }) {
         return true;
     }
     if dirs.iter().any(|s| s.starts_with('.')) {
@@ -979,6 +989,29 @@ pub fn detect(
         }
     }
     rows.retain(|r| r.docs > 0);
+    // Files that are not documents of a root: the root files of the
+    // repository (README, AGENTS.md, ...) in a root `.`, and the skill that
+    // `init` generates.
+    let skill_dir = crate::adapters::SKILL
+        .rsplit_once('/')
+        .map_or("", |(d, _)| d);
+    for (i, r) in rows.clone().iter().enumerate() {
+        if r.path == "." {
+            for f in files.iter().filter(|f| !f.contains('/') && is_md(f)) {
+                if !candidate(f) && !rows[i].exclude.contains(f) {
+                    rows[i].exclude.push(f.clone());
+                }
+            }
+        }
+        if owner(&rows, &format!("{skill_dir}/SKILL.md")) == Some(i) {
+            let rel = if r.path == "." {
+                skill_dir.to_string()
+            } else {
+                skill_dir[r.path.len() + 1..].to_string()
+            };
+            rows[i].exclude.push(format!("{rel}/**"));
+        }
+    }
     let mut types: Vec<DocType> = facts.sizes.iter().map(|s| s.0).collect();
     for r in &rows {
         types.push(r.ty.unwrap_or(r.default_type));
@@ -1259,5 +1292,35 @@ mod tests {
         assert_eq!(number_prefix("ADR-012-cache"), Some("ADR"));
         assert_eq!(number_prefix("ADR-x"), None);
         assert_eq!(number_prefix("adr-1"), None);
+    }
+
+    #[test]
+    fn root_files_skills_and_fixtures() {
+        let mut files: Vec<(String, String)> = vec![
+            ("README.md".into(), "# R\n".into()),
+            ("AGENTS.md".into(), "# A\n".into()),
+            (".claude/skills/spec-dna/SKILL.md".into(), "# S\n".into()),
+            (".claude/skills/a/SKILL.md".into(), "# A\n".into()),
+            (".claude/skills/b/SKILL.md".into(), "# B\n".into()),
+        ];
+        for i in 0..6 {
+            files.push((format!("page-{i}.md"), "# P\n".into()));
+            files.push((format!("tests/fixtures/repo/docs/d{i}.md"), "# D\n".into()));
+        }
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let f = facts(&refs);
+        let root = f.rows.iter().find(|r| r.path == ".").expect("a root `.`");
+        assert!(root.exclude.contains(&"README.md".to_string()), "{root:?}");
+        assert!(root.exclude.contains(&"AGENTS.md".to_string()), "{root:?}");
+        let skills = f.rows.iter().find(|r| r.path == ".claude/skills").unwrap();
+        assert_eq!(skills.exclude, ["spec-dna/**"]);
+        assert!(
+            f.rows.iter().all(|r| !r.path.contains("fixtures")),
+            "{:?}",
+            f.rows
+        );
     }
 }

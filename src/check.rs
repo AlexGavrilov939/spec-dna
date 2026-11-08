@@ -231,6 +231,18 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
             ));
         }
     }
+    for t in &p.placeholders {
+        out.push(diag(
+            d,
+            t.line,
+            Code::PlaceholderLeft,
+            t.text.clone(),
+            format!(
+                "the template placeholder `{}` is still in the document",
+                t.text
+            ),
+        ));
+    }
     if d.ty == DocType::Incident && !links_knowledge(c, d) {
         out.push(diag(
             d,
@@ -565,12 +577,18 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
     if from == to {
         return true;
     }
+    // An invariant and a runbook have the states of a spec (ADR 0001,
+    // amendment of 0.2.0).
+    let spec_like = matches!(
+        ty,
+        DocType::Spec | DocType::Contract | DocType::Guide | DocType::Invariant | DocType::Runbook
+    );
     let rank = |s: &str| -> Option<u8> {
         Some(match (ty, s) {
-            (DocType::Spec | DocType::Contract | DocType::Guide, "draft") => 0,
-            (DocType::Spec | DocType::Contract | DocType::Guide, "active") => 1,
-            (DocType::Spec | DocType::Contract | DocType::Guide, "deprecated") => 2,
-            (DocType::Spec | DocType::Contract | DocType::Guide, "superseded" | "retired") => 3,
+            (_, "draft") if spec_like => 0,
+            (_, "active") if spec_like => 1,
+            (_, "deprecated") if spec_like => 2,
+            (_, "superseded" | "retired") if spec_like => 3,
             (DocType::Decision | DocType::Change, "proposed") => 0,
             (DocType::Decision | DocType::Change, "accepted") => 1,
             (DocType::Decision, "superseded" | "rejected") => 2,
@@ -673,5 +691,8 @@ mod tests {
         assert!(!transition_ok(DocType::Decision, "accepted", "proposed"));
         assert!(transition_ok(DocType::Change, "accepted", "done"));
         assert!(!transition_ok(DocType::Change, "done", "accepted"));
+        assert!(!transition_ok(DocType::Invariant, "active", "draft"));
+        assert!(!transition_ok(DocType::Runbook, "retired", "active"));
+        assert!(transition_ok(DocType::Runbook, "draft", "active"));
     }
 }

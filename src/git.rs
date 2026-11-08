@@ -355,8 +355,20 @@ impl Git {
             args.push(r);
         }
         args.push("--");
-        let specs: Vec<String> = globs.iter().map(|g| format!(":(glob){g}")).collect();
-        args.extend(specs.iter().map(String::as_str));
+        // A glob that git does not accept as a pathspec (with `..`, or empty
+        // after the slashes) turns the limit off; the caller filters the paths.
+        let specs: Vec<String> = globs
+            .iter()
+            .map(|g| g.trim_matches('/'))
+            .map(|g| format!(":(glob){g}"))
+            .collect();
+        let limit = globs.iter().all(|g| {
+            let g = g.trim_matches('/');
+            !g.is_empty() && !g.split('/').any(|s| s == ".." || s == ".")
+        });
+        if limit {
+            args.extend(specs.iter().map(String::as_str));
+        }
         let out = self
             .cmd(&args)
             .stderr(Stdio::piped())

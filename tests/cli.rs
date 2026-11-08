@@ -2397,3 +2397,64 @@ fn init_asks_on_a_terminal() {
     assert!(out.contains("nothing written"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());
 }
+
+#[test]
+fn review_fixes_on_the_command_line() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[evidence]\ntests = [\"/tests/**\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/rules/money.md",
+        "---\ntype: invariant\nstatus: active\n---\n# Money\n\n## Rules\n\n- **minor-units**: The system SHALL store amounts in minor units.\n",
+    );
+    r.write("tests/money.py", "# covers: rules/money#minor-units\n");
+    r.commit("start");
+    // A test glob with a leading slash works (git rejects it as a pathspec).
+    let (code, out, err) = r.run(&["show", "rules/money"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("- rules/money#minor-units: tests/money.py:1"),
+        "{out}"
+    );
+    // An invariant cannot move back to draft.
+    r.write(
+        "docs/rules/money.md",
+        &r.read("docs/rules/money.md")
+            .replace("status: active", "status: draft"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD401 status-transition"), "{out}");
+    git(&r.dir, &["checkout", "-q", "--", "."]);
+    // A placeholder of a template that stays is an error.
+    let (code, _, _) = r.run(&["new", "spec", "loans"]);
+    assert_eq!(code, 0);
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/loans.md:9: error SD306 placeholder-left: the template placeholder `{{trigger}}` is still in the document"),
+        "{out}"
+    );
+    // init does not replace a workflow of the project, and `write = false`
+    // shows the preview.
+    r.write(".github/workflows/spec-dna.yml", "name: Own\n");
+    let answers = r.dir.join("../answers-review.toml");
+    fs::write(&answers, "ci = \"github\"\nwrite = false\n").unwrap();
+    let (code, out, err) = r.run(&[
+        "init",
+        "--reconfigure",
+        "--answers",
+        answers.to_str().unwrap(),
+    ]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("--- spec-dna.toml ---"), "{out}");
+    assert!(
+        out.contains(".github/workflows/spec-dna.yml exists and differs"),
+        "{out}"
+    );
+    assert!(out.contains("dry run: nothing written"), "{out}");
+    assert_eq!(r.read(".github/workflows/spec-dna.yml"), "name: Own\n");
+}

@@ -198,21 +198,17 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     p.layout = false;
     p.exclude = cfg.exclude.clone();
     p.evidence = cfg.rules.iter().find(|r| r.0 == "evidence").map(|r| r.1);
-    p.rules = cfg
-        .rules
-        .iter()
-        .filter(|r| !["evidence", "budgets", "lint"].contains(&r.0.as_str()))
-        .cloned()
-        .collect();
+    // Every current rule stays. The answers for evidence, budgets and the
+    // language replace their rule when `render` writes the file.
+    p.rules = cfg.rules.clone();
     if cfg.rules.iter().any(|r| r.0 == "budgets" && r.1.is_none()) {
         p.budgets = Budgets::Off;
     }
     if cfg.evidence_tests.is_empty() {
         p.style = Style::VerifiedBy;
     }
-    if cfg.evidence_tests != config::DEFAULT_TEST_GLOBS.map(str::to_string) {
-        p.tests = cfg.evidence_tests.clone();
-    }
+    // The current globs stay. The default list renders as no `[evidence]`.
+    p.tests = cfg.evidence_tests.clone();
     p.rows = cfg.roots.iter().map(row_of_root).collect();
     p.types = if cfg.types.is_empty() {
         DocType::ALL.to_vec()
@@ -425,19 +421,32 @@ pub fn render(plan: &Plan) -> String {
         out.push_str(&format!("{k}\n"));
     }
     // Rules: the answers that differ from the profile.
+    // The answers replace the rule of the same group; the other rules stay.
     let mut rules: Vec<(String, &str)> = plan
         .rules
         .iter()
         .map(|(k, s)| (k.clone(), severity_name(*s)))
         .collect();
-    if let Some(e) = plan.evidence {
-        rules.push(("evidence".into(), severity_name(e)));
-    }
-    if plan.budgets == Budgets::Off {
-        rules.push(("budgets".into(), "off"));
+    let mut set = |key: &str, value: Option<&'static str>| {
+        let at = rules.iter().position(|r| r.0 == key);
+        match (at, value) {
+            (Some(i), Some(v)) => rules[i].1 = v,
+            (None, Some(v)) => rules.push((key.to_string(), v)),
+            (Some(i), None) => {
+                rules.remove(i);
+            }
+            (None, None) => {}
+        }
+    };
+    set("evidence", plan.evidence.map(severity_name));
+    match plan.budgets {
+        Budgets::Off => set("budgets", Some("off")),
+        // A budget level replaces a rule that turned the budgets off.
+        _ if plan.rules.iter().any(|r| r.0 == "budgets" && r.1.is_none()) => set("budgets", None),
+        _ => {}
     }
     if plan.language != "en" {
-        rules.push(("lint".into(), "off"));
+        set("lint", Some("off"));
     }
     if !rules.is_empty() {
         out.push_str("\n[rules]  # overrides of the profile, by rule group or by code\n");
@@ -449,10 +458,14 @@ pub fn render(plan: &Plan) -> String {
         Style::VerifiedBy => {
             out.push_str("\n[evidence]\ntests = []  # evidence by `verified-by` only\n")
         }
-        _ if !plan.tests.is_empty() => out.push_str(&format!(
-            "\n[evidence]\ntests = {}  # test files with `covers: <doc-id>#<key>` tags\n",
-            toml_list(&plan.tests)
-        )),
+        _ if !plan.tests.is_empty()
+            && plan.tests != config::DEFAULT_TEST_GLOBS.map(str::to_string) =>
+        {
+            out.push_str(&format!(
+                "\n[evidence]\ntests = {}  # test files with `covers: <doc-id>#<key>` tags\n",
+                toml_list(&plan.tests)
+            ))
+        }
         _ => {}
     }
     let factor = match plan.budgets {
@@ -537,15 +550,13 @@ fn render_row(plan: &Plan, r: &Row) -> String {
         || r.default_type == DocType::Decision
         || (r.ty.is_none() && (r.decisions > 0 || plan.layout));
     let mut required: Vec<String> = Vec::new();
-    if decisions && !plan.outcome.is_empty() {
+    if decisions && !plan.outcome.is_empty() && !r.required_off.contains(&DocType::Decision) {
         let mut h = plan.outcome.clone();
         h.extend(config::DEFAULT_DECISION_SECTIONS.map(str::to_string));
         required.push(format!("decision = {}", toml_list(&h)));
     }
     for t in &r.required_off {
-        if *t != DocType::Decision || plan.outcome.is_empty() {
-            required.push(format!("{} = []", t.name()));
-        }
+        required.push(format!("{} = []", t.name()));
     }
     let has = |k: &str| r.extra.iter().any(|e| e.starts_with(k));
     if !required.is_empty() && !has("required-sections") {
@@ -730,13 +741,18 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
         "github" => {
             let path = ".github/workflows/spec-dna.yml";
             let text = github_workflow(&plan.base);
-            if read(path).as_deref() != Some(text.as_str()) {
-                out.push(Change {
+            match read(path) {
+                None => out.push(Change {
                     path: path.into(),
-                    created: read(path).is_none(),
+                    created: true,
                     text,
                     note: "the CI job: `spec-dna check --base`".into(),
-                });
+                }),
+                // A workflow of the project stays as it is.
+                Some(old) if old != text => manual.push(format!(
+                    "{path} exists and differs from the job of this version; init does not change it"
+                )),
+                Some(_) => {}
             }
         }
         "gitlab" => manual.push(format!(
@@ -941,6 +957,9 @@ fn apply_types(plan: &mut Plan, root: &str) {
             r.status_map.clear();
             r.required_off.clear();
             r.legacy_keys.clear();
+            r.extra.retain(|e| {
+                !e.starts_with("required-sections") && !e.starts_with("amendment-sections")
+            });
         }
     }
 }
@@ -966,10 +985,12 @@ fn edit_row(r: &mut Row, edits: &str) -> Result<(), String> {
                 let t = DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?;
                 r.ty = Some(t);
                 r.default_type = t;
+                retype(r);
             }
             "default-type" => {
                 r.default_type =
-                    DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?
+                    DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?;
+                retype(r);
             }
             "status" => r.status = (!v.is_empty() && v != "none").then(|| v.to_string()),
             "exclude" => r.exclude = items(),
@@ -979,6 +1000,32 @@ fn edit_row(r: &mut Row, edits: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// After a change of the type of a row: the status, the status map and the
+/// section keys keep only the values that the new types allow.
+fn retype(r: &mut Row) {
+    let types = r.types();
+    let ok = |s: &str| types.iter().any(|t| t.statuses().contains(&s));
+    if r.status
+        .as_deref()
+        .is_some_and(|s| !r.default_type.statuses().contains(&s))
+    {
+        r.status = match r.default_type {
+            DocType::Decision | DocType::Change => Some("proposed".into()),
+            t if t.has_status() => Some("active".into()),
+            _ => None,
+        };
+    }
+    if !r.default_type.has_status() {
+        r.status = None;
+    }
+    r.status_map.retain(|(from, to)| {
+        ok(to) && !types.iter().all(|t| t.statuses().contains(&from.as_str()))
+    });
+    r.required_off.retain(|t| types.contains(t));
+    r.extra
+        .retain(|e| !e.starts_with("required-sections") && !e.starts_with("amendment-sections"));
 }
 
 fn row_line(r: &Row) -> String {
@@ -1398,7 +1445,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let (ci, manual) = ci_changes(repo, &plan);
     changes.extend(ci);
 
-    let preview = o.dry_run || interactive;
+    let preview = o.dry_run || interactive || !write;
     if o.json {
         let files = changes.iter().map(|c| {
             Obj::new()
@@ -1643,5 +1690,51 @@ mod tests {
         assert_eq!(r.ty, Some(DocType::Guide));
         assert_eq!(r.exclude, ["a/**", "b.md"]);
         assert!(edit_row(&mut r, "colour=red").is_err());
+    }
+
+    #[test]
+    fn review_fixes_for_rows_and_rules() {
+        // A type edit drops the status and the section keys of the old type.
+        let mut r = blank_row("docs/adr", Some(DocType::Decision), DocType::Decision);
+        r.status = Some("proposed".into());
+        r.extra
+            .push("required-sections = { decision = [\"Решение\"] }".into());
+        edit_row(&mut r, "type=spec").unwrap();
+        assert_eq!(r.status.as_deref(), Some("active"));
+        assert!(r.extra.is_empty());
+        // A removed decision section stays removed with aliases.
+        let facts = Facts::default();
+        let mut plan = defaults(&facts, Some("docs"));
+        plan.outcome = vec!["Решение".into()];
+        plan.rows[0].required_off.push(DocType::Decision);
+        let text = render(&plan);
+        assert!(
+            text.contains("required-sections = { decision = [] }"),
+            "{text}"
+        );
+        // The answers replace their rule; the other rules stay.
+        plan.rules = vec![
+            ("lint".into(), Some(Severity::Warning)),
+            ("budgets".into(), Some(Severity::Error)),
+            ("evidence".into(), Some(Severity::Error)),
+        ];
+        plan.evidence = None;
+        let text = render(&plan);
+        assert!(
+            text.contains("lint = \"warning\"\nbudgets = \"error\"\n"),
+            "{text}"
+        );
+        assert!(!text.contains("evidence ="), "{text}");
+        plan.evidence = Some(Some(Severity::Warning));
+        plan.budgets = Budgets::Off;
+        let text = render(&plan);
+        assert!(
+            text.contains("budgets = \"off\"\nevidence = \"warning\"\n"),
+            "{text}"
+        );
+        Config::parse(&text).unwrap();
+        // The default test globs render as no `[evidence]` table.
+        plan.tests = config::DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
+        assert!(!render(&plan).contains("[evidence]"));
     }
 }

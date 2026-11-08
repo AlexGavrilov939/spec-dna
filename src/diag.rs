@@ -55,6 +55,7 @@ codes! {
     TypeInvalid = "SD303", "type-invalid", Error, "Use a type of the root and of the `types` list of spec-dna.toml (without the list: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference), or add the type to the list.";
     StatusInvalid = "SD304", "status-invalid", Error, "Set a `status` that the document type allows.";
     SectionMissing = "SD305", "section-missing", Error, "Add the required section heading.";
+    PlaceholderLeft = "SD306", "placeholder-left", Error, "Replace the template placeholder (`{{...}}`) with the text of the document.";
     StatusTransition = "SD401", "status-transition", Error, "A status can only move forward. To return to an earlier status, write a new document.";
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
