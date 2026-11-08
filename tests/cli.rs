@@ -806,31 +806,55 @@ fn transcript_reports_counts_and_ids_only() {
     ]);
     assert_eq!(code, 0, "{err}");
     let expected = [
-        "spec-dna transcript: 1 session, 2 agents, 3 episodes, 8 requests\n",
-        // Streamed lines repeat the usage of one request. It counts once.
-        "  8 requests; tokens: input 24, cache creation 1700, cache read 8000, output 175\n",
-        "  8 tool calls (Read 4, Bash 2, Edit 1, Grep 1); 1 error; 1 search\n",
+        "spec-dna transcript: 1 session, 2 agents, 3 episodes, 10 requests\n",
+        // Streamed lines repeat the usage of one request, and a forked
+        // subagent repeats a request and a tool call of its parent. Each
+        // counts once. A `<synthetic>` message is not a request.
+        "  10 requests; tokens: input 26, cache creation 1700, cache read 10930, output 185\n",
+        "  11 tool calls (Read 5, Bash 4, Edit 1, Grep 1); 1 error; 1 search\n",
         "    ADR-1-session-store: 1 read, full, via read\n",
         // A read with a line range gives sections. spec-dna output gives the
-        // sections that it served.
+        // sections that it served, and only ids that are documents.
         "    auth/session: 2 reads, auth/session#requirements, via read+spec-dna\n",
-        "    auth/tokens: 1 read, full, via shell\n",
+        // One of the 2 reads covers the front matter only.
+        "    auth/tokens: 2 reads, full, via read+shell\n",
+        // A shell path relative to the working directory of the agent.
+        "    billing/invoice: 1 read, full, via shell\n",
         "    guides/logging: 1 read, guides/logging#logging, via spec-dna\n",
         "    document edits: auth/session 1\n",
         "  expected: {\"read\":2,\"of\":2,\"first_relevant_ms\":4000}\n",
+        // A compaction summary does not start an episode.
         "  episode 1 (main, human), 60 s:\n",
         "  episode 2 (a1, human), 2 s:\n",
-        "  episode 3 (main, task-notification), 4 s:\n",
+        "  episode 3 (main, task-notification), 6 s:\n",
     ];
     for e in expected {
         assert!(out.contains(e), "missing {e:?} in\n{out}");
     }
+    assert!(!out.contains("ghost/missing"), "{out}");
+    // A workflow journal in the directory is not a transcript: a warning only.
+    assert!(
+        err.contains("journal.jsonl: no transcript adapter reads this file"),
+        "{err}"
+    );
+    // A file that two arguments give is read once.
+    let file = format!("{dir}/session-1.jsonl");
+    let (_, twice, _) = r.run(&[
+        "transcript",
+        dir,
+        &file,
+        "--expect",
+        "auth/tokens",
+        "--expect",
+        "ADR-1",
+    ]);
+    assert_eq!(twice, out);
     let (code, json, _) = r.run(&["transcript", dir, "--json"]);
     assert_eq!(code, 0);
     assert!(json.contains("\"documents_mapped\":true"), "{json}");
     assert!(
         json.contains(
-            "\"tokens\":{\"input\":24,\"cache_creation\":1700,\"cache_read\":8000,\"output\":175}"
+            "\"tokens\":{\"input\":26,\"cache_creation\":1700,\"cache_read\":10930,\"output\":185}"
         ),
         "{json}"
     );
@@ -850,7 +874,8 @@ fn transcript_reports_counts_and_ids_only() {
         out.contains("no spec-dna.toml, so file reads are not mapped to documents"),
         "{out}"
     );
-    assert!(out.contains("other files: 3 reads"), "{out}");
+    assert!(out.contains("other files: 4 reads"), "{out}");
+    assert!(!out.contains("SECRET"), "{out}");
     assert!(
         !out.contains("via read") && !out.contains("via shell"),
         "{out}"

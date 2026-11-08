@@ -309,11 +309,19 @@ impl Reader<'_> {
                         b'u' => {
                             let mut cp = self.hex4()?;
                             // A surrogate pair encodes one code point above U+FFFF.
-                            if (0xD800..0xDC00).contains(&cp) && self.eat("\\u") {
-                                let lo = self.hex4()?;
-                                if (0xDC00..0xE000).contains(&lo) {
-                                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                                }
+                            if (0xD800..0xDC00).contains(&cp)
+                                && self.b[self.i..].starts_with(b"\\u")
+                                && let Some(lo) = self
+                                    .b
+                                    .get(self.i + 2..self.i + 6)
+                                    .and_then(|h| std::str::from_utf8(h).ok())
+                                    .and_then(|h| u32::from_str_radix(h, 16).ok())
+                                    .filter(|lo| (0xDC00..0xE000).contains(lo))
+                            {
+                                // Only a low surrogate completes the pair.
+                                // Any other escape stays for the next step.
+                                self.i += 6;
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
                             }
                             let ch = char::from_u32(cp).unwrap_or('\u{FFFD}');
                             let mut buf = [0u8; 4];
@@ -368,6 +376,11 @@ mod tests {
         assert!(v.get("a").as_arr()[2].is_true());
         assert_eq!(v.get("s").as_str(), Some("q\"é😀\n"));
         assert_eq!(v.get("o"), &Value::Obj(Vec::new()));
+        // A lone high surrogate becomes U+FFFD and keeps the next escape.
+        assert_eq!(
+            parse(r#""\ud83d\u0041""#).unwrap().as_str(),
+            Some("\u{FFFD}A")
+        );
         assert_eq!(v.get("missing"), &Value::Null);
         for bad in ["{", "[1,]", "{\"a\" 1}", "\"x", "1 2", "nul"] {
             assert!(parse(bad).is_err(), "{bad}");

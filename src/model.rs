@@ -564,6 +564,11 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                 continue;
             }
             if seen.contains(&r.key.as_str()) {
+                // A repeated legacy key without a colon is a reference, for
+                // example in a traceability list. The first item defines it.
+                if !r.colon {
+                    continue;
+                }
                 issues.push(Issue {
                     code: Code::KeyDuplicate,
                     line: r.line,
@@ -990,6 +995,14 @@ mod tests {
             .map(|&r| s.parsed.reqs[r].key.as_str())
             .collect();
         assert_eq!(keys, ["R-1", "R-2", "R-3", "ok-key"]);
+        // A traceability list repeats legacy keys without a colon: no error.
+        let c2 = corpus(&[(
+            "docs/t.md",
+            "# T\n\n- **R-1** The client MUST retry.\n\n## Tests\n\n- **R-1** covered by test_retry\n- **ok**: The system MUST run.\n- **ok**: The system MUST run again.\n",
+        )]);
+        let codes: Vec<Code> = c2.docs[0].issues.iter().map(|i| i.code).collect();
+        assert_eq!(codes, [Code::KeyDuplicate]);
+        assert_eq!(c2.docs[0].reqs.len(), 2);
         assert!(s.issues.is_empty(), "{:?}", s.issues);
         assert!(!s.has_req_in(1) && s.has_req_in(2));
         // A spec with legacy-key tokens and no recognized requirement gets a

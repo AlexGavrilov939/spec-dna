@@ -11,8 +11,8 @@
 //! not depend on the format. `ClaudeCode` reads Claude Code JSONL files.
 
 use crate::json::{self, Obj, Value};
-use crate::model::Corpus;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use crate::model::{Corpus, Res};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// What a tool call reads or writes.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,7 +40,8 @@ pub type Lines = (u64, u64, Option<u64>);
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     /// A message that starts an episode, with its origin (such as `human`).
-    Prompt { origin: String },
+    /// `id` identifies the message, so that a copy in another file counts once.
+    Prompt { origin: String, id: String },
     /// One model request. Records with the same `request` are one request.
     Usage {
         request: String,
@@ -159,6 +160,7 @@ impl Adapter for ClaudeCode {
             cwd: o.get("cwd").as_str().map(str::to_string),
             event: Event::Prompt {
                 origin: String::new(),
+                id: String::new(),
             },
         };
         let msg = o.get("message");
@@ -174,12 +176,15 @@ impl Adapter for ClaudeCode {
                 .or_else(|| o.get("requestId").as_str())
                 .unwrap_or("");
             let u = msg.get("usage");
-            if !request.is_empty() && u != &Value::Null {
+            let model = msg.get("model").as_str().unwrap_or("");
+            // Claude Code writes `<synthetic>` messages itself: they are not
+            // model requests.
+            if !request.is_empty() && u != &Value::Null && model != "<synthetic>" {
                 push(
                     out,
                     Event::Usage {
                         request: request.to_string(),
-                        model: msg.get("model").as_str().unwrap_or("").to_string(),
+                        model: model.to_string(),
                         tokens: Tokens {
                             input: u.get("input_tokens").as_u64(),
                             cache_creation: u.get("cache_creation_input_tokens").as_u64(),
@@ -212,14 +217,16 @@ impl Adapter for ClaudeCode {
             .filter(|b| b.get("type").as_str() == Some("tool_result"))
             .collect();
         if results.is_empty() {
-            if o.get("isMeta").is_true() {
+            // A compaction summary continues the episode; it is not a prompt.
+            if o.get("isMeta").is_true() || o.get("isCompactSummary").is_true() {
                 return;
             }
             let origin = match o.get("origin").get("kind").as_str() {
                 Some(k) => k.to_string(),
                 None => "human".to_string(),
             };
-            push(out, Event::Prompt { origin });
+            let id = o.get("uuid").as_str().unwrap_or("").to_string();
+            push(out, Event::Prompt { origin, id });
             return;
         }
         let meta = o.get("toolUseResult");
@@ -402,6 +409,9 @@ struct Session {
     agents: BTreeMap<String, AgentState>,
     /// Request id to its episode and its last usage.
     requests: HashMap<String, (usize, Tokens)>,
+    /// Ids of prompts, tool calls and tool results already counted. A forked
+    /// subagent file can repeat records of its parent.
+    seen: HashSet<(u8, String)>,
 }
 
 /// Collects records and attributes reads to documents.
@@ -425,6 +435,30 @@ impl<'a> Analysis<'a> {
     pub fn feed(&mut self, adapter: &'static str, r: Record) {
         let s = self.sessions.entry(r.session.clone()).or_default();
         s.adapter = adapter;
+        let key = match &r.event {
+            Event::Prompt { id, .. } => Some((0, id)),
+            Event::Call { id, .. } => Some((1, id)),
+            Event::Result { id, .. } => Some((2, id)),
+            Event::Usage { .. } => None,
+        };
+        if let Some((kind, id)) = key
+            && !id.is_empty()
+            && !s.seen.insert((kind, id.clone()))
+        {
+            return;
+        }
+        // A request id that the analysis knows replaces its earlier usage, in
+        // the episode of its first record (streamed lines and forked copies).
+        if let Event::Usage {
+            request, tokens, ..
+        } = &r.event
+            && let Some((old_ei, old)) = s.requests.get(request).copied()
+        {
+            s.episodes[old_ei].tokens.sub(&old);
+            s.episodes[old_ei].tokens.add(tokens);
+            s.requests.insert(request.clone(), (old_ei, *tokens));
+            return;
+        }
         let agent = s
             .agents
             .entry(r.agent.clone())
@@ -437,7 +471,7 @@ impl<'a> Analysis<'a> {
             s.episodes.push(Episode {
                 agent: r.agent.clone(),
                 origin: match &r.event {
-                    Event::Prompt { origin } => origin.clone(),
+                    Event::Prompt { origin, .. } => origin.clone(),
                     _ => "unknown".into(),
                 },
                 ..Episode::default()
@@ -453,17 +487,10 @@ impl<'a> Analysis<'a> {
                 model,
                 tokens,
             } => {
-                // A repeated request id replaces its earlier usage.
-                if let Some((old_ei, old)) = s.requests.get(&request).copied() {
-                    s.episodes[old_ei].tokens.sub(&old);
-                    s.episodes[old_ei].tokens.add(&tokens);
-                    s.requests.insert(request, (old_ei, tokens));
-                } else {
-                    let e = &mut s.episodes[ei];
-                    e.requests += 1;
-                    e.tokens.add(&tokens);
-                    s.requests.insert(request, (ei, tokens));
-                }
+                let e = &mut s.episodes[ei];
+                e.requests += 1;
+                e.tokens.add(&tokens);
+                s.requests.insert(request, (ei, tokens));
                 if !model.is_empty() {
                     s.episodes[ei].models.insert(model);
                 }
@@ -671,8 +698,10 @@ fn episode_text(e: &Episode, indent: &str) -> String {
         n(e.spec_chars().div_ceil(4), "token")
     );
     for (id, d) in &e.docs {
-        let what = if d.full || d.sections.is_empty() {
+        let what = if d.full {
             "full".to_string()
+        } else if d.sections.is_empty() {
+            "front matter only".to_string()
         } else {
             d.sections.iter().cloned().collect::<Vec<_>>().join(" ")
         };
@@ -697,7 +726,7 @@ fn episode_json(e: &Episode, index: usize, expect: &[String]) -> String {
         Obj::new()
             .str("id", id)
             .num("reads", d.reads)
-            .bool("full", d.full || d.sections.is_empty())
+            .bool("full", d.full)
             .strs("sections", &sections)
             .strs("via", &via)
             .num("chars", d.chars)
@@ -759,7 +788,12 @@ fn expect_stats(e: &Episode, expect: &[String]) -> Option<String> {
     if expect.is_empty() {
         return None;
     }
-    let read: Vec<&String> = expect.iter().filter(|x| e.docs.contains_key(*x)).collect();
+    // A read that delivers no section (only front matter) is not relevant
+    // context.
+    let read: Vec<&String> = expect
+        .iter()
+        .filter(|x| e.docs.get(*x).is_some_and(|d| d.first_ms.is_some()))
+        .collect();
     let first = expect
         .iter()
         .filter_map(|x| e.docs.get(x).and_then(|d| d.first_ms))
@@ -802,7 +836,7 @@ fn format_time(ms: i64) -> String {
 /// Maps a file path from a transcript to a document id. The order of tries:
 ///
 /// - the path relative to the repository root, or to the working directory
-///   of the agent;
+///   of the agent (a relative path starts at that directory);
 /// - the longest tail of the path, with at least 2 segments, that is a
 ///   document path. Thus a run in an exported copy of the repository maps to
 ///   the same ids.
@@ -813,7 +847,12 @@ fn map_path(
     path: &str,
 ) -> Option<u32> {
     let c = corpus?;
-    let path = path.replace('\\', "/");
+    let mut path = path.replace('\\', "/");
+    if !path.starts_with('/')
+        && let Some(abs) = cwd.and_then(|c| crate::model::join(c, &path))
+    {
+        path = abs;
+    }
     let mut tries: Vec<String> = Vec::new();
     for base in [root, cwd].into_iter().flatten() {
         if let Some(rest) = path.strip_prefix(base).and_then(|r| r.strip_prefix('/')) {
@@ -888,7 +927,7 @@ fn attribute(
             d.full |= full;
             d.sections.extend(sections);
             d.via.insert(via);
-            if d.first_ms.is_none() {
+            if d.first_ms.is_none() && (full || !d.sections.is_empty()) {
                 d.first_ms = time;
             }
         };
@@ -912,9 +951,32 @@ fn attribute(
             _ => e.other_reads += 1,
         },
         Target::Shell { command } => {
+            let commands = shell_commands(command);
             // spec-dna output names its sections in headers. A served section
-            // counts as a read; a listed stub does not.
-            let served = spec_dna_sections(text);
+            // counts as a read; a listed stub does not. Only the output of a
+            // spec-dna command counts, and only ids that are documents (or
+            // that have the form of an id, without a configuration): any other
+            // text can contain a line of the same shape.
+            let runs_spec_dna = commands
+                .iter()
+                .any(|c| program(c).is_some_and(|p| p == "spec-dna"));
+            let served: Vec<String> = if runs_spec_dna {
+                spec_dna_sections(text)
+                    .into_iter()
+                    .filter_map(|id| match corpus {
+                        Some(c) => match c.resolve(&id) {
+                            Res::Found(d, frag, true) => Some(match frag {
+                                Some(f) => format!("{}#{f}", c.docs[d as usize].id),
+                                None => c.docs[d as usize].id.clone(),
+                            }),
+                            _ => None,
+                        },
+                        None => is_plain_id(&id).then_some(id),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             if !served.is_empty() {
                 let mut by_doc: BTreeMap<String, Vec<String>> = BTreeMap::new();
                 for s in served {
@@ -930,7 +992,7 @@ fn attribute(
             let Some(c) = corpus else {
                 return;
             };
-            let docs: BTreeSet<String> = shell_paths(command)
+            let docs: BTreeSet<String> = shell_reads(&commands)
                 .iter()
                 .filter_map(|p| map_path(corpus, root, cwd, p))
                 .map(|d| c.docs[d as usize].id.clone())
@@ -969,11 +1031,17 @@ fn spec_dna_sections(text: &str) -> Vec<String> {
     out
 }
 
-/// Returns the words of a shell command that look like Markdown file paths.
-/// Quotes keep a word together. A `:line` suffix (as `grep -n` prints) is
-/// removed.
-fn shell_paths(command: &str) -> Vec<String> {
-    let mut words = Vec::new();
+/// Splits a shell command into simple commands, each a list of words. Quotes
+/// keep a word together. `<` and `>` are words of their own.
+fn shell_commands(command: &str) -> Vec<Vec<String>> {
+    fn flush(word: &mut String, cmds: &mut [Vec<String>]) {
+        if !word.is_empty()
+            && let Some(last) = cmds.last_mut()
+        {
+            last.push(std::mem::take(word));
+        }
+    }
+    let mut cmds: Vec<Vec<String>> = vec![Vec::new()];
     let mut word = String::new();
     let mut quote: Option<char> = None;
     for ch in command.chars() {
@@ -981,23 +1049,78 @@ fn shell_paths(command: &str) -> Vec<String> {
             (Some(q), c) if c == q => quote = None,
             (Some(_), c) => word.push(c),
             (None, '"' | '\'') => quote = Some(ch),
-            (None, c)
-                if c.is_whitespace() || matches!(c, ';' | '|' | '&' | '<' | '>' | '(' | ')') =>
-            {
-                words.push(std::mem::take(&mut word));
+            (None, ';' | '|' | '&' | '\n' | '(' | ')') => {
+                flush(&mut word, &mut cmds);
+                if cmds.last().is_some_and(|c| !c.is_empty()) {
+                    cmds.push(Vec::new());
+                }
             }
+            (None, '<' | '>') => {
+                flush(&mut word, &mut cmds);
+                if let Some(last) = cmds.last_mut() {
+                    last.push(ch.to_string());
+                }
+            }
+            (None, c) if c.is_whitespace() => flush(&mut word, &mut cmds),
             (None, c) => word.push(c),
         }
     }
-    words.push(word);
-    words
-        .into_iter()
-        .map(|w| match w.rsplit_once(':') {
-            Some((p, line)) if line.bytes().all(|b| b.is_ascii_digit()) => p.to_string(),
-            _ => w,
-        })
-        .filter(|w| w.ends_with(".md") || w.ends_with(".markdown"))
-        .collect()
+    flush(&mut word, &mut cmds);
+    cmds.retain(|c| !c.is_empty());
+    cmds
+}
+
+/// Returns the program name of a simple command, after any `NAME=value`
+/// assignments, without its directory.
+fn program(cmd: &[String]) -> Option<&str> {
+    let w = cmd.iter().find(|w| !w.contains('='))?;
+    Some(w.rsplit('/').next().unwrap_or(w))
+}
+
+/// Programs that print the text of the files that they get.
+const READERS: &[&str] = &[
+    "cat", "head", "tail", "sed", "less", "more", "bat", "nl", "awk", "grep", "egrep", "rg", "ag",
+    "cut", "diff",
+];
+
+/// Returns the Markdown paths that a shell command reads: the arguments of a
+/// reader program, but not the target of a `>` redirection. A `:line` suffix
+/// (as `grep -n` prints) is removed.
+fn shell_reads(cmds: &[Vec<String>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for cmd in cmds {
+        if !program(cmd).is_some_and(|p| READERS.contains(&p)) {
+            continue;
+        }
+        for (i, w) in cmd.iter().enumerate() {
+            if i > 0 && cmd[i - 1] == ">" {
+                continue;
+            }
+            let w = match w.rsplit_once(':') {
+                Some((p, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => {
+                    p
+                }
+                _ => w.as_str(),
+            };
+            if w.ends_with(".md") || w.ends_with(".markdown") {
+                out.push(w.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Returns true for a string with the form of a document or section id:
+/// letters and digits in any script, and `-`, `_`, `.`, `/` and `#`. A path
+/// that starts with `/` or `.`, or ends in a Markdown extension, is not one.
+fn is_plain_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().count() <= 200
+        && !s.starts_with(['/', '.'])
+        && !s.ends_with(".md")
+        && !s.ends_with(".markdown")
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '#'))
 }
 
 /// Counts the search programs of a shell command: `grep`, `rg`, `find` and
@@ -1028,7 +1151,7 @@ fn n(count: impl Into<u64>, what: &str) -> String {
 /// Reads transcript files. `format` names an adapter; without it, the first
 /// line that parses selects the adapter of each file.
 pub fn read_files(
-    files: &[std::path::PathBuf],
+    files: &[(std::path::PathBuf, bool)],
     format: Option<&str>,
     analysis: &mut Analysis,
 ) -> Result<(), String> {
@@ -1041,7 +1164,51 @@ pub fn read_files(
         ),
         None => None,
     };
-    for f in files {
+    // A forked subagent can repeat records of its parent, and the analysis
+    // counts a record once. Thus read the files of main agents first, so that
+    // a repeated record stays with the agent that made it.
+    let mut order: Vec<(bool, usize)> = Vec::new();
+    for (i, (f, named)) in files.iter().enumerate() {
+        let text = std::fs::read(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let text = String::from_utf8_lossy(&text);
+        let mut adapter = forced;
+        let mut first: Option<bool> = None;
+        let mut records = Vec::new();
+        for line in text.lines() {
+            let Ok(v) = json::parse(line) else {
+                continue;
+            };
+            if adapter.is_none() {
+                adapter = ADAPTERS.iter().copied().find(|a| a.detect(&v));
+            }
+            if let Some(a) = adapter {
+                a.records(&v, &mut records);
+                if let Some(r) = records.first() {
+                    first = Some(r.agent != "main");
+                    break;
+                }
+            }
+        }
+        if adapter.is_none() {
+            // A directory can hold other JSONL files, such as workflow
+            // journals. Only a file that the user names is an error.
+            if *named {
+                return Err(format!(
+                    "{}: no transcript adapter reads this file",
+                    f.display()
+                ));
+            }
+            eprintln!(
+                "spec-dna: skipped {}: no transcript adapter reads this file",
+                f.display()
+            );
+            continue;
+        }
+        order.push((first.unwrap_or(true), i));
+    }
+    order.sort();
+    for (_, i) in order {
+        let f = &files[i].0;
         let text = std::fs::read(f).map_err(|e| format!("{}: {e}", f.display()))?;
         let text = String::from_utf8_lossy(&text);
         let mut adapter = forced;
@@ -1060,19 +1227,14 @@ pub fn read_files(
                 }
             }
         }
-        if adapter.is_none() {
-            return Err(format!(
-                "{}: no transcript adapter reads this file",
-                f.display()
-            ));
-        }
     }
     Ok(())
 }
 
-/// Returns the `.jsonl` files of the arguments. A directory gives its files
-/// at any depth, in sorted order.
-pub fn collect_files(args: &[String]) -> Result<Vec<std::path::PathBuf>, String> {
+/// Returns the `.jsonl` files of the arguments, each with true if the user
+/// named it. A directory gives its files at any depth, in sorted order. A file
+/// that two arguments give is read once.
+pub fn collect_files(args: &[String]) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
         let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
         entries.sort_by_key(|e| e.file_name());
@@ -1086,17 +1248,21 @@ pub fn collect_files(args: &[String]) -> Result<Vec<std::path::PathBuf>, String>
         }
         Ok(())
     }
-    let mut out = Vec::new();
+    let mut out: Vec<(std::path::PathBuf, bool)> = Vec::new();
     for a in args {
         let p = std::path::PathBuf::from(a);
         if p.is_dir() {
-            walk(&p, &mut out).map_err(|e| format!("{a}: {e}"))?;
+            let mut found = Vec::new();
+            walk(&p, &mut found).map_err(|e| format!("{a}: {e}"))?;
+            out.extend(found.into_iter().map(|f| (f, false)));
         } else if p.is_file() {
-            out.push(p);
+            out.push((p, true));
         } else {
             return Err(format!("{a}: no such file or directory"));
         }
     }
+    let mut seen = HashSet::new();
+    out.retain(|(p, _)| seen.insert(p.canonicalize().unwrap_or_else(|_| p.clone())));
     Ok(out)
 }
 
@@ -1119,12 +1285,28 @@ mod tests {
 
     #[test]
     fn shell_words() {
+        let reads = |c: &str| shell_reads(&shell_commands(c));
         assert_eq!(
-            shell_paths(
-                "sed -n '1,40p' docs/a.md && cat \"docs/b c.md\" | head; grep -n x docs/c.md:12"
-            ),
+            reads("sed -n '1,40p' docs/a.md && cat \"docs/b c.md\" | head; grep -n x docs/c.md:12"),
             ["docs/a.md", "docs/b c.md", "docs/c.md"]
         );
+        // Writes, staging and counts are not reads.
+        assert!(
+            reads("cat > docs/a.md; git add docs/b.md; wc -c docs/c.md; echo x >> docs/d.md")
+                .is_empty()
+        );
+        assert_eq!(
+            reads("LC_ALL=C /usr/bin/cat docs/e.md > out.md"),
+            ["docs/e.md"]
+        );
+        assert_eq!(
+            program(&shell_commands("X=1 ~/.cargo/bin/spec-dna context a")[0]),
+            Some("spec-dna")
+        );
+        assert!(is_plain_id("auth/session#requirements") && is_plain_id("Ünterlagen/x"));
+        for bad in ["KEY=value", "/home/u/a", "./a", "a.md", "a b", "a:b"] {
+            assert!(!is_plain_id(bad), "{bad}");
+        }
         assert_eq!(
             shell_searches(
                 "grep -r x . | grep -v y; find . -name '*.md' && LC_ALL=C git grep z; cat a | grep q"
