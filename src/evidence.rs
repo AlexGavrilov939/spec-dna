@@ -73,7 +73,7 @@ pub fn load(
     }
     let lines = repo
         .git
-        .grep_lines(TAG, rev, untracked)
+        .grep_lines(TAG, rev, untracked, &config.evidence_tests)
         .map_err(Fatal::Io)?;
     let mut out = Vec::new();
     for (path, line, text) in lines {

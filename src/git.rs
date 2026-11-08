@@ -328,11 +328,14 @@ impl Git {
     /// Without `rev`, it searches the working tree: tracked files, and with
     /// `untracked` also the untracked files that git does not ignore. With
     /// `rev`, it searches that commit. Binary files do not count.
+    /// `globs` limits the search to the paths that match one of them (git
+    /// `glob` pathspecs: `*` stays in one segment, `**` crosses segments).
     pub fn grep_lines(
         &self,
         text: &str,
         rev: Option<&str>,
         untracked: bool,
+        globs: &[String],
     ) -> Result<Vec<(String, u32, String)>, String> {
         let mut args: Vec<&str> = vec![
             "grep",
@@ -352,6 +355,8 @@ impl Git {
             args.push(r);
         }
         args.push("--");
+        let specs: Vec<String> = globs.iter().map(|g| format!(":(glob){g}")).collect();
+        args.extend(specs.iter().map(String::as_str));
         let out = self
             .cmd(&args)
             .stderr(Stdio::piped())

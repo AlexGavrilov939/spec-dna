@@ -345,8 +345,24 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
     {
         loaded.corpora[0].covers = evidence::load(repo, &cfg, None, a.base.is_none())?;
+        // The base has the same tags if no test file changed: the same
+        // paths with the same blobs, and no file of the working tree.
+        let tests = |s: &Snapshot| -> Vec<(String, Option<String>)> {
+            s.files
+                .iter()
+                .filter(|e| cfg.is_test_file(&e.path))
+                .map(|e| (e.path.clone(), e.blob.clone()))
+                .collect()
+        };
+        let head_tests = tests(&head_snap);
+        let same = head_tests.iter().all(|t| t.1.is_some()) && head_tests == tests(&base_snap);
+        let head_covers = loaded.corpora[0].covers.clone();
         if let (Some(b), Some(commit)) = (loaded.corpora.get_mut(1), &base_commit) {
-            b.covers = evidence::load(repo, &cfg, Some(commit), false)?;
+            b.covers = if same {
+                head_covers
+            } else {
+                evidence::load(repo, &cfg, Some(commit), false)?
+            };
         }
         repo::trace("evidence", &mut t);
     }
