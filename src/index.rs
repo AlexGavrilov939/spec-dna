@@ -205,9 +205,12 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.strs(&r.aliases);
         w.str(&r.text);
     }
+    w.u32(d.leads.len() as u32);
+    for t in &d.leads {
+        w.str(&t.text);
+        w.u32(t.line);
+    }
     w.u32(d.body_chars);
-    w.0.extend_from_slice(&d.frozen_hash);
-    w.u32(d.amendments.unwrap_or(u32::MAX));
 }
 
 fn read_doc(r: &mut R) -> Option<ParsedDoc> {
@@ -281,10 +284,13 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             text: r.str()?,
         });
     }
+    for _ in 0..r.u32()? {
+        d.leads.push(Token {
+            text: r.str()?,
+            line: r.u32()?,
+        });
+    }
     d.body_chars = r.u32()?;
-    d.frozen_hash = r.hash()?;
-    let a = r.u32()?;
-    d.amendments = (a != u32::MAX).then_some(a);
     Some(d)
 }
 
@@ -294,7 +300,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n[l](x.md) [[a/b]] ADR-1\n\n## Amendments\n";
+        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1\n\n## Amendments\n";
         let mut m = HashMap::new();
         m.insert("abc".to_string(), Arc::new(crate::parse::parse(text)));
         m.insert(

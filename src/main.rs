@@ -374,7 +374,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .head
             .iter()
             .zip(&outcome.new)
-            .filter(|(d, n)| d.code.severity() == sev && (!only_new || **n))
+            .filter(|(d, n)| d.severity == sev && (!only_new || **n))
             .count()
     };
     let (errors, warnings) = (

@@ -211,3 +211,11 @@ The owner gave these rulings before session 3, and a review of session 2 found 4
 - Section order. In a document with requirements, context assembly serves the sections that contain requirements first, and then the title section. A document without requirements keeps the heading order.
 - Tracked files. This rule makes the amendment "untracked documents in the working tree" more exact. Without `--base`, `check` reads tracked files and the untracked files that git does not ignore. Thus `check` sees a new document before `git add`. With `--base`, `check` reads tracked files only. A base is always a commit, and CI uses a clean checkout. Thus base-relative gating and CI use tracked files only.
 - Query. The BM25 ranking of `context --query` counts each heading word 3 times. It uses no embeddings and no network. This item records the existing behavior.
+
+### 2026-11-08: rulings after checkpoint 3
+
+The owner gave these rulings after checkpoint 3. These changes apply.
+
+- Amendment sections. This rule replaces "the text above an `## Amendments` section" in "Lifecycle". A root can name the amendment sections of each type, in any language (`amendment-sections`). The default for a decision is `Amendments`. A heading of level 2 or more that is a name, or that starts with a name and a character that is not a letter or a digit, starts an amendment section. The section continues to the next heading of the same or a higher level. Thus a repository can write one section for all amendments, or one section for each amendment, at any position. After a decision is accepted, all text outside its amendment sections is frozen (SD405). Context assembly serves the amendment sections of a decision with its outcome.
+- Partial recognition. A spec or contract also gives SD806 if a list item or a table row starts with a token that matches `legacy-keys`, and no recognized requirement of the document has that key. Thus a second syntax of requirements in one document gives a warning.
+- Lint severity. A root can set the severity of the requirement lint (SD801 to SD805): `off`, `warning` (default) or `error` (`lint-severity`). A repository can thus adopt spec-dna in legacy roots without a rewrite of normative text.

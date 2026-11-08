@@ -22,6 +22,7 @@ fn diag(
         doc: d.id.clone(),
         target: target.into(),
         message: message.into(),
+        severity: code.severity(),
     }
 }
 
@@ -235,6 +236,10 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
         ));
     }
 
+    // The root sets the severity of the requirement lint, or turns it off.
+    let Some(severity) = config.roots[d.root].lint_severity else {
+        return out;
+    };
     for &ri in &d.reqs {
         let r = &p.reqs[ri];
         for (code, sub, msg) in crate::lint::lint(&r.text, config.max_words) {
@@ -243,7 +248,9 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
             } else {
                 format!("{}:{sub}", r.key)
             };
-            out.push(diag(d, r.line, code, target, format!("`{}`: {msg}", r.key)));
+            let mut x = diag(d, r.line, code, target, format!("`{}`: {msg}", r.key));
+            x.severity = severity;
+            out.push(x);
         }
     }
     out
@@ -315,6 +322,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
                         path: b.path.clone(),
                         line: 1,
                         code: Code::IdRemoved,
+                        severity: Code::IdRemoved.severity(),
                         doc: b.id.clone(),
                         target: b.id.clone(),
                         message: format!(
@@ -327,6 +335,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
                         path: b.path.clone(),
                         line: 1,
                         code: Code::IdRemoved,
+                        severity: Code::IdRemoved.severity(),
                         doc: b.id.clone(),
                         target: b.id.clone(),
                         message: format!("`{}` is no longer a document id", b.id),
@@ -351,14 +360,14 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
         if b.ty == DocType::Decision
             && b.status_str() == "accepted"
             && h.ty == DocType::Decision
-            && h.parsed.frozen_hash != b.parsed.frozen_hash
+            && h.frozen_hash != b.frozen_hash
         {
             out.push(diag(
                 h,
                 1,
                 Code::DecisionFrozen,
                 "",
-                "the text above `## Amendments` changed after the decision was accepted",
+                "the text outside the amendment sections changed after the decision was accepted",
             ));
         }
         let (soft, hard) = config.budgets[h.ty as usize];
@@ -379,12 +388,14 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
     // Find new amendment text that can change the outcome of a decision.
     for h in head.docs.iter().filter(|d| d.ty == DocType::Decision) {
         let base_hashes: HashSet<[u8; 8]> = match head_to_base(base, h) {
-            Some(b) => amendment_chunks(b)
-                .map(|i| b.parsed.chunks[i].hash)
+            Some(b) => b
+                .amendments
+                .iter()
+                .map(|&i| b.parsed.chunks[i].hash)
                 .collect(),
             None => HashSet::new(),
         };
-        for i in amendment_chunks(h) {
+        for &i in &h.amendments {
             let ch = &h.parsed.chunks[i];
             if !base_hashes.contains(&ch.hash)
                 && ch.flags & (FLAG_REQUIREMENT | FLAG_BCP14 | FLAG_STATUS_WORD) != 0
@@ -459,13 +470,6 @@ fn head_to_base<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
         }
     }
     None
-}
-
-/// Returns the chunk indices of the `## Amendments` section.
-fn amendment_chunks(d: &Doc) -> impl Iterator<Item = usize> + '_ {
-    let start = d.parsed.amendments.map_or(usize::MAX, |a| a as usize);
-    let chunks = &d.parsed.chunks;
-    (start..chunks.len()).take_while(move |&i| i == start || chunks[i].level > 2)
 }
 
 fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {

@@ -156,9 +156,22 @@
             "items": { "type": "string", "pattern": "\\S" }
           }
         },
+        "amendment-sections": {
+          "description": "For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit. spec-dna compares them without case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. The default is `decision = [\"Amendments\"]`. After a decision is accepted, the text outside its amendment sections is frozen (SD405). For a decision, `context` serves the amendment sections with the outcome.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/type" },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "\\S" }
+          }
+        },
         "enforce-budgets": {
           "description": "If false, a document over its hard budget gives the warning SD704, never the error SD702. Default true.",
           "type": "boolean"
+        },
+        "lint-severity": {
+          "description": "The severity of the requirement lint (SD801 to SD805) in this root. Default `warning`.",
+          "enum": ["off", "warning", "error"]
         }
       }
     }

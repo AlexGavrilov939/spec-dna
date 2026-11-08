@@ -105,6 +105,7 @@ pub fn check(files: &[(&str, String)]) -> Vec<Diag> {
             doc: path.to_string(),
             target: name.to_string(),
             message,
+            severity: code.severity(),
         };
         if hex(&hash_normalized(b)) != hash {
             out.push(d(

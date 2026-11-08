@@ -17,7 +17,9 @@ legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
 legacy-keys = ["R-{n}"]
 status-map = { released = "active", wip = "draft" }            # legacy status words
 required-sections = { decision = ["Decision Outcome", "Decision"], spec = ["Requirements"] }
+amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
 enforce-budgets = true          # false: the hard budget gives warnings only
+lint-severity = "warning"       # "off", "warning" or "error" for SD801 to SD805
 
 [budgets.spec]                  # characters of body text, per type
 soft = 10000
@@ -47,16 +49,18 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type. |
 | `roots.exclude` | list of globs | `[]` | Paths, relative to the root, that are not documents. |
 | `roots.legacy-ids` | list | `[]` | Patterns that make existing file names into aliases. A string `ADR-{n}` makes the alias `ADR-{n}` from a slug that starts with it. In a table, `file` sets the slug pattern. |
-| `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. For a legacy key, the colon after the bold key is optional: `- **R-12** sentence`, `- **R-12**: sentence`, `- **R-12:** sentence` and `- **R-12.** sentence` are requirements. A spec or contract with tokens that match a pattern but no recognized requirement gets SD806. |
+| `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. For a legacy key, the colon after the bold key is optional: `- **R-12** sentence`, `- **R-12**: sentence`, `- **R-12:** sentence` and `- **R-12.** sentence` are requirements. A spec or contract gets SD806 if it has tokens that match a pattern but no recognized requirement. It also gets SD806 if a list item or a table row starts with a token that matches a pattern, and no recognized requirement of the document has that key. |
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the root's type (in a mixed root, a status of any type). |
 | `roots.required-sections` | table | `{ decision = ["Decision Outcome", "Decision"] }` | For each type, the headings of its required section, in any language. A document of that type needs a section with one of these headings (SD305). The comparison ignores case. A list replaces the default of its type, and an empty list removes the requirement. The other types have no required section by default. For a decision, `context` serves this section as the summary. |
+| `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit: `## Nachtrag 2026-01-02: TTL` matches `Nachtrag`, and `## Nachtragsplan` does not. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. After a decision is accepted, the text outside its amendment sections is frozen (SD405), and new amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
+| `roots.lint-severity` | string | `"warning"` | The severity of the requirement lint (SD801 to SD805) in this root: `"off"`, `"warning"` or `"error"`. Use `"off"` for a legacy root whose requirements you do not reword now. With `"error"`, a new lint finding fails `check`. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
 | `context.budget` | integer | `12000` | The default budget of `spec-dna context`, in characters. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
 
-Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `note` none. A budget counts the Unicode characters of the body, without front matter and code blocks. Text under `## Amendments` counts.
+Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `note` none. A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 
 A document over the soft budget gives a warning (SD701), and SD703 if it also grew against the base. The hard budget compares the document with the base ([ADR 0001](adr/0001-information-model.md), "Amendments"):
 

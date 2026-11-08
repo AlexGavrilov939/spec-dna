@@ -13,6 +13,18 @@ An argument is a file or a directory. A directory gives every `.jsonl` file belo
 
 A transcript can contain secrets: prompts, commands, file contents and tool output. The command prints counts, tool names, model names, times, session and agent ids, and spec-dna document and section ids. It never prints prompt, command, path or file text. It reads that text in memory to find document reads, and then drops it. A test with secret text in every field checks this rule.
 
+The names and ids that the command prints come from the transcript. Each one must match a strict pattern, or the command prints `<redacted>` instead:
+
+| Field | Pattern |
+| --- | --- |
+| Session id | A UUID in lowercase hexadecimal |
+| Agent id | `main`, `sidechain`, or 1 to 32 lowercase hexadecimal digits |
+| Origin | 1 to 32 lowercase ASCII letters and hyphens |
+| Model name | 1 to 64 lowercase ASCII letters, digits and `.`, `-`, `_`, `:`, `@`, with a letter first |
+| Tool name | 1 to 64 ASCII letters, digits, `_` and `-`, with a letter first (the tool name pattern of the Anthropic API) |
+
+Thus a malformed or hostile transcript cannot put free text into the report.
+
 ## Terms
 
 | Term | Meaning |

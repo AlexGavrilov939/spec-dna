@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 3;
+pub const PARSER_VERSION: u32 = 4;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -25,13 +25,12 @@ pub struct ParsedDoc {
     pub refs: Vec<Ref>,
     pub tokens: Vec<Token>,
     pub reqs: Vec<Req>,
+    /// The first word of each list item and each table body row, if the word
+    /// contains a digit. The model compares these words with `legacy-keys` to
+    /// find requirements in a syntax that it does not read (SD806).
+    pub leads: Vec<Token>,
     /// Characters of the body without fenced or indented code blocks.
     pub body_chars: u32,
-    /// Hash of the body above a level-2 `Amendments` heading. If there is no
-    /// such heading, it is the hash of all of the body.
-    pub frozen_hash: Hash,
-    /// Index of the first chunk of the `Amendments` section, if any.
-    pub amendments: Option<u32>,
 }
 
 /// A section unit: one heading and its text up to the next heading of any
@@ -138,7 +137,24 @@ pub fn parse(text: &str) -> ParsedDoc {
                 code_chars += body[range.clone()].chars().count();
             }
             Event::End(TagEnd::CodeBlock) => in_code = false,
-            Event::Start(Tag::Item) => items.push(Item::new(range.start, range.end)),
+            Event::Start(Tag::Item) => {
+                if let Some(w) = lead_word(strip_list_marker(&body[range.clone()])) {
+                    doc.leads.push(Token {
+                        text: w.to_string(),
+                        line: lines.line(body_start + range.start),
+                    });
+                }
+                items.push(Item::new(range.start, range.end))
+            }
+            Event::Start(Tag::TableRow) => {
+                let row = body[range.clone()].trim_start();
+                if let Some(w) = lead_word(row.strip_prefix('|').unwrap_or(row)) {
+                    doc.leads.push(Token {
+                        text: w.to_string(),
+                        line: lines.line(body_start + range.start),
+                    });
+                }
+            }
             Event::End(TagEnd::Item) => {
                 if let Some(item) = items.pop()
                     && let Some(c) = item.finish()
@@ -270,14 +286,41 @@ pub fn parse(text: &str) -> ParsedDoc {
     }
 
     doc.body_chars = (body.chars().count() - code_chars) as u32;
-    let amend = doc
-        .chunks
-        .iter()
-        .position(|c| c.level == 2 && c.heading.eq_ignore_ascii_case("amendments"));
-    doc.amendments = amend.map(|i| i as u32);
-    let frozen_end = amend.map_or(text.len(), |i| doc.chunks[i].start as usize);
-    doc.frozen_hash = hash_normalized(&text[body_start..frozen_end]);
     doc
+}
+
+/// Removes the marker of a list item (`-`, `*`, `+`, `1.` or `1)`) and a task
+/// box (`[ ]` or `[x]`).
+fn strip_list_marker(item: &str) -> &str {
+    let s = item.trim_start();
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    let s = if s.starts_with(['-', '*', '+']) {
+        &s[1..]
+    } else if digits > 0 && s[digits..].starts_with(['.', ')']) {
+        &s[digits + 1..]
+    } else {
+        s
+    };
+    let s = s.trim_start();
+    ["[ ]", "[x]", "[X]"]
+        .iter()
+        .find_map(|b| s.strip_prefix(b))
+        .unwrap_or(s)
+        .trim_start()
+}
+
+/// Returns the first word of a list item or table cell without emphasis
+/// marks and trailing punctuation, if it contains an ASCII digit. A word ends
+/// at whitespace, `*`, `` ` ``, `|`, `(`, `)`, `[`, `]` or `:`.
+fn lead_word(s: &str) -> Option<&str> {
+    let s = s.trim_start().trim_start_matches(['*', '_', '~', '`', '[']);
+    let end = s
+        .find(|c: char| {
+            c.is_whitespace() || matches!(c, '*' | '`' | '|' | '(' | ')' | '[' | ']' | ':')
+        })
+        .unwrap_or(s.len());
+    let w = s[..end].trim_end_matches(['.', ',', ';', '_', '~']);
+    (!w.is_empty() && w.len() <= 64 && w.bytes().any(|b| b.is_ascii_digit())).then_some(w)
 }
 
 struct Item {
@@ -560,7 +603,6 @@ mod tests {
             ]
         );
         assert_eq!(d.title, "Session tokens");
-        assert_eq!(d.amendments, Some(3));
         assert!(d.chunks[1].flags & FLAG_REQUIREMENT != 0);
         assert!(d.chunks[1].flags & FLAG_BCP14 != 0);
     }
@@ -642,12 +684,23 @@ mod tests {
     }
 
     #[test]
-    fn frozen_hash_ignores_amendments() {
-        let a = parse(DOC);
-        let b = parse(&format!("{DOC}More amendment text.\n"));
-        assert_eq!(a.frozen_hash, b.frozen_hash);
-        let c = parse(&DOC.replace("Intro with", "Changed intro with"));
-        assert_ne!(a.frozen_hash, c.frozen_hash);
+    fn lead_words() {
+        let d = parse(
+            "- R-1 plain key\n- **R-2.** bold with a period\n1. `R-3`: code\n- [x] R-4a done\n- See R-5\n- plain\n  - R-6) nested\n\n| Id | Text |\n| --- | --- |\n| R-7 | row |\n| **R-8** | bold row |\n| none | row |\n\n```md\n- R-9 in code\n```\n",
+        );
+        let leads: Vec<(&str, u32)> = d.leads.iter().map(|t| (t.text.as_str(), t.line)).collect();
+        assert_eq!(
+            leads,
+            [
+                ("R-1", 1),
+                ("R-2", 2),
+                ("R-3", 3),
+                ("R-4a", 4),
+                ("R-6", 7),
+                ("R-7", 11),
+                ("R-8", 12)
+            ]
+        );
     }
 
     #[test]

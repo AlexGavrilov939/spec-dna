@@ -299,7 +299,10 @@ pub fn assemble(
     for d in decisions {
         let chunks = &c.docs[d as usize].parsed.chunks;
         for (j, ch) in chunks.iter().enumerate() {
-            let summary = ch.level <= 1 || c.docs[d as usize].outcome.contains(&j);
+            // The summary of a decision: its title, its outcome and its
+            // amendments, in document order.
+            let doc = &c.docs[d as usize];
+            let summary = ch.level <= 1 || doc.outcome.contains(&j) || doc.amendments.contains(&j);
             if summary {
                 add(&mut plan, d, j, Tier::Decision);
             } else {

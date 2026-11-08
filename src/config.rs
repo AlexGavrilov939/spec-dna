@@ -2,6 +2,7 @@
 //! docs/config.md describes it. schema/spec-dna.schema.json contains its JSON
 //! Schema.
 
+use crate::diag::Severity;
 use crate::model::DocType;
 use toml::{Table, Value};
 
@@ -39,13 +40,23 @@ pub struct Root {
     /// section. A document of that type needs one of them. An empty list means
     /// no required section.
     pub required_sections: [Vec<String>; 6],
+    /// For each type, the names of its amendment sections. A heading that is
+    /// a name, or that starts with a name and a character that is not a letter
+    /// or a digit, starts an amendment section.
+    pub amendment_sections: [Vec<String>; 6],
     /// If false, a document over the hard budget gives a warning, not an
     /// error.
     pub enforce_budgets: bool,
+    /// The severity of the requirement lint (SD801 to SD805). `None` turns
+    /// the lint off.
+    pub lint_severity: Option<Severity>,
 }
 
 /// The default required section of a decision: its outcome.
 pub const DEFAULT_DECISION_SECTIONS: [&str; 2] = ["Decision Outcome", "Decision"];
+
+/// The default amendment section of a decision.
+pub const DEFAULT_AMENDMENT_SECTIONS: [&str; 1] = ["Amendments"];
 
 #[derive(Clone, Debug)]
 pub struct LegacyId {
@@ -422,32 +433,38 @@ impl Root {
         required_sections[DocType::Decision as usize] =
             DEFAULT_DECISION_SECTIONS.map(str::to_string).to_vec();
         if let Some(v) = f.take("required-sections") {
-            let tbl = v
-                .as_table()
-                .ok_or_else(|| format!("`{prefix}required-sections` must be a table"))?;
-            for (name, list) in tbl {
-                let key = format!("{prefix}required-sections.{name}");
-                let ty = DocType::from_name(name)
-                    .filter(|t| types.contains(t))
-                    .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
-                let headings = list
-                    .as_array()
-                    .and_then(|a| {
-                        a.iter()
-                            .map(|h| h.as_str().map(str::to_string))
-                            .collect::<Option<Vec<_>>>()
-                    })
-                    .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
-                if headings.iter().any(|h| h.trim().is_empty()) {
-                    return Err(format!("`{key}` has an empty heading"));
-                }
-                required_sections[ty as usize] = headings;
-            }
+            headings_per_type(
+                v,
+                &format!("{prefix}required-sections"),
+                &types,
+                &mut required_sections,
+            )?;
+        }
+        let mut amendment_sections: [Vec<String>; 6] = Default::default();
+        amendment_sections[DocType::Decision as usize] =
+            DEFAULT_AMENDMENT_SECTIONS.map(str::to_string).to_vec();
+        if let Some(v) = f.take("amendment-sections") {
+            headings_per_type(
+                v,
+                &format!("{prefix}amendment-sections"),
+                &types,
+                &mut amendment_sections,
+            )?;
         }
         let enforce_budgets = match f.take("enforce-budgets") {
             None => true,
             Some(Value::Boolean(b)) => *b,
             Some(_) => return Err(format!("`{prefix}enforce-budgets` must be true or false")),
+        };
+        let lint_severity = match f.take("lint-severity").map(|v| v.as_str()) {
+            None | Some(Some("warning")) => Some(Severity::Warning),
+            Some(Some("error")) => Some(Severity::Error),
+            Some(Some("off")) => None,
+            Some(_) => {
+                return Err(format!(
+                    "`{prefix}lint-severity` must be \"off\", \"warning\" or \"error\""
+                ));
+            }
         };
         f.done()?;
         Ok(Root {
@@ -460,7 +477,9 @@ impl Root {
             legacy_keys,
             status_map,
             required_sections,
+            amendment_sections,
             enforce_budgets,
+            lint_severity,
         })
     }
 
@@ -472,6 +491,38 @@ impl Root {
             &path[self.path.len() + 1..]
         }
     }
+}
+
+/// Reads a table of heading lists per type, such as `required-sections`, into
+/// `out`. A list replaces the default of its type.
+fn headings_per_type(
+    v: &Value,
+    key: &str,
+    types: &[DocType],
+    out: &mut [Vec<String>; 6],
+) -> Result<(), String> {
+    let tbl = v
+        .as_table()
+        .ok_or_else(|| format!("`{key}` must be a table"))?;
+    for (name, list) in tbl {
+        let key = format!("{key}.{name}");
+        let ty = DocType::from_name(name)
+            .filter(|t| types.contains(t))
+            .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+        let headings = list
+            .as_array()
+            .and_then(|a| {
+                a.iter()
+                    .map(|h| h.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+        if headings.iter().any(|h| h.trim().is_empty()) {
+            return Err(format!("`{key}` has an empty heading"));
+        }
+        out[ty as usize] = headings;
+    }
+    Ok(())
 }
 
 /// Reads keys from a table and rejects unknown ones.
@@ -704,6 +755,13 @@ type = "decision"
             )
             .is_ok()
         );
+        assert!(
+            err("amendment-sections = { decision = [\"Nachtrag\"] }")
+                .contains("not a type of this root")
+        );
+        assert!(err("amendment-sections = { spec = [\"\"] }").contains("empty heading"));
+        assert!(err("lint-severity = \"warn\"").contains("\"off\", \"warning\" or \"error\""));
+        assert!(err("lint-severity = false").contains("lint-severity"));
         for bad in [
             "ftp://example.org/x/",
             "https://example.org/x",
@@ -717,5 +775,32 @@ type = "decision"
             .unwrap_err();
             assert!(e.contains("self-urls"), "{bad}: {e}");
         }
+    }
+
+    #[test]
+    fn amendment_sections_and_lint_severity() {
+        let c = Config::parse(
+            r#"
+spec-dna = "0.1.0"
+[[roots]]
+path = "adr"
+type = "decision"
+amendment-sections = { decision = ["Nachtrag", "Amendments"] }
+lint-severity = "off"
+[[roots]]
+path = "docs"
+lint-severity = "error"
+[[roots]]
+path = "notes"
+"#,
+        )
+        .unwrap();
+        let d = DocType::Decision as usize;
+        assert_eq!(c.roots[0].amendment_sections[d], ["Nachtrag", "Amendments"]);
+        assert_eq!(c.roots[0].lint_severity, None);
+        assert_eq!(c.roots[1].amendment_sections[d], DEFAULT_AMENDMENT_SECTIONS);
+        assert!(c.roots[1].amendment_sections[DocType::Spec as usize].is_empty());
+        assert_eq!(c.roots[1].lint_severity, Some(Severity::Error));
+        assert_eq!(c.roots[2].lint_severity, Some(Severity::Warning));
     }
 }
