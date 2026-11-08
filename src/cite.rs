@@ -432,11 +432,11 @@ pub fn citing(
             .push((*ch, class(s), points(s)));
     }
     let type_rank = |t: DocType| match t {
-        DocType::Spec | DocType::Contract => 0,
-        DocType::Guide => 1,
+        DocType::Invariant | DocType::Spec | DocType::Contract => 0,
+        DocType::Guide | DocType::Runbook => 1,
         DocType::Decision => 2,
-        DocType::Change => 3,
-        DocType::Note => 4,
+        DocType::Change | DocType::Incident => 3,
+        DocType::Note | DocType::Reference => 4,
     };
     let mut docs: Vec<(u32, u8, u32, Vec<usize>)> = by_doc
         .into_iter()

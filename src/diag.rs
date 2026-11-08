@@ -24,8 +24,9 @@ macro_rules! codes {
         pub enum Code { $($variant),* }
 
         impl Code {
-            #[cfg(test)]
             pub const ALL: &[Code] = &[$(Code::$variant),*];
+            /// Finds a code by its `SDnnn` form.
+            pub fn from_code(s: &str) -> Option<Code> { Code::ALL.iter().copied().find(|c| c.code() == s) }
             pub fn code(self) -> &'static str { match self { $(Code::$variant => $code),* } }
             pub fn name(self) -> &'static str { match self { $(Code::$variant => $name),* } }
             pub fn severity(self) -> Severity { match self { $(Code::$variant => Severity::$sev),* } }
@@ -44,13 +45,14 @@ codes! {
     UnresolvedLink = "SD102", "unresolved-link", Error, "Fix the link target. The target must be a file or a directory that git tracks, with the exact case.";
     EvidenceMissing = "SD103", "evidence-missing", Error, "Fix the `verified-by` path. The path must exist in the git tree.";
     AmbiguousReference = "SD104", "ambiguous-reference", Error, "Use the full document id instead of an alias that names several documents.";
+    CoversUnresolved = "SD105", "covers-unresolved", Error, "Name an existing requirement as `<doc-id>#<key>` after `covers:`, or remove the tag.";
     DuplicateId = "SD201", "duplicate-id", Error, "Give each document a unique id. Remove the alias from all documents except one.";
     IdRemoved = "SD202", "id-removed", Error, "Keep the document and set a final status such as `retired`. As an alternative, use `spec-dna mv` to move it, so that the old id becomes an alias.";
     KeyFormat = "SD203", "key-format", Error, "Use a slug key (groups of lowercase letters and digits, with a hyphen between groups). As an alternative, add the legacy pattern to `legacy-keys`.";
     KeyDuplicate = "SD204", "key-duplicate", Error, "Rename one of the requirements. The keys in a document must be unique.";
     FrontMatterSyntax = "SD301", "front-matter-syntax", Error, "Use the front matter subset: `key: value` lines, where each value is a string or a list of strings.";
     FrontMatterField = "SD302", "front-matter-field", Error, "Give the field a string or a list of strings.";
-    TypeInvalid = "SD303", "type-invalid", Error, "Use one of these types: spec, contract, guide, decision, change, note. The type must match the type of the root.";
+    TypeInvalid = "SD303", "type-invalid", Error, "Use one of these types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference. The type must match the type of the root.";
     StatusInvalid = "SD304", "status-invalid", Error, "Set a `status` that the document type allows.";
     SectionMissing = "SD305", "section-missing", Error, "Add the required section heading.";
     StatusTransition = "SD401", "status-transition", Error, "A status can only move forward. To return to an earlier status, write a new document.";
@@ -67,6 +69,8 @@ codes! {
     AmendmentOutcome = "SD605", "amendment-outcome", Warning, "If the amendment changes the decision outcome, write a new decision that supersedes this one.";
     CitedPathRemoved = "SD606", "cited-path-removed", Warning, "Update the document: cite the new path, or change the text about the removed file.";
     CitedSymbolRemoved = "SD607", "cited-symbol-removed", Warning, "Update the document: cite the new identifier, or change the text about the removed code.";
+    RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
+    IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, decisions and runbooks that the incident involves, with `[[<id>]]` or a Markdown link.";
     BudgetSoft = "SD701", "budget-soft", Warning, "Split the document or move detail into linked documents.";
     BudgetHard = "SD702", "budget-hard", Error, "Split the document. It is new, or it went over the hard budget, or it grew while over the hard budget.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its soft budget and it grew. Split the document. Do not add more text to it.";

@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 8;
+pub const PARSER_VERSION: u32 = 9;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -98,6 +98,8 @@ pub struct Req {
     /// links to a moved key or section.
     pub frozen: Hash,
     pub aliases: Vec<String>,
+    /// The paths of an inline `<!-- verified-by: <path>, ... -->` marker.
+    pub verified_by: Vec<String>,
     /// The sentence, whitespace-normalized, without the alias marker.
     pub text: String,
 }
@@ -302,7 +304,7 @@ pub fn parse(text: &str) -> ParsedDoc {
                 ch.is_whitespace() || matches!(ch, ':' | '.' | '-' | '–' | '—')
             });
         }
-        let (clean, aliases) = strip_alias_marker(raw);
+        let (clean, aliases, verified_by) = strip_markers(raw);
         doc.reqs.push(Req {
             key: c.key,
             colon: c.colon,
@@ -313,6 +315,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             hash: hash_normalized(&clean),
             frozen: hash_normalized(&strip_link_destinations(&clean)),
             aliases,
+            verified_by,
             text: crate::hash::normalize(&clean),
         });
     }
@@ -453,9 +456,13 @@ impl Item {
     }
 }
 
-/// Removes `<!-- aliases: a#b, c#d -->` and returns the aliases it lists.
-pub fn strip_alias_marker(raw: &str) -> (String, Vec<String>) {
+/// Removes the markers `<!-- aliases: a#b, c#d -->` and
+/// `<!-- verified-by: tests/a.rs, tests/b.rs -->` from a requirement, and
+/// returns the aliases and the evidence paths that they list. The hash of a
+/// requirement does not cover the markers.
+pub fn strip_markers(raw: &str) -> (String, Vec<String>, Vec<String>) {
     let mut aliases = Vec::new();
+    let mut verified_by = Vec::new();
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(pos) = rest.find("<!--") {
@@ -465,19 +472,23 @@ pub fn strip_alias_marker(raw: &str) -> (String, Vec<String>) {
         };
         let inner = after[..close].trim();
         out.push_str(&rest[..pos]);
-        if let Some(list) = inner.strip_prefix("aliases:") {
-            aliases.extend(
-                list.split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty()),
-            );
+        let list = |l: &str| -> Vec<String> {
+            l.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+        if let Some(l) = inner.strip_prefix("aliases:") {
+            aliases.extend(list(l));
+        } else if let Some(l) = inner.strip_prefix("verified-by:") {
+            verified_by.extend(list(l));
         } else {
             out.push_str(&rest[pos..pos + 4 + close + 3]);
         }
         rest = &after[close + 3..];
     }
     out.push_str(rest);
-    (out, aliases)
+    (out, aliases, verified_by)
 }
 
 const BCP14: [&str; 7] = [

@@ -9,6 +9,7 @@ mod config;
 mod context;
 mod diag;
 mod drift;
+mod evidence;
 mod frontmatter;
 mod git;
 mod glob;
@@ -22,6 +23,7 @@ mod parse;
 mod rank;
 mod repo;
 mod split;
+mod templates;
 mod transcript;
 
 use crate::adapters::VERSION;
@@ -49,7 +51,10 @@ Commands:
         A superseded, retired or rejected document is only listed, unless
         --include-inactive is set or a target names it.
     show <id>[#<anchor>]
-        Prints a document, a section or a requirement.
+        Prints a document, a section or a requirement, with the evidence of
+        each requirement.
+    new <type> <id> [--root <dir>]
+        Writes a new document from the template of its type.
     mv <from> <to>
     mv <doc-id>#<key or section>... <spec-id>
         Moves a document. Or moves requirements and whole sections to an
@@ -179,6 +184,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "check" => check(&Repo::discover(&cwd)?, &a),
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
+        "new" => new_doc(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
@@ -418,7 +424,16 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         vec![&head_snap]
     };
     repo::trace("git base tree", &mut t);
-    let loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
+    let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
+    // The `covers:` tags of the test files, for the evidence checks.
+    if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
+    {
+        loaded.corpora[0].covers = evidence::load(repo, &cfg, None, a.base.is_none())?;
+        if let (Some(b), Some(commit)) = (loaded.corpora.get_mut(1), &base_commit) {
+            b.covers = evidence::load(repo, &cfg, Some(commit), false)?;
+        }
+        repo::trace("evidence", &mut t);
+    }
     t = std::time::Instant::now();
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
@@ -436,9 +451,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.head.extend(drift);
         repo::trace("drift", &mut t);
     }
-    let head_ad = adapters::check(&adapter_texts(repo, &head_snap)?);
+    let head_ad = check::apply_severity(&cfg, adapters::check(&adapter_texts(repo, &head_snap)?));
     let base_ad: Vec<_> = if use_base {
-        adapters::check(&adapter_texts(repo, &base_snap)?)
+        check::apply_severity(&cfg, adapters::check(&adapter_texts(repo, &base_snap)?))
     } else {
         Vec::new()
     };
@@ -652,7 +667,8 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 1, 1)?;
-    let (_cfg, c) = load_head(repo, a)?;
+    let (cfg, mut c) = load_head(repo, a)?;
+    c.covers = evidence::load(repo, &cfg, None, true)?;
     let t = &a.positional[0];
     let (d, frag) = context::resolve_target(&c, t).ok_or_else(|| {
         Fatal::NotFound(format!("`{t}` names no document, section or requirement"))
@@ -661,6 +677,92 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         "{}",
         context::show(&c, &repo.root, d, frag.as_deref(), a.json)
     );
+    Ok(0)
+}
+
+/// Writes a new document from the template of its type. The root is
+/// `--root`, or the first root of that single type, or the first mixed root.
+fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    use model::DocType;
+    expect_args(a, 2, 2)?;
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    let name = &a.positional[0];
+    let ty = DocType::from_name(name).ok_or_else(|| {
+        Fatal::Usage(format!(
+            "unknown type `{name}`; use one of {}",
+            DocType::names()
+        ))
+    })?;
+    let id = a.positional[1].trim_matches('/');
+    let id = id.strip_suffix(".md").unwrap_or(id);
+    if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
+        return Err(Fatal::Usage(format!(
+            "`{id}` is not a document id (`<namespace>/<slug>`)"
+        )));
+    }
+    let root_i = match &a.root {
+        Some(r) => {
+            let r = r.trim_matches('/');
+            let r = if r == "." { "" } else { r };
+            cfg.roots
+                .iter()
+                .position(|x| x.path == r)
+                .ok_or_else(|| Fatal::Usage(format!("`{r}` is not a root of spec-dna.toml")))?
+        }
+        None => cfg
+            .roots
+            .iter()
+            .position(|r| r.single_type == Some(ty))
+            .or_else(|| cfg.roots.iter().position(|r| r.single_type.is_none()))
+            .ok_or_else(|| {
+                Fatal::Usage(format!(
+                    "no root takes a `{}`; add a root to spec-dna.toml or use --root",
+                    ty.name()
+                ))
+            })?,
+    };
+    let root = &cfg.roots[root_i];
+    if let Some(t) = root.single_type.filter(|&t| t != ty) {
+        return Err(Fatal::Usage(format!(
+            "root `{}` holds only `{}` documents",
+            root.path,
+            t.name()
+        )));
+    }
+    let path = if root.path.is_empty() {
+        format!("{id}.md")
+    } else {
+        format!("{}/{id}.md", root.path)
+    };
+    if cfg.root_of(&path) != Some(root_i) || cfg.is_excluded(root_i, &path) {
+        return Err(Fatal::Usage(format!(
+            "`{path}` is in another root or excluded; use --root"
+        )));
+    }
+    let file = repo.root.join(&path);
+    if file.exists() {
+        return Err(Fatal::Usage(format!("`{path}` exists")));
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
+    }
+    mv::write(&file, &templates::render(ty, &templates::title_of(id)))?;
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("path", &path)
+                .str("type", ty.name())
+                .str("id", &model::root_doc_id(root, &path))
+                .end()
+        );
+    } else {
+        println!(
+            "wrote {path} ({} template); replace each <placeholder>",
+            ty.name()
+        );
+    }
     Ok(0)
 }
 

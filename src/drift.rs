@@ -23,11 +23,12 @@ use crate::repo::{Fatal, Repo, Snapshot};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Returns true if drift in this document is a problem. A superseded,
-/// retired or rejected document, a completed change and a note describe the
-/// past or give information only, so they can cite code that is gone.
+/// retired or rejected document, a completed change, a note, an incident and
+/// a reference describe the past or give information only, so they can cite
+/// code that is gone.
 fn current(d: &Doc) -> bool {
     !d.is_inactive()
-        && d.ty != DocType::Note
+        && !matches!(d.ty, DocType::Note | DocType::Incident | DocType::Reference)
         && !(d.ty == DocType::Change && d.status_str() == "done")
 }
 
@@ -39,8 +40,8 @@ fn last_segment(raw: &str) -> &str {
 
 /// Finds the drift of the head tree against the base tree. `untracked` is
 /// true when the head tree includes untracked files (`check` without
-/// `--base`). The `drift-severity` of the root of each document sets the
-/// severity of its diagnostics, or removes them.
+/// `--base`). The profile and the rules of the root of each document set the
+/// severity of its diagnostics, or remove them.
 pub fn check(
     repo: &Repo,
     config: &Config,
@@ -48,20 +49,13 @@ pub fn check(
     head: (&Corpus, &Snapshot),
     untracked: bool,
 ) -> Result<Vec<Diag>, Fatal> {
-    let corpus = head.0;
-    let by_path: std::collections::HashMap<&str, usize> = corpus
-        .docs
-        .iter()
-        .map(|d| (d.path.as_str(), d.root))
-        .collect();
-    Ok(find(repo, base, head, untracked)?
-        .into_iter()
-        .filter_map(|mut d| {
-            let root = by_path.get(d.path.as_str())?;
-            d.severity = config.roots[*root].drift_severity?;
-            Some(d)
-        })
-        .collect())
+    if config.is_off(Code::CitedPathRemoved) && config.is_off(Code::CitedSymbolRemoved) {
+        return Ok(Vec::new());
+    }
+    Ok(crate::check::apply_severity(
+        config,
+        find(repo, base, head, untracked)?,
+    ))
 }
 
 fn find(

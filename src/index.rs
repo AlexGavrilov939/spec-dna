@@ -205,6 +205,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.0.extend_from_slice(&r.hash);
         w.0.extend_from_slice(&r.frozen);
         w.strs(&r.aliases);
+        w.strs(&r.verified_by);
         w.str(&r.text);
     }
     for list in [&d.leads, &d.code_spans, &d.path_words] {
@@ -287,6 +288,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             hash: r.hash()?,
             frozen: r.hash()?,
             aliases: r.strs()?,
+            verified_by: r.strs()?,
             text: r.str()?,
         });
     }

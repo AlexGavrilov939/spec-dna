@@ -4,6 +4,7 @@
 
 use crate::config::Config;
 use crate::diag::{Code, Diag};
+use crate::evidence::{Evidence, needs_evidence};
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
 use std::collections::{HashMap, HashSet};
@@ -26,10 +27,24 @@ fn diag(
     }
 }
 
-/// Returns every diagnostic of one tree.
+/// Sets the severity of each diagnostic from the profile and the rules of
+/// its root (`Config::severity`), and removes the diagnostics that are off.
+pub fn apply_severity(config: &Config, diags: Vec<Diag>) -> Vec<Diag> {
+    diags
+        .into_iter()
+        .filter_map(|mut d| {
+            d.severity = config.severity(d.code, config.root_of(&d.path))?;
+            Some(d)
+        })
+        .collect()
+}
+
+/// Returns every diagnostic of one tree, with the severities of the
+/// configuration.
 pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
-    let per_doc = crate::repo::par_map(&c.docs, |d| doc_diags(config, c, d));
-    let mut out: Vec<Diag> = per_doc.into_iter().flatten().collect();
+    let (ev, mut out) = Evidence::build(c);
+    let per_doc = crate::repo::par_map(&c.docs, |d| doc_diags(config, c, d, &ev));
+    out.extend(per_doc.into_iter().flatten());
 
     // Duplicate ids and aliases.
     for (name, docs) in &c.lookup {
@@ -73,6 +88,7 @@ pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
             ));
         }
     }
+    let mut out = apply_severity(config, out);
     out.sort();
     out
 }
@@ -98,7 +114,7 @@ fn reaches(edges: &[Vec<u32>], from: u32, target: u32) -> bool {
     false
 }
 
-fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
+fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
     let mut out: Vec<Diag> = d
         .issues
         .iter()
@@ -168,9 +184,12 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
             }
         }
     }
+    let exists = |path: &str| {
+        let p = crate::cite::strip_location(path).trim_matches('/');
+        c.files.contains(p) || c.dirs.contains(p)
+    };
     for (path, line) in &d.verified_by {
-        let p = path.trim_matches('/');
-        if !c.files.contains(p) && !c.dirs.contains(p) {
+        if !exists(path) {
             out.push(diag(
                 d,
                 *line,
@@ -179,6 +198,47 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
                 format!("`verified-by` path `{path}` is not in the git tree"),
             ));
         }
+    }
+    // Evidence of each requirement: the inline marker must resolve, and an
+    // active requirement needs a link to a test (SD608).
+    let di = c.by_path.get(&d.path).copied().unwrap_or(0);
+    for &ri in &d.reqs {
+        let r = &p.reqs[ri];
+        for path in &r.verified_by {
+            if !exists(path) {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::EvidenceMissing,
+                    path.clone(),
+                    format!(
+                        "`{}`: `verified-by` path `{path}` is not in the git tree",
+                        r.key
+                    ),
+                ));
+            }
+        }
+        if needs_evidence(d) && ev.of(di, d, ri).is_empty() {
+            out.push(diag(
+                d,
+                r.line,
+                Code::RequirementUnverified,
+                r.key.clone(),
+                format!(
+                    "`{}#{}` is active but no test covers it (`covers:` tag or `verified-by`)",
+                    d.id, r.key
+                ),
+            ));
+        }
+    }
+    if d.ty == DocType::Incident && !links_knowledge(c, d) {
+        out.push(diag(
+            d,
+            1,
+            Code::IncidentUnlinked,
+            "",
+            "the incident links no requirement, decision or runbook",
+        ));
     }
     for t in &p.tokens {
         let Some((prefix, _)) = t.text.split_once('-') else {
@@ -236,10 +296,19 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
         ));
     }
 
-    // The root sets the severity of the requirement lint, or turns it off.
-    let Some(severity) = config.roots[d.root].lint_severity else {
+    // The profile and the rules of the root can turn the lint off.
+    let lint_on = [
+        Code::RequirementKeyword,
+        Code::EarsPattern,
+        Code::SentenceLength,
+        Code::VagueTerm,
+        Code::PassiveVoice,
+    ]
+    .iter()
+    .any(|&code| config.severity(code, Some(d.root)).is_some());
+    if !lint_on {
         return out;
-    };
+    }
     for &ri in &d.reqs {
         let r = &p.reqs[ri];
         for (code, sub, msg) in crate::lint::lint(&r.text, config.max_words) {
@@ -248,12 +317,25 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc) -> Vec<Diag> {
             } else {
                 format!("{}:{sub}", r.key)
             };
-            let mut x = diag(d, r.line, code, target, format!("`{}`: {msg}", r.key));
-            x.severity = severity;
-            out.push(x);
+            out.push(diag(d, r.line, code, target, format!("`{}`: {msg}", r.key)));
         }
     }
     out
+}
+
+/// Returns true if a document links a requirement (or a document with
+/// requirements), a decision or a runbook.
+fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
+    let useful = |t: u32| {
+        let ty = c.docs[t as usize].ty;
+        ty.has_requirements() || matches!(ty, DocType::Decision | DocType::Runbook)
+    };
+    d.parsed.refs.iter().any(|r| match r.kind {
+        RefKind::Wiki => matches!(c.resolve(&r.target), Res::Found(t, _, true) if useful(t)),
+        RefKind::Link | RefKind::Image => {
+            matches!(c.resolve_link(&d.path, &r.target), LinkRes::File(_, Some(t), _) if useful(t))
+        }
+    })
 }
 
 fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
@@ -305,7 +387,6 @@ fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
 /// Returns the diagnostics that compare the base tree with the head tree. All
 /// of them are new by definition.
 pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
-    let _ = config;
     let mut out = Vec::new();
     for b in &base.docs {
         // Find the same document in head: by its id, or by an alias that a move kept.
@@ -410,6 +491,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
             }
         }
     }
+    let mut out = apply_severity(config, out);
     out.sort();
     out
 }
@@ -462,6 +544,13 @@ fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Di
     out
 }
 
+/// The root of the document of a diagnostic.
+fn c_root(c: &Corpus, d: &Diag) -> usize {
+    c.by_path
+        .get(&d.path)
+        .map_or(0, |&i| c.docs[i as usize].root)
+}
+
 fn head_to_base<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
     let names = std::iter::once(&h.id).chain(&h.aliases);
     for n in names {
@@ -509,7 +598,13 @@ pub struct Outcome {
 
 pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
     let mut head_diags = diagnose(config, head);
-    let budget = hard_budget(config, base, head);
+    let budget: Vec<(Diag, bool)> = hard_budget(config, base, head)
+        .into_iter()
+        .filter_map(|(mut d, n)| {
+            d.severity = config.severity(d.code, Some(c_root(head, &d)))?;
+            Some((d, n))
+        })
+        .collect();
     let Some(base) = base else {
         let mut new = vec![true; head_diags.len()];
         for (d, n) in budget {

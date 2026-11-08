@@ -18,43 +18,96 @@ pub enum DocType {
     Decision = 3,
     Change = 4,
     Note = 5,
+    Invariant = 6,
+    Runbook = 7,
+    Incident = 8,
+    Reference = 9,
 }
 
 impl DocType {
-    pub const ALL: [DocType; 6] = [
+    /// The number of types. Per-type tables of the configuration have this
+    /// length, with the index `DocType as usize`.
+    pub const COUNT: usize = 10;
+
+    pub const ALL: [DocType; DocType::COUNT] = [
         DocType::Spec,
         DocType::Contract,
         DocType::Guide,
         DocType::Decision,
         DocType::Change,
         DocType::Note,
+        DocType::Invariant,
+        DocType::Runbook,
+        DocType::Incident,
+        DocType::Reference,
     ];
 
     pub fn name(self) -> &'static str {
-        ["spec", "contract", "guide", "decision", "change", "note"][self as usize]
+        [
+            "spec",
+            "contract",
+            "guide",
+            "decision",
+            "change",
+            "note",
+            "invariant",
+            "runbook",
+            "incident",
+            "reference",
+        ][self as usize]
     }
 
     pub fn from_name(s: &str) -> Option<DocType> {
         DocType::ALL.into_iter().find(|t| t.name() == s)
     }
 
+    /// The names of all types, for messages.
+    pub fn names() -> String {
+        DocType::ALL.map(DocType::name).join(", ")
+    }
+
+    /// The statuses of the type. A type without statuses (note, incident,
+    /// reference) needs no `status` and accepts any value.
     pub fn statuses(self) -> &'static [&'static str] {
         match self {
-            DocType::Spec | DocType::Contract | DocType::Guide => {
-                &["draft", "active", "deprecated", "superseded", "retired"]
-            }
+            DocType::Spec
+            | DocType::Contract
+            | DocType::Guide
+            | DocType::Invariant
+            | DocType::Runbook => &["draft", "active", "deprecated", "superseded", "retired"],
             DocType::Decision => &["proposed", "accepted", "superseded", "rejected"],
             DocType::Change => &["proposed", "accepted", "done", "rejected"],
-            DocType::Note => &[],
+            DocType::Note | DocType::Incident | DocType::Reference => &[],
         }
     }
 
-    pub fn has_requirements(self) -> bool {
-        matches!(self, DocType::Spec | DocType::Contract)
+    pub fn has_status(self) -> bool {
+        !self.statuses().is_empty()
     }
 
+    pub fn has_requirements(self) -> bool {
+        matches!(self, DocType::Spec | DocType::Contract | DocType::Invariant)
+    }
+
+    /// Normative types: `context` serves them for a matching `applies-to`.
     pub fn is_normative(self) -> bool {
-        matches!(self, DocType::Spec | DocType::Contract | DocType::Guide)
+        matches!(
+            self,
+            DocType::Spec
+                | DocType::Contract
+                | DocType::Guide
+                | DocType::Invariant
+                | DocType::Runbook
+        )
+    }
+
+    /// Types that describe the past or give information only. They do not
+    /// give drift warnings, and `context` lists them without their text.
+    pub fn is_informative(self) -> bool {
+        matches!(
+            self,
+            DocType::Change | DocType::Note | DocType::Incident | DocType::Reference
+        )
     }
 }
 
@@ -214,6 +267,9 @@ pub struct Corpus {
     pub token_prefixes: Vec<String>,
     pub repos: Vec<String>,
     pub self_urls: Vec<String>,
+    /// The `covers:` tags of the test files. `check` and `show` load them
+    /// (`evidence::load`); the other commands leave the list empty.
+    pub covers: Vec<crate::evidence::Cover>,
 }
 
 impl Corpus {
@@ -275,6 +331,7 @@ impl Corpus {
             token_prefixes: config.token_prefixes(),
             repos: config.repos.iter().map(|r| r.0.clone()).collect(),
             self_urls: config.self_urls.clone(),
+            covers: Vec::new(),
         }
     }
 
@@ -471,9 +528,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                 code: Code::TypeInvalid,
                 line,
                 target: t.clone(),
-                message: format!(
-                    "unknown type `{t}`; use one of spec, contract, guide, decision, change, note"
-                ),
+                message: format!("unknown type `{t}`; use one of {}", DocType::names()),
             }),
             Some(t2) => match root.single_type {
                 Some(st) if st != t2 => issues.push(Issue {
@@ -492,7 +547,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     }
     let status = match fm_status {
         Some((s, line)) => {
-            let allowed = |x: &str| ty == DocType::Note || ty.statuses().contains(&x);
+            let allowed = |x: &str| !ty.has_status() || ty.statuses().contains(&x);
             // If the root maps a legacy word, use the mapped status. The file
             // keeps the legacy word.
             let canon = if allowed(&s) {
@@ -525,7 +580,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         None if ty == root.default_type => root.status.clone(),
         None => None,
     };
-    if status.is_none() && ty != DocType::Note {
+    if status.is_none() && ty.has_status() {
         issues.push(Issue {
             code: Code::StatusInvalid,
             line: 1,
@@ -641,26 +696,37 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             }
         }
     }
-    let required = &root.required_sections[ty as usize];
-    let matched: Vec<usize> = parsed
-        .chunks
-        .iter()
-        .enumerate()
-        .filter(|(_, ch)| ch.level > 0 && required.iter().any(|s| same_heading(&ch.heading, s)))
-        .map(|(i, _)| i)
-        .collect();
-    if !required.is_empty() && matched.is_empty() {
-        let names: Vec<String> = required.iter().map(|s| format!("`{s}`")).collect();
-        issues.push(Issue {
-            code: Code::SectionMissing,
-            line: 1,
-            target: format!("{}-section", ty.name()),
-            message: format!(
-                "a {} needs a section headed {}",
-                ty.name(),
-                names.join(" or ")
-            ),
-        });
+    // Each group of required headings needs one matching section (SD305).
+    // The chunks that match the first group are the outcome of a decision.
+    let mut matched: Vec<usize> = Vec::new();
+    for (g, group) in root.required_sections[ty as usize].iter().enumerate() {
+        let hits: Vec<usize> = parsed
+            .chunks
+            .iter()
+            .enumerate()
+            .filter(|(_, ch)| ch.level > 0 && group.iter().any(|s| same_heading(&ch.heading, s)))
+            .map(|(i, _)| i)
+            .collect();
+        if hits.is_empty() {
+            let names: Vec<String> = group.iter().map(|s| format!("`{s}`")).collect();
+            issues.push(Issue {
+                code: Code::SectionMissing,
+                line: 1,
+                target: if g == 0 {
+                    format!("{}-section", ty.name())
+                } else {
+                    format!("{}-section-{}", ty.name(), g + 1)
+                },
+                message: format!(
+                    "a {} needs a section headed {}",
+                    ty.name(),
+                    names.join(" or ")
+                ),
+            });
+        }
+        if g == 0 {
+            matched = hits;
+        }
     }
     let outcome = if ty == DocType::Decision {
         matched

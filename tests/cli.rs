@@ -418,9 +418,9 @@ fn lint_severity_follows_the_root() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"spec\"\nstatus = \"active\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"spec\"\nstatus = \"active\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"spec\"\nstatus = \"draft\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"spec\"\nstatus = \"draft\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"draft\"\nprofile = \"strict\"\n[[roots]]\npath = \"std\"\ntype = \"spec\"\nstatus = \"draft\"\n",
     );
-    for root in ["old", "new", "docs"] {
+    for root in ["old", "new", "docs", "std"] {
         r.write(
             &format!("{root}/{root}-spec.md"),
             "# S\n\n- **retry**: The client retries.\n",
@@ -438,6 +438,8 @@ fn lint_severity_follows_the_root() {
         ),
         "{out}"
     );
+    // The `standard` profile has no lint.
+    assert!(!out.contains("std/std-spec.md"), "{out}");
     let (_, out, _) = r.run(&["check", "--all", "--lint"]);
     assert!(out.contains("docs/docs-spec.md:3: warning SD801"), "{out}");
     // The base has the same error, so the gate passes.
@@ -681,7 +683,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     r.commit("docs");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}");
-    let found: Vec<&str> = out.lines().filter(|l| l.contains(" SD")).collect();
+    let found: Vec<&str> = out.lines().filter(|l| l.contains(" error SD")).collect();
     assert_eq!(
         found,
         [
@@ -1826,6 +1828,10 @@ fn check_lists_errors_and_drift_before_the_prose_lint() {
     rules.push_str("\nSee [the terms](terms.md).\n");
     r.write("docs/imported.md", &rules);
     r.write(
+        "spec-dna.toml",
+        &format!("{}\n[rules]\nlint = \"warning\"\n", r.read("spec-dna.toml")),
+    );
+    r.write(
         "src/library/loans.py",
         &LOANS_PY.replace("MAX_RENEWALS = 1\n", ""),
     );
@@ -1871,4 +1877,244 @@ fn a_bold_slug_without_a_colon_warns() {
         "{out}"
     );
     assert!(!out.contains("`**note**`"), "{out}");
+}
+
+/// A repository with one mixed root `docs` and the given profile line.
+fn profile_repo(profile: &str) -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"0.1.0\"\n{profile}\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n"
+        ),
+    );
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **loan-period**: When a member borrows a book, the library SHALL set the due date 14 days later.\n- **renew-limit**: The library SHALL allow at most 1 renewal. <!-- verified-by: tests/renew.py -->\n- **fines**: the fine is collected daily.\n",
+    );
+    r.write("tests/renew.py", "def test_renew():\n    pass\n");
+    r.write(
+        "tests/test_loans.py",
+        "# covers: loans#loan-period\ndef test_period():\n    pass\n",
+    );
+    r.commit("start");
+    r
+}
+
+#[test]
+fn profiles_set_the_severity_of_each_rule_group() {
+    // standard (the default): a broken link is an error, a requirement
+    // without evidence is a warning, and there is no lint.
+    let r = profile_repo("");
+    r.append("docs/loans.md", "\nSee [the terms](terms.md).\n");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD102"), "{out}");
+    assert!(
+        out.contains("docs/loans.md:7: warning SD608 requirement-unverified: `loans#fines` is active but no test covers it"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("SD608 requirement-unverified: `loans#loan-period`"),
+        "{out}"
+    );
+    assert!(!out.contains("`loans#renew-limit` is active"), "{out}");
+    assert!(!out.contains("SD80"), "{out}");
+
+    // lite: the broken link is a warning; evidence and lint are off.
+    let r = profile_repo("profile = \"lite\"");
+    r.append("docs/loans.md", "\nSee [the terms](terms.md).\n");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD102"), "{out}");
+    assert!(!out.contains("SD608"), "{out}");
+
+    // strict: a requirement without evidence is an error, and the lint gives
+    // warnings. A rule of a root or of the project wins over the profile.
+    let r = profile_repo("profile = \"strict\"");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD608"), "{out}");
+    assert!(
+        out.contains("warning SD801 requirement-keyword: 1 in"),
+        "{out}"
+    );
+    let r = profile_repo("profile = \"strict\"\n[rules]\nevidence = \"warning\"\nlint = \"off\"");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD608"), "{out}");
+    assert!(!out.contains("SD801"), "{out}");
+}
+
+#[test]
+fn evidence_resolves_covers_tags_and_verified_by() {
+    let r = profile_repo("");
+    // A tag in any comment syntax, and a tag that names no requirement.
+    r.write(
+        "tests/fines.test.ts",
+        "/* covers: loans#fines */\ntest('x', () => {}) // covers: loans#fine, loans#loan-period\n",
+    );
+    r.write(
+        "src/app.py",
+        "# covers: loans#nothing (not a test file, so not a tag)\n",
+    );
+    r.append(
+        "docs/loans.md",
+        "- **holds**: The library SHALL keep a hold for 3 days. <!-- verified-by: tests/holds.py -->\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("tests/fines.test.ts:2: error SD105 covers-unresolved: `covers:` tag: `loans` has no requirement `fine`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("docs/loans.md:8: error SD103 evidence-missing: `holds`: `verified-by` path `tests/holds.py` is not in the git tree"),
+        "{out}"
+    );
+    assert!(!out.contains("SD608"), "{out}");
+    assert!(!out.contains("src/app.py"), "{out}");
+    // `show` lists the evidence of a requirement and of a document.
+    let (code, out, _) = r.run(&["show", "loans#loan-period"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(
+            "<!-- evidence -->\n- loans#loan-period: tests/fines.test.ts:2, tests/test_loans.py:1"
+        ),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "loans"]);
+    assert!(
+        out.contains("- loans#renew-limit: tests/renew.py\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("- loans#fines: tests/fines.test.ts:1\n"),
+        "{out}"
+    );
+    // The evidence check is base-relative: an old requirement without
+    // evidence is not new.
+    r.write("tests/fines.test.ts", "test('x', () => {})\n");
+    r.write("tests/holds.py", "def test_holds():\n    pass\n");
+    r.commit("tests");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(
+        out.contains("warning SD608 requirement-unverified: `loans#fines`"),
+        "{out}"
+    );
+    // A moved requirement keeps its tag through the alias.
+    let (code, out, _) = r.run(&["mv", "loans#loan-period", "periods"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD105"), "{out}");
+}
+
+#[test]
+fn knowledge_types_have_templates_sections_and_context_rules() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n[[roots]]\npath = \"docs/decisions\"\ntype = \"decision\"\n",
+    );
+    r.write("src/pay/charge.py", "def charge_card():\n    pass\n");
+    r.write(
+        "docs/pay.md",
+        "# Pay\n\n## Requirements\n\n- **charge**: The service SHALL charge the card once. See `src/pay/charge.py`.\n",
+    );
+    r.commit("start");
+    // `new` writes each type into the right root, from its template.
+    for (ty, id, path) in [
+        ("invariant", "rules/money", "docs/rules/money.md"),
+        ("runbook", "ops/restart", "docs/ops/restart.md"),
+        ("incident", "ops/double-charge", "docs/ops/double-charge.md"),
+        ("reference", "research/psp", "docs/research/psp.md"),
+        ("decision", "psp-choice", "docs/decisions/psp-choice.md"),
+    ] {
+        let (code, out, err) = r.run(&["new", ty, id]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.starts_with(&format!("wrote {path} ({ty} template)")),
+            "{out}"
+        );
+    }
+    let (code, _, err) = r.run(&["new", "spec", "decisions/x"]);
+    assert_eq!(code, 2, "{err}");
+    let (code, _, err) = r.run(&["new", "invariant", "rules/money"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("exists"), "{err}");
+    let inv = r.read("docs/rules/money.md");
+    assert!(
+        inv.starts_with(
+            "---\ntype: invariant\nstatus: draft\napplies-to: [\"**\"]\n---\n# Money\n\n## Rules\n"
+        ),
+        "{inv}"
+    );
+    // The placeholders of a template stay errors until an author fills them.
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("docs/ops/double-charge.md"), "{out}");
+    // Fill the documents.
+    r.write(
+        "docs/rules/money.md",
+        "---\ntype: invariant\nstatus: active\napplies-to: [\"src/pay/**\"]\n---\n# Money\n\n## Rules\n\n- **minor-units**: The system SHALL store amounts in minor units.\n",
+    );
+    r.write(
+        "docs/ops/restart.md",
+        "---\ntype: runbook\nstatus: active\n---\n# Restart\n\n## When to use\n\nThe queue stops.\n",
+    );
+    r.write(
+        "docs/ops/double-charge.md",
+        "---\ntype: incident\n---\n# Double charge\n\n## Summary\n\nTwo charges for one order.\n\n## Root cause\n\nA retry without a key.\n",
+    );
+    r.write(
+        "docs/research/psp.md",
+        "---\ntype: reference\n---\n# PSP research\n\nThe notes cite `src/pay/charge.py` many times.\n",
+    );
+    r.write(
+        "docs/decisions/psp-choice.md",
+        "---\nstatus: accepted\n---\n# PSP choice\n\n## Decision Outcome\n\nOne PSP.\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/ops/restart.md:1: error SD305 section-missing: a runbook needs a section headed `Steps`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("docs/ops/double-charge.md:1: warning SD609 incident-unlinked"),
+        "{out}"
+    );
+    r.append(
+        "docs/ops/restart.md",
+        "\n## Steps\n\n1. Restart the worker.\n",
+    );
+    r.append(
+        "docs/ops/double-charge.md",
+        "\n## Links\n\n- [[pay#charge]], [[psp-choice]], [[ops/restart]]\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD609"), "{out}");
+    // `context` serves the matching invariant first, lists the incident, and
+    // never serves the reference.
+    let (code, out, _) = r.run(&["context", "src/pay/charge.py"]);
+    assert_eq!(code, 0, "{out}");
+    let first = out.lines().filter(|l| l.starts_with("<!-- ")).nth(1);
+    assert!(
+        first.is_some_and(|l| l.starts_with("<!-- rules/money")),
+        "{out}"
+    );
+    assert!(out.contains("invariant/active invariant -->"), "{out}");
+    assert!(!out.contains("research/psp"), "{out}");
+    let (_, out, _) = r.run(&["context", "pay", "--path", "src/pay/charge.py"]);
+    assert!(out.contains("rules/money"), "{out}");
+    let (_, out, _) = r.run(&["context", "research/psp"]);
+    assert!(out.contains("The notes cite"), "{out}");
+    // An invariant out of scope is not served.
+    r.write("src/web/page.py", "def page():\n    pass\n");
+    let (_, out, _) = r.run(&["context", "src/web/page.py"]);
+    assert!(!out.contains("rules/money"), "{out}");
 }

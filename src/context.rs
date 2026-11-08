@@ -44,6 +44,7 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
+    Invariant,
     Entry,
     Cites,
     Concern,
@@ -56,6 +57,7 @@ pub enum Tier {
 impl Tier {
     fn name(self) -> &'static str {
         match self {
+            Tier::Invariant => "invariant",
             Tier::Entry => "entry",
             Tier::Cites => "cites",
             Tier::Concern => "applies",
@@ -195,19 +197,55 @@ pub fn assemble(
 ) -> Assembly {
     let mut plan: Vec<(u32, usize, Tier)> = Vec::new();
     let mut seen: HashSet<(u32, usize)> = HashSet::new();
-    let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
-        if seen.insert((d, ch)) {
-            plan.push((d, ch, t));
-        }
-    };
     let entry_docs: Vec<u32> = {
         let mut v: Vec<u32> = targets.iter().map(|t| t.0).collect();
         v.dedup();
         v
     };
+    // A reference document is cold material: the plan has it only if a
+    // target names it.
+    let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
+        if (c.docs[d as usize].ty != DocType::Reference || entry_docs.contains(&d))
+            && seen.insert((d, ch))
+        {
+            plan.push((d, ch, t));
+        }
+    };
+    // The scopes of the request: the entry documents and the code paths.
+    let scopes: Vec<&str> = entry_docs
+        .iter()
+        .flat_map(|&d| {
+            [
+                c.docs[d as usize].id.as_str(),
+                c.docs[d as usize].path.as_str(),
+            ]
+        })
+        .chain(paths.iter().map(String::as_str))
+        .collect();
     let mut rest: Vec<(u32, usize)> = Vec::new();
     // Sections that a target names explicitly. Under a query, they come first.
     let mut pinned: HashSet<(u32, usize)> = HashSet::new();
+
+    // 0. Invariants whose `applies-to` matches a scope. An invariant without
+    // `applies-to` applies to the whole project.
+    let invariants: Vec<u32> = c
+        .docs
+        .iter()
+        .enumerate()
+        .filter(|(i, d)| {
+            d.ty == DocType::Invariant
+                && !d.is_inactive()
+                && !entry_docs.contains(&(*i as u32))
+                && (d.applies_to.is_empty()
+                    || d.applies_to
+                        .iter()
+                        .any(|p| scopes.iter().any(|s| crate::glob::matches_scope(p, s))))
+        })
+        .map(|(i, _)| i as u32)
+        .collect();
+    for d in invariants {
+        normative_units(c, d, Tier::Invariant, &mut plan, &mut rest, &mut add);
+    }
 
     // 1. Entries.
     for (d, frag) in targets {
@@ -242,10 +280,14 @@ pub fn assemble(
     // sections, or the outcome of a decision, and the title. A change or a
     // note is only listed (ADR 0001, "Document types").
     let mut scope_docs = entry_docs.clone();
-    let listed_only = |d: u32| matches!(c.docs[d as usize].ty, DocType::Change | DocType::Note);
+    let listed_only = |d: u32| c.docs[d as usize].ty.is_informative();
     let strong: Vec<&(u32, u8, Vec<usize>)> = cited
         .iter()
-        .filter(|x| x.1 < crate::cite::BY_DIR && !entry_docs.contains(&x.0))
+        .filter(|x| {
+            x.1 < crate::cite::BY_DIR
+                && !entry_docs.contains(&x.0)
+                && c.docs[x.0 as usize].ty != DocType::Reference
+        })
         .collect();
     let mut served = 0;
     for (d, _, chunks) in &strong {
@@ -283,16 +325,6 @@ pub fn assemble(
     }
 
     // 3. Documents whose `applies-to` matches an entry or a path.
-    let scopes: Vec<&str> = entry_docs
-        .iter()
-        .flat_map(|&d| {
-            [
-                c.docs[d as usize].id.as_str(),
-                c.docs[d as usize].path.as_str(),
-            ]
-        })
-        .chain(paths.iter().map(String::as_str))
-        .collect();
     let mut concerns: Vec<u32> = c
         .docs
         .iter()
@@ -316,7 +348,10 @@ pub fn assemble(
     // so it comes after `applies-to`, without a summary.
     let mut served = 0;
     for (d, class, chunks) in cited {
-        if *class != crate::cite::BY_DIR || entry_docs.contains(d) {
+        if *class != crate::cite::BY_DIR
+            || entry_docs.contains(d)
+            || c.docs[*d as usize].ty == DocType::Reference
+        {
             continue;
         }
         let plan_it = !listed_only(*d) && served < CITING_SUMMARIES;
@@ -814,6 +849,18 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         .iter()
         .map(|&r| doc.parsed.reqs[r].key.clone())
         .collect();
+    // The evidence of the requirement, or of each requirement of the
+    // document.
+    let (ev, _) = crate::evidence::Evidence::build(c);
+    let shown_reqs: Vec<usize> = match kind {
+        "requirement" => frag.and_then(|f| doc.req(f)).into_iter().collect(),
+        "document" => doc.reqs.clone(),
+        _ => Vec::new(),
+    };
+    let evidence: Vec<(String, Vec<String>)> = shown_reqs
+        .iter()
+        .map(|&r| (doc.parsed.reqs[r].key.clone(), ev.of(d, doc, r)))
+        .collect();
     if as_json {
         let units = items.iter().map(|(id, h, line, t)| {
             Obj::new()
@@ -833,6 +880,14 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
                 .opt_str("owner", doc.owner.as_deref())
                 .str("kind", kind)
                 .strs("requirements", &keys)
+                .raw(
+                    "evidence",
+                    &json::array(
+                        evidence
+                            .iter()
+                            .map(|(k, v)| Obj::new().str("key", k).strs("sources", v).end()),
+                    ),
+                )
                 .raw("units", &json::array(units))
                 .end()
         );
@@ -856,6 +911,17 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
             doc.ty.name(),
             doc.path
         ));
+    }
+    if !evidence.is_empty() {
+        out.push_str("<!-- evidence -->\n");
+        for (k, v) in &evidence {
+            let v = if v.is_empty() {
+                "none".to_string()
+            } else {
+                v.join(", ")
+            };
+            out.push_str(&format!("- {}#{k}: {v}\n", doc.id));
+        }
     }
     format!("{}\n", out.trim_end())
 }

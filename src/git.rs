@@ -324,6 +324,68 @@ impl Git {
         Ok(found)
     }
 
+    /// Returns each line that contains `text`, as (path, line number, line).
+    /// Without `rev`, it searches the working tree: tracked files, and with
+    /// `untracked` also the untracked files that git does not ignore. With
+    /// `rev`, it searches that commit. Binary files do not count.
+    pub fn grep_lines(
+        &self,
+        text: &str,
+        rev: Option<&str>,
+        untracked: bool,
+    ) -> Result<Vec<(String, u32, String)>, String> {
+        let mut args: Vec<&str> = vec![
+            "grep",
+            "-I",
+            "-F",
+            "-z",
+            "-n",
+            "--no-color",
+            "--no-column",
+            "-e",
+            text,
+        ];
+        if untracked && rev.is_none() {
+            args.push("--untracked");
+        }
+        if let Some(r) = rev {
+            args.push(r);
+        }
+        args.push("--");
+        let out = self
+            .cmd(&args)
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        // `git grep` exits with 1 when nothing matches.
+        match out.status.code() {
+            Some(0) | Some(1) => {}
+            _ => {
+                return Err(format!(
+                    "git grep failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ));
+            }
+        }
+        // Each record is `path NUL line NUL text LF`. With a revision, the
+        // path starts with `<rev>:`.
+        let prefix = rev.map(|r| format!("{r}:")).unwrap_or_default();
+        let mut found = Vec::new();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for rec in stdout.split_terminator('\n') {
+            let mut parts = rec.splitn(3, '\0');
+            let (Some(path), Some(line), Some(body)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let path = path.strip_prefix(prefix.as_str()).unwrap_or(path);
+            if let Ok(n) = line.parse() {
+                found.push((path.to_string(), n, body.to_string()));
+            }
+        }
+        Ok(found)
+    }
+
     pub fn mv(&self, from: &str, to: &str) -> Result<(), String> {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }
