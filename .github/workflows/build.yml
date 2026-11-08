@@ -62,7 +62,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # scripts/cross-build.sh contains the target list.
+      # scripts/cross-build.sh contains the target list. Until phase 2 of
+      # ADR 0003, it lists only aarch64-apple-darwin.
       - name: List targets
         id: list
         run: echo "targets=$(scripts/cross-build.sh --list | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"

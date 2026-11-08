@@ -71,3 +71,7 @@ Rejected:
 ### 2026-11-07: Windows ABI
 
 The owner selected the GNU ABI for the Windows binaries: `x86_64-pc-windows-gnu` and `aarch64-pc-windows-gnullvm`. One host builds them with zig, as it builds the other 5 targets. This build does not need the Microsoft SDK or a Windows runner. No test ran the Windows binaries on Windows yet.
+
+### 2026-11-08: one build target in phase 1
+
+The owner ruled that phase 1 needs a build for one platform only: `aarch64-apple-darwin`, the platform of the first consumer. CI builds only this target. `scripts/cross-build.sh --all` keeps the 7 targets of phase 2, so phase 2 needs no new build recipe. ADR 0002 recorded the proof that one Linux host builds all 7 targets.

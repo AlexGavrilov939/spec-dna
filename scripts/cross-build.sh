@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Cross-builds release binaries for the 7 targets of ADR 0003 with cargo-zigbuild.
+# Cross-builds release binaries for the targets of ADR 0003 with cargo-zigbuild.
 #
-# Usage: scripts/cross-build.sh [--manifest-path PATH] [--bin NAME] [TARGET...]
-#        scripts/cross-build.sh --list
+# Usage: scripts/cross-build.sh [--manifest-path PATH] [--bin NAME] [--all] [TARGET...]
+#        scripts/cross-build.sh --list [--all]
 #
-# If you give no TARGET, it builds all 7. CI (.github/workflows/build.yml)
-# calls it once for each target. It needs zig, cargo-zigbuild, and rustup with
-# its cargo first on PATH. It uses CARGO_TARGET_DIR if it is set. It prints the
-# `file` output and the SHA-256 of each binary.
+# Without a TARGET, it builds the phase 1 target (aarch64-apple-darwin). With
+# --all, it builds the 7 targets of phase 2. CI (.github/workflows/build.yml)
+# calls it once for each target of --list. It needs zig, cargo-zigbuild, and
+# rustup with its cargo first on PATH. It prints the `file` output and the
+# SHA-256 of each binary.
 set -euo pipefail
 
 targets_all=(
@@ -19,6 +20,8 @@ targets_all=(
   x86_64-pc-windows-gnu
   aarch64-pc-windows-gnullvm
 )
+# Phase 1 of ADR 0003 has one consumer, on Apple silicon.
+targets_phase1=(aarch64-apple-darwin)
 
 # The *-linux-gnu binaries need this glibc or a newer one. 2.17 is the minimum
 # for Rust itself.
@@ -31,6 +34,8 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 manifest=Cargo.toml
 bin=spec-dna
 targets=()
+all=false
+list=false
 
 die() {
   echo "cross-build: $*" >&2
@@ -49,12 +54,16 @@ while [ $# -gt 0 ]; do
       bin=$2
       shift 2
       ;;
+    --all)
+      all=true
+      shift
+      ;;
     --list)
-      printf '%s\n' "${targets_all[@]}"
-      exit 0
+      list=true
+      shift
       ;;
     -h | --help)
-      sed -n '2,10s/^# \{0,1\}//p' "$0"
+      sed -n '2,11s/^# \{0,1\}//p' "$0"
       exit 0
       ;;
     -*) die "unknown option: $1" ;;
@@ -64,8 +73,17 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+if $all; then
+  default=("${targets_all[@]}")
+else
+  default=("${targets_phase1[@]}")
+fi
+if $list; then
+  printf '%s\n' "${default[@]}"
+  exit 0
+fi
 if [ ${#targets[@]} -eq 0 ]; then
-  targets=("${targets_all[@]}")
+  targets=("${default[@]}")
 fi
 
 for tool in rustup cargo cargo-zigbuild zig file; do
