@@ -8,6 +8,14 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BIN: &str = env!("CARGO_BIN_EXE_spec-dna");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Fixtures and tests pin this version. The helpers write the version of the
+/// binary instead, so that a version bump does not change the tests.
+const FIXTURE_PIN: &str = "spec-dna = \"0.1.0\"";
+
+fn pinned(text: &str) -> String {
+    text.replace(FIXTURE_PIN, &format!("spec-dna = \"{VERSION}\""))
+}
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 struct Repo {
@@ -78,6 +86,10 @@ impl Repo {
                 .join(name),
             &r.dir,
         );
+        let cfg = r.dir.join("spec-dna.toml");
+        if let Ok(t) = fs::read_to_string(&cfg) {
+            fs::write(&cfg, pinned(&t)).unwrap();
+        }
         r.commit("fixture");
         r
     }
@@ -103,7 +115,7 @@ impl Repo {
     fn write(&self, path: &str, text: &str) {
         let p = self.dir.join(path);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, text).unwrap();
+        fs::write(p, pinned(text)).unwrap();
     }
 
     fn read(&self, path: &str) -> String {
@@ -120,13 +132,23 @@ impl Repo {
     }
 }
 
+/// Compares the output with a golden file. The golden file has `VERSION`
+/// in place of the version of the binary, and `BASE` in place of the base
+/// commit (the fixture commit has the pinned version, so its id changes too).
 fn golden(name: &str, actual: &str) {
+    let mut actual = actual.replace(VERSION, "VERSION");
+    if let Some(i) = actual.find("\"base\":\"") {
+        let at = i + "\"base\":\"".len();
+        if let Some(end) = actual[at..].find('"') {
+            actual.replace_range(at..at + end, "BASE");
+        }
+    }
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(name);
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, actual).unwrap();
+        fs::write(&path, &actual).unwrap();
         return;
     }
     let expected = fs::read_to_string(&path)
@@ -527,7 +549,7 @@ fn exit_codes() {
     r.write(
         "spec-dna.toml",
         &r.read("spec-dna.toml")
-            .replace("spec-dna = \"0.1.0\"", "spec-dna = \"9.9.9\""),
+            .replace(&format!("spec-dna = \"{VERSION}\""), "spec-dna = \"9.9.9\""),
     );
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3);
@@ -535,7 +557,10 @@ fn exit_codes() {
         err.contains("cargo install --locked --force --git"),
         "{err}"
     );
-    assert!(err.contains("set `spec-dna = \"0.1.0\"`"), "{err}");
+    assert!(
+        err.contains(&format!("set `spec-dna = \"{VERSION}\"`")),
+        "{err}"
+    );
     let (code, _, err) = r.run(&["init"]);
     assert_eq!(code, 3, "init does not regenerate adapters for another pin");
     assert!(err.contains("pins version 9.9.9"), "{err}");
@@ -555,7 +580,7 @@ fn exit_codes() {
     assert_ne!(out.status.code(), Some(0));
     assert_eq!(
         Command::new(BIN).arg("--version").output().unwrap().stdout,
-        b"spec-dna 0.1.0\n"
+        format!("spec-dna {VERSION}\n").as_bytes()
     );
 }
 

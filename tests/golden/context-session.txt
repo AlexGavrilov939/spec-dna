@@ -1,4 +1,4 @@
-<!-- spec-dna context 0.1.0: auth/session, src/gateway.rs; 7 sections in full, 3 listed; 1559 of 2500 characters; about 405 tokens (estimated) -->
+<!-- spec-dna context VERSION: auth/session, src/gateway.rs; 7 sections in full, 3 listed; 1559 of 2500 characters; about 405 tokens (estimated) -->
 
 <!-- auth/session#requirements h:c45e6a10f2970c6b spec/active entry -->
 ## Requirements

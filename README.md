@@ -6,7 +6,7 @@
 spec-dna keeps engineering specifications small, linked and machine-checked. It serves the minimum sufficient context to AI coding agents. It works in any git repository, with any stack and any agent.
 
 > [!NOTE]
-> The project is at an early stage: version 0.1.0 is not released. The information model is in [ADR 0001](docs/adr/0001-information-model.md).
+> The project is at an early stage. Version 0.1.1 is the first version for a consumer. It is a local tag, not a public release yet. [CHANGELOG.md](CHANGELOG.md) lists the changes. The information model is in [ADR 0001](docs/adr/0001-information-model.md).
 
 ## Install
 
@@ -112,6 +112,7 @@ This repository has its own code, without dependencies, for argument parsing, fr
 | `docs/research/` | Standards and prior art |
 | `bench/` | Benchmarks and retrieval measurements; prototypes from the language decision |
 | `AGENTS.md` | Rules for AI agents that work in this repository. `CLAUDE.md` imports it |
+| `CHANGELOG.md` | The changes of each version |
 | `CONTRIBUTING.md` | Branches, commits, pull requests |
 | `.github/` | CI workflows, Dependabot, issue and PR templates, code owners |
 

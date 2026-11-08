@@ -12,10 +12,10 @@ scripts/demo-replay.sh [work directory]
 
 The script does these steps:
 
-1. It builds the current version and an unreleased `0.1.1-dev`.
+1. It builds the current version and the next patch version as an unreleased `-dev` version, for example `0.1.2-dev` for `0.1.1`.
 2. It makes a git repository from the application and runs the "Start" block of [the quickstart](quickstart.md) as it is written. It checks that `init` added one line to `CLAUDE.md`, no import and no `AGENTS.md`, and that the prompt prefix is 300 bytes or less.
 3. It adds the documents and uses `context`, `show`, `mv` and `check`. A change that removes a cited identifier must give SD607 in a CI-like `check --base`.
-4. It runs the upgrade of the quickstart to `0.1.1-dev`: the pin mismatch gives exit code 3, and `init` writes the adapters of the new version. Then it rolls back to the current version with `git revert`.
+4. It runs the upgrade of the quickstart to the `-dev` version: the pin mismatch gives exit code 3, and `init` writes the adapters of the new version. Then it rolls back to the current version with `git revert`.
 5. It runs the "Uninstall" block of the quickstart. The documents must not change, and only the files of spec-dna must go.
 
 ## Agent stages

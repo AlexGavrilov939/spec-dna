@@ -28,8 +28,11 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Demo GIT_AUTHOR_EMAIL=demo@example.
 export GIT_COMMITTER_NAME=Demo GIT_COMMITTER_EMAIL=demo@example.org
 gitc() { command git -c commit.gpgsign=false -c tag.gpgsign=false "$@"; }
 
-step "build the current version and an unreleased 0.1.1-dev"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/Cargo.toml" | head -n 1)
+# The next patch version, unreleased: 0.1.1 gives 0.1.2-dev.
+base=${version%%-*}
+nextv="${base%.*}.$((${base##*.} + 1))-dev"
+step "build the current version $version and an unreleased $nextv"
 cargo build --quiet --locked --manifest-path "$repo/Cargo.toml" --target-dir "$work/target"
 mkdir -p "$work/bin-current" "$work/bin-next"
 cp "$work/target/debug/spec-dna" "$work/bin-current/spec-dna"
@@ -37,10 +40,10 @@ next="$work/next"
 rm -rf "$next"
 mkdir -p "$next"
 cp -R "$repo/Cargo.toml" "$repo/Cargo.lock" "$repo/src" "$repo/schema" "$next/"
-sed -i.bak "s/^version = \"$version\"/version = \"0.1.1-dev\"/" "$next/Cargo.toml"
+sed -i.bak "s/^version = \"$version\"/version = \"$nextv\"/" "$next/Cargo.toml"
 cargo build --quiet --offline --manifest-path "$next/Cargo.toml" --target-dir "$work/target-next"
 cp "$work/target-next/debug/spec-dna" "$work/bin-next/spec-dna"
-"$work/bin-next/spec-dna" --version | grep -qx 'spec-dna 0.1.1-dev' || fail "the next binary has the wrong version"
+"$work/bin-next/spec-dna" --version | grep -qx "spec-dna $nextv" || fail "the next binary has the wrong version"
 
 use() { export PATH="$work/bin-$1:$base_path"; }
 base_path=$PATH
@@ -101,7 +104,7 @@ grep -q 'warning SD607 cited-symbol-removed: `MAX_RENEWALS`' "$work/drift.txt" |
     fail "check --base did not report the removed identifier"
 gitc revert --no-edit HEAD >/dev/null
 
-step "step 5: upgrade to 0.1.1-dev, then roll back"
+step "step 5: upgrade to $nextv, then roll back"
 use next
 set +e
 spec-dna check 2>"$work/pin.txt"
@@ -109,15 +112,15 @@ code=$?
 set -e
 cat "$work/pin.txt"
 [ "$code" = 3 ] || fail "a pin mismatch gave exit code $code, not 3"
-grep -q "pins version $version, but this binary is 0.1.1-dev" "$work/pin.txt" || fail "pin message"
-sed -i.bak "s/^spec-dna = \"$version\"/spec-dna = \"0.1.1-dev\"/" spec-dna.toml
+grep -q "pins version $version, but this binary is $nextv" "$work/pin.txt" || fail "pin message"
+sed -i.bak "s/^spec-dna = \"$version\"/spec-dna = \"$nextv\"/" spec-dna.toml
 rm spec-dna.toml.bak
 spec-dna init
 gitc diff --stat
-grep -q '<!-- spec-dna v0.1.1-dev h:' CLAUDE.md || fail "init did not regenerate the CLAUDE.md line"
-grep -q 'spec-dna:begin skill v0.1.1-dev' .claude/skills/spec-dna/SKILL.md || fail "init did not regenerate the skill"
+grep -q "<!-- spec-dna v$nextv h:" CLAUDE.md || fail "init did not regenerate the CLAUDE.md line"
+grep -q "spec-dna:begin skill v$nextv" .claude/skills/spec-dna/SKILL.md || fail "init did not regenerate the skill"
 spec-dna check
-gitc commit -q -am "build: upgrade spec-dna to 0.1.1-dev"
+gitc commit -q -am "build: upgrade spec-dna to $nextv"
 use current
 set +e
 spec-dna check 2>"$work/pin.txt"

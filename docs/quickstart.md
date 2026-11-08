@@ -7,7 +7,7 @@ This page gives the steps from install to uninstall. You need git, and Rust 1.88
 Build the version that you want from its tag (phase 1 of [ADR 0003](adr/0003-distribution.md)):
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.1.0 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.1.1 spec-dna
 spec-dna --version
 ```
 
