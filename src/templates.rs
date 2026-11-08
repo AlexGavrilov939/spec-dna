@@ -123,6 +123,23 @@ Chosen option: <option>, because <reason>.
     }
 }
 
+/// The namespace of a new document of a type, when its id has none: each type
+/// gets its own directory in a mixed root. A spec has no namespace.
+pub fn namespace(ty: DocType) -> Option<&'static str> {
+    match ty {
+        DocType::Spec => None,
+        DocType::Contract => Some("contracts"),
+        DocType::Guide => Some("guides"),
+        DocType::Decision => Some("decisions"),
+        DocType::Change => Some("changes"),
+        DocType::Note => Some("notes"),
+        DocType::Invariant => Some("invariants"),
+        DocType::Runbook => Some("runbooks"),
+        DocType::Incident => Some("incidents"),
+        DocType::Reference => Some("reference"),
+    }
+}
+
 /// Returns the first status of a new document of a type.
 pub fn first_status(ty: DocType) -> Option<&'static str> {
     match ty {

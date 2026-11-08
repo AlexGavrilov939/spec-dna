@@ -31,6 +31,8 @@ pub struct Config {
     pub rules: Rules,
     /// Globs of the files where `check` reads `covers:` tags.
     pub evidence_tests: Vec<String>,
+    /// The document types of the project. Empty: every type.
+    pub types: Vec<DocType>,
 }
 
 /// The public repository of spec-dna: the install source by default.
@@ -199,6 +201,8 @@ impl LegacyId {
 #[derive(Clone, Debug)]
 pub struct Pattern {
     parts: Vec<Part>,
+    /// The text of the pattern, as the configuration writes it.
+    pub source: String,
 }
 
 #[derive(Clone, Debug)]
@@ -238,7 +242,10 @@ impl Pattern {
         if !lit.is_empty() {
             parts.push(Part::Lit(lit));
         }
-        Ok(Pattern { parts })
+        Ok(Pattern {
+            parts,
+            source: source.to_string(),
+        })
     }
 
     pub fn is_match(&self, s: &str) -> bool {
@@ -432,6 +439,15 @@ impl Config {
             Some(v) => rules_table(v, "rules")?,
             None => Vec::new(),
         };
+        let mut types = Vec::new();
+        for name in t.opt_strs("types")? {
+            let ty = DocType::from_name(&name).ok_or_else(|| {
+                format!("`types`: unknown type `{name}`; use {}", DocType::names())
+            })?;
+            if !types.contains(&ty) {
+                types.push(ty);
+            }
+        }
         let mut evidence_tests = DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
         if let Some(v) = t.take("evidence") {
             let tbl = v.as_table().ok_or("`evidence` must be a table")?;
@@ -455,6 +471,7 @@ impl Config {
             profile,
             rules,
             evidence_tests,
+            types,
         })
     }
 
@@ -479,6 +496,11 @@ impl Config {
     pub fn is_off(&self, code: Code) -> bool {
         self.severity(code, None).is_none()
             && (0..self.roots.len()).all(|r| self.severity(code, Some(r)).is_none())
+    }
+
+    /// Returns true if the project uses a document type (`types`).
+    pub fn allows(&self, ty: DocType) -> bool {
+        self.types.is_empty() || self.types.contains(&ty)
     }
 
     /// Returns true if a path is a test file for `covers:` tags.

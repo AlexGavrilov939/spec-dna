@@ -459,7 +459,7 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "wrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nper-request prefix: "
+            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nper-request prefix: "
         ),
         "{out}"
     );
@@ -2117,4 +2117,277 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     r.write("src/web/page.py", "def page():\n    pass\n");
     let (_, out, _) = r.run(&["context", "src/web/page.py"]);
     assert!(!out.contains("rules/money"), "{out}");
+}
+
+#[test]
+fn init_answers_file_on_a_new_project() {
+    let r = Repo::empty();
+    let answers = r.dir.join("../answers-new.toml");
+    fs::write(
+        &answers,
+        "profile = \"strict\"\ntypes = [\"spec\", \"decision\", \"runbook\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\n",
+    )
+    .unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    for want in [
+        "profile = \"strict\"",
+        "types = [\"spec\", \"decision\", \"runbook\"]",
+        "[rules]  # overrides of the profile, by rule group or by code\nevidence = \"warning\"\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    ] {
+        assert!(cfg.contains(want), "{want}:\n{cfg}");
+    }
+    assert!(!r.dir.join("AGENTS.md").exists());
+    assert!(!r.dir.join("CLAUDE.md").exists());
+    assert!(r.dir.join(".claude/skills/spec-dna/SKILL.md").exists());
+    let ci = r.read(".github/workflows/spec-dna.yml");
+    assert!(
+        ci.contains("spec-dna check --base \"origin/${GITHUB_BASE_REF:-trunk}\""),
+        "{ci}"
+    );
+    assert!(out.contains("to commit: git add spec-dna.toml .claude/skills/spec-dna/SKILL.md .github/workflows/spec-dna.yml"), "{out}");
+    // `new` follows the types: a runbook goes into its namespace, a
+    // contract is not a type of this project.
+    let (code, out, _) = r.run(&["new", "runbook", "restart"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.starts_with("wrote docs/runbooks/restart.md"), "{out}");
+    let (code, _, err) = r.run(&["new", "contract", "api"]);
+    assert_eq!(code, 2, "{err}");
+    r.write(
+        "docs/api.md",
+        "---\ntype: contract\nstatus: draft\n---\n# Api\n",
+    );
+    let (_, out, _) = r.run(&["check"]);
+    assert!(
+        out.contains("error SD303 type-invalid: type `contract` is not a type of this project"),
+        "{out}"
+    );
+    // A second `init` updates the adapters only.
+    let (code, out, _) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("spec-dna.toml"), "{out}");
+}
+
+#[test]
+fn init_detects_a_brownfield_repository() {
+    let r = Repo::fixture("brownfield");
+    let (code, out, err) = r.run(&["init", "--dry-run", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for want in [
+        "types = [\"spec\", \"guide\", \"decision\", \"note\"]",
+        "[evidence]\ntests = [\"**/tests/**\"]",
+        "path = \"docs\"\ntype = \"mixed\"\ndefault-type = \"guide\"\nstatus = \"active\"\nstatus-map = { current = \"active\" }\n",
+        "path = \"docs/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nexclude = [\"ADR-*-implementation-plan.md\", \"README.md\"]\nlegacy-ids = [\"ADR-{n}\"]\nrequired-sections = { decision = [\"Решение\", \"Decision Outcome\", \"Decision\"] }\n",
+        "path = \"docs/guides\"\ntype = \"guide\"\nstatus = \"active\"\nexclude = [\"ext-*/**\"]\n",
+        "path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\n",
+        "  change AGENTS.md (one generated line)",
+        "  change .pre-commit-config.yaml (a local hook at the end: `spec-dna check`)",
+        "dry run: nothing written",
+    ] {
+        assert!(out.contains(want), "{want}:\n{out}");
+    }
+    assert!(!out.contains("path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\nrequired-sections"), "{out}");
+    assert!(!r.dir.join("spec-dna.toml").exists());
+    let (code, out, _) = r.run(&["init", "--dry-run", "--non-interactive", "--json"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("\"kind\":\"brownfield\""), "{out}");
+    assert!(out.contains("\"stack\":[\"Rust\"]"), "{out}");
+    assert!(out.contains("\"ci\":[\"GitHub Actions\"]"), "{out}");
+    assert!(out.contains("\"hooks\":[\"pre-commit\"]"), "{out}");
+    assert!(out.contains("\"written\":[]"), "{out}");
+
+    // An answers file: drop a root, relax the budgets, no CI file.
+    let answers = r.dir.join("../answers-brown.toml");
+    fs::write(
+        &answers,
+        "mapping = \"accept\"\ndrop = [\"docs/guides\"]\nbudgets = \"relaxed\"\nci = \"none\"\n",
+    )
+    .unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(!cfg.contains("docs/guides"), "{cfg}");
+    assert!(
+        cfg.contains("[budgets.spec]\nsoft = 20000\nhard = 40000\n"),
+        "{cfg}"
+    );
+    assert!(!r.dir.join(".github/workflows/spec-dna.yml").exists());
+    assert!(
+        r.read(".pre-commit-config.yaml")
+            .ends_with("  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n")
+    );
+    assert!(
+        r.read("AGENTS.md")
+            .starts_with("# Agents\n\nRun the tests before a commit.\n")
+    );
+    // The documents did not change, and `check` finds no error in them.
+    assert_eq!(git(&r.dir, &["status", "--porcelain", "--", "docs"]), "");
+    r.commit("adopt");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD305"), "{out}");
+    assert!(
+        out.contains("4 documents") || out.contains("documents;"),
+        "{out}"
+    );
+
+    // --reconfigure: the current values are the defaults, and the keys that
+    // no question asks for stay.
+    r.write(
+        "spec-dna.toml",
+        &r.read("spec-dna.toml").replace(
+            "# install-source = \"https://github.com/AlexGavrilov939/spec-dna\"  # a local or private clone\n",
+            "install-source = \"file:///srv/git/spec-dna\"\n\n[context]\nbudget = 9000\n",
+        ),
+    );
+    fs::write(&answers, "profile = \"lite\"\n").unwrap();
+    let (code, out, err) = r.run(&[
+        "init",
+        "--reconfigure",
+        "--answers",
+        answers.to_str().unwrap(),
+    ]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("profile = \"lite\""), "{cfg}");
+    assert!(
+        cfg.contains("install-source = \"file:///srv/git/spec-dna\""),
+        "{cfg}"
+    );
+    assert!(cfg.contains("[context]\nbudget = 9000\n"), "{cfg}");
+    assert!(
+        cfg.contains("path = \"docs/adr\"\ntype = \"decision\""),
+        "{cfg}"
+    );
+    assert!(cfg.contains("legacy-ids = [\"ADR-{n}\"]"), "{cfg}");
+    assert!(
+        cfg.contains("[budgets.spec]\nsoft = 20000\nhard = 40000\n"),
+        "{cfg}"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+/// Runs `spec-dna init` on a pseudo-terminal, writes the answers, and returns
+/// the exit code and the output.
+#[cfg(unix)]
+fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
+    use std::io::{Read, Write};
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::process::Stdio;
+    let (mut master, mut slave) = (0, 0);
+    // SAFETY: openpty writes two new file descriptors; the null pointers ask
+    // for no name and the default terminal settings.
+    let rc = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            // `*mut` also coerces to the `*const` arguments of Linux.
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0, "openpty");
+    // SAFETY: the descriptors are new and owned here only.
+    let (master, slave) = unsafe {
+        (
+            std::fs::File::from_raw_fd(master),
+            OwnedFd::from_raw_fd(slave),
+        )
+    };
+    let mut child = {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args)
+            .current_dir(dir)
+            .stdin(Stdio::from(slave.try_clone().unwrap()))
+            .stdout(Stdio::from(slave.try_clone().unwrap()))
+            .stderr(Stdio::from(slave));
+        cmd.spawn().expect("binary runs")
+    };
+    let mut reader = master.try_clone().unwrap();
+    let out = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        // The read ends with EOF or EIO when the child closes the terminal.
+        while let Ok(n) = reader.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        buf
+    });
+    let mut writer = master;
+    for line in answers.lines() {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        writer.write_all(format!("{line}\n").as_bytes()).unwrap();
+    }
+    let start = std::time::Instant::now();
+    let code = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s.code().unwrap_or(-1);
+        }
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            let _ = child.kill();
+            panic!("init waited for more input");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    drop(writer);
+    let text = String::from_utf8_lossy(&out.join().unwrap()).replace("\r\n", "\n");
+    (code, text)
+}
+
+#[cfg(unix)]
+#[test]
+fn init_asks_on_a_terminal() {
+    let r = Repo::fixture("brownfield");
+    // 1 profile, 2 types, 3 evidence, 4 language, 5 mapping (4 roots), 6
+    // budgets, 7 adapters, 8 CI, hook and base, then the confirmation.
+    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=spec\n\noff\nclaude-md, skill\nnone, none, main\ny\n";
+    let (code, out) = on_terminal(&r.dir, &["init"], answers);
+    assert_eq!(code, 0, "{out}");
+    for want in [
+        "1/8 Profile (lite, standard, strict) [standard]: ",
+        "2/8 Knowledge types [spec, guide, decision, note]: ",
+        "5/8 Mapping: 4 roots.",
+        "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-implementation-plan.md, README.md) [accept]: ",
+        "6/8 Budget level (default, relaxed, tight, off) [default]: ",
+        "8/8 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
+        "--- spec-dna.toml ---",
+        "Write these files? [y/N]: ",
+        "wrote spec-dna.toml",
+    ] {
+        assert!(out.contains(want), "{want}:\n{out}");
+    }
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("profile = \"strict\""), "{cfg}");
+    assert!(
+        cfg.contains("evidence = \"error\"\nbudgets = \"off\"\n"),
+        "{cfg}"
+    );
+    assert!(!cfg.contains("path = \"docs/adr\""), "{cfg}");
+    assert!(
+        cfg.contains("path = \"docs/specs\"\ntype = \"spec\""),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains("path = \"docs/guides\"\ntype = \"guide\""),
+        "{cfg}"
+    );
+    assert!(r.read("CLAUDE.md").contains("spec-dna check"));
+    assert!(!r.read("AGENTS.md").contains("spec-dna"));
+    assert!(!r.read(".pre-commit-config.yaml").contains("spec-dna"));
+
+    // A "no" at the confirmation writes nothing.
+    let r = Repo::empty();
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\nn\n");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("nothing written"), "{out}");
+    assert!(!r.dir.join("spec-dna.toml").exists());
 }

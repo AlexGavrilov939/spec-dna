@@ -545,6 +545,19 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             },
         }
     }
+    if !config.allows(ty) {
+        let names: Vec<&str> = config.types.iter().map(|t| t.name()).collect();
+        issues.push(Issue {
+            code: Code::TypeInvalid,
+            line: 1,
+            target: ty.name().to_string(),
+            message: format!(
+                "type `{}` is not a type of this project (`types` in spec-dna.toml: {})",
+                ty.name(),
+                names.join(", ")
+            ),
+        });
+    }
     let status = match fm_status {
         Some((s, line)) => {
             let allowed = |x: &str| !ty.has_status() || ty.statuses().contains(&x);

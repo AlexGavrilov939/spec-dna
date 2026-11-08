@@ -386,6 +386,39 @@ impl Git {
         Ok(found)
     }
 
+    /// Returns the default branch: the branch of `origin/HEAD`, or a local
+    /// `main` or `master`, or the current branch, or `main`. It reads local
+    /// refs only, without the network.
+    pub fn default_branch(&self) -> String {
+        let out = |args: &[&str]| {
+            self.run(args)
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+        if let Some(b) = out(&[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ]) {
+            return b.strip_prefix("origin/").unwrap_or(&b).to_string();
+        }
+        for b in ["main", "master"] {
+            if out(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{b}"),
+            ])
+            .is_some()
+            {
+                return b.to_string();
+            }
+        }
+        out(&["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|| "main".to_string())
+    }
+
     pub fn mv(&self, from: &str, to: &str) -> Result<(), String> {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }

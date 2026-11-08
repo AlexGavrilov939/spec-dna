@@ -1,0 +1,3 @@
+# Style
+
+Write short functions.

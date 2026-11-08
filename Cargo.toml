@@ -19,6 +19,10 @@ sha2 = { version = "0.10", default-features = false }
 toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
 
+# A test opens a pseudo-terminal for the interactive `init`.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
 [profile.release]
 lto = true
 codegen-units = 1

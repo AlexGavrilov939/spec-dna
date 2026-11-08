@@ -7,6 +7,7 @@ mod check;
 mod cite;
 mod config;
 mod context;
+mod detect;
 mod diag;
 mod drift;
 mod evidence;
@@ -15,6 +16,7 @@ mod git;
 mod glob;
 mod hash;
 mod index;
+mod init;
 mod json;
 mod lint;
 mod model;
@@ -35,8 +37,13 @@ use std::process::ExitCode;
 const USAGE: &str = "usage: spec-dna <command> [options]
 
 Commands:
-    init [--root <dir>]
-        Writes spec-dna.toml (if it does not exist) and the agent adapters.
+    init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
+        [--root <dir>]
+        Detects the repository, asks at most 8 questions with the detected
+        defaults, shows spec-dna.toml and the files to change, and writes
+        them after a confirmation. Without a terminal, it uses the defaults.
+        If spec-dna.toml exists, it updates the agent adapters only, unless
+        --reconfigure is set.
     check [--base <rev>] [--all] [--lint]
         Reports the diagnostics that are new against the merge base of <rev>
         and HEAD (default: HEAD). With --all, it reports every diagnostic.
@@ -88,6 +95,10 @@ struct Args {
     expect: Vec<String>,
     format: Option<String>,
     lint: bool,
+    non_interactive: bool,
+    answers: Option<String>,
+    reconfigure: bool,
+    dry_run: bool,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -106,6 +117,10 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         expect: Vec::new(),
         format: None,
         lint: false,
+        non_interactive: false,
+        answers: None,
+        reconfigure: false,
+        dry_run: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -127,6 +142,10 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--lint" => a.lint = true,
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
+            "--non-interactive" => a.non_interactive = true,
+            "--reconfigure" => a.reconfigure = true,
+            "--dry-run" => a.dry_run = true,
+            "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
@@ -212,21 +231,6 @@ fn warn_pin(cfg: &config::Config) {
     }
 }
 
-const DEFAULT_CONFIG: &str = "# spec-dna configuration. Reference: https://github.com/AlexGavrilov939/spec-dna/blob/master/docs/config.md
-spec-dna = \"{version}\"
-# The git source of spec-dna for `cargo install --git`, for example a local or
-# private clone in phase 1. The message of a version mismatch uses it.
-# install-source = \"https://github.com/AlexGavrilov939/spec-dna\"
-
-# Each root is a directory of documents. The id of a document is its path
-# under the root, without the extension.
-[[roots]]
-path = \"{root}\"
-type = \"mixed\"
-default-type = \"spec\"
-status = \"draft\"
-";
-
 /// The error for a binary whose version differs from the pin (ADR 0003).
 fn pin_mismatch(cfg: &config::Config) -> Fatal {
     let (pin, source) = (&cfg.pin, &cfg.install_source);
@@ -237,110 +241,22 @@ fn pin_mismatch(cfg: &config::Config) -> Fatal {
 
 fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
-    let mut written = Vec::new();
-    let cfg_path = repo.config_path();
-    if cfg_path.exists() {
-        let cfg = repo.load_config()?;
-        if cfg.pin != VERSION {
-            return Err(pin_mismatch(&cfg));
-        }
-    } else {
-        let root = a.root.as_deref().unwrap_or("docs").trim_matches('/');
-        let text = DEFAULT_CONFIG
-            .replace("{version}", VERSION)
-            .replace("{root}", if root.is_empty() { "." } else { root });
-        mv::write(&cfg_path, &text)?;
-        written.push(config::FILE_NAME.to_string());
+    if a.non_interactive && a.answers.is_some() {
+        return Err(Fatal::Usage(
+            "use --non-interactive or --answers, not both".into(),
+        ));
     }
-    // One line in each root instruction file that an agent reads (ADR 0003,
-    // amendment of 2026-11-08). AGENTS.md gets it if the file exists, or if
-    // there is no instruction file. CLAUDE.md gets it, unless it imports an
-    // AGENTS.md that has the line.
-    // An older version wrote a `claude` block that imported AGENTS.md. If
-    // AGENTS.md has text of its own, the import stays as a plain line.
-    let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).unwrap_or_default();
-    let exists = |p: &str| repo.root.join(p).exists();
-    let agents_target = exists(adapters::AGENTS) || !exists(adapters::CLAUDE);
-    let claude = adapters::migrate_claude(
-        &read(adapters::CLAUDE),
-        adapters::has_own_text(&read(adapters::AGENTS)),
-    );
-    let imports = adapters::imports_agents(&claude);
-    let claude_target = !(agents_target && imports);
-    for (path, target) in [
-        (adapters::AGENTS, agents_target),
-        (adapters::CLAUDE, claude_target),
-    ] {
-        let old = read(path);
-        let current = if path == adapters::CLAUDE {
-            claude.clone()
-        } else {
-            old.clone()
-        };
-        // A file that the agent reads through an import keeps no second copy.
-        let new = if target {
-            adapters::upsert_line(&current)
-        } else {
-            adapters::remove_line(&current)
-        };
-        if new != old {
-            mv::write(&repo.root.join(path), &new)?;
-            written.push(path.to_string());
-        }
-    }
-    let skill_path = repo.root.join(adapters::SKILL);
-    let skill = read(adapters::SKILL);
-    if !skill.is_empty() && !skill.contains("<!-- spec-dna:begin skill ") {
-        return Err(Fatal::Usage(format!(
-            "{} exists and was not generated by spec-dna; move it first",
-            adapters::SKILL
-        )));
-    }
-    if skill != adapters::skill_file() {
-        std::fs::create_dir_all(skill_path.parent().unwrap())
-            .map_err(|e| Fatal::Io(e.to_string()))?;
-        mv::write(&skill_path, &adapters::skill_file())?;
-        written.push(adapters::SKILL.to_string());
-    }
-    // The bytes that spec-dna adds to the prompt prefix of each request.
-    // Claude Code reads one copy of the line (in CLAUDE.md, or in AGENTS.md
-    // through an import) and the skill descriptions. Other agents read
-    // AGENTS.md.
-    let line = adapters::line().len() + 1;
-    let claude_line = line;
-    let skill_bytes = adapters::skill_prefix_bytes();
-    let agents_bytes = if agents_target { line } else { 0 };
-    if a.json {
-        println!(
-            "{}",
-            Obj::new()
-                .str("version", VERSION)
-                .strs("written", &written)
-                .raw(
-                    "prefix_bytes",
-                    &Obj::new()
-                        .num("claude_code", claude_line + skill_bytes)
-                        .num("agents_md", agents_bytes)
-                        .end()
-                )
-                .end()
-        );
-    } else {
-        if written.is_empty() {
-            println!("spec-dna init: everything is up to date");
-        }
-        for w in &written {
-            println!("wrote {w}");
-        }
-        println!(
-            "per-request prefix: {} bytes for Claude Code (line {claude_line}, skill description {skill_bytes}), {agents_bytes} bytes for AGENTS.md",
-            claude_line + skill_bytes
-        );
-        if !written.is_empty() {
-            println!("to commit: git add {}", written.join(" "));
-        }
-    }
-    Ok(0)
+    init::run(
+        repo,
+        &init::Opts {
+            root: a.root.clone(),
+            non_interactive: a.non_interactive,
+            answers: a.answers.clone(),
+            reconfigure: a.reconfigure,
+            dry_run: a.dry_run,
+            json: a.json,
+        },
+    )
 }
 
 fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, String)>, Fatal> {
@@ -682,6 +598,8 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 /// Writes a new document from the template of its type. The root is
 /// `--root`, or the first root of that single type, or the first mixed root.
+/// In a mixed root, an id without a namespace gets the namespace of its type,
+/// such as `decisions/<id>`.
 fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     use model::DocType;
     expect_args(a, 2, 2)?;
@@ -694,6 +612,11 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             DocType::names()
         ))
     })?;
+    if !cfg.allows(ty) {
+        return Err(Fatal::Usage(format!(
+            "type `{name}` is not a type of this project (`types` in spec-dna.toml)"
+        )));
+    }
     let id = a.positional[1].trim_matches('/');
     let id = id.strip_suffix(".md").unwrap_or(id);
     if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
@@ -723,6 +646,11 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             })?,
     };
     let root = &cfg.roots[root_i];
+    let id = match templates::namespace(ty) {
+        Some(ns) if root.single_type.is_none() && !id.contains('/') => format!("{ns}/{id}"),
+        _ => id.to_string(),
+    };
+    let id = id.as_str();
     if let Some(t) = root.single_type.filter(|&t| t != ty) {
         return Err(Fatal::Usage(format!(
             "root `{}` holds only `{}` documents",

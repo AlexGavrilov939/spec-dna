@@ -1,0 +1,5 @@
+repos:
+  - repo: https://example.org/hooks
+    rev: v1.0.0
+    hooks:
+      - id: trailing-whitespace
