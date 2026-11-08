@@ -339,6 +339,88 @@ fn lifecycle_rules_compare_base_and_head() {
 }
 
 #[test]
+fn localized_amendments_are_not_frozen_text() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nrequired-sections = { decision = [\"Lösung\"] }\namendment-sections = { decision = [\"Nachtrag\", \"Nachträge\"] }\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n",
+    );
+    let adr = "adr/d1.md";
+    r.write(
+        adr,
+        "---\nstatus: accepted\n---\n# Session store\n\n## Kontext\n\nWhere do sessions live?\n\n## Lösung\n\nUse the key-value store.\n\n## Folgen\n\nOne more service.\n",
+    );
+    r.write("docs/s.md", "# Sessions\n\nSee [[d1]].\n");
+    r.commit("docs");
+    // A new amendment section in the middle and one at the end: no SD405.
+    let text = r.read(adr).replace(
+        "## Folgen",
+        "## Nachtrag 2026-01-02: TTL\n\nThe gateway MUST expire a session after 30 min.\n\n## Folgen",
+    );
+    r.write(
+        adr,
+        &format!("{text}\n## Nachträge\n\n### Typo\n\nFixed a typo.\n"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let warnings: Vec<&str> = out.lines().filter(|l| l.contains("SD605")).collect();
+    assert_eq!(warnings.len(), 1, "{out}");
+    assert!(warnings[0].contains("adr/d1.md:14: warning SD605"), "{out}");
+    // `context` serves the amendments with the outcome of a linked decision.
+    let (_, out, _) = r.run(&["context", "s"]);
+    for id in [
+        "d1#lösung",
+        "d1#nachtrag-2026-01-02-ttl",
+        "d1#nachträge",
+        "d1#typo",
+    ] {
+        assert!(out.contains(&format!("<!-- {id} h:")), "{id}: {out}");
+    }
+    assert!(!out.contains("<!-- d1#folgen h:"), "{out}");
+    // An edit of other text is still an edit of the accepted decision.
+    r.write(
+        adr,
+        &r.read(adr)
+            .replace("One more service.", "Two more services."),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("SD405 decision-frozen: the text outside the amendment sections changed"),
+        "{out}"
+    );
+}
+
+#[test]
+fn lint_severity_follows_the_root() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"spec\"\nstatus = \"active\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"spec\"\nstatus = \"active\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+    );
+    for root in ["old", "new", "docs"] {
+        r.write(
+            &format!("{root}/{root}-spec.md"),
+            "# S\n\n- **retry**: The client retries.\n",
+        );
+    }
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(!out.contains("old/old-spec.md"), "{out}");
+    assert!(out.contains("new/new-spec.md:3: error SD801"), "{out}");
+    assert!(out.contains("docs/docs-spec.md:3: warning SD801"), "{out}");
+    // The base has the same error, so the gate passes.
+    let (code, _, _) = r.run(&["check"]);
+    assert_eq!(code, 0);
+    let (_, json, _) = r.run(&["check", "--all", "--json"]);
+    assert!(
+        json.contains("\"code\":\"SD801\",\"name\":\"requirement-keyword\",\"severity\":\"error\""),
+        "{json}"
+    );
+}
+
+#[test]
 fn fresh_project_init_check_uninstall() {
     let r = Repo::empty();
     let (code, out, err) = r.run(&["init"]);
@@ -881,6 +963,29 @@ fn transcript_reports_counts_and_ids_only() {
         "{out}"
     );
     assert_eq!(empty.run(&["transcript", "no/such/file.jsonl"]).0, 2);
+    // A session id, agent id, origin, model or tool name that does not match
+    // its strict pattern prints as `<redacted>`.
+    let unsafe_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transcripts-unsafe");
+    let unsafe_dir = unsafe_dir.to_str().unwrap();
+    for args in [
+        vec!["transcript", unsafe_dir],
+        vec!["transcript", unsafe_dir, "--json"],
+    ] {
+        let (code, out, _) = empty.run(&args);
+        assert_eq!(code, 0);
+        assert!(!out.contains("SECRET") && !out.contains("sk-"), "{out}");
+        assert!(out.contains("<redacted>"), "{out}");
+        assert!(out.contains("Read"), "{out}");
+    }
+    let (_, json, _) = empty.run(&["transcript", unsafe_dir, "--json"]);
+    assert!(json.contains("\"models\":[\"<redacted>\"]"), "{json}");
+    assert!(json.contains("\"models\":[\"claude-opus-5-5\"]"), "{json}");
+    let (_, out, _) = empty.run(&["transcript", unsafe_dir]);
+    assert!(out.contains("session <redacted> (claude-code)"), "{out}");
+    assert!(out.contains("episode 1 (main, <redacted>)"), "{out}");
+    assert!(out.contains("episode 2 (<redacted>, human)"), "{out}");
+    assert!(out.contains("(<redacted> 1, Read 1)"), "{out}");
     empty.write("x.jsonl", "{\"not\":\"a transcript\"}\n");
     let (code, _, err) = empty.run(&["transcript", "x.jsonl"]);
     assert_eq!(code, 2);

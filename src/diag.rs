@@ -52,7 +52,7 @@ codes! {
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
-    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and append the change under `## Amendments`. As an alternative, write a decision that supersedes this one.";
+    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). As an alternative, write a decision that supersedes this one.";
     AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. Put your own text outside of the generated block.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
     TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.";
@@ -80,6 +80,9 @@ pub struct Diag {
     pub doc: String,
     pub target: String,
     pub message: String,
+    /// The severity of the code, or the `lint-severity` of the root for the
+    /// requirement lint.
+    pub severity: Severity,
 }
 
 impl Diag {
@@ -94,7 +97,7 @@ impl Diag {
             "{}:{}: {} {} {}: {}",
             self.path,
             self.line,
-            self.code.severity().name(),
+            self.severity.name(),
             self.code.code(),
             self.code.name(),
             self.message
@@ -105,7 +108,7 @@ impl Diag {
         Obj::new()
             .str("code", self.code.code())
             .str("name", self.code.name())
-            .str("severity", self.code.severity().name())
+            .str("severity", self.severity.name())
             .bool("new", new)
             .str("doc", &self.doc)
             .str("path", &self.path)

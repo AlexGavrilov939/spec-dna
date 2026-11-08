@@ -5,7 +5,7 @@
 use crate::config::Config;
 use crate::diag::Code;
 use crate::frontmatter::Value;
-use crate::hash::nfc;
+use crate::hash::{Hash, nfc};
 use crate::parse::ParsedDoc;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -90,6 +90,12 @@ pub struct Doc {
     /// For a decision, the chunks whose heading is one of the required
     /// section headings of the root (the outcome).
     pub outcome: Vec<usize>,
+    /// The chunks of the amendment sections: each chunk whose heading matches
+    /// an `amendment-sections` name of the root, and the chunks below it.
+    pub amendments: Vec<usize>,
+    /// Hash of the chunks outside the amendment sections. After a decision is
+    /// accepted, this text is frozen (SD405).
+    pub frozen_hash: Hash,
 }
 
 impl Doc {
@@ -580,6 +586,29 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             seen.push(&r.key);
             reqs.push(i);
         }
+        let keys: HashSet<&str> = reqs.iter().map(|&i| parsed.reqs[i].key.as_str()).collect();
+        let missed: Vec<&crate::parse::Token> = parsed
+            .leads
+            .iter()
+            .filter(|t| !keys.contains(t.text.as_str()))
+            .filter(|t| root.legacy_keys.iter().any(|p| p.is_match(&t.text)))
+            .collect();
+        if !reqs.is_empty()
+            && let Some(first) = missed.first()
+        {
+            // Some requirements are in a syntax that spec-dna reads, and
+            // others are not.
+            issues.push(Issue {
+                code: Code::RequirementsUnrecognized,
+                line: first.line,
+                target: String::new(),
+                message: format!(
+                    "{} list items or table rows start with a `legacy-keys` token but are not recognized requirements (first: `{}`)",
+                    missed.len(),
+                    first.text
+                ),
+            });
+        }
         if reqs.is_empty() {
             let legacy: Vec<&crate::parse::Token> = parsed
                 .tokens
@@ -626,6 +655,14 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     } else {
         Vec::new()
     };
+    let amendments = amendment_chunks(&parsed.chunks, &root.amendment_sections[ty as usize]);
+    let mut frozen = Vec::new();
+    for (i, ch) in parsed.chunks.iter().enumerate() {
+        if !amendments.contains(&i) {
+            frozen.extend_from_slice(&ch.hash);
+        }
+    }
+    let frozen_hash = crate::hash::hash_bytes(&frozen);
     Doc {
         path,
         id,
@@ -643,6 +680,8 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         issues,
         reqs,
         outcome,
+        amendments,
+        frozen_hash,
     }
 }
 
@@ -650,6 +689,41 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
 /// the start and at the end.
 pub fn same_heading(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
+}
+
+/// Returns true if a heading is an amendment name, or starts with the name and
+/// a character that is not a letter or a digit (`Amendment 3: TTL`). The
+/// comparison ignores case.
+fn amendment_heading(heading: &str, name: &str) -> bool {
+    let h = heading.trim().to_lowercase();
+    let n = name.trim().to_lowercase();
+    match h.strip_prefix(&n) {
+        Some(rest) => rest.chars().next().is_none_or(|c| !c.is_alphanumeric()),
+        None => false,
+    }
+}
+
+/// Returns the chunks of the amendment sections. An amendment section starts
+/// at a heading of level 2 or more that matches a name, and it continues to
+/// the next heading of the same or a higher level.
+fn amendment_chunks(chunks: &[crate::parse::Chunk], names: &[String]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut open: Option<u8> = None;
+    for (i, ch) in chunks.iter().enumerate() {
+        if open.is_some_and(|level| ch.level <= level) {
+            open = None;
+        }
+        if open.is_none()
+            && ch.level >= 2
+            && names.iter().any(|n| amendment_heading(&ch.heading, n))
+        {
+            open = Some(ch.level);
+        }
+        if open.is_some() {
+            out.push(i);
+        }
+    }
+    out
 }
 
 fn canonical_ref(r: &str) -> String {
@@ -1011,6 +1085,56 @@ mod tests {
         assert_eq!(t, [(Code::RequirementsUnrecognized, 5)]);
         assert!(c.docs[1].issues[0].message.starts_with("2 tokens match"));
         assert!(c.docs[2].issues.is_empty());
+    }
+
+    #[test]
+    fn partial_recognition_warns() {
+        let c = corpus(&[(
+            "docs/s.md",
+            "# S\n\n- **R-1** The client MUST retry.\n- R-2 The server SHALL log.\n\n| Key | Rule |\n| --- | --- |\n| R-3 | The cache MAY drop entries. |\n\n## Tests\n\n| R-1 | test_retry |\n| --- | --- |\n| R-1 | test_retry_twice |\n",
+        )]);
+        let d = &c.docs[0];
+        assert_eq!(d.reqs.len(), 1);
+        let t: Vec<(Code, u32, &str)> = d
+            .issues
+            .iter()
+            .map(|i| (i.code, i.line, i.message.as_str()))
+            .collect();
+        // A traceability row of a recognized key does not count.
+        assert_eq!(
+            t,
+            [(
+                Code::RequirementsUnrecognized,
+                4,
+                "2 list items or table rows start with a `legacy-keys` token but are not recognized requirements (first: `R-2`)"
+            )]
+        );
+    }
+
+    #[test]
+    fn amendment_sections_per_root() {
+        let base = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Lösung\n\nUse X.\n\n### Nachtrag 2: scope\n\nAlso Y.\n\n## Nachtrag 1: TTL\n\nThe TTL is 5 min.\n\n#### Detail\n\nZ.\n\n## Folgen\n\nW.\n\n## Nachtragsplan\n\nV.\n";
+        let cfg = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nrequired-sections = { decision = [\"Lösung\"] }\namendment-sections = { decision = [\"Nachtrag\"] }\n[[roots]]\npath = \"adr\"\n";
+        let c = corpus_with(cfg, &[("docs/d.md", base), ("adr/d.md", base)]);
+        let d = &c.docs[0];
+        let headings: Vec<&str> = d
+            .amendments
+            .iter()
+            .map(|&i| d.parsed.chunks[i].heading.as_str())
+            .collect();
+        // `Nachtragsplan` starts with the name, but a letter follows it.
+        assert_eq!(headings, ["Nachtrag 2: scope", "Nachtrag 1: TTL", "Detail"]);
+        // The default name is `Amendments`.
+        assert!(c.docs[1].amendments.is_empty());
+        let frozen = |text: &str| corpus_with(cfg, &[("docs/d.md", text)]).docs[0].frozen_hash;
+        // Amendment text can change and grow; the other text is frozen.
+        assert_eq!(frozen(base), frozen(&base.replace("5 min", "10 min")));
+        assert_eq!(
+            frozen(base),
+            frozen(&format!("{base}\n## Nachtrag 3\n\nMore.\n"))
+        );
+        assert_ne!(frozen(base), frozen(&base.replace("W.", "W2.")));
+        assert_ne!(frozen(base), frozen(&base.replace("Use X.", "Use X2.")));
     }
 
     #[test]

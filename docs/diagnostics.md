@@ -23,7 +23,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD402 | superseded-without-successor | error | A superseded document has no active (or accepted) successor that names it in `supersedes`. |
 | SD403 | supersede-cycle | error | The `supersedes` chain returns to its start. |
 | SD404 | depends-on-inactive | error | `depends-on` names a superseded or retired document. |
-| SD405 | decision-frozen | error | Text above `## Amendments` changed after the decision became accepted. |
+| SD405 | decision-frozen | error | Text outside the amendment sections (`amendment-sections`, default `## Amendments`) changed after the decision became accepted. |
 | SD501 | adapter-modified | error | A generated adapter block has a manual edit. |
 | SD502 | adapter-outdated | error | A generated adapter is different from the adapter that this version generates. |
 | SD601 | token-unresolved | warning | A bare `PREFIX-NUMBER` token with a configured legacy prefix names no document. |
@@ -40,6 +40,8 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD803 | sentence-length | warning | A requirement sentence is longer than `lint.max-words`. |
 | SD804 | vague-term | warning | A requirement uses a term from the vague-term list. |
 | SD805 | passive-voice | warning | A requirement uses a passive construction (heuristic). |
-| SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
+| SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or some requirements are recognized, but a list item or a table row starts with a `legacy-keys` token that is not the key of a recognized requirement. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
+
+The requirement lint (SD801 to SD805) has the severity that `lint-severity` of the root sets: `off`, `warning` (default) or `error`.
 
 The [research matrix](research/matrix.md), section "Controlled-language lint", describes the lint warnings SD803 to SD805 and their sources.
