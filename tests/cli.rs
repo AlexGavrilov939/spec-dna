@@ -595,6 +595,34 @@ fn exit_codes() {
 }
 
 #[test]
+fn help_of_one_command_is_short() {
+    let run = |args: &[&str]| {
+        let o = Command::new(BIN).args(args).output().unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+        )
+    };
+    let (code, all) = run(&["--help"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        all.contains("Commands:") && all.contains("transcript"),
+        "{all}"
+    );
+    let (code, again) = run(&["help", "help"]);
+    assert_eq!((code, again), (Some(0), all.clone()));
+    for args in [&["mv", "--help"][..], &["help", "mv"], &["mv", "-h"]] {
+        let (code, one) = run(args);
+        assert_eq!(code, Some(0), "{args:?}");
+        assert!(one.starts_with("usage: spec-dna mv <from> <to>\n"), "{one}");
+        assert!(!one.contains("transcript"), "{one}");
+        assert!(one.len() * 4 < all.len(), "{} of {}", one.len(), all.len());
+    }
+    let (code, _) = run(&["nothing", "--help"]);
+    assert_eq!(code, Some(2));
+}
+
+#[test]
 fn hard_budget_is_an_error_for_new_and_growing_documents() {
     let r = Repo::empty();
     r.write(
@@ -2275,6 +2303,39 @@ fn init_detects_a_brownfield_repository() {
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn init_detects_common_layouts() {
+    let r = Repo::fixture("layouts");
+    let (code, out, err) = r.run(&["init", "--dry-run", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for want in [
+        "path = \"doc/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nlegacy-ids = [{ alias = \"ADR-{n}\", file = \"{n}-*\" }]\n",
+        "path = \"rfcs\"\ntype = \"change\"\nstatus = \"accepted\"\n",
+        "path = \"runbooks\"\ntype = \"runbook\"\n",
+        "path = \"incidents\"\ntype = \"incident\"\n",
+        "path = \"postmortems\"\ntype = \"incident\"\n",
+        "path = \"validation\"\ntype = \"reference\"\n",
+        "path = \"research\"\ntype = \"reference\"\n",
+        // A numbered directory in a mixed root takes the type of its files.
+        "path = \"docs/records\"\ntype = \"incident\"\nlegacy-ids = [\"BUG-{n}\"]\n",
+    ] {
+        assert!(out.contains(want), "{want}:\n{out}");
+    }
+    let answers = r.dir.join("../answers-layouts.toml");
+    fs::write(&answers, "mapping = \"accept\"\nci = \"none\"\n").unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("0 errors"), "{out}");
+    // The adr-tools numbers give the aliases.
+    let (code, out, _) = r.run(&["show", "ADR-2"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("# 2. Use Markdown"), "{out}");
 }
 
 /// Runs `spec-dna init` on a pseudo-terminal, writes the answers, and returns

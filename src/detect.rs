@@ -39,7 +39,9 @@ const TYPE_DIRS: &[(&str, DocType)] = &[
     ("oncall", DocType::Runbook),
     ("on-call", DocType::Runbook),
     ("incidents", DocType::Incident),
+    ("incident", DocType::Incident),
     ("postmortems", DocType::Incident),
+    ("postmortem", DocType::Incident),
     ("post-mortems", DocType::Incident),
     ("rfcs", DocType::Change),
     ("rfc", DocType::Change),
@@ -52,6 +54,8 @@ const TYPE_DIRS: &[(&str, DocType)] = &[
     ("principles", DocType::Invariant),
     ("notes", DocType::Note),
     ("research", DocType::Reference),
+    ("validation", DocType::Reference),
+    ("validations", DocType::Reference),
     ("references", DocType::Reference),
     ("reference", DocType::Reference),
     ("briefs", DocType::Reference),
@@ -59,6 +63,11 @@ const TYPE_DIRS: &[(&str, DocType)] = &[
     ("meetings", DocType::Reference),
     ("meeting-notes", DocType::Reference),
 ];
+
+/// Type words that are also common names of code directories
+/// (`src/validation`). They give a type only inside a documentation tree or
+/// to a directory that is mostly Markdown.
+const CODE_WORDS: &[&str] = &["incident", "postmortem", "validation", "validations"];
 
 /// Directory names of documentation trees.
 const DOC_DIRS: &[&str] = &["docs", "doc", "documentation", "wiki", "handbook"];
@@ -301,6 +310,10 @@ struct Md {
     path: String,
     parsed: ParsedDoc,
     generated: bool,
+    /// The field labels of the file, in lowercase: the first cell of each
+    /// table row and each bold label at the start of a line. Record templates
+    /// often put their fields (`Root cause`, `Status`) in a table.
+    labels: Vec<String>,
 }
 
 fn segments(path: &str) -> Vec<&str> {
@@ -387,6 +400,126 @@ fn legacy_id(stems: &[&str], min_share: f64) -> Option<String> {
     }
     let (p, n) = counts.into_iter().max_by_key(|x| x.1)?;
     (n >= 3 && n as f64 >= min_share * stems.len() as f64).then(|| format!("{p}-{{n}}"))
+}
+
+/// Returns true if a file stem is `<digits>-<word>`, as adr-tools writes it
+/// (`0001-record-architecture-decisions`). A date (`2026-01-05-outage`) is
+/// not a number of this shape.
+fn is_plain_numbered(stem: &str) -> bool {
+    let digits = stem.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0
+        && stem[digits..]
+            .strip_prefix('-')
+            .and_then(|r| r.chars().next())
+            .is_some_and(char::is_alphabetic)
+}
+
+/// Returns true if most file stems are `<digits>-<word>`.
+fn plain_numbered(stems: &[&str], min_share: f64) -> bool {
+    let n = stems.iter().filter(|s| is_plain_numbered(s)).count();
+    n >= 3 && n as f64 >= min_share * stems.len() as f64
+}
+
+/// The type that a file-name prefix names, such as `ADR` or `RFC`.
+fn prefix_type(prefix: &str) -> Option<DocType> {
+    Some(match prefix {
+        "ADR" | "MADR" | "AD" | "DR" | "DEC" => DocType::Decision,
+        "RFC" | "RFD" | "KEP" | "PEP" | "CR" | "EP" => DocType::Change,
+        "INC" | "INCIDENT" | "PM" | "PIR" | "RCA" => DocType::Incident,
+        "RB" | "RUNBOOK" => DocType::Runbook,
+        "REQ" | "SPEC" | "PRD" | "SRS" => DocType::Spec,
+        "INV" => DocType::Invariant,
+        _ => return None,
+    })
+}
+
+/// The type that the content of a file shows, if one type fits.
+fn content_type(m: &Md) -> Option<DocType> {
+    let heading = |names: &[&str]| {
+        m.parsed.chunks.iter().any(|c| {
+            c.level > 0
+                && names
+                    .iter()
+                    .any(|n| crate::model::same_heading(&c.heading, n))
+        })
+    };
+    let field = |name: &str| heading(&[name]) || m.labels.iter().any(|l| l == name);
+    let decision = heading(&["Decision", "Decision Outcome"])
+        || heading(OUTCOME_ALIASES)
+        || (heading(&["Context"]) && heading(&["Consequences"]));
+    let incident = field("root cause") || (heading(&["Timeline"]) && heading(&["Impact"]));
+    let runbook = heading(&["Steps", "Procedure"]);
+    let spec = m
+        .parsed
+        .reqs
+        .iter()
+        .any(|r| crate::parse::has_bcp14(&r.text));
+    let hits: Vec<DocType> = [
+        (decision, DocType::Decision),
+        (incident, DocType::Incident),
+        (runbook, DocType::Runbook),
+        (spec, DocType::Spec),
+    ]
+    .into_iter()
+    .filter(|x| x.0)
+    .map(|x| x.1)
+    .collect();
+    (hits.len() == 1).then(|| hits[0])
+}
+
+/// The type of a directory from its own files: the file-name prefix, then
+/// the front matter `type` of most files, then the content of most files.
+/// Returns the type and the reason.
+fn own_type(docs: &[&Md], prefixed: Option<&str>) -> Option<(DocType, String)> {
+    if let Some(p) = prefixed.and_then(|p| p.strip_suffix("-{n}"))
+        && let Some(t) = prefix_type(p)
+    {
+        return Some((t, format!("the prefix `{p}` names type `{}`", t.name())));
+    }
+    let majority = |types: Vec<DocType>| -> Option<DocType> {
+        let mut counts: BTreeMap<DocType, usize> = BTreeMap::new();
+        for t in types {
+            *counts.entry(t).or_default() += 1;
+        }
+        let (t, n) = counts.into_iter().max_by_key(|x| x.1)?;
+        (n as f64 >= 0.6 * docs.len() as f64).then_some(t)
+    };
+    let fm = docs
+        .iter()
+        .filter_map(|m| fm_str(&m.parsed, "type").and_then(|t| DocType::from_name(&t)))
+        .collect();
+    if let Some(t) = majority(fm) {
+        return Some((t, format!("most files have `type: {}`", t.name())));
+    }
+    let shown = docs.iter().filter_map(|m| content_type(m)).collect();
+    majority(shown).map(|t| {
+        (
+            t,
+            format!("most files have the sections of type `{}`", t.name()),
+        )
+    })
+}
+
+/// The field labels of a Markdown text (see `Md::labels`).
+fn labels(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for l in text.lines() {
+        let l = l.trim_start();
+        let label = if let Some(row) = l.strip_prefix('|') {
+            row.split('|')
+                .next()
+                .map(|c| c.trim().trim_matches('*').trim())
+        } else {
+            let l = l.strip_prefix("- ").unwrap_or(l);
+            l.strip_prefix("**")
+                .and_then(|r| r.split_once("**"))
+                .map(|(b, _)| b.trim().trim_end_matches(':'))
+        };
+        if let Some(x) = label.filter(|x| !x.is_empty() && x.len() <= 40) {
+            out.push(x.to_lowercase());
+        }
+    }
+    out
 }
 
 /// The script of a heading: the script of its first letter.
@@ -493,6 +626,7 @@ pub fn detect(
             path: p.to_string(),
             parsed: crate::parse::parse(&text),
             generated,
+            labels: labels(&text),
         }
     });
     facts.markdown = mds.len();
@@ -555,12 +689,23 @@ pub fn detect(
             continue;
         }
         trees.push(d);
-        rows.push(Row::new(
-            if d.is_empty() { "." } else { d },
-            None,
-            DocType::Guide,
-            format!("{} Markdown files, mostly documentation", md_in(d)),
-        ));
+        // A tree whose name is a type word has that type, as a typed
+        // directory has (`rfcs/` at the top level).
+        let name = d.rsplit('/').next().unwrap_or(d);
+        rows.push(match dir_type(name).filter(|_| !d.is_empty()) {
+            Some(t) => Row::new(
+                d,
+                Some(t),
+                t,
+                format!("directory name `{name}`, {} Markdown files", md_in(d)),
+            ),
+            None => Row::new(
+                if d.is_empty() { "." } else { d },
+                None,
+                DocType::Guide,
+                format!("{} Markdown files, mostly documentation", md_in(d)),
+            ),
+        });
     }
     // 2. Typed directories and agent directories.
     for d in &dirs {
@@ -578,7 +723,12 @@ pub fn detect(
             );
             r.why = format!("agent instructions, {} Markdown files", md_in(d));
             rows.push(r);
-        } else if let Some(t) = dir_type(name).filter(|_| md_in(d) >= 2) {
+        } else if let Some(t) = dir_type(name).filter(|_| md_in(d) >= 2)
+            && !rows.iter().any(|r| r.path == d)
+            && (!CODE_WORDS.contains(&name.to_ascii_lowercase().as_str())
+                || enclosing(&rows, d).is_some()
+                || md_in(d) * 2 >= all_tree.get(d).copied().unwrap_or(0))
+        {
             rows.push(Row::new(
                 d,
                 Some(t),
@@ -587,24 +737,66 @@ pub fn detect(
             ));
         }
     }
-    // 3. Directories of numbered files (`PREFIX-<n>-*.md`): legacy ids.
-    for (d, idx) in &md_direct {
+    // 3. Directories of numbered files (`PREFIX-<n>-*.md`, or `<n>-*.md` as
+    // adr-tools writes them): legacy ids. The type of such a directory comes
+    // from its own files. If the files show no type, it is the type of a
+    // typed enclosing root, or `note` in a mixed root.
+    let mut plain_aliases: Vec<(String, &str)> = Vec::new();
+    let mut numbered: Vec<(&String, &Vec<usize>)> = md_direct.iter().collect();
+    numbered.sort();
+    for (d, idx) in numbered {
         let stems: Vec<&str> = idx.iter().map(|&i| stem(&mds[i].path)).collect();
-        let Some(pattern) = legacy_id(&stems, 0.6) else {
+        let prefixed = legacy_id(&stems, 0.6);
+        let plain = plain_numbered(&stems, 0.6);
+        if prefixed.is_none() && !plain {
             continue;
+        }
+        let docs: Vec<&Md> = idx.iter().map(|&i| &mds[i]).collect();
+        let own = own_type(&docs, prefixed.as_deref());
+        // Files without a prefix make a root only for the layouts of
+        // decision and change records (adr-tools, RFC directories).
+        if prefixed.is_none() && !matches!(own, Some((DocType::Decision | DocType::Change, _))) {
+            continue;
+        }
+        let row = match rows.iter().position(|r| r.path == *d) {
+            Some(i) => {
+                // A mixed tree takes the type of its numbered files only if
+                // it has no other documents.
+                let r = &mut rows[i];
+                if r.ty.is_none()
+                    && md_in(d) == idx.len()
+                    && let Some((t, why)) = &own
+                {
+                    *r = Row::new(d, Some(*t), *t, format!("{}; {why}", r.why));
+                }
+                i
+            }
+            None => {
+                let parent = enclosing(&rows, d).map(|j| rows[j].ty);
+                let (t, why) = match (&own, parent) {
+                    (Some(o), _) => o.clone(),
+                    (None, Some(Some(pt))) => (
+                        pt,
+                        format!("the type of the enclosing root `{}`", pt.name()),
+                    ),
+                    (None, Some(None)) => (DocType::Note, "no type in the files".into()),
+                    (None, None) => continue,
+                };
+                let shape = prefixed.clone().unwrap_or_else(|| "{n}-*".into());
+                rows.push(Row::new(
+                    d,
+                    Some(t),
+                    t,
+                    format!("numbered files `{shape}`; {why}"),
+                ));
+                rows.len() - 1
+            }
         };
-        if let Some(r) = rows.iter_mut().find(|r| r.path == *d) {
-            r.legacy_ids.push(pattern);
-            continue;
+        if let Some(p) = prefixed {
+            rows[row].legacy_ids.push(p);
+        } else if rows[row].ty == Some(DocType::Decision) {
+            plain_aliases.push((d.clone(), "ADR-{n}"));
         }
-        let parent = enclosing(&rows, d).map(|i| rows[i].default_type);
-        if parent.is_none() {
-            continue;
-        }
-        let t = parent.unwrap_or(DocType::Guide);
-        let mut r = Row::new(d, Some(t), t, format!("numbered files `{pattern}`"));
-        r.legacy_ids.push(pattern);
-        rows.push(r);
     }
     // 4. Large reference directories: many documents or much text, and no
     // other root inside.
@@ -989,6 +1181,34 @@ pub fn detect(
         }
     }
     rows.retain(|r| r.docs > 0);
+    // An alias for `<n>-*.md` files is safe only if each document of its root
+    // that matches `{n}-*` has the shape `<n>-<word>` (not a date) and a
+    // number of its own, and no other root makes the same alias.
+    for (d, a) in &plain_aliases {
+        let Some(ri) = rows.iter().position(|r| r.path == *d) else {
+            continue;
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        let safe = mds
+            .iter()
+            .filter(|m| in_root(&rows, m) == Some(ri))
+            .all(|m| {
+                let s = stem(&m.path);
+                let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+                if digits == 0 || !s[digits..].starts_with('-') {
+                    return true;
+                }
+                let n = s[..digits].trim_start_matches('0').to_string();
+                is_plain_numbered(s) && seen.insert(n)
+            });
+        let taken = plain_aliases.iter().filter(|x| x.1 == *a).count() > 1
+            || rows
+                .iter()
+                .any(|r| r.legacy_ids.iter().any(|l| l.split('|').next() == Some(*a)));
+        if safe && !taken {
+            rows[ri].legacy_ids.push(format!("{a}|{{n}}-*"));
+        }
+    }
     // Files that are not documents of a root: the root files of the
     // repository (README, AGENTS.md, ...) in a root `.`, and the skill that
     // `init` generates.
@@ -1259,10 +1479,12 @@ mod tests {
             [("shipped".to_string(), "active".to_string())]
         );
         assert_eq!(row("docs/guides").exclude, ["ext-*/**"]);
+        // A numbered directory takes its type from its own files. These files
+        // show no type, so the type is `note`, not the type of `docs`.
         let def = row("docs/defects");
         assert_eq!(
             (def.ty, def.legacy_ids.clone()),
-            (Some(DocType::Guide), vec!["DEF-{n}".to_string()])
+            (Some(DocType::Note), vec!["DEF-{n}".to_string()])
         );
         assert_eq!(row("docs/market").ty, Some(DocType::Reference));
         assert_eq!(f.outcome_aliases, ["Решение"]);
@@ -1273,6 +1495,193 @@ mod tests {
         assert_eq!(f.hooks, ["pre-commit"]);
         assert!(f.brownfield);
         assert!(f.scripts.iter().any(|s| s.0 == "Cyrillic"));
+    }
+
+    fn rows_of(files: &[(String, String)]) -> Vec<(String, Option<DocType>, Vec<String>)> {
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        facts(&refs)
+            .rows
+            .into_iter()
+            .map(|r| (r.path, r.ty, r.legacy_ids))
+            .collect()
+    }
+
+    const ADR: &str = "# T\n\n## Status\n\nAccepted\n\n## Context\n\nC.\n\n## Decision\n\nD.\n\n## Consequences\n\nE.\n";
+
+    #[test]
+    fn detects_adr_tools_layout() {
+        let mut files = vec![("README.md".to_string(), "# R\n".to_string())];
+        for (i, s) in ["record-architecture-decisions", "use-markdown", "use-rust"]
+            .iter()
+            .enumerate()
+        {
+            files.push((format!("doc/adr/000{}-{s}.md", i + 1), ADR.into()));
+        }
+        assert_eq!(
+            rows_of(&files),
+            [(
+                "doc/adr".to_string(),
+                Some(DocType::Decision),
+                vec!["ADR-{n}|{n}-*".to_string()]
+            )]
+        );
+        // Two roots of `<n>-*.md` decisions would make the same aliases.
+        for i in 1..=3 {
+            files.push((format!("services/api/doc/adr/000{i}-x.md"), ADR.into()));
+        }
+        let rows = rows_of(&files);
+        assert!(rows.iter().all(|r| r.2.is_empty()), "{rows:?}");
+    }
+
+    #[test]
+    fn top_level_type_directories_keep_their_type() {
+        let mut files: Vec<(String, String)> = Vec::new();
+        for i in 1..=5 {
+            files.push((format!("adrs/ADR-000{i}-choice.md"), ADR.into()));
+            files.push((
+                format!("rfcs/000{i}-feature.md"),
+                "# F\n\n## Motivation\n\nM.\n".into(),
+            ));
+            files.push((
+                format!("runbooks/task-{i}.md"),
+                "# R\n\n## Steps\n\n1. Do.\n".into(),
+            ));
+            files.push((
+                format!("incidents/2026-01-0{i}-outage.md"),
+                "# O\n\n## Summary\n\nS.\n\n## Root cause\n\nR.\n".into(),
+            ));
+        }
+        for d in ["postmortems", "validation", "research"] {
+            for i in 1..=2 {
+                files.push((format!("{d}/item-{i}.md"), "# I\n\nText.\n".into()));
+            }
+        }
+        let rows = rows_of(&files);
+        let want = [
+            ("adrs", DocType::Decision, vec!["ADR-{n}"]),
+            ("incidents", DocType::Incident, vec![]),
+            ("postmortems", DocType::Incident, vec![]),
+            ("research", DocType::Reference, vec![]),
+            ("rfcs", DocType::Change, vec![]),
+            ("runbooks", DocType::Runbook, vec![]),
+            ("validation", DocType::Reference, vec![]),
+        ];
+        let want: Vec<(String, Option<DocType>, Vec<String>)> = want
+            .into_iter()
+            .map(|(p, t, l)| {
+                (
+                    p.to_string(),
+                    Some(t),
+                    l.into_iter().map(str::to_string).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(rows, want);
+    }
+
+    #[test]
+    fn numbered_directories_take_the_type_of_their_files() {
+        let mut files: Vec<(String, String)> = vec![
+            ("docs/index.md".into(), "# Docs\n".into()),
+            ("docs/guide.md".into(), "# Guide\n".into()),
+            (
+                "docs/specs/login.md".into(),
+                "# Login\n\n- **sign-in**: The app SHALL sign in.\n".into(),
+            ),
+            (
+                "docs/specs/logout.md".into(),
+                "# Logout\n\n- **sign-out**: The app SHALL sign out.\n".into(),
+            ),
+        ];
+        for i in 1..=3 {
+            files.push((format!("docs/architecture/ADR-000{i}-x.md"), ADR.into()));
+            files.push((
+                format!("docs/records/BUG-{i}-crash.md"),
+                "# BUG\n\n| Field | Value |\n|---|---|\n| Symptom | S |\n| Root cause | R |\n"
+                    .into(),
+            ));
+            files.push((
+                format!("docs/reviews/REV-{i}-sign-off.md"),
+                "# Sign-off\n\nApproved.\n".into(),
+            ));
+        }
+        let rows = rows_of(&files);
+        let get = |p: &str| rows.iter().find(|r| r.0 == p).cloned();
+        assert_eq!(
+            get("docs/architecture"),
+            Some((
+                "docs/architecture".into(),
+                Some(DocType::Decision),
+                vec!["ADR-{n}".into()]
+            ))
+        );
+        assert_eq!(
+            get("docs/records").map(|r| r.1),
+            Some(Some(DocType::Incident))
+        );
+        assert_eq!(get("docs/reviews").map(|r| r.1), Some(Some(DocType::Note)));
+        assert_eq!(get("docs/specs").map(|r| r.1), Some(Some(DocType::Spec)));
+        assert!(!plain_numbered(
+            &["2026-01-05-outage", "2026-02-01-x", "2026-03-01-y"],
+            0.6
+        ));
+    }
+
+    #[test]
+    fn review_cases_keep_the_earlier_behaviour() {
+        let row =
+            |files: &[(String, String)], p: &str| rows_of(files).into_iter().find(|r| r.0 == p);
+        // Repeated numbers and dates in the root of `<n>-*.md` decisions:
+        // no alias, so that `check` finds no duplicate id.
+        let mut files: Vec<(String, String)> = Vec::new();
+        for i in 1..=3 {
+            files.push((format!("doc/adr/000{i}-x.md"), ADR.into()));
+        }
+        for i in 1..=2 {
+            files.push((format!("doc/adr/superseded/000{i}-old.md"), ADR.into()));
+        }
+        assert_eq!(row(&files, "doc/adr").map(|r| r.2), Some(vec![]));
+        files.truncate(3);
+        files.push(("doc/adr/2025-03-01-review.md".into(), ADR.into()));
+        assert_eq!(row(&files, "doc/adr").map(|r| r.2), Some(vec![]));
+        // A tree with numbered chapters and other documents stays mixed.
+        let mut files: Vec<(String, String)> = Vec::new();
+        for (i, s) in ["overview", "install", "deploy", "upgrade"]
+            .iter()
+            .enumerate()
+        {
+            files.push((
+                format!("docs/0{}-{s}.md", i + 1),
+                "# S\n\n## Steps\n\n1. Do.\n".into(),
+            ));
+        }
+        files.push(("docs/api/users.md".into(), "# Users\n".into()));
+        files.push(("docs/api/orders.md".into(), "# Orders\n".into()));
+        assert_eq!(row(&files, "docs").map(|r| r.1), Some(None));
+        // Numbered files without a type in a typed root keep its type.
+        let mut files: Vec<(String, String)> = vec![
+            ("docs/specs/a.md".into(), "# A\n".into()),
+            ("docs/specs/b.md".into(), "# B\n".into()),
+        ];
+        for i in 1..=3 {
+            files.push((format!("docs/specs/features/FEAT-{i}-x.md"), "# F\n".into()));
+        }
+        assert_eq!(
+            row(&files, "docs/specs/features").map(|r| r.1),
+            Some(Some(DocType::Spec))
+        );
+        // A code directory with a type word is not a root.
+        let files: Vec<(String, String)> = vec![
+            ("src/incident/README.md".into(), "# I\n".into()),
+            ("src/incident/DESIGN.md".into(), "# D\n".into()),
+            ("src/incident/mod.rs".into(), "\n".into()),
+            ("src/incident/store.rs".into(), "\n".into()),
+            ("src/incident/api.rs".into(), "\n".into()),
+        ];
+        assert_eq!(row(&files, "src/incident"), None);
     }
 
     #[test]

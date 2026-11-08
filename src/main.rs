@@ -34,54 +34,111 @@ use crate::json::Obj;
 use crate::repo::{Fatal, Repo, Snapshot};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: spec-dna <command> [options]
+/// The help of each command: the name, the usage lines and the description.
+/// `spec-dna <command> --help` prints one entry, so that an agent reads only
+/// the help that it asks for.
+const COMMANDS: &[(&str, &str, &str)] = &[
+    (
+        "init",
+        "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]",
+        "Detects the repository, asks at most 8 questions with the detected
+defaults, shows spec-dna.toml and the files to change, and writes them
+after a confirmation. Without a terminal, it uses the defaults. If
+spec-dna.toml exists, it updates the agent adapters only, unless
+--reconfigure is set.",
+    ),
+    (
+        "check",
+        "check [--base <rev>] [--all] [--lint]",
+        "Reports the diagnostics that are new against the merge base of <rev>
+and HEAD (default: HEAD). With --all, it reports every diagnostic. With
+--base, it reads tracked files only, as CI does. It prints the errors
+first, then the drift warnings, then the other warnings. The prose lint
+warnings (SD801-SD805) are one count for each code; --lint lists each of
+them. --json lists all diagnostics.",
+    ),
+    (
+        "context",
+        "context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]",
+        "Assembles the sections that an agent needs for the targets. With
+--query, the sections that match the words of the text come first. A
+superseded, retired or rejected document is only listed, unless
+--include-inactive is set or a target names it.",
+    ),
+    (
+        "show",
+        "show <id>[#<anchor>]",
+        "Prints a document, a section or a requirement, with the evidence of
+each requirement.",
+    ),
+    (
+        "new",
+        "new <type> <id> [--root <dir>]",
+        "Writes a new document from the template of its type.",
+    ),
+    (
+        "mv",
+        "mv <from> <to>\nmv <doc-id>#<key or section>... <spec-id>",
+        "Moves a document. Or moves requirements and whole sections to an
+existing or a new spec, with an alias for every moved key of HEAD. A
+preservation check runs first; if it fails, nothing changes.",
+    ),
+    (
+        "transcript",
+        "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
+        "Reports token usage, tool calls and document reads per session and
+episode of agent transcripts. It prints counts and ids only.",
+    ),
+];
 
-Commands:
-    init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
-        [--root <dir>]
-        Detects the repository, asks at most 8 questions with the detected
-        defaults, shows spec-dna.toml and the files to change, and writes
-        them after a confirmation. Without a terminal, it uses the defaults.
-        If spec-dna.toml exists, it updates the agent adapters only, unless
-        --reconfigure is set.
-    check [--base <rev>] [--all] [--lint]
-        Reports the diagnostics that are new against the merge base of <rev>
-        and HEAD (default: HEAD). With --all, it reports every diagnostic.
-        With --base, it reads tracked files only, as CI does. It prints the
-        errors first, then the drift warnings, then the other warnings. The
-        prose lint warnings (SD801-SD805) are one count for each code;
-        --lint lists each of them. --json lists all diagnostics.
-    context <target>... [--path <file>]... [--budget <chars>] [--query <text>]
-            [--include-inactive]
-        Assembles the sections that an agent needs for the targets. With
-        --query, the sections that match the words of the text come first.
-        A superseded, retired or rejected document is only listed, unless
-        --include-inactive is set or a target names it.
-    show <id>[#<anchor>]
-        Prints a document, a section or a requirement, with the evidence of
-        each requirement.
-    new <type> <id> [--root <dir>]
-        Writes a new document from the template of its type.
-    mv <from> <to>
-    mv <doc-id>#<key or section>... <spec-id>
-        Moves a document. Or moves requirements and whole sections to an
-        existing or a new spec, with an alias for every moved key of HEAD. A
-        preservation check runs first; if it fails, nothing changes.
-    transcript <file or dir>... [--expect <id>]... [--format claude-code]
-        Reports token usage, tool calls and document reads per session and
-        episode of agent transcripts. It prints counts and ids only.
-
-Options:
+const OPTIONS: &str = "Options:
     --json        Prints machine-readable output
     --no-cache    Does not read or write the index
-    -h, --help    Prints this help
+    -h, --help    Prints this help; `spec-dna <command> --help` prints the help of one command
     -V, --version Prints the version
 
 Exit codes: 0 ok, 1 check found new errors, 2 usage, 3 configuration,
 4 git or I/O, 5 not found.";
 
+fn indent(text: &str, by: &str) -> String {
+    text.lines()
+        .map(|l| format!("{by}{l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The help of all commands.
+fn usage() -> String {
+    let mut out = String::from("usage: spec-dna <command> [options]\n\nCommands:\n");
+    for (_, synopsis, text) in COMMANDS {
+        out.push_str(&format!(
+            "{}\n{}\n",
+            indent(synopsis, "    "),
+            indent(text, "        ")
+        ));
+    }
+    out.push('\n');
+    out.push_str(OPTIONS);
+    out
+}
+
+/// The help of one command, or `None` for an unknown command.
+fn command_usage(name: &str) -> Option<String> {
+    let (_, synopsis, text) = COMMANDS.iter().find(|c| c.0 == name)?;
+    let lines: Vec<String> = synopsis
+        .lines()
+        .enumerate()
+        .map(|(i, l)| format!("{} spec-dna {l}", if i == 0 { "usage:" } else { "      " }))
+        .collect();
+    Some(format!(
+        "{}\n\n{text}\n\nAll commands accept --json and --no-cache.",
+        lines.join("\n")
+    ))
+}
+
 struct Args {
     command: String,
+    help: bool,
     positional: Vec<String>,
     base: Option<String>,
     all: bool,
@@ -104,6 +161,7 @@ struct Args {
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
     let mut a = Args {
         command: String::new(),
+        help: false,
         positional: Vec::new(),
         base: None,
         all: false,
@@ -135,7 +193,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
                 .ok_or_else(|| Fatal::Usage(format!("{name} needs a value")))
         };
         match flag.as_str() {
-            "-h" | "--help" => a.command = "help".into(),
+            "-h" | "--help" => a.help = true,
             "-V" | "--version" => a.command = "version".into(),
             "--json" => a.json = true,
             "--all" => a.all = true,
@@ -190,9 +248,27 @@ fn fail(e: &Fatal) -> ExitCode {
 
 fn run(a: Args) -> Result<u8, Fatal> {
     let cwd = std::env::current_dir().map_err(|e| Fatal::Io(e.to_string()))?;
+    if a.help || a.command == "help" {
+        let name = if a.command == "help" {
+            a.positional.first().map(String::as_str).unwrap_or("")
+        } else {
+            a.command.as_str()
+        };
+        if name.is_empty() || name == "version" || name == "help" {
+            println!("{}", usage());
+            return Ok(0);
+        }
+        return match command_usage(name) {
+            Some(text) => {
+                println!("{text}");
+                Ok(0)
+            }
+            None => Err(Fatal::Usage(format!("unknown command `{name}`"))),
+        };
+    }
     match a.command.as_str() {
-        "" | "help" => {
-            println!("{USAGE}");
+        "" => {
+            println!("{}", usage());
             Ok(0)
         }
         "version" => {

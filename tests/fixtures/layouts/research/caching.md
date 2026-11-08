@@ -1,0 +1,3 @@
+# caching
+
+Notes about caching.

@@ -38,6 +38,7 @@ spec-dna mv auth/session#renewal auth/session#token-expiry auth/tokens   # sever
 spec-dna mv auth/session#mfa auth/second-factor  # a whole section into a new spec
 spec-dna transcript ~/.claude/projects/<project> --expect auth/session
 spec-dna --help                     # commands and options (-h); --version (-V) prints the version
+spec-dna mv --help                  # the help of one command
 ```
 
 Every command accepts `--json`. spec-dna does not use the network. It reads documents through local git plumbing.

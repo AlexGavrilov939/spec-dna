@@ -1,0 +1,3 @@
+# Docs
+
+The start page.
