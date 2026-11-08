@@ -93,8 +93,8 @@ pub struct Doc {
     /// The chunks of the amendment sections: each chunk whose heading matches
     /// an `amendment-sections` name of the root, and the chunks below it.
     pub amendments: Vec<usize>,
-    /// Hash of the chunks outside the amendment sections. After a decision is
-    /// accepted, this text is frozen (SD405).
+    /// Hash of the chunks outside the amendment sections, without link
+    /// destinations. After a decision is accepted, this text is frozen (SD405).
     pub frozen_hash: Hash,
 }
 
@@ -659,7 +659,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     let mut frozen = Vec::new();
     for (i, ch) in parsed.chunks.iter().enumerate() {
         if !amendments.contains(&i) {
-            frozen.extend_from_slice(&ch.hash);
+            frozen.extend_from_slice(&ch.frozen);
         }
     }
     let frozen_hash = crate::hash::hash_bytes(&frozen);

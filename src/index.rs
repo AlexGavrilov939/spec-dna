@@ -181,6 +181,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
             w.u32(v);
         }
         w.0.extend_from_slice(&c.hash);
+        w.0.extend_from_slice(&c.frozen);
         w.u8(c.flags);
     }
     w.u32(d.refs.len() as u32);
@@ -252,6 +253,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             line: r.u32()?,
             chars: r.u32()?,
             hash: r.hash()?,
+            frozen: r.hash()?,
             flags: r.u8()?,
         });
     }

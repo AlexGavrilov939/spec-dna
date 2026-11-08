@@ -316,6 +316,9 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "per-request prefix: {} bytes for Claude Code (line {claude_line}, skill description {skill_bytes}), {agents_bytes} bytes for AGENTS.md",
             claude_line + skill_bytes
         );
+        if !written.is_empty() {
+            println!("to commit: git add {}", written.join(" "));
+        }
     }
     Ok(0)
 }

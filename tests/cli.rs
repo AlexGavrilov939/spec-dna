@@ -431,6 +431,10 @@ fn fresh_project_init_check_uninstall() {
         ),
         "{out}"
     );
+    assert!(
+        out.ends_with("\nto commit: git add spec-dna.toml AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md\n"),
+        "{out}"
+    );
     assert_eq!(r.read("AGENTS.md").lines().count(), 1);
     assert_eq!(r.read("CLAUDE.md"), r.read("AGENTS.md"));
     let docs = [
@@ -1363,4 +1367,44 @@ fn context_keeps_applies_to_above_directory_mentions() {
     let (code, out, err) = r.run(&["context", "src/library/new.py"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("<!-- loans#renewals h:"), "{out}");
+}
+
+#[test]
+fn moving_a_document_keeps_accepted_decisions_frozen() {
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n- **daily-fine**: When a member returns a book late, the library SHALL charge a fine.\n",
+    );
+    r.write(
+        "docs/decisions/fine.md",
+        "---\ntype: decision\nstatus: accepted\n---\n# Fine\n\n## Decision Outcome\n\nA flat fine. See [daily-fine](../loans.md#daily-fine).\n",
+    );
+    r.commit("docs");
+    let (code, out, err) = r.run(&["mv", "loans", "circulation/loans"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("moved document loans -> circulation/loans"),
+        "{out}"
+    );
+    assert!(
+        r.read("docs/decisions/fine.md")
+            .contains("(../circulation/loans.md#daily-fine)"),
+        "mv rewrites the link"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(
+        code, 0,
+        "a rewritten link is not a change of the decision: {out}"
+    );
+    // A change of the text is still a change.
+    r.write(
+        "docs/decisions/fine.md",
+        &r.read("docs/decisions/fine.md")
+            .replace("A flat fine", "A capped fine"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1);
+    assert!(out.contains("error SD405 decision-frozen"), "{out}");
 }

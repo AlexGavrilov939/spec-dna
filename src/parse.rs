@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 6;
+pub const PARSER_VERSION: u32 = 7;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -52,6 +52,9 @@ pub struct Chunk {
     pub line: u32,
     pub chars: u32,
     pub hash: Hash,
+    /// Hash of the text without link destinations. SD405 compares it, so a
+    /// move that rewrites a link does not change the frozen text.
+    pub frozen: Hash,
     pub flags: u8,
 }
 
@@ -268,6 +271,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             line: lines.line(body_start + start),
             chars: slice.chars().count() as u32,
             hash: hash_normalized(slice),
+            frozen: hash_normalized(&strip_link_destinations(slice)),
             flags: chunk_flags[i],
         });
     }
@@ -545,6 +549,48 @@ fn scan_tokens(text: &str, line: u32, out: &mut Vec<Token>) {
     }
 }
 
+/// Removes the destinations of inline links and images (`](dest)`) and of
+/// reference definitions (`[label]: dest`). The link text stays.
+pub fn strip_link_destinations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('[')
+            && let Some(i) = t.find("]: ")
+        {
+            out.push_str(&line[..line.len() - t.len() + i + 1]);
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+            continue;
+        }
+        let mut rest = line;
+        while let Some(i) = rest.find("](") {
+            out.push_str(&rest[..=i]);
+            let after = &rest[i + 2..];
+            let mut depth = 1;
+            let close = after.char_indices().find_map(|(j, ch)| {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(j)
+            });
+            match close {
+                Some(j) => rest = &after[j + 1..],
+                None => {
+                    out.push('(');
+                    rest = after;
+                    break;
+                }
+            }
+        }
+        out.push_str(rest);
+    }
+    out
+}
+
 /// Returns true if an inline code span can be a path or an identifier: 1 to
 /// 200 bytes with a letter, and no whitespace before the first `(`.
 fn is_code_candidate(span: &str) -> bool {
@@ -653,6 +699,20 @@ fn memchr_iter(needle: u8, hay: &[u8]) -> impl Iterator<Item = usize> + '_ {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_destinations_are_not_frozen_text() {
+        assert_eq!(
+            strip_link_destinations("See [a](../a.md#x) and ![i](i (1).png).\n[r]: ../r.md\n"),
+            "See [a] and ![i].\n[r]\n"
+        );
+        let a = parse("# D\n\nUse [loans](../loans.md#k).\n");
+        let b = parse("# D\n\nUse [loans](../circulation/loans.md#k).\n");
+        let c = parse("# D\n\nUse [lending](../loans.md#k).\n");
+        assert_ne!(a.chunks[0].hash, b.chunks[0].hash);
+        assert_eq!(a.chunks[0].frozen, b.chunks[0].frozen);
+        assert_ne!(a.chunks[0].frozen, c.chunks[0].frozen);
+    }
 
     const DOC: &str = "---\nstatus: active\n---\n# Session tokens\n\nIntro with ADR-12 and `ADR-13` in code.\n\n## Requirements\n\n- **token-expiry**: When a session token expires, the gateway SHALL reject the request. <!-- aliases: auth/old#ttl -->\n- **R-12**: The client MUST retry.\n  - nested note\n- plain item\n- **Note** this is not a key\n\n```md\n- **in-code**: ignored SHALL\n```\n\nSee [the guide](../guide.md#setup) and [[auth/session#token-expiry@3f2a9c1b7e0d4a11]].\n\n## Requirements\n\n## Amendments\n\nText.\n";
 
