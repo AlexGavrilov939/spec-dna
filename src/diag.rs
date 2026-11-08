@@ -30,6 +30,11 @@ macro_rules! codes {
             pub fn name(self) -> &'static str { match self { $(Code::$variant => $name),* } }
             pub fn severity(self) -> Severity { match self { $(Code::$variant => Severity::$sev),* } }
             pub fn fix(self) -> &'static str { match self { $(Code::$variant => $fix),* } }
+            /// The prose lint of requirement sentences (SD801-SD805). The
+            /// human output of `check` gives one count for each code.
+            pub fn is_prose_lint(self) -> bool {
+                matches!(self.code(), "SD801" | "SD802" | "SD803" | "SD804" | "SD805")
+            }
         }
     };
 }

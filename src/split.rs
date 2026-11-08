@@ -3,13 +3,18 @@
 //! requirements, or whole sections, into a new or an existing spec or
 //! contract. A source is `<doc-id>#<key>` (a requirement) or
 //! `<doc-id>#<anchor>` (a section with its subsections). A new destination
-//! gets front matter and a title. Each moved requirement keeps its old global
-//! id as an alias, and links to a moved key or section follow it.
+//! gets front matter and a title. Each moved requirement whose id is in the
+//! base tree (HEAD) keeps that id as an alias. A key that is new in the
+//! change gets no alias, because no reference can use its old id yet. Links
+//! to a moved key or section follow it.
 //!
-//! A preservation check runs before any file changes:
+//! A preservation check runs before any file changes. It compares the
+//! requirement text without link destinations, because the move rewrites
+//! links:
 //!
 //! - the requirement hashes of all documents are the same multiset;
-//! - every requirement id resolves, to a requirement with the same hash;
+//! - every requirement id resolves, to a requirement with the same hash (a
+//!   new key at its new id);
 //! - the frozen text of every accepted decision is the same (a link
 //!   destination is not frozen text);
 //! - no error diagnostic is new.
@@ -18,12 +23,25 @@
 
 use crate::config::Config;
 use crate::diag::{Code, Severity};
+use crate::hash::Hash;
 use crate::model::{Corpus, DocType, Res, is_doc_path, join, same_heading};
 use crate::mv::{add_req_alias, dedent, line_span, parent, read, relative, write};
 use crate::parse::parse;
 use crate::repo::{Fatal, Repo};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// Returns the whole lines of a requirement list item, without the blank
+/// lines after it. The range of a list item can end after a blank line. A
+/// cut or an insert at that end would join the next paragraph to an item as
+/// a lazy continuation line, and change its text.
+fn item_span(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let (a, mut b) = line_span(text, start, end);
+    while b > a + 1 && text[..b].ends_with("\n\n") {
+        b -= 1;
+    }
+    (a, b)
+}
 
 /// The result of a split.
 pub struct Split {
@@ -32,6 +50,8 @@ pub struct Split {
     pub created: bool,
     /// The old global ids of the moved requirements.
     pub moved: Vec<String>,
+    /// The old ids that stay as aliases: the moved ids of the base tree.
+    pub aliases: Vec<String>,
     pub sections: usize,
     pub files: Vec<String>,
     /// Requirement hashes compared, ids that resolve, accepted decisions
@@ -45,10 +65,13 @@ enum Part {
 }
 
 /// Moves the requirements and sections that `sources` name to `dest`.
+/// `base` is the corpus of the base tree (HEAD), or `None` if there is no
+/// commit. Then every moved id gets an alias.
 pub fn run(
     repo: &Repo,
     config: &Config,
     c: &Corpus,
+    base: Option<&Corpus>,
     sources: &[String],
     dest: &str,
 ) -> Result<Split, Fatal> {
@@ -113,6 +136,19 @@ pub fn run(
         }
     }
     check_names(c, dest_doc, &keys, &section_anchors, &to_id)?;
+    // The moved ids that are new in the change: they get no alias.
+    let new_ids: HashSet<String> = moved_ids
+        .iter()
+        .filter(|id| base.is_some_and(|b| !matches!(b.resolve(id), Res::Found(_, Some(_), true))))
+        .cloned()
+        .collect();
+    let alias = |item: &str, id: String| {
+        if new_ids.contains(&id) {
+            item.to_string()
+        } else {
+            add_req_alias(item, &id)
+        }
+    };
 
     // Cut the parts out of their source documents.
     let mut texts: HashMap<String, String> = HashMap::new();
@@ -134,8 +170,8 @@ pub fn run(
                     continue;
                 }
                 let r = &d.parsed.reqs[req];
-                let (a, b) = line_span(text, r.start as usize, r.end as usize);
-                let item = add_req_alias(&dedent(&text[a..b]), &format!("{}#{}", d.id, r.key));
+                let (a, b) = item_span(text, r.start as usize, r.end as usize);
+                let item = alias(&dedent(&text[a..b]), format!("{}#{}", d.id, r.key));
                 let item = map_links(&item, &|l| {
                     retarget(l, &d.path, &to_path, &moved_anchors, &to_path, c)
                 });
@@ -166,8 +202,8 @@ pub fn run(
                 reqs.sort_by_key(|&r| std::cmp::Reverse(d.parsed.reqs[r].start));
                 for r in reqs {
                     let req = &d.parsed.reqs[r];
-                    let (x, y) = line_span(text, req.start as usize, req.end as usize);
-                    let item = add_req_alias(&text[x..y], &format!("{}#{}", d.id, req.key));
+                    let (x, y) = item_span(text, req.start as usize, req.end as usize);
+                    let item = alias(&text[x..y], format!("{}#{}", d.id, req.key));
                     body.replace_range(x - a..y - a, &item);
                 }
                 let body = shift_headings(&body, 2 - i32::from(chunks[first].level));
@@ -259,11 +295,12 @@ pub fn run(
         }
     }
 
-    let preserved = preserve(config, c, &changed, &to_path, created).map_err(|e| {
-        Fatal::Refused(format!(
-            "the move would not preserve the specifications, so nothing changed: {e}"
-        ))
-    })?;
+    let preserved =
+        preserve(config, c, &changed, &to_path, created, &to_id, &new_ids).map_err(|e| {
+            Fatal::Refused(format!(
+                "the move would not preserve the specifications, so nothing changed: {e}"
+            ))
+        })?;
 
     if let Some(dir) = repo.root.join(&to_path).parent() {
         std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
@@ -273,11 +310,17 @@ pub fn run(
     for (p, t) in &changed {
         write(&repo.root.join(p), t)?;
     }
+    let aliases = moved_ids
+        .iter()
+        .filter(|id| !new_ids.contains(*id))
+        .cloned()
+        .collect();
     Ok(Split {
         to: to_id,
         to_path,
         created,
         moved: moved_ids,
+        aliases,
         sections: sections.len(),
         files,
         preserved,
@@ -476,7 +519,7 @@ fn insert_into(
             .reqs
             .iter()
             .filter(|r| r.colon && chunk.is_none_or(|c| r.chunk as usize == c))
-            .map(|r| line_span(text, r.start as usize, r.end as usize).1)
+            .map(|r| item_span(text, r.start as usize, r.end as usize).1)
             .max()
     };
     for (heading, items) in groups {
@@ -661,13 +704,16 @@ fn retarget(
 }
 
 /// The preservation check. Returns the numbers of compared requirement
-/// hashes, resolved ids and accepted decisions.
+/// hashes, resolved ids and accepted decisions. `new_ids` are the moved ids
+/// without an alias: each must resolve at its new id in `to_id`.
 fn preserve(
     config: &Config,
     c: &Corpus,
     changed: &HashMap<String, String>,
     to_path: &str,
     created: bool,
+    to_id: &str,
+    new_ids: &HashSet<String>,
 ) -> Result<(usize, usize, usize), String> {
     let mut docs: Vec<(String, Arc<crate::parse::ParsedDoc>)> = c
         .docs
@@ -688,32 +734,33 @@ fn preserve(
     let n = Corpus::build(config, files, docs);
 
     let hashes = |k: &Corpus| {
-        let mut v: Vec<[u8; 8]> = k
+        let mut v: Vec<Hash> = k
             .docs
             .iter()
-            .flat_map(|d| d.reqs.iter().map(|&r| d.parsed.reqs[r].hash))
+            .flat_map(|d| d.reqs.iter().map(|&r| d.parsed.reqs[r].frozen))
             .collect();
         v.sort_unstable();
         v
     };
     let (before, after) = (hashes(c), hashes(&n));
     if before != after {
-        return Err(format!(
-            "the requirement hashes changed ({} before, {} after)",
-            before.len(),
-            after.len()
-        ));
+        return Err(hash_changes(c, &n));
     }
     let mut ids = 0;
     for d in &c.docs {
         for &r in &d.reqs {
             let req = &d.parsed.reqs[r];
             let id = format!("{}#{}", d.id, req.key);
-            let same = match n.resolve(&id) {
+            let at = if new_ids.contains(&id) {
+                format!("{to_id}#{}", req.key)
+            } else {
+                id.clone()
+            };
+            let same = match n.resolve(&at) {
                 Res::Found(hit, Some(k), true) => {
                     let hit = &n.docs[hit as usize];
                     hit.req(&k)
-                        .is_some_and(|i| hit.parsed.reqs[i].hash == req.hash)
+                        .is_some_and(|i| hit.parsed.reqs[i].frozen == req.frozen)
                 }
                 _ => false,
             };
@@ -761,6 +808,88 @@ fn preserve(
     Ok((after.len(), ids, decisions))
 }
 
+/// Names each requirement whose text the move would change, with the
+/// reason: the changed text, a lost requirement or a new one.
+fn hash_changes(before: &Corpus, after: &Corpus) -> String {
+    type Items<'a> = HashMap<Hash, Vec<(String, &'a str)>>;
+    fn items(k: &Corpus) -> Items<'_> {
+        let mut m: Items = HashMap::new();
+        for d in &k.docs {
+            for &r in &d.reqs {
+                let req = &d.parsed.reqs[r];
+                m.entry(req.frozen)
+                    .or_default()
+                    .push((format!("{}#{}", d.id, req.key), req.text.as_str()));
+            }
+        }
+        m
+    }
+    let (b, a) = (items(before), items(after));
+    // The items of `x` that `y` does not have, in a stable order.
+    let extra = |x: &Items<'_>, y: &Items<'_>| {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for (h, list) in x {
+            let keep = y.get(h).map_or(0, Vec::len);
+            out.extend(
+                list.iter()
+                    .skip(keep)
+                    .map(|(i, t)| (i.clone(), t.to_string())),
+            );
+        }
+        out.sort();
+        out
+    };
+    let (lost, mut gained) = (extra(&b, &a), extra(&a, &b));
+    let key = |id: &str| id.rsplit('#').next().unwrap_or(id).to_string();
+    let mut reasons = Vec::new();
+    for (id, old) in lost {
+        match gained.iter().position(|(g, _)| key(g) == key(&id)) {
+            Some(i) => {
+                let (to, new) = gained.remove(i);
+                let (o, n) = excerpt(&old, &new);
+                let at = if to == id {
+                    String::new()
+                } else {
+                    format!(" (as `{to}`)")
+                };
+                reasons.push(format!("`{id}`{at}: the text \"{o}\" would become \"{n}\""));
+            }
+            None => reasons.push(format!("`{id}`: the requirement would be lost")),
+        }
+    }
+    for (id, _) in gained {
+        reasons.push(format!("`{id}`: a new requirement would appear"));
+    }
+    format!(
+        "the text of {} would change: {}",
+        if reasons.len() == 1 {
+            "1 requirement".to_string()
+        } else {
+            format!("{} requirements", reasons.len())
+        },
+        reasons.join("; ")
+    )
+}
+
+/// The parts of two texts around their first difference.
+fn excerpt(a: &str, b: &str) -> (String, String) {
+    let (ac, bc): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let p = ac.iter().zip(&bc).take_while(|(x, y)| x == y).count();
+    let from = p.saturating_sub(20);
+    let cut = |v: &[char]| {
+        let to = v.len().min(p + 30);
+        let mut s: String = v[from..to].iter().collect();
+        if from > 0 {
+            s.insert(0, '…');
+        }
+        if to < v.len() {
+            s.push('…');
+        }
+        s
+    };
+    (cut(&ac), cut(&bc))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,6 +900,52 @@ mod tests {
         assert_eq!(
             shift_headings("### A\n\n#### B\n```\n### code\n```\n", -1),
             "## A\n\n### B\n```\n### code\n```\n"
+        );
+    }
+
+    fn corpus(cfg: &Config, files: &[(&str, &str)]) -> Corpus {
+        let docs = files
+            .iter()
+            .map(|(p, t)| (p.to_string(), Arc::new(parse(t))))
+            .collect();
+        Corpus::build(cfg, files.iter().map(|f| f.0.to_string()).collect(), docs)
+    }
+
+    #[test]
+    fn a_refusal_names_each_changed_requirement() {
+        let cfg = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+        )
+        .unwrap();
+        let c = corpus(
+            &cfg,
+            &[
+                (
+                    "docs/a.md",
+                    "# A\n\n- **fee**: The desk SHALL charge 3 percent of [the amount](b.md#amount).\n- **cap**: The fee SHALL NOT exceed 5 euros.\n",
+                ),
+                (
+                    "docs/b.md",
+                    "# B\n\n- **amount**: The amount SHALL be the paid price.\n",
+                ),
+            ],
+        );
+        // A rewritten link destination keeps the hash.
+        let moved = HashMap::from([(
+            "docs/a.md".to_string(),
+            "# A\n\n- **fee**: The desk SHALL charge 3 percent of [the amount](./b.md#amount).\n- **cap**: The fee SHALL NOT exceed 5 euros.\n".to_string(),
+        )]);
+        assert!(preserve(&cfg, &c, &moved, "docs/c.md", false, "c", &HashSet::new()).is_ok());
+        // A changed sentence and a lost requirement are named.
+        let broken = HashMap::from([(
+            "docs/a.md".to_string(),
+            "# A\n\n- **fee**: The desk SHALL charge 4 percent of [the amount](b.md#amount).\n"
+                .to_string(),
+        )]);
+        let e = preserve(&cfg, &c, &broken, "docs/c.md", false, "c", &HashSet::new()).unwrap_err();
+        assert_eq!(
+            e,
+            "the text of 2 requirements would change: `a#cap`: the requirement would be lost; `a#fee`: the text \"…e desk SHALL charge 3 percent of [the amount](b.md…\" would become \"…e desk SHALL charge 4 percent of [the amount](b.md…\""
         );
     }
 

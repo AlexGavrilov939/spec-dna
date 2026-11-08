@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.1.1"              # required: the pinned version
+spec-dna = "0.1.2"              # required: the pinned version
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna

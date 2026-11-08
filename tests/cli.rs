@@ -431,6 +431,14 @@ fn lint_severity_follows_the_root() {
     assert_eq!(code, 1, "{out}");
     assert!(!out.contains("old/old-spec.md"), "{out}");
     assert!(out.contains("new/new-spec.md:3: error SD801"), "{out}");
+    // A lint error is listed. A lint warning is a count, and --lint lists it.
+    assert!(
+        out.contains(
+            "warning SD801 requirement-keyword: 1 in docs/docs-spec.md (`check --lint` lists them)"
+        ),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["check", "--all", "--lint"]);
     assert!(out.contains("docs/docs-spec.md:3: warning SD801"), "{out}");
     // The base has the same error, so the gate passes.
     let (code, _, _) = r.run(&["check"]);
@@ -1560,6 +1568,123 @@ fn mv_refuses_bad_splits_and_changes_nothing() {
 }
 
 #[test]
+fn mv_keeps_the_hash_of_a_requirement_whose_link_it_rewrites() {
+    // The links to a moved key are in requirements: the move rewrites them,
+    // and the preservation check passes (defect D1 of 0.1.1).
+    let r = split_project();
+    r.write(
+        "docs/policy.md",
+        "---\nstatus: active\n---\n# Policy\n\n## Scope\n\n- **scope**: The library SHALL apply [the fine](loans.md#daily-fine) to all branches.\n",
+    );
+    r.append(
+        "docs/loans.md",
+        "- **renewal-fine**: The library SHALL charge [the daily fine](#daily-fine) for a late renewal.\n",
+    );
+    r.commit("links in requirements");
+    let (code, out, err) = r.run(&["mv", "loans#daily-fine", "loans#fine-cap", "fines"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        r.read("docs/policy.md")
+            .contains("[the fine](fines.md#daily-fine)"),
+        "{}",
+        r.read("docs/policy.md")
+    );
+    assert!(
+        r.read("docs/loans.md")
+            .contains("[the daily fine](fines.md#daily-fine)")
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn mv_keeps_the_text_after_a_list_apart_from_the_moved_items() {
+    // A paragraph follows the last requirement after a blank line, in the
+    // source and in the destination. The moved items must not take it as a
+    // lazy continuation line (the cause of defect D1 in a playground task).
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write(
+        "docs/web.md",
+        "# Web\n\n## Requirements\n\n- **web-home**: The web app SHALL list the events.\n- **web-locale**: The web app SHALL serve two locales.\n\nThe locale rules are in one place.\n\n## Sign-in\n\nText.\n",
+    );
+    r.write(
+        "docs/i18n.md",
+        "# Languages\n\n## Requirements\n\n- **locales**: The system SHALL support two locales.\n\nThe web app has the same rule.\n\n## Notes\n\nText.\n",
+    );
+    r.commit("docs");
+    let (code, out, err) = r.run(&["mv", "web#web-locale", "i18n"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        r.read("docs/i18n.md").contains(
+            "- **locales**: The system SHALL support two locales.\n- **web-locale**: The web app SHALL serve two locales. <!-- aliases: web#web-locale -->\n\nThe web app has the same rule.\n"
+        ),
+        "{}",
+        r.read("docs/i18n.md")
+    );
+    assert!(
+        r.read("docs/web.md").contains(
+            "- **web-home**: The web app SHALL list the events.\n\nThe locale rules are in one place.\n"
+        ),
+        "{}",
+        r.read("docs/web.md")
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn mv_records_aliases_only_for_ids_of_the_base_tree() {
+    // Keys that are new in the change get no alias (defect D4 of 0.1.1).
+    let r = split_project();
+    r.write(
+        "docs/loans.md",
+        &r.read("docs/loans.md").replace(
+            "## Renewals\n",
+            "## Holds\n\n- **hold-limit**: The library SHALL allow 3 holds for each member.\n- **hold-expiry**: The library SHALL release a hold after 7 days.\n\n## Renewals\n",
+        ),
+    );
+    let (code, out, err) = r.run(&["mv", "loans#holds", "holds"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("no alias, because the keys are new in this change"),
+        "{out}"
+    );
+    assert!(
+        !r.read("docs/holds.md").contains("aliases"),
+        "{}",
+        r.read("docs/holds.md")
+    );
+    // A mix: one key of the base, one new key.
+    r.write(
+        "docs/loans.md",
+        &r.read("docs/loans.md").replace(
+            "- **renewal-limit**: The library SHALL allow 2 renewals of a loan.\n",
+            "- **renewal-limit**: The library SHALL allow 2 renewals of a loan.\n- **renewal-notice**: The library SHALL send a notice before a loan ends.\n",
+        ),
+    );
+    let (code, out, err) = r.run(&["mv", "loans#renewal-limit", "loans#renewal-notice", "holds"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("1 old ids stay as aliases; 1 keys are new in this change and get no alias"),
+        "{out}"
+    );
+    let holds = r.read("docs/holds.md");
+    assert!(
+        holds.contains("renewals of a loan. <!-- aliases: loans#renewal-limit -->"),
+        "{holds}"
+    );
+    assert!(
+        holds.contains("before a loan ends.\n") && !holds.contains("loans#renewal-notice"),
+        "{holds}"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out, _) = r.run(&["show", "loans#renewal-limit"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
 fn install_source_goes_into_the_pin_message() {
     let r = Repo::empty();
     r.run(&["init"]);
@@ -1608,6 +1733,125 @@ fn drift_severity_follows_the_root() {
             None => assert!(!out.contains("SD607"), "{out}"),
         }
     }
+}
+
+#[test]
+fn an_amendment_that_names_the_new_code_clears_drift_of_a_decision() {
+    // The frozen text of an accepted decision cites code that the change
+    // moves and renames. The amendment is the only valid fix (defect D3 of
+    // 0.1.1).
+    let r = code_project();
+    let adr = "docs/decisions/lending.md";
+    r.write(
+        adr,
+        "---\ntype: decision\nstatus: accepted\n---\n# Lending\n\n## Decision Outcome\n\nThe loan code is in `src/library/loans.py`, and `checkoutBook()` records a loan.\n",
+    );
+    r.commit("decision");
+    let base = git(&r.dir, &["rev-parse", "HEAD"]).trim().to_string();
+    git(
+        &r.dir,
+        &["mv", "src/library/loans.py", "src/library/lending.py"],
+    );
+    r.write(
+        "src/library/lending.py",
+        &LOANS_PY
+            .replace("checkoutBook", "lend_book")
+            .replace("return loan", "return (loan)"),
+    );
+    r.write(
+        "docs/notes/idea.md",
+        &r.read("docs/notes/idea.md")
+            .replace("loans.py", "lending.py"),
+    );
+    let warned = |out: &str| {
+        out.lines()
+            .filter(|l| l.starts_with(adr) && l.contains("SD60"))
+            .count()
+    };
+    let (_, out, _) = r.run(&["check"]);
+    assert_eq!(warned(&out), 2, "SD606 and SD607 on the frozen text: {out}");
+    // An amendment that names no new code does not clear the drift.
+    let frozen = r.read(adr);
+    r.write(
+        adr,
+        &format!("{frozen}\n## Amendments\n\n- The loan code moved.\n"),
+    );
+    let (_, out, _) = r.run(&["check"]);
+    assert_eq!(warned(&out), 2, "{out}");
+    // An amendment that names the new path and the new identifier clears it.
+    r.write(
+        adr,
+        &format!("{frozen}\n## Amendments\n\n- The loan code moved to `src/library/lending.py`; `lend_book()` records a loan.\n"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(warned(&out), 0, "{out}");
+    assert!(!out.contains("SD405"), "the frozen text is the same: {out}");
+    // The documents that are not frozen still warn.
+    assert!(out.contains("docs/books.md:9: warning SD607"), "{out}");
+    // The same in CI mode, against the base.
+    r.commit("amend");
+    let (code, out, _) = r.run(&["check", "--base", &base]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(warned(&out), 0, "{out}");
+    // A citation of removed code in the amendment itself still warns.
+    r.write(
+        adr,
+        &format!("{}- See also `src/library/fees_old.py`.\n", r.read(adr)),
+    );
+    git(
+        &r.dir,
+        &["mv", "src/library/fees.py", "src/library/fees_old.py"],
+    );
+    r.commit("fees");
+    git(&r.dir, &["rm", "-q", "src/library/fees_old.py"]);
+    let (_, out, _) = r.run(&["check"]);
+    assert!(
+        out.contains("warning SD606 cited-path-removed: `src/library/fees_old.py`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn check_lists_errors_and_drift_before_the_prose_lint() {
+    // Many lint warnings must not hide an error or a drift warning (defect
+    // D5 of 0.1.1).
+    let r = code_project();
+    let mut rules = String::from("# Imported\n\n");
+    for i in 1..=12 {
+        rules.push_str(&format!(
+            "- **rule-{i}**: The refund of ticket {i} SHALL be approved by the desk.\n"
+        ));
+    }
+    rules.push_str("\nSee [the terms](terms.md).\n");
+    r.write("docs/imported.md", &rules);
+    r.write(
+        "src/library/loans.py",
+        &LOANS_PY.replace("MAX_RENEWALS = 1\n", ""),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 4, "{out}");
+    assert!(lines[0].contains("error SD102"), "{out}");
+    assert!(lines[1].contains("warning SD607"), "{out}");
+    assert_eq!(
+        lines[2],
+        "warning SD805 passive-voice: 12 in docs/imported.md (`check --lint` lists them)"
+    );
+    assert!(lines[3].starts_with("spec-dna check: "), "{out}");
+    assert!(
+        lines[3].contains("13 new warnings"),
+        "the count is the same: {out}"
+    );
+    let (_, out, _) = r.run(&["check", "--lint"]);
+    assert_eq!(
+        out.matches("warning SD805 passive-voice: `rule-").count(),
+        12,
+        "{out}"
+    );
+    let (_, json, _) = r.run(&["check", "--json"]);
+    assert_eq!(json.matches("\"code\":\"SD805\"").count(), 12, "{json}");
 }
 
 #[test]

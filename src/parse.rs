@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 7;
+pub const PARSER_VERSION: u32 = 8;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -93,6 +93,10 @@ pub struct Req {
     pub chunk: u32,
     /// Hash of the sentence without the key and the alias marker.
     pub hash: Hash,
+    /// Hash of the same sentence without link destinations. The
+    /// preservation check of `mv` compares it, because `mv` rewrites the
+    /// links to a moved key or section.
+    pub frozen: Hash,
     pub aliases: Vec<String>,
     /// The sentence, whitespace-normalized, without the alias marker.
     pub text: String,
@@ -307,6 +311,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             end: (body_start + c.end) as u32,
             chunk,
             hash: hash_normalized(&clean),
+            frozen: hash_normalized(&strip_link_destinations(&clean)),
             aliases,
             text: crate::hash::normalize(&clean),
         });

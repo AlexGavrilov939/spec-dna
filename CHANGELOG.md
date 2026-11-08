@@ -2,6 +2,23 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.1.2 - 2026-11-08
+
+Fixes of the defects that a playground product of 12 agent tasks found in 0.1.1.
+
+### Fixed
+
+- `mv` of requirements: a list item can end after a blank line. A cut or an insert at that end joined the next paragraph to a moved or a remaining item, so the preservation check refused a valid move. The move now cuts and inserts whole lines without the blank lines after the item.
+- `mv` of requirements: the preservation check compares the requirement text without link destinations, because the move rewrites the links to a moved key or section. The index format changed (parser version 8), so the first run parses all documents again.
+- A refused move names each requirement whose text would change, and gives the text before and after the first difference, or says that the requirement would be lost or new.
+- `mv` of requirements records an alias only for an id of `HEAD`. A key that is new in the uncommitted change gets no alias.
+- SD606 and SD607 on the frozen text of an accepted decision: an amendment section that cites the new path or identifier clears them for that decision. Before, no valid change could clear them, except a supersede.
+
+### Changed
+
+- The text output of `check` lists the errors first, then the drift warnings (SD606, SD607), then the other warnings. It gives one line with a count for each prose lint code (SD801 to SD805). `--lint` lists each of these warnings. The JSON output did not change.
+- The skill tells agents when to amend an accepted decision (the outcome stays) and when to supersede it (the outcome changes), and to name new code paths of an accepted decision in its amendment section.
+
 ## 0.1.1 - 2026-11-08
 
 The first version for a consumer.

@@ -203,6 +203,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
             w.u32(v);
         }
         w.0.extend_from_slice(&r.hash);
+        w.0.extend_from_slice(&r.frozen);
         w.strs(&r.aliases);
         w.str(&r.text);
     }
@@ -284,6 +285,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             end: r.u32()?,
             chunk: r.u32()?,
             hash: r.hash()?,
+            frozen: r.hash()?,
             aliases: r.strs()?,
             text: r.str()?,
         });

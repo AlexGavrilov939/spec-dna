@@ -4,6 +4,10 @@
 //! cites, `check` gives a warning for that document: SD606 for a path, SD607
 //! for an identifier. Both are heuristic, so they are warnings.
 //!
+//! The frozen text of an accepted decision cannot change (SD405). Thus an
+//! amendment section of the decision that names the new code clears the
+//! drift of that decision: see `Amends`.
+//!
 //! The work starts from the change, so it costs little when the change is
 //! small. First, the snapshots give the removed paths and the changed files.
 //! Then only the spans that can name a removed path or a removed identifier
@@ -237,7 +241,11 @@ fn find(
     }
 
     let mut out = Vec::new();
+    let amends = Amends::new(base, head, &head_tree);
     for ((i, p), line) in gone_paths {
+        if amends.clears_path(i, line, renamed.get(p.as_str()).copied()) {
+            continue;
+        }
         let to = renamed
             .get(p.as_str())
             .map(|n| format!(" (renamed to `{n}`)"))
@@ -257,9 +265,11 @@ fn find(
     let mut names: Vec<String> = cited_idents.keys().map(|k| k.1.clone()).collect();
     names.sort();
     names.dedup();
-    let still = repo.git.grep_words(&names, untracked).map_err(Fatal::Io)?;
+    let mut words = names.clone();
+    words.extend(amends.idents());
+    let still = repo.git.grep_words(&words, untracked).map_err(Fatal::Io)?;
     for ((i, id), line) in cited_idents {
-        if still.contains(&id) {
+        if still.contains(&id) || amends.clears_ident(i, line, &still) {
             continue;
         }
         let (file, hint) = &removed[&id];
@@ -278,6 +288,104 @@ fn find(
         ));
     }
     Ok(out)
+}
+
+/// The new code that the amendment sections of accepted decisions name. A
+/// citation is new if the base text of the decision does not have it.
+struct Amends<'a> {
+    head: &'a Corpus,
+    /// For each document of the head tree: the new paths that resolve in the
+    /// head tree, and the new identifiers.
+    docs: HashMap<u32, (HashSet<String>, HashSet<String>)>,
+}
+
+impl<'a> Amends<'a> {
+    fn new(base: &Corpus, head: &'a Corpus, tree: &Tree) -> Amends<'a> {
+        let mut docs = HashMap::new();
+        for (i, d) in head.docs.iter().enumerate() {
+            if d.ty != DocType::Decision || d.status_str() != "accepted" || d.amendments.is_empty()
+            {
+                continue;
+            }
+            let old: HashSet<&str> = base
+                .by_path
+                .get(&d.path)
+                .map(|&b| {
+                    let p = &base.docs[b as usize].parsed;
+                    p.code_spans
+                        .iter()
+                        .chain(&p.path_words)
+                        .map(|t| t.text.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let (mut paths, mut idents_new) = (HashSet::new(), HashSet::new());
+            let spans = d.parsed.code_spans.iter().map(|t| (t, true));
+            let words = d.parsed.path_words.iter().map(|t| (t, false));
+            for (t, is_span) in spans.chain(words) {
+                if old.contains(t.text.as_str()) || !in_amendment(d, t.line) {
+                    continue;
+                }
+                match tree.resolve(&d.path, &t.text) {
+                    Some(Target::File(p) | Target::Dir(p)) => {
+                        paths.insert(p);
+                    }
+                    None if is_span => idents_new.extend(idents(&t.text)),
+                    None => {}
+                }
+            }
+            if !paths.is_empty() || !idents_new.is_empty() {
+                docs.insert(i as u32, (paths, idents_new));
+            }
+        }
+        Amends { head, docs }
+    }
+
+    /// The new identifiers of all amendments, to look up in the code.
+    fn idents(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .docs
+            .values()
+            .flat_map(|d| d.1.iter().cloned())
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// True if the citation at `line` is in the frozen text of the decision.
+    fn frozen(&self, doc: u32, line: u32) -> bool {
+        !in_amendment(&self.head.docs[doc as usize], line)
+    }
+
+    /// A removed path is cleared if an amendment names a new path: the
+    /// rename target if git found one.
+    fn clears_path(&self, doc: u32, line: u32, renamed: Option<&str>) -> bool {
+        let Some((paths, _)) = self.docs.get(&doc) else {
+            return false;
+        };
+        self.frozen(doc, line)
+            && match renamed {
+                Some(to) => paths.contains(to),
+                None => !paths.is_empty(),
+            }
+    }
+
+    /// A removed identifier is cleared if an amendment names a new
+    /// identifier that the code has.
+    fn clears_ident(&self, doc: u32, line: u32, in_code: &HashSet<String>) -> bool {
+        let Some((_, ids)) = self.docs.get(&doc) else {
+            return false;
+        };
+        self.frozen(doc, line) && ids.iter().any(|i| in_code.contains(i))
+    }
+}
+
+/// True if `line` is in an amendment section of the document.
+fn in_amendment(d: &Doc, line: u32) -> bool {
+    let chunks = &d.parsed.chunks;
+    let at = chunks.iter().rposition(|c| c.line <= line);
+    at.is_some_and(|i| d.amendments.contains(&i))
 }
 
 fn diag(d: &Doc, line: u32, code: Code, target: &str, message: String) -> Diag {

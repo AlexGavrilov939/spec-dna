@@ -35,10 +35,13 @@ const USAGE: &str = "usage: spec-dna <command> [options]
 Commands:
     init [--root <dir>]
         Writes spec-dna.toml (if it does not exist) and the agent adapters.
-    check [--base <rev>] [--all]
+    check [--base <rev>] [--all] [--lint]
         Reports the diagnostics that are new against the merge base of <rev>
         and HEAD (default: HEAD). With --all, it reports every diagnostic.
-        With --base, it reads tracked files only, as CI does.
+        With --base, it reads tracked files only, as CI does. It prints the
+        errors first, then the drift warnings, then the other warnings. The
+        prose lint warnings (SD801-SD805) are one count for each code;
+        --lint lists each of them. --json lists all diagnostics.
     context <target>... [--path <file>]... [--budget <chars>] [--query <text>]
             [--include-inactive]
         Assembles the sections that an agent needs for the targets. With
@@ -50,7 +53,7 @@ Commands:
     mv <from> <to>
     mv <doc-id>#<key or section>... <spec-id>
         Moves a document. Or moves requirements and whole sections to an
-        existing or a new spec, with an alias for every moved key. A
+        existing or a new spec, with an alias for every moved key of HEAD. A
         preservation check runs first; if it fails, nothing changes.
     transcript <file or dir>... [--expect <id>]... [--format claude-code]
         Reports token usage, tool calls and document reads per session and
@@ -79,6 +82,7 @@ struct Args {
     include_inactive: bool,
     expect: Vec<String>,
     format: Option<String>,
+    lint: bool,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -96,6 +100,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         include_inactive: false,
         expect: Vec::new(),
         format: None,
+        lint: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -114,6 +119,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "-V" | "--version" => a.command = "version".into(),
             "--json" => a.json = true,
             "--all" => a.all = true,
+            "--lint" => a.lint = true,
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
             "--base" => a.base = Some(value("--base")?),
@@ -499,10 +505,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .end()
         );
     } else {
-        for &i in &order {
-            if a.all || outcome.new[i] {
-                println!("{}", outcome.head[i].text());
-            }
+        let shown: Vec<&diag::Diag> = order
+            .iter()
+            .filter(|&&i| a.all || outcome.new[i])
+            .map(|&i| &outcome.head[i])
+            .collect();
+        for line in human_lines(&shown, a.lint) {
+            println!("{line}");
         }
         let n = |count: usize, what: &str| {
             format!("{count} {what}{}", if count == 1 { "" } else { "s" })
@@ -523,12 +532,68 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     Ok(if failed { 1 } else { 0 })
 }
 
+/// The lines of the human output of `check`: the errors, the drift
+/// warnings (SD606, SD607), the other warnings, and then the prose lint
+/// warnings. Without `lint`, the prose lint warnings are one line for each
+/// code, with the count and the documents.
+fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
+    use diag::{Code, Severity};
+    let rank = |d: &diag::Diag| match (d.severity, d.code) {
+        (Severity::Error, _) => 0,
+        (_, Code::CitedPathRemoved | Code::CitedSymbolRemoved) => 1,
+        (_, c) if c.is_prose_lint() => 3,
+        _ => 2,
+    };
+    let mut sorted: Vec<&diag::Diag> = diags.to_vec();
+    sorted.sort_by_key(|d| rank(d));
+    let mut out = Vec::new();
+    let mut counts: Vec<(Code, usize, Vec<&str>)> = Vec::new();
+    for d in sorted {
+        if lint || rank(d) < 3 {
+            out.push(d.text());
+            continue;
+        }
+        match counts.iter_mut().find(|c| c.0 == d.code) {
+            Some(c) => {
+                c.1 += 1;
+                if !c.2.contains(&d.path.as_str()) {
+                    c.2.push(&d.path);
+                }
+            }
+            None => counts.push((d.code, 1, vec![&d.path])),
+        }
+    }
+    counts.sort_by_key(|c| c.0);
+    for (code, n, paths) in counts {
+        let place = match paths.as_slice() {
+            [one] => one.to_string(),
+            many => format!("{} documents", many.len()),
+        };
+        out.push(format!(
+            "warning {} {}: {n} in {place} (`check --lint` lists them)",
+            code.code(),
+            code.name()
+        ));
+    }
+    out
+}
+
 fn load_head(repo: &Repo, a: &Args) -> Result<(config::Config, model::Corpus), Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     let snap = Snapshot::worktree(repo, &repo::root_paths(&cfg), true)?;
     let mut loaded = repo::load(repo, &cfg, &[&snap], !a.no_cache, false)?;
     Ok((cfg, loaded.corpora.remove(0)))
+}
+
+/// The corpus of the HEAD commit, or `None` if there is no commit.
+fn load_base(repo: &Repo, cfg: &config::Config, a: &Args) -> Result<Option<model::Corpus>, Fatal> {
+    let Some(commit) = repo.head_commit() else {
+        return Ok(None);
+    };
+    let snap = Snapshot::at(repo, &commit)?;
+    let mut loaded = repo::load(repo, cfg, &[&snap], !a.no_cache, false)?;
+    Ok(Some(loaded.corpora.remove(0)))
 }
 
 fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
@@ -602,7 +667,14 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 2, usize::MAX)?;
     let (cfg, c) = load_head(repo, a)?;
-    let m = mv::run(repo, &cfg, &c, &a.positional)?;
+    // A move of requirements records an alias only for an id of the base
+    // tree (HEAD).
+    let base = if a.positional.iter().any(|p| p.contains('#')) {
+        load_base(repo, &cfg, a)?
+    } else {
+        None
+    };
+    let m = mv::run(repo, &cfg, &c, base.as_ref(), &a.positional)?;
     if a.json {
         let mut o = Obj::new()
             .str("kind", m.kind)
@@ -632,8 +704,9 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     match &m.split {
         Some(s) if m.kind == "split" => {
             let (hashes, ids, decisions) = s.preserved;
+            let fresh = s.moved.len() - s.aliases.len();
             println!(
-                "moved {} requirements{} to {} ({}{}); every old id stays as an alias",
+                "moved {} requirements{} to {} ({}{}); {}",
                 s.moved.len(),
                 if s.sections > 0 {
                     format!(" in {} sections", s.sections)
@@ -643,11 +716,25 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 m.to,
                 s.to_path,
                 if s.created { ", new document" } else { "" },
+                match fresh {
+                    0 => "every old id stays as an alias".to_string(),
+                    _ if fresh == s.moved.len() => {
+                        "no alias, because the keys are new in this change".to_string()
+                    }
+                    _ => format!(
+                        "{} old ids stay as aliases; {fresh} keys are new in this change and get no alias",
+                        s.aliases.len()
+                    ),
+                }
             );
             println!(
                 "preservation check: {hashes} requirement hashes unchanged, {ids} ids resolve, {decisions} accepted decisions unchanged"
             );
         }
+        _ if m.alias.is_empty() => println!(
+            "moved {} {} -> {} (no alias: the key is new in this change)",
+            m.kind, m.from, m.to
+        ),
         _ => println!(
             "moved {} {} -> {} (alias kept: {})",
             m.kind, m.from, m.to, m.alias
