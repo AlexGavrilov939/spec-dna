@@ -10,7 +10,7 @@ spec-dna has 10 document types. [ADR 0001](adr/0001-information-model.md) define
 | `decision` | The reason for a choice (MADR minimal) | proposed, accepted, superseded, rejected | `Decision Outcome` or `Decision` | 7,000, 14,000 | summary of a linked decision |
 | `change` | A proposal, plan or task | proposed, accepted, done, rejected | none | 10,000, 20,000 | listed only |
 | `note` | Observations and informative material | none | none | none | listed only |
-| `invariant` | Project-wide rules with stable ids and an `applies-to` scope | as spec | `Rules` | 3,000, 6,000 | first, for a matching scope |
+| `invariant` | Project-wide rules with stable ids and an `applies-to` scope | as spec (status moves forward only) | `Rules` | 3,000, 6,000 | first, for a matching scope |
 | `runbook` | An operational procedure | as spec | `Steps` | 8,000, 16,000 | for its `applies-to` |
 | `incident` | What happened, why, and the knowledge it involves | none | `Summary` and `Root cause` | 6,000, 12,000 | listed only |
 | `reference` | Research and other cold material | none | none | none | never, unless a target names it |
@@ -39,7 +39,7 @@ A reference document holds research, data, transcripts or other cold material. I
 
 `spec-dna new <type> <id>` writes the template of a type. In a mixed root, an id without a namespace gets the namespace of its type: `spec-dna new decision psp-choice` writes `<root>/decisions/psp-choice.md`. A spec has no namespace. The root is `--root <dir>`, or the first root of that single type, or the first mixed root.
 
-The placeholders of a template, such as `<key>` and `[[<decision-id>]]`, are not valid keys or ids. `check` reports each placeholder that an author does not replace.
+A placeholder of a template has the form `{{text}}`, such as `{{key}}` or `{{The cause.}}`. `check` reports each placeholder that stays in a document (SD306, an error), so a template cannot pass the gate before an author fills it. `${{ ... }}` and `{{ ... }}` with spaces inside the braces (GitHub Actions and Jinja syntax) are not placeholders.
 
 This is the template of an invariant:
 
@@ -53,11 +53,11 @@ applies-to: ["**"]
 
 ## Rules
 
-- **<key>**: The <system> SHALL <rule that every change in the scope keeps>.
+- **{{key}}**: The {{system}} SHALL {{rule that every change in the scope keeps}}.
 
 ## Rationale
 
-<Why the rule exists. Link the decision.>
+{{Why the rule exists. Link the decision.}}
 ```
 
 ## Project types

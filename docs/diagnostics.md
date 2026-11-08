@@ -22,6 +22,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD303 | type-invalid | error | The `type` is unknown, it does not agree with a single-type root, or it is not in the `types` list of the project. |
 | SD304 | status-invalid | error | After the root's `status-map` applies, the status is missing or the type does not allow it. |
 | SD305 | section-missing | error | A document has no section with a heading from one group of the root's `required-sections` for its type. The defaults: a decision needs `Decision Outcome` or `Decision`, an invariant `Rules`, a runbook `Steps`, an incident `Summary` and `Root cause`. |
+| SD306 | placeholder-left | error | A template placeholder (`{{text}}`, from `spec-dna new`) is still in the document. |
 | SD401 | status-transition | error | A status moved backwards or left a final state. |
 | SD402 | superseded-without-successor | error | A superseded document has no active (or accepted) successor that names it in `supersedes`. |
 | SD403 | supersede-cycle | error | The `supersedes` chain returns to its start. |

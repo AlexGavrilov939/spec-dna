@@ -35,7 +35,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | CI and hooks | `.github/workflows`, `.gitlab-ci.yml` and other CI files; pre-commit, husky, lefthook |
 | Default branch | `origin/HEAD`, else a local `main` or `master`, else the current branch |
 
-Detection reads only. It uses no network.
+Detection skips vendored, generated and test fixture directories (`fixtures`, `testdata`, `__snapshots__`, `golden`). In a root `.`, it excludes the root files of the repository (`README.md`, `AGENTS.md`, `CLAUDE.md`, `CHANGELOG.md` and similar). In a root that holds `.claude/skills`, it excludes the generated skill `spec-dna/`. Detection reads only. It uses no network.
 
 ## Questions
 
@@ -58,7 +58,7 @@ The preview shows the full `spec-dna.toml` and each file to create or change:
 
 - `spec-dna.toml`;
 - the generated line in `AGENTS.md` and `CLAUDE.md`, and the skill `.claude/skills/spec-dna/SKILL.md`;
-- `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)), for `github`;
+- `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)), for `github`. If the file exists, `init` does not change it;
 - a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`.
 
 For GitLab CI and lefthook, the preview gives the text to add by hand. `init` checks that it can read the new `spec-dna.toml` before it writes a file.
@@ -94,4 +94,4 @@ The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).
 
 ## Reconfigure
 
-`init --reconfigure` asks the questions again. The defaults are the current values: the profile, the types, the evidence rule and test globs, and the roots of `spec-dna.toml`. The keys that no question asks for stay: `install-source`, `self-urls`, `[repos]`, `[lint]`, `[context]`, the `[budgets.<type>]` tables (unless the budget level changes) and the section, budget, profile and rules keys of each root. The comments of the old file are lost. The preview shows the new file before `init` writes it.
+`init --reconfigure` asks the questions again. The defaults are the current values: the profile, the types, the evidence rule and test globs, and the roots of `spec-dna.toml`. The keys that no question asks for stay: `install-source`, `self-urls`, `[repos]`, `[lint]`, `[context]`, every rule of `[rules]` (an answer replaces only the rule of its group: `evidence`, `budgets`, and `lint` for a language other than English), the test globs, the `[budgets.<type>]` tables (unless the budget level changes) and the section, budget, profile and rules keys of each root. The comments of the old file are lost. The preview shows the new file before `init` writes it.

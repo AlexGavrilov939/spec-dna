@@ -10,7 +10,7 @@ Profiles, 4 knowledge types, requirement evidence and an interactive `init`. The
 
 - `profile = "lite" | "standard" | "strict"` sets the default severity of each code. `[rules]` and the `rules` of a root override it by rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or by code. A root can have its own `profile`. [docs/profiles.md](docs/profiles.md) gives the table.
 - 4 document types: `invariant` (project-wide rules with stable ids and an `applies-to` scope; `context` serves a matching invariant first), `runbook`, `incident` (it must link the requirements, decisions or runbooks that it involves: SD609) and `reference` (cold material: no budget, and `context` never serves it unless a target names it). Each type has a template, required sections and budgets. [docs/types.md](docs/types.md).
-- `spec-dna new <type> <id>` writes a document from the template of its type. In a mixed root, each type gets its own namespace.
+- `spec-dna new <type> <id>` writes a document from the template of its type. In a mixed root, each type gets its own namespace. SD306 (error): a template placeholder (`{{text}}`) is still in a document.
 - `types` in `spec-dna.toml`: the document types of the project. A document of another type is an error (SD303).
 - `required-sections` accepts a list of lists: several required sections for a type.
 - Evidence: a requirement links to tests by `verified-by` (front matter, or an inline `<!-- verified-by: <path> -->` marker) or by a `covers: <doc-id>#<key>` tag in a test file of any language (`[evidence] tests`). SD105 (error): a tag names no requirement. SD608 (by profile): an active requirement has no evidence. `show` lists the evidence of each requirement.
