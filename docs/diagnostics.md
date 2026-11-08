@@ -43,6 +43,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD804 | vague-term | warning | A requirement uses a term from the vague-term list. |
 | SD805 | passive-voice | warning | A requirement uses a passive construction (heuristic). |
 | SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or some requirements are recognized, but a list item or a table row starts with a `legacy-keys` token that is not the key of a recognized requirement. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
+| SD807 | requirement-colon-missing | warning | In a spec or contract, a list item starts with a bold slug key and has a BCP 14 keyword, but no colon follows the key (`- **key** [1.1]: sentence`). Thus the item is not a requirement. |
 
 The requirement lint (SD801 to SD805) has the severity that `lint-severity` of the root sets: `off`, `warning` (default) or `error`.
 
@@ -58,4 +59,4 @@ SD606 and SD607 use the code citations of a document ([ADR 0001](adr/0001-inform
 
 An identifier matches a file if it occurs in the file as a whole word, also in a comment or a string. A citation that still resolves after the change, such as a file name after a move, gives no SD606.
 
-Only current documents give SD606 and SD607. A superseded, retired or rejected document, a `done` change and a note can cite code that is gone.
+The `drift-severity` of the root sets the severity of SD606 and SD607 (default `warning`), or turns them off. Only current documents give SD606 and SD607. A superseded, retired or rejected document, a `done` change and a note can cite code that is gone.

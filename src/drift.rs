@@ -12,6 +12,7 @@
 use crate::cite::{
     MAX_SOURCE, Target, Tree, idents, read_source, source_text, strip_location, tokens,
 };
+use crate::config::Config;
 use crate::diag::{Code, Diag};
 use crate::model::{Corpus, Doc, DocType, is_doc_path};
 use crate::repo::{Fatal, Repo, Snapshot};
@@ -34,8 +35,32 @@ fn last_segment(raw: &str) -> &str {
 
 /// Finds the drift of the head tree against the base tree. `untracked` is
 /// true when the head tree includes untracked files (`check` without
-/// `--base`).
+/// `--base`). The `drift-severity` of the root of each document sets the
+/// severity of its diagnostics, or removes them.
 pub fn check(
+    repo: &Repo,
+    config: &Config,
+    base: (&Corpus, &Snapshot),
+    head: (&Corpus, &Snapshot),
+    untracked: bool,
+) -> Result<Vec<Diag>, Fatal> {
+    let corpus = head.0;
+    let by_path: std::collections::HashMap<&str, usize> = corpus
+        .docs
+        .iter()
+        .map(|d| (d.path.as_str(), d.root))
+        .collect();
+    Ok(find(repo, base, head, untracked)?
+        .into_iter()
+        .filter_map(|mut d| {
+            let root = by_path.get(d.path.as_str())?;
+            d.severity = config.roots[*root].drift_severity?;
+            Some(d)
+        })
+        .collect())
+}
+
+fn find(
     repo: &Repo,
     base: (&Corpus, &Snapshot),
     head: (&Corpus, &Snapshot),

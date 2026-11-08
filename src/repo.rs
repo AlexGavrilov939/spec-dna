@@ -18,6 +18,8 @@ pub enum Fatal {
     Config(String),
     Io(String),
     NotFound(String),
+    /// A safety check refused the change, and nothing changed.
+    Refused(String),
 }
 
 impl Fatal {
@@ -27,12 +29,17 @@ impl Fatal {
             Fatal::Config(_) => 3,
             Fatal::Io(_) => 4,
             Fatal::NotFound(_) => 5,
+            Fatal::Refused(_) => 1,
         }
     }
 
     pub fn message(&self) -> &str {
         match self {
-            Fatal::Usage(m) | Fatal::Config(m) | Fatal::Io(m) | Fatal::NotFound(m) => m,
+            Fatal::Usage(m)
+            | Fatal::Config(m)
+            | Fatal::Io(m)
+            | Fatal::NotFound(m)
+            | Fatal::Refused(m) => m,
         }
     }
 }

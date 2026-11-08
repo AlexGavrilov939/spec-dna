@@ -21,6 +21,7 @@ mod mv;
 mod parse;
 mod rank;
 mod repo;
+mod split;
 mod transcript;
 
 use crate::adapters::VERSION;
@@ -47,7 +48,10 @@ Commands:
     show <id>[#<anchor>]
         Prints a document, a section or a requirement.
     mv <from> <to>
-        Moves a document, or moves <doc-id>#<key> to another document.
+    mv <doc-id>#<key or section>... <spec-id>
+        Moves a document. Or moves requirements and whole sections to an
+        existing or a new spec, with an alias for every moved key. A
+        preservation check runs first; if it fails, nothing changes.
     transcript <file or dir>... [--expect <id>]... [--format claude-code]
         Reports token usage, tool calls and document reads per session and
         episode of agent transcripts. It prints counts and ids only.
@@ -198,6 +202,9 @@ fn warn_pin(cfg: &config::Config) {
 
 const DEFAULT_CONFIG: &str = "# spec-dna configuration. Reference: https://github.com/AlexGavrilov939/spec-dna/blob/master/docs/config.md
 spec-dna = \"{version}\"
+# The git source of spec-dna for `cargo install --git`, for example a local or
+# private clone in phase 1. The message of a version mismatch uses it.
+# install-source = \"https://github.com/AlexGavrilov939/spec-dna\"
 
 # Each root is a directory of documents. The id of a document is its path
 # under the root, without the extension.
@@ -209,9 +216,10 @@ status = \"draft\"
 ";
 
 /// The error for a binary whose version differs from the pin (ADR 0003).
-fn pin_mismatch(pin: &str) -> Fatal {
+fn pin_mismatch(cfg: &config::Config) -> Fatal {
+    let (pin, source) = (&cfg.pin, &cfg.install_source);
     Fatal::Config(format!(
-        "spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n  To use {pin}, install it:\n    cargo install --locked --force --git https://github.com/AlexGavrilov939/spec-dna --tag v{pin} spec-dna\n  To move the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+        "spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n  To use {pin}, install it:\n    cargo install --locked --force --git {source} --tag v{pin} spec-dna\n  To move the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
     ))
 }
 
@@ -222,7 +230,7 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if cfg_path.exists() {
         let cfg = repo.load_config()?;
         if cfg.pin != VERSION {
-            return Err(pin_mismatch(&cfg.pin));
+            return Err(pin_mismatch(&cfg));
         }
     } else {
         let root = a.root.as_deref().unwrap_or("docs").trim_matches('/');
@@ -359,7 +367,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let cfg = repo.load_config()?;
     if cfg.pin != VERSION {
-        return Err(pin_mismatch(&cfg.pin));
+        return Err(pin_mismatch(&cfg));
     }
     // The base is the merge base of --base and HEAD, or HEAD. If there is no
     // commit, the base is None. `--all` uses the same base: it changes only
@@ -413,6 +421,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if let Some(base) = base {
         let drift = drift::check(
             repo,
+            &cfg,
             (base, &base_snap),
             (head, &head_snap),
             a.base.is_none(),
@@ -591,25 +600,61 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 }
 
 fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
-    expect_args(a, 2, 2)?;
+    expect_args(a, 2, usize::MAX)?;
     let (cfg, c) = load_head(repo, a)?;
-    let m = mv::run(repo, &cfg, &c, &a.positional[0], &a.positional[1])?;
+    let m = mv::run(repo, &cfg, &c, &a.positional)?;
     if a.json {
-        println!(
-            "{}",
-            Obj::new()
-                .str("kind", m.kind)
-                .str("from", &m.from)
-                .str("to", &m.to)
-                .str("alias", &m.alias)
-                .strs("files", &m.files)
-                .end()
-        );
-    } else {
-        println!(
+        let mut o = Obj::new()
+            .str("kind", m.kind)
+            .str("from", &m.from)
+            .str("to", &m.to)
+            .str("alias", &m.alias)
+            .strs("files", &m.files);
+        if let Some(s) = &m.split {
+            let (hashes, ids, decisions) = s.preserved;
+            o = o
+                .str("path", &s.to_path)
+                .bool("created", s.created)
+                .num("requirements", s.moved.len())
+                .num("sections", s.sections)
+                .raw(
+                    "preserved",
+                    &Obj::new()
+                        .num("hashes", hashes)
+                        .num("ids", ids)
+                        .num("decisions", decisions)
+                        .end(),
+                );
+        }
+        println!("{}", o.end());
+        return Ok(0);
+    }
+    match &m.split {
+        Some(s) if m.kind == "split" => {
+            let (hashes, ids, decisions) = s.preserved;
+            println!(
+                "moved {} requirements{} to {} ({}{}); every old id stays as an alias",
+                s.moved.len(),
+                if s.sections > 0 {
+                    format!(" in {} sections", s.sections)
+                } else {
+                    String::new()
+                },
+                m.to,
+                s.to_path,
+                if s.created { ", new document" } else { "" },
+            );
+            println!(
+                "preservation check: {hashes} requirement hashes unchanged, {ids} ids resolve, {decisions} accepted decisions unchanged"
+            );
+        }
+        _ => println!(
             "moved {} {} -> {} (alias kept: {})",
             m.kind, m.from, m.to, m.alias
-        );
+        ),
+    }
+    if let Some(s) = m.split.as_ref().filter(|s| s.created) {
+        println!("new file: {} (not yet added to git)", s.to_path);
     }
     Ok(0)
 }

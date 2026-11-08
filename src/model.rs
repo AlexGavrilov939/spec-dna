@@ -550,8 +550,20 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         for (i, r) in parsed.reqs.iter().enumerate() {
             let legacy = root.legacy_keys.iter().any(|p| p.is_match(&r.key));
             // Without a colon, only a legacy key makes a requirement. Other
-            // bold labels are prose.
+            // bold labels are prose, unless a slug key comes with a BCP 14
+            // keyword: then the author probably meant a requirement.
             if !r.colon && !legacy {
+                if is_slug(&r.key) && crate::parse::has_bcp14(&r.text) {
+                    issues.push(Issue {
+                        code: Code::RequirementColonMissing,
+                        line: r.line,
+                        target: r.key.clone(),
+                        message: format!(
+                            "`**{}**` starts a list item with a BCP 14 keyword, but no colon follows the key, so it is not a requirement",
+                            r.key
+                        ),
+                    });
+                }
                 continue;
             }
             let valid = legacy || is_slug(&r.key);
@@ -1044,6 +1056,24 @@ mod tests {
             c.resolve_link("docs/a/x.md", "../../../out.md"),
             LinkRes::Missing("../../../out.md".into())
         );
+    }
+
+    #[test]
+    fn slug_key_without_colon_warns() {
+        let c = corpus(&[(
+            "docs/a.md",
+            "# A\n\n- **member-registration** [1.1]: The desk SHALL check an identity document.\n- **note** this list item is prose.\n- **ok-key**: The system MUST run.\n",
+        )]);
+        let d = &c.docs[0];
+        assert_eq!(d.reqs.len(), 1);
+        let w: Vec<&Issue> = d
+            .issues
+            .iter()
+            .filter(|i| i.code == Code::RequirementColonMissing)
+            .collect();
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].target, "member-registration");
+        assert_eq!(w[0].line, 3);
     }
 
     #[test]

@@ -6,6 +6,7 @@
 spec-dna = "0.1.0"              # required: the pinned version
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
+install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
 
 [[roots]]                       # required: one table per document root
 path = "docs"
@@ -20,6 +21,7 @@ required-sections = { decision = ["Decision Outcome", "Decision"], spec = ["Requ
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
 enforce-budgets = true          # false: the hard budget gives warnings only
 lint-severity = "warning"       # "off", "warning" or "error" for SD801 to SD805
+drift-severity = "warning"      # "off", "warning" or "error" for SD606 and SD607
 
 [budgets.spec]                  # characters of body text, per type
 soft = 10000
@@ -42,6 +44,7 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
+| `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`: a URL such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`, without spaces. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
 | `roots` | list of tables | required | The document roots. A path belongs to the deepest root that contains it. |
 | `roots.path` | string | required | The directory, relative to the repository root. `.` is the full repository. |
 | `roots.type` | string | `mixed` | The type of every document in the root, or `mixed`. |
@@ -55,6 +58,7 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit: `## Nachtrag 2026-01-02: TTL` matches `Nachtrag`, and `## Nachtragsplan` does not. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. After a decision is accepted, the text outside its amendment sections is frozen (SD405), and new amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.lint-severity` | string | `"warning"` | The severity of the requirement lint (SD801 to SD805) in this root: `"off"`, `"warning"` or `"error"`. Use `"off"` for a legacy root whose requirements you do not reword now. With `"error"`, a new lint finding fails `check`. |
+| `roots.drift-severity` | string | `"warning"` | The severity of the drift diagnostics SD606 and SD607 for the documents of this root: `"off"`, `"warning"` or `"error"`. With `"error"`, a change that removes or renames a path or an identifier that a document cites fails `check`. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
 | `context.budget` | integer | `12000` | The default budget of `spec-dna context`, in characters. |

@@ -1408,3 +1408,198 @@ fn moving_a_document_keeps_accepted_decisions_frozen() {
     assert_eq!(code, 1);
     assert!(out.contains("error SD405 decision-frozen"), "{out}");
 }
+
+fn split_project() -> Repo {
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write(
+        "docs/loans.md",
+        "---\nstatus: active\n---\n# Loans\n\nThe loan rules. See [membership](#membership).\n\n## Membership\n\n- **member-registration**: When a person applies, the desk SHALL check an identity document.\n- **membership-kinds**: The library SHALL have two membership kinds.\n\n## Fines\n\nThe fine rules.\n\n- **daily-fine**: When a member returns a book late, the library SHALL charge 25 cents for each late day.\n\n### Fine cap\n\n- **fine-cap**: The library SHALL limit a fine to the replacement cost of the book.\n\n## Renewals\n\n- **renewal-limit**: The library SHALL allow 2 renewals of a loan.\n",
+    );
+    r.write(
+        "docs/policy.md",
+        "---\nstatus: active\n---\n# Policy\n\n## Scope\n\n- **scope**: The library SHALL apply this policy to all branches.\n",
+    );
+    r.write(
+        "docs/decisions/fines.md",
+        "---\ntype: decision\nstatus: accepted\n---\n# Fines\n\n## Decision Outcome\n\nA capped fine: [daily-fine](../loans.md#daily-fine), [cap](../loans.md#fine-cap).\n",
+    );
+    r.write(
+        "docs/guide.md",
+        "---\ntype: guide\nstatus: active\n---\n# Desk guide\n\nCheck [the identity](loans.md#member-registration) and [the fines](loans.md#fines).\n",
+    );
+    r.commit("docs");
+    r
+}
+
+#[test]
+fn mv_splits_keys_into_a_new_spec() {
+    let r = split_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "loans#member-registration",
+        "loans#membership-kinds",
+        "members",
+    ]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("moved 2 requirements to members (docs/members.md, new document)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("preservation check: 6 requirement hashes unchanged, 6 ids resolve, 1 accepted decisions unchanged"),
+        "{out}"
+    );
+    assert_eq!(
+        r.read("docs/members.md"),
+        "---\nstatus: active\n---\n# Members\n\n## Membership\n\n- **member-registration**: When a person applies, the desk SHALL check an identity document. <!-- aliases: loans#member-registration -->\n- **membership-kinds**: The library SHALL have two membership kinds. <!-- aliases: loans#membership-kinds -->\n"
+    );
+    let loans = r.read("docs/loans.md");
+    assert!(
+        !loans.contains("## Membership"),
+        "the empty section goes: {loans}"
+    );
+    assert!(
+        loans.contains("See [membership](#membership)."),
+        "a link to a section that stays is kept: {loans}"
+    );
+    assert!(
+        r.read("docs/guide.md")
+            .contains("[the identity](members.md#member-registration)"),
+        "links follow the key"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let (_, out, _) = r.run(&["show", "loans#membership-kinds"]);
+    assert!(out.starts_with("<!-- members#membership-kinds h:"), "{out}");
+}
+
+#[test]
+fn mv_moves_sections_and_rewrites_links_but_not_decision_text() {
+    let r = split_project();
+    let before = r.read("docs/decisions/fines.md");
+    let (code, out, err) = r.run(&["mv", "loans#fines", "loans#renewals", "policy", "--json"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("\"kind\":\"split\""), "{out}");
+    assert!(out.contains("\"requirements\":3,\"sections\":2"), "{out}");
+    assert!(
+        out.contains("\"preserved\":{\"hashes\":6,\"ids\":6,\"decisions\":1}"),
+        "{out}"
+    );
+    let policy = r.read("docs/policy.md");
+    assert!(
+        policy.contains("## Fines\n\nThe fine rules.\n\n- **daily-fine**: When a member returns a book late, the library SHALL charge 25 cents for each late day. <!-- aliases: loans#daily-fine -->\n\n### Fine cap\n"),
+        "{policy}"
+    );
+    assert!(
+        policy.contains("## Renewals\n\n- **renewal-limit**:"),
+        "{policy}"
+    );
+    let decision = r.read("docs/decisions/fines.md");
+    assert_eq!(
+        decision,
+        before.replace("../loans.md#", "../policy.md#"),
+        "only the link destinations change"
+    );
+    assert!(
+        r.read("docs/guide.md")
+            .contains("[the fines](policy.md#fines)")
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "no SD405, no broken link: {out}");
+}
+
+#[test]
+fn mv_refuses_bad_splits_and_changes_nothing() {
+    let r = split_project();
+    let (code, _, err) = r.run(&["mv", "loans#daily-fine", "decisions/fines"]);
+    assert_eq!(code, 2, "a decision has no requirements: {err}");
+    let (code, _, err) = r.run(&["mv", "loans#loans", "x"]);
+    assert_eq!(code, 2, "the title section: {err}");
+    assert!(err.contains("to move the whole document"), "{err}");
+    r.write(
+        "docs/policy.md",
+        &r.read("docs/policy.md")
+            .replace("**scope**", "**daily-fine**"),
+    );
+    let (code, _, err) = r.run(&["mv", "loans#fines", "policy"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("the requirement key `daily-fine` two times"),
+        "{err}"
+    );
+    let (code, _, err) = r.run(&["mv", "loans#nothing", "policy"]);
+    assert_eq!(code, 5, "{err}");
+    let status = git(&r.dir, &["status", "--porcelain"]);
+    assert_eq!(status, " M docs/policy.md\n", "only the edit of the test");
+}
+
+#[test]
+fn install_source_goes_into_the_pin_message() {
+    let r = Repo::empty();
+    r.run(&["init"]);
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("# install-source = "),
+        "init documents the key: {cfg}"
+    );
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "install-source = \"file:///srv/git/spec-dna\"\n{}",
+            cfg.replace(
+                &format!("spec-dna = \"{}\"", env!("CARGO_PKG_VERSION")),
+                "spec-dna = \"9.9.9\""
+            )
+        ),
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(
+        err.contains(
+            "cargo install --locked --force --git file:///srv/git/spec-dna --tag v9.9.9 spec-dna"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn drift_severity_follows_the_root() {
+    for (severity, code, expect) in [("error", 1, Some("error SD607")), ("off", 0, None)] {
+        let r = code_project();
+        r.append(
+            "spec-dna.toml",
+            &format!("drift-severity = \"{severity}\"\n"),
+        );
+        r.commit("severity");
+        r.write(
+            "src/library/loans.py",
+            &LOANS_PY.replace("MAX_RENEWALS = 1\n", ""),
+        );
+        let (c, out, _) = r.run(&["check"]);
+        assert_eq!(c, code, "{severity}: {out}");
+        match expect {
+            Some(e) => assert!(out.contains(e), "{out}"),
+            None => assert!(!out.contains("SD607"), "{out}"),
+        }
+    }
+}
+
+#[test]
+fn a_bold_slug_without_a_colon_warns() {
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write(
+        "docs/rules.md",
+        "# Rules\n\n- **member-registration** [1.1]: When a person applies, the desk SHALL check an identity document.\n- **note** this item is prose.\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "a warning: {out}");
+    assert!(
+        out.contains(
+            "docs/rules.md:3: warning SD807 requirement-colon-missing: `**member-registration**`"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("`**note**`"), "{out}");
+}

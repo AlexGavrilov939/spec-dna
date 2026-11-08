@@ -37,7 +37,7 @@ const SKILL_BODY: &str = "# spec-dna
 7. Move a document or a requirement only with `spec-dna mv`. Thus its old id still resolves.
     - To move a document, run `spec-dna mv <old-id> <new-id>`.
     - To move a requirement to another spec, run `spec-dna mv <doc-id>#<key> <doc-id>`.
-    - If `check` reports SD702 (a document over its hard budget), split the document. Write the new spec, and then move requirements into it with `spec-dna mv`.";
+    - To split a document, move several keys or whole sections in one command: `spec-dna mv <doc-id>#<key or section anchor>... <spec-id>`. A new spec id creates the spec. Do this when `check` reports SD702 (a document over its hard budget).";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {
