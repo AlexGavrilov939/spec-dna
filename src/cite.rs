@@ -155,9 +155,105 @@ fn is_ident(s: &str) -> bool {
         && b.all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'$')
 }
 
+/// Names that look distinctive but occur in prose and in code of every kind:
+/// common call names, and product names in mixed case.
+const COMMON: &[&str] = &[
+    "append",
+    "apply",
+    "assert",
+    "build",
+    "call",
+    "catch",
+    "check",
+    "clear",
+    "close",
+    "connect",
+    "create",
+    "debug",
+    "delete",
+    "emit",
+    "error",
+    "exec",
+    "execute",
+    "fetch",
+    "filter",
+    "find",
+    "flush",
+    "format",
+    "handle",
+    "info",
+    "init",
+    "insert",
+    "join",
+    "length",
+    "list",
+    "load",
+    "main",
+    "next",
+    "open",
+    "parse",
+    "post",
+    "print",
+    "push",
+    "read",
+    "reduce",
+    "remove",
+    "render",
+    "reset",
+    "resolve",
+    "save",
+    "send",
+    "setup",
+    "size",
+    "sleep",
+    "sort",
+    "spawn",
+    "split",
+    "start",
+    "stop",
+    "test",
+    "then",
+    "update",
+    "wait",
+    "warn",
+    "write",
+    "toString",
+    "valueOf",
+    "ChatGPT",
+    "DevOps",
+    "GitHub",
+    "GitLab",
+    "GraphQL",
+    "IntelliJ",
+    "JavaScript",
+    "JetBrains",
+    "LinkedIn",
+    "MongoDB",
+    "MySQL",
+    "OAuth",
+    "OpenAI",
+    "OpenAPI",
+    "OpenID",
+    "PayPal",
+    "PostgreSQL",
+    "PowerShell",
+    "TypeScript",
+    "VSCode",
+    "WebAssembly",
+    "WebSocket",
+    "WordPress",
+    "YouTube",
+    "iOS",
+    "iPad",
+    "iPadOS",
+    "iPhone",
+    "macOS",
+    "watchOS",
+];
+
 fn distinctive(s: &str, called: bool) -> bool {
     let b = s.as_bytes();
-    if b.len() < 3 || !b.iter().any(u8::is_ascii_alphabetic) {
+    if b.len() < 3 || !b.iter().any(u8::is_ascii_alphabetic) || COMMON.contains(&s) {
         return false;
     }
     let inner_underscore = s.trim_matches('_').contains('_');
@@ -175,13 +271,16 @@ pub fn tokens(text: &str) -> HashSet<&str> {
         .collect()
 }
 
+/// The largest source file that spec-dna reads for identifiers: 4 MiB.
+pub const MAX_SOURCE: u64 = 4 << 20;
+
 /// Reads a source file of the working tree for identifier matches. Returns
-/// `None` for a file that is missing, larger than 4 MiB, or binary (a NUL byte
-/// in the first 8 KiB).
+/// `None` for a file that is missing, larger than `MAX_SOURCE`, or binary (a
+/// NUL byte in the first 8 KiB).
 pub fn read_source(root: &Path, path: &str) -> Option<String> {
     let p = root.join(path);
     let meta = std::fs::metadata(&p).ok()?;
-    if !meta.is_file() || meta.len() > 4 << 20 {
+    if !meta.is_file() || meta.len() > MAX_SOURCE {
         return None;
     }
     let bytes = std::fs::read(p).ok()?;
@@ -190,7 +289,7 @@ pub fn read_source(root: &Path, path: &str) -> Option<String> {
 
 /// Returns the text of source bytes, or `None` for binary content.
 pub fn source_text(bytes: &[u8]) -> Option<String> {
-    if bytes.len() > 4 << 20 || bytes[..bytes.len().min(8192)].contains(&0) {
+    if bytes.len() as u64 > MAX_SOURCE || bytes[..bytes.len().min(8192)].contains(&0) {
         return None;
     }
     Some(String::from_utf8_lossy(bytes).into_owned())
@@ -258,8 +357,14 @@ impl Citations {
     }
 }
 
+/// The strength of a citation, best first.
+pub const BY_FILE: u8 = 0;
+pub const BY_IDENT: u8 = 1;
+pub const BY_DIR: u8 = 2;
+
 /// Returns the sections that cite the given paths, best first, grouped by
-/// document. A section scores 1000 for each citation of the file itself, 10
+/// document, with the best class of each document (`BY_FILE`, `BY_IDENT` or
+/// `BY_DIR`). A section scores 1000 for each citation of the file itself, 10
 /// for each distinct cited identifier that occurs in the file, and 1 plus the
 /// depth for each citation of a directory that contains the file. The order
 /// of the documents is:
@@ -273,7 +378,7 @@ pub fn citing(
     cits: &Citations,
     root: &Path,
     paths: &[String],
-) -> Vec<(u32, Vec<usize>)> {
+) -> Vec<(u32, u8, Vec<usize>)> {
     #[derive(Default)]
     struct Score {
         file: u32,
@@ -311,11 +416,11 @@ pub fn citing(
     }
     let class = |s: &Score| -> u8 {
         if s.file > 0 {
-            0
+            BY_FILE
         } else if !s.idents.is_empty() {
-            1
+            BY_IDENT
         } else {
-            2
+            BY_DIR
         }
     };
     let points = |s: &Score| s.file + 10 * s.idents.len() as u32 + s.dir;
@@ -337,7 +442,7 @@ pub fn citing(
         .into_iter()
         .map(|(d, mut v)| {
             v.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)));
-            let best = v.iter().map(|x| x.1).min().unwrap_or(2);
+            let best = v.iter().map(|x| x.1).min().unwrap_or(BY_DIR);
             let total = v.iter().map(|x| x.2).sum();
             (d, best, total, v.into_iter().map(|x| x.0).collect())
         })
@@ -348,7 +453,7 @@ pub fn citing(
             .then(b.2.cmp(&a.2))
             .then(c.docs[a.0 as usize].id.cmp(&c.docs[b.0 as usize].id))
     });
-    docs.into_iter().map(|(d, _, _, v)| (d, v)).collect()
+    docs.into_iter().map(|(d, c, _, v)| (d, c, v)).collect()
 }
 
 #[cfg(test)]
@@ -374,7 +479,8 @@ mod tests {
         assert_eq!(idents("MAX_LOANS"), ["MAX_LOANS"]);
         assert_eq!(idents("Vec<String>"), Vec::<String>::new());
         for plain in [
-            "status", "HTTP", "Loan", "get()", "--budget", "a/b", "v0.1.0", "x y",
+            "status", "HTTP", "Loan", "get()", "--budget", "a/b", "v0.1.0", "x y", "read()",
+            "GitHub", "macOS",
         ] {
             assert!(idents(plain).is_empty(), "{plain}");
         }

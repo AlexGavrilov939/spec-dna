@@ -89,19 +89,63 @@ fn find_block<'a>(text: &'a str, name: &str) -> Option<(usize, usize, &'a str, &
     Some((start, end, version, hash, body))
 }
 
-/// Finds the generated line. Returns (start, end with the line break,
+/// Finds the generated line: a line that ends with the exact marker
+/// `<!-- spec-dna v<version> h:<16 hex digits> -->`. Prose that quotes the
+/// marker form does not match. Returns (start, end with the line break,
 /// version, recorded hash, text before the marker).
 fn find_line(text: &str) -> Option<(usize, usize, &str, &str, &str)> {
-    let marker = text.find("<!-- spec-dna v")?;
-    let start = text[..marker].rfind('\n').map_or(0, |i| i + 1);
-    let close = marker + text[marker..].find("-->")?;
-    let end = text[close..]
-        .find('\n')
-        .map_or(text.len(), |i| close + i + 1);
-    let mut it = text[marker + "<!-- spec-dna ".len()..close].split_whitespace();
-    let version = it.next()?.strip_prefix('v')?;
-    let hash = it.next()?.strip_prefix("h:")?;
-    Some((start, end, version, hash, text[start..marker].trim_end()))
+    const OPEN: &str = "<!-- spec-dna v";
+    let mut start = 0;
+    for l in text.split_inclusive('\n') {
+        let end = start + l.len();
+        let body = l.trim_end_matches(['\n', '\r']);
+        if let Some(m) = body.rfind(OPEN)
+            && let Some(inner) = body[m + OPEN.len()..].strip_suffix(" -->")
+            && let Some((version, hash)) = inner.split_once(" h:")
+            && !version.is_empty()
+            && version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-+".contains(&b))
+            && hash.len() == 16
+            && hash.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Some((start, end, version, hash, body[..m].trim_end()));
+        }
+        start = end;
+    }
+    None
+}
+
+/// Removes the generated line and the blank line before it.
+pub fn remove_line(text: &str) -> String {
+    match find_line(text) {
+        Some((start, end, ..)) => {
+            let start = if text[..start].ends_with("\n\n") {
+                start - 1
+            } else {
+                start
+            };
+            format!("{}{}", &text[..start], &text[end..])
+        }
+        None => text.to_string(),
+    }
+}
+
+/// Returns true if the text has content that spec-dna did not generate.
+pub fn has_own_text(text: &str) -> bool {
+    !remove_line(&remove_old_blocks(text)).trim().is_empty()
+}
+
+/// Replaces the `claude` block of an older version, which imported
+/// `AGENTS.md`. If `keep_import` is true (`AGENTS.md` has text of its own),
+/// the import stays as a plain line, so that the agent still reads that text.
+/// Otherwise the block goes.
+pub fn migrate_claude(text: &str, keep_import: bool) -> String {
+    match find_block(text, "claude") {
+        Some((s, e, ..)) if keep_import => format!("{}@AGENTS.md\n{}", &text[..s], &text[e..]),
+        Some(_) => remove_old_blocks(text),
+        None => text.to_string(),
+    }
 }
 
 /// Removes the blocks of older versions: a multi-line `agents` block and the
@@ -244,10 +288,25 @@ mod tests {
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, Code::AdapterOutdated);
         assert_eq!(upsert_line(&old_agents), format!("# Rules\n\n{}\n", line()));
+        assert!(has_own_text(&old_agents));
         let old_claude =
             "<!-- spec-dna:begin claude v0.0.9 h:0 -->\n@AGENTS.md\n<!-- spec-dna:end claude -->\n";
         assert!(!imports_agents(old_claude));
+        // The import stays when AGENTS.md has text of its own.
+        assert_eq!(migrate_claude(old_claude, true), "@AGENTS.md\n");
+        assert_eq!(migrate_claude(old_claude, false), "");
         assert_eq!(upsert_line(old_claude), format!("{}\n", line()));
+    }
+
+    #[test]
+    fn prose_that_quotes_the_marker_is_not_the_line() {
+        let prose = "# Notes\n\nThe line ends with `<!-- spec-dna v<version> h:<hash> -->`.\n";
+        assert!(find_line(prose).is_none());
+        assert!(check(&[(AGENTS, prose.to_string())]).is_empty());
+        let both = upsert_line(prose);
+        assert!(both.starts_with(prose), "{both}");
+        assert_eq!(remove_line(&both), prose);
+        assert!(!has_own_text(&upsert_line("")));
     }
 
     #[test]

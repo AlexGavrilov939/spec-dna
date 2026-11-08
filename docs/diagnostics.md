@@ -52,8 +52,10 @@ The [research matrix](research/matrix.md), section "Controlled-language lint", d
 
 SD606 and SD607 use the code citations of a document ([ADR 0001](adr/0001-information-model.md), amendment "code citations"). `context <code path>` uses the same citations. A document cites code in these ways:
 
-- A link to a file that is not a document.
+- A link to a file that is not a document. The text of the link is not a second citation.
 - A path in an inline code span or in prose, with an optional location: `src/loans.py`, `src/loans.py:42`, `src/loans.py#L3-L9`. A path is relative to the repository root or to the document. A file name or a path tail that only one file has also resolves: `loans.py`.
-- A distinctive identifier in an inline code span: a name with an inner `_` (`max_loans`), a name with a lowercase letter before an uppercase letter (`loanBook`), or a called name with 4 characters or more (`renew()`). Words such as `status` or `HTTP` are not identifier citations.
+- A distinctive identifier in an inline code span: a name with an inner `_` (`max_loans`), a name with a lowercase letter before an uppercase letter (`loanBook`), or a called name with 4 characters or more (`renew()`). Words such as `status` or `HTTP` are not identifier citations. A short list of common call names (`read()`, `main()`) and product names (`GitHub`, `macOS`) is also excluded.
+
+An identifier matches a file if it occurs in the file as a whole word, also in a comment or a string. A citation that still resolves after the change, such as a file name after a move, gives no SD606.
 
 Only current documents give SD606 and SD607. A superseded, retired or rejected document, a `done` change and a note can cite code that is gone.

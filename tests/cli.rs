@@ -1076,8 +1076,36 @@ fn init_replaces_the_blocks_of_older_versions() {
     assert!(out.contains("CLAUDE.md:1: error SD502"), "{out}");
     r.run(&["init"]);
     assert_eq!(r.read("AGENTS.md").lines().count(), 3);
-    assert!(!r.read("CLAUDE.md").contains("@AGENTS.md"));
+    assert_eq!(
+        r.read("CLAUDE.md"),
+        "@AGENTS.md\n",
+        "the import stays, because AGENTS.md has text of its own"
+    );
     let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+
+    // An AGENTS.md with only the old block: CLAUDE.md gets the line.
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write("AGENTS.md", block);
+    r.write(
+        "CLAUDE.md",
+        "<!-- spec-dna:begin claude v0.0.9 h:0000000000000000 -->\n@AGENTS.md\n<!-- spec-dna:end claude -->\n",
+    );
+    r.run(&["init"]);
+    assert_eq!(r.read("CLAUDE.md"), r.read("AGENTS.md"));
+    assert_eq!(r.read("CLAUDE.md").lines().count(), 1);
+
+    // A CLAUDE.md that imports AGENTS.md keeps no second copy of the line.
+    let r = Repo::empty();
+    r.run(&["init"]);
+    r.write(
+        "CLAUDE.md",
+        &format!("@AGENTS.md\n\n{}", r.read("CLAUDE.md")),
+    );
+    r.run(&["init"]);
+    assert_eq!(r.read("CLAUDE.md"), "@AGENTS.md\n");
+    let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
 }
 
@@ -1128,10 +1156,10 @@ fn context_serves_the_sections_that_cite_a_code_path() {
             "loans#code",
             "loans#renewals",
             "books#lending",
-            "layout#layout",
             "loans#loans",
             "loans#checkout",
             "books#books",
+            "layout#layout",
         ],
         "{out}"
     );
@@ -1231,4 +1259,108 @@ fn check_warns_when_a_change_removes_cited_code() {
         out.contains("warning SD607 cited-symbol-removed: `MAX_RENEWALS`"),
         "{out}"
     );
+}
+
+#[test]
+fn drift_sees_the_working_tree_outside_the_roots() {
+    // A plain `rm` or `mv` of a cited file outside the roots, without `git rm`.
+    let r = code_project();
+    fs::remove_file(r.dir.join("src/library/fees.py")).unwrap();
+    r.append("docs/loans.md", "\nFees: `src/library/fees.py`.\n");
+    let (_, out, _) = r.run(&["check"]);
+    assert!(
+        out.contains("warning SD606 cited-path-removed: `src/library/fees.py` was removed"),
+        "{out}"
+    );
+    let r = code_project();
+    fs::rename(
+        r.dir.join("src/library/loans.py"),
+        r.dir.join("src/library/lending.py"),
+    )
+    .unwrap();
+    let (_, out, _) = r.run(&["check"]);
+    assert!(
+        out.contains("warning SD606 cited-path-removed: `src/library/loans.py`"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("SD607"),
+        "the identifiers are in the new file: {out}"
+    );
+    // `check` reads git, but it does not write the git index.
+    let index = r.dir.join(".git/index");
+    let before = fs::metadata(&index).unwrap().modified().unwrap();
+    r.run(&["check"]);
+    assert_eq!(fs::metadata(&index).unwrap().modified().unwrap(), before);
+}
+
+#[test]
+fn drift_has_no_false_warnings() {
+    let r = code_project();
+    // A file name that still names one file after a move is not drift.
+    r.write(
+        "docs/books.md",
+        &r.read("docs/books.md")
+            .replace("uses `find_book()`.", "uses `find_book()` from `books.py`."),
+    );
+    r.commit("cite a file name");
+    git(&r.dir, &["mv", "src/library/books.py", "src/books.py"]);
+    let (_, out, _) = r.run(&["check"]);
+    assert!(!out.contains("SD606"), "{out}");
+    // The grep settings of the user's git config do not change the result.
+    git(&r.dir, &["config", "grep.lineNumber", "true"]);
+    git(&r.dir, &["config", "grep.column", "true"]);
+    r.write("src/library/legacy.py", "def checkoutBook():\n    pass\n");
+    r.commit("legacy copy");
+    r.write(
+        "src/library/loans.py",
+        &LOANS_PY.replace("checkoutBook", "lend_book"),
+    );
+    let (_, out, _) = r.run(&["check"]);
+    assert!(!out.contains("SD607"), "{out}");
+    // A link whose text is the path gives only the link error.
+    r.append(
+        "docs/loans.md",
+        "\nSee [src/library/fees.py](../src/library/fees.py).\n",
+    );
+    r.commit("link");
+    git(&r.dir, &["rm", "-q", "src/library/fees.py"]);
+    let (_, out, _) = r.run(&["check"]);
+    assert!(out.contains("error SD102"), "{out}");
+    assert!(!out.contains("SD606"), "{out}");
+}
+
+#[test]
+fn context_keeps_applies_to_above_directory_mentions() {
+    let r = code_project();
+    for i in 0..12 {
+        r.write(
+            &format!("docs/area{i}.md"),
+            &format!("# Area {i}\n\nAll code is under src/.\n\n## Rules\n\n- **rule-{i}**: The library SHALL keep area {i}.\n"),
+        );
+    }
+    r.write(
+        "docs/guides/style.md",
+        "---\ntype: guide\nstatus: active\napplies-to: [src/library/**]\n---\n# Style\n\nUse type hints.\n",
+    );
+    r.commit("more docs");
+    let (_, out, _) = r.run(&["context", "src/library/loans.py"]);
+    let served: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("<!-- ") && l.contains(" h:"))
+        .map(|l| l.split(' ').nth(1).unwrap())
+        .collect();
+    let style = served.iter().position(|s| *s == "guides/style#style");
+    let area = served.iter().position(|s| s.starts_with("area"));
+    assert!(style.is_some(), "{out}");
+    assert!(area.is_none_or(|a| a > style.unwrap()), "{out}");
+    assert!(
+        served.iter().filter(|s| s.starts_with("area")).count() <= 5,
+        "{out}"
+    );
+    // An untracked file is a valid target.
+    r.write("src/library/new.py", "MAX_RENEWALS = 2\n");
+    let (code, out, err) = r.run(&["context", "src/library/new.py"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("<!-- loans#renewals h:"), "{out}");
 }

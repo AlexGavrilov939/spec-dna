@@ -1166,8 +1166,18 @@ fn spec_dna_runs(command: &str) -> Vec<&'static str> {
         .iter()
         .filter(|c| program(c) == Some("spec-dna"))
         .map(|c| {
+            // The first word after the program that is not an option.
             let at = c.iter().position(|w| !w.contains('=')).unwrap_or(0);
-            let sub = c.get(at + 1).map(String::as_str).unwrap_or("");
+            let words = &c[(at + 1).min(c.len())..];
+            let sub = match words.first().map(String::as_str) {
+                Some("-h" | "--help") => "--help",
+                Some("-V" | "--version") => "--version",
+                _ => words
+                    .iter()
+                    .map(String::as_str)
+                    .find(|w| !w.starts_with('-'))
+                    .unwrap_or(""),
+            };
             match sub {
                 "-h" | "--help" | "help" | "" => "help",
                 "-V" | "--version" => "version",
@@ -1446,9 +1456,9 @@ mod tests {
         );
         assert_eq!(
             spec_dna_runs(
-                "X=1 spec-dna context a && spec-dna check --base main; spec-dna secret-word; spec-dna --help | head"
+                "X=1 spec-dna context a && spec-dna check --base main; spec-dna secret-word; spec-dna --help | head; spec-dna --json show x"
             ),
-            ["context", "check", "other", "help"]
+            ["context", "check", "other", "help", "show"]
         );
         assert!(is_plain_id("auth/session#requirements") && is_plain_id("Ünterlagen/x"));
         for bad in ["KEY=value", "/home/u/a", "./a", "a.md", "a b", "a:b"] {

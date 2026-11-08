@@ -4,9 +4,12 @@
 //! The assembly uses this order:
 //!
 //! - the entry documents (or the requested sections);
-//! - the sections that cite a given code path (`cite.rs`), and then the
-//!   requirement sections and the summary of each citing document;
+//! - the sections that cite a given code path by its path or by an identifier
+//!   (`cite.rs`), for the first 8 such documents, and then the requirement
+//!   sections and the summary of the first 5;
 //! - the documents whose `applies-to` matches an entry or a given path;
+//! - the sections that cite only a directory of a given path, for the first 5
+//!   such documents;
 //! - the `depends-on` targets of the entries and of the first 5 normative
 //!   citing documents (depth 1);
 //! - accepted decisions linked to these documents, as summaries.
@@ -172,13 +175,20 @@ fn successors(c: &Corpus, d: &Doc) -> Vec<u32> {
         .collect()
 }
 
+/// The number of citing documents whose citing sections `context` plans, and
+/// the number of those whose summary it also plans. The other citing sections
+/// are listed only. Thus a common identifier or a mention of a large directory
+/// cannot fill the budget.
+const CITING_DOCS: usize = 8;
+const CITING_SUMMARIES: usize = 5;
+
 /// Plans and packs the sections for the targets and the code paths. `cited`
 /// contains the sections that cite the paths, best first (`cite::citing`).
 pub fn assemble(
     c: &Corpus,
     targets: &[(u32, Option<String>)],
     paths: &[String],
-    cited: &[(u32, Vec<usize>)],
+    cited: &[(u32, u8, Vec<usize>)],
     budget: u32,
     query: Option<&Query>,
     include_inactive: bool,
@@ -227,27 +237,32 @@ pub fn assemble(
         }
     }
 
-    // 2. Sections that cite a code path, then the summary of each citing
-    // document: its requirement sections, or the outcome of a decision, and
-    // its title. A change or a note is only listed (ADR 0001, "Document
-    // types").
+    // 2. Sections that cite a code path by its path or by an identifier,
+    // then the summary of the best citing documents: the requirement
+    // sections, or the outcome of a decision, and the title. A change or a
+    // note is only listed (ADR 0001, "Document types").
     let mut scope_docs = entry_docs.clone();
-    for (d, chunks) in cited {
-        if entry_docs.contains(d) {
-            continue;
-        }
-        let listed_only = matches!(c.docs[*d as usize].ty, DocType::Change | DocType::Note);
+    let listed_only = |d: u32| matches!(c.docs[d as usize].ty, DocType::Change | DocType::Note);
+    let strong: Vec<&(u32, u8, Vec<usize>)> = cited
+        .iter()
+        .filter(|x| x.1 < crate::cite::BY_DIR && !entry_docs.contains(&x.0))
+        .collect();
+    let mut served = 0;
+    for (d, _, chunks) in &strong {
+        let plan_it = !listed_only(*d) && served < CITING_DOCS;
+        served += usize::from(plan_it);
         for &j in chunks {
-            if listed_only {
-                rest.push((*d, j));
-            } else {
+            if plan_it {
                 add(&mut plan, *d, j, Tier::Cites);
+            } else {
+                rest.push((*d, j));
             }
         }
     }
-    for (d, _) in cited {
+    let mut summaries = 0;
+    for (d, _, _) in &strong {
         let doc = &c.docs[*d as usize];
-        if entry_docs.contains(d) || matches!(doc.ty, DocType::Change | DocType::Note) {
+        if listed_only(*d) {
             continue;
         }
         for (j, ch) in doc.parsed.chunks.iter().enumerate() {
@@ -255,12 +270,13 @@ pub fn assemble(
                 || doc.has_req_in(j)
                 || doc.outcome.contains(&j)
                 || doc.amendments.contains(&j);
-            if summary {
+            if summary && summaries < CITING_SUMMARIES {
                 add(&mut plan, *d, j, Tier::Cites);
             } else {
                 rest.push((*d, j));
             }
         }
+        summaries += 1;
         if doc.ty.is_normative() && !doc.is_inactive() && scope_docs.len() < entry_docs.len() + 5 {
             scope_docs.push(*d);
         }
@@ -294,6 +310,24 @@ pub fn assemble(
     concerns.sort_by(|a, b| c.docs[*a as usize].id.cmp(&c.docs[*b as usize].id));
     for d in concerns {
         normative_units(c, d, Tier::Concern, &mut plan, &mut rest, &mut add);
+    }
+
+    // Sections that cite only a directory of a given path: a weak citation,
+    // so it comes after `applies-to`, without a summary.
+    let mut served = 0;
+    for (d, class, chunks) in cited {
+        if *class != crate::cite::BY_DIR || entry_docs.contains(d) {
+            continue;
+        }
+        let plan_it = !listed_only(*d) && served < CITING_SUMMARIES;
+        served += usize::from(plan_it);
+        for &j in chunks {
+            if plan_it {
+                add(&mut plan, *d, j, Tier::Cites);
+            } else {
+                rest.push((*d, j));
+            }
+        }
     }
 
     // 4. Dependencies, depth 1. A superseded, retired or rejected target is

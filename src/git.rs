@@ -202,21 +202,72 @@ impl Git {
         Ok(out)
     }
 
-    /// Returns the tracked files whose working-tree content differs from the
-    /// git index, in all of the tree.
-    pub fn unstaged(&self) -> Result<HashSet<String>, String> {
+    /// Returns the tracked files of the whole tree that differ from the git
+    /// index in the working tree: (modified, deleted). `git diff-files` does
+    /// not refresh the index, so it never writes it. A file with a new
+    /// modification time but the same content can be in `modified`.
+    pub fn diff_files(&self) -> Result<(HashSet<String>, HashSet<String>), String> {
         let out = self.run(&[
-            "diff",
-            "--name-only",
+            "diff-files",
+            "--name-status",
             "-z",
             "--no-renames",
             "--ignore-submodules=all",
         ])?;
-        Ok(out
-            .split(|b| *b == 0)
-            .filter(|r| !r.is_empty())
-            .map(|r| String::from_utf8_lossy(r).into_owned())
-            .collect())
+        let (mut modified, mut deleted) = (HashSet::new(), HashSet::new());
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        while let (Some(status), Some(path)) = (recs.next(), recs.next()) {
+            let path = String::from_utf8_lossy(path).into_owned();
+            if status.first() == Some(&b'D') {
+                deleted.insert(path);
+            } else {
+                modified.insert(path);
+            }
+        }
+        Ok((modified, deleted))
+    }
+
+    /// Reads the blobs of at most `max` bytes. A larger blob is not read. In
+    /// a partial clone, a missing blob is not fetched: it is not in the result.
+    pub fn read_small_blobs(
+        &self,
+        ids: &[String],
+        max: u64,
+    ) -> Result<HashMap<String, Vec<u8>>, String> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let input: String = ids.iter().map(|i| format!("{i}\n")).collect();
+        let mut child = self
+            .cmd(&["cat-file", "--batch-check"])
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("cannot run git cat-file: {e}"))?;
+        let mut stdin = child.stdin.take().unwrap();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        });
+        let mut text = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut text)
+            .map_err(|e| e.to_string())?;
+        let _ = writer.join();
+        let _ = child.wait();
+        let small: Vec<String> = text
+            .lines()
+            .filter_map(|l| {
+                let p: Vec<&str> = l.split(' ').collect();
+                (p.len() == 3 && p[1] == "blob" && p[2].parse::<u64>().is_ok_and(|n| n <= max))
+                    .then(|| p[0].to_string())
+            })
+            .collect();
+        self.read_blobs(&small)
     }
 
     /// Returns the words that occur as whole words in the working tree, outside
@@ -227,7 +278,18 @@ impl Git {
         if words.is_empty() {
             return Ok(found);
         }
-        let mut args: Vec<&str> = vec!["grep", "-I", "-w", "-F", "-o", "-h", "--no-color"];
+        // The flags override the grep settings of the user's git config.
+        let mut args: Vec<&str> = vec![
+            "grep",
+            "-I",
+            "-w",
+            "-F",
+            "-o",
+            "-h",
+            "--no-color",
+            "--no-line-number",
+            "--no-column",
+        ];
         if untracked {
             args.push("--untracked");
         }

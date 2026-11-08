@@ -9,7 +9,9 @@
 //! Then only the spans that can name a removed path or a removed identifier
 //! get a full resolution.
 
-use crate::cite::{Target, Tree, idents, source_text, strip_location, tokens};
+use crate::cite::{
+    MAX_SOURCE, Target, Tree, idents, read_source, source_text, strip_location, tokens,
+};
 use crate::diag::{Code, Diag};
 use crate::model::{Corpus, Doc, DocType, is_doc_path};
 use crate::repo::{Fatal, Repo, Snapshot};
@@ -42,12 +44,29 @@ pub fn check(
     let (base, base_snap) = base;
     let (head, head_snap) = head;
 
+    // The head snapshot has the changes of the working tree only under the
+    // document roots. Git lists the changed and deleted files of the whole
+    // tree.
+    let (modified, deleted) = if head_snap.worktree {
+        repo.git.diff_files().map_err(Fatal::Io)?
+    } else {
+        Default::default()
+    };
+    let without_deleted: Option<HashSet<String>> = (!deleted.is_empty()).then(|| {
+        head.files
+            .iter()
+            .filter(|f| !deleted.contains(*f))
+            .cloned()
+            .collect()
+    });
+    let head_files = without_deleted.as_ref().unwrap_or(&head.files);
+
     // Removed paths, and a rename target for a file with the same content.
     let gone_files: HashSet<&str> = base_snap
         .files
         .iter()
         .map(|e| e.path.as_str())
-        .filter(|p| !head.files.contains(*p))
+        .filter(|p| !head_files.contains(*p))
         .collect();
     let gone_dirs: HashSet<&str> = base
         .dirs
@@ -61,6 +80,7 @@ pub fn check(
         for e in &head_snap.files {
             if let Some(b) = &e.blob
                 && !base.files.contains(&e.path)
+                && head_files.contains(&e.path)
             {
                 by_blob.insert(b.as_str(), e.path.as_str());
             }
@@ -80,14 +100,7 @@ pub fn check(
         .collect();
 
     // Removed identifiers: they occur in the base text of a changed file and
-    // not in its head text. Documents are not code. The head snapshot knows
-    // the changes of the working tree only under the document roots, so git
-    // lists the other changed files.
-    let unstaged = if head_snap.worktree {
-        repo.git.unstaged().map_err(Fatal::Io)?
-    } else {
-        HashSet::new()
-    };
+    // not in its head text. Documents are not code.
     let changed: Vec<(&str, &str)> = base_snap
         .files
         .iter()
@@ -95,7 +108,11 @@ pub fn check(
         .filter_map(|e| {
             let base_blob = e.blob.as_deref()?;
             match head_snap.blob_of(&e.path) {
-                Some(h) if h.blob.as_deref() == Some(base_blob) && !unstaged.contains(&e.path) => {
+                Some(h)
+                    if h.blob.as_deref() == Some(base_blob)
+                        && !modified.contains(&e.path)
+                        && !deleted.contains(&e.path) =>
+                {
                     None
                 }
                 _ => Some((e.path.as_str(), base_blob)),
@@ -103,7 +120,10 @@ pub fn check(
         })
         .collect();
     let blob_ids: Vec<String> = changed.iter().map(|c| c.1.to_string()).collect();
-    let blobs = repo.git.read_blobs(&blob_ids).map_err(Fatal::Io)?;
+    let blobs = repo
+        .git
+        .read_small_blobs(&blob_ids, MAX_SOURCE)
+        .map_err(Fatal::Io)?;
     // For each removed identifier: the file, and the only new distinctive
     // identifier of that file, if there is exactly one (a rename candidate).
     let mut removed: HashMap<String, (String, Option<String>)> = HashMap::new();
@@ -112,11 +132,8 @@ pub fn check(
             continue;
         };
         let now = renamed.get(path).copied().unwrap_or(path);
-        let new = if head.files.contains(now) {
-            std::fs::read(repo.root.join(now))
-                .ok()
-                .and_then(|b| source_text(&b))
-                .unwrap_or_default()
+        let new = if head_files.contains(now) {
+            read_source(&repo.root, now).unwrap_or_default()
         } else {
             String::new()
         };
@@ -148,7 +165,7 @@ pub fn check(
     // removed identifier. A key is (document, target); the value is the
     // first line.
     let base_tree = Tree::new(&base.files, &base.dirs);
-    let head_tree = Tree::new(&head.files, &head.dirs);
+    let head_tree = Tree::new(head_files, &head.dirs);
     let mut gone_paths: BTreeMap<(u32, String), u32> = BTreeMap::new();
     let mut cited_idents: BTreeMap<(u32, String), u32> = BTreeMap::new();
     for (i, d) in head.docs.iter().enumerate() {
@@ -160,18 +177,20 @@ pub fn check(
         let words = d.parsed.path_words.iter().map(|t| (t, false));
         for (t, is_span) in spans.chain(words) {
             if gone_names.contains(last_segment(&t.text)) {
-                match base_tree.resolve(&d.path, &t.text) {
+                // A citation that still resolves in the head tree, for example
+                // a file name after a move, is not drift.
+                let gone = match base_tree.resolve(&d.path, &t.text) {
                     Some(Target::File(p)) if gone_files.contains(p.as_str()) => {
-                        if !base.by_path.contains_key(&p) {
-                            gone_paths.entry((i, p)).or_insert(t.line);
-                        }
-                        continue;
+                        (!base.by_path.contains_key(&p)).then_some(p)
                     }
-                    Some(Target::Dir(p)) if gone_dirs.contains(p.as_str()) => {
+                    Some(Target::Dir(p)) if gone_dirs.contains(p.as_str()) => Some(p),
+                    _ => None,
+                };
+                if let Some(p) = gone {
+                    if head_tree.resolve(&d.path, &t.text).is_none() {
                         gone_paths.entry((i, p)).or_insert(t.line);
-                        continue;
                     }
-                    _ => {}
+                    continue;
                 }
             }
             if !is_span || removed.is_empty() {

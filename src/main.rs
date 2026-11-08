@@ -236,21 +236,33 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // amendment of 2026-11-08). AGENTS.md gets it if the file exists, or if
     // there is no instruction file. CLAUDE.md gets it, unless it imports an
     // AGENTS.md that has the line.
+    // An older version wrote a `claude` block that imported AGENTS.md. If
+    // AGENTS.md has text of its own, the import stays as a plain line.
     let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).unwrap_or_default();
     let exists = |p: &str| repo.root.join(p).exists();
     let agents_target = exists(adapters::AGENTS) || !exists(adapters::CLAUDE);
-    let claude = read(adapters::CLAUDE);
+    let claude = adapters::migrate_claude(
+        &read(adapters::CLAUDE),
+        adapters::has_own_text(&read(adapters::AGENTS)),
+    );
     let imports = adapters::imports_agents(&claude);
     let claude_target = !(agents_target && imports);
     for (path, target) in [
         (adapters::AGENTS, agents_target),
         (adapters::CLAUDE, claude_target),
     ] {
-        if !target {
-            continue;
-        }
         let old = read(path);
-        let new = adapters::upsert_line(&old);
+        let current = if path == adapters::CLAUDE {
+            claude.clone()
+        } else {
+            old.clone()
+        };
+        // A file that the agent reads through an import keeps no second copy.
+        let new = if target {
+            adapters::upsert_line(&current)
+        } else {
+            adapters::remove_line(&current)
+        };
         if new != old {
             mv::write(&repo.root.join(path), &new)?;
             written.push(path.to_string());
@@ -519,7 +531,13 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     for t in &a.positional {
         match context::resolve_target(&c, t) {
             Some(r) => targets.push(r),
-            None if c.files.contains(t.trim_start_matches("./")) => {
+            // A tracked file, or a file of the working tree that git does
+            // not track yet: an agent asks for context before it adds a file.
+            None if c.files.contains(t.trim_start_matches("./"))
+                || (!t.starts_with('/')
+                    && !t.split('/').any(|s| s == "..")
+                    && repo.root.join(t).is_file()) =>
+            {
                 paths.push(t.trim_start_matches("./").to_string())
             }
             None => {

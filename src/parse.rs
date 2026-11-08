@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 5;
+pub const PARSER_VERSION: u32 = 6;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -117,6 +117,9 @@ pub fn parse(text: &str) -> ParsedDoc {
 
     let mut code_chars = 0usize;
     let mut in_code = false;
+    // The text of a link is not a code citation of its own: the link target
+    // is the citation.
+    let mut in_link = 0u32;
     let mut heading: Option<(u8, usize, String)> = None;
     let mut chunk_flags: Vec<u8> = vec![0];
     // Chunk starts: (level, heading, start offset in body).
@@ -189,11 +192,13 @@ pub fn parse(text: &str) -> ParsedDoc {
                     parent.first_list = Some(range.start);
                 }
             }
+            Event::End(TagEnd::Link) => in_link = in_link.saturating_sub(1),
             Event::Start(Tag::Link {
                 link_type,
                 dest_url,
                 ..
             }) => {
+                in_link += 1;
                 let kind = match link_type {
                     LinkType::Autolink | LinkType::Email => None,
                     LinkType::WikiLink { .. } => Some(RefKind::Wiki),
@@ -221,14 +226,16 @@ pub fn parse(text: &str) -> ParsedDoc {
                 *chunk_flags.last_mut().unwrap() |= word_flags(&t);
                 let line = lines.line(body_start + range.start);
                 scan_tokens(&t, line, &mut doc.tokens);
-                scan_path_words(&t, line, &mut doc.path_words);
+                if in_link == 0 {
+                    scan_path_words(&t, line, &mut doc.path_words);
+                }
             }
             Event::Code(t) => {
                 if let Some((_, _, h)) = heading.as_mut() {
                     h.push_str(&t);
                 }
                 let span = t.trim();
-                if is_code_candidate(span) {
+                if in_link == 0 && is_code_candidate(span) {
                     doc.code_spans.push(Token {
                         text: span.to_string(),
                         line: lines.line(body_start + range.start),
