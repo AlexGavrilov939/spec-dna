@@ -59,8 +59,7 @@ pub struct Split {
     pub sections: usize,
     /// The companion rows that moved with the requirements.
     pub companion_rows: usize,
-    /// A move into a reference document leaves a one-line pointer in place
-    /// of each moved section.
+    /// Each moved section leaves its heading with a one-line pointer.
     pub pointers: usize,
     /// Moved amendment sections of a decision whose text can change its
     /// outcome: candidates for a superseding decision. `mv` never writes one.
@@ -301,7 +300,10 @@ pub fn run(
                     retarget(l, &d.path, &to_path, &moved_anchors, &to_path, c)
                 });
                 sections.push(body);
-                let keep = if pointer {
+                // The heading stays with a one-line pointer, so that a reader of
+                // the old document (and a prose reference to the section) finds
+                // the moved text.
+                let keep = {
                     pointers += 1;
                     let heading_line = text[a..b].lines().next().unwrap_or("").trim_end();
                     format!(
@@ -310,8 +312,6 @@ pub fn run(
                         relative(parent(&d.path), &to_path),
                         chunks[first].anchor
                     )
-                } else {
-                    String::new()
                 };
                 cuts.entry(doc).or_default().push((a, b, keep));
             }

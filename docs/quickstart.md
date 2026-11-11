@@ -7,15 +7,15 @@ This page gives the steps from install to uninstall. You need git, and Rust 1.88
 Build the version that you want from its tag (phase 1 of [ADR 0003](adr/0003-distribution.md)):
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.3.0 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.3.1 spec-dna
 spec-dna --version
 ```
 
 In phase 1, a team often installs from a local or a private clone. Give its git URL to `--git`. A plain path does not work. Keep the package name `spec-dna` at the end, because the repository has other packages.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.3.0 spec-dna            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.3.0 spec-dna  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.3.1 spec-dna            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.3.1 spec-dna  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source, and the CI job below uses it.
