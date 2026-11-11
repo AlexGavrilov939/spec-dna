@@ -2,6 +2,29 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.3.0 - 2026-11-11
+
+Hygiene functions: split, history extraction, generated indexes and stubs for every document type, and lower cost of code tasks.
+
+### Added
+
+- `mv <doc-id>#<section>... <to>` moves sections out of a document of any type (guide, runbook, decision, incident, invariant, note, spec, contract, change, reference), into a new or an existing document of any type. `--type <type>` sets the type of a new destination. Each moved section keeps its old id as an alias (`<old-id>#<anchor>` in the `aliases` of the destination), and links follow it. The preservation check also requires that every moved section resolves at its old id.
+- A move into a `reference` document leaves a one-line pointer in place of each moved section, and the new document links back to its source.
+- Decisions: only the amendment sections and the history sections move, and only into a `reference` document. The frozen text stays. `mv` lists the moved amendments that state a requirement, a BCP 14 keyword or a status word as candidates for a superseding decision. It never writes a decision.
+- `companion-sections` per root and type: the sections that belong to the requirements, such as an acceptance map. When requirements move, their table rows and list items move with them. A row of a key that moves and a key that stays refuses the move, with that reason.
+- `history-sections` per root and type, and `spec-dna history <doc-id> [<to>]`: moves the history sections (and the amendment sections of a decision) into a reference document. In a decision, a history section is not frozen text.
+- `spec-dna index <dir> [--replace]`: writes a generated index of the documents of a directory (default `<dir>/README.md`), marked by `generated: spec-dna index h:<hash>`. With `--replace`, it replaces a hand-kept registry, and links to a section of the old file that names an entry go to the entry. SD610 (warning): a stale or hand-edited index.
+- `mv <from> <to> --stub` leaves a stub at the old path (front matter `moved-to`) for tools that read a file by its path. A stub has no id and no budget.
+- SD503 (error): a change edits `spec-dna.toml` together with documents or code. A configuration change must be a change of its own.
+- `[budgets] growth` (default 4,000 characters).
+- A new document that a split moved out of a document over its hard budget gives the warning SD704, not SD702: it holds no new text.
+
+### Changed
+
+- A document that was over its hard budget in the base and grew by at most `[budgets] growth` characters gives the warning SD703, not the error SD702. In the code tasks of a real corpus, the error made agents split or shorten unrelated documents.
+- The skill: do not split, move or shorten a document for a size warning; for a size error, put the new text into a new document or move whole sections with one `mv`; do not edit `spec-dna.toml`; run `check` once, or the project target that runs it. The fix texts of SD701 to SD704 say the same.
+- The ids of a root of type `reference` start with a namespace from the root path, so two reference roots never collide (D11-1). The id of 0.2 stays a fallback name when it is unique.
+
 ## 0.2.1 - 2026-11-08
 
 Fewer agent requests and a better detection of common layouts.

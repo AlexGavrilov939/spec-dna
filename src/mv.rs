@@ -16,6 +16,8 @@ pub struct Moved {
     pub files: Vec<String>,
     /// For a move of requirements or sections: the details of the split.
     pub split: Option<crate::split::Split>,
+    /// The path of the stub that `--stub` left at the old path.
+    pub stub: Option<String>,
 }
 
 /// Moves one document, or requirements and sections (`split.rs`). The last
@@ -26,6 +28,8 @@ pub fn run(
     c: &Corpus,
     base: Option<&Corpus>,
     args: &[String],
+    opts: &crate::split::Opts,
+    stub: bool,
 ) -> Result<Moved, Fatal> {
     let (sources, to) = args.split_at(args.len() - 1);
     let to = &to[0];
@@ -34,9 +38,14 @@ pub fn run(
     {
         let (d, _) = crate::context::resolve_target(c, from)
             .ok_or_else(|| Fatal::NotFound(format!("`{from}` names no document")))?;
-        return move_document(repo, config, c, d, to);
+        return move_document(repo, config, c, d, to, stub);
     }
-    let s = crate::split::run(repo, config, c, base, sources, to)?;
+    if stub {
+        return Err(Fatal::Usage(
+            "--stub is for the move of a whole document; a split keeps the source file".into(),
+        ));
+    }
+    let s = crate::split::run(repo, config, c, base, sources, to, opts)?;
     let one = s.moved.len() == 1 && s.sections == 0;
     let (kind, from, to) = if one {
         let key = s.moved[0].rsplit('#').next().unwrap_or("");
@@ -51,6 +60,7 @@ pub fn run(
         alias: s.aliases.join(", "),
         files: s.files.clone(),
         split: Some(s),
+        stub: None,
     })
 }
 
@@ -60,8 +70,15 @@ fn move_document(
     c: &Corpus,
     d: u32,
     to: &str,
+    stub: bool,
 ) -> Result<Moved, Fatal> {
     let doc = &c.docs[d as usize];
+    if doc.moved_to.is_some() {
+        return Err(Fatal::Usage(format!(
+            "`{}` is a stub; move the document that it points to",
+            doc.path
+        )));
+    }
     let root = &config.roots[doc.root];
     let to_path = if is_doc_path(to) {
         to.trim_start_matches("./").to_string()
@@ -141,11 +158,27 @@ fn move_document(
         std::fs::rename(repo.root.join(&doc.path), &dest).map_err(|e| Fatal::Io(e.to_string()))?;
     }
     write(&dest, &updated)?;
-    let mut files = vec![doc.path.clone(), to_path];
+    let mut files = vec![doc.path.clone(), to_path.clone()];
     for (p, t) in others {
         write(&repo.root.join(&p), &t)?;
         files.push(p);
     }
+    // A stub at the old path, for tools that read a file by its path.
+    let stub_path = if stub {
+        let title = doc.parsed.title.replace(['[', ']'], "");
+        let text = format!(
+            "---\nmoved-to: {new_id}\n---\n# {title}\n\nThis document moved to [{title}]({}).\n",
+            relative(old_dir, &to_path)
+        );
+        let at = repo.root.join(&doc.path);
+        if let Some(dir) = at.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
+        }
+        write(&at, &text)?;
+        Some(doc.path.clone())
+    } else {
+        None
+    };
     Ok(Moved {
         kind: "document",
         from: doc.id.clone(),
@@ -153,6 +186,7 @@ fn move_document(
         alias: add.join(", "),
         files,
         split: None,
+        stub: stub_path,
     })
 }
 

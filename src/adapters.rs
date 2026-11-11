@@ -31,8 +31,9 @@ const SKILL_BODY: &str = "# spec-dna
 5. Do not change the text of an accepted decision outside its amendment sections (default `## Amendments`).
     - Amend the decision if its outcome stays: add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
     - Supersede the decision if its outcome changes: write a new decision with `supersedes: [<old id>]`, and set the status of the old one to `superseded`.
-6. Before you commit, run `spec-dna check` once. Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix.
-7. Move a document or requirements only with `spec-dna mv <from>... <to>`, so that the old ids stay as aliases. Split a document only when `check` reports a size error for it (SD702; in the `strict` profile also SD701, SD703 and SD704): move several keys or sections into a new spec with one `mv`. A size warning needs no split, and a document that is split once needs no second split.";
+6. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
+7. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`, so that the old ids stay as aliases.
+8. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner; `check` reports it with other files as SD503.";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {

@@ -614,7 +614,10 @@ fn help_of_one_command_is_short() {
     for args in [&["mv", "--help"][..], &["help", "mv"], &["mv", "-h"]] {
         let (code, one) = run(args);
         assert_eq!(code, Some(0), "{args:?}");
-        assert!(one.starts_with("usage: spec-dna mv <from> <to>\n"), "{one}");
+        assert!(
+            one.starts_with("usage: spec-dna mv <from> <to> [--stub]\n"),
+            "{one}"
+        );
         assert!(!one.contains("transcript"), "{one}");
         assert!(one.len() * 4 < all.len(), "{} of {}", one.len(), all.len());
     }
@@ -627,7 +630,7 @@ fn hard_budget_is_an_error_for_new_and_growing_documents() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n[[roots]]\npath = \"lax\"\ndefault-type = \"spec\"\nstatus = \"active\"\nenforce-budgets = false\n[budgets.spec]\nsoft = 100\nhard = 200\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n[[roots]]\npath = \"lax\"\ndefault-type = \"spec\"\nstatus = \"active\"\nenforce-budgets = false\n[budgets]\ngrowth = 20\n[budgets.spec]\nsoft = 100\nhard = 200\n",
     );
     let words = |n: usize| "word ".repeat(n);
     r.write("docs/big.md", &format!("# Big\n\n{}\n", words(50)));
@@ -656,7 +659,18 @@ fn hard_budget_is_an_error_for_new_and_growing_documents() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("SD704"), "an old warning is not new: {out}");
-    // Net growth of a document over the hard budget is an error.
+    // Growth within the allowance (`[budgets] growth`, here 20 characters)
+    // is a warning: a task can add a short amendment without a split.
+    r.append("docs/big.md", "\nA bit more.\n");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("docs/big.md:1: warning SD703 budget-grew: 271 characters, over the hard budget of 200 (grew by 13 characters, at most 20 in one change)"),
+        "{out}"
+    );
+    git(&r.dir, &["checkout", "-q", "--", "docs/big.md"]);
+    // Net growth of a document over the hard budget beyond the allowance is
+    // an error.
     r.append("docs/big.md", &format!("\n{}\n", words(10)));
     r.append("lax/wide.md", &format!("\n{}\n", words(10)));
     let (code, out, _) = r.run(&["check"]);
@@ -1546,7 +1560,7 @@ fn mv_moves_sections_and_rewrites_links_but_not_decision_text() {
     assert!(out.contains("\"kind\":\"split\""), "{out}");
     assert!(out.contains("\"requirements\":3,\"sections\":2"), "{out}");
     assert!(
-        out.contains("\"preserved\":{\"hashes\":6,\"ids\":6,\"decisions\":1}"),
+        out.contains("\"preserved\":{\"hashes\":6,\"ids\":9,\"decisions\":1}"),
         "{out}"
     );
     let policy = r.read("docs/policy.md");
@@ -1859,6 +1873,9 @@ fn check_lists_errors_and_drift_before_the_prose_lint() {
         "spec-dna.toml",
         &format!("{}\n[rules]\nlint = \"warning\"\n", r.read("spec-dna.toml")),
     );
+    // A configuration change is a change of its own (SD503).
+    git(&r.dir, &["add", "spec-dna.toml"]);
+    git(&r.dir, &["commit", "-q", "-m", "lint on"]);
     r.write(
         "src/library/loans.py",
         &LOANS_PY.replace("MAX_RENEWALS = 1\n", ""),
@@ -2518,4 +2535,412 @@ fn review_fixes_on_the_command_line() {
     );
     assert!(out.contains("dry run: nothing written"), "{out}");
     assert_eq!(r.read(".github/workflows/spec-dna.yml"), "name: Own\n");
+}
+
+/// A project for the hygiene functions of 0.3.0: a mixed root with history
+/// and companion sections, a decision root, two reference roots and a
+/// registry of incidents.
+fn hygiene_project() -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\nhistory-sections = { guide = [\"Iteration log\"] }\ncompanion-sections = { spec = [\"Acceptance map\"] }\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlegacy-ids = [\"ADR-{n}\"]\nhistory-sections = { decision = [\"Review rounds\"] }\n[[roots]]\npath = \"refs/plans\"\ntype = \"reference\"\n[[roots]]\npath = \"refs/briefs\"\ntype = \"reference\"\n[[roots]]\npath = \"registry\"\ntype = \"incident\"\nlegacy-ids = [\"INC-{n}\"]\n",
+    );
+    r.write(
+        "docs/billing.md",
+        "# Billing\n\n## Charges\n\n- **R-1**: The desk SHALL charge 3 percent.\n- **R-2**: The desk SHALL send a receipt.\n\n## Refunds\n\n- **R-3**: The desk SHALL refund a payment within 5 days.\n\n## 4. Acceptance map\n\n| Key | Test |\n| --- | --- |\n| R-1 | test_charge |\n| R-2 | test_receipt |\n| R-3 | test_refund |\n",
+    );
+    r.write(
+        "docs/guides/desk.md",
+        "---\ntype: guide\nstatus: active\n---\n# Desk guide\n\n## Opening\n\nOpen the desk at 9.\n\n## Closing\n\nClose the desk at 5. See [refunds](../billing.md#refunds).\n\n### Cash count\n\nCount the cash.\n\n## Iteration log\n\n### Round 1\n\nWe tried 8.\n\n### Round 2\n\nWe tried 9.\n",
+    );
+    r.write(
+        "docs/notes/links.md",
+        "---\ntype: note\n---\n# Links\n\nSee [the count](../guides/desk.md#cash-count), [[guides/desk#closing]] and [the slow queue](../../registry/README.md#inc-2-slow-queue).\n",
+    );
+    r.write(
+        "adr/ADR-3-cash.md",
+        "---\nstatus: accepted\n---\n# Cash only\n\n## Decision Outcome\n\nThe desk takes cash only.\n\n## Review rounds\n\nRound 1 asked for cards.\n\n## Amendments\n\n### Amendment 1: coins\n\nThe desk SHALL accept coins too.\n\n### Amendment 2: wording\n\nA typo fix.\n",
+    );
+    r.write("refs/plans/rollout.md", "# Rollout plan\n\nA plan.\n");
+    r.write("refs/plans/launch.md", "# Launch plan\n\nA plan.\n");
+    r.write(
+        "refs/briefs/rollout/README.md",
+        "# Rollout brief\n\nA brief.\n",
+    );
+    for (n, title) in [(1, "Outage"), (2, "Slow queue")] {
+        r.write(
+            &format!("registry/INC-{n}.md"),
+            &format!(
+                "# {title}\n\n## Summary\n\nIt broke. See [[ADR-3]].\n\n## Root cause\n\nA bug.\n"
+            ),
+        );
+    }
+    r.write(
+        "registry/README.md",
+        "# Incidents\n\nThe register.\n\n## INC-1 Outage\n\nA long story.\n\n## INC-2 Slow queue\n\nAnother long story. See [[ADR-3]].\n\n## Summary\n\nTwo incidents.\n\n## Root cause\n\nMany.\n",
+    );
+    r.commit("hygiene");
+    r
+}
+
+#[test]
+fn mv_splits_sections_of_every_type_with_section_aliases() {
+    let r = hygiene_project();
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{err}{out}");
+    // A guide: the sections go to a new guide, and every old section id
+    // resolves through an alias.
+    let (code, out, err) = r.run(&["mv", "guides/desk#closing", "guides/closing"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.starts_with(
+            "moved 1 section to guides/closing (docs/guides/closing.md, guide, new document)"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("2 section ids stay as aliases"), "{out}");
+    let closing = r.read("docs/guides/closing.md");
+    assert!(
+        closing.starts_with("---\ntype: guide\nstatus: active\naliases:\n  - guides/desk#closing\n  - guides/desk#cash-count\n---\n# Closing\n"),
+        "{closing}"
+    );
+    assert!(
+        closing.contains("See [refunds](../billing.md#refunds)."),
+        "{closing}"
+    );
+    assert!(!r.read("docs/guides/desk.md").contains("Cash count"));
+    assert!(
+        r.read("docs/notes/links.md")
+            .contains("[the count](../guides/closing.md#cash-count), [[guides/desk#closing]]"),
+        "a link follows the section; an id reference resolves by the alias"
+    );
+    let (code, out, _) = r.run(&["show", "guides/desk#cash-count"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("Count the cash."), "{out}");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    // A document split out of a document over its hard budget holds no new
+    // text: a warning (SD704), not a new-document error.
+    git(&r.dir, &["checkout", "-q", "--", "."]);
+    let _ = fs::remove_file(r.dir.join("docs/guides/closing.md"));
+    r.append(
+        "spec-dna.toml",
+        "\n[budgets.guide]\nsoft = 50\nhard = 100\n",
+    );
+    git(&r.dir, &["commit", "-qam", "small guides"]);
+    let (code, out, err) = r.run(&["mv", "guides/desk#closing", "guides/closing"]);
+    assert_eq!(code, 0, "{err}{out}");
+    git(&r.dir, &["add", "-A"]);
+    let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("docs/guides/closing.md:1: warning SD704 budget-hard-kept: 115 characters, over the hard budget of 100 (split out of `guides/desk`, which was over the hard budget in the base)"),
+        "{out}"
+    );
+    git(&r.dir, &["commit", "-qm", "split"]);
+    // A guide section into an existing reference document: a pointer stays.
+    let (code, out, err) = r.run(&["mv", "guides/desk#opening", "plans/rollout"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("left a one-line pointer"), "{out}");
+    assert!(
+        r.read("docs/guides/desk.md").contains(
+            "## Opening\n\nThis section moved to [Rollout](../../refs/plans/rollout.md#opening).\n"
+        ),
+        "{}",
+        r.read("docs/guides/desk.md")
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    // Requirements do not go into a document without requirements.
+    let (code, _, err) = r.run(&["mv", "billing#charges", "guides/closing"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("requirements live in a spec, contract or invariant"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
+    let r = hygiene_project();
+    let before = r.read("adr/ADR-3-cash.md");
+    let (code, _, err) = r.run(&["mv", "ADR-3#decision-outcome", "docs/history/adr-3.md"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("is frozen text of the decision"), "{err}");
+    let (code, _, err) = r.run(&["mv", "ADR-3#amendments", "billing"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("moves only into a `reference` document"),
+        "{err}"
+    );
+    assert_eq!(
+        r.read("adr/ADR-3-cash.md"),
+        before,
+        "a refusal changes nothing"
+    );
+    let (code, out, err) = r.run(&[
+        "mv",
+        "ADR-3#amendments",
+        "ADR-3#review-rounds",
+        "docs/history/adr-3.md",
+    ]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("candidates for a superseding decision (the moved amendments state a requirement, a BCP 14 keyword or a status word; spec-dna writes no decision): ADR-3-cash#amendment-1-coins"),
+        "{out}"
+    );
+    let adr = r.read("adr/ADR-3-cash.md");
+    assert!(
+        adr.contains("## Decision Outcome\n\nThe desk takes cash only.\n"),
+        "{adr}"
+    );
+    assert!(
+        adr.contains(
+            "## Amendments\n\nThis section moved to [Adr 3](../docs/history/adr-3.md#amendments).\n"
+        ),
+        "{adr}"
+    );
+    let history = r.read("docs/history/adr-3.md");
+    assert!(
+        history.starts_with("---\ntype: reference\naliases:\n"),
+        "{history}"
+    );
+    assert!(
+        history.contains("The history of [Cash only](../../adr/ADR-3-cash.md)."),
+        "{history}"
+    );
+    assert!(
+        history.contains("### Amendment 1: coins\n\nThe desk SHALL accept coins too."),
+        "{history}"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "the frozen text did not change: {out}");
+    assert!(!out.contains("SD405"), "{out}");
+    let (code, out, _) = r.run(&["show", "ADR-3-cash#amendment-2-wording"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn companion_rows_move_with_their_requirements() {
+    let r = hygiene_project();
+    let (code, out, err) = r.run(&["mv", "billing#charges", "payments"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("moved 2 companion rows with the requirements"),
+        "{out}"
+    );
+    let payments = r.read("docs/payments.md");
+    assert!(
+        payments.contains("## 4. Acceptance map\n\n| Key | Test |\n| --- | --- |\n| R-1 | test_charge |\n| R-2 | test_receipt |\n"),
+        "{payments}"
+    );
+    let billing = r.read("docs/billing.md");
+    assert!(
+        billing.contains("| Key | Test |\n| --- | --- |\n| R-3 | test_refund |\n")
+            && !billing.contains("R-1"),
+        "{billing}"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-q", "-m", "split"]);
+    // A row of a key that moves and a key that stays cannot move.
+    r.write(
+        "docs/billing.md",
+        &billing.replace("| R-3 | test_refund |", "| R-3, R-9 | test_refund |"),
+    );
+    r.append(
+        "docs/billing.md",
+        "\n## Extra\n\n- **R-9**: The desk SHALL close at 5.\n",
+    );
+    let (code, _, err) = r.run(&["mv", "billing#refunds", "refunds"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("names keys that move (R-3) and keys that stay (R-9)"),
+        "{err}"
+    );
+    assert!(!r.dir.join("docs/refunds.md").exists());
+    // The rows join the table of an existing companion section.
+    git(&r.dir, &["checkout", "-q", "--", "."]);
+    let (code, out, err) = r.run(&["mv", "billing#refunds", "payments"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        r.read("docs/payments.md")
+            .contains("| R-2 | test_receipt |\n| R-3 | test_refund |\n"),
+        "{}",
+        r.read("docs/payments.md")
+    );
+}
+
+#[test]
+fn history_moves_the_configured_sections_into_a_reference_document() {
+    let r = hygiene_project();
+    let (code, out, err) = r.run(&["history", "guides/desk"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let h = r.read("docs/guides/desk-history.md");
+    assert!(h.starts_with("---\ntype: reference\naliases:\n"), "{h}");
+    assert!(h.contains("The history of [Desk guide](desk.md)."), "{h}");
+    assert!(
+        h.contains("## Iteration log\n\n### Round 1\n\nWe tried 8."),
+        "{h}"
+    );
+    let desk = r.read("docs/guides/desk.md");
+    assert!(
+        desk.ends_with("## Iteration log\n\nThis section moved to [Desk history](desk-history.md#iteration-log).\n"),
+        "{desk}"
+    );
+    // A decision root holds decisions only: name the destination.
+    let (code, _, err) = r.run(&["history", "ADR-3"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("give the path of the reference document"),
+        "{err}"
+    );
+    let (code, out, err) = r.run(&["history", "ADR-3", "docs/history/adr-3.md"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.starts_with("moved 2 sections"), "{out}");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, _, err) = r.run(&["history", "billing"]);
+    assert_eq!(code, 5, "{err}");
+}
+
+#[test]
+fn a_generated_index_replaces_a_hand_kept_registry() {
+    let r = hygiene_project();
+    let (code, _, err) = r.run(&["index", "registry"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("pass --replace"), "{err}");
+    let (code, out, err) = r.run(&["index", "registry", "--replace"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("a generated index of 2 entries; links to its old sections now go to the entries in 1 documents"), "{out}");
+    let index = r.read("registry/README.md");
+    assert!(index.contains("generated: spec-dna index h:"), "{index}");
+    assert!(
+        index
+            .contains("| [INC-1](INC-1.md) | Outage |  |\n| [INC-2](INC-2.md) | Slow queue |  |\n"),
+        "{index}"
+    );
+    assert!(
+        r.read("docs/notes/links.md")
+            .contains("[the slow queue](../../registry/INC-2.md)")
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD610"), "{out}");
+    // A new entry makes the index stale.
+    r.write(
+        "registry/INC-10.md",
+        "# Lost keys\n\n## Summary\n\nX. See [[ADR-3]].\n\n## Root cause\n\nY.\n",
+    );
+    let (_, out, _) = r.run(&["check"]);
+    assert!(out.contains("warning SD610 index-stale"), "{out}");
+    let (code, out, err) = r.run(&["index", "registry"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(r.read("registry/README.md").contains(
+        "| [INC-2](INC-2.md) | Slow queue |  |\n| [INC-10](INC-10.md) | Lost keys |  |\n"
+    ));
+    let (_, out, _) = r.run(&["check"]);
+    assert!(!out.contains("SD610"), "{out}");
+    // A hand edit of the rows makes it stale too.
+    r.write(
+        "registry/README.md",
+        &r.read("registry/README.md")
+            .replace("| [INC-1](INC-1.md) | Outage |  |\n", ""),
+    );
+    let (_, out, _) = r.run(&["check"]);
+    assert!(out.contains("edited by hand"), "{out}");
+}
+
+#[test]
+fn mv_leaves_a_stub_for_tools_that_read_by_path() {
+    let r = hygiene_project();
+    let (code, out, err) = r.run(&["mv", "guides/desk", "guides/front-desk", "--stub"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("left a stub at docs/guides/desk.md"), "{out}");
+    assert_eq!(
+        r.read("docs/guides/desk.md"),
+        "---\nmoved-to: guides/front-desk\n---\n# Desk guide\n\nThis document moved to [Desk guide](front-desk.md).\n"
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "no duplicate id, no type rule for a stub: {out}");
+    let (code, out, _) = r.run(&["show", "guides/desk#cash-count"]);
+    assert_eq!(code, 0, "the old id names the moved document: {out}");
+    r.write(
+        "docs/guides/gone.md",
+        "---\nmoved-to: guides/nowhere\n---\n# Gone\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error SD101 unresolved-reference: `guides/nowhere` names no document"),
+        "{out}"
+    );
+    let (code, _, err) = r.run(&["mv", "billing#charges", "x", "--stub"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn a_configuration_change_must_be_its_own_change() {
+    let r = hygiene_project();
+    r.append("spec-dna.toml", "\n[context]\nbudget = 9000\n");
+    let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
+    assert_eq!(code, 0, "the configuration alone: {out}");
+    r.append("docs/billing.md", "\nMore text.\n");
+    let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("spec-dna.toml:1: error SD503 config-not-alone: the change edits spec-dna.toml and 1 other file (first: `docs/billing.md`)"),
+        "{out}"
+    );
+    git(&r.dir, &["checkout", "-q", "--", "docs/billing.md"]);
+    r.write("src/new.py", "x = 1\n");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "an untracked file counts without --base: {out}");
+    // The adoption: a new spec-dna.toml with the adapters is not checked.
+    let fresh = Repo::empty();
+    fresh.write("docs/a.md", "# A\n");
+    fresh.commit("docs");
+    fresh.run(&["init", "--non-interactive"]);
+    let (code, out, _) = fresh.run(&["check", "--base", "HEAD"]);
+    assert!(!out.contains("SD503"), "{code} {out}");
+}
+
+#[test]
+fn ids_of_reference_roots_have_the_root_as_namespace() {
+    let r = hygiene_project();
+    let (code, out, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(
+        code, 0,
+        "no SD201 for the same slug in 2 reference roots: {out}"
+    );
+    assert!(
+        out.contains("\"id\":\"plans/rollout\"") && out.contains("\"id\":\"briefs/rollout\""),
+        "{out}"
+    );
+    let (code, out, _) = r.run(&["show", "plans/launch"]);
+    assert_eq!(code, 0, "{out}");
+    // The id of 0.2 stays a fallback name if it names one document.
+    let (code, out, _) = r.run(&["show", "launch"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, _, _) = r.run(&["show", "rollout"]);
+    assert_eq!(code, 5, "two documents had the id `rollout`");
+}
+
+#[test]
+fn a_diagnostic_that_moves_with_a_section_is_not_new() {
+    let r = hygiene_project();
+    r.write(
+        "docs/guides/desk.md",
+        &r.read("docs/guides/desk.md")
+            .replace("Count the cash.", "Count the cash. See [[nowhere/doc]]."),
+    );
+    r.commit("an old broken reference");
+    let (code, out, err) = r.run(&["mv", "guides/desk#closing", "guides/closing"]);
+    assert_eq!(code, 0, "{err}{out}");
+    git(&r.dir, &["add", "-A"]);
+    let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
+    assert_eq!(code, 0, "the error was in the base: {out}");
+    assert!(out.contains("0 new errors"), "{out}");
 }

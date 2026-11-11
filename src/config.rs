@@ -33,7 +33,13 @@ pub struct Config {
     pub evidence_tests: Vec<String>,
     /// The document types of the project. Empty: every type.
     pub types: Vec<DocType>,
+    /// The characters that a document over its hard budget in the base can
+    /// grow in one change with a warning (SD703) instead of an error (SD702).
+    pub growth: u32,
 }
+
+/// The default growth allowance: about one amendment or a few registry rows.
+pub const DEFAULT_GROWTH: u32 = 4_000;
 
 /// The public repository of spec-dna: the install source by default.
 pub const DEFAULT_INSTALL_SOURCE: &str = "https://github.com/AlexGavrilov939/spec-dna";
@@ -65,6 +71,19 @@ pub struct Root {
     pub profile: Option<Profile>,
     /// Severity overrides for this root. They replace `[rules]`.
     pub rules: Rules,
+    /// For each type, the names of its history sections (iteration logs,
+    /// review rounds, superseded notes). They match as amendment sections do.
+    /// `spec-dna history` moves them into a `reference` document. In a
+    /// decision, they are not frozen text.
+    pub history_sections: [Vec<String>; DocType::COUNT],
+    /// For each type, the names of the sections that belong to the
+    /// requirements, such as an acceptance map. When requirements move, their
+    /// rows move with them.
+    pub companion_sections: [Vec<String>; DocType::COUNT],
+    /// For a root of type `reference`: the namespace of its ids, a suffix of
+    /// its path that no other reference root has. Thus the ids of two
+    /// reference roots never collide.
+    pub namespace: Option<String>,
 }
 
 /// The profiles (docs/profiles.md). A profile gives the default severity of
@@ -357,10 +376,13 @@ impl Config {
                 return Err(format!("root `{}` is listed twice", a.path));
             }
         }
+        set_namespaces(&mut roots);
         let mut budgets = DEFAULT_BUDGETS;
+        let mut growth = DEFAULT_GROWTH;
         if let Some(v) = t.take("budgets") {
             let tbl = v.as_table().ok_or("`budgets` must be a table")?;
             let mut b = Fields::new(tbl, "budgets.");
+            growth = b.opt_u32("growth")?.unwrap_or(growth);
             for ty in DocType::ALL {
                 if let Some(v) = b.take(ty.name()) {
                     let tbl = v
@@ -474,6 +496,7 @@ impl Config {
             rules,
             evidence_tests,
             types,
+            growth,
         })
     }
 
@@ -679,6 +702,24 @@ impl Root {
                 &mut amendment_sections,
             )?;
         }
+        let mut history_sections: [Vec<String>; DocType::COUNT] = Default::default();
+        if let Some(v) = f.take("history-sections") {
+            headings_per_type(
+                v,
+                &format!("{prefix}history-sections"),
+                &types,
+                &mut history_sections,
+            )?;
+        }
+        let mut companion_sections: [Vec<String>; DocType::COUNT] = Default::default();
+        if let Some(v) = f.take("companion-sections") {
+            headings_per_type(
+                v,
+                &format!("{prefix}companion-sections"),
+                &types,
+                &mut companion_sections,
+            )?;
+        }
         let enforce_budgets = match f.take("enforce-budgets") {
             None => true,
             Some(Value::Boolean(b)) => *b,
@@ -719,6 +760,9 @@ impl Root {
             enforce_budgets,
             profile,
             rules,
+            history_sections,
+            companion_sections,
+            namespace: None,
         })
     }
 
@@ -729,6 +773,31 @@ impl Root {
         } else {
             &path[self.path.len() + 1..]
         }
+    }
+}
+
+/// Gives each root of type `reference` a namespace: the shortest suffix of
+/// its path (whole segments) that no other reference root has. A reference
+/// root at the repository root has no namespace.
+fn set_namespaces(roots: &mut [Root]) {
+    let paths: Vec<Option<Vec<String>>> = roots
+        .iter()
+        .map(|r| {
+            (r.single_type == Some(DocType::Reference) && !r.path.is_empty())
+                .then(|| r.path.split('/').map(str::to_string).collect())
+        })
+        .collect();
+    let suffix = |segs: &[String], n: usize| segs[segs.len().saturating_sub(n)..].join("/");
+    for (i, own) in paths.iter().enumerate() {
+        let Some(own) = own else { continue };
+        let n = (1..=own.len())
+            .find(|&n| {
+                paths.iter().enumerate().all(|(j, o)| {
+                    j == i || o.as_ref().is_none_or(|o| suffix(o, n) != suffix(own, n))
+                })
+            })
+            .unwrap_or(own.len());
+        roots[i].namespace = Some(suffix(own, n));
     }
 }
 

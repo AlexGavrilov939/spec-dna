@@ -23,6 +23,7 @@ mod model;
 mod mv;
 mod parse;
 mod rank;
+mod registry;
 mod repo;
 mod split;
 mod templates;
@@ -78,10 +79,29 @@ each requirement.",
     ),
     (
         "mv",
-        "mv <from> <to>\nmv <doc-id>#<key or section>... <spec-id>",
-        "Moves a document. Or moves requirements and whole sections to an
-existing or a new spec, with an alias for every moved key of HEAD. A
-preservation check runs first; if it fails, nothing changes.",
+        "mv <from> <to> [--stub]\nmv <doc-id>#<key or section>... <doc-id or path> [--type <type>]",
+        "Moves a document; --stub leaves a stub at the old path for tools that
+read by path. Or moves requirements and whole sections of a document of
+any type to an existing or a new document of any type. Every moved key and
+section of HEAD keeps its old id as an alias, and the companion rows of the
+moved requirements move with them. A move into a reference document leaves
+a one-line pointer. A decision keeps its frozen text: only its amendment
+and history sections move, into a reference document. A preservation
+check runs first; if it fails, nothing changes.",
+    ),
+    (
+        "history",
+        "history <doc-id> [<reference doc id or path>]",
+        "Moves the history sections of a document (`history-sections`, and the
+amendment sections of a decision) into a reference document, with a
+pointer in place of each section and a backlink.",
+    ),
+    (
+        "index",
+        "index <dir or file> [--replace]",
+        "Writes a generated index of the documents under a directory (default
+file: <dir>/README.md). --replace replaces a hand-kept file. `check`
+reports a stale index (SD610).",
     ),
     (
         "transcript",
@@ -156,6 +176,9 @@ struct Args {
     answers: Option<String>,
     reconfigure: bool,
     dry_run: bool,
+    ty: Option<String>,
+    stub: bool,
+    replace: bool,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -179,6 +202,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         answers: None,
         reconfigure: false,
         dry_run: false,
+        ty: None,
+        stub: false,
+        replace: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -203,6 +229,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--non-interactive" => a.non_interactive = true,
             "--reconfigure" => a.reconfigure = true,
             "--dry-run" => a.dry_run = true,
+            "--stub" => a.stub = true,
+            "--replace" => a.replace = true,
+            "--type" => a.ty = Some(value("--type")?),
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
@@ -281,6 +310,8 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "show" => show(&Repo::discover(&cwd)?, &a),
         "new" => new_doc(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
+        "history" => history(&Repo::discover(&cwd)?, &a),
+        "index" => index(&Repo::discover(&cwd)?, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -469,6 +500,12 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.head.push(d);
         outcome.new.push(is_new);
     }
+    if let Some(c) = &base_commit
+        && let Some(d) = config_not_alone(repo, &cfg, c, a.base.is_none())?
+    {
+        outcome.head.push(d);
+        outcome.new.push(true);
+    }
 
     let count = |sev: Severity, only_new: bool| {
         outcome
@@ -552,6 +589,51 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         println!("spec-dna check: {} documents; {counts}", head.docs.len());
     }
     Ok(if failed { 1 } else { 0 })
+}
+
+/// SD503: a change that edits `spec-dna.toml` together with documents or
+/// code. A configuration change must be a change of its own. The files that
+/// `init` writes with it (the adapters and files named `spec-dna*`) do not
+/// count, and a new `spec-dna.toml` (the adoption) is not checked.
+fn config_not_alone(
+    repo: &Repo,
+    cfg: &config::Config,
+    base: &str,
+    untracked: bool,
+) -> Result<Option<diag::Diag>, Fatal> {
+    let changed = repo.git.changed_since(base, untracked).map_err(Fatal::Io)?;
+    let Some((_, added)) = changed.iter().find(|(p, _)| p == config::FILE_NAME) else {
+        return Ok(None);
+    };
+    if *added {
+        return Ok(None);
+    }
+    let others: Vec<&str> = changed
+        .iter()
+        .map(|(p, _)| p.as_str())
+        .filter(|p| {
+            *p != config::FILE_NAME
+                && !adapters::PATHS.contains(p)
+                && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
+        })
+        .collect();
+    let Some(first) = others.first() else {
+        return Ok(None);
+    };
+    let d = diag::Diag {
+        path: config::FILE_NAME.to_string(),
+        line: 1,
+        code: diag::Code::ConfigNotAlone,
+        doc: String::new(),
+        target: String::new(),
+        message: format!(
+            "the change edits spec-dna.toml and {} other {} (first: `{first}`); a configuration change must be a change of its own",
+            others.len(),
+            if others.len() == 1 { "file" } else { "files" }
+        ),
+        severity: diag::Code::ConfigNotAlone.severity(),
+    };
+    Ok(check::apply_severity(cfg, vec![d]).pop())
 }
 
 /// The lines of the human output of `check`: the errors, the drift
@@ -796,6 +878,19 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     Ok(0)
 }
 
+fn split_opts(a: &Args) -> Result<split::Opts, Fatal> {
+    let ty = match &a.ty {
+        None => None,
+        Some(name) => Some(model::DocType::from_name(name).ok_or_else(|| {
+            Fatal::Usage(format!(
+                "unknown type `{name}`; use one of {}",
+                model::DocType::names()
+            ))
+        })?),
+    };
+    Ok(split::Opts { ty })
+}
+
 fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 2, usize::MAX)?;
     let (cfg, c) = load_head(repo, a)?;
@@ -806,21 +901,240 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     } else {
         None
     };
-    let m = mv::run(repo, &cfg, &c, base.as_ref(), &a.positional)?;
+    let m = mv::run(
+        repo,
+        &cfg,
+        &c,
+        base.as_ref(),
+        &a.positional,
+        &split_opts(a)?,
+        a.stub,
+    )?;
+    report_move(&m, a.json);
+    Ok(0)
+}
+
+/// Moves the history sections of a document into a reference document.
+fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 2)?;
+    let (cfg, c) = load_head(repo, a)?;
+    let t = &a.positional[0];
+    let (di, frag) = context::resolve_target(&c, t)
+        .ok_or_else(|| Fatal::NotFound(format!("`{t}` names no document")))?;
+    if frag.is_some() {
+        return Err(Fatal::Usage(
+            "`history` takes a document id, without `#`".into(),
+        ));
+    }
+    let d = &c.docs[di as usize];
+    let mut set: Vec<usize> = d.history.clone();
+    if d.ty == model::DocType::Decision {
+        set.extend(&d.amendments);
+    }
+    // The top sections: a history section inside another one moves with it.
+    let mut tops: Vec<String> = Vec::new();
+    let mut open: Option<u8> = None;
+    for (i, ch) in d.parsed.chunks.iter().enumerate() {
+        if open.is_some_and(|l| ch.level <= l) {
+            open = None;
+        }
+        if open.is_none() && set.contains(&i) {
+            open = Some(ch.level);
+            tops.push(format!("{}#{}", d.id, ch.anchor));
+        }
+    }
+    if tops.is_empty() {
+        return Err(Fatal::NotFound(format!(
+            "`{}` has no history sections; name them in `history-sections` of its root in spec-dna.toml",
+            d.id
+        )));
+    }
+    let dest = match a.positional.get(1) {
+        Some(x) => x.clone(),
+        None => {
+            let root = &cfg.roots[d.root];
+            if root
+                .single_type
+                .is_some_and(|t| t != model::DocType::Reference)
+            {
+                return Err(Fatal::Usage(format!(
+                    "root `{}` holds only `{}` documents; give the path of the reference document under another root, such as `<dir>/{}-history.md`",
+                    root.path,
+                    d.ty.name(),
+                    d.id.rsplit('/').next().unwrap_or(&d.id)
+                )));
+            }
+            let (dir, file) = d.path.rsplit_once('/').unwrap_or(("", &d.path));
+            let stem = file.rsplit_once('.').map_or(file, |x| x.0);
+            let name = if stem.eq_ignore_ascii_case("readme") || stem.eq_ignore_ascii_case("index")
+            {
+                "history.md".to_string()
+            } else {
+                format!("{stem}-history.md")
+            };
+            if dir.is_empty() {
+                name
+            } else {
+                format!("{dir}/{name}")
+            }
+        }
+    };
+    let base = load_base(repo, &cfg, a)?;
+    let mut args = tops;
+    args.push(dest);
+    let opts = split::Opts {
+        ty: Some(model::DocType::Reference),
+    };
+    let m = mv::run(repo, &cfg, &c, base.as_ref(), &args, &opts, false)?;
+    report_move(&m, a.json);
+    Ok(0)
+}
+
+/// Writes a generated index of the documents under a directory.
+fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    let (cfg, c) = load_head(repo, a)?;
+    let t = a.positional[0]
+        .trim_start_matches("./")
+        .trim_end_matches('/');
+    let path = if model::is_doc_path(t) {
+        t.to_string()
+    } else if t.is_empty() || t == "." {
+        "README.md".to_string()
+    } else {
+        ["README.md", "index.md"]
+            .iter()
+            .map(|n| format!("{t}/{n}"))
+            .find(|p| c.by_path.contains_key(p))
+            .unwrap_or_else(|| format!("{t}/README.md"))
+    };
+    let root = cfg
+        .root_of(&path)
+        .filter(|r| !cfg.is_excluded(*r, &path))
+        .ok_or_else(|| {
+            Fatal::Usage(format!(
+                "`{path}` is not under a document root of spec-dna.toml"
+            ))
+        })?;
+    let old = c.by_path.get(&path).map(|&i| &c.docs[i as usize]);
+    if let Some(o) = old {
+        if o.generated.is_none() && !a.replace {
+            return Err(Fatal::Usage(format!(
+                "`{path}` is a hand-kept file; pass --replace to replace it with a generated index (its text is lost)"
+            )));
+        }
+        if !o.reqs.is_empty() {
+            return Err(Fatal::Refused(format!(
+                "`{path}` holds {} requirements; move them first (`spec-dna mv`)",
+                o.reqs.len()
+            )));
+        }
+    }
+    let existing = old.map(|o| mv::read(repo, &o.path)).transpose()?;
+    let id = model::root_doc_id(&cfg.roots[root], &path);
+    let entries = registry::entries_for(&c, &path, &id);
+    if entries.is_empty() {
+        return Err(Fatal::NotFound(format!(
+            "no documents under `{}` for the index",
+            mv::parent(&path)
+        )));
+    }
+    let title = old
+        .map(|o| o.parsed.title.clone())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| templates::title_of(mv::parent(&path)));
+    let text = registry::render(&path, &entries, existing.as_deref(), &title);
+    let mut changed = std::collections::HashMap::from([(path.clone(), text)]);
+    // Links to a section of the old file that names an entry go to the entry.
+    let mut rewritten = 0;
+    if old.is_some() {
+        for o in c.docs.iter().filter(|o| o.path != path) {
+            let hits = o.parsed.refs.iter().any(|r| {
+                matches!(c.resolve_link(&o.path, &r.target), model::LinkRes::File(ref p, _, Some(_)) if *p == path)
+            });
+            if !hits {
+                continue;
+            }
+            let t = mv::read(repo, &o.path)?;
+            let nt = split::map_links(&t, &|dest| {
+                registry::entry_link(&c, &o.path, dest, &path, &entries)
+            });
+            if nt != t {
+                rewritten += 1;
+                changed.insert(o.path.clone(), nt);
+            }
+        }
+    }
+    let created = if old.is_none() {
+        vec![path.clone()]
+    } else {
+        Vec::new()
+    };
+    let lost = split::check_no_new_errors(&cfg, &c, &changed, &created).map_err(|e| {
+        Fatal::Refused(format!(
+            "the index would break references, so nothing changed: {e}"
+        ))
+    })?;
+    for (p, t) in &changed {
+        let f = repo.root.join(p);
+        if let Some(dir) = f.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
+        }
+        mv::write(&f, t)?;
+    }
     if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("path", &path)
+                .num("entries", entries.len())
+                .bool("replaced", old.is_some_and(|o| o.generated.is_none()))
+                .num("links_rewritten", rewritten)
+                .num("anchor_warnings", lost)
+                .end()
+        );
+    } else {
+        println!(
+            "wrote {path}: a generated index of {} entries{}",
+            entries.len(),
+            if rewritten > 0 {
+                format!(
+                    "; links to its old sections now go to the entries in {rewritten} documents"
+                )
+            } else {
+                String::new()
+            }
+        );
+        if lost > 0 {
+            println!("{lost} links name a section that the index no longer has (SD602 warnings)");
+        }
+    }
+    Ok(0)
+}
+
+fn report_move(m: &mv::Moved, json: bool) {
+    if json {
         let mut o = Obj::new()
             .str("kind", m.kind)
             .str("from", &m.from)
             .str("to", &m.to)
             .str("alias", &m.alias)
             .strs("files", &m.files);
+        if let Some(st) = &m.stub {
+            o = o.str("stub", st);
+        }
         if let Some(s) = &m.split {
             let (hashes, ids, decisions) = s.preserved;
             o = o
                 .str("path", &s.to_path)
+                .str("type", s.to_type.name())
                 .bool("created", s.created)
                 .num("requirements", s.moved.len())
                 .num("sections", s.sections)
+                .strs("section_aliases", &s.section_aliases)
+                .num("companion_rows", s.companion_rows)
+                .num("pointers", s.pointers)
+                .strs("supersede_candidates", &s.supersede_candidates)
                 .raw(
                     "preserved",
                     &Obj::new()
@@ -831,9 +1145,24 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 );
         }
         println!("{}", o.end());
-        return Ok(0);
+        return;
     }
     match &m.split {
+        Some(s) if m.kind == "split" && s.moved.is_empty() => {
+            let (hashes, ids, decisions) = s.preserved;
+            println!(
+                "moved {} section{} to {} ({}, {}{})",
+                s.sections,
+                if s.sections == 1 { "" } else { "s" },
+                m.to,
+                s.to_path,
+                s.to_type.name(),
+                if s.created { ", new document" } else { "" }
+            );
+            println!(
+                "preservation check: {hashes} requirement hashes unchanged, {ids} ids resolve, {decisions} accepted decisions unchanged"
+            );
+        }
         Some(s) if m.kind == "split" => {
             let (hashes, ids, decisions) = s.preserved;
             let fresh = s.moved.len() - s.aliases.len();
@@ -872,10 +1201,42 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             m.kind, m.from, m.to, m.alias
         ),
     }
-    if let Some(s) = m.split.as_ref().filter(|s| s.created) {
-        println!("new file: {} (not yet added to git)", s.to_path);
+    if let Some(s) = &m.split {
+        if !s.section_aliases.is_empty() {
+            println!(
+                "{} section ids stay as aliases in {}",
+                s.section_aliases.len(),
+                s.to_path
+            );
+        }
+        if s.companion_rows > 0 {
+            println!(
+                "moved {} companion rows with the requirements",
+                s.companion_rows
+            );
+        }
+        if s.pointers > 0 {
+            println!(
+                "left a one-line pointer in place of each of the {} moved sections",
+                s.pointers
+            );
+        }
+        if !s.supersede_candidates.is_empty() {
+            println!(
+                "candidates for a superseding decision (the moved amendments state a requirement, a BCP 14 keyword or a status word; spec-dna writes no decision): {}",
+                s.supersede_candidates.join(", ")
+            );
+        }
+        if s.created {
+            println!("new file: {} (not yet added to git)", s.to_path);
+        }
     }
-    Ok(0)
+    if let Some(st) = &m.stub {
+        println!(
+            "left a stub at {st} (`moved-to: {}`) for tools that read the old path; it has no id and no budget",
+            m.to
+        );
+    }
 }
 
 fn transcript(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
