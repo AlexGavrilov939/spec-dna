@@ -63,6 +63,7 @@ codes! {
     DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). As an alternative, write a decision that supersedes this one.";
     AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. Put your own text outside of the generated block.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
+    ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";
     TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.";
     AnchorMissing = "SD602", "anchor-missing", Warning, "Link to an existing heading anchor or requirement key.";
     CrossRepoUnpinned = "SD603", "cross-repo-unpinned", Warning, "A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.";
@@ -72,10 +73,11 @@ codes! {
     CitedSymbolRemoved = "SD607", "cited-symbol-removed", Warning, "Update the document: cite the new identifier, or change the text about the removed code.";
     RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, decisions and runbooks that the incident involves, with `[[<id>]]` or a Markdown link.";
-    BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Split the document only when `check` reports a size error.";
-    BudgetHard = "SD702", "budget-hard", Error, "Split the document. It is new, or it went over the hard budget, or it grew while over the hard budget.";
-    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over its soft budget and it grew. Add only the text that the task needs. Split the document only when `check` reports a size error.";
-    BudgetHardKept = "SD704", "budget-hard-kept", Warning, "The document was over its hard budget in the base and did not grow, or its root does not enforce budgets. Split it before you add text: growth is an error.";
+    IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
+    BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
+    BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
+    BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
+    BudgetHardKept = "SD704", "budget-hard-kept", Warning, "The document was over its hard budget in the base and did not grow, or a split moved it out of such a document, or its root does not enforce budgets. It needs no change in this task.";
     RequirementKeyword = "SD801", "requirement-keyword", Warning, "Write the requirement with an uppercase BCP 14 keyword (MUST, SHALL, SHOULD, MAY).";
     EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern. Put `then` after an `If` condition.";
     SentenceLength = "SD803", "sentence-length", Warning, "Split the requirement. Write one requirement in one sentence.";

@@ -121,6 +121,11 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
         .map(|i| diag(d, i.line, i.code, i.target.clone(), i.message.clone()))
         .collect();
     let p = &d.parsed;
+    if let Some(i) = c.by_path.get(&d.path)
+        && let Some(stale) = crate::registry::stale(c, *i)
+    {
+        out.push(diag(d, 1, Code::IndexStale, "", stale));
+    }
 
     for r in &p.refs {
         match r.kind {
@@ -157,6 +162,11 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
                 _ => {}
             },
         }
+    }
+    // A stub needs only a `moved-to` that resolves.
+    if let Some((t, line)) = &d.moved_to {
+        id_ref(c, d, t, *line, &mut out);
+        return out;
     }
     for (t, line) in d.supersedes.iter() {
         id_ref(c, d, t, *line, &mut out);
@@ -243,7 +253,7 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
             ),
         ));
     }
-    if d.ty == DocType::Incident && !links_knowledge(c, d) {
+    if d.ty == DocType::Incident && d.generated.is_none() && !links_knowledge(c, d) {
         out.push(diag(
             d,
             1,
@@ -295,7 +305,11 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
 
     // `hard_budget` compares a document over the hard budget with the base.
     let (soft, hard) = config.budgets[d.ty as usize];
-    if soft > 0 && p.body_chars > soft && (hard == 0 || p.body_chars <= hard) {
+    if soft > 0
+        && !d.is_exempt_from_budgets()
+        && p.body_chars > soft
+        && (hard == 0 || p.body_chars <= hard)
+    {
         out.push(diag(
             d,
             1,
@@ -465,7 +479,12 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
         }
         let (soft, hard) = config.budgets[h.ty as usize];
         let chars = h.parsed.body_chars;
-        if soft > 0 && chars > soft && (hard == 0 || chars <= hard) && chars > b.parsed.body_chars {
+        if soft > 0
+            && !h.is_exempt_from_budgets()
+            && chars > soft
+            && (hard == 0 || chars <= hard)
+            && chars > b.parsed.body_chars
+        {
             out.push(diag(
                 h,
                 1,
@@ -508,26 +527,51 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
     out
 }
 
-/// Applies the hard budget against the base (ADR 0001, amendment of
-/// 2026-11-08). A document over the hard budget is an error (SD702) if it is
-/// new, if it was under the budget in the base, or if it grew. A document that
-/// was over the budget in the base and did not grow gives a warning (SD704).
-/// A root with `enforce-budgets = false` gives SD704 in all cases. Returns
-/// each diagnostic with its "new" flag.
+/// Applies the hard budget against the base (ADR 0001, amendments of
+/// 2026-11-08 and 0.3.0). A document over the hard budget is an error (SD702)
+/// if it is new, if it was under the budget in the base, or if it grew by more
+/// than `[budgets] growth` characters. A document that was over the budget in
+/// the base and grew by at most that allowance gives a warning (SD703): a
+/// task can add an amendment or a registry row without a split. A document
+/// that did not grow gives a warning (SD704). A root with
+/// `enforce-budgets = false` gives SD704 in all cases. A stub and a generated
+/// index have no budget. Returns each diagnostic with its "new" flag.
 fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Diag, bool)> {
     let mut out = Vec::new();
     for h in &head.docs {
         let (_, hard) = config.budgets[h.ty as usize];
         let chars = h.parsed.body_chars;
-        if hard == 0 || chars <= hard {
+        if hard == 0 || chars <= hard || h.is_exempt_from_budgets() {
             continue;
         }
         let before = base
             .and_then(|b| head_to_base(b, h))
             .map(|b| b.parsed.body_chars);
+        let mut small = false;
+        // A document that a split moved out of a document over the hard budget
+        // (its section aliases name that base document) brings no new text.
+        let origin = base.and_then(|b| split_origin(config, b, h));
         let (why, new) = match before {
+            None if origin.is_some() => (
+                format!(
+                    "split out of `{}`, which was over the hard budget in the base",
+                    origin.as_deref().unwrap_or("")
+                ),
+                true,
+            ),
             None => ("a new document".to_string(), true),
             Some(b) if b <= hard => (format!("{b} characters in the base"), true),
+            Some(b) if chars > b && chars - b <= config.growth => {
+                small = true;
+                (
+                    format!(
+                        "grew by {} characters, at most {} in one change",
+                        chars - b,
+                        config.growth
+                    ),
+                    true,
+                )
+            }
             Some(b) if chars > b => (format!("grew from {b} characters in the base"), true),
             Some(_) => ("no growth against the base".to_string(), false),
         };
@@ -537,6 +581,10 @@ fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Di
                 Code::BudgetHardKept,
                 format!("{why}; the root does not enforce budgets"),
             )
+        } else if before.is_none() && origin.is_some() {
+            (Code::BudgetHardKept, why)
+        } else if small {
+            (Code::BudgetGrew, why)
         } else if new {
             (Code::BudgetHard, why)
         } else {
@@ -554,6 +602,32 @@ fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Di
         ));
     }
     out
+}
+
+/// The base document that the first section alias of `h` names: the source
+/// of a split.
+fn split_source<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
+    h.aliases.iter().find_map(|a| {
+        let (id, _) = a.split_once('#')?;
+        match base.lookup.get(&canonical(id))?.as_slice() {
+            [i] => Some(&base.docs[*i as usize]),
+            _ => None,
+        }
+    })
+}
+
+/// The base document over its hard budget that a section alias of `h`
+/// names: `h` holds text that a split moved out of it.
+fn split_origin(config: &Config, base: &Corpus, h: &Doc) -> Option<String> {
+    h.aliases.iter().find_map(|a| {
+        let (id, _) = a.split_once('#')?;
+        let [i] = base.lookup.get(&canonical(id))?.as_slice() else {
+            return None;
+        };
+        let b = &base.docs[*i as usize];
+        let (_, hard) = config.budgets[b.ty as usize];
+        (hard > 0 && b.parsed.body_chars > hard).then(|| b.id.clone())
+    })
 }
 
 /// The root of the document of a diagnostic.
@@ -639,12 +713,19 @@ pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
     for d in &base_diags {
         *base_fp.entry(d.fingerprint()).or_default() += 1;
     }
-    // A moved document keeps its old id as an alias. Compare it under the old id.
+    // A moved document keeps its old id as an alias. Compare it under the old
+    // id. A document that a split made has the section aliases of its source:
+    // compare it under the id of the source, so that a diagnostic that moved
+    // with the text is not new.
     let renamed: HashMap<&str, &str> = head
         .docs
         .iter()
         .filter(|h| !base.lookup.contains_key(&canonical(&h.id)))
-        .filter_map(|h| head_to_base(base, h).map(|b| (h.id.as_str(), b.id.as_str())))
+        .filter_map(|h| {
+            head_to_base(base, h)
+                .or_else(|| split_source(base, h))
+                .map(|b| (h.id.as_str(), b.id.as_str()))
+        })
         .collect();
     let mut new: Vec<bool> = head_diags
         .iter()

@@ -146,9 +146,22 @@ pub struct Doc {
     /// The chunks of the amendment sections: each chunk whose heading matches
     /// an `amendment-sections` name of the root, and the chunks below it.
     pub amendments: Vec<usize>,
-    /// Hash of the chunks outside the amendment sections, without link
-    /// destinations. After a decision is accepted, this text is frozen (SD405).
+    /// The chunks of the history sections (`history-sections` of the root),
+    /// with the chunks below them.
+    pub history: Vec<usize>,
+    /// The chunks of the companion sections (`companion-sections` of the
+    /// root), with the chunks below them.
+    pub companions: Vec<usize>,
+    /// Hash of the chunks outside the amendment and history sections, without
+    /// link destinations. After a decision is accepted, this text is frozen
+    /// (SD405).
     pub frozen_hash: Hash,
+    /// For a stub that `mv --stub` left at an old path: the id in its
+    /// `moved-to` field. A stub has no id of its own and no budget.
+    pub moved_to: Option<(String, u32)>,
+    /// For an index that `spec-dna index` generated: the hash in its
+    /// `generated` field.
+    pub generated: Option<String>,
 }
 
 impl Doc {
@@ -169,6 +182,12 @@ impl Doc {
 
     pub fn is_inactive(&self) -> bool {
         matches!(self.status_str(), "superseded" | "retired" | "rejected")
+            || self.moved_to.is_some()
+    }
+
+    /// A stub or a generated index: no budget applies.
+    pub fn is_exempt_from_budgets(&self) -> bool {
+        self.moved_to.is_some() || self.generated.is_some()
     }
 
     /// Returns true if the chunk holds at least one valid requirement.
@@ -205,10 +224,26 @@ pub fn doc_id(rel: &str) -> String {
 /// takes the name of its directory. Thus such a file directly in a root takes
 /// the name of the root.
 pub fn root_doc_id(root: &crate::config::Root, path: &str) -> String {
+    let id = bare_doc_id(root, path);
+    match &root.namespace {
+        Some(ns) if root.rel(path).contains('/') || !is_index_name(&doc_id(root.rel(path))) => {
+            format!("{ns}/{id}")
+        }
+        Some(ns) => ns.clone(),
+        None => id,
+    }
+}
+
+fn is_index_name(id: &str) -> bool {
+    !id.contains('/') && (id.eq_ignore_ascii_case("readme") || id.eq_ignore_ascii_case("index"))
+}
+
+/// The id of a document without the namespace of a reference root: the id of
+/// version 0.2. It stays a fallback name (`Corpus::weak`).
+pub fn bare_doc_id(root: &crate::config::Root, path: &str) -> String {
     let rel = root.rel(path);
     let id = doc_id(rel);
-    if !id.contains('/')
-        && (id.eq_ignore_ascii_case("readme") || id.eq_ignore_ascii_case("index"))
+    if is_index_name(&id)
         && let Some(name) = root.path.rsplit('/').next().filter(|n| !n.is_empty())
     {
         return name.to_string();
@@ -260,6 +295,13 @@ pub enum LinkRes {
 pub struct Corpus {
     pub docs: Vec<Doc>,
     pub lookup: HashMap<String, Vec<u32>>,
+    /// The ids without the namespace of a reference root. A name resolves
+    /// here only if `lookup` does not have it. These names give no duplicate
+    /// id.
+    pub weak: HashMap<String, Vec<u32>>,
+    /// Section aliases: an `aliases` entry `<old-id>#<anchor>` of the document
+    /// that a section moved to.
+    pub frag_aliases: HashMap<String, Vec<u32>>,
     pub by_path: HashMap<String, u32>,
     pub files: HashSet<String>,
     pub dirs: HashSet<String>,
@@ -295,22 +337,34 @@ impl Corpus {
             .map(|(path, parsed)| make_doc(config, path, parsed))
             .collect();
         let mut lookup: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut weak: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut frag_aliases: HashMap<String, Vec<u32>> = HashMap::new();
         let mut by_path = HashMap::new();
         let mut req_aliases: HashMap<String, Vec<(u32, usize)>> = HashMap::new();
         for (i, d) in docs.iter().enumerate() {
             let i = i as u32;
             by_path.insert(d.path.clone(), i);
+            // A stub has no name: the moved document keeps its old id.
+            if d.moved_to.is_some() {
+                continue;
+            }
             let mut names: Vec<String> = vec![canonical(&d.id)];
-            names.extend(
-                d.aliases
-                    .iter()
-                    .chain(&d.legacy_aliases)
-                    .map(|a| canonical(a)),
-            );
+            for a in d.aliases.iter().chain(&d.legacy_aliases) {
+                if a.contains('#') {
+                    frag_aliases.entry(canonical_ref(a)).or_default().push(i);
+                } else {
+                    names.push(canonical(a));
+                }
+            }
             names.sort();
             names.dedup();
             for n in names {
                 lookup.entry(n).or_default().push(i);
+            }
+            let root = &config.roots[d.root];
+            if root.namespace.is_some() {
+                let bare = canonical(&nfc(&bare_doc_id(root, &d.path)));
+                weak.entry(bare).or_default().push(i);
             }
             for &r in &d.reqs {
                 for a in &d.parsed.reqs[r].aliases {
@@ -324,6 +378,8 @@ impl Corpus {
         Corpus {
             docs,
             lookup,
+            weak,
+            frag_aliases,
             by_path,
             files: files.into_iter().collect(),
             dirs,
@@ -365,7 +421,33 @@ impl Corpus {
             }
             return Res::Ambiguous(hits.iter().map(|h| h.0).collect());
         }
-        match self.lookup.get(&canonical(idpart)).map(Vec::as_slice) {
+        let res = self.resolve_name(idpart, frag);
+        // A section that moved: the old `<id>#<anchor>` is an alias of the
+        // document that holds it now, unless the old document still has it.
+        if let Some(f) = frag
+            && matches!(res, Res::Missing | Res::Found(_, _, false))
+            && let Some(hits) = self
+                .frag_aliases
+                .get(&canonical_ref(&format!("{idpart}#{f}")))
+        {
+            return match hits.as_slice() {
+                [d] => Res::Found(
+                    *d,
+                    Some(f.to_string()),
+                    self.docs[*d as usize].has_anchor(f),
+                ),
+                many => Res::Ambiguous(many.to_vec()),
+            };
+        }
+        res
+    }
+
+    fn resolve_name(&self, idpart: &str, frag: Option<&str>) -> Res {
+        let hits = match self.lookup.get(&canonical(idpart)).map(Vec::as_slice) {
+            None | Some([]) => self.weak.get(&canonical(idpart)).map(Vec::as_slice),
+            other => other,
+        };
+        match hits {
             None | Some([]) => Res::Missing,
             Some([d]) => {
                 let ok = frag.is_none_or(|f| self.docs[*d as usize].has_anchor(f));
@@ -520,6 +602,38 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     let owner = scalar("owner", &mut issues).map(|(s, _)| s);
     let fm_type = scalar("type", &mut issues);
     let fm_status = scalar("status", &mut issues);
+    let moved_to = scalar("moved-to", &mut issues).filter(|(s, _)| !s.is_empty());
+    let generated = scalar("generated", &mut issues).and_then(|(s, _)| {
+        s.strip_prefix(crate::registry::MARKER)
+            .map(|h| h.trim().to_string())
+    });
+    if moved_to.is_some() {
+        // A stub: no type rules, no status, no requirements, no budget.
+        return Doc {
+            path,
+            id,
+            root: root_i,
+            ty: root.default_type,
+            status: None,
+            parsed,
+            aliases: Vec::new(),
+            legacy_aliases: Vec::new(),
+            supersedes: Vec::new(),
+            depends_on: Vec::new(),
+            applies_to: Vec::new(),
+            verified_by: Vec::new(),
+            owner,
+            issues,
+            reqs: Vec::new(),
+            outcome: Vec::new(),
+            amendments: Vec::new(),
+            history: Vec::new(),
+            companions: Vec::new(),
+            frozen_hash: Hash::default(),
+            moved_to,
+            generated: None,
+        };
+    }
 
     let mut ty = root.default_type;
     if let Some((t, line)) = fm_type {
@@ -712,7 +826,13 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     // Each group of required headings needs one matching section (SD305).
     // The chunks that match the first group are the outcome of a decision.
     let mut matched: Vec<usize> = Vec::new();
-    for (g, group) in root.required_sections[ty as usize].iter().enumerate() {
+    // A generated index has no required sections.
+    let required: &[Vec<String>] = if generated.is_some() {
+        &[]
+    } else {
+        &root.required_sections[ty as usize]
+    };
+    for (g, group) in required.iter().enumerate() {
         let hits: Vec<usize> = parsed
             .chunks
             .iter()
@@ -747,9 +867,11 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         Vec::new()
     };
     let amendments = amendment_chunks(&parsed.chunks, &root.amendment_sections[ty as usize]);
+    let history = amendment_chunks(&parsed.chunks, &root.history_sections[ty as usize]);
+    let companions = amendment_chunks(&parsed.chunks, &root.companion_sections[ty as usize]);
     let mut frozen = Vec::new();
     for (i, ch) in parsed.chunks.iter().enumerate() {
-        if !amendments.contains(&i) {
+        if !amendments.contains(&i) && !history.contains(&i) {
             frozen.extend_from_slice(&ch.frozen);
         }
     }
@@ -772,7 +894,11 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         reqs,
         outcome,
         amendments,
+        history,
+        companions,
         frozen_hash,
+        moved_to: None,
+        generated,
     }
 }
 
@@ -784,9 +910,10 @@ pub fn same_heading(a: &str, b: &str) -> bool {
 
 /// Returns true if a heading is an amendment name, or starts with the name and
 /// a character that is not a letter or a digit (`Amendment 3: TTL`). The
-/// comparison ignores case.
+/// comparison ignores case and a leading section number (`12. Acceptance
+/// map`, `§4.2 Amendments`).
 fn amendment_heading(heading: &str, name: &str) -> bool {
-    let h = heading.trim().to_lowercase();
+    let h = without_number(heading.trim()).to_lowercase();
     let n = name.trim().to_lowercase();
     match h.strip_prefix(&n) {
         Some(rest) => rest.chars().next().is_none_or(|c| !c.is_alphanumeric()),
@@ -794,10 +921,28 @@ fn amendment_heading(heading: &str, name: &str) -> bool {
     }
 }
 
+/// Removes a leading section number and the space after it: `12. `, `4.2 `,
+/// `§3 `, `7) `.
+fn without_number(heading: &str) -> &str {
+    let rest = heading.strip_prefix('§').unwrap_or(heading).trim_start();
+    let digits = rest
+        .bytes()
+        .take_while(|b| b.is_ascii_digit() || *b == b'.')
+        .count();
+    if digits == 0 || !rest.as_bytes()[0].is_ascii_digit() {
+        return heading;
+    }
+    let after = rest[digits..].strip_prefix(')').unwrap_or(&rest[digits..]);
+    match after.strip_prefix([' ', '\t']) {
+        Some(r) => r.trim_start(),
+        None => heading,
+    }
+}
+
 /// Returns the chunks of the amendment sections. An amendment section starts
 /// at a heading of level 2 or more that matches a name, and it continues to
 /// the next heading of the same or a higher level.
-fn amendment_chunks(chunks: &[crate::parse::Chunk], names: &[String]) -> Vec<usize> {
+pub(crate) fn amendment_chunks(chunks: &[crate::parse::Chunk], names: &[String]) -> Vec<usize> {
     let mut out = Vec::new();
     let mut open: Option<u8> = None;
     for (i, ch) in chunks.iter().enumerate() {
@@ -817,7 +962,7 @@ fn amendment_chunks(chunks: &[crate::parse::Chunk], names: &[String]) -> Vec<usi
     out
 }
 
-fn canonical_ref(r: &str) -> String {
+pub(crate) fn canonical_ref(r: &str) -> String {
     let r = strip_hash_suffix(r);
     match r.split_once('#') {
         Some((d, k)) => format!("{}#{}", canonical(d), nfc(k)),
@@ -1233,6 +1378,14 @@ mod tests {
             .collect();
         // `Nachtragsplan` starts with the name, but a letter follows it.
         assert_eq!(headings, ["Nachtrag 2: scope", "Nachtrag 1: TTL", "Detail"]);
+        // A leading section number does not count.
+        assert!(amendment_heading(
+            "12. Acceptance map (requirement -> test)",
+            "Acceptance map"
+        ));
+        assert!(amendment_heading("§4.2 Amendments", "amendments"));
+        assert!(amendment_heading("7) Amendments", "Amendments"));
+        assert!(!amendment_heading("12.Acceptance map", "Acceptance map"));
         // The default name is `Amendments`.
         assert!(c.docs[1].amendments.is_empty());
         let frozen = |text: &str| corpus_with(cfg, &[("docs/d.md", text)]).docs[0].frozen_hash;

@@ -30,6 +30,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD405 | decision-frozen | error | Text outside the amendment sections (`amendment-sections`, default `## Amendments`) changed after the decision became accepted. |
 | SD501 | adapter-modified | error | A generated adapter (the line in `AGENTS.md` or `CLAUDE.md`, or the skill block) has a manual edit. |
 | SD502 | adapter-outdated | error | A generated adapter is different from the adapter that this version generates. The multi-line block of an earlier version also gives SD502: `spec-dna init` replaces it with one line. |
+| SD503 | config-not-alone | error | The change edits `spec-dna.toml` and other files (documents or code). A configuration change must be a change of its own. The files that `init` writes with it (the adapters, and files whose name starts with `spec-dna`) do not count, and a new `spec-dna.toml` is not checked. `check` compares the working tree with the base (with `--base`, tracked files; without it, also untracked files). |
 | SD601 | token-unresolved | warning | A bare `PREFIX-NUMBER` token with a configured legacy prefix names no document. |
 | SD602 | anchor-missing | warning | A Markdown link fragment names no heading or requirement of its target. |
 | SD603 | cross-repo-unpinned | warning | spec-dna cannot check a `<repo>:<id>` reference without a pinned index. |
@@ -39,10 +40,11 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD607 | cited-symbol-removed | warning | A document cites an identifier in an inline code span. The change removed the identifier from a file, and no other file outside of Markdown has it. If the file has exactly one new identifier, the message names it as a possible new name. |
 | SD608 | requirement-unverified | warning | A requirement of an active spec, contract or invariant has no evidence: no `verified-by` and no `covers:` tag. |
 | SD609 | incident-unlinked | warning | An incident links no requirement, decision or runbook. |
+| SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries: an entry document was added, removed or renamed, or its title or status changed, or the rows were edited by hand. |
 | SD701 | budget-soft | warning | A document is over its soft budget. |
-| SD702 | budget-hard | error | A document is over its hard budget, and against the base it is new, it was under the hard budget, or it grew. |
-| SD703 | budget-grew | warning | A document over its soft budget (but not over its hard budget) grew against the base. |
-| SD704 | budget-hard-kept | warning | A document is over its hard budget, but it was over it in the base and did not grow. In a root with `enforce-budgets = false`, every hard overage is SD704. |
+| SD702 | budget-hard | error | A document is over its hard budget, and against the base it is new, it was under the hard budget, or it grew by more than `[budgets] growth` characters (default 4,000). |
+| SD703 | budget-grew | warning | A document over its soft budget grew against the base: under its hard budget, or over it by at most `[budgets] growth` characters. |
+| SD704 | budget-hard-kept | warning | A document is over its hard budget, but it was over it in the base and did not grow, or it is a new document that a split moved out of a document over its hard budget (its section aliases name that document). In a root with `enforce-budgets = false`, every hard overage is SD704. |
 | SD801 | requirement-keyword | warning | A requirement has no uppercase BCP 14 keyword. |
 | SD802 | ears-pattern | warning | An `If` requirement has no `then`. |
 | SD803 | sentence-length | warning | A requirement sentence is longer than `lint.max-words`. |

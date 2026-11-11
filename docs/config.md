@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.2.0"              # required: the pinned version
+spec-dna = "0.3.0"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
@@ -27,9 +27,14 @@ legacy-keys = ["R-{n}"]
 status-map = { released = "active", wip = "draft" }            # legacy status words
 required-sections = { decision = ["Decision Outcome", "Decision"], incident = [["Summary"], ["Root cause"]] }
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
+history-sections = { guide = ["Iteration log"], decision = ["Review rounds"] }  # history headings
+companion-sections = { spec = ["Acceptance map"] }  # sections with a row per requirement
 enforce-budgets = true          # false: the hard budget gives warnings only
 profile = "lite"                # the profile of this root
 rules = { lint = "off" }        # severity overrides for this root
+
+[budgets]
+growth = 4000                   # characters that a document over its hard budget can grow in one change
 
 [budgets.spec]                  # characters of body text, per type
 soft = 10000
@@ -68,12 +73,15 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the root's type (in a mixed root, a status of any type). |
 | `roots.required-sections` | table | see [docs/types.md](types.md) | For each type, its required sections, in any language. The value is a list of headings (one section, with alternative headings) or a list of such lists (several sections). A document of that type needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type, and an empty list removes the requirement. Defaults: decision `["Decision Outcome", "Decision"]`, invariant `["Rules"]`, runbook `["Steps"]`, incident `[["Summary"], ["Root cause"]]`. For a decision, `context` serves the first required section as the summary. |
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit: `## Nachtrag 2026-01-02: TTL` matches `Nachtrag`, and `## Nachtragsplan` does not. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. After a decision is accepted, the text outside its amendment sections is frozen (SD405), and new amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome. |
+| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Review rounds` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `reference` document. In a decision, a history section is not frozen text. |
+| `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as an acceptance map or an evidence map. A table row or a list item of such a section belongs to the requirement keys in its first cell (or the lead of the item). When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. A row of a key that moves and a key that stays refuses the move. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They win over `[rules]` and over every profile. |
 | `roots.lint-severity` | string | none | The key of 0.1 for the rule `lint` of this root (SD801 to SD805). `roots.rules` wins over it. |
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` wins over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
+| `budgets.growth` | integer | `4000` | The characters that a document over its hard budget in the base can grow in one change with a warning (SD703) instead of an error (SD702): about one amendment or a few registry rows. |
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
@@ -82,12 +90,12 @@ Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000;
 
 A document over the soft budget gives a warning (SD701), and SD703 if it also grew against the base. The hard budget compares the document with the base ([ADR 0001](adr/0001-information-model.md), "Amendments"):
 
-- A new document over the hard budget is an error (SD702).
+- A new document over the hard budget is an error (SD702), unless a split moved it out of a document that was over the hard budget in the base (its section aliases name that document): then it gives SD704.
 - A document that was under the hard budget in the base and is over it now is an error (SD702).
-- A document that was over the hard budget in the base and grew is an error (SD702). The comparison uses the body characters of the two versions.
+- A document that was over the hard budget in the base and grew by more than `budgets.growth` characters (default 4,000) is an error (SD702). Growth up to that allowance gives the warning SD703. The comparison uses the body characters of the two versions.
 - A document that was over the hard budget in the base and did not grow gives a warning (SD704).
 
-In a root with `enforce-budgets = false`, all of these give SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
+A stub that `mv --stub` leaves and an index that `spec-dna index` generates have no budget. In a root with `enforce-budgets = false`, all of these give SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
 
 ## Evidence
 
@@ -110,4 +118,8 @@ A link with a scheme (`https:`) or a `//` prefix is external, unless it starts w
 
 ## Documents
 
-A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does: an untracked document is not part of that gate until `git add`. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.
+A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does: an untracked document is not part of that gate until `git add`. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory.
+
+In a root of type `reference`, an id starts with a namespace: the shortest suffix of the root path (whole segments) that no other reference root has, such as `plans/rollout` for `tasks/plans/rollout.md`. Thus the ids of two reference roots never collide. The id without the namespace (the id of 0.2) stays a fallback name: it resolves if no other id has it and if it names one document.
+
+A section that `mv` moved keeps its old id as an alias: the destination lists `<old-id>#<anchor>` in its `aliases`. A stub (front matter `moved-to: <id>`) has no id of its own. A generated index has the front matter field `generated: spec-dna index h:<hash>`. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.

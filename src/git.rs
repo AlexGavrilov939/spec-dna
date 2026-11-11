@@ -56,6 +56,37 @@ impl Git {
         Ok(out.stdout)
     }
 
+    /// Returns the paths that differ between a commit and the working tree
+    /// (tracked files), each with `true` if the commit does not have it. With
+    /// `untracked`, it also returns the untracked files that git does not
+    /// ignore, as new paths.
+    pub fn changed_since(&self, rev: &str, untracked: bool) -> Result<Vec<(String, bool)>, String> {
+        let out = self.run(&[
+            "diff",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            "--ignore-submodules=all",
+            rev,
+            "--",
+        ])?;
+        let mut v = Vec::new();
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        while let (Some(status), Some(path)) = (recs.next(), recs.next()) {
+            v.push((
+                String::from_utf8_lossy(path).into_owned(),
+                status.first() == Some(&b'A'),
+            ));
+        }
+        if untracked {
+            let out = self.run(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+            for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+                v.push((String::from_utf8_lossy(rec).into_owned(), true));
+            }
+        }
+        Ok(v)
+    }
+
     /// Returns the paths and blob ids of the git index (stage 0, or the first
     /// stage of a conflicted path).
     pub fn ls_files(&self) -> Result<Vec<Entry>, String> {
