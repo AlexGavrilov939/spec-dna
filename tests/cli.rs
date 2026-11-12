@@ -1572,6 +1572,12 @@ fn mv_moves_sections_and_rewrites_links_but_not_decision_text() {
         policy.contains("## Renewals\n\n- **renewal-limit**:"),
         "{policy}"
     );
+    assert!(
+        r.read("docs/loans.md")
+            .contains("## Fines\n\nThis section moved to [Policy](policy.md#fines).\n"),
+        "{}",
+        r.read("docs/loans.md")
+    );
     let decision = r.read("docs/decisions/fines.md");
     assert_eq!(
         decision,
@@ -2609,7 +2615,12 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
         closing.contains("See [refunds](../billing.md#refunds)."),
         "{closing}"
     );
-    assert!(!r.read("docs/guides/desk.md").contains("Cash count"));
+    let desk = r.read("docs/guides/desk.md");
+    assert!(!desk.contains("Cash count"), "{desk}");
+    assert!(
+        desk.contains("## Closing\n\nThis section moved to [Closing](closing.md#closing).\n"),
+        "the heading stays with a pointer: {desk}"
+    );
     assert!(
         r.read("docs/notes/links.md")
             .contains("[the count](../guides/closing.md#cash-count), [[guides/desk#closing]]"),

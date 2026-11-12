@@ -2,6 +2,12 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.3.1 - 2026-11-11
+
+### Changed
+
+- `mv` of a section leaves the heading of the section with a one-line pointer to its new place, for every destination type. Before, only a move into a `reference` document left a pointer. A review of 10 splits on a real corpus found that a reader of the old document, and prose references such as "see section 1" or "(Releases, below)", lost the moved text.
+
 ## 0.3.0 - 2026-11-11
 
 Hygiene functions: split, history extraction, generated indexes and stubs for every document type, and lower cost of code tasks.

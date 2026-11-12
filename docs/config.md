@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.3.0"              # required: the pinned version
+spec-dna = "0.3.1"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
