@@ -5,18 +5,62 @@
 
 spec-dna keeps engineering specifications small, linked and machine-checked. It serves the minimum sufficient context to AI coding agents. It works in any git repository, with any stack and any agent.
 
+Your specifications, contracts and decisions stay plain Markdown files in your repository. spec-dna reads them as a linked model: document types, stable ids, requirements with keys, links, code citations and test evidence. With this model, spec-dna does 3 things:
+
+- **Gate.** `check` compares a change with its base, in CI or in a git hook. It reports broken links, removed ids, edits of the frozen text of an accepted decision, documents over their size budget, and code citations that no longer match the code.
+- **Context.** `context` gives an agent the sections that a task needs, inside a character budget. The conventions of the project come first.
+- **Hygiene.** `mv`, `history` and `index` move, split and index documents. A preservation check makes sure that no requirement text changes and that every old id still resolves.
+
+`init` writes the configuration and the agent adapters: one skill, and one line in each root instruction file such as `AGENTS.md`. It never edits a document. To remove spec-dna, delete a few files; your documents do not change.
+
 > [!NOTE]
-> The project is at an early stage. Version 0.3 adds hygiene functions: a split of every document type, history extraction, generated indexes and stubs. It is a local tag, not a public release yet. [CHANGELOG.md](CHANGELOG.md) lists the changes. The information model is in [ADR 0001](docs/adr/0001-information-model.md).
+> Status: version 0.x, early. A minor version can change the configuration keys and the diagnostics; [CHANGELOG.md](CHANGELOG.md) lists each change. The CI tests run on Linux and the author uses macOS. The information model is in [ADR 0001](docs/adr/0001-information-model.md).
 
 ## Install
 
-This is phase 1 of [ADR 0003](docs/adr/0003-distribution.md): build from a tag with the locked dependency versions.
+Build from a tag with the locked dependency versions. You need Rust 1.88 or later and git.
 
 ```sh
 cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v<version> spec-dna
 ```
 
-The project pins the version in `spec-dna.toml`. `check` and `init` do not run with a binary of a different version. [docs/quickstart.md](docs/quickstart.md) gives the steps from install to uninstall, with a CI job and the upgrade.
+Keep the package name `spec-dna` at the end, because the repository has other packages. Each project pins the version in `spec-dna.toml`. `check` and `init` do not run with a binary of a different version, and their message gives the install command.
+
+## Quickstart
+
+```sh
+cd your-repository
+spec-dna init                 # detects your layout, asks at most 8 questions, shows a preview, then writes spec-dna.toml and the adapters
+spec-dna check --all          # every diagnostic, once, as a report
+spec-dna check                # the gate: new diagnostics against HEAD; exit code 1 on a new error
+spec-dna context src/api.rs   # the sections that an agent needs for a change to this file
+```
+
+[docs/quickstart.md](docs/quickstart.md) gives each step from install to uninstall, with a CI job, a hook and an upgrade. [docs/demo.md](docs/demo.md) replays the steps on a small example project.
+
+## Evidence
+
+In agent experiments with blind grading, spec-dna did these things:
+
+- On a synthetic project, agents with the gate kept accepted decisions intact in 15 of 15 runs, against 6 of 15 without it. The cost of one correct result was about half.
+- On a synthetic project that agents grew by 80 tasks, the documents stayed about one third smaller, with about half the drift.
+- On a mature private repository, a light configuration gave more correct results in 2 of 3 comparisons, at about the same cost of one correct result.
+
+spec-dna does not reduce tokens by itself: with it, agents read more. [docs/evidence.md](docs/evidence.md) gives the method, the numbers and the limits.
+
+## Documentation
+
+| Page | Content |
+| --- | --- |
+| [docs/quickstart.md](docs/quickstart.md) | Install, setup, CI job, upgrade, uninstall |
+| [docs/init.md](docs/init.md) | What `init` detects and asks |
+| [docs/config.md](docs/config.md) | Every key of `spec-dna.toml` |
+| [docs/types.md](docs/types.md) | The document types and their templates |
+| [docs/diagnostics.md](docs/diagnostics.md) | Every diagnostic code and its fix |
+| [docs/profiles.md](docs/profiles.md) | The profiles: severity of each code |
+| [docs/transcript.md](docs/transcript.md) | Token and read counts from agent transcripts |
+| [docs/evidence.md](docs/evidence.md) | The experiments and their limits |
+| [docs/adr/](docs/adr/) | Decisions: information model, language, distribution |
 
 ## Use
 
@@ -132,6 +176,7 @@ This repository has its own code, without dependencies, for argument parsing, fr
 | `AGENTS.md` | Rules for AI agents that work in this repository. `CLAUDE.md` imports it |
 | `CHANGELOG.md` | The changes of each version |
 | `CONTRIBUTING.md` | Branches, commits, pull requests |
+| `SECURITY.md` | How to report a vulnerability |
 | `.github/` | CI workflows, Dependabot, issue and PR templates, code owners |
 
 ## Development
@@ -143,6 +188,8 @@ cargo test                   # unit and integration tests
 pre-commit install           # git hooks: checks on commit, commit message format
 pre-commit run --all-files   # every check, same as CI
 ```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) gives the rules for branches, commits and pull requests. To report a vulnerability, follow [SECURITY.md](SECURITY.md).
 
 ## License
 

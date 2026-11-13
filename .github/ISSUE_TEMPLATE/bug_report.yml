@@ -25,7 +25,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS, agent and its version (Claude Code, Codex, other), spec-dna commit.
+      description: OS, agent and its version (Claude Code, Codex, other), and the output of `spec-dna --version`.
 
   - type: textarea
     id: logs
