@@ -59,10 +59,16 @@ Write a code comment only when it gives information that the code and its names 
 - Put one logical change in each pull request. Complete the template.
 - The PR title must be a Conventional Commit. The `PR title` workflow checks it.
 - GitHub squash-merges pull requests, so the PR title becomes the commit message on `master`.
-- Merge only when all CI jobs pass. If GitHub Actions does not start the jobs (for example, because of account billing), do these steps:
+- Merge only when all CI jobs pass. If GitHub Actions does not start the jobs, do these steps:
     1. Run the same jobs locally.
     2. Put the results in the pull request.
     3. Merge only if all jobs pass.
+
+## Issues
+
+- Use the issue forms for a bug report or a feature request. Give the output of `spec-dna --version`.
+- Do not report a security problem in a public issue. [SECURITY.md](SECURITY.md) tells you how to report it.
+- Do not put text, paths or names from a private repository into an issue, a test fixture or a commit message. Make a small example that shows the same problem.
 
 ## Dependencies
 
