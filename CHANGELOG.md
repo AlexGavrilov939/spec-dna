@@ -10,42 +10,42 @@ The first public release: release binaries for 7 targets, with SHA-256 sums that
 
 - Release binaries for macOS (`aarch64-apple-darwin`, `x86_64-apple-darwin`), Linux (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`) and Windows (`x86_64-pc-windows-gnu`, `aarch64-pc-windows-gnullvm`). Each release also has `SHA256SUMS`, `spec-dna-pin.toml` and a build-provenance attestation for each file. A tag `v<version>` starts `.github/workflows/release.yml`. [docs/quickstart.md](docs/quickstart.md#install) gives the install and the verification commands.
 - The table `[spec-dna-sha256]` in `spec-dna.toml`: the sums of the release binaries, copied from `spec-dna-pin.toml`. If the pin is the version of the binary, each command validates the table (exit code 3 for an error). `init --reconfigure` keeps the table.
-- The CI job that `init` writes downloads the pinned Linux x86-64 binary and verifies its sum, if `spec-dna.toml` has that sum and no `install-source`. Otherwise it builds the pin from source, as before.
+- The CI job that `init` writes downloads the pinned Linux x86-64 binary and verifies its sum, if `spec-dna.toml` has that sum and no `install-source`. Otherwise, it builds the pin from source, as before.
 - `SECURITY.md`, and [docs/evidence.md](docs/evidence.md): the method, the results and the limits of the agent experiments.
 
 ### Changed
 
 - The message of a version mismatch gives the download URL and the sum of the pinned binary when the table has them. To move a project to the version of the binary, it names `spec-dna-pin.toml` of that release.
 - If `spec-dna.toml` does not parse and its pin is a different version, `check` and `init` give the version mismatch, not the parse error. A configuration of a later version can have keys that an earlier binary does not know.
-- CI builds the 7 targets on each push and pull request, and runs each binary on a runner of its own platform: `--version`, `init`, `check`, `show` and `context` (`scripts/smoke.sh`). Before, CI built `aarch64-apple-darwin` only.
-- ADR 0003 has the design of phase 2. The Windows binaries keep the GNU ABI. There is no dispatch shim: a tool manager such as mise or aqua keeps several versions side by side.
+- CI builds the 7 targets on each push and pull request. It also runs each binary on a runner of its own platform, with these commands: `--version`, `init`, `check`, `show` and `context` (`scripts/smoke.sh`). Before, CI built `aarch64-apple-darwin` only.
+- ADR 0003 has the design of phase 2. The Windows binaries keep the GNU ABI. There is no dispatch shim. A tool manager such as mise or aqua can keep several versions at the same time.
 
 ### Upgrade notes
 
-- A binary before 0.4.0 does not know the table. For a configuration with the table, it reports ``unknown key `spec-dna-sha256` `` in place of the version mismatch. Install the pinned version.
-- `init` does not change a CI job that exists, so the job of an earlier `init` continues to build from source. To download the binary in CI, copy the job from [docs/quickstart.md](docs/quickstart.md#ci).
+- A binary of a version before 0.4.0 does not know the table. For a configuration with the table, it reports ``unknown key `spec-dna-sha256` `` in place of the version mismatch. Install the pinned version.
+- `init` does not change a CI job that exists, so the job of an earlier `init` still builds from source. To download the binary in CI, copy the job from [docs/quickstart.md](docs/quickstart.md#ci).
 
 ## 0.3.3 - 2026-11-13
 
-Convention files outside the documents, and fixes from a sweep of the open defects.
+Convention files outside the documents, and fixes from a review of the open defects.
 
 ### Added
 
-- A pointer of `[conventions]` can name a Markdown file that is not a document: a file outside every root, or a file that an `exclude` glob removes, such as the `README.md` of a decision directory. `context` serves its sections first in the convention tier (`"type": "file"` in `--json`), `show --conventions <type>` prints them, and `show <path>#<anchor>` prints one section. No check, budget or id applies to the file. SD106 also reports a missing file.
+- A pointer of `[conventions]` can name a Markdown file that is not a document: a file outside every root, or a file that an `exclude` glob removes, such as the `README.md` of a decision directory. `context` serves its sections first in the convention tier (`"type": "file"` in `--json`). `show --conventions <type>` prints them. `show <path>#<anchor>` prints one section. No check, budget or id applies to the file. SD106 also reports a file that is absent.
 
 ### Changed
 
 - `check` prints a warning code with more than 10 diagnostics as one count, as it does for the prose lint. On a mature corpus without test links, the SD608 lines no longer hide the other output. `--json` lists each diagnostic, and the exit code does not change.
-- `scripts/cross-build.sh` names the zig version of CI when zig is missing, and warns when another zig version is on PATH.
+- `scripts/cross-build.sh` names the zig version of CI when zig is absent. It also warns when another zig version is on `PATH`.
 
 ### Fixed
 
-- `init --reconfigure` dropped `[conventions]` and the root keys `history-sections`, `companion-sections` and `live-sections`. It keeps them now. If you ran `init --reconfigure` with 0.3.0 to 0.3.2, compare `spec-dna.toml` with its last commit.
-- spec-dna reads a convention file of the working tree from disk on every run, without the parse cache, and adds it to the git status pathspec. Thus a changed file, or a symlink whose target changed, gives the current text. A symlink whose target is outside the repository is not read (SD106).
+- `init --reconfigure` removed `[conventions]` and the root keys `history-sections`, `companion-sections` and `live-sections`. It now keeps them. If you ran `init --reconfigure` with 0.3.0 to 0.3.2, compare `spec-dna.toml` with its last commit.
+- spec-dna reads a convention file of the working tree from disk on every run, without the parse cache, It also adds the file to the git status pathspec. Thus a changed file, or a symlink whose target changed, gives the current text. spec-dna does not read a symlink whose target is outside the repository (SD106).
 
 ## 0.3.2 - 2026-11-13
 
-Live sections and project conventions. A replay of real changes of a corpus found 2 gaps: agents left the implementation status of an accepted decision stale, because spec-dna froze that text, and agents did not see a convention for contract changes that only the project documents state.
+Live sections and project conventions. A replay of real changes of a corpus found 2 gaps. First, agents left the implementation status of an accepted decision stale, because spec-dna froze that text. Second, agents did not see a convention for contract changes that only the project documents state.
 
 ### Added
 
@@ -55,14 +55,14 @@ Live sections and project conventions. A replay of real changes of a corpus foun
 
 ### Changed
 
-- The skill tells agents to run `spec-dna show --conventions <type>` before they edit a document of that type, and to update a live section of an accepted decision in place when a change makes it stale.
+- The skill tells agents to run `spec-dna show --conventions <type>` before they edit a document of that type. It also tells them to update a live section of an accepted decision in place when a change makes the section stale.
 - The message and the fix of SD405 name the live sections.
 
 ## 0.3.1 - 2026-11-11
 
 ### Changed
 
-- `mv` of a section leaves the heading of the section with a one-line pointer to its new place, for every destination type. Before, only a move into a `reference` document left a pointer. A review of 10 splits on a real corpus found that a reader of the old document, and prose references such as "see section 1" or "(Releases, below)", lost the moved text.
+- `mv` of a section leaves the heading of the section with a one-line pointer to its new place, for every destination type. Before, only a move into a `reference` document left a pointer. A review of 10 splits on a real corpus found that a reader of the old document, and prose references such as "see section 1" or "(Releases, below)", could not find the moved text.
 
 ## 0.3.0 - 2026-11-11
 
@@ -73,18 +73,22 @@ Hygiene functions: split, history extraction, generated indexes and stubs for ev
 - `mv <doc-id>#<section>... <to>` moves sections out of a document of any type (guide, runbook, decision, incident, invariant, note, spec, contract, change, reference), into a new or an existing document of any type. `--type <type>` sets the type of a new destination. Each moved section keeps its old id as an alias (`<old-id>#<anchor>` in the `aliases` of the destination), and links follow it. The preservation check also requires that every moved section resolves at its old id.
 - A move into a `reference` document leaves a one-line pointer in place of each moved section, and the new document links back to its source.
 - Decisions: only the amendment sections and the history sections move, and only into a `reference` document. The frozen text stays. `mv` lists the moved amendments that state a requirement, a BCP 14 keyword or a status word as candidates for a superseding decision. It never writes a decision.
-- `companion-sections` per root and type: the sections that belong to the requirements, such as an acceptance map. When requirements move, their table rows and list items move with them. A row of a key that moves and a key that stays refuses the move, with that reason.
-- `history-sections` per root and type, and `spec-dna history <doc-id> [<to>]`: moves the history sections (and the amendment sections of a decision) into a reference document. In a decision, a history section is not frozen text.
-- `spec-dna index <dir> [--replace]`: writes a generated index of the documents of a directory (default `<dir>/README.md`), marked by `generated: spec-dna index h:<hash>`. With `--replace`, it replaces a hand-kept registry, and links to a section of the old file that names an entry go to the entry. SD610 (warning): a stale or hand-edited index.
+- `companion-sections` per root and type: the sections that belong to the requirements, such as an acceptance map. When requirements move, their table rows and list items move with them. If a row has a key that moves and a key that stays, `mv` stops and gives that reason.
+- `history-sections` per root and type. `spec-dna history <doc-id> [<to>]` moves the history sections (and the amendment sections of a decision) into a reference document. In a decision, a history section is not frozen text.
+- `spec-dna index <dir> [--replace]` writes a generated index of the documents of a directory (default `<dir>/README.md`). The index has the mark `generated: spec-dna index h:<hash>`. With `--replace`, it replaces a hand-kept registry, and links to a section of the old file that names an entry go to the entry. SD610 (warning): a stale index, or an index with a manual edit.
 - `mv <from> <to> --stub` leaves a stub at the old path (front matter `moved-to`) for tools that read a file by its path. A stub has no id and no budget.
 - SD503 (error): a change edits `spec-dna.toml` together with documents or code. A configuration change must be a change of its own.
 - `[budgets] growth` (default 4,000 characters).
-- A new document that a split moved out of a document over its hard budget gives the warning SD704, not SD702: it holds no new text.
+- A new document that a split moved out of a document over its hard budget gives the warning SD704, not SD702, because it holds no new text.
 
 ### Changed
 
 - A document that was over its hard budget in the base and grew by at most `[budgets] growth` characters gives the warning SD703, not the error SD702. In the code tasks of a real corpus, the error made agents split or shorten unrelated documents.
-- The skill: do not split, move or shorten a document for a size warning; for a size error, put the new text into a new document or move whole sections with one `mv`; do not edit `spec-dna.toml`; run `check` once, or the project target that runs it. The fix texts of SD701 to SD704 say the same.
+- The skill gives these rules, and the fix texts of SD701 to SD704 say the same:
+  - Do not split, move or shorten a document for a size warning.
+  - For a size error, put the new text into a new document, or move whole sections with one `mv`.
+  - Do not edit `spec-dna.toml`.
+  - Run `check` once, or run the project target that runs it.
 - The ids of a root of type `reference` start with a namespace from the root path, so two reference roots never collide (D11-1). The id of 0.2 stays a fallback name when it is unique.
 
 ## 0.2.1 - 2026-11-08
@@ -94,26 +98,35 @@ Fewer agent requests and a better detection of common layouts.
 ### Added
 
 - `spec-dna <command> --help` and `spec-dna help <command>` print the help of one command only.
-- `init` detects more layouts: a top-level type directory such as `rfcs/`, `adr/` or `runbooks/` keeps its type. New type words: `validation` and `validations` (`reference`), `incident` and `postmortem` (`incident`); a directory with one of these names must be in a documentation tree or be mostly Markdown. Decision files such as `0001-use-postgres.md` (adr-tools, `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }`, if each number of the root is unique, no file of the root starts with a date, and no other root makes the same alias.
+- `init` detects more layouts. A top-level type directory such as `rfcs/`, `adr/` or `runbooks/` keeps its type. The new type words are `validation` and `validations` (`reference`), and `incident` and `postmortem` (`incident`). A directory with one of these names must be in a documentation tree, or it must be mostly Markdown. Decision files such as `0001-use-postgres.md` (adr-tools, `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }`. This applies if each number of the root is unique, no file of the root starts with a date, and no other root makes the same alias.
 
 ### Changed
 
-- A directory of numbered files takes its type from its own files: the prefix (`ADR`, `RFC`, `INC`), the front matter `type` of most files, or their content (`Decision`, or `Context` and `Consequences`; `Root cause` as a heading or a table field, or `Timeline` and `Impact`; `Steps`; requirements with a BCP 14 keyword). If the files show no type, the type is the type of a typed enclosing root, or `note` in a mixed root. Before, it took the default type of the enclosing root. A mixed tree takes the type of its numbered files only if it has no other documents. Files numbered without a prefix (`0001-*.md`) make a root only for decisions and changes.
-- The skill: split a document only for a size error (SD702, and in the `strict` profile also SD701, SD703 and SD704). A size warning needs no split, and a split document needs no second split. The fix texts of SD701 and SD703 no longer ask for a split.
+- A directory of numbered files takes its type from its own files. These facts give the type:
+  - the prefix (`ADR`, `RFC`, `INC`)
+  - the front matter `type` of most files
+  - the content of most files: `Decision`, or `Context` and `Consequences`; `Root cause` as a heading or a table field, or `Timeline` and `Impact`; `Steps`; requirements with a BCP 14 keyword
+
+  If the files show no type, the type is the type of the enclosing root, if that root has a type. In a mixed root, the type is `note`. Before, the directory took the default type of the enclosing root. A mixed tree takes the type of its numbered files only if it has no other documents. Files with a number and no prefix (`0001-*.md`) make a root only for decisions and changes.
+- The skill: split a document only for a size error (SD702, and in the `strict` profile also SD701, SD703 and SD704). A size warning needs no split. A split document needs no second split. The fix texts of SD701 and SD703 no longer ask for a split.
 
 ## 0.2.0 - 2026-11-08
 
-Profiles, 4 knowledge types, requirement evidence and an interactive `init`. The goal: a growing corpus stays orderly, so agents stay fast and cheap.
+Profiles, 4 knowledge types, requirement evidence and an interactive `init`. The goal is that a corpus that gets larger stays consistent, so agents stay fast and cost little.
 
 ### Added
 
 - `profile = "lite" | "standard" | "strict"` sets the default severity of each code. `[rules]` and the `rules` of a root override it by rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or by code. A root can have its own `profile`. [docs/profiles.md](docs/profiles.md) gives the table.
-- 4 document types: `invariant` (project-wide rules with stable ids and an `applies-to` scope; `context` serves a matching invariant first), `runbook`, `incident` (it must link the requirements, decisions or runbooks that it involves: SD609) and `reference` (cold material: no budget, and `context` never serves it unless a target names it). Each type has a template, required sections and budgets. [docs/types.md](docs/types.md).
+- 4 document types. Each type has a template, required sections and budgets. [docs/types.md](docs/types.md) gives the details.
+  - `invariant`: project-wide rules with stable ids and an `applies-to` scope. `context` serves a matching invariant first.
+  - `runbook`: an operational procedure.
+  - `incident`: it must link the requirements, decisions or runbooks that it involves (SD609).
+  - `reference`: material that agents seldom read. It has no budget. `context` never serves it unless a target names it.
 - `spec-dna new <type> <id>` writes a document from the template of its type. In a mixed root, each type gets its own namespace. SD306 (error): a template placeholder (`{{text}}`) is still in a document.
 - `types` in `spec-dna.toml`: the document types of the project. A document of another type is an error (SD303).
 - `required-sections` accepts a list of lists: several required sections for a type.
 - Evidence: a requirement links to tests by `verified-by` (front matter, or an inline `<!-- verified-by: <path> -->` marker) or by a `covers: <doc-id>#<key>` tag in a test file of any language (`[evidence] tests`). SD105 (error): a tag names no requirement. SD608 (by profile): an active requirement has no evidence. `show` lists the evidence of each requirement.
-- `init` detects the repository and asks at most 8 questions with the detected defaults: the profile, the knowledge types, the evidence policy and link style, the language and heading aliases, the mapping of each detected root, the budget level, the agent adapters, and the CI step, hook and base branch. It shows the full `spec-dna.toml` and the files to create or change, and writes them only after a confirmation. Modes: `--non-interactive`, `--answers <file>`, `--reconfigure`, `--dry-run`. It can write a GitHub Actions job and a pre-commit or husky hook. [docs/init.md](docs/init.md).
+- `init` detects the repository and asks at most 8 questions with the detected defaults. The questions are about the profile, the knowledge types, the evidence policy and link style, the language and heading aliases, the mapping of each detected root, the budget level, the agent adapters, and the CI step, hook and base branch. It shows the full `spec-dna.toml` and the files to create or change, and writes them only after a confirmation. Modes: `--non-interactive`, `--answers <file>`, `--reconfigure`, `--dry-run`. It can write a GitHub Actions job and a pre-commit or husky hook. [docs/init.md](docs/init.md).
 
 ### Changed
 
@@ -130,11 +143,11 @@ Fixes of the defects that a playground product of 12 agent tasks found in 0.1.1.
 
 ### Fixed
 
-- `mv` of requirements: a list item can end after a blank line. A cut or an insert at that end joined the next paragraph to a moved or a remaining item, so the preservation check refused a valid move. The move now cuts and inserts whole lines without the blank lines after the item.
+- `mv` of requirements: a list item can end after a blank line. A cut or an insert at that end joined the next paragraph to a moved or a remaining item, so the preservation check stopped a valid move. The move now cuts and inserts whole lines without the blank lines after the item.
 - `mv` of requirements: the preservation check compares the requirement text without link destinations, because the move rewrites the links to a moved key or section. The index format changed (parser version 8), so the first run parses all documents again.
-- A refused move names each requirement whose text would change, and gives the text before and after the first difference, or says that the requirement would be lost or new.
+- If the preservation check stops a move, it names each requirement whose text would change. It gives the text before and after the first difference, or it says that the requirement would be lost or new.
 - `mv` of requirements records an alias only for an id of `HEAD`. A key that is new in the uncommitted change gets no alias.
-- SD606 and SD607 on the frozen text of an accepted decision: an amendment section that cites the new path or identifier clears them for that decision. Before, no valid change could clear them, except a supersede.
+- SD606 and SD607 on the frozen text of an accepted decision: an amendment section that cites the new path or identifier clears them for that decision. Before, no valid change could clear them, except a superseding decision.
 
 ### Changed
 
@@ -156,7 +169,7 @@ The first version for a consumer.
 ### Changed
 
 - SD405 ignores link destinations. A move that rewrites a link in an accepted decision does not change its frozen text. The index format changed (parser version 7), so the first run parses all documents again.
-- The message of a version mismatch says "move the project to", for both directions.
+- The message of a version mismatch says "move the project to", for an upgrade and for a downgrade.
 - The skill tells agents to split a document with one `mv`.
 
 ## 0.1.0 - 2026-11-08

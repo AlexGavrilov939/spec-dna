@@ -44,21 +44,21 @@ Write a code comment only when it gives information that the code and its names 
 
 ## Branches
 
-- `master` is the default branch. Changes go into `master` only through pull requests. The `no-commit-to-branch` hook stops local commits to `master`.
+- `master` is the default branch. Merge changes into `master` only through pull requests. The `no-commit-to-branch` hook stops local commits to `master`.
 - Give each branch a name of the form `<type>/<short-description>`, for example `feat/spec-template` or `fix/readme-links`.
 
 ## Commits
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): subject`. The scope is optional.
 - Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `style`, `revert`.
-- Subject: imperative mood, lowercase first letter, no period at the end.
+- Write the subject in the imperative, with a lowercase first letter and no period at the end.
 - Sign your commits (`git config commit.gpgsign true`).
 
 ## Pull requests
 
 - Put one logical change in each pull request. Complete the template.
 - The PR title must be a Conventional Commit. The `PR title` workflow checks it.
-- GitHub squash-merges pull requests, so the PR title becomes the commit message on `master`.
+- GitHub merges each pull request as one squashed commit, so the PR title becomes the commit message on `master`.
 - Merge only when all CI jobs pass. If GitHub Actions does not start the jobs, do these steps:
     1. Run the same jobs locally.
     2. Put the results in the pull request.
@@ -72,11 +72,11 @@ Write a code comment only when it gives information that the code and its names 
 
 ## Releases
 
-1. In a pull request, set the new version in `Cargo.toml` and `Cargo.lock`, and add its section to `CHANGELOG.md`, in the form `## <version> - <date>`.
+1. In a pull request, set the new version in `Cargo.toml` and `Cargo.lock`. Add its section to `CHANGELOG.md`, in the form `## <version> - <date>`.
 2. Merge the pull request when CI passes. CI builds the 7 targets and runs each binary on a runner of its platform.
 3. Push a signed tag `v<version>` on that commit of `master`.
 
-The tag starts `.github/workflows/release.yml`. It compares the tag with the version, builds and runs the binaries again, and publishes the binaries, `SHA256SUMS` and `spec-dna-pin.toml` with build-provenance attestations. The notes of the release are the section of the version in `CHANGELOG.md`.
+The tag starts `.github/workflows/release.yml`. The workflow compares the tag with the version. It builds and runs the binaries again. It publishes the binaries, `SHA256SUMS` and `spec-dna-pin.toml` with build-provenance attestations. The notes of the release are the section of the version in `CHANGELOG.md`.
 
 ## Dependencies
 

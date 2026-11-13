@@ -64,7 +64,7 @@ Consequence: the spec-dna standard uses its own words, under the repository lice
 Other approaches in the study:
 
 - Kubernetes KEPs (`kep.yaml` beside `README.md`, about 710 proposals): a typed schema with status and stage enums and cross-field rules. It has `replaces` and `superseded-by` links, a JSON index, and checks only on changed files. The metadata check fetches a remote file, so it is not hermetic. This is the nearest prior art for machine-validated spec metadata.
-- AGENTS.md: plain Markdown; the nearest file has priority; no required fields.
+- AGENTS.md: plain Markdown. The nearest file has priority. It has no required fields.
 - Agent Skills (`SKILL.md`): 3 disclosure levels (metadata of about 100 tokens, body on activation, files on demand).
 - Claude Code: `CLAUDE.md` with `@path` imports (4 hops), `.claude/rules` with `paths:` globs, hooks that inject context, with a limit of 10,000 characters per string.
 - Kiro: `requirements.md`, `design.md`, `tasks.md` per feature with EARS; steering files with inclusion modes. Closed source (**unverified**).
@@ -84,7 +84,7 @@ Other tools and ideas that this research considered, but did not evaluate in dep
 
 Mechanisms to reuse, not to rebuild:
 
-1. The surfaces that agents already load: AGENTS.md, `CLAUDE.md` imports, path-scoped rules, skills. spec-dna writes small entry points into them; it does not invent a loader.
+1. The surfaces that agents already load: AGENTS.md, `CLAUDE.md` imports, path-scoped rules, skills. spec-dna writes small entry points into them. It does not invent a loader.
 2. The OpenSpec diagnostic shape `{severity, code, message, target, fix}` and its `x-` prefix for extension keys.
 3. The KEP metadata pattern: typed schema, enums, cross-field rules, supersede links, changed-files-only checks. Keep it offline.
 4. The OpenSpec referenced-spec index (id, one-line purpose, fetch command) as the progressive-disclosure unit.
@@ -107,11 +107,11 @@ Integration decision: spec-dna stays independent of all three frameworks. No fra
 ## 5. Selected composition
 
 1. Format: CommonMark plus GFM tables; YAML front matter in a JSON-compatible subset; JSON Schema 2020-12 for front matter; TOML for tool configuration.
-2. Language: BCP 14 uppercase keywords as the only normative vocabulary. Requirements use EARS patterns. EARS, INCOSE and 29148 use lowercase "shall", with goal semantics for "should". spec-dna uses the BCP 14 meanings and matches EARS trigger words without regard to case.
+2. Language: BCP 14 uppercase keywords as the only normative vocabulary. Requirements use EARS patterns. EARS, INCOSE and 29148 use lowercase "shall", with goal semantics for "should". spec-dna uses the BCP 14 meanings and matches EARS trigger words in any case.
 3. Quality rules: a small controlled-language lint of this project (see below). All its checks are warnings, except where an ADR proves that a check is exact.
 4. Decisions: MADR 4.0.0 minimal.
 5. Structure: DITA concepts without DITA XML: typed topics (the 6 document types of ADR 0001), generated maps, and keys (path ids with aliases). spec-dna defers includes. Diátaxis modes and C4 levels are optional `x-` metadata.
-6. Delivery: an index in the shape of llms.txt; the CLI fetches bodies by id.
+6. Delivery: an index in the shape of llms.txt. The CLI fetches bodies by id.
 7. Versioning: SemVer 2.0.0 for the tool and the standard; Conventional Commits 1.0.0 in this repository.
 
 ### Controlled-language lint
@@ -120,9 +120,9 @@ ASD-STE100, INCOSE GtWR and ISO/IEC/IEEE 29148 stay as references only. spec-dna
 
 | Check | What it flags | Maps to |
 | --- | --- | --- |
-| Sentence length | A requirement sentence of more than 30 words (configurable). A long sentence usually has more than one requirement | 29148 characteristic "singular"; GtWR R18 (single thought sentence); ASD-STE100 sets its own length limits; spec-dna uses them only as inspiration |
+| Sentence length | A requirement sentence of more than 30 words (configurable). A long sentence usually has more than one requirement | 29148 characteristic "singular"; GtWR R18 (single thought sentence); ASD-STE100 sets its own length limits. spec-dna uses them only as inspiration |
 | Vague terms | A word or phrase from spec-dna's own list. The list has 4 groups. Terms that a test cannot verify: "adequate", "appropriate", "fast", "user-friendly", "robust", "efficient", "seamless", "reasonable", "sufficient". Escape clauses: "if possible", "as appropriate", "where practical". Open endings: "etc.", "and so on", "including but not limited to". Loose quantities: "some", "several", "various", "many", "few". | 29148 characteristics "unambiguous" and "verifiable"; GtWR R7 (vague terms), R8 (escape clauses), R9 (open-ended clauses) |
-| Passive voice | A form of "be" before a past participle (a word that ends in "-ed" or "-en", or a word from a short list of irregular forms), as in "the request SHALL be rejected". This check is a heuristic: it misses some forms and flags some adjectives | 29148 characteristic "unambiguous" (the actor is missing); GtWR R2 (active voice) |
+| Passive voice | A form of "be" before a past participle (a word that ends in "-ed" or "-en", or a word from a short list of irregular forms), as in "the request SHALL be rejected". This check is a heuristic: it misses some forms and flags some adjectives | 29148 characteristic "unambiguous" (the actor is absent); GtWR R2 (active voice) |
 
 The GtWR rule ids come from the v4 rule list, as secondary sources cite it. This research did not check the paid text (see section 2). The 29148 characteristic names come from the official preview.
 
@@ -130,10 +130,10 @@ The GtWR rule ids come from the v4 rule list, as secondary sources cite it. This
 
 | Alternative | Reason |
 | --- | --- |
-| Adopt Spec Kit, OpenSpec or BMAD as the base | See section 3: no merged truth with stable ids at scale (Spec Kit), flat namespaces and a narrow grammar (OpenSpec), process without a spec store (BMAD). Spec Kit and BMAD also need Python or Node; OpenSpec has a standalone binary |
-| Full ISO/IEC/IEEE 29148 or INCOSE templates | Paid text that spec-dna cannot bundle; many mandatory attributes with no demonstrated value for agents |
-| ASD-STE100 dictionary checks | The dictionary has copyright protection, and spec-dna cannot ship it; the domain is aircraft maintenance |
-| DITA XML toolchain | Heavy toolchain and XML noise in agent context; the useful ideas stay as concepts |
+| Adopt Spec Kit, OpenSpec or BMAD as the base | See section 3: no merged truth with stable ids at scale (Spec Kit), flat namespaces and a narrow grammar (OpenSpec), process without a spec store (BMAD). Spec Kit and BMAD also need Python or Node. OpenSpec has a standalone binary |
+| Full ISO/IEC/IEEE 29148 or INCOSE templates | Paid text that spec-dna cannot bundle. Many mandatory attributes with no demonstrated value for agents |
+| ASD-STE100 dictionary checks | The dictionary has copyright protection, and spec-dna cannot ship it. The domain is aircraft maintenance |
+| DITA XML toolchain | The toolchain is heavy, and XML adds noise in agent context. The useful ideas stay as concepts |
 | Full arc42 as a mandatory structure | 12 sections add too much process to small projects; CC BY-SA would also apply to adapted templates |
 | Embeddings, a vector database or LLM re-ranking for retrieval | Non-deterministic; needs a service or a network. Explicit links and ids come first (brief section 4.2) |
 | LLM-based validation as a gate | Non-deterministic; a gate must be reproducible. LLM review stays advisory |
