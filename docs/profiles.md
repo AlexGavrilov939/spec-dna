@@ -12,7 +12,7 @@ An error fails `check` when the error is new against the base. A warning never f
 
 | Rule group | Codes | lite | standard | strict |
 | --- | --- | --- | --- | --- |
-| `references` | SD101, SD102, SD104 | warning | error | error |
+| `references` | SD101, SD102, SD104, SD106 | warning | error | error |
 | `ids` | SD201, SD202, SD203, SD204 | warning | error | error |
 | `budgets` | SD702 (a new document over the hard budget, a document that goes over it, or a document over it that grew) | warning | error | error |
 | `budgets` | SD701 (over the soft budget), SD703 (over the soft budget and grew), SD704 (over the hard budget, no growth) | warning | warning | error |

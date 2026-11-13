@@ -88,6 +88,25 @@ pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
             ));
         }
     }
+    // The pointers of `conventions` must name a document or a section.
+    for (t, ptrs) in config.conventions.iter().enumerate() {
+        for p in ptrs {
+            if crate::context::resolve_pointer(c, p).is_none() {
+                let ty = DocType::ALL[t].name();
+                out.push(Diag {
+                    path: crate::config::FILE_NAME.to_string(),
+                    line: 1,
+                    code: Code::ConventionUnresolved,
+                    doc: crate::config::FILE_NAME.to_string(),
+                    target: p.clone(),
+                    message: format!(
+                        "`conventions.{ty}` points to `{p}`, which names no document or section"
+                    ),
+                    severity: Code::ConventionUnresolved.severity(),
+                });
+            }
+        }
+    }
     let mut out = apply_severity(config, out);
     out.sort();
     out
@@ -474,7 +493,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
                 1,
                 Code::DecisionFrozen,
                 "",
-                "the text outside the amendment sections changed after the decision was accepted",
+                "the text outside the amendment and live sections changed after the decision was accepted",
             ));
         }
         let (soft, hard) = config.budgets[h.ty as usize];

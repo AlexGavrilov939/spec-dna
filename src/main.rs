@@ -68,9 +68,11 @@ superseded, retired or rejected document is only listed, unless
     ),
     (
         "show",
-        "show <id>[#<anchor>]",
+        "show <id>[#<anchor>]\nshow --conventions <type>",
         "Prints a document, a section or a requirement, with the evidence of
-each requirement.",
+each requirement. With --conventions, it prints the sections that state
+the project conventions for documents of the type (`conventions` in
+spec-dna.toml).",
     ),
     (
         "new",
@@ -179,6 +181,7 @@ struct Args {
     ty: Option<String>,
     stub: bool,
     replace: bool,
+    conventions: Option<String>,
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -205,6 +208,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         ty: None,
         stub: false,
         replace: false,
+        conventions: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -232,6 +236,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--stub" => a.stub = true,
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
+            "--conventions" => a.conventions = Some(value("--conventions")?),
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
@@ -760,12 +765,16 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         a.budget.unwrap_or(cfg.context_budget),
         query.as_ref(),
         a.include_inactive,
+        &cfg.conventions,
     );
     print!("{}", context::render(&c, &repo.root, &asm, a.json));
     Ok(0)
 }
 
 fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    if let Some(name) = &a.conventions {
+        return show_conventions(repo, a, name);
+    }
     expect_args(a, 1, 1)?;
     let (cfg, mut c) = load_head(repo, a)?;
     c.covers = evidence::load(repo, &cfg, None, true)?;
@@ -778,6 +787,98 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         context::show(&c, &repo.root, d, frag.as_deref(), a.json)
     );
     Ok(0)
+}
+
+/// Prints the sections that state the project conventions for documents of a
+/// type (`conventions` in spec-dna.toml).
+fn show_conventions(repo: &Repo, a: &Args, name: &str) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    let ty = model::DocType::from_name(name).ok_or_else(|| {
+        Fatal::Usage(format!(
+            "--conventions: unknown type `{name}`; use {}",
+            model::DocType::names()
+        ))
+    })?;
+    let (cfg, mut c) = load_head(repo, a)?;
+    c.covers = evidence::load(repo, &cfg, None, true)?;
+    let ptrs = &cfg.conventions[ty as usize];
+    let mut parts = Vec::new();
+    let mut missing = Vec::new();
+    for p in ptrs {
+        match context::resolve_pointer(&c, p) {
+            Some((d, frag)) => {
+                parts.push(context::show(&c, &repo.root, d, frag.as_deref(), a.json))
+            }
+            None => missing.push(p.clone()),
+        }
+    }
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("type", ty.name())
+                .strs("pointers", ptrs)
+                .strs("unresolved", &missing)
+                .raw(
+                    "sections",
+                    &json::array(parts.iter().map(|p| p.trim_end().to_string()))
+                )
+                .end()
+        );
+        return Ok(0);
+    }
+    if ptrs.is_empty() {
+        println!(
+            "No conventions for `{}`: spec-dna.toml has no `conventions.{}`.",
+            ty.name(),
+            ty.name()
+        );
+        section_names(&cfg, ty);
+        return Ok(0);
+    }
+    println!("<!-- conventions of {}: {} -->", ty.name(), ptrs.join(", "));
+    section_names(&cfg, ty);
+    for p in &missing {
+        println!("<!-- `{p}` names no document or section (SD106) -->");
+    }
+    for p in parts {
+        print!("{p}");
+    }
+    Ok(0)
+}
+
+/// Prints the amendment and live section names of a type, over all roots,
+/// if the type has any.
+fn section_names(cfg: &config::Config, ty: model::DocType) {
+    let names = |f: fn(&config::Root) -> &[Vec<String>; model::DocType::COUNT]| {
+        let mut v: Vec<String> = Vec::new();
+        for r in &cfg.roots {
+            for n in &f(r)[ty as usize] {
+                if !v.contains(n) {
+                    v.push(n.clone());
+                }
+            }
+        }
+        v
+    };
+    let amend = names(|r| &r.amendment_sections);
+    let live = names(|r| &r.live_sections);
+    if !amend.is_empty() || !live.is_empty() {
+        println!(
+            "<!-- {}: amendment sections: {}; live sections: {} -->",
+            ty.name(),
+            if amend.is_empty() {
+                "none".into()
+            } else {
+                amend.join(", ")
+            },
+            if live.is_empty() {
+                "none".into()
+            } else {
+                live.join(", ")
+            }
+        );
+    }
 }
 
 /// Writes a new document from the template of its type. The root is

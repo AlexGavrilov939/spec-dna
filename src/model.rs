@@ -152,9 +152,9 @@ pub struct Doc {
     /// The chunks of the companion sections (`companion-sections` of the
     /// root), with the chunks below them.
     pub companions: Vec<usize>,
-    /// Hash of the chunks outside the amendment and history sections, without
-    /// link destinations. After a decision is accepted, this text is frozen
-    /// (SD405).
+    /// Hash of the chunks outside the amendment, history and live sections,
+    /// without link destinations. After a decision is accepted, this text is
+    /// frozen (SD405).
     pub frozen_hash: Hash,
     /// For a stub that `mv --stub` left at an old path: the id in its
     /// `moved-to` field. A stub has no id of its own and no budget.
@@ -869,9 +869,12 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     let amendments = amendment_chunks(&parsed.chunks, &root.amendment_sections[ty as usize]);
     let history = amendment_chunks(&parsed.chunks, &root.history_sections[ty as usize]);
     let companions = amendment_chunks(&parsed.chunks, &root.companion_sections[ty as usize]);
+    // The live sections (such as an implementation status) record a current
+    // state, so their text can change in place.
+    let live = amendment_chunks(&parsed.chunks, &root.live_sections[ty as usize]);
     let mut frozen = Vec::new();
     for (i, ch) in parsed.chunks.iter().enumerate() {
-        if !amendments.contains(&i) && !history.contains(&i) {
+        if !amendments.contains(&i) && !history.contains(&i) && !live.contains(&i) {
             frozen.extend_from_slice(&ch.frozen);
         }
     }
@@ -1397,6 +1400,35 @@ mod tests {
         );
         assert_ne!(frozen(base), frozen(&base.replace("W.", "W2.")));
         assert_ne!(frozen(base), frozen(&base.replace("Use X.", "Use X2.")));
+    }
+
+    #[test]
+    fn live_sections_are_not_frozen() {
+        let base = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Решение\n\nUse X.\n\n## Статус реализации\n\n- step 1: done\n- step 2: open\n\n### Детали\n\nZ.\n\n## Последствия\n\nW.\n\n## Поправки\n\nA.\n";
+        let cfg = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nrequired-sections = { decision = [\"Решение\"] }\namendment-sections = { decision = [\"Поправки\"] }\nlive-sections = { decision = [\"Статус реализации\"] }\n";
+        let c = corpus_with(cfg, &[("docs/d.md", base)]);
+        let names = &Config::parse(cfg).unwrap().roots[0].live_sections[DocType::Decision as usize];
+        let live = amendment_chunks(&c.docs[0].parsed.chunks, names);
+        let headings: Vec<&str> = live
+            .iter()
+            .map(|&i| c.docs[0].parsed.chunks[i].heading.as_str())
+            .collect();
+        assert_eq!(headings, ["Статус реализации", "Детали"]);
+        let frozen = |text: &str| corpus_with(cfg, &[("docs/d.md", text)]).docs[0].frozen_hash;
+        // Live text can change in place and grow.
+        assert_eq!(
+            frozen(base),
+            frozen(&base.replace("step 2: open", "step 2: done (2026-11-13)"))
+        );
+        assert_eq!(frozen(base), frozen(&base.replace("Z.", "Z.\n\nMore.")));
+        // The outcome and the other sections stay frozen.
+        assert_ne!(frozen(base), frozen(&base.replace("Use X.", "Use X2.")));
+        assert_ne!(frozen(base), frozen(&base.replace("W.", "W2.")));
+        // A renamed live heading is frozen text again.
+        assert_ne!(
+            frozen(base),
+            frozen(&base.replace("## Статус реализации", "## Статус"))
+        );
     }
 
     #[test]
