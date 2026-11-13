@@ -14,15 +14,15 @@ This page gives the results of the agent experiments that shaped spec-dna, and t
 
 | Question | Setup | Result |
 | --- | --- | --- |
-| Does the gate keep accepted decisions intact? | Synthetic project, 5 tasks, 2 arms, 3 runs each | With spec-dna: 15 of 15 runs correct. Without it: 6 of 15; the agents edited the frozen text of accepted decisions 7 times and left 3 stale code citations. The cost of one correct result was about half ($1.02 against $2.03, estimated from token prices). |
-| Does a project stay orderly as it grows? | Synthetic project grown by 80 agent tasks in each of 3 arms | All 240 tasks passed. With the gate, the documents were about one third smaller, and drift and broken code citations occurred about half as often. The tasks cost about 14% less. The accuracy of spot questions about the project did not change beyond noise (118, 114 and 113 of 120). |
+| Does the gate keep accepted decisions intact? | Synthetic project, 5 tasks, 2 arms, 3 runs each | With spec-dna: 15 of 15 runs correct. Without it: 6 of 15. The agents edited the frozen text of accepted decisions 7 times and left 3 stale code citations. The cost of one correct result was about half ($1.02 against $2.03, estimated from token prices). |
+| Does the gate keep the documents small and consistent as the project grows? | Synthetic project grown by 80 agent tasks in each of 3 arms | All 240 tasks passed. With the gate, the documents were about one third smaller, and drift and broken code citations occurred about half as often. The tasks cost about 14% less. The accuracy of spot questions about the project did not change by more than the noise (118, 114 and 113 of 120). |
 | Does it help on a mature real repository? | A private product repository with about 2,300 Markdown documents; real and replayed changes | With a light configuration (the gate as a hint, the skill, project conventions served first), agents gave more correct results in 2 of 3 comparisons and the same number in the third, at about the same cost of one correct result. With the gate, the agents stopped editing the outcome of accepted decisions in place. |
 
 ## What is not proven
 
 - spec-dna does not reduce tokens by itself. On the synthetic project, the median input of a run was 42% to 101% higher with the tool. The gain is in correct results per cost, not in tokens.
 - A split of large documents into smaller ones gave no gain on the real repository. The agents seldom opened the new documents.
-- Many differences rest on 1 or 2 tasks, and most confidence intervals of cost include no change.
+- Many differences depend on 1 or 2 tasks. Most confidence intervals of cost include no change.
 - No team has used spec-dna in daily work over weeks yet. All measurements used snapshots.
 
 ## Limits

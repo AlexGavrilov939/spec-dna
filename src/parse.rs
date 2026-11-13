@@ -644,8 +644,8 @@ pub fn strip_link_destinations(text: &str) -> String {
     out
 }
 
-/// Returns true if an inline code span can be a path or an identifier: 1 to
-/// 200 bytes with a letter, and no whitespace before the first `(`.
+/// Returns true if an inline code span can be a path or an identifier. It has
+/// 1 to 200 bytes with a letter, and no whitespace before the first `(`.
 fn is_code_candidate(span: &str) -> bool {
     let head = span.split('(').next().unwrap_or("");
     !span.is_empty()

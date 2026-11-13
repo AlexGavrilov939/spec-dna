@@ -1,6 +1,6 @@
 //! spec-dna keeps engineering specifications small, linked and
-//! machine-checked. It serves AI coding agents the minimum sufficient
-//! context. See README.md for commands, exit codes and diagnostics.
+//! machine-checked. It gives AI coding agents the minimum sufficient context.
+//! See README.md for commands, exit codes and diagnostics.
 
 mod adapters;
 mod check;
@@ -460,8 +460,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
     {
         // The working tree and the base, in parallel. The snapshots do not
-        // tell whether a test file outside the document roots changed, so
-        // both trees are read.
+        // tell whether a test file outside the document roots changed, so the
+        // command reads both trees.
         let (head_covers, base_covers) = std::thread::scope(|s| {
             let base = s.spawn(|| match &base_commit {
                 Some(c) => evidence::load(repo, &cfg, Some(c), false).map(Some),
@@ -758,8 +758,8 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     for t in &a.positional {
         match context::resolve_target(&c, t) {
             Some(r) => targets.push(r),
-            // A tracked file, or a file of the working tree that git does
-            // not track yet: an agent asks for context before it adds a file.
+            // A tracked file, or a file of the working tree that git does not
+            // track yet. An agent asks for context before it adds a file.
             None if c.files.contains(t.trim_start_matches("./"))
                 || (!t.starts_with('/')
                     && !t.split('/').any(|s| s == "..")

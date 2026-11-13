@@ -26,7 +26,8 @@ impl Index {
         }
     }
 
-    /// Loads the index. A missing, old or damaged file gives an empty index.
+    /// Loads the index. A file that is absent, old or damaged gives an empty
+    /// index.
     pub fn load(path: PathBuf) -> Index {
         let entries = std::fs::read(&path)
             .ok()

@@ -29,8 +29,8 @@ pub struct Config {
     pub install_source: String,
     /// The table `[spec-dna-sha256]`: the release assets of the pin and their
     /// SHA-256 sums. `None` if there is no table. If the pin is not the
-    /// version of the binary, the table holds only the asset of this binary
-    /// (if it has one), and it is not validated.
+    /// version of the binary, the table holds only the asset of this binary,
+    /// if it has one. spec-dna does not validate the table in this case.
     pub sha256: Option<Vec<(String, String)>>,
     /// The profile: the default severity of each diagnostic code.
     pub profile: Profile,
@@ -40,8 +40,9 @@ pub struct Config {
     pub evidence_tests: Vec<String>,
     /// The document types of the project. Empty: every type.
     pub types: Vec<DocType>,
-    /// The characters that a document over its hard budget in the base can
-    /// grow in one change with a warning (SD703) instead of an error (SD702).
+    /// The number of characters that a document over its hard budget in the
+    /// base can grow in one change. Growth up to this number gives a warning
+    /// (SD703), not an error (SD702).
     pub growth: u32,
     /// For each type, the sections of project documents that state the
     /// project conventions for documents of that type (`[conventions]`), as
@@ -180,9 +181,9 @@ pub struct Root {
     /// section. A document of that type needs one of them. An empty list means
     /// no required section.
     pub required_sections: [Vec<Vec<String>>; DocType::COUNT],
-    /// For each type, the names of its amendment sections. A heading that is
-    /// a name, or that starts with a name and a character that is not a letter
-    /// or a digit, starts an amendment section.
+    /// For each type, the names of its amendment sections. A heading starts an
+    /// amendment section if it is a name, or if it starts with a name and a
+    /// character that is not a letter or a digit.
     pub amendment_sections: [Vec<String>; DocType::COUNT],
     /// If false, a document over the hard budget gives a warning, not an
     /// error.
@@ -299,8 +300,8 @@ fn rules_table(v: &Value, key: &str) -> Result<Rules, String> {
     Ok(out)
 }
 
-/// Returns the override of a code in one rules table. A code rule wins over a
-/// group rule.
+/// Returns the override of a code in one rules table. A code rule has priority
+/// over a group rule.
 fn rule_for(rules: &Rules, code: Code) -> Option<Option<Severity>> {
     if let Some((_, s)) = rules.iter().find(|r| r.0 == code.code()) {
         return Some(*s);
@@ -652,8 +653,8 @@ impl Config {
         })
     }
 
-    /// Returns the severity of a code for a file of a root (`None` for a file
-    /// outside every root), or `None` if the code is off. The order is: the
+    /// Returns the severity of a code for a file of a root. It returns `None`
+    /// for a file outside every root, or if the code is off. The order is: the
     /// rules of the root, `[rules]`, the profile of the root, the profile of
     /// the project.
     pub fn severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
@@ -711,8 +712,8 @@ impl Config {
     }
 
     /// Returns the Markdown files that a pointer of `conventions` names by
-    /// path and that are not documents: files outside every root, or files
-    /// that an exclude glob removes. spec-dna reads these files only to serve
+    /// path and that are not documents. These files are outside every root, or
+    /// an exclude glob removes them. spec-dna reads these files only to serve
     /// the conventions (`context`, `show --conventions`) and to check the
     /// pointers (SD106).
     pub fn convention_files(&self) -> Vec<String> {
@@ -920,7 +921,7 @@ impl Root {
             None => Vec::new(),
         };
         // `lint-severity` and `drift-severity` are the rules `lint` and
-        // `drift` of 0.1 configurations. A rule in `rules` wins.
+        // `drift` of 0.1 configurations. A rule in `rules` has priority.
         for (key, group) in [("lint-severity", "lint"), ("drift-severity", "drift")] {
             if let Some(v) = f.take(key) {
                 let s = severity_value(v, &format!("{prefix}{key}"))?;
@@ -1148,7 +1149,7 @@ mod tests {
             "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#a\", \"./CONTRIBUTING.md\", \"docs/x.md#b\", \"token\", \"../up.md\", \"/abs.md\", \"a\\\\b.md\", \"notes.txt\"]\ndecision = [\"CONTRIBUTING.md#c\"]\n[[roots]]\npath = \"docs\"\nexclude = [\"README.md\"]\n",
         )
         .unwrap();
-        // docs/x.md is a document; an id, a non-Markdown file and a path that
+        // docs/x.md is a document. An id, a non-Markdown file and a path that
         // leaves the repository are not convention files.
         assert_eq!(
             c.convention_files(),
@@ -1416,8 +1417,8 @@ rules = { lint = "error" }
         .unwrap();
         assert_eq!(c.profile, Profile::Lite);
         let sev = |code, root| c.severity(code, root);
-        // Lite: references, ids and budgets are warnings; drift and evidence
-        // are off. A code rule of `[rules]` wins over every profile.
+        // Lite: references, ids and budgets are warnings. Drift and evidence
+        // are off. A code rule of `[rules]` has priority over every profile.
         assert_eq!(sev(Code::UnresolvedReference, Some(0)), Some(W));
         assert_eq!(sev(Code::DuplicateId, Some(0)), Some(W));
         assert_eq!(sev(Code::BudgetHard, Some(0)), Some(W));
@@ -1436,7 +1437,7 @@ rules = { lint = "error" }
         assert_eq!(sev(Code::SentenceLength, Some(1)), None);
         assert_eq!(sev(Code::RequirementUnverified, Some(1)), Some(W));
         assert_eq!(sev(Code::EvidenceMissing, Some(1)), Some(W));
-        // `rules` wins over the old `lint-severity` key of the same root.
+        // `rules` has priority over the old `lint-severity` key of the same root.
         assert_eq!(sev(Code::SentenceLength, Some(2)), Some(E));
         // Outside the roots, the project profile and rules apply.
         assert_eq!(sev(Code::AdapterModified, None), Some(E));
@@ -1530,7 +1531,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "`spec-dna-sha256`: `spec-dna-0.0.1-x86_64-unknown-linux-gnu` is not a release asset of spec-dna {VERSION}; copy the table from spec-dna-pin.toml of release v{VERSION}"
             )
         );
-        // The Windows assets have the extension `.exe`; the others do not.
+        // The Windows assets have the extension `.exe`. The others do not.
         assert!(
             with_table(
                 VERSION,
@@ -1613,8 +1614,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             "spec-dna.toml pins version 0.0.1, but this binary is {VERSION}.\n  To use 0.0.1, download it and compare its SHA-256 with spec-dna.toml:\n    {src}/releases/download/v0.0.1/{own}\n    SHA-256: {SUM}\n  Or build it from source:\n    cargo install --locked --force --git {src} --tag v0.0.1 spec-dna\n  To move the project to {VERSION}, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {src}/releases/download/v{VERSION}/spec-dna-pin.toml and run `spec-dna init`."
         );
         assert_eq!(m, want);
-        // A source of the project gets the build command only; the table
-        // still sets the last line.
+        // A source of the project gets the build command only. The table still
+        // sets the last line.
         let m = pin_mismatch_message("0.0.1", "file:///srv/x", Some(&sums));
         assert!(!m.contains("SHA-256"), "{m}");
         assert!(m.contains("--git file:///srv/x --tag v0.0.1"), "{m}");

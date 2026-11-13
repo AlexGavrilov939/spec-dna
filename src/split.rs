@@ -1,23 +1,24 @@
 //! `spec-dna mv <source>... <dest>` for requirements and sections: a split
 //! (ADR 0001, amendment "batch split"). One command moves several
-//! requirements, or whole sections, into a new or an existing spec or
-//! contract. A source is `<doc-id>#<key>` (a requirement) or
-//! `<doc-id>#<anchor>` (a section with its subsections). A new destination
-//! gets front matter and a title. Each moved requirement whose id is in the
-//! base tree (HEAD) keeps that id as an alias. A key that is new in the
-//! change gets no alias, because no reference can use its old id yet. Links
-//! to a moved key or section follow it.
+//! requirements, or whole sections, into a new spec or contract, or into a
+//! spec or contract that exists. A source is `<doc-id>#<key>` (a requirement)
+//! or `<doc-id>#<anchor>` (a section with its subsections). A new destination
+//! gets front matter and a title. Links to a moved key or section follow it.
+//!
+//! Each moved requirement whose id is in the base tree (HEAD) keeps that id as
+//! an alias. A key that is new in the change gets no alias, because no
+//! reference can use its old id yet.
 //!
 //! A preservation check runs before any file changes. It compares the
 //! requirement text without link destinations, because the move rewrites
-//! links:
+//! links. The check has these conditions:
 //!
-//! - the requirement hashes of all documents are the same multiset;
-//! - every requirement id resolves, to a requirement with the same hash (a
-//!   new key at its new id);
-//! - the frozen text of every accepted decision is the same (a link
-//!   destination is not frozen text);
-//! - no error diagnostic is new.
+//! - The requirement hashes of all documents are the same multiset.
+//! - Every requirement id resolves, to a requirement with the same hash (a new
+//!   key at its new id).
+//! - The frozen text of every accepted decision is the same (a link
+//!   destination is not frozen text).
+//! - No error diagnostic is new.
 //!
 //! If a check fails, `mv` changes no file and exits with code 1.
 
@@ -300,9 +301,9 @@ pub fn run(
                     retarget(l, &d.path, &to_path, &moved_anchors, &to_path, c)
                 });
                 sections.push(body);
-                // The heading stays with a one-line pointer, so that a reader of
-                // the old document (and a prose reference to the section) finds
-                // the moved text.
+                // The heading stays with a one-line pointer. Thus a reader of
+                // the old document, and a prose reference to the section,
+                // finds the moved text.
                 let keep = {
                     pointers += 1;
                     let heading_line = text[a..b].lines().next().unwrap_or("").trim_end();
@@ -559,11 +560,11 @@ fn is_item_start(line: &str) -> bool {
             }))
 }
 
-/// Finds the rows of the companion sections of a document that name moving
-/// requirement keys. Returns each group of rows with the byte ranges of
-/// their lines. Refuses a row that names a key that moves and a key that
-/// stays. Companion sections inside a moved section (`skip`, chunk ranges)
-/// move with that section.
+/// Finds the rows of the companion sections of a document that name a
+/// requirement key that moves. Returns each group of rows with the byte ranges
+/// of their lines. Does not accept a row that names a key that moves and a key
+/// that stays. Companion sections inside a moved section (`skip`, chunk
+/// ranges) move with that section.
 fn companion_rows(
     d: &crate::model::Doc,
     text: &str,
@@ -688,9 +689,9 @@ fn refusal(
     )
 }
 
-/// Puts companion rows into the destination: into its section that matches
-/// the same configured name, after the last row of its table (the columns
-/// must agree), or into a new section at the end.
+/// Puts companion rows into the destination. They go into its section that
+/// matches the same configured name, after the last row of its table (the
+/// columns must agree). Otherwise, they go into a new section at the end.
 fn insert_companions(
     text: &str,
     names: &[String],
@@ -802,11 +803,11 @@ fn parse_sources(c: &Corpus, sources: &[String]) -> Result<Vec<Part>, Fatal> {
     Ok(parts)
 }
 
-/// Returns the destination: an existing document of any type, or the path,
+/// Returns the destination: a document that exists (of any type), or the path,
 /// id and type of a new document. A new document goes into the root of the
 /// first source, unless `dest` is a path. Its type is `opts.ty`, or the type
-/// of a single-type root, or `reference` for the history of a decision, or
-/// the type of the source.
+/// of a single-type root, or `reference` for the history of a decision, or the
+/// type of the source.
 fn destination(
     repo: &Repo,
     config: &Config,
@@ -1439,7 +1440,7 @@ mod tests {
             "# A\n\n- **fee**: The desk SHALL charge 3 percent of [the amount](./b.md#amount).\n- **cap**: The fee SHALL NOT exceed 5 euros.\n".to_string(),
         )]);
         assert!(preserve(&cfg, &c, &moved, None, "c", &HashSet::new(), &[]).is_ok());
-        // A changed sentence and a lost requirement are named.
+        // The error names a changed sentence and a lost requirement.
         let broken = HashMap::from([(
             "docs/a.md".to_string(),
             "# A\n\n- **fee**: The desk SHALL charge 4 percent of [the amount](b.md#amount).\n"

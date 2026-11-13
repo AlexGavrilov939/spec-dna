@@ -132,9 +132,9 @@ impl Repo {
     }
 }
 
-/// Compares the output with a golden file. The golden file has `VERSION`
-/// in place of the version of the binary, and `BASE` in place of the base
-/// commit (the fixture commit has the pinned version, so its id changes too).
+/// Compares the output with a golden file. The golden file has `VERSION` in
+/// place of the version of the binary, and `BASE` in place of the base commit.
+/// The fixture commit has the pinned version, so its id changes too.
 fn golden(name: &str, actual: &str) {
     let mut actual = actual.replace(VERSION, "VERSION");
     if let Some(i) = actual.find("\"base\":\"") {
@@ -598,7 +598,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
         out.contains("\"type\":\"file\"") && out.contains("\"tier\":\"convention\""),
         "{out}"
     );
-    // A small budget lists a file section; `show` reads it by its id.
+    // A small budget lists a file section. `show` reads it by its id.
     let (_, out, _) = r.run(&["context", "docs/token.md", "--budget", "400"]);
     assert!(
         out.contains("- `docs/README.md#contract-changes` h:"),
@@ -620,8 +620,8 @@ fn conventions_can_name_a_file_outside_the_documents() {
             && out.contains("Write docs in plain English."),
         "{out}"
     );
-    // A change in the working tree is served at once (the file is in the
-    // status pathspec, so the parse cache does not keep the old text).
+    // `context` serves a change in the working tree at once (the file is in
+    // the status pathspec, so the parse cache does not keep the old text).
     r.write(
         "CONTRIBUTING.md",
         "# Contributing\n\n## Docs\n\nWrite docs in Simplified Technical English.\n",
@@ -728,8 +728,8 @@ fn many_warnings_of_one_code_are_one_count() {
     );
     let (_, out, _) = r.run(&["check", "--all", "--json"]);
     assert_eq!(out.matches("\"code\":\"SD608\"").count(), 12, "{out}");
-    // 10 or fewer are listed one by one, as in a change with new
-    // requirements.
+    // `check` lists 10 or fewer diagnostics one by one, as in a change with
+    // new requirements.
     r.write("docs/b.md", "# B\n\nNo requirements.\n");
     let (_, out, _) = r.run(&["check", "--all"]);
     assert!(out.contains("docs/a.md:3: warning SD608"), "{out}");
@@ -971,8 +971,8 @@ fn hard_budget_is_an_error_for_new_and_growing_documents() {
         "{out}"
     );
     r.commit("docs");
-    // An overage that the base has and that does not grow is a warning, also
-    // with --all.
+    // A document that is over the budget in the base and does not grow gives a
+    // warning, also with --all.
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
     assert!(
@@ -1011,7 +1011,8 @@ fn hard_budget_is_an_error_for_new_and_growing_documents() {
     r.write("docs/big.md", &format!("# Big\n\n{}\n", words(45)));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    // A document that goes over the hard budget in this change is an error.
+    // A document that was under the hard budget and is over it in this change
+    // is an error.
     r.append("docs/small.md", &format!("\n{}\n", words(50)));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
@@ -1334,7 +1335,7 @@ fn transcript_reports_counts_and_ids_only() {
         err.contains("journal.jsonl: no transcript adapter reads this file"),
         "{err}"
     );
-    // A file that two arguments give is read once.
+    // The command reads a file once, even if two arguments give it.
     let file = format!("{dir}/session-1.jsonl");
     let (_, twice, _) = r.run(&[
         "transcript",
@@ -2301,7 +2302,7 @@ fn profiles_set_the_severity_of_each_rule_group() {
     assert!(!out.contains("`loans#renew-limit` is active"), "{out}");
     assert!(!out.contains("SD80"), "{out}");
 
-    // lite: the broken link is a warning; evidence and lint are off.
+    // lite: the broken link is a warning. Evidence and lint are off.
     let r = profile_repo("profile = \"lite\"");
     r.append("docs/loans.md", "\nSee [the terms](terms.md).\n");
     let (code, out, _) = r.run(&["check", "--all"]);
@@ -2310,7 +2311,7 @@ fn profiles_set_the_severity_of_each_rule_group() {
     assert!(!out.contains("SD608"), "{out}");
 
     // strict: a requirement without evidence is an error, and the lint gives
-    // warnings. A rule of a root or of the project wins over the profile.
+    // warnings. A rule of a root or of the project has priority over the profile.
     let r = profile_repo("profile = \"strict\"");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}");
@@ -2819,7 +2820,7 @@ fn the_github_job_of_init_is_the_job_of_the_quickstart() {
         .and_then(|b| b.split("```\n").next())
         .unwrap();
     assert_eq!(job, block);
-    // The release branch verifies the sum; the other branch builds the pin.
+    // The release branch verifies the sum. The other branch builds the pin.
     for want in [
         "sum=$(sed -n \"s/^\\\"$asset\\\" = \\\"\\(.*\\)\\\"/\\1/p\" spec-dna.toml)",
         "if [ -z \"$src\" ] && [ -n \"$sum\" ]; then",
@@ -2873,7 +2874,7 @@ fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
     use std::os::fd::{FromRawFd, OwnedFd};
     use std::process::Stdio;
     let (mut master, mut slave) = (0, 0);
-    // SAFETY: openpty writes two new file descriptors; the null pointers ask
+    // SAFETY: openpty writes two new file descriptors. The null pointers ask
     // for no name and the default terminal settings.
     let rc = unsafe {
         libc::openpty(
@@ -3047,8 +3048,8 @@ fn review_fixes_on_the_command_line() {
     assert_eq!(r.read(".github/workflows/spec-dna.yml"), "name: Own\n");
 }
 
-/// A project for the hygiene functions of 0.3.0: a mixed root with history
-/// and companion sections, a decision root, two reference roots and a
+/// A project for the hygiene functions of 0.3.0. It has a mixed root with
+/// history and companion sections, a decision root, two reference roots and a
 /// registry of incidents.
 fn hygiene_project() -> Repo {
     let r = Repo::empty();

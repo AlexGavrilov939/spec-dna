@@ -29,7 +29,7 @@ python3 bench/tool/run.py --corpus bench/work/sd/medium --config bench/work/sd/m
 
 ## Results (measured 2026-11-07)
 
-Host: Apple M4 Max, 16 cores, macOS 26.6.1, APFS SSD. Other work used the host at the same time (1-minute load average 6 to 12 during the runs). Binaries: spec-dna 0.1.0 (release, LTO, stripped), and git 2.50.1 (Apple Git-155) called as `git` from `PATH`. Each cell shows the median of 15 runs in milliseconds, with the minimum in brackets. Treat results that differ by less than about 20% as equal.
+Host: Apple M4 Max, 16 cores, macOS 26.6.1, APFS SSD. Other work used the host at the same time (1-minute load average 6 to 12 during the runs). Binaries: spec-dna 0.1.0 (release, LTO, stripped), and git 2.50.1 (Apple Git-155) called as `git` from `PATH`. Each cell shows the median of 15 runs in milliseconds, with the minimum in parentheses. Treat results that differ by less than about 20% as equal.
 
 | Corpus | Files / documents | Index (MB) | Startup | Full | Cold | Warm | Warm, base HEAD | Incremental | Context | Peak RSS full / warm (MB) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |

@@ -314,7 +314,7 @@ pub struct Corpus {
     /// documents. No check, budget, id or rank uses them.
     pub outside: HashMap<String, Arc<ParsedDoc>>,
     /// The `covers:` tags of the test files. `check` and `show` load them
-    /// (`evidence::load`); the other commands leave the list empty.
+    /// (`evidence::load`). The other commands leave the list empty.
     pub covers: Vec<crate::evidence::Cover>,
 }
 
@@ -738,7 +738,8 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             let legacy = root.legacy_keys.iter().any(|p| p.is_match(&r.key));
             // Without a colon, only a legacy key makes a requirement. Other
             // bold labels are prose, unless a slug key comes with a BCP 14
-            // keyword: then the author probably meant a requirement.
+            // keyword. Then the item is a requirement without its colon, and
+            // the check gives SD807.
             if !r.colon && !legacy {
                 if is_slug(&r.key) && crate::parse::has_bcp14(&r.text) {
                     issues.push(Issue {
@@ -916,10 +917,10 @@ pub fn same_heading(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
-/// Returns true if a heading is an amendment name, or starts with the name and
-/// a character that is not a letter or a digit (`Amendment 3: TTL`). The
-/// comparison ignores case and a leading section number (`12. Acceptance
-/// map`, `§4.2 Amendments`).
+/// Returns true if a heading is an amendment name. It also returns true if the
+/// heading starts with the name and a character that is not a letter or a
+/// digit (`Amendment 3: TTL`). The comparison ignores case and a leading
+/// section number (`12. Acceptance map`, `§4.2 Amendments`).
 fn amendment_heading(heading: &str, name: &str) -> bool {
     let h = without_number(heading.trim()).to_lowercase();
     let n = name.trim().to_lowercase();
@@ -948,8 +949,8 @@ fn without_number(heading: &str) -> &str {
 }
 
 /// Returns the chunks of the amendment sections. An amendment section starts
-/// at a heading of level 2 or more that matches a name, and it continues to
-/// the next heading of the same or a higher level.
+/// at a heading of level 2 or more that matches a name. It continues to the
+/// next heading of the same or a higher level.
 pub(crate) fn amendment_chunks(chunks: &[crate::parse::Chunk], names: &[String]) -> Vec<usize> {
     let mut out = Vec::new();
     let mut open: Option<u8> = None;
@@ -1045,7 +1046,7 @@ fn hexval(c: u8) -> Option<u8> {
 }
 
 /// Joins a relative path to a base directory, and resolves `.` and `..`.
-/// Returns `None` if the path goes out of the repository.
+/// Returns `None` if the path is outside the repository.
 pub fn join(base: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = if base.is_empty() {
         Vec::new()
@@ -1397,7 +1398,7 @@ mod tests {
         // The default name is `Amendments`.
         assert!(c.docs[1].amendments.is_empty());
         let frozen = |text: &str| corpus_with(cfg, &[("docs/d.md", text)]).docs[0].frozen_hash;
-        // Amendment text can change and grow; the other text is frozen.
+        // Amendment text can change and grow. The other text is frozen.
         assert_eq!(frozen(base), frozen(&base.replace("5 min", "10 min")));
         assert_eq!(
             frozen(base),

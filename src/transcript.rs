@@ -5,7 +5,7 @@
 //! A transcript can contain secrets. Thus this module prints counts, names of
 //! tools and models, and spec-dna ids only. It never prints prompt, command,
 //! path or file text. It reads that text in memory to find document reads,
-//! and then drops it. A session id, agent id, origin, model name or tool name
+//! and then discards it. A session id, agent id, origin, model name or tool name
 //! that does not match the strict pattern of its field prints as
 //! `<redacted>` (`safe`).
 //!
@@ -279,7 +279,7 @@ impl Adapter for ClaudeCode {
             .filter(|b| b.get("type").as_str() == Some("tool_result"))
             .collect();
         if results.is_empty() {
-            // A compaction summary continues the episode; it is not a prompt.
+            // A compaction summary continues the episode. It is not a prompt.
             if o.get("isMeta").is_true() || o.get("isCompactSummary").is_true() {
                 return;
             }
@@ -614,9 +614,9 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    /// Returns the report. `expect` lists the document ids that the task needs;
-    /// with them, the report gives the time to the first relevant read and the
-    /// share of expected documents that the agent read.
+    /// Returns the report. `expect` lists the document ids that the task
+    /// needs. With them, the report gives the time to the first relevant read
+    /// and the share of expected documents that the agent read.
     pub fn report(&self, expect: &[String], as_json: bool) -> String {
         let mut out = String::new();
         let mut sessions_json = Vec::new();
@@ -919,11 +919,12 @@ fn format_time(ms: i64) -> String {
 
 /// Maps a file path from a transcript to a document id. The order of tries:
 ///
-/// - the path relative to the repository root, or to the working directory
-///   of the agent (a relative path starts at that directory);
+/// - the path relative to the repository root, or to the working directory of
+///   the agent (a relative path starts at that directory)
 /// - the longest tail of the path, with at least 2 segments, that is a
-///   document path. Thus a run in an exported copy of the repository maps to
-///   the same ids.
+///   document path
+///
+/// Thus a run in an exported copy of the repository maps to the same ids.
 fn map_path(
     corpus: Option<&Corpus>,
     root: Option<&str>,
@@ -1037,10 +1038,10 @@ fn attribute(
         Target::Shell { command } => {
             let commands = shell_commands(command);
             // spec-dna output names its sections in headers. A served section
-            // counts as a read; a listed stub does not. Only the output of a
-            // spec-dna command counts, and only ids that are documents (or
-            // that have the form of an id, without a configuration): any other
-            // text can contain a line of the same shape.
+            // counts as a read. A listed stub does not. Only the output of a
+            // spec-dna command counts. Only ids that are documents count.
+            // Without a configuration, only ids that have the form of an id
+            // count. Any other text can contain a line of the same shape.
             let runs_spec_dna = commands
                 .iter()
                 .any(|c| program(c).is_some_and(|p| p == "spec-dna"));
@@ -1203,8 +1204,8 @@ const READERS: &[&str] = &[
 ];
 
 /// Returns the Markdown paths that a shell command reads: the arguments of a
-/// reader program, but not the target of a `>` redirection. A `:line` suffix
-/// (as `grep -n` prints) is removed.
+/// reader program, but not the target of a `>` redirection. The function
+/// removes a `:line` suffix (as `grep -n` prints).
 fn shell_reads(cmds: &[Vec<String>]) -> Vec<String> {
     let mut out = Vec::new();
     for cmd in cmds {
@@ -1267,7 +1268,7 @@ fn n(count: impl Into<u64>, what: &str) -> String {
     format!("{count} {what}{}", if count == 1 { "" } else { "s" })
 }
 
-/// Reads transcript files. `format` names an adapter; without it, the first
+/// Reads transcript files. `format` names an adapter. Without it, the first
 /// line that parses selects the adapter of each file.
 pub fn read_files(
     files: &[(std::path::PathBuf, bool)],
@@ -1351,8 +1352,8 @@ pub fn read_files(
 }
 
 /// Returns the `.jsonl` files of the arguments, each with true if the user
-/// named it. A directory gives its files at any depth, in sorted order. A file
-/// that two arguments give is read once.
+/// named it. A directory gives its files at any depth, in sorted order. The
+/// function returns a file once, even if two arguments give it.
 pub fn collect_files(args: &[String]) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
         let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;

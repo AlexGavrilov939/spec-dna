@@ -1,6 +1,6 @@
 # `spec-dna init`
 
-`init` makes the configuration of a repository. It detects the facts of the repository, asks at most 8 questions with the detected defaults, and shows a preview. It writes only after a confirmation. It never edits a document. In an instruction file (`AGENTS.md`, `CLAUDE.md`), it changes only its own generated line.
+`init` makes the configuration of a repository. It detects the facts of the repository. It asks at most 8 questions with the detected defaults, and it shows a preview. It writes only after a confirmation. It never edits a document. In an instruction file (`AGENTS.md`, `CLAUDE.md`), it changes only its own generated line.
 
 ```sh
 spec-dna init                   # interactive on a terminal
@@ -10,63 +10,98 @@ spec-dna init --answers a.toml  # the answers of a file
 spec-dna init --reconfigure     # the questions again, with the current values as defaults
 ```
 
-Without a terminal (for example, when an agent runs `init`), `init` uses the detected defaults, as `--non-interactive` does. If `spec-dna.toml` exists, `init` updates only the agent adapters, as in 0.1, unless `--reconfigure` is set. Use this after an upgrade.
+Without a terminal (for example, when an agent runs `init`), `init` uses the detected defaults, as `--non-interactive` does. If `spec-dna.toml` exists, `init` updates only the agent adapters, as in 0.1, unless you set `--reconfigure`. Run `init` in this way after an upgrade.
 
 ## Detection
 
-`init` reads the file list of git (tracked files and untracked files that git does not ignore) and the Markdown files. It finds:
+`init` reads the file list of git (tracked files and untracked files that git does not ignore) and the Markdown files. It finds these facts:
 
 | Fact | How |
 | --- | --- |
-| Greenfield or brownfield | Brownfield if there are documents to map or 20 files or more |
-| Document roots | The top-most directories that are mostly Markdown, or that have a documentation name (`docs`, `doc`, `documentation`, `wiki`, `handbook`) |
-| Types of roots | A directory name: `adr`, `adrs` and `decisions` give `decision`, `specs` gives `spec`, `contracts` gives `contract`, `guides` and `guidelines` give `guide`, `runbooks` gives `runbook`, `incidents`, `incident`, `postmortems` and `postmortem` give `incident`, `rfcs`, `tasks` and `plans` give `change`, `research`, `validation`, `validations`, `briefs` and `archive` give `reference`. This applies also to a top-level directory, such as `rfcs/`. The names `incident`, `postmortem`, `validation` and `validations` are also common names of code directories, so they give a type only inside a documentation tree or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `guide`. A root whose documents name another type in the front matter becomes mixed. |
-| Id patterns | File names such as `ADR-012-cache.md`: `legacy-ids = ["ADR-{n}"]`. A directory of such files becomes a root. Decision files such as `0001-use-postgres.md` (adr-tools, for example in `doc/adr`): `{ alias = "ADR-{n}", file = "{n}-*" }`, if each number of the root is unique, no file of the root starts with a date, and no other root makes the same alias. Files numbered without a prefix make a root only for decisions and changes. |
-| Types of numbered directories | The type comes from the files of the directory, in this order: the prefix (`ADR` gives `decision`, `RFC` gives `change`, `INC` gives `incident`); the front matter `type` of most files; the content of most files (`Decision`, or `Context` and `Consequences`, gives `decision`; `Root cause` as a heading or a table field, or `Timeline` and `Impact`, gives `incident`; `Steps` gives `runbook`; requirements with a BCP 14 keyword give `spec`). If the files show no type, the type is the type of a typed enclosing root, or `note` in a mixed root. A mixed documentation tree takes the type of its numbered files only if it has no other documents. |
-| Requirement keys | Bold keys such as `- **R-12** text` at the start of list items: `legacy-keys = ["R-{n}"]`, or `R-{n}*` if some keys have a letter suffix |
-| Statuses | The front-matter status words of each root. A word that the type does not allow gets a `status-map` entry: `shipped` and `implemented` map to `active`, `approved` maps to `accepted` for a decision, and so on. An unknown word maps to the default status of the root. |
-| Heading languages and aliases | The scripts of the headings. Known translations of `Decision Outcome` and `Amendments` (for example `Решение`, `Entscheidung`, `Nachtrag`) in decisions become `required-sections` and `amendment-sections`. |
+| Greenfield or brownfield | A repository is brownfield if it has documents to map or 20 files or more |
+| Document roots | The highest directories that are mostly Markdown, or that have a documentation name (`docs`, `doc`, `documentation`, `wiki`, `handbook`) |
+| Types of roots | The name of the directory. See [Types of roots](#types-of-roots) |
+| Id patterns | The names of the files. See [Id patterns](#id-patterns) |
+| Types of numbered directories | The files of the directory. See [Types of numbered directories](#types-of-numbered-directories) |
+| Requirement keys | Bold keys at the start of list items, such as `- **R-12** text`. They give `legacy-keys = ["R-{n}"]`. If some keys have a letter suffix, the pattern is `R-{n}*` |
+| Statuses | The status words in the front matter of each root. A word that the type does not allow gets a `status-map` entry. For example, `shipped` and `implemented` map to `active`, and `approved` maps to `accepted` for a decision. An unknown word maps to the default status of the root |
+| Heading languages and aliases | The scripts of the headings. Known translations of `Decision Outcome` and `Amendments` in decisions (for example `Решение`, `Entscheidung`, `Nachtrag`) become `required-sections` and `amendment-sections` |
 | Exclusions | Vendored directories (`vendor`, `node_modules`, `third_party`), generated directories (`dist`, `build`, `generated`), files that say that a generator wrote them, sibling directories with a vendor prefix (`ext-*`), and the files of a decision root that are not decisions (a README without an outcome, `*-implementation-plan.md`) |
-| Large reference directories | A directory with 100 Markdown files or more, or 1,000,000 characters or more, and no typed directory in it: a `reference` root |
+| Large reference directories | A directory with 100 Markdown files or more, or 1,000,000 characters or more, and with no typed directory in it. It becomes a `reference` root |
 | Required sections | If most documents of a type in a root do not have the required sections, the root removes the requirement |
 | Budgets | The documents over the hard budget, at 3 levels |
-| Stack and apps | Manifests such as `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml` (to depth 3) |
+| Stack and apps | Manifests such as `Cargo.toml`, `package.json`, `go.mod` and `pyproject.toml`, down to depth 3 |
 | Tests | The test globs that match files, for `covers:` tags |
-| Agent files | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/skills`, `.cursor/rules` and others |
-| CI and hooks | `.github/workflows`, `.gitlab-ci.yml` and other CI files; pre-commit, husky, lefthook |
-| Default branch | `origin/HEAD`, else a local `main` or `master`, else the current branch |
+| Agent files | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/skills`, `.cursor/rules` and other agent files |
+| CI and hooks | `.github/workflows`, `.gitlab-ci.yml` and other CI files; pre-commit, husky and lefthook |
+| Default branch | `origin/HEAD`. If it is absent, a local `main` or `master`. If both are absent, the current branch |
 
-Detection skips vendored, generated and test fixture directories (`fixtures`, `testdata`, `__snapshots__`, `golden`). In a root `.`, it excludes the root files of the repository (`README.md`, `AGENTS.md`, `CLAUDE.md`, `CHANGELOG.md` and similar). In a root that holds `.claude/skills`, it excludes the generated skill `spec-dna/`. Detection reads only. It uses no network.
+Detection skips vendored, generated and test fixture directories (`fixtures`, `testdata`, `__snapshots__`, `golden`). In a root `.`, it excludes the root files of the repository (`README.md`, `AGENTS.md`, `CLAUDE.md`, `CHANGELOG.md` and similar files). In a root that holds `.claude/skills`, it excludes the generated skill `spec-dna/`. Detection only reads files. It does not use the network.
+
+### Types of roots
+
+The name of a directory gives the type of the root:
+
+- `adr`, `adrs` and `decisions` give `decision`.
+- `specs` gives `spec`.
+- `contracts` gives `contract`.
+- `guides` and `guidelines` give `guide`.
+- `runbooks` gives `runbook`.
+- `incidents`, `incident`, `postmortems` and `postmortem` give `incident`.
+- `rfcs`, `tasks` and `plans` give `change`.
+- `research`, `validation`, `validations`, `briefs` and `archive` give `reference`.
+
+This rule also applies to a top-level directory, such as `rfcs/`. The names `incident`, `postmortem`, `validation` and `validations` are also common names of code directories. They give a type only inside a documentation tree, or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `guide`. A root becomes mixed if the front matter of its documents names another type.
+
+### Id patterns
+
+- File names such as `ADR-012-cache.md` give `legacy-ids = ["ADR-{n}"]`. A directory of such files becomes a root.
+- Decision files such as `0001-use-postgres.md` (adr-tools, for example in `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }`. This applies if each number of the root is unique, no file of the root starts with a date, and no other root makes the same alias.
+- Files with a number and no prefix make a root only for decisions and changes.
+
+### Types of numbered directories
+
+The files of the directory give its type. `init` examines these facts in this order:
+
+1. The prefix: `ADR` gives `decision`, `RFC` gives `change` and `INC` gives `incident`.
+2. The front matter `type` of most files.
+3. The content of most files:
+    - `Decision`, or `Context` and `Consequences`, gives `decision`.
+    - `Root cause` as a heading or a table field, or `Timeline` and `Impact`, gives `incident`.
+    - `Steps` gives `runbook`.
+    - Requirements with a BCP 14 keyword give `spec`.
+
+If the files show no type, the type is the type of the enclosing root, if that root has a type. In a mixed root, the type is `note`. A mixed documentation tree takes the type of its numbered files only if it has no other documents.
 
 ## Questions
 
 | # | Question | Default |
 | --- | --- | --- |
 | 1 | The profile: `lite`, `standard` or `strict` ([profiles.md](profiles.md)) | `standard` |
-| 2 | The knowledge types of the project. A shorter list writes `types` into `spec-dna.toml`: then a document of another type is an error | Every type (no `types` key). The question shows the detected types |
+| 2 | The knowledge types of the project. A shorter list writes `types` into `spec-dna.toml`. Then a document of another type is an error | Every type (no `types` key). The question shows the detected types |
 | 3 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 4 | The normative language and the heading aliases: `en; outcome: Решение; amendments: Поправки` | The detected aliases |
-| 5 | The mapping: each detected root, to accept (Enter), to drop (`drop`), or to edit (`type=spec status=active exclude=a/**,b.md`) | Accept |
-| 6 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`, with the number of documents over the hard budget at each level | `default` |
-| 7 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The present instruction files and the skill |
+| 5 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it (`type=spec status=active exclude=a/**,b.md`) | Accept |
+| 6 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
+| 7 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
 | 8 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 
-A language other than `en` sets `[rules] lint = "off"`, because the requirement lint reads English only. A type that is not chosen makes its detected roots `note` roots. A new project gets one mixed root (`docs` or `--root <dir>`): `spec-dna new` puts each type into its own namespace there, such as `decisions/<id>`, so that the ids of different types cannot clash.
+A language other than `en` sets `[rules] lint = "off"`, because the requirement lint reads English only. A type that you do not choose makes its detected roots `note` roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`). In this root, `spec-dna new` puts each type into its own namespace, such as `decisions/<id>`. Thus the ids of different types cannot clash.
 
 ## Preview and files
 
 The preview shows the full `spec-dna.toml` and each file to create or change:
 
-- `spec-dna.toml`;
-- the generated line in `AGENTS.md` and `CLAUDE.md`, and the skill `.claude/skills/spec-dna/SKILL.md`;
-- `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)), for `github`. If the file exists, `init` does not change it;
-- a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`.
+- `spec-dna.toml`
+- the generated line in `AGENTS.md` and `CLAUDE.md`, and the skill `.claude/skills/spec-dna/SKILL.md`
+- for `github`: `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)). If the file exists, `init` does not change it.
+- a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`
 
-For GitLab CI and lefthook, the preview gives the text to add by hand. `init` checks that it can read the new `spec-dna.toml` before it writes a file.
+For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file.
 
 ## Answers file
 
-An answers file is TOML. Each key is optional, and a missing key keeps its default.
+An answers file is TOML. Each key is optional. An absent key keeps its default.
 
 ```toml
 profile = "standard"
@@ -95,4 +130,13 @@ The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).
 
 ## Reconfigure
 
-`init --reconfigure` asks the questions again. The defaults are the current values: the profile, the types, the evidence rule and test globs, and the roots of `spec-dna.toml`. The keys that no question asks for stay: `install-source`, `self-urls`, `[repos]`, `[lint]`, `[context]`, every rule of `[rules]` (an answer replaces only the rule of its group: `evidence`, `budgets`, and `lint` for a language other than English), the test globs, the `[budgets.<type>]` tables (unless the budget level changes), `[conventions]`, and the section keys (`required-sections`, `amendment-sections`, `history-sections`, `companion-sections`, `live-sections`), budget, profile and rules keys of each root. The comments of the old file are lost. The preview shows the new file before `init` writes it.
+`init --reconfigure` asks the questions again. The defaults are the current values: the profile, the types, the evidence rule and test globs, and the roots of `spec-dna.toml`. `init` does not change the keys that no question asks for:
+
+- `install-source`, `self-urls`, `[repos]`, `[lint]` and `[context]`
+- every rule of `[rules]`. An answer replaces only the rule of its group: `evidence`, `budgets`, and `lint` for a language other than English.
+- the test globs
+- the `[budgets.<type>]` tables, unless the budget level changes
+- `[conventions]`
+- the section keys of each root (`required-sections`, `amendment-sections`, `history-sections`, `companion-sections`, `live-sections`), and its budget, profile and rules keys
+
+`init` does not keep the comments of the old file. The preview shows the new file before `init` writes it.

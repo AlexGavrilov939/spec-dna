@@ -3,34 +3,35 @@
 //!
 //! The assembly uses this order:
 //!
-//! - the entry documents (or the requested sections);
+//! - the entry documents (or the requested sections)
 //! - the sections that cite a given code path by its path or by an identifier
 //!   (`cite.rs`), for the first 8 such documents, and then the requirement
-//!   sections and the summary of the first 5;
-//! - the documents whose `applies-to` matches an entry or a given path;
+//!   sections and the summary of the first 5
+//! - the documents whose `applies-to` matches an entry or a given path
 //! - the sections that cite only a directory of a given path, for the first 5
-//!   such documents;
+//!   such documents
 //! - the `depends-on` targets of the entries and of the first 5 normative
-//!   citing documents (depth 1);
-//! - accepted decisions linked to these documents, as summaries.
+//!   citing documents (depth 1)
+//! - accepted decisions linked to these documents, as summaries
 //!
 //! For a spec or contract with requirements, the assembly serves the
 //! requirement sections first, then the title section, in full. It serves a
 //! document without requirements in heading order. It lists the other sections
-//! of these documents, and other documents that the entries link to, as stubs
-//! with id, hash and size. Thus one `show` call can read each of them. If a
-//! section does not fit the character budget, the assembly lists it as a stub
-//! too.
+//! of these documents as stubs with id, hash and size. It lists the other
+//! documents that the entries link to in the same way. Thus one `show` call
+//! can read each of them. If a section does not fit the character budget, the
+//! assembly lists it as a stub too.
 //!
 //! A superseded, retired or rejected document that no target names is only
-//! listed, with its status and successor, unless `--include-inactive` is set.
+//! listed, with its status and successor. The exception: you set
+//! `--include-inactive`.
 //!
 //! With `--query`, BM25 ranks the planned sections, and every section of the
 //! linked documents, against the words of the query (`rank.rs`). The order is:
 //!
-//! - the sections that a target names;
-//! - the sections that match, best first;
-//! - the rest of the plan, in order.
+//! - the sections that a target names
+//! - the sections that match, best first
+//! - the rest of the plan, in order
 //!
 //! The assembly serves a listed-only section (`more`, `linked`) in full only
 //! if it matches.
@@ -173,8 +174,8 @@ fn resolve_doc_pointer(c: &Corpus, p: &str) -> Option<(u32, Option<String>)> {
 }
 
 /// The sections that state the project conventions for documents of a type:
-/// each pointer of `conventions` for the type, resolved. A pointer that names
-/// nothing is left out (`check` reports it as SD106).
+/// each pointer of `conventions` for the type, resolved. `context` omits a
+/// pointer that names nothing (`check` reports it as SD106).
 pub fn conventions(
     c: &Corpus,
     conventions: &[Vec<String>; DocType::COUNT],
@@ -274,9 +275,9 @@ fn successors(c: &Corpus, d: &Doc) -> Vec<u32> {
 }
 
 /// The number of citing documents whose citing sections `context` plans, and
-/// the number of those whose summary it also plans. The other citing sections
-/// are listed only. Thus a common identifier or a mention of a large directory
-/// cannot fill the budget.
+/// the number of those whose summary it also plans. `context` only lists the
+/// other citing sections. Thus a common identifier or a mention of a large
+/// directory cannot fill the budget.
 const CITING_DOCS: usize = 8;
 const CITING_SUMMARIES: usize = 5;
 
@@ -407,10 +408,10 @@ pub fn assemble(
         }
     }
 
-    // 2. Sections that cite a code path by its path or by an identifier,
-    // then the summary of the best citing documents: the requirement
-    // sections, or the outcome of a decision, and the title. A change or a
-    // note is only listed (ADR 0001, "Document types").
+    // 2. Sections that cite a code path by its path or by an identifier, then
+    // the summary of the best citing documents. The summary has the
+    // requirement sections, or the outcome of a decision, and the title. A
+    // change or a note is only listed (ADR 0001, "Document types").
     let mut scope_docs = entry_docs.clone();
     let listed_only = |d: u32| c.docs[d as usize].ty.is_informative();
     let strong: Vec<&(u32, u8, Vec<usize>)> = cited
@@ -608,12 +609,14 @@ pub fn assemble(
     }
 
     // Packing has 2 passes:
+    //
     // - First the map. List every planned section as a stub, in priority
     //   order, within half of the budget.
-    // - Then the full text, in the same order, with the remaining budget. A
+    // - Then the full text, in the same order, with the rest of the budget. A
     //   section in full replaces its stub.
-    // Thus one `show` call can read each listed section, for documents of
-    // any length.
+    //
+    // Thus one `show` call can read each listed section, for documents of any
+    // length.
     let costs: Vec<(u32, u32)> = plan
         .iter()
         .map(|&(d, ch, tier)| {
@@ -714,12 +717,12 @@ pub fn assemble(
     }
 }
 
-/// Returns the packing order under a query, and the sections that the
-/// assembly can serve in full. The order is:
+/// Returns the packing order under a query. It also returns the sections that
+/// the assembly can serve in full. The order is:
 ///
-/// - the sections that a target names;
-/// - the sections that match, best first;
-/// - the other sections of the plan, in plan order.
+/// - the sections that a target names
+/// - the sections that match, best first
+/// - the other sections of the plan, in plan order
 ///
 /// Ties keep the plan order, so the result is deterministic.
 fn rank_plan(

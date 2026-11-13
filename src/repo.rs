@@ -19,7 +19,7 @@ pub enum Fatal {
     Config(String),
     Io(String),
     NotFound(String),
-    /// A safety check refused the change, and nothing changed.
+    /// A safety check stopped the change, and nothing changed.
     Refused(String),
 }
 
@@ -51,8 +51,8 @@ pub struct Repo {
     pub git: Git,
 }
 
-/// A path for a message. On Windows, `canonicalize` adds a `\\?\` prefix that a
-/// user does not type; this function removes it.
+/// A path for a message. On Windows, `canonicalize` adds a `\\?\` prefix that
+/// a user does not type. This function removes it.
 pub fn shown(p: &Path) -> String {
     let s = p.display().to_string();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
@@ -186,9 +186,9 @@ fn is_oid(s: &str) -> bool {
 }
 
 /// Returns the status pathspec: the document roots and the convention files
-/// outside them, or nothing for the whole tree. Without a convention file in
-/// the pathspec, a changed convention file would keep the blob id of the git
-/// index, and the parse cache would keep its old text.
+/// outside them, or nothing for the whole tree. Suppose that the pathspec does
+/// not have a convention file. Then a changed convention file would keep the
+/// blob id of the git index, and the parse cache would keep its old text.
 pub fn root_paths(config: &Config) -> Vec<String> {
     if config.roots.iter().any(|r| r.path.is_empty()) {
         return Vec::new();
@@ -335,9 +335,10 @@ pub fn load(
             .filter_map(|p| snap.blob_of(p))
             .filter(|e| !snap.worktree || inside_repo(&root_dir, &repo.root.join(&e.path)))
             .collect();
-        // A convention file of the working tree is read from disk on every
-        // run and is not cached: the blob id of a symlink stays the same when
-        // its target changes. There are few such files.
+        // spec-dna reads a convention file of the working tree from disk on
+        // every run. It does not cache the file, because the blob id of a
+        // symlink stays the same when its target changes. There are few such
+        // files.
         let items = docs
             .iter()
             .map(|e| (e, false))

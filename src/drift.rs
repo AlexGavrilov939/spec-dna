@@ -5,8 +5,8 @@
 //! for an identifier. Both are heuristic, so they are warnings.
 //!
 //! The frozen text of an accepted decision cannot change (SD405). Thus an
-//! amendment section of the decision that names the new code clears the
-//! drift of that decision: see `Amends`.
+//! amendment section of the decision that names the new code clears the drift
+//! of that decision (see `Amends`).
 //!
 //! The work starts from the change, so it costs little when the change is
 //! small. First, the snapshots give the removed paths and the changed files.
@@ -22,10 +22,10 @@ use crate::model::{Corpus, Doc, DocType, is_doc_path};
 use crate::repo::{Fatal, Repo, Snapshot};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// Returns true if drift in this document is a problem. A superseded,
-/// retired or rejected document, a completed change, a note, an incident and
-/// a reference describe the past or give information only, so they can cite
-/// code that is gone.
+/// Returns true if drift in this document is a problem. A superseded, retired
+/// or rejected document, a completed change, a note, an incident and a
+/// reference describe the past or give information only. Thus they can cite
+/// code that does not exist.
 fn current(d: &Doc) -> bool {
     !d.is_inactive()
         && !matches!(d.ty, DocType::Note | DocType::Incident | DocType::Reference)
@@ -185,8 +185,8 @@ fn find(
     }
 
     // The citations of current documents that can name a removed path or a
-    // removed identifier. A key is (document, target); the value is the
-    // first line.
+    // removed identifier. A key is (document, target). The value is the first
+    // line.
     let base_tree = Tree::new(&base.files, &base.dirs);
     let head_tree = Tree::new(head_files, &head.dirs);
     let mut gone_paths: BTreeMap<(u32, String), u32> = BTreeMap::new();
@@ -335,7 +335,7 @@ impl<'a> Amends<'a> {
         Amends { head, docs }
     }
 
-    /// The new identifiers of all amendments, to look up in the code.
+    /// The new identifiers of all amendments, to search for in the code.
     fn idents(&self) -> Vec<String> {
         let mut v: Vec<String> = self
             .docs
@@ -352,8 +352,8 @@ impl<'a> Amends<'a> {
         !in_amendment(&self.head.docs[doc as usize], line)
     }
 
-    /// A removed path is cleared if an amendment names a new path: the
-    /// rename target if git found one.
+    /// An amendment clears a removed path if it names a new path (the rename
+    /// target, if git found one).
     fn clears_path(&self, doc: u32, line: u32, renamed: Option<&str>) -> bool {
         let Some((paths, _)) = self.docs.get(&doc) else {
             return false;
@@ -365,8 +365,8 @@ impl<'a> Amends<'a> {
             }
     }
 
-    /// A removed identifier is cleared if an amendment names a new
-    /// identifier that the code has.
+    /// An amendment clears a removed identifier if it names a new identifier
+    /// that the code has.
     fn clears_ident(&self, doc: u32, line: u32, in_code: &HashSet<String>) -> bool {
         let Some((_, ids)) = self.docs.get(&doc) else {
             return false;

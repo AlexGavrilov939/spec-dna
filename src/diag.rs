@@ -102,8 +102,8 @@ pub struct Diag {
 }
 
 impl Diag {
-    /// Base-relative gating compares diagnostics by this fingerprint
-    /// (ADR 0001, "Growth controls").
+    /// The gate compares diagnostics with the base by this fingerprint (ADR
+    /// 0001, "Growth controls").
     pub fn fingerprint(&self) -> (Code, &str, &str) {
         (self.code, &self.doc, &self.target)
     }

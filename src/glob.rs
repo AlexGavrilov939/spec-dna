@@ -1,8 +1,8 @@
 //! Path globs for the configuration and for `applies-to`:
 //!
-//! - `**` matches any number of path segments;
-//! - `*` matches any run of characters in one segment;
-//! - `?` matches one character.
+//! - `**` matches any number of path segments
+//! - `*` matches any run of characters in one segment
+//! - `?` matches one character
 //!
 //! spec-dna matches a pattern against the whole `/`-separated path.
 

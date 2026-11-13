@@ -24,18 +24,18 @@ const SKILL_DESCRIPTION: &str = "Loads and checks the specs for a task. Use it b
 /// request carries it, so each line must change what the agent does.
 const SKILL_BODY: &str = "# spec-dna
 
-1. If the task changes code or docs, run `spec-dna context <file>...` once, with all the files that you plan to change (or a document id). Skip it for a question without edits. The output gives the sections in priority order: invariants, the entry, the sections that cite the files, their decisions. Each section has an id.
+1. If the task changes code or docs, run `spec-dna context <file>...` once. Give all the files that you plan to change (or a document id). Do not run it for a question without edits. The output gives the sections in priority order: invariants, the entry, the sections that cite the files, their decisions. Each section has an id.
 2. Read a listed section with `spec-dna show <id>#<anchor>` only if the task needs it.
-3. Before you edit a document, run `spec-dna show --conventions <type>` once for its type, and follow the project conventions that it prints. `context` serves them first when a target is a document of that type.
-4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`, with a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. In a test, `covers: <doc-id>#<key>` links the test to it.
-5. For a new document, run `spec-dna new <type> <id>` and replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
-6. Do not change the text of an accepted decision outside its amendment and live sections (`show --conventions decision` names them; the default is `## Amendments`).
+3. Before you edit a document, run `spec-dna show --conventions <type>` once for its type. Follow the project conventions that it prints. `context` serves them first when a target is a document of that type.
+4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`. Use a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. To link a test to a requirement, write `covers: <doc-id>#<key>` in the test.
+5. For a new document, run `spec-dna new <type> <id>`. Then replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
+6. Do not change the text of an accepted decision outside its amendment and live sections (`show --conventions decision` names them. The default is `## Amendments`).
     - Update a live section, such as an implementation status, in place when your change makes it stale.
-    - Amend the decision if its outcome stays: add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
-    - Supersede the decision if its outcome changes: write a new decision with `supersedes: [<old id>]`, and set the status of the old one to `superseded`.
+    - Amend the decision if its outcome stays. Add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
+    - Supersede the decision if its outcome changes. Write a new decision with `supersedes: [<old id>]`. Set the status of the old decision to `superseded`.
 7. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
-8. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`, so that the old ids stay as aliases.
-9. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner; `check` reports it with other files as SD503.";
+8. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), do one of these actions: put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`. Then the old ids stay as aliases.
+9. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner. `check` reports a change of `spec-dna.toml` together with other files as SD503.";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {
@@ -137,7 +137,7 @@ pub fn has_own_text(text: &str) -> bool {
 /// Replaces the `claude` block of an older version, which imported
 /// `AGENTS.md`. If `keep_import` is true (`AGENTS.md` has text of its own),
 /// the import stays as a plain line, so that the agent still reads that text.
-/// Otherwise the block goes.
+/// Otherwise, it removes the block.
 pub fn migrate_claude(text: &str, keep_import: bool) -> String {
     match find_block(text, "claude") {
         Some((s, e, ..)) if keep_import => format!("{}@AGENTS.md\n{}", &text[..s], &text[e..]),
@@ -219,7 +219,7 @@ pub fn check(files: &[(&str, String)]) -> Vec<Diag> {
 }
 
 /// Puts the generated line into the text of a root instruction file. It
-/// replaces an existing line or an old block. Otherwise, it adds the line at
+/// replaces the current line or an old block. Otherwise, it adds the line at
 /// the end, after a blank line.
 pub fn upsert_line(text: &str) -> String {
     let t = remove_old_blocks(text);
