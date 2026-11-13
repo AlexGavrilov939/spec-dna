@@ -225,7 +225,7 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
             p.kept.push(format!("{key} = {}", toml_value(v)));
         }
     }
-    for key in ["lint", "context", "repos"] {
+    for key in ["lint", "context", "repos", "conventions"] {
         if let Some(toml::Value::Table(t)) = table.get(key) {
             p.kept.push(format!("\n[{key}]"));
             for (k, v) in t {
@@ -302,6 +302,23 @@ fn row_of_root(r: &config::Root) -> Row {
             "amendment-sections = {{ {} }}",
             amendments.join(", ")
         ));
+    }
+    // The section keys of 0.3 (no default value): history, companion and
+    // live sections.
+    for (key, lists) in [
+        ("history-sections", &r.history_sections),
+        ("companion-sections", &r.companion_sections),
+        ("live-sections", &r.live_sections),
+    ] {
+        let v: Vec<String> = row
+            .types()
+            .into_iter()
+            .filter(|&t| !lists[t as usize].is_empty())
+            .map(|t| format!("{} = {}", t.name(), toml_list(&lists[t as usize])))
+            .collect();
+        if !v.is_empty() {
+            row.extra.push(format!("{key} = {{ {} }}", v.join(", ")));
+        }
     }
     if !r.enforce_budgets {
         row.extra.push("enforce-budgets = false".into());

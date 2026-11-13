@@ -100,7 +100,7 @@ pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
                     doc: crate::config::FILE_NAME.to_string(),
                     target: p.clone(),
                     message: format!(
-                        "`conventions.{ty}` points to `{p}`, which names no document or section"
+                        "`conventions.{ty}` points to `{p}`, which names no document, file or section"
                     ),
                     severity: Code::ConventionUnresolved.severity(),
                 });

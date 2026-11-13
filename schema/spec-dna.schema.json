@@ -130,7 +130,7 @@
       }
     },
     "conventions": {
-      "description": "For each type, pointers (`<doc-id or path>[#<anchor>]`) to the sections of project documents that state the conventions of the project for documents of that type. `context` serves them first when a target is a document of that type; `show --conventions <type>` prints them. A pointer that names nothing gives SD106.",
+      "description": "For each type, pointers (`<doc-id or path>[#<anchor>]`) to the sections of project documents, or of Markdown files that are not documents (outside every root, or excluded), that state the conventions of the project for documents of that type. `context` serves them first when a target is a document of that type; `show --conventions <type>` prints them. A pointer that names nothing gives SD106.",
       "type": "object",
       "propertyNames": {
         "$ref": "#/$defs/type"

@@ -531,7 +531,7 @@ fn conventions_come_first_and_show_prints_them() {
     );
     let (_, out, _) = r.run(&["show", "--conventions", "contract"]);
     assert!(
-        out.contains("names no document or section (SD106)"),
+        out.contains("names no document, file or section (SD106)"),
         "{out}"
     );
     // An unknown type in `conventions` is a configuration error.
@@ -542,6 +542,198 @@ fn conventions_come_first_and_show_prints_them() {
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("conventions.adr"), "{err}");
+}
+
+#[test]
+fn conventions_can_name_a_file_outside_the_documents() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#contract-changes\", \"./CONTRIBUTING.md#docs\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nexclude = [\"README.md\"]\n",
+    );
+    // An excluded README and a file outside every root: not documents.
+    r.write(
+        "docs/README.md",
+        &format!(
+            "# Docs\n\n## Contract changes\n\nA contract change needs a dated amendment.\n\n{}\n\n### Example\n\nSee the token contract.\n\n## Other\n\nNot a convention.\n",
+            "Each amendment names its date and its reason. ".repeat(12)
+        ),
+    );
+    r.write(
+        "CONTRIBUTING.md",
+        "# Contributing\n\n## Docs\n\nWrite docs in plain English.\n\n## Code\n\nNot a docs rule.\n",
+    );
+    r.write(
+        "docs/token.md",
+        "---\ntype: contract\nstatus: active\n---\n# Token\n\n- **ttl**: The gateway SHALL expire a token after 30 min.\n",
+    );
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD106"), "{out}");
+    // The files stay outside the corpus: no budget, id or link check sees them.
+    let (_, out, _) = r.run(&["check", "--all", "--json"]);
+    assert!(!out.contains("\"path\":\"docs/README.md\""), "{out}");
+    // `context` serves the file sections first, in the convention tier.
+    let (code, out, _) = r.run(&["context", "docs/token.md"]);
+    assert_eq!(code, 0, "{out}");
+    let readme = out
+        .find("<!-- docs/README.md#contract-changes h:")
+        .expect(&out);
+    let example = out.find("<!-- docs/README.md#example h:").expect(&out);
+    let contributing = out.find("<!-- CONTRIBUTING.md#docs h:").expect(&out);
+    let entry = out.find("<!-- token#token h:").expect(&out);
+    assert!(
+        readme < example && example < entry && contributing < entry,
+        "{out}"
+    );
+    assert!(out.contains("file convention -->"), "{out}");
+    assert!(out.contains("Write docs in plain English."), "{out}");
+    assert!(
+        !out.contains("Not a convention.") && !out.contains("Not a docs rule."),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["context", "docs/token.md", "--json"]);
+    assert!(
+        out.contains("\"type\":\"file\"") && out.contains("\"tier\":\"convention\""),
+        "{out}"
+    );
+    // A small budget lists a file section; `show` reads it by its id.
+    let (_, out, _) = r.run(&["context", "docs/token.md", "--budget", "400"]);
+    assert!(
+        out.contains("- `docs/README.md#contract-changes` h:"),
+        "{out}"
+    );
+    let (code, out, _) = r.run(&["show", "docs/README.md#contract-changes"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("file docs/README.md -->") && out.contains("See the token contract."),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "CONTRIBUTING.md#docs", "--json"]);
+    assert!(out.contains("\"type\":\"file\""), "{out}");
+    // `show --conventions` prints the file sections.
+    let (code, out, _) = r.run(&["show", "--conventions", "contract"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("A contract change needs a dated amendment.")
+            && out.contains("Write docs in plain English."),
+        "{out}"
+    );
+    // A change in the working tree is served at once (the file is in the
+    // status pathspec, so the parse cache does not keep the old text).
+    r.write(
+        "CONTRIBUTING.md",
+        "# Contributing\n\n## Docs\n\nWrite docs in Simplified Technical English.\n",
+    );
+    let (_, out, _) = r.run(&["show", "--conventions", "contract"]);
+    assert!(out.contains("Simplified Technical English"), "{out}");
+    // A renamed heading or a removed file is SD106.
+    r.write(
+        "CONTRIBUTING.md",
+        "# Contributing\n\n## Documents\n\nWrite docs.\n",
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("SD106 convention-unresolved: `conventions.contract` points to `./CONTRIBUTING.md#docs`, which names no document, file or section"),
+        "{out}"
+    );
+    r.commit("rename");
+    fs::remove_file(r.dir.join("docs/README.md")).unwrap();
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("points to `docs/README.md#contract-changes`"),
+        "{out}"
+    );
+    // A path that leaves the repository is SD106, not a git failure.
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"../outside.md\", \"/abs.md\"]\n[[roots]]\npath = \"docs\"\n",
+    );
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("points to `../outside.md`") && out.contains("points to `/abs.md`"),
+        "{out}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_convention_file_is_read_again_and_stays_inside() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[conventions]\nspec = [\"link.md#rule\"]\ndecision = [\"away.md\"]\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+    );
+    r.write("real.md", "# Real\n\n## Rule\n\nold rule\n");
+    std::os::unix::fs::symlink("real.md", r.dir.join("link.md")).unwrap();
+    // A link to a file outside the repository.
+    let outside = r.dir.with_extension("outside.md");
+    fs::write(&outside, "# Secret\n\nnot for agents\n").unwrap();
+    std::os::unix::fs::symlink(&outside, r.dir.join("away.md")).unwrap();
+    r.write("docs/s.md", "# S\n\n- **run**: The system SHALL run.\n");
+    r.commit("docs");
+    let (_, out, _) = r.run(&["show", "--conventions", "spec"]);
+    assert!(out.contains("old rule"), "{out}");
+    // The target changes, the link does not: the next run reads the new text.
+    r.write(
+        "real.md",
+        "# Real\n\n## Intro\n\nA much longer introduction paragraph.\n\n## Rule\n\nnew rule\n",
+    );
+    let (_, out, _) = r.run(&["show", "--conventions", "spec"]);
+    assert!(out.contains("new rule") && !out.contains("Intro"), "{out}");
+    let (_, out, _) = r.run(&["context", "docs/s.md"]);
+    assert!(out.contains("new rule"), "{out}");
+    // spec-dna does not read a link that leaves the repository.
+    let (_, out, _) = r.run(&["show", "--conventions", "decision"]);
+    assert!(!out.contains("not for agents"), "{out}");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("points to `away.md`"), "{out}");
+    let _ = fs::remove_file(outside);
+}
+
+#[test]
+fn many_warnings_of_one_code_are_one_count() {
+    // A mature corpus without tests links: one SD608 for each requirement.
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+    );
+    let reqs = |n: usize| -> String {
+        (1..=n)
+            .map(|i| format!("- **r{i}**: The system SHALL do step {i}.\n"))
+            .collect()
+    };
+    r.write("docs/a.md", &format!("# A\n\n{}", reqs(7)));
+    r.write("docs/b.md", &format!("# B\n\n{}", reqs(5)));
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(
+            "warning SD608 requirement-unverified: 12 in 2 documents (`check --json` lists them)"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("docs/a.md:3: warning SD608"), "{out}");
+    assert!(out.contains("SD608 fix: "), "{out}");
+    assert!(
+        out.ends_with("spec-dna check: 2 documents; 0 errors and 12 warnings\n"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(out.matches("\"code\":\"SD608\"").count(), 12, "{out}");
+    // 10 or fewer are listed one by one, as in a change with new
+    // requirements.
+    r.write("docs/b.md", "# B\n\nNo requirements.\n");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(out.contains("docs/a.md:3: warning SD608"), "{out}");
+    assert!(!out.contains("(`check --json` lists them)"), "{out}");
 }
 
 #[test]
@@ -2456,6 +2648,46 @@ fn init_detects_a_brownfield_repository() {
         "{cfg}"
     );
     let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn reconfigure_keeps_the_section_keys_and_the_conventions() {
+    // The keys of 0.3 that no question asks for: the history, companion and
+    // live sections of a root, and `[conventions]`.
+    let r = Repo::empty();
+    let cfg = "spec-dna = \"0.1.0\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nhistory-sections = { spec = [\"Changelog\"] }\ncompanion-sections = { spec = [\"Acceptance map\"] }\n\n[[roots]]\npath = \"docs/adr\"\ntype = \"decision\"\nlive-sections = { decision = [\"Implementation status\"] }\n\n[conventions]\ndecision = [\"CONTRIBUTING.md#decisions\"]\nspec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]\n";
+    r.write("spec-dna.toml", cfg);
+    r.write(
+        "docs/guide.md",
+        "---\ntype: guide\nstatus: active\n---\n# Guide\n\n## Specs\n\nOne rule.\n\n## More\n\nAnother rule.\n",
+    );
+    r.write(
+        "CONTRIBUTING.md",
+        "# Contributing\n\n## Decisions\n\nAmend.\n",
+    );
+    r.commit("docs");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let new = r.read("spec-dna.toml");
+    for want in [
+        "history-sections = { spec = [\"Changelog\"] }",
+        "companion-sections = { spec = [\"Acceptance map\"] }",
+        "live-sections = { decision = [\"Implementation status\"] }",
+        "[conventions]",
+        "decision = [\"CONTRIBUTING.md#decisions\"]",
+        "spec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]",
+    ] {
+        assert!(new.contains(want), "{want}\n{new}");
+    }
+    let (_, out, _) = r.run(&["show", "--conventions", "decision"]);
+    assert!(
+        out.contains("<!-- decision: amendment sections: Amendments; live sections: Implementation status -->")
+            && out.contains("Amend."),
+        "{out}"
+    );
+    r.commit("reconfigure");
+    let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
 }
 

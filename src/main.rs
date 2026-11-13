@@ -56,7 +56,8 @@ and HEAD (default: HEAD). With --all, it reports every diagnostic. With
 --base, it reads tracked files only, as CI does. It prints the errors
 first, then the drift warnings, then the other warnings. The prose lint
 warnings (SD801-SD805) are one count for each code; --lint lists each of
-them. --json lists all diagnostics.",
+them. Another warning code with more than 10 diagnostics, for example
+SD608 on a mature corpus, is one count too. --json lists all diagnostics.",
     ),
     (
         "context",
@@ -645,6 +646,11 @@ fn config_not_alone(
 /// warnings (SD606, SD607), the other warnings, and then the prose lint
 /// warnings. Without `lint`, the prose lint warnings are one line for each
 /// code, with the count and the documents.
+/// A warning code (not drift, not prose lint) with more diagnostics than this
+/// prints as one count. A mature corpus can have hundreds of warnings of one
+/// code, for example SD608 before the project links tests.
+const MANY_WARNINGS: usize = 10;
+
 fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
     use diag::{Code, Severity};
     let rank = |d: &diag::Diag| match (d.severity, d.code) {
@@ -653,12 +659,29 @@ fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
         (_, c) if c.is_prose_lint() => 3,
         _ => 2,
     };
+    let mut per_code: Vec<(Code, usize)> = Vec::new();
+    for d in diags.iter().filter(|d| rank(d) == 2) {
+        match per_code.iter_mut().find(|c| c.0 == d.code) {
+            Some(c) => c.1 += 1,
+            None => per_code.push((d.code, 1)),
+        }
+    }
+    let many: Vec<Code> = per_code
+        .into_iter()
+        .filter(|c| c.1 > MANY_WARNINGS)
+        .map(|c| c.0)
+        .collect();
     let mut sorted: Vec<&diag::Diag> = diags.to_vec();
     sorted.sort_by_key(|d| rank(d));
     let mut out = Vec::new();
     let mut counts: Vec<(Code, usize, Vec<&str>)> = Vec::new();
     for d in sorted {
-        if lint || rank(d) < 3 {
+        let counted = match rank(d) {
+            3 => !lint,
+            2 => many.contains(&d.code),
+            _ => false,
+        };
+        if !counted {
             out.push(d.text());
             continue;
         }
@@ -679,9 +702,14 @@ fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
             many => format!("{} documents", many.len()),
         };
         out.push(format!(
-            "warning {} {}: {n} in {place} (`check --lint` lists them)",
+            "warning {} {}: {n} in {place} (`check {}` lists them)",
             code.code(),
-            code.name()
+            code.name(),
+            if code.is_prose_lint() {
+                "--lint"
+            } else {
+                "--json"
+            }
         ));
     }
     // The fix of each listed code, once, so that an agent needs no lookup.
@@ -779,12 +807,21 @@ fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let (cfg, mut c) = load_head(repo, a)?;
     c.covers = evidence::load(repo, &cfg, None, true)?;
     let t = &a.positional[0];
-    let (d, frag) = context::resolve_target(&c, t).ok_or_else(|| {
+    if let Some((d, frag)) = context::resolve_target(&c, t) {
+        print!(
+            "{}",
+            context::show(&c, &repo.root, d, frag.as_deref(), a.json)
+        );
+        return Ok(0);
+    }
+    // A convention file outside the documents: `context` lists its sections
+    // by path.
+    let (f, frag) = context::resolve_file(&c, t).ok_or_else(|| {
         Fatal::NotFound(format!("`{t}` names no document, section or requirement"))
     })?;
     print!(
         "{}",
-        context::show(&c, &repo.root, d, frag.as_deref(), a.json)
+        context::show_file(&c, &repo.root, &f, frag.as_deref(), a.json)
     );
     Ok(0)
 }
@@ -806,9 +843,16 @@ fn show_conventions(repo: &Repo, a: &Args, name: &str) -> Result<u8, Fatal> {
     let mut missing = Vec::new();
     for p in ptrs {
         match context::resolve_pointer(&c, p) {
-            Some((d, frag)) => {
+            Some(context::Pointer::Doc(d, frag)) => {
                 parts.push(context::show(&c, &repo.root, d, frag.as_deref(), a.json))
             }
+            Some(context::Pointer::File(f, frag)) => parts.push(context::show_file(
+                &c,
+                &repo.root,
+                &f,
+                frag.as_deref(),
+                a.json,
+            )),
             None => missing.push(p.clone()),
         }
     }
@@ -839,7 +883,7 @@ fn show_conventions(repo: &Repo, a: &Args, name: &str) -> Result<u8, Fatal> {
     println!("<!-- conventions of {}: {} -->", ty.name(), ptrs.join(", "));
     section_names(&cfg, ty);
     for p in &missing {
-        println!("<!-- `{p}` names no document or section (SD106) -->");
+        println!("<!-- `{p}` names no document, file or section (SD106) -->");
     }
     for p in parts {
         print!("{p}");

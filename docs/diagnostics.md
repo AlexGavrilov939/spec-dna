@@ -13,7 +13,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD103 | evidence-missing | error | A `verified-by` path (in the front matter, or in the inline `<!-- verified-by: ... -->` marker of a requirement) is not in the git tree. |
 | SD104 | ambiguous-reference | error | A reference names an alias that more than one document has. |
 | SD105 | covers-unresolved | error | A `covers:` tag in a test file names no requirement: the document, the key or the requirement is missing, or the id names a section. |
-| SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names no document, or no section of the document. |
+| SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names no document and no Markdown file of the git tree, or no section of the document or file. |
 | SD201 | duplicate-id | error | Two documents have the same id or alias. |
 | SD202 | id-removed | error | An id of the base tree is gone, and no document keeps it as an alias. You can delete a `done` or `rejected` change, or a note. |
 | SD203 | key-format | error | A requirement key in a sentence with a BCP 14 keyword is not a slug and not a legacy key. |

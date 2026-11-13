@@ -309,6 +309,10 @@ pub struct Corpus {
     pub token_prefixes: Vec<String>,
     pub repos: Vec<String>,
     pub self_urls: Vec<String>,
+    /// The convention files of the tree (`Config::convention_files`), parsed:
+    /// Markdown files that a `conventions` pointer names and that are not
+    /// documents. No check, budget, id or rank uses them.
+    pub outside: HashMap<String, Arc<ParsedDoc>>,
     /// The `covers:` tags of the test files. `check` and `show` load them
     /// (`evidence::load`); the other commands leave the list empty.
     pub covers: Vec<crate::evidence::Cover>,
@@ -387,6 +391,7 @@ impl Corpus {
             token_prefixes: config.token_prefixes(),
             repos: config.repos.iter().map(|r| r.0.clone()).collect(),
             self_urls: config.self_urls.clone(),
+            outside: HashMap::new(),
             covers: Vec::new(),
         }
     }

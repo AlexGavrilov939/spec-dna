@@ -2,6 +2,24 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.3.3 - 2026-11-13
+
+Convention files outside the documents, and fixes from a sweep of the open defects.
+
+### Added
+
+- A pointer of `[conventions]` can name a Markdown file that is not a document: a file outside every root, or a file that an `exclude` glob removes, such as the `README.md` of a decision directory. `context` serves its sections first in the convention tier (`"type": "file"` in `--json`), `show --conventions <type>` prints them, and `show <path>#<anchor>` prints one section. No check, budget or id applies to the file. SD106 also reports a missing file.
+
+### Changed
+
+- `check` prints a warning code with more than 10 diagnostics as one count, as it does for the prose lint. On a mature corpus without test links, the SD608 lines no longer hide the other output. `--json` lists each diagnostic, and the exit code does not change.
+- `scripts/cross-build.sh` names the zig version of CI when zig is missing, and warns when another zig version is on PATH.
+
+### Fixed
+
+- `init --reconfigure` dropped `[conventions]` and the root keys `history-sections`, `companion-sections` and `live-sections`. It keeps them now. If you ran `init --reconfigure` with 0.3.0 to 0.3.2, compare `spec-dna.toml` with its last commit.
+- spec-dna reads a convention file of the working tree from disk on every run, without the parse cache, and adds it to the git status pathspec. Thus a changed file, or a symlink whose target changed, gives the current text. A symlink whose target is outside the repository is not read (SD106).
+
 ## 0.3.2 - 2026-11-13
 
 Live sections and project conventions. A replay of real changes of a corpus found 2 gaps: agents left the implementation status of an accepted decision stale, because spec-dna froze that text, and agents did not see a convention for contract changes that only the project documents state.

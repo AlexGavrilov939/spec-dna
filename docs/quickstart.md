@@ -7,15 +7,15 @@ This page gives the steps from install to uninstall. You need git, and Rust 1.88
 Build the version that you want from its tag (phase 1 of [ADR 0003](adr/0003-distribution.md)):
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.3.2 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.3.3 spec-dna
 spec-dna --version
 ```
 
 In phase 1, a team often installs from a local or a private clone. Give its git URL to `--git`. A plain path does not work. Keep the package name `spec-dna` at the end, because the repository has other packages.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.3.2 spec-dna            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.3.2 spec-dna  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.3.3 spec-dna            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.3.3 spec-dna  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source, and the CI job below uses it.
@@ -89,13 +89,14 @@ spec-dna check                          # before a commit: exit 1 on a new error
 spec-dna mv loans circulation/loans     # move a document; the old id stays as an alias
 spec-dna mv loans#loan-period policy    # move a requirement into the spec `policy`
 spec-dna mv loans#holds loans#fines circulation  # split: move 2 sections into a new spec
+spec-dna show --conventions decision    # the project rules for a type: `[conventions]` in spec-dna.toml
 ```
 
 `check` warns when a change removes a path or an identifier that a document cites (SD606, SD607). Update that document in the same change. For an accepted decision, do not change its text: add an amendment section (`## Amendments`) that names the new path or identifier. To make these warnings errors, set `[rules] drift = "error"`, or use the `strict` profile.
 
 Amend an accepted decision when its outcome stays: add a detail, a limit or a new code path under `## Amendments`. Supersede it when its outcome changes: write a new decision with `supersedes: [<old id>]` and set the old one to `superseded`.
 
-`check` lists errors and drift warnings first, and then the fix of each listed code. The prose lint warnings (SD801 to SD805) are one count for each code; `spec-dna check --lint` lists them. The lint is on in the `strict` profile only.
+`check` lists errors and drift warnings first, and then the fix of each listed code. The prose lint warnings (SD801 to SD805) are one count for each code; `spec-dna check --lint` lists them. The lint is on in the `strict` profile only. Another warning code with more than 10 diagnostics, such as SD608 on a mature corpus, is one count too; `spec-dna check --json` lists each diagnostic.
 
 When `check` reports SD702 (a document over its hard budget), split the document with one `mv`: name the keys or the sections, and a new or an existing spec. The old ids of `HEAD` stay as aliases (a key that is new in the change needs none), and a preservation check runs before any file changes. Split only for a size error: SD702, and in the `strict` profile also SD701, SD703 and SD704. A size warning needs no split.
 
@@ -154,4 +155,4 @@ done
 cargo uninstall spec-dna
 ```
 
-The loop removes the generated line and the blank line before it. It deletes a file that only had this line. Your documents are plain Markdown files, and they do not change.
+The loop removes the generated line and the blank line before it. It deletes a file that only had this line. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. Your documents are plain Markdown files, and they do not change.

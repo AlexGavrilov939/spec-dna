@@ -175,8 +175,10 @@ fn is_oid(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Returns the status pathspec: the document roots, or nothing for the whole
-/// tree.
+/// Returns the status pathspec: the document roots and the convention files
+/// outside them, or nothing for the whole tree. Without a convention file in
+/// the pathspec, a changed convention file would keep the blob id of the git
+/// index, and the parse cache would keep its old text.
 pub fn root_paths(config: &Config) -> Vec<String> {
     if config.roots.iter().any(|r| r.path.is_empty()) {
         return Vec::new();
@@ -184,7 +186,9 @@ pub fn root_paths(config: &Config) -> Vec<String> {
     config
         .roots
         .iter()
-        .map(|r| format!(":(literal){}", r.path))
+        .map(|r| r.path.clone())
+        .chain(config.convention_files())
+        .map(|p| format!(":(literal){p}"))
         .collect()
 }
 
@@ -296,11 +300,13 @@ pub fn load(
     } else {
         Index::empty(repo.index_path())
     };
-    // Documents per snapshot, and the work to do.
-    let mut per_snap: Vec<Vec<&Entry>> = Vec::new();
+    // Documents and convention files per snapshot, and the work to do.
+    let mut per_snap: Vec<(Vec<&Entry>, Vec<&Entry>)> = Vec::new();
     let mut jobs: Vec<(Source, Option<String>)> = Vec::new();
     let mut queued: HashSet<String> = HashSet::new();
     let mut used: HashSet<String> = HashSet::new();
+    let convention_files = config.convention_files();
+    let root_dir = std::fs::canonicalize(&repo.root).unwrap_or_else(|_| repo.root.clone());
     for snap in snaps {
         let docs: Vec<&Entry> = snap
             .files
@@ -312,9 +318,23 @@ pub fn load(
                     .is_some_and(|r| !config.is_excluded(r, &e.path))
             })
             .collect();
-        for e in &docs {
+        // In the working tree, a convention file can be a symlink: spec-dna
+        // reads it only if its target is inside the repository.
+        let outs: Vec<&Entry> = convention_files
+            .iter()
+            .filter_map(|p| snap.blob_of(p))
+            .filter(|e| !snap.worktree || inside_repo(&root_dir, &repo.root.join(&e.path)))
+            .collect();
+        // A convention file of the working tree is read from disk on every
+        // run and is not cached: the blob id of a symlink stays the same when
+        // its target changes. There are few such files.
+        let items = docs
+            .iter()
+            .map(|e| (e, false))
+            .chain(outs.iter().map(|e| (e, snap.worktree)));
+        for (e, uncached) in items {
             match &e.blob {
-                Some(b) => {
+                Some(b) if !uncached => {
                     used.insert(b.clone());
                     if !index.entries.contains_key(b) && queued.insert(b.clone()) {
                         let src = if snap.worktree {
@@ -325,10 +345,10 @@ pub fn load(
                         jobs.push((src, Some(b.clone())));
                     }
                 }
-                None => jobs.push((Source::Disk(e.path.clone()), None)),
+                _ => jobs.push((Source::Disk(e.path.clone()), None)),
             }
         }
-        per_snap.push(docs);
+        per_snap.push((docs, outs));
     }
 
     trace("index load", &mut t);
@@ -380,19 +400,28 @@ pub fn load(
     let cached = used.len().saturating_sub(parsed - worktree_docs.len());
 
     let mut corpora = Vec::new();
-    for (snap, docs) in snaps.iter().zip(per_snap) {
+    for (snap, (docs, outs)) in snaps.iter().zip(per_snap) {
         let files: Vec<String> = snap.files.iter().map(|e| e.path.clone()).collect();
-        let docs: Vec<(String, Arc<ParsedDoc>)> = docs
+        let parsed_of = |e: &Entry| -> (String, Arc<ParsedDoc>) {
+            let d = match &e.blob {
+                Some(b) => index.entries[b].clone(),
+                None => worktree_docs[&e.path].clone(),
+            };
+            (e.path.clone(), d)
+        };
+        let docs: Vec<(String, Arc<ParsedDoc>)> = docs.into_iter().map(parsed_of).collect();
+        let mut corpus = Corpus::build(config, files, docs);
+        corpus.outside = outs
             .into_iter()
             .map(|e| {
-                let d = match &e.blob {
-                    Some(b) => index.entries[b].clone(),
-                    None => worktree_docs[&e.path].clone(),
-                };
-                (e.path.clone(), d)
+                if snap.worktree {
+                    (e.path.clone(), worktree_docs[&e.path].clone())
+                } else {
+                    parsed_of(e)
+                }
             })
             .collect();
-        corpora.push(Corpus::build(config, files, docs));
+        corpora.push(corpus);
     }
     trace("build corpora", &mut t);
     if use_cache && changed {
@@ -405,6 +434,12 @@ pub fn load(
         parsed,
         cached,
     })
+}
+
+/// True if `path` exists and resolves (through symlinks) to a path inside the
+/// canonical repository root `root`.
+fn inside_repo(root: &Path, path: &Path) -> bool {
+    std::fs::canonicalize(path).is_ok_and(|p| p.starts_with(root))
 }
 
 /// If `SPEC_DNA_TRACE` is set, writes the time of each phase to stderr (to
