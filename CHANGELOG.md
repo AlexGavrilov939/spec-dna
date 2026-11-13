@@ -19,6 +19,9 @@ The first public release: release binaries for 7 targets, with SHA-256 sums that
 - If `spec-dna.toml` does not parse and its pin is a different version, `check` and `init` give the version mismatch, not the parse error. A configuration of a later version can have keys that an earlier binary does not know.
 - CI builds the 7 targets on each push and pull request. It also runs each binary on a runner of its own platform, with these commands: `--version`, `init`, `check`, `show` and `context` (`scripts/smoke.sh`). Before, CI built `aarch64-apple-darwin` only.
 - ADR 0003 has the design of phase 2. The Windows binaries keep the GNU ABI. There is no dispatch shim. A tool manager such as mise or aqua can keep several versions at the same time.
+- The README is shorter: an example, the install, the start, the status and the links. [docs/commands.md](docs/commands.md) has the reference of each command. `CONTRIBUTING.md` has the repository layout, the setup and the dependencies.
+- The documentation, the code comments, the schema descriptions and the text for agents follow ASD-STE100.
+- Releases are immutable. After the publication, nobody can change the assets or the tag of a release.
 
 ### Upgrade notes
 

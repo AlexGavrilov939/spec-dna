@@ -142,7 +142,7 @@ After a decision is accepted, the text outside its amendment sections is frozen 
 
 ### Conventions
 
-The value of a type is a list of pointers to the sections of project documents that state the conventions of the project for documents of that type. An example of a convention is "a contract change needs a dated amendment and a `verified_against` update".
+The value of a type is a list of pointers. Each pointer names a section of a project document that states the conventions for documents of that type. An example of a convention is "a contract change needs a dated amendment and a `verified_against` update".
 
 - A pointer is a document id or a path, with an optional `#<anchor>`. Without an anchor, it names the whole document.
 - A path can also name a Markdown file that is not a document. Examples are a file outside every root, and a file that an `exclude` glob removes, such as a `README.md`. No check, budget or id applies to such a file. spec-dna reads it only for the conventions.
@@ -171,11 +171,11 @@ spec-dna = "0.4.0"
 - If the pin is a different version, the binary does not validate the table. It reads only the sum of its own asset, for the message of the version mismatch. The asset names contain the version, so a table of an earlier version never matches the pin.
 - The binary does not compute the sum of its own file. The install step verifies the sum. The install step is one of the install commands of the release, or the CI job that `init` writes ([docs/quickstart.md](quickstart.md)).
 - `init --reconfigure` keeps the table and writes it again in the same form.
-- The message of a version mismatch gives the URL and the sum of the pinned asset for this binary if the file has no `install-source` and has the sum of that asset. Otherwise, it gives the `cargo install` command. If the table exists, the instruction to move the project to the new version names `spec-dna-pin.toml` of that release.
+- The message of a version mismatch can give the URL and the sum of the pinned asset for this binary. It gives them if the file has that sum and has no `install-source`. Otherwise, it gives the `cargo install` command. If the table exists, the instruction to move the project to the new version names `spec-dna-pin.toml` of that release.
 
 ## The pin comes first
 
-If `spec-dna.toml` does not parse, and its key `spec-dna` is a different version from the binary, the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary of a version before 0.4.0 does not have this rule. It reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
+Sometimes `spec-dna.toml` does not parse, and its key `spec-dna` is a different version from the binary. Then the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary of a version before 0.4.0 does not have this rule. It reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
 
 ## Budgets
 
@@ -239,6 +239,6 @@ A link with a scheme (`https:`) or a `//` prefix is external, unless it starts w
 
 A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does. An untracked document is not part of that gate until you run `git add`. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory.
 
-In a root of type `reference`, an id starts with a namespace: the shortest suffix of the root path (whole segments) that no other reference root has, such as `plans/rollout` for `tasks/plans/rollout.md`. Thus the ids of two reference roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
+In a root of type `reference`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other reference root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of two reference roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
 
 A section that `mv` moved keeps its old id as an alias: the destination lists `<old-id>#<anchor>` in its `aliases`. A stub (front matter `moved-to: <id>`) has no id of its own. A generated index has the front matter field `generated: spec-dna index h:<hash>`. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.

@@ -2,6 +2,8 @@
 
 ## Setup
 
+You need Rust 1.88 or later, and [pre-commit](https://pre-commit.com) 4.x. You can also run pre-commit with [uv](https://docs.astral.sh/uv/): `uvx pre-commit ...`.
+
 ```sh
 pre-commit install
 ```
@@ -16,6 +18,23 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 The golden outputs of the integration tests are in `tests/golden/`. After an intended change of the output, run `UPDATE_GOLDEN=1 cargo test` to regenerate them. Then examine the diff.
+
+## Repository layout
+
+| Path | Content |
+| --- | --- |
+| `src/` | The `spec-dna` crate |
+| `tests/` | Integration tests, fixtures and golden outputs |
+| `schema/spec-dna.schema.json` | The JSON Schema of `spec-dna.toml`. [docs/config.md](docs/config.md) describes the keys. |
+| `docs/` | The user documentation |
+| `docs/adr/` | Decisions: the information model, the language and the distribution |
+| `docs/research/` | Standards and prior art |
+| `scripts/` | The cross-build, the run test, the release assets and the demo replay |
+| `bench/` | Benchmarks, retrieval measurements and the prototypes of the language decision |
+| `AGENTS.md` | Rules for AI agents that work in this repository. `CLAUDE.md` imports it. |
+| `CHANGELOG.md` | The changes of each version |
+| `SECURITY.md` | How to report a vulnerability |
+| `.github/` | CI workflows, Dependabot, issue and pull request templates, code owners |
 
 ## Formatting
 
@@ -78,7 +97,34 @@ Write a code comment only when it gives information that the code and its names 
 
 The tag starts `.github/workflows/release.yml`. The workflow compares the tag with the version. It builds and runs the binaries again. It publishes the binaries, `SHA256SUMS` and `spec-dna-pin.toml` with build-provenance attestations. The notes of the release are the section of the version in `CHANGELOG.md`.
 
+The repository has immutable releases. After the publication, nobody can change the assets or the tag of a release. To correct a release, publish a new version.
+
 ## Dependencies
+
+spec-dna has 4 direct dependencies. Give each new dependency a one-line reason in the table below.
+
+| Crate | Reason |
+| --- | --- |
+| `pulldown-cmark` | CommonMark parser with byte offsets for headings, list items and links. Served sections and requirement keys need these offsets. |
+| `sha2` | SHA-256 for the normalized section and requirement hashes of ADR 0001 |
+| `toml` | Parses `spec-dna.toml` (TOML 1.0 syntax) |
+| `unicode-normalization` | Unicode NFC: the definitions of ids and hashes use it |
+
+These crates come with the direct dependencies:
+
+| Crate | Required by, and reason |
+| --- | --- |
+| `bitflags`, `memchr`, `unicase` | `pulldown-cmark`: option flags, fast byte search, link labels without case |
+| `digest`, `block-buffer`, `crypto-common`, `generic-array`, `typenum` | `sha2`: the shared interfaces of hash functions, and buffers of fixed size |
+| `cpufeatures`, `libc`, `cfg-if` | `sha2`: detection of SHA CPU instructions at run time |
+| `serde_core`, `serde_spanned`, `toml_datetime`, `toml_parser`, `winnow` (2 versions) | `toml`: value model, spans, date values and the parser |
+| `tinyvec` | `unicode-normalization`: small buffers for combining characters |
+
+The tests on Unix also use `libc`: `openpty` gives a pseudo-terminal to the test of the interactive `init`.
+
+The repository has its own code, without dependencies, for argument parsing, front matter (a YAML subset), globs, JSON output and input, parallelism and git access. Git access uses the `git` command line ([ADR 0002](docs/adr/0002-language.md)).
+
+### Updates
 
 Dependabot opens grouped pull requests each week for GitHub Actions and pre-commit hooks. It waits 7 days after a release before it proposes that release.
 

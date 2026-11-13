@@ -12,7 +12,7 @@ Rule zero: do not put the name, paths, ids, text, metrics or conventions of a co
 - Decisions: `docs/adr/` (information model, language, distribution)
 - Language benchmark prototype, not the tool: `bench/`
 
-The project is at an early stage. It has one Rust crate at the repository root (`src/`, `tests/`). `Cargo.toml` gives the version. Releases are public (`.github/workflows/release.yml`). Do not add structure, languages or tools that the task does not ask for. Give each new dependency a one-line reason in the dependency table of the README.
+The project is at an early stage. It has one Rust crate at the repository root (`src/`, `tests/`). `Cargo.toml` gives the version. Releases are public (`.github/workflows/release.yml`). Do not add structure, languages or tools that the task does not ask for. Give each new dependency a one-line reason in the dependency table of `CONTRIBUTING.md`.
 
 ## Done means checked
 

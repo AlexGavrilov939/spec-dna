@@ -10,7 +10,7 @@ spec-dna must keep specifications small, correct and cheap for agents to load. T
 
 The decision uses this evidence (the details are in [the research matrix](../research/matrix.md); consumer findings stay outside this repository):
 
-- Corpus A (mature product, about 2.3k Markdown docs, about 39 MB, mixed languages, about 14 months of history): the main problems are size and accretion. There are almost no exact duplicates, and most normative docs are 4 link hops or fewer from the entry files. Feature specs and decision records grow far past any budget for reads. Most repeated reads by agents are page reads of the same large file. Some sequential numbers belong to several files. Citations to ids that do not exist accumulate. The project removed a gate on human-typed dates after false alarms. Some mandatory gates depend on agent tooling that is not in the repository.
+- Corpus A is a mature product with about 2.3k Markdown docs (about 39 MB), mixed languages and about 14 months of history. Its main problems are size and accretion. There are almost no exact duplicates, and most normative docs are 4 link hops or fewer from the entry files. Feature specs and decision records grow far past any budget for reads. Most repeated reads by agents are page reads of the same large file. Some sequential numbers belong to several files. Citations to ids that do not exist accumulate. The project removed a gate on human-typed dates after false alarms. Some mandatory gates depend on agent tooling that is not in the repository.
 - Corpus B (public proposal process, about 700 proposals): typed metadata with enums, cross-field rules and supersede links works at this scale. The process validates this metadata only on changed files.
 - Corpus C (synthetic, 60 to 20,000 docs): the performance measurements use it (see [ADR 0002](0002-language.md)).
 - An independent architecture review of the first draft found risks for adoption, merge safety and false errors. This version has solutions for these risks.
@@ -20,7 +20,7 @@ The decision uses this evidence (the details are in [the research matrix](../res
 
 1. Adopt the model of an existing framework (Spec Kit, OpenSpec or BMAD).
 2. A large typed model with many document types and mandatory metadata (29148 or INCOSE attribute sets).
-3. A small typed model: 6 document types, ids derived from paths, metadata defaults from configuration, state derived from git and the link graph, gates relative to the merge base.
+3. A small typed model. It has 6 document types, ids from paths, metadata defaults from the configuration, state from git and links, and gates against the merge base.
 
 ## Decision Outcome
 
@@ -42,14 +42,14 @@ A gate MUST run from the repository with only spec-dna and git. Skills, plugins 
 
 | Type | Purpose | Authority | Default in agent context |
 | --- | --- | --- | --- |
-| `spec` | Intended behavior and constraints of one capability, or one cross-cutting concern | Normative | Yes |
+| `spec` | Intended behavior and constraints of one capability, or one concern of many modules | Normative | Yes |
 | `contract` | An interface: prose, or a pointer to an OpenAPI, AsyncAPI or schema file | Normative | When the task affects it |
 | `guide` | Conventions and procedures | Normative | For paths in its `applies-to` |
 | `decision` | The reason for a choice (MADR minimal) | Rationale. Its normative effects are in the specs, contracts or guides that it links | Accepted and linked decisions, with the summary first |
 | `change` | A proposal, plan or task that is not yet merged into current truth | Proposal | Only on request |
 | `note` | Research, observations, reference material | Informative | No |
 
-A cross-cutting concern (security, logging, error handling) is one `spec` or `guide` with `applies-to` (path globs or namespaces). Context assembly adds it for matching paths. Specs do not contain copies of it.
+A concern of many modules (security, logging, error handling) is one `spec` or `guide` with `applies-to` (path globs or namespaces). Context assembly adds it for matching paths. Specs do not contain copies of it.
 
 ### Metadata
 

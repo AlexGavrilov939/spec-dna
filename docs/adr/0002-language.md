@@ -56,7 +56,7 @@ Corpus A is a mature product repository with mixed languages (anonymized, tracke
 | Corpus A | Go | 3.8 (3.3) | 123.1 (96.8) | 103.8 (96.8) | 35.1 (33.0) | 45.0 (39.5) | 78.5 / 12.1 |
 | Corpus A | Rust | 3.3 (2.9) | 95.5 (73.8) | 79.8 (74.3) | 31.2 (29.4) | 39.4 (34.4) | 14.2 / 8.3 |
 
-The index size is the same for both scanners: 0.03, 0.68, 9.56, 1.25 and 0.68 MB, in the order of the table.
+The index size is the same for both scanners. In the order of the table, it is 0.03, 0.68, 9.56, 1.25 and 0.68 MB.
 
 Other measured facts (same host):
 
