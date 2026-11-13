@@ -225,7 +225,7 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
             p.kept.push(format!("{key} = {}", toml_value(v)));
         }
     }
-    for key in ["lint", "context", "repos", "conventions"] {
+    for key in ["lint", "context", "repos", "conventions", "spec-dna-sha256"] {
         if let Some(toml::Value::Table(t)) = table.get(key) {
             p.kept.push(format!("\n[{key}]"));
             for (k, v) in t {
@@ -673,10 +673,16 @@ fn lines(items: &[&str]) -> String {
     items.iter().map(|l| format!("{l}\n")).collect()
 }
 
-/// The GitHub Actions job, as in docs/quickstart.md.
+/// The GitHub Actions job, as in docs/quickstart.md. With the sum of the
+/// release asset in `spec-dna.toml` and no `install-source`, the job downloads
+/// the binary and verifies its sum. Otherwise it builds the pin from source.
 fn github_workflow(base: &str) -> String {
-    let install = format!(
-        "          cargo install --locked --git \"${{src:-{}}}\" --tag \"v$pin\" spec-dna",
+    let download = format!(
+        "            curl --fail --silent --show-error --location --output \"$RUNNER_TEMP/$asset\" \"{}/releases/download/v$pin/$asset\"",
+        config::DEFAULT_INSTALL_SOURCE
+    );
+    let build = format!(
+        "            cargo install --locked --git \"${{src:-{}}}\" --tag \"v$pin\" spec-dna",
         config::DEFAULT_INSTALL_SOURCE
     );
     let check =
@@ -699,7 +705,16 @@ fn github_workflow(base: &str) -> String {
         "        run: |",
         "          pin=$(sed -n 's/^spec-dna = \"\\(.*\\)\"/\\1/p' spec-dna.toml)",
         "          src=$(sed -n 's/^install-source = \"\\(.*\\)\"/\\1/p' spec-dna.toml)",
-        &install,
+        "          asset=\"spec-dna-$pin-x86_64-unknown-linux-gnu\"",
+        "          sum=$(sed -n \"s/^\\\"$asset\\\" = \\\"\\(.*\\)\\\"/\\1/p\" spec-dna.toml)",
+        "          if [ -z \"$src\" ] && [ -n \"$sum\" ]; then",
+        &download,
+        "            echo \"$sum  $RUNNER_TEMP/$asset\" | sha256sum --check -",
+        "            install -D -m 755 \"$RUNNER_TEMP/$asset\" \"$HOME/.local/bin/spec-dna\"",
+        "            echo \"$HOME/.local/bin\" >> \"$GITHUB_PATH\"",
+        "          else",
+        &build,
+        "          fi",
         &check,
     ])
 }

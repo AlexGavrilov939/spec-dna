@@ -3,12 +3,15 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.3.3"              # required: the pinned version
+spec-dna = "0.4.0"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
+
+[spec-dna-sha256]               # optional: the release assets of the pin, and their SHA-256 sums
+"spec-dna-0.4.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
 
 [rules]                         # severity overrides (docs/profiles.md)
 drift = "error"                 # a rule group, or a code such as SD704
@@ -60,6 +63,7 @@ decision = ["docs/adr/README.md#how-to-amend"]
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
+| `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name, `spec-dna-<version>-<target>` (with `.exe` for a Windows target), and each value is its sum. See "The table `spec-dna-sha256`" below. |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
 | `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule wins over a group rule. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` refuses it. |
@@ -92,6 +96,33 @@ decision = ["docs/adr/README.md#how-to-amend"]
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions of the project for documents of that type, such as "a contract change needs a dated amendment and a `verified_against` update". A pointer is a document id or a path, with an optional `#<anchor>`; without an anchor, it names the full document. A path can also name a Markdown file that is not a document: a file outside every root, or a file that an `exclude` glob removes, such as a `README.md`. No check, budget or id applies to such a file; spec-dna reads it only for the conventions. When a target of `context` is a document of that type, `context` serves these sections first: the sections of files that are not documents come before the sections of documents (`"type": "file"` in `--json`). `show --conventions <type>` prints them, and `show <path>#<anchor>` prints one section of such a file. A pointer that names no document, no file of the git tree or no section gives SD106. A file that git ignores, or (under `--base`) a file that git does not track, is not in the tree. A symlink whose target is outside the repository is not read. |
+
+## The table `spec-dna-sha256`
+
+[ADR 0003](adr/0003-distribution.md) (amendment "phase 2") gives the form of this table. Each release has the file `spec-dna-pin.toml`. It has the key `spec-dna` and the full table of that release. Copy both into `spec-dna.toml`. You can remove the lines of the targets that your project does not use.
+
+```toml
+spec-dna = "0.4.0"
+
+[spec-dna-sha256]
+"spec-dna-0.4.0-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.4.0-aarch64-pc-windows-gnullvm.exe" = "<...>"
+"spec-dna-0.4.0-aarch64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.4.0-x86_64-apple-darwin" = "<...>"
+"spec-dna-0.4.0-x86_64-pc-windows-gnu.exe" = "<...>"
+"spec-dna-0.4.0-x86_64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.4.0-x86_64-unknown-linux-musl" = "<...>"
+```
+
+- If the pin is the version of the binary, each command validates the table. Each key must be a release asset of that version: one of the 7 targets, with `.exe` for the 2 Windows targets. Each value must be 64 lowercase hexadecimal characters. An error is a configuration error (exit code 3).
+- If the pin is a different version, the binary does not validate the table. It reads only the sum of its own asset, for the message of the version mismatch. The asset names contain the version, so a table of an earlier version never matches the pin.
+- The binary does not compute the sum of its own file. The install step verifies it: the install commands of the release and the CI job that `init` writes ([docs/quickstart.md](quickstart.md)).
+- `init --reconfigure` keeps the table and writes it again in the same form.
+- The message of a version mismatch gives the URL and the sum of the pinned asset for this binary, if the file has no `install-source` and has the sum of that asset. Otherwise it gives the `cargo install` command. If the table exists, the instruction to move the project to the new version names `spec-dna-pin.toml` of that release.
+
+## The pin comes first
+
+If `spec-dna.toml` does not parse, and its key `spec-dna` is a different version from the binary, the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary before 0.4.0 does not have this rule: it reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
 
 Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `invariant` 3,000 and 6,000; `runbook` 8,000 and 16,000; `incident` 6,000 and 12,000; `note` and `reference` none. A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 

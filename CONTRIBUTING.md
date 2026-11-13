@@ -70,6 +70,14 @@ Write a code comment only when it gives information that the code and its names 
 - Do not report a security problem in a public issue. [SECURITY.md](SECURITY.md) tells you how to report it.
 - Do not put text, paths or names from a private repository into an issue, a test fixture or a commit message. Make a small example that shows the same problem.
 
+## Releases
+
+1. In a pull request, set the new version in `Cargo.toml` and `Cargo.lock`, and add its section to `CHANGELOG.md`, in the form `## <version> - <date>`.
+2. Merge the pull request when CI passes. CI builds the 7 targets and runs each binary on a runner of its platform.
+3. Push a signed tag `v<version>` on that commit of `master`.
+
+The tag starts `.github/workflows/release.yml`. It compares the tag with the version, builds and runs the binaries again, and publishes the binaries, `SHA256SUMS` and `spec-dna-pin.toml` with build-provenance attestations. The notes of the release are the section of the version in `CHANGELOG.md`.
+
 ## Dependencies
 
 Dependabot opens grouped pull requests each week for GitHub Actions and pre-commit hooks. It waits 7 days after a release before it proposes that release.

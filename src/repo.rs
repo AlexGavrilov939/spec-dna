@@ -1,6 +1,7 @@
 //! This module finds the repository, makes tree snapshots (of the working tree
 //! or of a commit), and loads parsed documents through the index.
 
+use crate::adapters::VERSION;
 use crate::config::{self, Config};
 use crate::git::Git;
 use crate::index::Index;
@@ -116,7 +117,16 @@ impl Repo {
                 shown(&self.root)
             ))
         })?;
-        Config::parse(&text).map_err(|e| Fatal::Config(format!("{}: {e}", config::FILE_NAME)))
+        Config::parse(&text).map_err(|e| {
+            // The pin comes first: a configuration of another version can
+            // have keys that this binary does not know.
+            match config::scan_pin(&text) {
+                Some(pin) if pin != VERSION => {
+                    Fatal::Config(config::pin_mismatch_of_text(&pin, &text))
+                }
+                _ => Fatal::Config(format!("{}: {e}", config::FILE_NAME)),
+            }
+        })
     }
 
     /// Returns the commit that `HEAD` points to. It reads the commit from the

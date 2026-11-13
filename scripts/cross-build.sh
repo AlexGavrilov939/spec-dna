@@ -4,11 +4,11 @@
 # Usage: scripts/cross-build.sh [--manifest-path PATH] [--bin NAME] [--all] [TARGET...]
 #        scripts/cross-build.sh --list [--all]
 #
-# Without a TARGET, it builds the phase 1 target (aarch64-apple-darwin). With
-# --all, it builds the 7 targets of phase 2. CI (.github/workflows/build.yml)
-# calls it once for each target of --list. It needs zig, cargo-zigbuild, and
-# rustup with its cargo first on PATH. It prints the `file` output and the
-# SHA-256 of each binary.
+# Without a TARGET, it builds aarch64-apple-darwin only, for a local build on
+# Apple silicon. With --all, it builds the 7 release targets of ADR 0003. CI
+# (.github/workflows/build.yml) calls it once for each target of --list --all.
+# It needs zig, cargo-zigbuild, and rustup with its cargo first on PATH. It
+# prints the `file` output and the SHA-256 of each binary.
 set -euo pipefail
 
 targets_all=(
@@ -20,7 +20,7 @@ targets_all=(
   x86_64-pc-windows-gnu
   aarch64-pc-windows-gnullvm
 )
-# Phase 1 of ADR 0003 has one consumer, on Apple silicon.
+# The default target of a local build without --all.
 targets_phase1=(aarch64-apple-darwin)
 
 # The *-linux-gnu binaries need this glibc or a newer one. 2.17 is the minimum
