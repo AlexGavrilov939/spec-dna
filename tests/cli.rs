@@ -408,9 +408,140 @@ fn localized_amendments_are_not_frozen_text() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("SD405 decision-frozen: the text outside the amendment sections changed"),
+        out.contains(
+            "SD405 decision-frozen: the text outside the amendment and live sections changed"
+        ),
         "{out}"
     );
+}
+
+#[test]
+fn live_sections_change_in_place_and_frozen_text_does_not() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nrequired-sections = { decision = [\"Решение\"] }\namendment-sections = { decision = [\"Поправки\"] }\nlive-sections = { decision = [\"Статус реализации\"] }\n",
+    );
+    let adr = "adr/d1.md";
+    r.write(
+        adr,
+        "---\nstatus: accepted\n---\n# Histogram\n\n## Решение\n\nShip the histogram in 2 steps.\n\n## Статус реализации\n\n- step 1: done\n- step 2: open\n\n## Поправки\n\nNone yet.\n",
+    );
+    r.commit("docs");
+    // A live section changes in place: no SD405, no SD605.
+    r.write(
+        adr,
+        &r.read(adr).replace(
+            "- step 2: open",
+            "- step 2: done (the gateway SHALL record it)",
+        ),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD405") && !out.contains("SD605"), "{out}");
+    r.commit("status");
+    // The outcome is still frozen.
+    r.write(adr, &r.read(adr).replace("in 2 steps", "in 3 steps"));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("SD405 decision-frozen"), "{out}");
+    // A live section of the wrong type is a configuration error.
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlive-sections = { spec = [\"Status\"] }\n",
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("live-sections.spec"), "{err}");
+}
+
+#[test]
+fn conventions_come_first_and_show_prints_them() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#contract-changes\"]\ndecision = [\"rules\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n",
+    );
+    r.write(
+        "docs/README.md",
+        "---\ntype: reference\n---\n# Docs\n\n## Layout\n\nOne file per area.\n\n## Contract changes\n\nA contract change needs a dated amendment and a `verified_against` update.\n\n### Example\n\nSee the token contract.\n\n## Other\n\nNot a convention.\n",
+    );
+    r.write(
+        "docs/rules.md",
+        "---\ntype: guide\nstatus: active\n---\n# Decision rules\n\nAmend, do not rewrite.\n",
+    );
+    r.write(
+        "docs/token.md",
+        "---\ntype: contract\nstatus: active\n---\n# Token\n\n- **ttl**: The gateway SHALL expire a token after 30 min.\n",
+    );
+    r.write("docs/s.md", "# S\n\n- **run**: The system SHALL run.\n");
+    r.commit("docs");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    // `context` serves the conventions of the target type first.
+    let (_, out, _) = r.run(&["context", "docs/token.md"]);
+    let conv = out.find("<!-- docs#contract-changes h:").expect(&out);
+    let example = out.find("<!-- docs#example h:").expect(&out);
+    let entry = out.find("<!-- token#token h:").expect(&out);
+    assert!(conv < example && example < entry, "{out}");
+    assert!(out.contains("convention -->"), "{out}");
+    assert!(!out.contains("<!-- docs#other h:"), "{out}");
+    assert!(!out.contains("Amend, do not rewrite."), "{out}");
+    // A spec has no conventions.
+    let (_, out, _) = r.run(&["context", "s"]);
+    assert!(!out.contains("convention -->"), "{out}");
+    // `show --conventions <type>` prints them.
+    let (code, out, _) = r.run(&["show", "--conventions", "contract"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.starts_with("<!-- conventions of contract: docs/README.md#contract-changes -->"),
+        "{out}"
+    );
+    assert!(
+        out.contains("verified_against") && out.contains("See the token contract."),
+        "{out}"
+    );
+    assert!(!out.contains("Not a convention."), "{out}");
+    let (_, out, _) = r.run(&["show", "--conventions", "decision"]);
+    assert!(out.contains("Amend, do not rewrite."), "{out}");
+    assert!(
+        out.contains("<!-- decision: amendment sections: Amendments; live sections: none -->"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "--conventions", "spec"]);
+    assert!(out.contains("No conventions for `spec`"), "{out}");
+    let (_, out, _) = r.run(&["show", "--conventions", "contract", "--json"]);
+    assert!(
+        out.contains("\"type\":\"contract\"") && out.contains("\"sections\":[{"),
+        "{out}"
+    );
+    let (code, _, err) = r.run(&["show", "--conventions", "nope"]);
+    assert_eq!(code, 2, "{err}");
+    // A pointer that names no section is a new error after a rename.
+    r.write(
+        "docs/README.md",
+        &r.read("docs/README.md")
+            .replace("## Contract changes", "## Contracts"),
+    );
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("spec-dna.toml:1: error SD106 convention-unresolved: `conventions.contract` points to `docs/README.md#contract-changes`"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "--conventions", "contract"]);
+    assert!(
+        out.contains("names no document or section (SD106)"),
+        "{out}"
+    );
+    // An unknown type in `conventions` is a configuration error.
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[conventions]\nadr = [\"rules\"]\n[[roots]]\npath = \"docs\"\n",
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("conventions.adr"), "{err}");
 }
 
 #[test]

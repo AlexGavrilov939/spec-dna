@@ -13,6 +13,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD103 | evidence-missing | error | A `verified-by` path (in the front matter, or in the inline `<!-- verified-by: ... -->` marker of a requirement) is not in the git tree. |
 | SD104 | ambiguous-reference | error | A reference names an alias that more than one document has. |
 | SD105 | covers-unresolved | error | A `covers:` tag in a test file names no requirement: the document, the key or the requirement is missing, or the id names a section. |
+| SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names no document, or no section of the document. |
 | SD201 | duplicate-id | error | Two documents have the same id or alias. |
 | SD202 | id-removed | error | An id of the base tree is gone, and no document keeps it as an alias. You can delete a `done` or `rejected` change, or a note. |
 | SD203 | key-format | error | A requirement key in a sentence with a BCP 14 keyword is not a slug and not a legacy key. |
@@ -27,7 +28,7 @@ Base-relative gating compares diagnostics by their fingerprint (code, document i
 | SD402 | superseded-without-successor | error | A superseded document has no active (or accepted) successor that names it in `supersedes`. |
 | SD403 | supersede-cycle | error | The `supersedes` chain returns to its start. |
 | SD404 | depends-on-inactive | error | `depends-on` names a superseded or retired document. |
-| SD405 | decision-frozen | error | Text outside the amendment sections (`amendment-sections`, default `## Amendments`) changed after the decision became accepted. |
+| SD405 | decision-frozen | error | Text outside the amendment sections (`amendment-sections`, default `## Amendments`), the history sections and the live sections (`live-sections`) changed after the decision became accepted. |
 | SD501 | adapter-modified | error | A generated adapter (the line in `AGENTS.md` or `CLAUDE.md`, or the skill block) has a manual edit. |
 | SD502 | adapter-outdated | error | A generated adapter is different from the adapter that this version generates. The multi-line block of an earlier version also gives SD502: `spec-dna init` replaces it with one line. |
 | SD503 | config-not-alone | error | The change edits `spec-dna.toml` and other files (documents or code). A configuration change must be a change of its own. The files that `init` writes with it (the adapters, and files whose name starts with `spec-dna`) do not count, and a new `spec-dna.toml` is not checked. `check` compares the working tree with the base (with `--base`, tracked files; without it, also untracked files). |

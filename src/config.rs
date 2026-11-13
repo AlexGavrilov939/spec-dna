@@ -36,6 +36,10 @@ pub struct Config {
     /// The characters that a document over its hard budget in the base can
     /// grow in one change with a warning (SD703) instead of an error (SD702).
     pub growth: u32,
+    /// For each type, the sections of project documents that state the
+    /// project conventions for documents of that type (`[conventions]`), as
+    /// `<doc-id or path>[#<anchor>]`.
+    pub conventions: [Vec<String>; DocType::COUNT],
 }
 
 /// The default growth allowance: about one amendment or a few registry rows.
@@ -80,6 +84,11 @@ pub struct Root {
     /// requirements, such as an acceptance map. When requirements move, their
     /// rows move with them.
     pub companion_sections: [Vec<String>; DocType::COUNT],
+    /// For each type, the names of its live sections, such as an
+    /// implementation status. They match as amendment sections do. In a
+    /// decision, they are not frozen text, and their text can change in
+    /// place.
+    pub live_sections: [Vec<String>; DocType::COUNT],
     /// For a root of type `reference`: the namespace of its ids, a suffix of
     /// its path that no other reference root has. Thus the ids of two
     /// reference roots never collide.
@@ -116,8 +125,8 @@ impl Profile {
     pub fn severity(self, code: Code) -> Option<Severity> {
         use Severity::{Error as E, Warning as W};
         let (lite, standard, strict) = match code.code() {
-            "SD101" | "SD102" | "SD103" | "SD104" | "SD105" | "SD201" | "SD202" | "SD203"
-            | "SD204" | "SD702" => (Some(W), Some(E), Some(E)),
+            "SD101" | "SD102" | "SD103" | "SD104" | "SD105" | "SD106" | "SD201" | "SD202"
+            | "SD203" | "SD204" | "SD702" => (Some(W), Some(E), Some(E)),
             "SD701" | "SD703" | "SD704" => (Some(W), Some(W), Some(E)),
             "SD606" | "SD607" | "SD608" => (None, Some(W), Some(E)),
             "SD801" | "SD802" | "SD803" | "SD804" | "SD805" => (None, None, Some(W)),
@@ -137,7 +146,7 @@ pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
 pub const GROUPS: [(&str, &[&str]); 6] = [
-    ("references", &["SD101", "SD102", "SD104"]),
+    ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
     ("drift", &["SD606", "SD607"]),
@@ -481,6 +490,30 @@ impl Config {
             }
             f.done()?;
         }
+        let mut conventions: [Vec<String>; DocType::COUNT] = Default::default();
+        if let Some(v) = t.take("conventions") {
+            let tbl = v.as_table().ok_or("`conventions` must be a table")?;
+            for (name, list) in tbl {
+                let ty = DocType::from_name(name).ok_or_else(|| {
+                    format!(
+                        "`conventions.{name}`: unknown type `{name}`; use {}",
+                        DocType::names()
+                    )
+                })?;
+                let ptrs = list
+                    .as_array()
+                    .and_then(|a| {
+                        a.iter()
+                            .map(|p| p.as_str().map(str::to_string))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or_else(|| format!("`conventions.{name}` must be an array of strings"))?;
+                if ptrs.iter().any(|p| p.trim().is_empty()) {
+                    return Err(format!("`conventions.{name}` has an empty pointer"));
+                }
+                conventions[ty as usize] = ptrs;
+            }
+        }
         t.done()?;
         Ok(Config {
             pin,
@@ -497,6 +530,7 @@ impl Config {
             evidence_tests,
             types,
             growth,
+            conventions,
         })
     }
 
@@ -720,6 +754,15 @@ impl Root {
                 &mut companion_sections,
             )?;
         }
+        let mut live_sections: [Vec<String>; DocType::COUNT] = Default::default();
+        if let Some(v) = f.take("live-sections") {
+            headings_per_type(
+                v,
+                &format!("{prefix}live-sections"),
+                &types,
+                &mut live_sections,
+            )?;
+        }
         let enforce_budgets = match f.take("enforce-budgets") {
             None => true,
             Some(Value::Boolean(b)) => *b,
@@ -762,6 +805,7 @@ impl Root {
             rules,
             history_sections,
             companion_sections,
+            live_sections,
             namespace: None,
         })
     }

@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.3.1"              # required: the pinned version
+spec-dna = "0.3.2"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
@@ -29,6 +29,7 @@ required-sections = { decision = ["Decision Outcome", "Decision"], incident = [[
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
 history-sections = { guide = ["Iteration log"], decision = ["Review rounds"] }  # history headings
 companion-sections = { spec = ["Acceptance map"] }  # sections with a row per requirement
+live-sections = { decision = ["Implementation status"] }  # sections that change in place
 enforce-budgets = true          # false: the hard budget gives warnings only
 profile = "lite"                # the profile of this root
 rules = { lint = "off" }        # severity overrides for this root
@@ -48,6 +49,10 @@ budget = 8000                   # default character budget of `spec-dna context`
 
 [repos]
 platform = "https://example.org/platform.git"   # alias for `platform:<namespace>/<slug>`
+
+[conventions]                   # sections that state the project conventions, per type
+contract = ["docs/README.md#contract-changes"]
+decision = ["docs/adr/README.md#how-to-amend"]
 ```
 
 ## Keys
@@ -75,6 +80,7 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit: `## Nachtrag 2026-01-02: TTL` matches `Nachtrag`, and `## Nachtragsplan` does not. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. After a decision is accepted, the text outside its amendment sections is frozen (SD405), and new amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome. |
 | `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Review rounds` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `reference` document. In a decision, a history section is not frozen text. |
 | `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as an acceptance map or an evidence map. A table row or a list item of such a section belongs to the requirement keys in its first cell (or the lead of the item). When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. A row of a key that moves and a key that stays refuses the move. |
+| `roots.live-sections` | table | `{}` | For each type, the names of its live sections, such as `Implementation status`, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text, new text in it gives no SD605, and `mv` and `history` do not move it. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They win over `[rules]` and over every profile. |
@@ -85,6 +91,7 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
+| `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions of the project for documents of that type, such as "a contract change needs a dated amendment and a `verified_against` update". A pointer is a document id or a path, with an optional `#<anchor>`; without an anchor, it names the full document. When a target of `context` is a document of that type, `context` serves these sections first. `show --conventions <type>` prints them. A pointer that names no document or section gives SD106. |
 
 Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `invariant` 3,000 and 6,000; `runbook` 8,000 and 16,000; `incident` 6,000 and 12,000; `note` and `reference` none. A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 
@@ -96,6 +103,18 @@ A document over the soft budget gives a warning (SD701), and SD703 if it also gr
 - A document that was over the hard budget in the base and did not grow gives a warning (SD704).
 
 A stub that `mv --stub` leaves and an index that `spec-dna index` generates have no budget. In a root with `enforce-budgets = false`, all of these give SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
+
+## Sections of a decision
+
+An accepted decision has 3 kinds of section:
+
+| Kind | Key | After acceptance | `context` | `mv`, `history` |
+| --- | --- | --- | --- | --- |
+| Frozen text | (all other sections) | Cannot change (SD405). Supersede the decision to change its outcome. | The title and the outcome are the summary. | Stays in place. |
+| Amendment section | `amendment-sections` (default `Amendments`) | Can change and grow. New text that states a requirement, a BCP 14 keyword or a status word gives SD605. | Served with the outcome. | Moves into a `reference` document. |
+| Live section | `live-sections` (no default) | Can change in place, with no SD605. Use it for a current state, such as an implementation status. | Served as a section of the document. | Stays in place. |
+
+A history section (`history-sections`) is not frozen text either, and `history` moves it. A heading that changes its name changes the kind of its section: a renamed live heading is frozen text again.
 
 ## Evidence
 

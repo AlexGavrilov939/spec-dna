@@ -26,14 +26,16 @@ const SKILL_BODY: &str = "# spec-dna
 
 1. If the task changes code or docs, run `spec-dna context <file>...` once, with all the files that you plan to change (or a document id). Skip it for a question without edits. The output gives the sections in priority order: invariants, the entry, the sections that cite the files, their decisions. Each section has an id.
 2. Read a listed section with `spec-dna show <id>#<anchor>` only if the task needs it.
-3. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`, with a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. In a test, `covers: <doc-id>#<key>` links the test to it.
-4. For a new document, run `spec-dna new <type> <id>` and replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
-5. Do not change the text of an accepted decision outside its amendment sections (default `## Amendments`).
+3. Before you edit a document, run `spec-dna show --conventions <type>` once for its type, and follow the project conventions that it prints. `context` serves them first when a target is a document of that type.
+4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`, with a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. In a test, `covers: <doc-id>#<key>` links the test to it.
+5. For a new document, run `spec-dna new <type> <id>` and replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
+6. Do not change the text of an accepted decision outside its amendment and live sections (`show --conventions decision` names them; the default is `## Amendments`).
+    - Update a live section, such as an implementation status, in place when your change makes it stale.
     - Amend the decision if its outcome stays: add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
     - Supersede the decision if its outcome changes: write a new decision with `supersedes: [<old id>]`, and set the status of the old one to `superseded`.
-6. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
-7. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`, so that the old ids stay as aliases.
-8. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner; `check` reports it with other files as SD503.";
+7. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
+8. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`, so that the old ids stay as aliases.
+9. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner; `check` reports it with other files as SD503.";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {
@@ -329,6 +331,19 @@ mod tests {
         );
         assert!(
             skill.contains("For an accepted decision, name the new path or identifier in its amendment section."),
+            "{skill}"
+        );
+    }
+
+    #[test]
+    fn the_skill_names_live_sections_and_conventions() {
+        let skill = skill_file();
+        assert!(
+            skill.contains("Update a live section, such as an implementation status, in place"),
+            "{skill}"
+        );
+        assert!(
+            skill.contains("run `spec-dna show --conventions <type>` once for its type"),
             "{skill}"
         );
     }

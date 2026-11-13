@@ -46,6 +46,7 @@ codes! {
     EvidenceMissing = "SD103", "evidence-missing", Error, "Fix the `verified-by` path. The path must exist in the git tree.";
     AmbiguousReference = "SD104", "ambiguous-reference", Error, "Use the full document id instead of an alias that names several documents.";
     CoversUnresolved = "SD105", "covers-unresolved", Error, "Name an existing requirement as `<doc-id>#<key>` after `covers:`, or remove the tag.";
+    ConventionUnresolved = "SD106", "convention-unresolved", Error, "Restore the document or the heading that `conventions` in spec-dna.toml points to. As an alternative, change the pointer in a change of its own.";
     DuplicateId = "SD201", "duplicate-id", Error, "Give each document a unique id. Remove the alias from all documents except one.";
     IdRemoved = "SD202", "id-removed", Error, "Keep the document and set a final status such as `retired`. As an alternative, use `spec-dna mv` to move it, so that the old id becomes an alias.";
     KeyFormat = "SD203", "key-format", Error, "Use a slug key (groups of lowercase letters and digits, with a hyphen between groups). As an alternative, add the legacy pattern to `legacy-keys`.";
@@ -60,7 +61,7 @@ codes! {
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
-    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). As an alternative, write a decision that supersedes this one.";
+    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, such as an implementation status) can change in place. As an alternative, write a decision that supersedes this one.";
     AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. Put your own text outside of the generated block.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
     ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";

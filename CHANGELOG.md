@@ -2,6 +2,21 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.3.2 - 2026-11-13
+
+Live sections and project conventions. A replay of real changes of a corpus found 2 gaps: agents left the implementation status of an accepted decision stale, because spec-dna froze that text, and agents did not see a convention for contract changes that only the project documents state.
+
+### Added
+
+- `live-sections` per root and type: the sections that record a current state, such as an implementation status, in any language. In an accepted decision, a live section can change in place without SD405, and new text in it gives no SD605. The frozen text and the amendment sections keep their rules. [docs/config.md](docs/config.md), section "Sections of a decision", compares the 3 kinds of section.
+- `[conventions]`: for each type, pointers to the sections of project documents that state the conventions of the project for documents of that type. `context` serves them first when a target is a document of that type. `show --conventions <type>` prints them, with the names of the amendment and live sections of the type.
+- SD106 `convention-unresolved` (error, rule group `references`): a pointer of `conventions` names no document or section.
+
+### Changed
+
+- The skill tells agents to run `spec-dna show --conventions <type>` before they edit a document of that type, and to update a live section of an accepted decision in place when a change makes it stale.
+- The message and the fix of SD405 name the live sections.
+
 ## 0.3.1 - 2026-11-11
 
 ### Changed

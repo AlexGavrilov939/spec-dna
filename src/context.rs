@@ -44,6 +44,7 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
+    Convention,
     Invariant,
     Entry,
     Cites,
@@ -57,6 +58,7 @@ pub enum Tier {
 impl Tier {
     fn name(self) -> &'static str {
         match self {
+            Tier::Convention => "convention",
             Tier::Invariant => "invariant",
             Tier::Entry => "entry",
             Tier::Cites => "cites",
@@ -102,6 +104,56 @@ pub fn resolve_target(c: &Corpus, t: &str) -> Option<(u32, Option<String>)> {
     match c.resolve(t) {
         Res::Found(d, frag, true) => Some((d, frag)),
         _ => None,
+    }
+}
+
+/// Resolves a pointer of `conventions`: a document id or a path, with an
+/// optional `#<anchor>`. The anchor must name a section of the document.
+pub fn resolve_pointer(c: &Corpus, p: &str) -> Option<(u32, Option<String>)> {
+    let (d, frag) = match p.split_once('#') {
+        Some((path, frag)) if c.by_path.contains_key(path.trim_start_matches("./")) => (
+            c.by_path[path.trim_start_matches("./")],
+            Some(frag.to_string()),
+        ),
+        _ => resolve_target(c, p)?,
+    };
+    match &frag {
+        Some(f)
+            if !c.docs[d as usize]
+                .parsed
+                .chunks
+                .iter()
+                .any(|ch| &ch.anchor == f) =>
+        {
+            None
+        }
+        _ => Some((d, frag)),
+    }
+}
+
+/// The sections that state the project conventions for documents of a type:
+/// each pointer of `conventions` for the type, resolved. A pointer that names
+/// nothing is left out (`check` reports it as SD106).
+pub fn conventions(
+    c: &Corpus,
+    conventions: &[Vec<String>; DocType::COUNT],
+    ty: DocType,
+) -> Vec<(u32, Option<String>)> {
+    conventions[ty as usize]
+        .iter()
+        .filter_map(|p| resolve_pointer(c, p))
+        .collect()
+}
+
+/// The chunks of a section and of the sections below it, or all chunks of the
+/// document without an anchor.
+fn section_chunks(d: &Doc, frag: Option<&str>) -> Vec<usize> {
+    let chunks = &d.parsed.chunks;
+    match frag.and_then(|f| chunks.iter().position(|ch| ch.anchor == f)) {
+        Some(s) => std::iter::once(s)
+            .chain((s + 1..chunks.len()).take_while(|&j| chunks[j].level > chunks[s].level))
+            .collect(),
+        None => (0..chunks.len()).collect(),
     }
 }
 
@@ -186,6 +238,7 @@ const CITING_SUMMARIES: usize = 5;
 
 /// Plans and packs the sections for the targets and the code paths. `cited`
 /// contains the sections that cite the paths, best first (`cite::citing`).
+#[allow(clippy::too_many_arguments)]
 pub fn assemble(
     c: &Corpus,
     targets: &[(u32, Option<String>)],
@@ -194,6 +247,7 @@ pub fn assemble(
     budget: u32,
     query: Option<&Query>,
     include_inactive: bool,
+    conventions: &[Vec<String>; DocType::COUNT],
 ) -> Assembly {
     let mut plan: Vec<(u32, usize, Tier)> = Vec::new();
     let mut seen: HashSet<(u32, usize)> = HashSet::new();
@@ -202,6 +256,28 @@ pub fn assemble(
         v.dedup();
         v
     };
+    // Sections that a target names explicitly, and the conventions. Under a
+    // query, they come first.
+    let mut pinned: HashSet<(u32, usize)> = HashSet::new();
+    // The project conventions for the type of each target document come
+    // first, of any document type.
+    let mut types: Vec<DocType> = Vec::new();
+    for &d in &entry_docs {
+        let ty = c.docs[d as usize].ty;
+        if !types.contains(&ty) {
+            types.push(ty);
+        }
+    }
+    for ty in types {
+        for (d, frag) in self::conventions(c, conventions, ty) {
+            for j in section_chunks(&c.docs[d as usize], frag.as_deref()) {
+                if seen.insert((d, j)) {
+                    plan.push((d, j, Tier::Convention));
+                    pinned.insert((d, j));
+                }
+            }
+        }
+    }
     // A reference document is cold material: the plan has it only if a
     // target names it.
     let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
@@ -223,8 +299,6 @@ pub fn assemble(
         .chain(paths.iter().map(String::as_str))
         .collect();
     let mut rest: Vec<(u32, usize)> = Vec::new();
-    // Sections that a target names explicitly. Under a query, they come first.
-    let mut pinned: HashSet<(u32, usize)> = HashSet::new();
 
     // 0. Invariants whose `applies-to` matches a scope. An invariant without
     // `applies-to` applies to the whole project.
