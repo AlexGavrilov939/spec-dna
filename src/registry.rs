@@ -1,10 +1,9 @@
-//! `spec-dna index <dir or file>` writes a generated index of the documents
-//! of a directory: one table row for each entry document, with its name,
-//! title and status. It replaces a large hand-kept registry file when the
-//! entries exist as separate documents. The front matter field
-//! `generated: spec-dna index h:<hash>` marks the file. `check` gives SD610
-//! when the entries changed after the last run, or when the rows were edited
-//! by hand.
+//! `spec-dna index <dir or file>` writes a generated index of the documents of
+//! a directory: one table row for each entry document, with its name, title
+//! and status. It replaces a large hand-kept registry file when the entries
+//! exist as separate documents. The front matter field `generated: spec-dna
+//! index h:<hash>` marks the file. `check` gives SD610 when the entries
+//! changed after the last run, or when the rows have a manual edit.
 
 use crate::hash::{hash_normalized, hex};
 use crate::model::{Corpus, Doc, LinkRes};
@@ -22,8 +21,8 @@ pub struct Entry {
 }
 
 /// The entry documents of the index at `index_path`: the documents under its
-/// directory, without the index, stubs and other generated indexes, in the
-/// natural order of their names.
+/// directory, in the natural order of their names. The list has no index, no
+/// stub and no other generated index.
 pub fn entries(c: &Corpus, index_path: &str) -> Vec<Entry> {
     let id = c
         .by_path
@@ -137,8 +136,9 @@ pub fn render(index_path: &str, entries: &[Entry], existing: Option<&str>, title
 }
 
 /// The new destination of a link from the document at `from` to a section of
-/// the old index file: the entry whose name gives the anchor, such as
-/// `#inc-12` or `#inc-12-cache-outage` for `INC-12`. `None` keeps the link.
+/// the old index file. The destination is the entry whose name gives the
+/// anchor, such as `#inc-12` or `#inc-12-cache-outage` for `INC-12`. `None`
+/// keeps the link.
 pub fn entry_link(
     c: &Corpus,
     from: &str,

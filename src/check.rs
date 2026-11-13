@@ -1,6 +1,6 @@
 //! `spec-dna check` applies the controls of ADR 0001 to one tree. It also
-//! checks the transitions between the base tree and the head tree, and it does
-//! base-relative gating.
+//! checks the transitions between the base tree and the head tree, and it
+//! applies the gate against the base.
 
 use crate::config::Config;
 use crate::diag::{Code, Diag};
@@ -547,14 +547,20 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
 }
 
 /// Applies the hard budget against the base (ADR 0001, amendments of
-/// 2026-11-08 and 0.3.0). A document over the hard budget is an error (SD702)
-/// if it is new, if it was under the budget in the base, or if it grew by more
-/// than `[budgets] growth` characters. A document that was over the budget in
-/// the base and grew by at most that allowance gives a warning (SD703): a
-/// task can add an amendment or a registry row without a split. A document
-/// that did not grow gives a warning (SD704). A root with
-/// `enforce-budgets = false` gives SD704 in all cases. A stub and a generated
-/// index have no budget. Returns each diagnostic with its "new" flag.
+/// 2026-11-08 and 0.3.0).
+///
+/// A document over the hard budget is an error (SD702) in one of these cases:
+///
+/// - It is new.
+/// - It was under the budget in the base.
+/// - It grew by more than `[budgets] growth` characters.
+///
+/// A document that was over the budget in the base and grew by at most that
+/// allowance gives a warning (SD703). Thus a task can add an amendment or a
+/// registry row without a split. A document that did not grow gives a warning
+/// (SD704). A root with `enforce-budgets = false` gives SD704 in all cases. A
+/// stub and a generated index have no budget. Returns each diagnostic with its
+/// "new" flag.
 fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Diag, bool)> {
     let mut out = Vec::new();
     for h in &head.docs {
@@ -699,7 +705,7 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
     }
 }
 
-/// The result of base-relative gating.
+/// The result of the gate against the base.
 pub struct Outcome {
     pub head: Vec<Diag>,
     /// One flag for each index into `head`: true if the base does not have
@@ -733,9 +739,9 @@ pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
         *base_fp.entry(d.fingerprint()).or_default() += 1;
     }
     // A moved document keeps its old id as an alias. Compare it under the old
-    // id. A document that a split made has the section aliases of its source:
-    // compare it under the id of the source, so that a diagnostic that moved
-    // with the text is not new.
+    // id. A document that a split made has the section aliases of its source.
+    // Compare it under the id of the source. Then a diagnostic that moved with
+    // the text is not new.
     let renamed: HashMap<&str, &str> = head
         .docs
         .iter()

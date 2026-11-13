@@ -2,8 +2,8 @@
 //! evidence if one of these links it to a test or a verification record:
 //!
 //! - `verified-by` in the front matter of its document (every requirement of
-//!   the document);
-//! - an inline `<!-- verified-by: <path> -->` marker in the requirement;
+//!   the document)
+//! - an inline `<!-- verified-by: <path> -->` marker in the requirement
 //! - a `covers: <doc-id>#<key>` tag in a test file. The tag is plain text, so
 //!   it works in a comment of any language.
 //!
@@ -143,9 +143,10 @@ impl Evidence {
         (ev, diags)
     }
 
-    /// Returns the evidence of one requirement (an index into `parsed.reqs`
-    /// of document `di`): the paths of `verified-by` (front matter and the
-    /// inline marker), and the `covers:` tags as `<path>:<line>`.
+    /// Returns the evidence of one requirement (an index into `parsed.reqs` of
+    /// document `di`). The evidence is the paths of `verified-by` (front
+    /// matter and the inline marker), and the `covers:` tags as
+    /// `<path>:<line>`.
     pub fn of(&self, di: u32, d: &Doc, r: usize) -> Vec<String> {
         let mut out: Vec<String> = d.verified_by.iter().map(|v| v.0.clone()).collect();
         out.extend(d.parsed.reqs[r].verified_by.iter().cloned());

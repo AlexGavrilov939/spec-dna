@@ -115,8 +115,8 @@ pub enum Value {
 }
 
 impl Value {
-    /// Returns the value of a key of an object. For any other value, or for a
-    /// missing key, it returns `Null`.
+    /// Returns the value of a key of an object. For any other value, or for an
+    /// absent key, it returns `Null`.
     pub fn get(&self, key: &str) -> &Value {
         match self {
             Value::Obj(fields) => fields
@@ -197,7 +197,7 @@ impl Reader<'_> {
     }
 
     fn value(&mut self) -> Result<Value, String> {
-        // A limit on nesting keeps a damaged file from overflowing the stack.
+        // A depth limit stops a damaged file from using all the stack.
         if self.depth > 256 {
             return self.err("nesting too deep");
         }

@@ -1,6 +1,6 @@
 //! `spec-dna mv` moves a document, or requirements and sections (`split.rs`).
-//! It records the old id as an alias, so that existing references still
-//! resolve (ADR 0001, "Identifiers" and "References and requirements").
+//! It records the old id as an alias, so that the references to the old id
+//! still resolve (ADR 0001, "Identifiers" and "References and requirements").
 
 use crate::config::Config;
 use crate::frontmatter::{self, Value};

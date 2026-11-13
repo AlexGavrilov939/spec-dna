@@ -1,4 +1,4 @@
-//! This module accesses git through the CLI plumbing commands (ADR 0002, git
+//! This module accesses git through the commands of the git CLI (ADR 0002, git
 //! access decision). Every command runs with `GIT_OPTIONAL_LOCKS=0`, so that a
 //! read never writes the index of the repository. No command uses the network.
 
@@ -108,9 +108,8 @@ impl Git {
     }
 
     /// Returns the working-tree changes in `paths`. If `paths` is empty, it
-    /// returns the changes in all of the tree.
-    /// Lists changed files under `paths`. With `untracked`, it also lists the
-    /// untracked files that git does not ignore.
+    /// returns the changes in the whole tree. With `untracked`, it also lists
+    /// the untracked files that git does not ignore.
     pub fn status(&self, paths: &[String], untracked: bool) -> Result<Status, String> {
         let mut args = vec![
             "status",
@@ -258,8 +257,9 @@ impl Git {
         Ok((modified, deleted))
     }
 
-    /// Reads the blobs of at most `max` bytes. A larger blob is not read. In
-    /// a partial clone, a missing blob is not fetched: it is not in the result.
+    /// Reads the blobs of at most `max` bytes. A larger blob is not read. In a
+    /// partial clone, git does not fetch an absent blob, so it is not in the
+    /// result.
     pub fn read_small_blobs(
         &self,
         ids: &[String],
@@ -387,7 +387,8 @@ impl Git {
         }
         args.push("--");
         // A glob that git does not accept as a pathspec (with `..`, or empty
-        // after the slashes) turns the limit off; the caller filters the paths.
+        // after the slashes) turns the limit off. The caller filters the
+        // paths.
         let specs: Vec<String> = globs
             .iter()
             .map(|g| g.trim_matches('/'))

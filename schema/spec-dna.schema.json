@@ -23,7 +23,7 @@
       "$ref": "#/$defs/rules"
     },
     "types": {
-      "description": "The document types of the project. A document of another type is an error (SD303), and `spec-dna new` refuses it. Default: every type.",
+      "description": "The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. Default: every type.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/type"
@@ -112,7 +112,7 @@
           "$ref": "#/$defs/budget"
         },
         "growth": {
-          "description": "The characters that a document over its hard budget in the base can grow in one change with a warning (SD703) instead of an error (SD702). Default 4000.",
+          "description": "The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). Default 4000.",
           "type": "integer",
           "minimum": 0
         }
@@ -123,7 +123,7 @@
       "additionalProperties": false,
       "properties": {
         "max-words": {
-          "description": "The maximum number of words in a requirement sentence. A longer sentence causes a warning. Default 30.",
+          "description": "The maximum number of words in a requirement sentence. A longer sentence gives a warning. Default 30.",
           "type": "integer",
           "minimum": 0
         }
@@ -141,7 +141,7 @@
       }
     },
     "conventions": {
-      "description": "For each type, pointers (`<doc-id or path>[#<anchor>]`) to the sections of project documents, or of Markdown files that are not documents (outside every root, or excluded), that state the conventions of the project for documents of that type. `context` serves them first when a target is a document of that type; `show --conventions <type>` prints them. A pointer that names nothing gives SD106.",
+      "description": "For each type, pointers (`<doc-id or path>[#<anchor>]`) to the sections of project documents, or of Markdown files that are not documents (outside every root, or excluded), that state the conventions of the project for documents of that type. `context` serves them first when a target is a document of that type. `show --conventions <type>` prints them. A pointer that names nothing gives SD106.",
       "type": "object",
       "propertyNames": {
         "$ref": "#/$defs/type"
@@ -237,7 +237,7 @@
           "$ref": "#/$defs/globs"
         },
         "legacy-ids": {
-          "description": "Patterns that make aliases from existing file names, such as `ADR-{n}`.",
+          "description": "Patterns that make aliases from the names of files, such as `ADR-{n}`.",
           "type": "array",
           "items": {
             "anyOf": [
@@ -263,14 +263,14 @@
           }
         },
         "legacy-keys": {
-          "description": "Patterns of existing requirement keys that spec-dna keeps as written, such as `R-{n}`.",
+          "description": "Patterns of requirement keys that spec-dna keeps as written, such as `R-{n}`.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/pattern"
           }
         },
         "status-map": {
-          "description": "Legacy status words, each with the status that it maps to, such as `released = \"active\"`. The target must be a status of the root's type, or of any type in a mixed root.",
+          "description": "Legacy status words, each with the status that it maps to, such as `released = \"active\"`. The target must be a status of the type of the root, or of any type in a mixed root.",
           "type": "object",
           "additionalProperties": {
             "enum": [
@@ -287,7 +287,7 @@
           }
         },
         "required-sections": {
-          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). spec-dna compares them without case. A value replaces the default of its type, and an empty list removes the requirement. Defaults: decision `[\"Decision Outcome\", \"Decision\"]`, invariant `[\"Rules\"]`, runbook `[\"Steps\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`. For a decision, `context` serves the first required section as the summary.",
+          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type. An empty list removes the requirement. The defaults are: decision `[\"Decision Outcome\", \"Decision\"]`, invariant `[\"Rules\"]`, runbook `[\"Steps\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`. For a decision, `context` serves the first required section as the summary.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -316,7 +316,7 @@
           }
         },
         "amendment-sections": {
-          "description": "For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit. spec-dna compares them without case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. The default is `decision = [\"Amendments\"]`. After a decision is accepted, the text outside its amendment sections is frozen (SD405). For a decision, `context` serves the amendment sections with the outcome.",
+          "description": "For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. The default is `decision = [\"Amendments\"]`. After a decision is accepted, the text outside its amendment sections is frozen (SD405). For a decision, `context` serves the amendment sections with the outcome.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -376,11 +376,11 @@
           "type": "boolean"
         },
         "lint-severity": {
-          "description": "The rule `lint` of this root (SD801 to SD805), as in 0.1. `rules` wins over it.",
+          "description": "The rule `lint` of this root (SD801 to SD805), as in 0.1. `rules` has priority over it.",
           "$ref": "#/$defs/severity"
         },
         "drift-severity": {
-          "description": "The rule `drift` of this root (SD606, SD607), as in 0.1. `rules` wins over it.",
+          "description": "The rule `drift` of this root (SD606, SD607), as in 0.1. `rules` has priority over it.",
           "$ref": "#/$defs/severity"
         },
         "profile": {
@@ -389,7 +389,7 @@
         },
         "rules": {
           "$ref": "#/$defs/rules",
-          "description": "Severity overrides for this root. They win over `[rules]` and over every profile."
+          "description": "Severity overrides for this root. They have priority over `[rules]` and over every profile."
         }
       }
     },
@@ -401,7 +401,7 @@
       ]
     },
     "rules": {
-      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, lint) or a diagnostic code such as `SD702`. A code rule wins over a group rule. See docs/profiles.md.",
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, lint) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
       "type": "object",
       "propertyNames": {
         "pattern": "^(references|ids|budgets|drift|evidence|lint|SD[0-9]{3})$"

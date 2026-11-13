@@ -1,14 +1,20 @@
 //! `spec-dna init` (docs/init.md). It detects the facts of the repository
-//! (`detect.rs`), asks at most 8 questions with the detected defaults, shows a
-//! preview (the full `spec-dna.toml` and the files to create or change), and
-//! writes only after a confirmation. It never edits a document. It changes an
-//! instruction file (`AGENTS.md`, `CLAUDE.md`) only by its one generated line.
+//! (`detect.rs`). It asks at most 8 questions with the detected defaults. It
+//! shows a preview (the full `spec-dna.toml` and the files to create or
+//! change), and it writes only after a confirmation. It never edits a
+//! document. It changes an instruction file (`AGENTS.md`, `CLAUDE.md`) only by
+//! its one generated line.
 //!
-//! Modes: interactive (a terminal), `--non-interactive` (the detected
-//! defaults; also without a terminal), `--answers <file>`, `--reconfigure`
-//! (the current values as defaults) and `--dry-run` (the preview only). If
-//! `spec-dna.toml` exists and `--reconfigure` is not set, `init` updates the
-//! adapters only, as in 0.1.
+//! The modes are:
+//!
+//! - interactive (a terminal)
+//! - `--non-interactive` (the detected defaults, also without a terminal)
+//! - `--answers <file>`
+//! - `--reconfigure` (the current values as defaults)
+//! - `--dry-run` (the preview only)
+//!
+//! If `spec-dna.toml` exists and `--reconfigure` is not set, `init` updates
+//! the adapters only, as in 0.1.
 
 use crate::adapters::{self, VERSION};
 use crate::config::{self, Config, DEFAULT_BUDGETS, Profile, Rules};
@@ -137,8 +143,8 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
     let layout = rows.is_empty();
     let docs_root = root.unwrap_or("docs").trim_matches('/');
     let docs_root = if docs_root.is_empty() { "." } else { docs_root };
-    // Every type by default: a list that leaves out a type makes each
-    // document of that type an error, so a narrower list is the user's choice.
+    // Every type by default. A list that omits a type makes each document of
+    // that type an error, so a narrower list is the choice of the user.
     let types: Vec<DocType> = DocType::ALL.to_vec();
     let mut adapters_default = vec![Adapter::Skill];
     let agents = facts.agent_files.iter().any(|f| f == "AGENTS.md");
@@ -437,8 +443,8 @@ pub fn render(plan: &Plan) -> String {
     for k in kept_top {
         out.push_str(&format!("{k}\n"));
     }
-    // Rules: the answers that differ from the profile.
-    // The answers replace the rule of the same group; the other rules stay.
+    // Rules: the answers that differ from the profile. The answers replace the
+    // rule of the same group. The other rules stay.
     let mut rules: Vec<(String, &str)> = plan
         .rules
         .iter()
@@ -735,7 +741,7 @@ fn pre_commit_hook() -> String {
 
 /// Appends the local hook to `.pre-commit-config.yaml`, if `repos:` is its
 /// last top-level key. Otherwise returns `None`, and the preview gives the
-/// text to add by hand.
+/// text to add manually.
 fn pre_commit_append(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     let repos = lines.iter().rposition(|l| l.trim_end() == "repos:")?;
@@ -764,7 +770,7 @@ fn pre_commit_append(text: &str) -> Option<String> {
     Some(format!("{t}{block}"))
 }
 
-/// The CI and hook files, and the text to add by hand.
+/// The CI and hook files, and the text to add manually.
 fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
     let mut out = Vec::new();
     let mut manual = Vec::new();
@@ -970,8 +976,8 @@ fn check_choice(what: &str, w: &str, allowed: &[&str]) -> Result<String, String>
     }
 }
 
-/// The types of a plan change the roots of a new project, and the type of a
-/// detected root whose type is not chosen (it becomes a note).
+/// The types of a plan change the roots of a new project. They also change the
+/// type of a detected root whose type is not chosen (it becomes a note).
 fn apply_types(plan: &mut Plan, root: &str) {
     if plan.layout {
         plan.rows = layout_rows(root);
@@ -1034,8 +1040,8 @@ fn edit_row(r: &mut Row, edits: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// After a change of the type of a row: the status, the status map and the
-/// section keys keep only the values that the new types allow.
+/// When the type of a row changes, the status, the status map and the section
+/// keys keep only the values that the new types allow.
 fn retype(r: &mut Row) {
     let types = r.types();
     let ok = |s: &str| types.iter().any(|t| t.statuses().contains(&s));
@@ -1098,10 +1104,10 @@ fn row_line(r: &Row) -> String {
 /// Asks the 8 questions on a terminal.
 fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), String> {
     io.say(&format!(
-        "spec-dna init: {} repository; {} files, {} Markdown documents. Press Enter to keep a default.",
+        "spec-dna init: {} repository with {} files and {} Markdown documents. Press Enter to keep a default.",
         plan.kind, facts.files, facts.markdown
     ));
-    io.say("lite: warnings only. standard: errors for broken references and budget growth. strict: drift, evidence and budgets fail, lint warns.");
+    io.say("lite: warnings only. standard: broken references and budget growth are errors. strict: drift, evidence and budgets are errors, and lint gives warnings.");
     let p = io.line("1/8 Profile (lite, standard, strict)", plan.profile.name());
     plan.profile =
         Profile::from_name(&p).ok_or(format!("profile `{p}`: use lite, standard or strict"))?;
@@ -1156,7 +1162,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         .map(|(s, n)| format!("{s} {n}"))
         .collect();
     io.say(&format!(
-        "    Heading scripts: {}. Requirement lint works for English only.",
+        "    Heading scripts: {}. The requirement lint reads English only.",
         if scripts.is_empty() {
             "none".into()
         } else {
@@ -1196,7 +1202,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
     }
 
     io.say(&format!(
-        "5/8 Mapping: {} roots. For each: Enter accepts, `drop` removes, `key=value ...` edits (path, type, default-type, status, exclude, legacy-ids, legacy-keys).",
+        "5/8 Mapping: {} roots. For each root, press Enter to accept it, enter `drop` to remove it, or enter `key=value ...` to edit it (path, type, default-type, status, exclude, legacy-ids, legacy-keys).",
         plan.rows.len()
     ));
     let mut rows = Vec::new();
@@ -1726,7 +1732,7 @@ mod tests {
 
     #[test]
     fn review_fixes_for_rows_and_rules() {
-        // A type edit drops the status and the section keys of the old type.
+        // A type edit removes the status and the section keys of the old type.
         let mut r = blank_row("docs/adr", Some(DocType::Decision), DocType::Decision);
         r.status = Some("proposed".into());
         r.extra
@@ -1744,7 +1750,7 @@ mod tests {
             text.contains("required-sections = { decision = [] }"),
             "{text}"
         );
-        // The answers replace their rule; the other rules stay.
+        // The answers replace their rule. The other rules stay.
         plan.rules = vec![
             ("lint".into(), Some(Severity::Warning)),
             ("budgets".into(), Some(Severity::Error)),

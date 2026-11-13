@@ -1,8 +1,14 @@
 //! Code citations (ADR 0001, amendment "code citations"). A document cites
-//! code with a link to a file, a path in an inline code span or in prose, a
-//! `path:line`, or an identifier in an inline code span. This module resolves
-//! these citations against a tree. `context <code path>` uses them to find the
-//! sections that cite a file, and `check` uses them to find drift.
+//! code in these ways:
+//!
+//! - a link to a file
+//! - a path in an inline code span or in prose
+//! - a `path:line`
+//! - an identifier in an inline code span
+//!
+//! This module resolves these citations against a tree. `context <code path>`
+//! uses them to find the sections that cite a file. `check` uses them to find
+//! drift.
 
 use crate::model::{Corpus, DocType, LinkRes, join};
 use crate::parse::RefKind;
@@ -58,9 +64,9 @@ impl<'a> Tree<'a> {
         Tree { files, dirs, tails }
     }
 
-    /// Resolves a cited path. The order is: from the repository root, from
-    /// the directory of the citing document, and then a file name or a path
-    /// tail that only one file of the tree has.
+    /// Resolves a cited path. The order is: the repository root, the directory
+    /// of the citing document, then a file name or a path tail that only one
+    /// file of the tree has.
     pub fn resolve(&self, doc_path: &str, raw: &str) -> Option<Target> {
         let s = strip_location(raw);
         if s.is_empty() || s.contains("://") || s.starts_with("--") {
@@ -117,11 +123,11 @@ pub fn strip_location(s: &str) -> &str {
 /// Returns the distinctive identifiers of an inline code span. The span is a
 /// name, a qualified name (`a::b`, `a.b`, `a->b`, `a#b`) or a call (`f()`,
 /// `f(x, y)`). An identifier is distinctive if it has 3 characters or more,
-/// and one of these:
+/// and it has one of these properties:
 ///
-/// - an inner `_` (`max_loans`, `MAX_LOANS`);
-/// - a lowercase letter before an uppercase letter (`loanBook`, `LoanBook`);
-/// - it is the called name of a call, with 4 characters or more (`renew()`).
+/// - an inner `_` (`max_loans`, `MAX_LOANS`)
+/// - a lowercase letter before an uppercase letter (`loanBook`, `LoanBook`)
+/// - it is the called name of a call, with 4 characters or more (`renew()`)
 ///
 /// Thus words that are common in prose, such as `status` or `HTTP`, are not
 /// identifier citations.
@@ -275,8 +281,8 @@ pub fn tokens(text: &str) -> HashSet<&str> {
 pub const MAX_SOURCE: u64 = 4 << 20;
 
 /// Reads a source file of the working tree for identifier matches. Returns
-/// `None` for a file that is missing, larger than `MAX_SOURCE`, or binary (a
-/// NUL byte in the first 8 KiB).
+/// `None` for a file that does not exist, is larger than `MAX_SOURCE`, or is
+/// binary (a NUL byte in the first 8 KiB).
 pub fn read_source(root: &Path, path: &str) -> Option<String> {
     let p = root.join(path);
     let meta = std::fs::metadata(&p).ok()?;
@@ -364,15 +370,15 @@ pub const BY_DIR: u8 = 2;
 
 /// Returns the sections that cite the given paths, best first, grouped by
 /// document, with the best class of each document (`BY_FILE`, `BY_IDENT` or
-/// `BY_DIR`). A section scores 1000 for each citation of the file itself, 10
-/// for each distinct cited identifier that occurs in the file, and 1 plus the
-/// depth for each citation of a directory that contains the file. The order
-/// of the documents is:
+/// `BY_DIR`). A section scores 1000 for each citation of the file itself. It
+/// scores 10 for each distinct cited identifier that occurs in the file. It
+/// scores 1 plus the depth for each citation of a directory that contains the
+/// file. The order of the documents is:
 ///
-/// - documents that cite a file, then an identifier, then a directory;
-/// - specs and contracts, guides, decisions, changes, notes;
-/// - the higher total score;
-/// - the document id.
+/// - documents that cite a file, then an identifier, then a directory
+/// - specs and contracts, guides, decisions, changes, notes
+/// - the higher total score
+/// - the document id
 pub fn citing(
     c: &Corpus,
     cits: &Citations,
