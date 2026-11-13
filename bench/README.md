@@ -28,7 +28,7 @@ The output is a fixed list of counts. `--list` adds the broken links and the unr
 | `go/main.go` | Go scanner. |
 | `rust/src/main.rs` | Rust scanner. |
 | `gen/gen.py` | Deterministic generator of synthetic corpora (`small`, `medium`, `large`). Writes `expected.json` with the counts that a correct scanner reports. With `--model spec-dna`, it writes a corpus in the ADR 0001 model, a `spec-dna.toml`, and `tasks.json` with the retrieval ground truth. |
-| `run.py` | Harness. Takes any corpus path and makes a snapshot of it. Measures startup, full scan, index build, warm runs and incremental runs. |
+| `run.py` | The harness. It takes any corpus path and makes a snapshot of it. It measures startup, full scan, index build, warm runs and incremental runs. |
 | `results/` | Results for the synthetic corpora and the public corpus: prototypes (`small`, `medium`, `large`, `corpus-b`), the tool (`tool-*`) and retrieval (`retrieval-*`). |
 
 ## Run

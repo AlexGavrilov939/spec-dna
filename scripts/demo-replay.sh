@@ -92,7 +92,7 @@ spec-dna mv decisions/in-memory-store decisions/storage
 grep -q '^aliases:' docs/decisions/storage.md || fail "mv did not keep the old id"
 spec-dna show decisions/in-memory-store >/dev/null || fail "the old id does not resolve"
 gitc commit -q -am "docs: rename the storage decision"
-# A change that removes a cited identifier gives SD607 in CI-like mode.
+# A change that removes a cited identifier gives SD607 in `check --base`, as in CI.
 sed -i.bak 's/MAX_RENEWALS/RENEWAL_LIMIT/' library/loans.py
 rm library/loans.py.bak
 gitc commit -q -am "refactor: rename the renewal limit"

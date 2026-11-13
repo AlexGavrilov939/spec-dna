@@ -4,7 +4,7 @@ Measured 2026-11-07 for [ADR 0002](../../docs/adr/0002-language.md), confirmatio
 
 Host: Apple M4 Max, 16 cores, 128 GB, macOS 26.6.1, APFS SSD. Other work used the host at the same time. Toolchain: rustc 1.99.1, release profile with LTO, 1 codegen unit, stripped. Git: 2.50.1 (Apple Git-155), run as `/usr/bin/git` (the `xcrun` shim) and as the Xcode binary that the shim forwards to. Crate: gix 0.90.0 (released 2026-10-22, MSRV 1.88).
 
-Each cell shows the median of 15 runs in milliseconds, with the minimum in brackets. All numbers are measured values, unless the text marks a number as estimated. Treat results that differ by less than about 20% as equal.
+Each cell shows the median of 15 runs in milliseconds, with the minimum in parentheses. All numbers are measured values, unless the text marks a number as estimated. Treat results that differ by less than about 20% as equal.
 
 ## Corpora
 
@@ -91,7 +91,7 @@ The RSS of gix itself includes the pages of the memory-mapped pack. In the CLI m
 | `/usr/bin/git` (`xcrun` shim) | 11.3 | 10.7 |
 | Xcode git binary, called directly | 4.0 | 3.4 |
 
-Here, the shim costs about 7 ms per process. The tool can skip the shim if it resolves `$(git --exec-path)/git` one time and caches the path. Linux does not have this shim.
+Here, the shim costs about 7 ms per process. The tool can skip the shim if it resolves `$(git --exec-path)/git` once and keeps the path. Linux does not have this shim.
 
 ## Build and size (measured)
 

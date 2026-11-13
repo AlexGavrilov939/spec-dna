@@ -36,7 +36,7 @@ python3 bench/retrieval/run.py --repo <repository with spec-dna.toml> --tasks <t
 
 ### Headline: public corpora, oracles written before the measurement (measured 2026-11-08)
 
-These are the numbers to quote. Nothing was tuned on corpus D. Corpus B was the only public corpus during the work on `--query`, and its oracles did not change. Binary: commit `df64974` (session 3 fixes). Host: Apple M4 Max, shared, load average 6.7 to 9.4. Each row is the mean over the tasks; sizes are medians.
+These are the numbers to quote. Nothing was tuned on corpus D. Corpus B was the only public corpus during the work on `--query`, and its oracles did not change. Binary: commit `df64974` (session 3 fixes). Host: Apple M4 Max, shared, load average 6.7 to 9.4. Each row is the mean over the tasks. The sizes are medians.
 
 | Corpus | Arm | Budget | Recall full | Recall listed | Critical full | Precision | Characters | Tokens (estimated) | Two-step characters | Baseline characters | Latency (ms) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -65,7 +65,7 @@ What the numbers show:
 
 ### Synthetic corpora (measured 2026-11-08, after tuning)
 
-Same binary. These rows check that the tool follows the ADR 0001 model. They are not the headline, because the assembly was tuned on this generator (see "Tasks").
+The binary is the same. These rows check that the tool follows the ADR 0001 model. They are not the headline, because the assembly was tuned on this generator (see "Tasks").
 
 | Corpus | Budget | Recall full | Recall listed | Precision | Characters | Tokens (estimated) | Two-step characters | Baseline characters | Latency (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

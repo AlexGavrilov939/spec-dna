@@ -221,7 +221,7 @@ mod cli {
         "--no-renames",
     ];
 
-    /// Makes a command for the git executable: `GIT_ACCESS_GIT` if it is set, or else `git`
+    /// Makes a command for the git executable: `GIT_ACCESS_GIT` if it is set, or `git`
     /// from PATH.
     fn git(repo: &Path, args: &[&str]) -> Command {
         let exe = std::env::var_os("GIT_ACCESS_GIT").unwrap_or_else(|| "git".into());

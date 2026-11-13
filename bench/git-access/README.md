@@ -5,7 +5,7 @@ Benchmark for [ADR 0002](../../docs/adr/0002-language.md), confirmation step 2. 
 | Path | Purpose |
 | --- | --- |
 | `src/main.rs` | The benchmark binary, with the modes `cli`, `cli-par` and `gix`. |
-| `run.py` | Harness. `prepare` builds a test repository from a snapshot. `measure` runs and compares the modes. |
+| `run.py` | The harness. `prepare` builds a test repository from a snapshot. `measure` runs and compares the modes. |
 | `results.md` | Results for the synthetic corpora and the public corpus. `measure --out` writes the raw JSON. The JSON stays in `bench/work/`, which git ignores. |
 
 ## What it measures
@@ -53,7 +53,7 @@ python3 git-access/run.py measure --repo work/ga/medium --label medium \
   --git-direct "$(git --exec-path)/git" --runs 15 --out work/ga/results/medium.json
 ```
 
-Remove the old binary before you copy a new one to the same path. On macOS, if you overwrite a signed binary in place, macOS kills it at its next start.
+Remove the old binary before you copy a new one to the same path. On macOS, if you overwrite a signed binary, macOS stops it at its next start.
 
 `prepare` never writes to the source. It exports a git source with `git archive <rev>`. With `--rev -`, it copies a directory. In the new repository, it does these steps:
 
@@ -64,14 +64,14 @@ Remove the old binary before you copy a new one to the same path. On macOS, if y
 - It adds 3 untracked `.md` files (one in a new nested directory).
 - After a pause, it refreshes the index one time, so that no entry is racily clean.
 
-`measure` runs 1 warm-up for each mode, then `--runs` runs for each mode. The modes alternate run by run, and the first mode of each round changes in rotation.
+`measure` runs 1 warm-up for each mode, then `--runs` runs for each mode. The modes alternate in each round, and the first mode of each round changes.
 
 ## Limits
 
 - The results come from one host (macOS, Apple Silicon), and other work used the host at the same time. The benchmark does not measure Linux and Windows. Their process start costs are different.
 - The OS file cache is warm. The harness packs each repository into one new pack with a commit graph. The benchmark does not measure loose objects or many packs.
 - The prepared corpora have no ignored files, submodules, sparse checkout, conflicts, fsmonitor or untracked cache. A small hand-made repository gives identical output in both modes, but the benchmark does not time it. This repository has a deletion, a staged-only change, an executable-bit change, ignored files, a symlink and non-ASCII paths.
-- `git status` also compares `HEAD` with the index, but the check does not need this comparison. It is possible that `git diff-files` with `git ls-files --others --exclude-standard` is cheaper. The benchmark does not measure this.
+- `git status` also compares `HEAD` with the index, but the check does not need this comparison. `git diff-files` with `git ls-files --others --exclude-standard` can be cheaper. The benchmark does not measure this.
 - The benchmark cannot split the step times of `cli-par`, because the steps overlap.
 - Process wall time includes the summary (sort and checksums), which is the same code in every mode.
 - The peak RSS of gix includes the pages of the memory-mapped pack that it touched. For the CLI modes, that cost is in the git child.

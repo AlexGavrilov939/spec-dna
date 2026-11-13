@@ -4,7 +4,7 @@
 
 ## How it was checked
 
-<!-- Commands you ran and what you checked by hand. -->
+<!-- Commands you ran and what you checked manually. -->
 
 ## Checklist
 
