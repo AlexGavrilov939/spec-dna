@@ -71,8 +71,12 @@ jobs:
           awk -v h="## $VERSION " 'index($0, h) == 1 { s = 1; next } s && /^## / { exit } s' CHANGELOG.md > notes.md
           [ -s notes.md ] || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
 
+      # The repository has immutable releases: after the publication, nobody can
+      # change the assets. Thus the job uploads all assets to a draft first.
       - name: Create the release
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "spec-dna $VERSION" --notes-file notes.md
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "spec-dna $VERSION" --notes-file notes.md
+          gh release edit "$GITHUB_REF_NAME" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
