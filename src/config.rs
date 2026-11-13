@@ -592,6 +592,29 @@ impl Config {
                 .any(|g| crate::glob::matches(g, rel))
     }
 
+    /// Returns the Markdown files that a pointer of `conventions` names by
+    /// path and that are not documents: files outside every root, or files
+    /// that an exclude glob removes. spec-dna reads these files only to serve
+    /// the conventions (`context`, `show --conventions`) and to check the
+    /// pointers (SD106).
+    pub fn convention_files(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .conventions
+            .iter()
+            .flatten()
+            .map(|p| p.split('#').next().unwrap_or(p).trim_start_matches("./"))
+            // A path that leaves the repository would break `git status`
+            // (`root_paths`): such a pointer resolves to nothing (SD106).
+            .filter(|p| crate::model::is_doc_path(p) && !p.starts_with('/') && !p.contains('\\'))
+            .filter(|p| !p.split('/').any(|s| s == ".." || s == "." || s.is_empty()))
+            .filter(|p| self.root_of(p).is_none_or(|r| self.is_excluded(r, p)))
+            .map(str::to_string)
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
     /// Returns the prefixes of legacy `PREFIX-{n}` aliases, for bare-token
     /// checks.
     pub fn token_prefixes(&self) -> Vec<String> {
@@ -1000,6 +1023,20 @@ impl<'a> Fields<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn convention_files_are_the_paths_outside_the_documents() {
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#a\", \"./CONTRIBUTING.md\", \"docs/x.md#b\", \"token\", \"../up.md\", \"/abs.md\", \"a\\\\b.md\", \"notes.txt\"]\ndecision = [\"CONTRIBUTING.md#c\"]\n[[roots]]\npath = \"docs\"\nexclude = [\"README.md\"]\n",
+        )
+        .unwrap();
+        // docs/x.md is a document; an id, a non-Markdown file and a path that
+        // leaves the repository are not convention files.
+        assert_eq!(
+            c.convention_files(),
+            vec!["CONTRIBUTING.md".to_string(), "docs/README.md".to_string()]
+        );
+    }
 
     const FULL: &str = r#"
 spec-dna = "0.1.0"

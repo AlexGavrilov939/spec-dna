@@ -86,9 +86,19 @@ if [ ${#targets[@]} -eq 0 ]; then
   targets=("${default[@]}")
 fi
 
+# CI pins the zig version (ZIG_VERSION in .github/workflows/build.yml). A local
+# build needs the same version on PATH: download it from
+# https://ziglang.org/download/ and compare its SHA-256 with the `shasum` in
+# https://ziglang.org/download/index.json.
+zig_version=$(sed -n 's/^ *ZIG_VERSION: *"\([^"]*\)".*/\1/p' "$(dirname "$0")/../.github/workflows/build.yml" 2>/dev/null || true)
 for tool in rustup cargo cargo-zigbuild zig file; do
-  command -v "$tool" >/dev/null || die "$tool not found on PATH"
+  hint=
+  [ "$tool" = zig ] && [ -n "$zig_version" ] && hint=" (CI uses zig $zig_version)"
+  command -v "$tool" >/dev/null || die "$tool not found on PATH$hint"
 done
+if [ -n "$zig_version" ] && [ "$(zig version)" != "$zig_version" ]; then
+  echo "cross-build: warning: zig $(zig version) is on PATH; CI uses zig $zig_version" >&2
+fi
 if command -v sha256sum >/dev/null; then
   sha256() { sha256sum "$1"; }
 else

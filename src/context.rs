@@ -38,7 +38,7 @@
 use crate::hash::hex;
 use crate::json::{self, Obj};
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res};
-use crate::parse::RefKind;
+use crate::parse::{Chunk, RefKind};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -78,10 +78,20 @@ pub struct Unit {
     pub full: bool,
 }
 
+/// A section of a convention file (`Corpus::outside`) in an assembly.
+pub struct FileUnit {
+    pub path: String,
+    pub chunk: usize,
+    pub full: bool,
+}
+
 pub struct Assembly {
     pub entries: Vec<String>,
     /// The code paths of the request.
     pub paths: Vec<String>,
+    /// The sections of convention files outside the documents. They come
+    /// before the units: first in the packing order, first in the output.
+    pub files: Vec<FileUnit>,
     pub units: Vec<Unit>,
     pub omitted: usize,
     pub budget: u32,
@@ -107,9 +117,40 @@ pub fn resolve_target(c: &Corpus, t: &str) -> Option<(u32, Option<String>)> {
     }
 }
 
+/// A pointer of `conventions`, resolved: a section of a document, or a
+/// section of a convention file outside the documents (`Corpus::outside`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pointer {
+    Doc(u32, Option<String>),
+    File(String, Option<String>),
+}
+
 /// Resolves a pointer of `conventions`: a document id or a path, with an
-/// optional `#<anchor>`. The anchor must name a section of the document.
-pub fn resolve_pointer(c: &Corpus, p: &str) -> Option<(u32, Option<String>)> {
+/// optional `#<anchor>`. The anchor must name a section of the document. A
+/// path that names no document can name a convention file.
+pub fn resolve_pointer(c: &Corpus, p: &str) -> Option<Pointer> {
+    if let Some((d, frag)) = resolve_doc_pointer(c, p) {
+        return Some(Pointer::Doc(d, frag));
+    }
+    resolve_file(c, p).map(|(f, frag)| Pointer::File(f, frag))
+}
+
+/// Resolves `<path>[#<anchor>]` to a convention file of the corpus. The
+/// anchor must name a section of the file.
+pub fn resolve_file(c: &Corpus, p: &str) -> Option<(String, Option<String>)> {
+    let (path, frag) = match p.split_once('#') {
+        Some((path, frag)) => (path, Some(frag.to_string())),
+        None => (p, None),
+    };
+    let path = path.trim_start_matches("./");
+    let parsed = c.outside.get(path)?;
+    match &frag {
+        Some(f) if !parsed.chunks.iter().any(|ch| &ch.anchor == f) => None,
+        _ => Some((path.to_string(), frag)),
+    }
+}
+
+fn resolve_doc_pointer(c: &Corpus, p: &str) -> Option<(u32, Option<String>)> {
     let (d, frag) = match p.split_once('#') {
         Some((path, frag)) if c.by_path.contains_key(path.trim_start_matches("./")) => (
             c.by_path[path.trim_start_matches("./")],
@@ -138,7 +179,7 @@ pub fn conventions(
     c: &Corpus,
     conventions: &[Vec<String>; DocType::COUNT],
     ty: DocType,
-) -> Vec<(u32, Option<String>)> {
+) -> Vec<Pointer> {
     conventions[ty as usize]
         .iter()
         .filter_map(|p| resolve_pointer(c, p))
@@ -148,7 +189,10 @@ pub fn conventions(
 /// The chunks of a section and of the sections below it, or all chunks of the
 /// document without an anchor.
 fn section_chunks(d: &Doc, frag: Option<&str>) -> Vec<usize> {
-    let chunks = &d.parsed.chunks;
+    chunk_range(&d.parsed.chunks, frag)
+}
+
+fn chunk_range(chunks: &[Chunk], frag: Option<&str>) -> Vec<usize> {
     match frag.and_then(|f| chunks.iter().position(|ch| ch.anchor == f)) {
         Some(s) => std::iter::once(s)
             .chain((s + 1..chunks.len()).take_while(|&j| chunks[j].level > chunks[s].level))
@@ -268,12 +312,26 @@ pub fn assemble(
             types.push(ty);
         }
     }
+    // The sections of convention files outside the documents: packed before
+    // the plan.
+    let mut file_plan: Vec<(String, usize)> = Vec::new();
     for ty in types {
-        for (d, frag) in self::conventions(c, conventions, ty) {
-            for j in section_chunks(&c.docs[d as usize], frag.as_deref()) {
-                if seen.insert((d, j)) {
-                    plan.push((d, j, Tier::Convention));
-                    pinned.insert((d, j));
+        for p in self::conventions(c, conventions, ty) {
+            match p {
+                Pointer::Doc(d, frag) => {
+                    for j in section_chunks(&c.docs[d as usize], frag.as_deref()) {
+                        if seen.insert((d, j)) {
+                            plan.push((d, j, Tier::Convention));
+                            pinned.insert((d, j));
+                        }
+                    }
+                }
+                Pointer::File(f, frag) => {
+                    for j in chunk_range(&c.outside[&f].chunks, frag.as_deref()) {
+                        if !file_plan.iter().any(|(g, k)| *g == f && *k == j) {
+                            file_plan.push((f.clone(), j));
+                        }
+                    }
                 }
             }
         }
@@ -565,13 +623,42 @@ pub fn assemble(
             (full, stub_line(c, doc, ch, tier).chars().count() as u32)
         })
         .collect();
+    // The convention files come first in both passes.
+    let file_costs: Vec<(u32, u32)> = file_plan
+        .iter()
+        .map(|(f, j)| {
+            let ch = &c.outside[f].chunks[*j];
+            let full =
+                ch.chars + file_header(f, ch, Tier::Convention.name()).chars().count() as u32;
+            (full, file_stub_line(f, ch).chars().count() as u32)
+        })
+        .collect();
+    let mut file_listed = vec![false; file_plan.len()];
     let mut listed = vec![false; plan.len()];
     let mut used = 0u32;
+    for (i, &(_, stub)) in file_costs.iter().enumerate() {
+        if used + stub <= budget / 2 {
+            used += stub;
+            file_listed[i] = true;
+        }
+    }
     for &i in &order {
         let stub = costs[i].1;
         if used + stub <= budget / 2 {
             used += stub;
             listed[i] = true;
+        }
+    }
+    let mut file_full = vec![false; file_plan.len()];
+    for (i, &(f, stub)) in file_costs.iter().enumerate() {
+        let extra = if file_listed[i] {
+            f.saturating_sub(stub)
+        } else {
+            f
+        };
+        if used + extra <= budget {
+            used += extra;
+            file_full[i] = true;
         }
     }
     let mut full = vec![false; plan.len()];
@@ -588,6 +675,18 @@ pub fn assemble(
     }
     let mut units = Vec::new();
     let mut omitted = 0;
+    let mut files = Vec::new();
+    for (i, (f, ch)) in file_plan.into_iter().enumerate() {
+        if file_full[i] || file_listed[i] {
+            files.push(FileUnit {
+                path: f,
+                chunk: ch,
+                full: file_full[i],
+            });
+        } else {
+            omitted += 1;
+        }
+    }
     for (i, &(d, ch, tier)) in plan.iter().enumerate() {
         if full[i] || listed[i] {
             units.push(Unit {
@@ -606,6 +705,7 @@ pub fn assemble(
             .map(|&d| c.docs[d as usize].id.clone())
             .collect(),
         paths: paths.to_vec(),
+        files,
         units,
         omitted,
         budget,
@@ -753,10 +853,104 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 fn chunk_text<'a>(text: &'a str, d: &Doc, chunk: usize) -> &'a str {
-    let ch = &d.parsed.chunks[chunk];
+    range_text(text, &d.parsed.chunks[chunk])
+}
+
+fn range_text<'a>(text: &'a str, ch: &Chunk) -> &'a str {
     text.get(ch.start as usize..ch.end as usize)
         .unwrap_or("")
         .trim_end()
+}
+
+fn read_file(root: &Path, path: &str) -> String {
+    std::fs::read(root.join(path))
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
+}
+
+/// The id of a section of a convention file: `<path>#<anchor>`, or the path
+/// for the text before the first heading.
+fn file_section_id(path: &str, ch: &Chunk) -> String {
+    if ch.anchor.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}#{}", ch.anchor)
+    }
+}
+
+fn file_header(path: &str, ch: &Chunk, tier: &str) -> String {
+    format!(
+        "<!-- {} h:{} file {tier} -->\n",
+        file_section_id(path, ch),
+        hex(&ch.hash)
+    )
+}
+
+fn file_stub_line(path: &str, ch: &Chunk) -> String {
+    format!(
+        "- `{}` h:{} {} chars ({}): {}\n",
+        file_section_id(path, ch),
+        hex(&ch.hash),
+        ch.chars,
+        Tier::Convention.name(),
+        if ch.heading.is_empty() {
+            path
+        } else {
+            ch.heading.as_str()
+        }
+    )
+}
+
+/// `spec-dna show` for a convention file (`Corpus::outside`): the file, or a
+/// section with its subsections. A convention file has no requirements and
+/// no evidence.
+pub fn show_file(c: &Corpus, root: &Path, path: &str, frag: Option<&str>, as_json: bool) -> String {
+    let chunks = &c.outside[path].chunks;
+    let text = read_file(root, path);
+    let items: Vec<(String, String, u32, String)> = chunk_range(chunks, frag)
+        .into_iter()
+        .map(|j| {
+            let ch = &chunks[j];
+            (
+                file_section_id(path, ch),
+                hex(&ch.hash),
+                ch.line,
+                range_text(&text, ch).to_string(),
+            )
+        })
+        .collect();
+    let kind = if frag.is_some() {
+        "section"
+    } else {
+        "document"
+    };
+    if as_json {
+        let units = items.iter().map(|(id, h, line, t)| {
+            Obj::new()
+                .str("id", id)
+                .str("hash", h)
+                .num("line", line)
+                .str("text", t)
+                .end()
+        });
+        return format!(
+            "{}\n",
+            Obj::new()
+                .str("doc", path)
+                .str("path", path)
+                .str("type", "file")
+                .str("kind", kind)
+                .strs("requirements", &[])
+                .raw("evidence", "[]")
+                .raw("units", &json::array(units))
+                .end()
+        );
+    }
+    let mut out = String::new();
+    for (id, h, _, t) in items {
+        out.push_str(&format!("<!-- {id} h:{h} file {path} -->\n{t}\n\n"));
+    }
+    format!("{}\n", out.trim_end())
 }
 
 pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
@@ -766,10 +960,36 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
             .entry(u.doc)
             .or_insert_with(|| read_doc(c, root, u.doc));
     }
-    let full = a.units.iter().filter(|u| u.full).count();
-    let stubs = a.units.len() - full;
+    let mut file_texts: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    for u in a.files.iter().filter(|u| u.full) {
+        file_texts
+            .entry(u.path.as_str())
+            .or_insert_with(|| read_file(root, &u.path));
+    }
+    let full =
+        a.units.iter().filter(|u| u.full).count() + a.files.iter().filter(|u| u.full).count();
+    let stubs = a.units.len() + a.files.len() - full;
     if as_json {
-        let units = a.units.iter().map(|u| {
+        let file_units = a.files.iter().map(|u| {
+            let ch = &c.outside[&u.path].chunks[u.chunk];
+            let mut o = Obj::new()
+                .str("id", &file_section_id(&u.path, ch))
+                .str("doc", &u.path)
+                .str("path", &u.path)
+                .str("type", "file")
+                .str("anchor", &ch.anchor)
+                .str("heading", &ch.heading)
+                .num("line", ch.line)
+                .str("tier", Tier::Convention.name())
+                .str("hash", &hex(&ch.hash))
+                .num("chars", ch.chars)
+                .str("mode", if u.full { "full" } else { "stub" });
+            if u.full {
+                o = o.str("text", range_text(&file_texts[u.path.as_str()], ch));
+            }
+            o.end()
+        });
+        let units = file_units.chain(a.units.iter().map(|u| {
             let d = &c.docs[u.doc as usize];
             let ch = &d.parsed.chunks[u.chunk];
             let mut o = Obj::new()
@@ -796,7 +1016,7 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
                 o = o.str("text", chunk_text(&texts[&u.doc], d, u.chunk));
             }
             o.end()
-        });
+        }));
         let mut body = Obj::new()
             .str("version", crate::adapters::VERSION)
             .strs("entries", &a.entries)
@@ -819,6 +1039,12 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
         );
     }
     let mut out = String::new();
+    for u in a.files.iter().filter(|u| u.full) {
+        let ch = &c.outside[&u.path].chunks[u.chunk];
+        out.push_str(&file_header(&u.path, ch, Tier::Convention.name()));
+        out.push_str(range_text(&file_texts[u.path.as_str()], ch));
+        out.push_str("\n\n");
+    }
     for u in a.units.iter().filter(|u| u.full) {
         let d = &c.docs[u.doc as usize];
         out.push_str(&header(d, u.chunk, u.tier.name()));
@@ -827,11 +1053,17 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     }
     if stubs > 0 {
         out.push_str("<!-- not loaded; read one with `spec-dna show <id>` -->\n");
+        for u in a.files.iter().filter(|u| !u.full) {
+            out.push_str(&file_stub_line(
+                &u.path,
+                &c.outside[&u.path].chunks[u.chunk],
+            ));
+        }
         for u in a.units.iter().filter(|u| !u.full) {
             out.push_str(&stub_line(c, &c.docs[u.doc as usize], u.chunk, u.tier));
         }
     }
-    if a.units.is_empty() && !a.paths.is_empty() {
+    if a.units.is_empty() && a.files.is_empty() && !a.paths.is_empty() {
         out.push_str(&format!(
             "<!-- no document cites or applies to {}; to search by words, add --query \"<the task>\" -->\n",
             a.paths.join(", ")

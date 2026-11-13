@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.3.2"              # required: the pinned version
+spec-dna = "0.3.3"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
@@ -91,7 +91,7 @@ decision = ["docs/adr/README.md#how-to-amend"]
 | `lint.max-words` | integer | `30` | The requirement sentence length before a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
-| `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions of the project for documents of that type, such as "a contract change needs a dated amendment and a `verified_against` update". A pointer is a document id or a path, with an optional `#<anchor>`; without an anchor, it names the full document. When a target of `context` is a document of that type, `context` serves these sections first. `show --conventions <type>` prints them. A pointer that names no document or section gives SD106. |
+| `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions of the project for documents of that type, such as "a contract change needs a dated amendment and a `verified_against` update". A pointer is a document id or a path, with an optional `#<anchor>`; without an anchor, it names the full document. A path can also name a Markdown file that is not a document: a file outside every root, or a file that an `exclude` glob removes, such as a `README.md`. No check, budget or id applies to such a file; spec-dna reads it only for the conventions. When a target of `context` is a document of that type, `context` serves these sections first: the sections of files that are not documents come before the sections of documents (`"type": "file"` in `--json`). `show --conventions <type>` prints them, and `show <path>#<anchor>` prints one section of such a file. A pointer that names no document, no file of the git tree or no section gives SD106. A file that git ignores, or (under `--base`) a file that git does not track, is not in the tree. A symlink whose target is outside the repository is not read. |
 
 Default budgets (soft, hard): `spec`, `contract` and `change` 10,000 and 20,000; `guide` 14,000 and 28,000; `decision` 7,000 and 14,000; `invariant` 3,000 and 6,000; `runbook` 8,000 and 16,000; `incident` 6,000 and 12,000; `note` and `reference` none. A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 

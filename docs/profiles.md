@@ -29,6 +29,8 @@ Use the profiles in this sequence:
 - `standard`: daily work. Broken references and ids fail. A document that grows past its hard budget fails. Drift and missing evidence are warnings.
 - `strict`: a mature corpus. Drift, missing evidence and every budget overage fail. The requirement lint gives warnings.
 
+A mature corpus that links no tests yet gets one SD608 for each active requirement in `standard`. `check` prints more than 10 warnings of one code as one count, and the gate against the base reports only the new ones. To remove them until the project links tests, set `[rules] evidence = "off"`.
+
 ## Overrides
 
 A rule changes the severity of one rule group or of one code. Its value is `"off"`, `"warning"` or `"error"`.
