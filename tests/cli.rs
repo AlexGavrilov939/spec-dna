@@ -2691,6 +2691,147 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     assert_eq!(code, 0, "{out}");
 }
 
+const SUM_A: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const SUM_B: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+#[test]
+fn reconfigure_keeps_the_sha256_table_in_the_same_form() {
+    // The asset names contain dots, so the keys need quotes.
+    let r = Repo::empty();
+    let cfg = format!(
+        "spec-dna = \"{VERSION}\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\n\n[spec-dna-sha256]\n\"spec-dna-{VERSION}-x86_64-pc-windows-gnu.exe\" = \"{SUM_B}\"\n\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = \"{SUM_A}\"\n"
+    );
+    r.write("spec-dna.toml", &cfg);
+    r.write("docs/a.md", "# A\n");
+    r.commit("docs");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let new = r.read("spec-dna.toml");
+    let table = format!(
+        "[spec-dna-sha256]\n\"spec-dna-{VERSION}-x86_64-pc-windows-gnu.exe\" = \"{SUM_B}\"\n\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = \"{SUM_A}\"\n"
+    );
+    assert!(new.contains(&table), "{new}");
+    assert_eq!(new.matches("[spec-dna-sha256]").count(), 1, "{new}");
+    // The new file is valid, and a second run changes nothing.
+    r.commit("reconfigure");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(r.read("spec-dna.toml"), new);
+}
+
+#[test]
+fn a_bad_sha256_table_is_a_configuration_error_for_the_pin_of_the_binary() {
+    let r = Repo::empty();
+    let base = format!("spec-dna = \"{VERSION}\"\n[[roots]]\npath = \"docs\"\n");
+    for (table, want) in [
+        (
+            "[spec-dna-sha256]\n\"spec-dna-0.0.1-x86_64-unknown-linux-gnu\" = \"a\"\n".to_string(),
+            format!(
+                "`spec-dna-sha256`: `spec-dna-0.0.1-x86_64-unknown-linux-gnu` is not a release asset of spec-dna {VERSION}; copy the table from spec-dna-pin.toml of release v{VERSION}"
+            ),
+        ),
+        (
+            format!(
+                "[spec-dna-sha256]\n\"spec-dna-{VERSION}-aarch64-apple-darwin\" = \"{}\"\n",
+                SUM_A.to_uppercase()
+            ),
+            format!(
+                "`spec-dna-sha256`: the sum of `spec-dna-{VERSION}-aarch64-apple-darwin` must be 64 lowercase hexadecimal characters"
+            ),
+        ),
+    ] {
+        r.write("spec-dna.toml", &format!("{base}{table}"));
+        let (code, _, err) = r.run(&["check"]);
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains(&format!("spec-dna.toml: {want}")), "{err}");
+    }
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\nspec-dna-sha256 = 1\n[[roots]]\npath = \"docs\"\n"),
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(
+        err.contains("`spec-dna-sha256` must be a table of release assets and their SHA-256 sums"),
+        "{err}"
+    );
+}
+
+#[test]
+fn another_pin_does_not_validate_the_sha256_table_and_comes_before_a_parse_error() {
+    let r = Repo::empty();
+    // A table of another version: no validation, only the mismatch.
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"9.9.9\"\n[[roots]]\npath = \"docs\"\n[spec-dna-sha256]\n\"bogus\" = 1\n",
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(
+        err.contains(&format!(
+            "spec-dna.toml pins version 9.9.9, but this binary is {VERSION}."
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains("replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with https://github.com/AlexGavrilov939/spec-dna/releases/download/"),
+        "{err}"
+    );
+    // A key that this binary does not know, in a file of another version.
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"9.9.9\"\nfuture-key = true\n[[roots]]\npath = \"docs\"\nfuture = 1\n",
+    );
+    for cmd in [&["check"][..], &["show", "a"], &["context", "a"]] {
+        let (code, _, err) = r.run(cmd);
+        assert_eq!(code, 3, "{cmd:?}: {err}");
+        assert!(err.contains("pins version 9.9.9"), "{cmd:?}: {err}");
+        assert!(!err.contains("unknown key"), "{cmd:?}: {err}");
+        assert!(err.contains("set `spec-dna = \""), "{cmd:?}: {err}");
+    }
+    // The same file with the pin of this binary: the parse error.
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\nfuture-key = true\n[[roots]]\npath = \"docs\"\n"),
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("unknown key `future-key`"), "{err}");
+}
+
+#[test]
+fn the_github_job_of_init_is_the_job_of_the_quickstart() {
+    let r = Repo::empty();
+    let answers = r.dir.join("../answers-ci-job.toml");
+    fs::write(&answers, "ci = \"github\"\nbase = \"main\"\n").unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let job = r.read(".github/workflows/spec-dna.yml");
+    let quickstart =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/quickstart.md"))
+            .unwrap();
+    let block = quickstart
+        .split("```yaml\n")
+        .nth(1)
+        .and_then(|b| b.split("```\n").next())
+        .unwrap();
+    assert_eq!(job, block);
+    // The release branch verifies the sum; the other branch builds the pin.
+    for want in [
+        "sum=$(sed -n \"s/^\\\"$asset\\\" = \\\"\\(.*\\)\\\"/\\1/p\" spec-dna.toml)",
+        "if [ -z \"$src\" ] && [ -n \"$sum\" ]; then",
+        "sha256sum --check -",
+        "/releases/download/v$pin/$asset\"",
+        "cargo install --locked --git",
+    ] {
+        assert!(job.contains(want), "{want}\n{job}");
+    }
+    assert_eq!(job.matches("uses:").count(), 1, "{job}");
+}
+
 #[test]
 fn init_detects_common_layouts() {
     let r = Repo::fixture("layouts");

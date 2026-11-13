@@ -14,17 +14,27 @@ Your specifications, contracts and decisions stay plain Markdown files in your r
 `init` writes the configuration and the agent adapters: one skill, and one line in each root instruction file such as `AGENTS.md`. It never edits a document. To remove spec-dna, delete a few files; your documents do not change.
 
 > [!NOTE]
-> Status: version 0.x, early. A minor version can change the configuration keys and the diagnostics; [CHANGELOG.md](CHANGELOG.md) lists each change. The CI tests run on Linux and the author uses macOS. The information model is in [ADR 0001](docs/adr/0001-information-model.md).
+> Status: version 0.x, early. A minor version can change the configuration keys and the diagnostics; [CHANGELOG.md](CHANGELOG.md) lists each change. CI runs the tests on Linux, and runs each release binary on a runner of its own platform, Windows included. The information model is in [ADR 0001](docs/adr/0001-information-model.md).
 
 ## Install
 
-Build from a tag with the locked dependency versions. You need Rust 1.88 or later and git.
+Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has a binary for 7 targets: macOS (`aarch64-apple-darwin`, `x86_64-apple-darwin`), Linux (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`) and Windows (`x86_64-pc-windows-gnu`, `aarch64-pc-windows-gnullvm`). You also need git. Download the binary of your target, compare its SHA-256 sum with `SHA256SUMS`, and put it on your `PATH`:
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v<version> spec-dna
+v=0.4.0 t=aarch64-apple-darwin
+base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
+curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
+shasum -a 256 -c --ignore-missing SHA256SUMS     # Linux: sha256sum -c --ignore-missing SHA256SUMS
+install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 ```
 
-Keep the package name `spec-dna` at the end, because the repository has other packages. Each project pins the version in `spec-dna.toml`. `check` and `init` do not run with a binary of a different version, and their message gives the install command.
+Or build it from the tag, with Rust 1.88 or later:
+
+```sh
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.4.0 spec-dna
+```
+
+Each project pins the version and the SHA-256 sums of the binaries in `spec-dna.toml`: copy `spec-dna-pin.toml` of the release into it. `check` and `init` do not run with a binary of a different version, and their message gives the download URL and the sum. [docs/quickstart.md](docs/quickstart.md#install) gives the commands for Windows, and the verification of the build-provenance attestation.
 
 ## Quickstart
 
@@ -129,8 +139,9 @@ Delete these items:
 - `spec-dna.toml`
 - the generated line in `AGENTS.md` and in `CLAUDE.md` (it ends with `<!-- spec-dna v<version> h:<hash> -->`)
 - `.claude/skills/spec-dna/`
+- if `init` wrote them: the CI job `.github/workflows/spec-dna.yml`, and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`
 - `<git-dir>/spec-dna/`
-- the binary: `cargo uninstall spec-dna`
+- the binary: delete it, or run `cargo uninstall spec-dna`
 
 The documents are plain Markdown files. They do not change. [docs/quickstart.md](docs/quickstart.md#uninstall) gives the commands.
 

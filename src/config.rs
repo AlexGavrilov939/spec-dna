@@ -2,8 +2,10 @@
 //! docs/config.md describes it. schema/spec-dna.schema.json contains its JSON
 //! Schema.
 
+use crate::adapters::VERSION;
 use crate::diag::{Code, Severity};
 use crate::model::DocType;
+use crate::release;
 use toml::{Table, Value};
 
 pub const FILE_NAME: &str = "spec-dna.toml";
@@ -25,6 +27,11 @@ pub struct Config {
     /// The git source of spec-dna for `cargo install --git`. The message of a
     /// pin mismatch uses it.
     pub install_source: String,
+    /// The table `[spec-dna-sha256]`: the release assets of the pin and their
+    /// SHA-256 sums. `None` if there is no table. If the pin is not the
+    /// version of the binary, the table holds only the asset of this binary
+    /// (if it has one), and it is not validated.
+    pub sha256: Option<Vec<(String, String)>>,
     /// The profile: the default severity of each diagnostic code.
     pub profile: Profile,
     /// Severity overrides for every root (`[rules]`).
@@ -47,6 +54,115 @@ pub const DEFAULT_GROWTH: u32 = 4_000;
 
 /// The public repository of spec-dna: the install source by default.
 pub const DEFAULT_INSTALL_SOURCE: &str = "https://github.com/AlexGavrilov939/spec-dna";
+
+/// Reads `[spec-dna-sha256]`. If the pin is the version of this binary, it
+/// validates the table (ADR 0003, amendment "phase 2"). Otherwise it keeps
+/// only the sum of the asset of this binary.
+fn sha256_table(v: Option<&Value>, pin: &str) -> Result<Option<Vec<(String, String)>>, String> {
+    let Some(v) = v else {
+        return Ok(None);
+    };
+    if pin != VERSION {
+        return Ok(v.as_table().map(|t| {
+            let own = release::own_asset(pin).and_then(|a| {
+                t.get(&a)
+                    .and_then(Value::as_str)
+                    .map(|s| (a, s.to_string()))
+            });
+            own.into_iter().collect()
+        }));
+    }
+    let tbl = v
+        .as_table()
+        .ok_or("`spec-dna-sha256` must be a table of release assets and their SHA-256 sums")?;
+    let assets = release::assets(pin);
+    let mut out = Vec::new();
+    for (k, v) in tbl {
+        if !assets.contains(k) {
+            return Err(format!(
+                "`spec-dna-sha256`: `{k}` is not a release asset of spec-dna {pin}; copy the table from spec-dna-pin.toml of release v{pin}"
+            ));
+        }
+        match v.as_str() {
+            Some(s)
+                if s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+            {
+                out.push((k.clone(), s.to_string()))
+            }
+            _ => {
+                return Err(format!(
+                    "`spec-dna-sha256`: the sum of `{k}` must be 64 lowercase hexadecimal characters"
+                ));
+            }
+        }
+    }
+    Ok(Some(out))
+}
+
+/// Reads the key `spec-dna` of a configuration text with a line scan, for a
+/// text that does not parse. It looks at the lines before the first table
+/// header.
+pub fn scan_pin(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix("spec-dna") else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start().strip_prefix('"')?;
+        return rest.split_once('"').map(|(v, _)| v.to_string());
+    }
+    None
+}
+
+/// The message of a pin mismatch (ADR 0003). `sums` is `[spec-dna-sha256]`,
+/// if the file has the table. The release form needs the public install
+/// source and the sum of the asset of this binary.
+pub fn pin_mismatch_message(pin: &str, source: &str, sums: Option<&[(String, String)]>) -> String {
+    let release = release::own_asset(pin)
+        .filter(|_| source == DEFAULT_INSTALL_SOURCE)
+        .and_then(|a| sums.and_then(|s| s.iter().find(|(k, _)| *k == a).cloned()));
+    let build = format!("cargo install --locked --force --git {source} --tag v{pin} spec-dna");
+    let mut m = format!("spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n");
+    match release {
+        Some((asset, sum)) => m.push_str(&format!(
+            "  To use {pin}, download it and compare its SHA-256 with spec-dna.toml:\n    {source}/releases/download/v{pin}/{asset}\n    SHA-256: {sum}\n  Or build it from source:\n    {build}\n"
+        )),
+        None => m.push_str(&format!("  To use {pin}, install it:\n    {build}\n")),
+    }
+    if sums.is_some() {
+        m.push_str(&format!(
+            "  To move the project to {VERSION}, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {DEFAULT_INSTALL_SOURCE}/releases/download/v{VERSION}/spec-dna-pin.toml and run `spec-dna init`."
+        ));
+    } else {
+        m.push_str(&format!(
+            "  To move the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+        ));
+    }
+    m
+}
+
+/// The pin mismatch message for a text that does not parse as a
+/// configuration. It reads the install source and the sums from the TOML
+/// table, if the text is valid TOML.
+pub fn pin_mismatch_of_text(pin: &str, text: &str) -> String {
+    let table: Table = text.parse().unwrap_or_default();
+    let source = match table.get("install-source") {
+        Some(Value::String(s)) if !s.trim().is_empty() && !s.contains(char::is_whitespace) => {
+            s.as_str()
+        }
+        _ => DEFAULT_INSTALL_SOURCE,
+    };
+    let sums = sha256_table(table.get("spec-dna-sha256"), pin)
+        .ok()
+        .flatten();
+    pin_mismatch_message(pin, source, sums.as_deref())
+}
 
 #[derive(Clone, Debug)]
 pub struct Root {
@@ -462,6 +578,7 @@ impl Config {
                 );
             }
         };
+        let sha256 = sha256_table(t.take("spec-dna-sha256"), &pin)?;
         let profile = match t.opt_str("profile")? {
             None => Profile::Standard,
             Some(p) => Profile::from_name(&p).ok_or_else(|| {
@@ -525,6 +642,7 @@ impl Config {
             repos,
             self_urls,
             install_source,
+            sha256,
             profile,
             rules,
             evidence_tests,
@@ -1376,5 +1494,141 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         )
         .unwrap_err();
         assert!(e.contains("non-empty arrays"), "{e}");
+    }
+
+    const SUM: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn with_table(pin: &str, table: &str) -> Result<Config, String> {
+        Config::parse(&format!(
+            "spec-dna = \"{pin}\"\n[spec-dna-sha256]\n{table}\n[[roots]]\npath = \"d\"\n"
+        ))
+    }
+
+    #[test]
+    fn the_sha256_table_is_validated_for_the_pin_of_the_binary() {
+        assert!(
+            Config::parse(&format!(
+                "spec-dna = \"{VERSION}\"\n[[roots]]\npath = \"d\"\n"
+            ))
+            .unwrap()
+            .sha256
+            .is_none()
+        );
+        let good = format!(
+            "\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = \"{SUM}\"\n\"spec-dna-{VERSION}-x86_64-pc-windows-gnu.exe\" = \"{SUM}\""
+        );
+        let c = with_table(VERSION, &good).unwrap();
+        assert_eq!(c.sha256.unwrap().len(), 2);
+        let e = with_table(
+            VERSION,
+            &format!("\"spec-dna-0.0.1-x86_64-unknown-linux-gnu\" = \"{SUM}\""),
+        )
+        .unwrap_err();
+        assert_eq!(
+            e,
+            format!(
+                "`spec-dna-sha256`: `spec-dna-0.0.1-x86_64-unknown-linux-gnu` is not a release asset of spec-dna {VERSION}; copy the table from spec-dna-pin.toml of release v{VERSION}"
+            )
+        );
+        // The Windows assets have the extension `.exe`; the others do not.
+        assert!(
+            with_table(
+                VERSION,
+                &format!("\"spec-dna-{VERSION}-x86_64-pc-windows-gnu\" = \"{SUM}\"")
+            )
+            .unwrap_err()
+            .contains("is not a release asset")
+        );
+        for bad in [
+            SUM.to_uppercase(),
+            SUM[1..].to_string(),
+            format!("{SUM}0"),
+            "z".repeat(64),
+        ] {
+            let e = with_table(
+                VERSION,
+                &format!("\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = \"{bad}\""),
+            )
+            .unwrap_err();
+            assert_eq!(
+                e,
+                format!(
+                    "`spec-dna-sha256`: the sum of `spec-dna-{VERSION}-x86_64-unknown-linux-gnu` must be 64 lowercase hexadecimal characters"
+                )
+            );
+        }
+        assert!(
+            with_table(
+                VERSION,
+                &format!("\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = 1")
+            )
+            .unwrap_err()
+            .contains("64 lowercase hexadecimal")
+        );
+        let e = Config::parse(&format!(
+            "spec-dna = \"{VERSION}\"\nspec-dna-sha256 = \"x\"\n[[roots]]\npath = \"d\"\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            e,
+            "`spec-dna-sha256` must be a table of release assets and their SHA-256 sums"
+        );
+    }
+
+    #[test]
+    fn the_sha256_table_of_another_pin_is_not_validated() {
+        // A wrong key and a wrong sum do not matter for another version.
+        let c = with_table("0.0.1", "\"nonsense\" = 1").unwrap();
+        assert_eq!(c.sha256, Some(Vec::new()));
+        if let Some(own) = release::own_asset("0.0.1") {
+            let c = with_table("0.0.1", &format!("\"{own}\" = \"{SUM}\"\n\"other\" = 1")).unwrap();
+            assert_eq!(c.sha256, Some(vec![(own, SUM.to_string())]));
+        }
+    }
+
+    #[test]
+    fn the_pin_is_found_by_a_line_scan() {
+        assert_eq!(
+            scan_pin("spec-dna = \"1.2.3\"\nfoo = ").as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            scan_pin("# c\n\nspec-dna=\"1.2.3\" # x\n[[roots]]").as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(scan_pin("spec-dna-sha256 = \"x\"\n"), None);
+        assert_eq!(scan_pin("[[roots]]\nspec-dna = \"1.2.3\"\n"), None);
+        assert_eq!(scan_pin("spec-dna = 5\n"), None);
+    }
+
+    #[test]
+    fn the_pin_mismatch_message_has_a_release_form() {
+        let Some(own) = release::own_asset("0.0.1") else {
+            return;
+        };
+        let sums = [(own.clone(), SUM.to_string())];
+        let m = pin_mismatch_message("0.0.1", DEFAULT_INSTALL_SOURCE, Some(&sums));
+        let src = DEFAULT_INSTALL_SOURCE;
+        let want = format!(
+            "spec-dna.toml pins version 0.0.1, but this binary is {VERSION}.\n  To use 0.0.1, download it and compare its SHA-256 with spec-dna.toml:\n    {src}/releases/download/v0.0.1/{own}\n    SHA-256: {SUM}\n  Or build it from source:\n    cargo install --locked --force --git {src} --tag v0.0.1 spec-dna\n  To move the project to {VERSION}, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {src}/releases/download/v{VERSION}/spec-dna-pin.toml and run `spec-dna init`."
+        );
+        assert_eq!(m, want);
+        // A source of the project gets the build command only; the table
+        // still sets the last line.
+        let m = pin_mismatch_message("0.0.1", "file:///srv/x", Some(&sums));
+        assert!(!m.contains("SHA-256"), "{m}");
+        assert!(m.contains("--git file:///srv/x --tag v0.0.1"), "{m}");
+        assert!(m.ends_with("pin.toml and run `spec-dna init`."), "{m}");
+        // No sum of this binary, or no table: the text of phase 1.
+        let m = pin_mismatch_message("0.0.1", src, Some(&[]));
+        assert!(m.contains("To use 0.0.1, install it:"), "{m}");
+        assert!(m.contains("spec-dna-pin.toml"), "{m}");
+        let m = pin_mismatch_message("0.0.1", src, None);
+        assert!(
+            m.ends_with(&format!(
+                "set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+            )),
+            "{m}"
+        );
     }
 }

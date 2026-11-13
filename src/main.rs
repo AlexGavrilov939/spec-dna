@@ -24,6 +24,7 @@ mod mv;
 mod parse;
 mod rank;
 mod registry;
+mod release;
 mod repo;
 mod split;
 mod templates;
@@ -346,9 +347,10 @@ fn warn_pin(cfg: &config::Config) {
 
 /// The error for a binary whose version differs from the pin (ADR 0003).
 fn pin_mismatch(cfg: &config::Config) -> Fatal {
-    let (pin, source) = (&cfg.pin, &cfg.install_source);
-    Fatal::Config(format!(
-        "spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n  To use {pin}, install it:\n    cargo install --locked --force --git {source} --tag v{pin} spec-dna\n  To move the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+    Fatal::Config(config::pin_mismatch_message(
+        &cfg.pin,
+        &cfg.install_source,
+        cfg.sha256.as_deref(),
     ))
 }
 

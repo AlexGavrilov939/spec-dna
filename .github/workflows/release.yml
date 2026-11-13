@@ -1,0 +1,78 @@
+name: Release
+
+# ADR 0003 phase 2: a tag `v<version>` builds the 7 targets, runs each binary
+# on a native runner, and publishes the binaries, `SHA256SUMS` and
+# `spec-dna-pin.toml` with build-provenance attestations.
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+# The called workflow uses the group `<workflow>-<ref>`, so this group needs
+# another name.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build
+    # actionlint does not accept the `$/` form yet.
+    uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the tag with the version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "the tag $GITHUB_REF_NAME is not v$version, the version in Cargo.toml" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Download the binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: spec-dna-*
+          path: artifacts
+
+      - name: Make the assets
+        run: scripts/release-assets.sh artifacts dist "$VERSION"
+
+      - name: Attest the assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      # The notes are the section of the version in CHANGELOG.md.
+      - name: Write the release notes
+        run: |
+          awk -v h="## $VERSION " 'index($0, h) == 1 { s = 1; next } s && /^## / { exit } s' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+
+      - name: Create the release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "spec-dna $VERSION" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

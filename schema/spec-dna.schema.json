@@ -57,6 +57,17 @@
       "type": "string",
       "pattern": "^\\S+$"
     },
+    "spec-dna-sha256": {
+      "description": "The SHA-256 sums of the release assets of the pin. A key is an asset name, `spec-dna-<version>-<target>`, with `.exe` for a Windows target. If the pin is the version of the binary, the binary also checks that each key is an asset of that version. Copy the table from `spec-dna-pin.toml` of the release.",
+      "type": "object",
+      "patternProperties": {
+        "^spec-dna-[^\\s]+-(aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|x86_64-unknown-linux-musl|x86_64-pc-windows-gnu\\.exe|aarch64-pc-windows-gnullvm\\.exe)$": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
     "roots": {
       "description": "Directories of documents. A path belongs to the deepest root that contains it.",
       "type": "array",

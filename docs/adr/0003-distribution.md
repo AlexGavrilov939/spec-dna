@@ -86,3 +86,44 @@ The owner gave these rulings after checkpoint 4.
 ### 2026-11-08: install source
 
 The owner approved this rule after checkpoint 5. In phase 1, a project can install spec-dna from a local or a private git clone. The optional key `install-source` in `spec-dna.toml` gives that git URL. The message of a pin mismatch and the CI job of the quickstart use it. Without the key, they use the public repository.
+
+### 2026-11-13: phase 2 (0.4.0)
+
+The owner made the repository public and started phase 2 with release 0.4.0. GitHub-hosted runners for all 7 targets are now free for this repository. This amendment gives the design of phase 2. It replaces 3 parts of "Decision Outcome": the dispatch shim, the install action, and the opt-out of checksum verification for source builds.
+
+- Release. A tag `v<version>` starts the release workflow. The tag must be equal to the version in `Cargo.toml`. Jobs on `ubuntu-24.04` build the 7 targets with `scripts/cross-build.sh`, the one build recipe of [ADR 0002](0002-language.md): one job for each target.
+- Run test. A job on a native runner runs each binary with `scripts/smoke.sh`: `spec-dna --version`, then `init --non-interactive`, `check --all`, `show` and `context` in a new git repository. The runners are macOS (arm64, x86-64), Linux (x86-64, arm64) and Windows (x86-64, arm64). The musl binary runs on Linux x86-64. If a run test fails, the workflow does not publish the release. Each pull request also builds the 7 targets and runs the run tests. This replaces the phase 1 rule of one build target (2026-11-08).
+- Assets. Each release has 9 assets. The 7 binaries are bare executables, not archives: `spec-dna-<version>-<target>`, with `.exe` for the 2 Windows targets. Thus a sum applies to the installed file, and a user or a CI cache can verify that file at any time. `SHA256SUMS` gives one line `<sum>  <asset>` for each binary, in the format of `sha256sum` and `shasum -a 256`. `spec-dna-pin.toml` gives the pin of the release (see "Pin"). Both files list the assets in the byte order of their names.
+- Attestation. `actions/attest-build-provenance` attests the 9 assets. `gh attestation verify <asset> --repo <owner>/spec-dna` verifies one asset. This command needs the network, so it is a step of an upgrade, not of each install.
+- macOS. The macOS binaries have no notarization. `curl` does not set the quarantine attribute, so macOS starts a binary from the documented install command. The run test proves that macOS starts each binary.
+- Windows ABI. The GNU ABI of 2026-11-07 stays. spec-dna links no C library and has no network code, so the ABI changes only the linker and the C runtime. With GNU, one pinned toolchain on one host builds the 7 targets, and ADR 0002 keeps one build recipe. The 2026-11-07 amendment noted that no test ran the Windows binaries on Windows. The run test now does this before each release. `aarch64-pc-windows-gnullvm` is a tier 2 target, and it did not run yet. If a Windows binary fails its run test, a new amendment moves the 2 Windows targets to MSVC (`x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`: tier 1, static C runtime, built on Windows runners).
+- Pin. The pin is the key `spec-dna` and the optional table `[spec-dna-sha256]`. Each key of the table is an asset name, and each value is the SHA-256 sum of that asset. `spec-dna-pin.toml` of release 0.4.0 has this form:
+
+  ```toml
+  spec-dna = "0.4.0"
+
+  [spec-dna-sha256]
+  "spec-dna-0.4.0-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
+  "spec-dna-0.4.0-aarch64-pc-windows-gnullvm.exe" = "<...>"
+  "spec-dna-0.4.0-aarch64-unknown-linux-gnu" = "<...>"
+  "spec-dna-0.4.0-x86_64-apple-darwin" = "<...>"
+  "spec-dna-0.4.0-x86_64-pc-windows-gnu.exe" = "<...>"
+  "spec-dna-0.4.0-x86_64-unknown-linux-gnu" = "<...>"
+  "spec-dna-0.4.0-x86_64-unknown-linux-musl" = "<...>"
+  ```
+
+  The asset names contain the version, so the table of an earlier version cannot pass as the sums of the pin. A project can remove the lines of targets that it does not use. `init --reconfigure` keeps the table and writes it again in this form.
+- Validation. If the pin is equal to the binary version, each command validates the table. Each key must be the asset of one of the 7 targets of that version. Each value must be 64 lowercase hexadecimal characters. An error stops the command with exit code 3, as other configuration errors do. If the pin is different, the binary does not validate the table. It reads only the sum of its own asset, for the pin mismatch message.
+- Pin first. If `spec-dna.toml` does not parse, and its key `spec-dna` is different from the binary version, the binary gives the pin mismatch message, not the parse error. Thus a key of a later version cannot hide the mismatch. A binary before 0.4.0 does not have this rule: it reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
+- Verification. The install step verifies the sum: the documented install commands and the CI job that `init` writes. The binary does not compute the sum of its own file. A changed binary can skip such a check, and the version pin already gives the same behavior to a source build. Thus a source build needs no opt-out.
+- CI job. The job that `init` writes runs on `ubuntu-24.04`. It reads the sum of `spec-dna-<pin>-x86_64-unknown-linux-gnu` from `spec-dna.toml`. Without `install-source` and with this sum, it downloads the asset from the release and verifies the sum. A difference stops the job. Otherwise, it builds the pin from source with `cargo install`, as in phase 1. The job uses no action other than `actions/checkout`, no token and no cache. The reviewer of a project sees the full step, so an install action is not necessary. `init` does not change a workflow that exists, so a phase 1 job continues to work. The GitLab text of `init` stays a source build.
+- Pin mismatch. The binary knows its own target if it is one of the 7. Without `install-source`, and with the sum of its own asset in the table, the message gives the URL and the sum of the pinned asset. Then it gives the `cargo install` command. Otherwise, it gives the `cargo install` command, as in phase 1. If the table exists, the instruction to move the project to the binary version names `spec-dna-pin.toml` of that release.
+- Upgrade. These steps replace the phase 1 steps of 2026-11-08. `spec-dna upgrade` does not exist yet.
+
+  1. Download `spec-dna-pin.toml` of the new release. Verify it with `gh attestation verify`.
+  2. In `spec-dna.toml`, replace the key `spec-dna` and the table `[spec-dna-sha256]` with its content.
+  3. Install the new binary, and verify it against the new sum.
+  4. Run `spec-dna init`, and commit the result.
+
+  A rollback reverts the commit and installs the earlier version.
+- Dispatch shim. Phase 2 has no dispatch shim. A tool manager such as mise or aqua keeps side-by-side versions for each project. The pin mismatch message gives the URL and the sum of the pinned binary, and a download replaces a build from source. A shim adds a second executable, a version directory and a PATH rule on 3 operating systems, and it needs its own verification. A new amendment can add a shim when a consumer needs one.

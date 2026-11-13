@@ -5,6 +5,9 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+  # The release workflow calls this workflow, and publishes the binaries of the
+  # run only if every job passes.
+  workflow_call:
 
 permissions: {}
 
@@ -82,11 +85,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # scripts/cross-build.sh contains the target list. Until phase 2 of
-      # ADR 0003, it lists only aarch64-apple-darwin.
+      # scripts/cross-build.sh contains the list of the 7 targets of ADR 0003.
       - name: List targets
         id: list
-        run: echo "targets=$(scripts/cross-build.sh --list | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
+        run: echo "targets=$(scripts/cross-build.sh --list --all | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.target }}
@@ -150,3 +152,52 @@ jobs:
         run: scripts/cross-build.sh --manifest-path "$MANIFEST_PATH" --bin "$BIN" "$TARGET"
         env:
           TARGET: ${{ matrix.target }}
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.BIN }}-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/${{ env.BIN }}
+            target/${{ matrix.target }}/release/${{ env.BIN }}.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ADR 0003: each binary runs on a native runner of its target before a
+  # release can publish it.
+  smoke:
+    name: Run ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, runner: macos-15 }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel }
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04 }
+          - { target: x86_64-pc-windows-gnu, runner: windows-2025 }
+          - { target: aarch64-pc-windows-gnullvm, runner: windows-11-arm }
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.BIN }}-${{ matrix.target }}
+          path: bin
+
+      - name: Run the binary
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$MANIFEST_PATH" | head -n 1)
+          exe=bin/$BIN
+          [ -f "$exe" ] || exe=$exe.exe
+          scripts/smoke.sh "$exe" "$version"
