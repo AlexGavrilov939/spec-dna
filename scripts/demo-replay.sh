@@ -81,6 +81,18 @@ bytes=$(spec-dna init | sed -n 's/^per-request prefix: \([0-9]*\) bytes.*/\1/p')
 [ "$bytes" -le 300 ] || fail "the adapters add $bytes bytes to the prompt prefix"
 echo "prompt prefix: $bytes bytes"
 
+# The small graph of `init` has no `interfaces` layer, and the demo has an
+# interface document. `layer add` writes the layer. The skill lists the types of
+# the layers, so `init` writes it again. A change of `spec-dna.toml` is a change
+# of its own (SD503): the skill is a file that `init` writes, so it does not
+# count.
+step "add the interfaces layer"
+spec-dna layer add interfaces --types interface --moved-from intent
+spec-dna init
+spec-dna check
+gitc add spec-dna.toml .claude/skills/spec-dna/SKILL.md
+gitc commit -q -m "build: add the interfaces layer"
+
 cp -R "$seed/docs" .
 spec-dna check
 gitc add docs
@@ -90,9 +102,9 @@ python3 -m unittest discover -s tests -t . 2>&1 | tail -n 1
 step "daily use: context, show, check, mv"
 spec-dna context library/loans.py >"$work/context.txt"
 head -n 3 "$work/context.txt"
-grep -q '^<!-- loans#renewals h:[0-9a-f]* requirements/active cites -->$' "$work/context.txt" ||
-    fail "context library/loans.py does not serve loans#renewals"
-spec-dna show loans#loan-period | grep -q 'LOAN_DAYS' || fail "show loans#loan-period"
+grep -q '^<!-- requirements/loans#renewals h:[0-9a-f]* requirements/active cites -->$' "$work/context.txt" ||
+    fail "context library/loans.py does not serve requirements/loans#renewals"
+spec-dna show requirements/loans#loan-period | grep -q 'LOAN_DAYS' || fail "show requirements/loans#loan-period"
 spec-dna mv decisions/in-memory-store decisions/storage
 grep -q '^aliases:' docs/decisions/storage.md || fail "mv did not keep the old id"
 spec-dna show decisions/in-memory-store >/dev/null || fail "the old id does not resolve"

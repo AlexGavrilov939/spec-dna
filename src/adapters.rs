@@ -7,6 +7,7 @@
 
 use crate::diag::{Code, Diag};
 use crate::hash::{hash_normalized, hex};
+use crate::layer::Graph;
 use crate::model::DocType;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,7 +30,7 @@ const SKILL_BODY: &str = "# spec-dna
 2. Read a listed section with `spec-dna show <id>#<anchor>` only if the task needs it.
 3. Before you edit a document, run `spec-dna show --conventions <type>` once for its type. Follow the project conventions that it prints. `context` serves them first when a target is a document of that type.
 4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`. Use a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. To link a test to a requirement, write `covers: <doc-id>#<key>` in the test.
-5. For a new document, run `spec-dna new <type> <id>`. Then replace each placeholder. Types of this project: {types}.
+5. For a new document, run `spec-dna new <type> <id>`. The folder of a layer gives the type, so write no `type:` line there. A top file has no id (`spec-dna new terms`), and a change has a folder (`spec-dna new intent <slug>`). Then replace each placeholder. Types of this project: {types}.
 6. Do not change the text of an accepted decision outside its amendment and live sections (`show --conventions decision` names them. The default is `## Amendments`).
     - Update a live section, such as a progress section, in place when your change makes it stale.
     - Amend the decision if its outcome stays. Add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
@@ -46,8 +47,18 @@ pub fn line() -> String {
     )
 }
 
-/// The text of the skill body for a project. `types` is the `types` list of
-/// the project. An empty list allows every type.
+/// The document types of a project for the skill: the types that a layer of
+/// the graph has, narrowed by the `types` list of the file (empty: no
+/// narrowing). `init` and `check` both use it, so they agree on the text.
+pub fn project_types(graph: &Graph, types: &[DocType]) -> Vec<DocType> {
+    DocType::ALL
+        .into_iter()
+        .filter(|t| graph.layer_of_type(*t).is_some() && (types.is_empty() || types.contains(t)))
+        .collect()
+}
+
+/// The text of the skill body for a project. `types` are the types of the
+/// project ([`project_types`]). An empty list allows every type.
 fn skill_body(types: &[DocType]) -> String {
     let names: Vec<&str> = DocType::ALL
         .into_iter()

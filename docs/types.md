@@ -168,4 +168,4 @@ applies-to: ["**"]
 
 ## Project types
 
-`types` in `spec-dna.toml` lists the types of a project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. If `types` is absent, spec-dna allows every type. `spec-dna init` writes the list from its answers.
+`types` in `spec-dna.toml` lists the types of a project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. If `types` is absent, the layers of the project give the types. `spec-dna init` writes no `types` list: question 2 writes the layers.

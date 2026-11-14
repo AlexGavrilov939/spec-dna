@@ -899,7 +899,7 @@ fn the_help_of_init_matches_the_docs() {
     ] {
         let (code, out) = r.run(args);
         assert_eq!(code, 0, "{args:?}");
-        assert!(out.contains("at most 10 questions"), "{args:?}: {out}");
+        assert!(out.contains("at most 14 questions"), "{args:?}: {out}");
         assert!(!out.contains("8 questions"), "{args:?}: {out}");
         assert!(!out.contains("adapters only"), "{args:?}: {out}");
         assert!(out.contains("and the harness"), "{args:?}: {out}");
@@ -1028,50 +1028,53 @@ fn the_upgrade_dry_run_gives_the_diff_of_each_harness_file() {
 }
 
 #[test]
-fn the_preview_has_10_answers_and_question_10_writes_nothing_without_a_harness() {
+fn the_preview_has_11_answers_and_question_13_writes_nothing_without_a_harness() {
     let r = Repo::empty();
     let (code, out, err) = r.run3(&["init", "--dry-run", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     let shown = out.split("--- spec-dna.toml ---").next().unwrap();
     for want in [
-        "  1/10 profile: ",
-        "  8/10 CI step, hook and base branch: ",
-        "  9/10 agent harness: lean (default) -> [harness] level = \"lean\", ",
+        "  1. profile: ",
+        "  11. CI step, hook and base branch: ",
+        "  12. agent harness: lean (default) -> [harness] level = \"lean\", ",
         ".claude/agents/checker.md",
         ".claude/settings.json",
-        "  10/10 harness models: orchestrator=opus:xhigh advisor=fable ",
+        "  13. harness models: orchestrator=opus:xhigh advisor=fable ",
         " (default) -> [harness.roles] table\n",
     ] {
         assert!(shown.contains(want), "{want}:\n{shown}");
     }
     // The adapter answer does not list the files of the harness.
-    let adapters = shown.lines().find(|l| l.contains("7/10")).unwrap();
+    let adapters = shown
+        .lines()
+        .find(|l| l.contains("10. agent adapters"))
+        .unwrap();
     assert!(!adapters.contains(".claude/agents"), "{adapters}");
-    // The level `none`: question 10 writes nothing.
+    // The level `none`: question 13 writes nothing.
     let (code, out, err) = r.init_with("harness = \"none\"\n", &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     let shown = out.split("--- spec-dna.toml ---").next().unwrap();
     assert!(
         shown.contains(
-            "  9/10 agent harness: none (changed from lean) -> [harness] level = \"none\"\n"
+            "  12. agent harness: none (changed from lean) -> [harness] level = \"none\"\n"
         ),
         "{shown}"
     );
     assert!(
-        shown.contains("  10/10 harness models: - (changed from orchestrator=opus:xhigh ")
+        shown.contains("  13. harness models: - (changed from orchestrator=opus:xhigh ")
             && shown.contains(", writes nothing)\n"),
         "{shown}"
     );
     assert!(!shown.contains("/8 "), "{shown}");
-    // `--json` has the 10 answers.
+    // `--json` has the 11 answers.
     let (code, json, err) = r.init_with("harness = \"none\"\n", &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{json}{err}");
-    assert_eq!(json.matches("\"number\":").count(), 10, "{json}");
+    assert_eq!(json.matches("\"number\":").count(), 11, "{json}");
     assert!(
-        json.contains("{\"number\":10,\"name\":\"harness models\",\"value\":\"-\","),
+        json.contains("{\"number\":13,\"name\":\"harness models\",\"value\":\"-\","),
         "{json}"
     );
-    // A reconfigure to `none` lists the removed files in answer 9.
+    // A reconfigure to `none` lists the removed files in answer 12.
     let r = lean_repo();
     r.commit("init");
     let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure", "--dry-run"]);
@@ -1170,14 +1173,11 @@ fn the_upgrade_changes_the_hook_of_0_4_1_and_the_harness_files_together() {
 #[test]
 fn the_skill_lists_the_project_types_and_check_accepts_it_with_the_harness() {
     let r = Repo::empty();
-    let (code, out, err) = r.init_with(
-        "types = [\"requirements\", \"decision\"]\nharness = \"lean\"\n",
-        &[],
-    );
+    let (code, out, err) = r.init_with("graph = \"small\"\nharness = \"lean\"\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
     let skill = r.read(".claude/skills/spec-dna/SKILL.md");
     assert!(
-        skill.contains("Types of this project: requirements, decision."),
+        skill.contains("Types of this project: product, system, terms, roadmap, questions, rule, requirements, decision, incident, intent, spec, plan."),
         "{skill}"
     );
     let (code, out) = r.run(&["check", "--all"]);

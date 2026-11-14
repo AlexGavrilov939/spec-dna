@@ -454,23 +454,17 @@ impl Graph {
 
     /// The graph that `init` writes for a project with fewer than 30
     /// documents.
-    // `init` reads it (slice S6a).
-    #[allow(dead_code)]
     pub fn small() -> Graph {
         build(SMALL_GRAPH.iter(), &SMALL_NAMES)
     }
 
     /// The graph that `init` writes for a project with 30 documents or more.
-    // `init` reads it (slice S6a).
-    #[allow(dead_code)]
     pub fn default_graph() -> Graph {
         let names: Vec<&str> = DEFAULT_GRAPH.iter().map(|d| d.name).collect();
         build(DEFAULT_GRAPH.iter(), &names)
     }
 
     /// The graph of a size name: `small` or `default`.
-    // `init` reads it (slice S6a).
-    #[allow(dead_code)]
     pub fn of_size(size: &str) -> Option<Graph> {
         match size {
             "small" => Some(Graph::small()),
@@ -655,8 +649,6 @@ const DEFAULT_GRAPH: [LayerDef; 10] = [
 /// differs from the default graph in 3 keys: `pending` moves only to
 /// `intent`, and the edges of `intent` and `incidents` name only the layers
 /// of this graph.
-// `init` reads it (slice S6a).
-#[allow(dead_code)]
 const SMALL_GRAPH: [LayerDef; 7] = [
     FOUNDATION,
     LayerDef {
@@ -673,8 +665,6 @@ const SMALL_GRAPH: [LayerDef; 7] = [
     INCIDENTS,
 ];
 
-// `init` reads it (slice S6a).
-#[allow(dead_code)]
 const SMALL_NAMES: [&str; 7] = [
     "foundation",
     "pending",

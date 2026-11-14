@@ -109,6 +109,23 @@ impl Repo {
         out
     }
 
+    /// Runs `init` with the layout that most tests of 0.5 used: the default
+    /// graph (a layer for every type) and one mixed root `docs`, whose default
+    /// type is `requirements` with the status `draft`. The new layout of
+    /// `init` has no default type, so a test that writes a document with no
+    /// `type:` line needs this root.
+    fn init_old_root(&self) -> (i32, String, String) {
+        let answers = PathBuf::from(format!("{}-answers-root.toml", self.dir.display()));
+        fs::write(
+            &answers,
+            "graph = \"default\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
+        )
+        .unwrap();
+        let out = self.run(&["init", "--answers", answers.to_str().unwrap()]);
+        let _ = fs::remove_file(&answers);
+        out
+    }
+
     fn run(&self, args: &[&str]) -> (i32, String, String) {
         let out = Command::new(BIN)
             .args(args)
@@ -814,30 +831,34 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(claude.lines().count(), 3, "{claude}");
     let docs = [
         (
-            "docs/api/orders.md",
-            "# Orders\n\n## Requirements\n\n- **create**: When a client posts an order, the API SHALL return its id.\n- **cancel**: While an order is open, the client MAY cancel it.\n",
+            "docs/requirements/orders.md",
+            "---\nstatus: draft\n---\n# Orders\n\n## Requirements\n\n- **create**: When a client posts an order, the API SHALL return its id.\n- **cancel**: While an order is open, the client MAY cancel it.\n",
         ),
         (
             "docs/decisions/order-ids.md",
-            "---\ntype: decision\nstatus: accepted\n---\n# Order ids\n\n## Context and Problem Statement\n\nOrders need ids that sort by time.\n\n## Decision Outcome\n\nChosen option: time-ordered ids, used by [[api/orders#create]].\n",
+            "---\nstatus: accepted\n---\n# Order ids\n\n## Context and Problem Statement\n\nOrders need ids that sort by time.\n\n## Decision Outcome\n\nChosen option: time-ordered ids, used by [[requirements/orders#create]].\n",
         ),
         (
-            "docs/guides/errors.md",
-            "---\ntype: procedure\nstatus: active\napplies-to: [api]\n---\n# Errors\n\nReturn errors as problem details. See [orders](../api/orders.md#requirements).\n",
+            "docs/rules/errors.md",
+            "---\nstatus: active\napplies-to: [requirements]\n---\n# Errors\n\n## Rules\n\n- **problem-details**: The API SHALL return an error as problem details. See [orders](../requirements/orders.md#requirements).\n",
         ),
     ];
     for (p, t) in docs {
         r.write(p, t);
     }
+    r.write(
+        "tests/test_errors.py",
+        "# covers: rules/errors#problem-details\n",
+    );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("0 errors and 0 warnings"), "{out}");
     r.commit("docs");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
-    let (code, out, _) = r.run(&["context", "api/orders"]);
+    let (code, out, _) = r.run(&["context", "requirements/orders"]);
     assert_eq!(code, 0);
-    assert!(out.contains("<!-- guides/errors#errors h:"), "{out}");
+    assert!(out.contains("<!-- rules/errors#rules h:"), "{out}");
     assert!(
         out.contains("<!-- decisions/order-ids#decision-outcome h:"),
         "{out}"
@@ -1542,7 +1563,7 @@ const LOANS_PY: &str = "MAX_RENEWALS = 1\n\n\ndef renew_loan(loan):\n    return 
 
 fn code_project() -> Repo {
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_old_root();
     r.write("src/library/loans.py", LOANS_PY);
     r.write(
         "src/library/books.py",
@@ -1797,7 +1818,7 @@ fn context_keeps_applies_to_above_directory_mentions() {
 #[test]
 fn moving_a_document_keeps_accepted_decisions_frozen() {
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_old_root();
     r.write(
         "docs/loans.md",
         "# Loans\n\n- **daily-fine**: When a member returns a book late, the library SHALL charge a fine.\n",
@@ -1836,7 +1857,7 @@ fn moving_a_document_keeps_accepted_decisions_frozen() {
 
 fn split_project() -> Repo {
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_old_root();
     r.write(
         "docs/loans.md",
         "---\nstatus: active\n---\n# Loans\n\nThe loan rules. See [membership](#membership).\n\n## Membership\n\n- **member-registration**: When a person applies, the desk SHALL check an identity document.\n- **membership-kinds**: The library SHALL have two membership kinds.\n\n## Fines\n\nThe fine rules.\n\n- **daily-fine**: When a member returns a book late, the library SHALL charge 25 cents for each late day.\n\n### Fine cap\n\n- **fine-cap**: The library SHALL limit a fine to the replacement cost of the book.\n\n## Renewals\n\n- **renewal-limit**: The library SHALL allow 2 renewals of a loan.\n",
@@ -2001,7 +2022,7 @@ fn mv_keeps_the_text_after_a_list_apart_from_the_moved_items() {
     // source and in the destination. The moved items must not take it as a
     // lazy continuation line (the cause of defect D1 in a playground task).
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_old_root();
     r.write(
         "docs/panel.md",
         "# Panel\n\n## Requirements\n\n- **panel-home**: The control panel SHALL list the beds.\n- **panel-units**: The control panel SHALL show two units.\n\nThe unit rules are in one place.\n\n## Display\n\nText.\n",
@@ -2268,7 +2289,7 @@ fn check_lists_errors_and_drift_before_the_prose_lint() {
 #[test]
 fn a_bold_slug_without_a_colon_warns() {
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_old_root();
     r.write(
         "docs/rules.md",
         "# Rules\n\n- **member-registration** [1.1]: When a person applies, the desk SHALL check an identity document.\n- **note** this item is prose.\n",
@@ -2528,7 +2549,7 @@ fn init_answers_file_on_a_new_project() {
     let answers = r.dir.join("../answers-new.toml");
     fs::write(
         &answers,
-        "profile = \"strict\"\ntypes = [\"requirements\", \"decision\", \"procedure\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\nharness = \"none\"\n",
+        "profile = \"strict\"\ngraph = \"small\"\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\nharness = \"none\"\n",
     )
     .unwrap();
     let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
@@ -2537,18 +2558,25 @@ fn init_answers_file_on_a_new_project() {
     let cfg = r.read("spec-dna.toml");
     for want in [
         "profile = \"strict\"",
-        "types = [\"requirements\", \"decision\", \"procedure\"]",
+        "[layers.requirements]\ntypes = [\"requirements\"]\n",
         "[rules]  # overrides of the profile, by rule group or by code\nevidence = \"warning\"\n",
-        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
     ] {
         assert!(cfg.contains(want), "{want}:\n{cfg}");
     }
+    assert!(!cfg.contains("default-type"), "{cfg}");
+    // The graph, not a `types` key, gives the types.
+    assert!(
+        !cfg.split("\n[").next().unwrap().contains("types ="),
+        "{cfg}"
+    );
     assert!(!r.dir.join("AGENTS.md").exists());
     assert!(!r.dir.join("CLAUDE.md").exists());
-    // The skill lists the types of the project, and no other type.
+    // The skill lists the types of the layers of the project, and no other
+    // type.
     let skill = r.read(".claude/skills/spec-dna/SKILL.md");
     assert!(
-        skill.contains("Types of this project: requirements, decision, procedure."),
+        skill.contains("Types of this project: product, system, terms, roadmap, questions, rule, requirements, decision, incident, intent, spec, plan."),
         "{skill}"
     );
     assert!(!skill.contains("interface"), "{skill}");
@@ -2558,20 +2586,27 @@ fn init_answers_file_on_a_new_project() {
         "{ci}"
     );
     assert!(out.contains("to commit: git add spec-dna.toml .claude/skills/spec-dna/SKILL.md .github/workflows/spec-dna.yml"), "{out}");
-    // `new` follows the types: a procedure goes into its namespace, an
-    // interface is not a type of this project.
-    let (code, out, _) = r.run(&["new", "procedure", "restart"]);
+    // `new` follows the layers: a requirements document goes into the folder
+    // of its layer, and the small graph has no layer for an interface.
+    let (code, out, _) = r.run(&["new", "requirements", "restart"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.starts_with("wrote docs/procedures/restart.md"), "{out}");
+    assert!(
+        out.starts_with("wrote docs/requirements/restart.md"),
+        "{out}"
+    );
     let (code, _, err) = r.run(&["new", "interface", "api"]);
     assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("no layer of spec-dna.toml has type `interface`"),
+        "{err}"
+    );
     r.write(
         "docs/api.md",
         "---\ntype: interface\nstatus: draft\n---\n# Api\n",
     );
     let (_, out, _) = r.run(&["check"]);
     assert!(
-        out.contains("error SD303 type-invalid: type `interface` is not a type of this project"),
+        out.contains("error SD303 type-invalid: no layer of spec-dna.toml has type `interface`; run `spec-dna layer add <name> --types interface`"),
         "{out}"
     );
     // The skill that `init` wrote is the skill that `check` expects.
@@ -2586,7 +2621,12 @@ fn init_answers_file_on_a_new_project() {
 #[test]
 fn init_detects_a_brownfield_repository() {
     let r = Repo::fixture("brownfield");
-    let (code, out, err) = r.run(&["init", "--dry-run", "--non-interactive"]);
+    // The fixture has roots of the types `procedure` and `research`, which the
+    // small graph has no layer for. The default graph has all of them.
+    let graph = r.dir.join("../answers-brown-graph.toml");
+    fs::write(&graph, "graph = \"default\"\n").unwrap();
+    let g = graph.to_str().unwrap();
+    let (code, out, err) = r.run(&["init", "--dry-run", "--answers", g]);
     assert_eq!(code, 0, "{out}{err}");
     for want in [
         "[evidence]\ntests = [\"**/tests/**\"]",
@@ -2602,7 +2642,8 @@ fn init_detects_a_brownfield_repository() {
     }
     assert!(!out.contains("path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\nrequired-sections"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());
-    let (code, out, _) = r.run(&["init", "--dry-run", "--non-interactive", "--json"]);
+    let (code, out, _) = r.run(&["init", "--dry-run", "--answers", g, "--json"]);
+    let _ = fs::remove_file(&graph);
     assert_eq!(code, 0);
     assert!(out.contains("\"kind\":\"brownfield\""), "{out}");
     assert!(out.contains("\"stack\":[\"Rust\"]"), "{out}");
@@ -2614,7 +2655,7 @@ fn init_detects_a_brownfield_repository() {
     let answers = r.dir.join("../answers-brown.toml");
     fs::write(
         &answers,
-        "mapping = \"accept\"\ndrop = [\"docs/guides\"]\nbudgets = \"relaxed\"\nci = \"none\"\n",
+        "graph = \"default\"\nmapping = \"accept\"\ndrop = [\"docs/guides\"]\nbudgets = \"relaxed\"\nci = \"none\"\n",
     )
     .unwrap();
     let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
@@ -2868,7 +2909,12 @@ fn the_github_job_of_init_is_the_job_of_the_quickstart() {
 #[test]
 fn init_detects_common_layouts() {
     let r = Repo::fixture("layouts");
-    let (code, out, err) = r.run(&["init", "--dry-run", "--non-interactive"]);
+    // The roots have the types `research`, `procedure` and `incident`: they
+    // need the default graph.
+    let graph = r.dir.join("../answers-layouts-graph.toml");
+    fs::write(&graph, "graph = \"default\"\n").unwrap();
+    let (code, out, err) = r.run(&["init", "--dry-run", "--answers", graph.to_str().unwrap()]);
+    let _ = fs::remove_file(&graph);
     assert_eq!(code, 0, "{out}{err}");
     for want in [
         "path = \"doc/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nlegacy-ids = [{ alias = \"ADR-{n}\", file = \"{n}-*\" }]\n",
@@ -2884,10 +2930,20 @@ fn init_detects_common_layouts() {
         assert!(out.contains(want), "{want}:\n{out}");
     }
     let answers = r.dir.join("../answers-layouts.toml");
-    fs::write(&answers, "mapping = \"accept\"\nci = \"none\"\n").unwrap();
+    fs::write(
+        &answers,
+        "graph = \"default\"\nmapping = \"accept\"\nci = \"none\"\n",
+    )
+    .unwrap();
     let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
     let _ = fs::remove_file(&answers);
     assert_eq!(code, 0, "{out}{err}");
+    // A flat folder of proposals is `research`. The note says how to start an
+    // open proposal.
+    assert!(
+        out.contains("To start an open proposal, run `spec-dna new intent <slug>`"),
+        "{out}"
+    );
     r.commit("adopt");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
@@ -2973,22 +3029,26 @@ fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
 #[test]
 fn init_asks_on_a_terminal() {
     let r = Repo::fixture("brownfield");
-    // 1 profile, 2 types, 3 evidence, 4 language, 5 mapping (4 roots), 6
-    // budgets, 7 adapters, 8 CI, hook and base, 9 harness, 10 models, then the
-    // confirmation.
-    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
+    // The numbers are the numbers of the design: 1 profile, 2 graph, 3 areas,
+    // 6 evidence, 7 language, 8 mapping (4 roots), 9 budgets, 10 adapters, 11
+    // CI, hook and base, 12 harness, 13 models, then the confirmation.
+    let answers = "strict\ndefault\n\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
     let (code, out) = on_terminal(&r.dir, &["init"], answers);
     assert_eq!(code, 0, "{out}");
     for want in [
-        "1/10 Profile (lite, standard, strict) [standard]: ",
-        "    Types in use: requirements, decision, procedure, research. A shorter list makes each document of another type an error.",
-        "2/10 Knowledge types [product, system, terms, roadmap, questions, rule, requirements, interface, decision, procedure, incident, research, intent, spec, plan]: ",
-        "5/10 Mapping: 4 roots.",
+        "1. Profile (lite, standard, strict) [standard]: ",
+        "    Documents found: 9. small: foundation, pending, rules, requirements, decisions, intent and incidents (fewer than 30 documents).",
+        "    Found types that the small graph has no layer for: procedure, research. A root of such a type is not written with the small graph.",
+        "2. Layer graph (small, default, custom) [small]: ",
+        "    Areas found: none. An area is a folder of requirements/.",
+        "3. Areas of requirements/ (names, or none) [none]: ",
+        "6. Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both) [profile, both]: ",
+        "8. Mapping: 4 roots.",
         "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-notes.md, README.md) [accept]: ",
-        "6/10 Budget level (default, relaxed, tight, off) [default]: ",
-        "8/10 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
-        "9/10 Agent harness (none, lean, full) [lean]: ",
-        "10/10 Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high spec-writer=sonnet:high]: ",
+        "9. Budget level (default, relaxed, tight, off) [default]: ",
+        "11. CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
+        "12. Agent harness (none, lean, full) [lean]: ",
+        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high spec-writer=sonnet:high]: ",
         "Agent harness: full (for Claude Code)",
         "  create .claude/agents/checker.md (agent checker: sonnet, medium)",
         "Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.",
@@ -3033,7 +3093,7 @@ fn init_asks_on_a_terminal() {
 
     // A "no" at the confirmation writes nothing.
     let r = Repo::empty();
-    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\nn\n");
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\nn\n");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("nothing written"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());
@@ -3667,23 +3727,24 @@ fn init_preview_shows_how_each_answer_was_applied() {
     let answers = answers_file(
         &r,
         "resolved",
-        "profile = \"strict\"\ntypes = [\"requirements\", \"decision\"]\nbudgets = \"relaxed\"\nadapters = [\"skill\"]\nci = \"none\"\nhook = \"none\"\n",
+        "profile = \"strict\"\ngraph = \"default\"\nareas = [\"valves\", \"sensors\"]\nbudgets = \"relaxed\"\nadapters = [\"skill\"]\nci = \"none\"\nhook = \"none\"\n",
     );
     let (code, out, err) = r.run(&["init", "--dry-run", "--answers", answers.to_str().unwrap()]);
     assert_eq!(code, 0, "{out}{err}");
     let shown = out.split("--- spec-dna.toml ---").next().unwrap();
     for want in [
         "How the answers were applied:",
-        "1/10 profile: strict (changed from standard) -> profile = \"strict\"",
-        "2/10 knowledge types: requirements, decision (changed from all 15) -> types = [\"requirements\", \"decision\"]",
-        "3/10 evidence policy and link style: profile, both (default, writes nothing)",
-        "4/10 normative language and heading aliases: en; outcome: -; amendments: - (default, writes nothing)",
-        "5/10 mapping: 1 root: docs (mixed, default requirements; 0 documents; status draft) (default) -> 1 [[roots]] table(s)",
-        "6/10 budget level: relaxed (changed from default) -> [budgets.<type>] tables",
-        "7/10 agent adapters: skill (changed from agents-md, claude-md, skill) -> .claude/skills/spec-dna/SKILL.md",
-        "8/10 CI step, hook and base branch: none, none, main (default, writes nothing)",
-        "9/10 agent harness: lean (default) -> [harness] level = \"lean\", ",
-        "10/10 harness models: orchestrator=opus:xhigh advisor=fable ",
+        "  1. profile: strict (changed from standard) -> profile = \"strict\"",
+        "  2. layer graph: default (changed from small) -> 10 [layers.*] tables",
+        "  3. areas of requirements: valves, sensors (changed from none) -> areas = [\"valves\", \"sensors\"]",
+        "  6. evidence policy and link style: profile, both (default, writes nothing)",
+        "  7. normative language and heading aliases: en; outcome: -; amendments: - (default, writes nothing)",
+        "  8. mapping: 1 root: docs (mixed, no default type; 0 documents) (default) -> 1 [[roots]] table(s)",
+        "  9. budget level: relaxed (changed from default) -> [budgets.<type>] tables",
+        "  10. agent adapters: skill (changed from agents-md, claude-md, skill) -> .claude/skills/spec-dna/SKILL.md",
+        "  11. CI step, hook and base branch: none, none, main (default, writes nothing)",
+        "  12. agent harness: lean (default) -> [harness] level = \"lean\", ",
+        "  13. harness models: orchestrator=opus:xhigh advisor=fable ",
     ] {
         assert!(shown.contains(want), "{want}:\n{shown}");
     }
@@ -4420,7 +4481,7 @@ fn the_answers_say_when_a_root_changed_and_when_text_is_left_to_the_user() {
     assert_eq!(code, 0, "{out}{err}");
     let shown = out.split("--- spec-dna.toml ---").next().unwrap();
     assert!(
-        shown.contains("8/10 CI step, hook and base branch: none, lefthook, ")
+        shown.contains("11. CI step, hook and base branch: none, lefthook, ")
             && shown.contains("-> text to add by hand"),
         "{shown}"
     );

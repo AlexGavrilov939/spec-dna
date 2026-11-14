@@ -20,6 +20,11 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - `type:` is optional where the place gives the type. A mixed root has no default for `default-type`, so a document with no type gives SD303.
 - The types `intent`, `spec` and `plan` are valid only as `intent/<slug>/<type>.md`. A `spec` at another place gives SD303, and its message names `requirements`. A root `type` or `default-type` of one of these types is an error (exit code 3). A document of a type that no layer has gives SD303 ([docs/types.md](docs/types.md)).
 - `spec-dna new` writes each document at the place of its layer. `new requirements loans` writes `requirements/loans.md`, and an id is relative to the folder of the layer. A top file type takes no id (`new terms`). `new spec` and `new plan` stop with exit code 5 when the folder of the change does not exist. `new` writes no `type:` line where the place gives the type.
+- `spec-dna init` asks the layer graph at question 2 (`small`, `default` or `custom`) in place of the knowledge types. Fewer than 30 documents, also in a new project, give `small`. 30 documents or more give `default`. `custom` keeps the `[layers]` tables of the current file, so it is the default of `--reconfigure`. The answers key `types` ended: it gives an error that names `graph`. `init` asks at most 14 questions and uses the numbers of the design (this version asks 1 to 3 and 6 to 13). `init` writes no root for a type that no layer has, and a note in the preview says why ([docs/init.md](docs/init.md)).
+- A new project gets one mixed root `docs` with no `default-type` and no status. The folder of a layer gives the type of a document. `init` writes no `types` key.
+- The skill of `init` lists the types that the layers have. After `spec-dna layer add`, run `spec-dna init` to update it, or `check` reports SD502. The skill and the agent `spec-writer` describe the places of `spec-dna new`.
+- `init --reconfigure` keeps a mixed root that has no `default-type` (it became `research`). It does not write `live-sections = { decision = ["Status"] }`, which is the default now. It keeps the keys `types`, `[groups]` and `[templates]`.
+- The demo and the quickstart use the layout of 0.6: `requirements/loans`, `interfaces/http` and `decisions/`. The demo adds the layer `interfaces` with `layer add`.
 
 ### Added
 
@@ -30,6 +35,8 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - The types `product`, `system`, `terms`, `roadmap`, `questions`, `spec` and `plan`, with their statuses, required sections, budgets and templates ([docs/types.md](docs/types.md)).
 - `spec-dna new intent <slug>`, `new spec <slug>` and `new plan <slug>` write the files of a change into `intent/<slug>/`. `new` names the new type for a type of 0.5.
 - The configuration keys `[layers.<name>]`, `areas` and `[groups]` ([docs/config.md](docs/config.md)). A layer has the keys `types`, `dir`, `files`, `paths`, `moves-to`, `linked-from`, `keep`, `context`, `max-docs`, `max-chars`, `max-started` and `stale-days`. A cycle in `moves-to`, a type in 2 layers, an absent layer in an edge, `files` with `dir`, 2 layers with the same `dir`, an unknown key, a bad value and a group area that is not in `areas` are errors (exit code 3). Only the place rule reads the graph so far.
+- `init` question 3 proposes the areas of `requirements/`: the top folders of the existing specs, or the folders of the apps. It proposes at most 8, and only 2 or more. The answers key is `areas`, and `none` gives one folder. `init` never proposes a group.
+- `init` says in a note that a flat folder of proposals (`rfcs`, `proposals`, `changes`, `tasks`, `plans`, `enhancements`, or the prefixes `RFC` and `KEP`) is a `research` root. To start an open proposal, run `spec-dna new intent <slug>`. `init --json` has the field `notes`, and `default_type` is `null` for a mixed root with no `default-type`.
 
 ## 0.5.0 - 2026-11-14
 

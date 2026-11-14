@@ -210,6 +210,10 @@ pub struct Row {
     /// `None` for a mixed root.
     pub ty: Option<DocType>,
     pub default_type: DocType,
+    /// True for a mixed root that has no `default-type`: the place of a
+    /// document gives its type, and a document with no place and no type gives
+    /// SD303. `default_type` has no meaning then.
+    pub no_default_type: bool,
     pub status: Option<String>,
     pub legacy_ids: Vec<String>,
     pub legacy_keys: Vec<String>,
@@ -236,6 +240,7 @@ impl Row {
             path: path.to_string(),
             ty,
             default_type,
+            no_default_type: false,
             status: first_status(default_type),
             legacy_ids: Vec::new(),
             legacy_keys: Vec::new(),
@@ -299,6 +304,9 @@ pub struct Facts {
     pub ci: Vec<String>,
     pub hooks: Vec<String>,
     pub base: String,
+    /// The proposed areas of `requirements/`: at most 8 names of one folder
+    /// each, or none if fewer than 2 are found.
+    pub areas: Vec<String>,
 }
 
 /// One Markdown file.
@@ -1295,6 +1303,7 @@ pub fn detect(
     apps.sort();
     facts.stack = stack;
     facts.apps = apps;
+    facts.areas = areas_of(&facts.rows, &mds, &facts.apps);
 
     // Tests.
     for g in DEFAULT_TEST_GLOBS {
@@ -1355,6 +1364,92 @@ pub fn detect(
 }
 
 /// The deepest row that contains a path, as an index.
+/// The most areas that `init` proposes.
+const MAX_AREAS: usize = 8;
+
+/// Folder names that are no area of requirements: they hold other kinds of
+/// files, or old text.
+const NOT_AREAS: &[&str] = &[
+    "archive",
+    "archived",
+    "assets",
+    "attachments",
+    "drafts",
+    "images",
+    "img",
+    "templates",
+];
+
+/// Folder names of an app directory that name a part of an app, not an app.
+const NOT_APPS: &[&str] = &[
+    "bench", "benches", "doc", "docs", "example", "examples", "lib", "script", "scripts", "src",
+    "test", "tests", "tools",
+];
+
+/// Returns true if a folder name can be an area: one visible folder name.
+fn is_area_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['.', '_'])
+        && name.trim() == name
+        && !name.contains(['/', '\\'])
+        && !NOT_AREAS.contains(&name.to_ascii_lowercase().as_str())
+        && !VENDORED.contains(&name)
+        && !GENERATED.contains(&name)
+        && !FIXTURES.contains(&name)
+}
+
+/// The areas of `requirements/`. The first source is the top folders of the
+/// roots that hold requirements: the folders with the most documents come
+/// first. If they give fewer than 2 areas, the second source is the folders of
+/// the apps (the directories of the manifests of the stack). The result has at
+/// most 8 names, in the order of the names. A result of fewer than 2 names is
+/// empty: one area is the same as no area.
+fn areas_of(rows: &[Row], mds: &[Md], apps: &[String]) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if r.path == "." || r.ty.unwrap_or(r.default_type) != DocType::Requirements {
+            continue;
+        }
+        let base = format!("{}/", r.path);
+        for m in mds {
+            if owner(rows, &m.path) != Some(i) {
+                continue;
+            }
+            let rel = &m.path[base.len()..];
+            if r.exclude.iter().any(|g| crate::glob::matches(g, rel)) {
+                continue;
+            }
+            if let Some((folder, _)) = rel.split_once('/')
+                && is_area_name(folder)
+            {
+                *counts.entry(folder.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let mut named: Vec<(String, usize)> = counts.into_iter().collect();
+    // The most documents first, then the name.
+    named.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let mut names: Vec<String> = named.into_iter().map(|n| n.0).collect();
+    if names.len() < 2 {
+        names = Vec::new();
+        for a in apps {
+            let name = a.rsplit('/').next().unwrap_or(a);
+            if is_area_name(name)
+                && !NOT_APPS.contains(&name.to_ascii_lowercase().as_str())
+                && !names.iter().any(|n| n == name)
+            {
+                names.push(name.to_string());
+            }
+        }
+    }
+    if names.len() < 2 {
+        return Vec::new();
+    }
+    names.truncate(MAX_AREAS);
+    names.sort();
+    names
+}
+
 fn owner(rows: &[Row], path: &str) -> Option<usize> {
     rows.iter()
         .enumerate()

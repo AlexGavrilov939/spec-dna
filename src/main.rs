@@ -61,7 +61,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "init",
         "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]",
-        "Detects the repository, asks at most 10 questions with the detected
+        "Detects the repository, asks at most 14 questions with the detected
 defaults, shows spec-dna.toml and the files to change, and writes them
 after a confirmation. Without a terminal, it uses the defaults. If
 spec-dna.toml exists, it updates the agent adapters, and the harness
@@ -742,12 +742,18 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     }
     let head_ad = check::apply_severity(
         &cfg,
-        adapters::check(&adapter_texts(repo, &head_snap)?, &cfg.types),
+        adapters::check(
+            &adapter_texts(repo, &head_snap)?,
+            &adapters::project_types(&cfg.layers, &cfg.types),
+        ),
     );
     let base_ad: Vec<_> = if use_base {
         check::apply_severity(
             &cfg,
-            adapters::check(&adapter_texts(repo, &base_snap)?, &cfg.types),
+            adapters::check(
+                &adapter_texts(repo, &base_snap)?,
+                &adapters::project_types(&cfg.layers, &cfg.types),
+            ),
         )
     } else {
         Vec::new()
