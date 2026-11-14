@@ -1,12 +1,12 @@
-<!-- ADR-1-session-store#session-store h:6c84b3751c541aa2 decision/accepted docs/decisions/ADR-1-session-store.md -->
-# Session store
+<!-- ADR-1-valve-controller#valve-controller h:edfb3e7626fe65e9 decision/accepted docs/decisions/ADR-1-valve-controller.md -->
+# Valve controller
 
-<!-- ADR-1-session-store#context-and-problem-statement h:101141999816be1d decision/accepted docs/decisions/ADR-1-session-store.md -->
+<!-- ADR-1-valve-controller#context-and-problem-statement h:a76d0959e5acf391 decision/accepted docs/decisions/ADR-1-valve-controller.md -->
 ## Context and Problem Statement
 
-Where do sessions live? See [[auth/session#expiry]].
+Which device opens the valves? See [[irrigation/valves#shutoff]].
 
-<!-- ADR-1-session-store#decision-outcome h:1dcdaa1914651473 decision/accepted docs/decisions/ADR-1-session-store.md -->
+<!-- ADR-1-valve-controller#decision-outcome h:8eeeecf3dbdbb98a decision/accepted docs/decisions/ADR-1-valve-controller.md -->
 ## Decision Outcome
 
-Chosen option: signed stateless tokens.
+Chosen option: one controller for each row of beds.

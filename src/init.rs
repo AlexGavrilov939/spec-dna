@@ -1695,8 +1695,8 @@ mod tests {
         let mut plan = defaults(&facts, Some("docs"));
         assert_eq!(plan.kind, "greenfield");
         assert_eq!(plan.rows.len(), 1);
-        plan.outcome = vec!["Решение".into()];
-        plan.amendments = vec!["Поправки".into()];
+        plan.outcome = vec!["Decisión".into()];
+        plan.amendments = vec!["Enmiendas".into()];
         plan.evidence = Some(Some(Severity::Error));
         plan.budgets = Budgets::Relaxed;
         plan.language = "de".into();
@@ -1708,7 +1708,7 @@ mod tests {
         assert!(cfg.allows(DocType::Contract));
         assert_eq!(
             cfg.roots[0].required_sections[DocType::Decision as usize],
-            [["Решение", "Decision Outcome", "Decision"]]
+            [["Decisión", "Decision Outcome", "Decision"]]
         );
         assert_eq!(
             cfg.severity(crate::diag::Code::RequirementUnverified, Some(0)),
@@ -1736,14 +1736,14 @@ mod tests {
         let mut r = blank_row("docs/adr", Some(DocType::Decision), DocType::Decision);
         r.status = Some("proposed".into());
         r.extra
-            .push("required-sections = { decision = [\"Решение\"] }".into());
+            .push("required-sections = { decision = [\"Decisión\"] }".into());
         edit_row(&mut r, "type=spec").unwrap();
         assert_eq!(r.status.as_deref(), Some("active"));
         assert!(r.extra.is_empty());
         // A removed decision section stays removed with aliases.
         let facts = Facts::default();
         let mut plan = defaults(&facts, Some("docs"));
-        plan.outcome = vec!["Решение".into()];
+        plan.outcome = vec!["Decisión".into()];
         plan.rows[0].required_off.push(DocType::Decision);
         let text = render(&plan);
         assert!(

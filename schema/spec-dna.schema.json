@@ -330,7 +330,7 @@
           }
         },
         "live-sections": {
-          "description": "For each type, the names of its live sections, such as an implementation status, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605.",
+          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -344,7 +344,7 @@
           }
         },
         "history-sections": {
-          "description": "For each type, the names of its history sections (iteration logs, review rounds, superseded notes). They match as amendment sections do. `spec-dna history` moves them, and the amendment sections of a decision, into a reference document. In a decision, a history section is not frozen text.",
+          "description": "For each type, the names of its history sections (iteration logs, discussions, superseded notes). They match as amendment sections do. `spec-dna history` moves them, and the amendment sections of a decision, into a reference document. In a decision, a history section is not frozen text.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -358,7 +358,7 @@
           }
         },
         "companion-sections": {
-          "description": "For each type, the names of the sections that belong to the requirements, such as an acceptance map. When `mv` moves requirements, the table rows and list items of these sections that name the moved keys move with them.",
+          "description": "For each type, the names of the sections that belong to the requirements, such as a coverage table. When `mv` moves requirements, the table rows and list items of these sections that name the moved keys move with them.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"

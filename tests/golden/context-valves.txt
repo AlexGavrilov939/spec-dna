@@ -1,0 +1,41 @@
+<!-- spec-dna context VERSION: irrigation/valves, src/controller.rs; 7 sections in full, 3 listed; 1623 of 2500 characters; about 421 tokens (estimated) -->
+
+<!-- irrigation/valves#requirements h:2a4d76de672f25aa spec/active entry -->
+## Requirements
+
+- **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray.
+- **flush**: The valve SHALL be flushed quickly, if possible.
+- **R-7**: While a valve is open, the controller SHALL read its moisture sensor every 10 seconds.
+- **Bad_Key**: The controller MUST log the valve id.
+
+<!-- irrigation/valves#valves h:2783ca13bb4ff140 spec/active entry -->
+# Valves
+
+A valve lets water into one bed of the greenhouse. ADR-1 names the controller.
+
+<!-- guides/logging#logging h:72d880ddf829cf4f guide/active applies -->
+# Logging
+
+Log every valve command with its valve id and the reason.
+
+<!-- irrigation/sensors#requirements h:525e3c1ad4bc21ba spec/deprecated depends -->
+## Requirements
+
+- **calibration**: The installer SHALL calibrate every sensor in dry soil.
+- **max-age**: If a reading is older than 15 minutes, the controller SHALL ignore it.
+
+<!-- irrigation/sensors#sensors h:a7ebf47b30a28d68 spec/deprecated depends -->
+# Sensors
+
+<!-- ADR-1-valve-controller#valve-controller h:edfb3e7626fe65e9 decision/accepted decision -->
+# Valve controller
+
+<!-- ADR-1-valve-controller#decision-outcome h:8eeeecf3dbdbb98a decision/accepted decision -->
+## Decision Outcome
+
+Chosen option: one controller for each row of beds.
+
+<!-- not loaded; read one with `spec-dna show <id>` -->
+- `irrigation/valves#rationale` h:d76575f736a8dec0 146 chars (more): Rationale
+- `notes/research#research-notes` h:f0bd1ed3d44bea25 410 chars (more): Research notes
+- `ADR-1-valve-controller#context-and-problem-statement` h:a76d0959e5acf391 101 chars (more): Context and Problem Statement

@@ -30,7 +30,7 @@ const SKILL_BODY: &str = "# spec-dna
 4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`. Use a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. To link a test to a requirement, write `covers: <doc-id>#<key>` in the test.
 5. For a new document, run `spec-dna new <type> <id>`. Then replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
 6. Do not change the text of an accepted decision outside its amendment and live sections (`show --conventions decision` names them. The default is `## Amendments`).
-    - Update a live section, such as an implementation status, in place when your change makes it stale.
+    - Update a live section, such as a progress section, in place when your change makes it stale.
     - Amend the decision if its outcome stays. Add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
     - Supersede the decision if its outcome changes. Write a new decision with `supersedes: [<old id>]`. Set the status of the old decision to `superseded`.
 7. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
@@ -339,7 +339,7 @@ mod tests {
     fn the_skill_names_live_sections_and_conventions() {
         let skill = skill_file();
         assert!(
-            skill.contains("Update a live section, such as an implementation status, in place"),
+            skill.contains("Update a live section, such as a progress section, in place"),
             "{skill}"
         );
         assert!(

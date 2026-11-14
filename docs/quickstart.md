@@ -119,10 +119,10 @@ The code is in `src/library/loans.py` (`checkout_book()`).
 To set another type, write it in the front matter. Or use `spec-dna new` to write the document from the template of its type:
 
 ```sh
-spec-dna new decision psp-choice        # docs/decisions/psp-choice.md
-spec-dna new invariant money             # docs/invariants/money.md: rules that every change in its scope keeps
+spec-dna new decision pump-choice       # docs/decisions/pump-choice.md
+spec-dna new invariant water             # docs/invariants/water.md: rules that every change in its scope keeps
 spec-dna new runbook restart-worker      # docs/runbooks/restart-worker.md
-spec-dna new incident 2026-11-double-charge
+spec-dna new incident 2026-11-flooded-bed
 ```
 
 There are 10 types: `spec`, `contract`, `guide`, `decision`, `change`, `note`, `invariant`, `runbook`, `incident` and `reference`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves a matching invariant first. It never serves a `reference` document unless a target names it.

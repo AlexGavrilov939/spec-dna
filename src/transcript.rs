@@ -1461,7 +1461,7 @@ mod tests {
             ),
             ["context", "check", "other", "help", "show"]
         );
-        assert!(is_plain_id("auth/session#requirements") && is_plain_id("Ünterlagen/x"));
+        assert!(is_plain_id("irrigation/valves#requirements") && is_plain_id("Ünterlagen/x"));
         for bad in ["KEY=value", "/home/u/a", "./a", "a.md", "a b", "a:b"] {
             assert!(!is_plain_id(bad), "{bad}");
         }
@@ -1475,10 +1475,10 @@ mod tests {
 
     #[test]
     fn spec_dna_headers() {
-        let text = "<!-- spec-dna context 0.1.0: a; 2 sections -->\n\n<!-- auth/session#requirements h:c45e6a10f2970c6b spec/active entry -->\n## R\n- `auth/tokens` h:6860bfc09e21e7a5 10 chars (depends): Tokens\n<!-- auth/session h:958433b88811cebb spec/active docs/auth/session.md -->\n";
+        let text = "<!-- spec-dna context 0.1.0: a; 2 sections -->\n\n<!-- irrigation/valves#requirements h:c45e6a10f2970c6b spec/active entry -->\n## R\n- `irrigation/sensors` h:6860bfc09e21e7a5 10 chars (depends): Sensors\n<!-- irrigation/valves h:958433b88811cebb spec/active docs/irrigation/valves.md -->\n";
         assert_eq!(
             spec_dna_sections(text),
-            ["auth/session", "auth/session#requirements"]
+            ["irrigation/valves", "irrigation/valves#requirements"]
         );
     }
 }

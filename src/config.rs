@@ -193,16 +193,16 @@ pub struct Root {
     /// Severity overrides for this root. They replace `[rules]`.
     pub rules: Rules,
     /// For each type, the names of its history sections (iteration logs,
-    /// review rounds, superseded notes). They match as amendment sections do.
+    /// discussions, superseded notes). They match as amendment sections do.
     /// `spec-dna history` moves them into a `reference` document. In a
     /// decision, they are not frozen text.
     pub history_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of the sections that belong to the
-    /// requirements, such as an acceptance map. When requirements move, their
+    /// requirements, such as a coverage table. When requirements move, their
     /// rows move with them.
     pub companion_sections: [Vec<String>; DocType::COUNT],
-    /// For each type, the names of its live sections, such as an
-    /// implementation status. They match as amendment sections do. In a
+    /// For each type, the names of its live sections, such as a
+    /// progress section. They match as amendment sections do. In a
     /// decision, they are not frozen text, and their text can change in
     /// place.
     pub live_sections: [Vec<String>; DocType::COUNT],

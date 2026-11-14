@@ -767,7 +767,7 @@ mod tests {
         assert_ne!(a.chunks[0].frozen, c.chunks[0].frozen);
     }
 
-    const DOC: &str = "---\nstatus: active\n---\n# Session tokens\n\nIntro with ADR-12 and `ADR-13` in code.\n\n## Requirements\n\n- **token-expiry**: When a session token expires, the gateway SHALL reject the request. <!-- aliases: auth/old#ttl -->\n- **R-12**: The client MUST retry.\n  - nested note\n- plain item\n- **Note** this is not a key\n\n```md\n- **in-code**: ignored SHALL\n```\n\nSee [the guide](../guide.md#setup) and [[auth/session#token-expiry@3f2a9c1b7e0d4a11]].\n\n## Requirements\n\n## Amendments\n\nText.\n";
+    const DOC: &str = "---\nstatus: active\n---\n# Moisture sensors\n\nIntro with ADR-12 and `ADR-13` in code.\n\n## Requirements\n\n- **sensor-timeout**: When a moisture sensor times out, the controller SHALL close the valve. <!-- aliases: irrigation/old#ttl -->\n- **R-12**: The client MUST retry.\n  - nested note\n- plain item\n- **Note** this is not a key\n\n```md\n- **in-code**: ignored SHALL\n```\n\nSee [the guide](../guide.md#setup) and [[irrigation/valves#sensor-timeout@3f2a9c1b7e0d4a11]].\n\n## Requirements\n\n## Amendments\n\nText.\n";
 
     #[test]
     fn sections_anchors_and_lines() {
@@ -780,13 +780,13 @@ mod tests {
         assert_eq!(
             heads,
             vec![
-                ("Session tokens", "session-tokens", 4),
+                ("Moisture sensors", "moisture-sensors", 4),
                 ("Requirements", "requirements", 8),
                 ("Requirements", "requirements-1", 22),
                 ("Amendments", "amendments", 24)
             ]
         );
-        assert_eq!(d.title, "Session tokens");
+        assert_eq!(d.title, "Moisture sensors");
         assert!(d.chunks[1].flags & FLAG_REQUIREMENT != 0);
         assert!(d.chunks[1].flags & FLAG_BCP14 != 0);
     }
@@ -799,18 +799,18 @@ mod tests {
         // model accepts it only if it matches a legacy key pattern.
         assert_eq!(
             keys,
-            vec![("token-expiry", true), ("R-12", true), ("Note", false)]
+            vec![("sensor-timeout", true), ("R-12", true), ("Note", false)]
         );
         let r = &d.reqs[0];
-        assert_eq!(r.aliases, vec!["auth/old#ttl".to_string()]);
+        assert_eq!(r.aliases, vec!["irrigation/old#ttl".to_string()]);
         assert_eq!(
             r.text,
-            "When a session token expires, the gateway SHALL reject the request."
+            "When a moisture sensor times out, the controller SHALL close the valve."
         );
         assert_eq!(r.line, 10);
         assert_eq!(d.reqs[1].text, "The client MUST retry.");
         // The alias marker does not change the hash.
-        let moved = DOC.replace(" <!-- aliases: auth/old#ttl -->", "");
+        let moved = DOC.replace(" <!-- aliases: irrigation/old#ttl -->", "");
         assert_eq!(parse(&moved).reqs[0].hash, r.hash);
     }
 
@@ -858,7 +858,7 @@ mod tests {
                 (RefKind::Link, "../guide.md#setup", 20),
                 (
                     RefKind::Wiki,
-                    "auth/session#token-expiry@3f2a9c1b7e0d4a11",
+                    "irrigation/valves#sensor-timeout@3f2a9c1b7e0d4a11",
                     20
                 )
             ]

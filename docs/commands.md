@@ -7,24 +7,24 @@ This page gives each command of spec-dna, its options and the exit codes. [quick
 ```sh
 spec-dna init                       # detection, 8 questions, a preview, then spec-dna.toml and the adapters
 spec-dna init --dry-run             # the preview only (also --non-interactive, --answers <file>, --reconfigure)
-spec-dna new decision psp-choice    # a new document from the template of its type
-spec-dna context src/gateway.rs     # the sections that cite a code file
+spec-dna new decision pump-choice   # a new document from the template of its type
+spec-dna context src/valves.rs      # the sections that cite a code file
 spec-dna check                      # new diagnostics against HEAD; exit 1 on a new error
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
 spec-dna check --all                # every diagnostic
 spec-dna check --lint               # also list each prose lint warning
-spec-dna context auth/session --path src/gateway.rs
-spec-dna context auth/session --query "renew a session after a password change"
-spec-dna show auth/session#token-expiry
-spec-dna mv auth/session auth/sessions          # the old id becomes an alias
-spec-dna mv auth/session#token-expiry auth/tokens
-spec-dna mv auth/session#renewal auth/session#token-expiry auth/tokens   # several keys
-spec-dna mv auth/session#mfa auth/second-factor  # a whole section into a new spec
+spec-dna context irrigation/valves --path src/valves.rs
+spec-dna context irrigation/valves --query "close a valve after a sensor timeout"
+spec-dna show irrigation/valves#sensor-timeout
+spec-dna mv irrigation/valves irrigation/valve-rules   # the old id becomes an alias
+spec-dna mv irrigation/valves#sensor-timeout irrigation/sensors
+spec-dna mv irrigation/valves#flush irrigation/valves#sensor-timeout irrigation/sensors   # several keys
+spec-dna mv irrigation/valves#drip irrigation/drip-lines  # a whole section into a new spec
 spec-dna mv guides/deploy#rollback runbooks/rollback --type runbook   # a section of a guide into a new runbook
 spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a reference document
-spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept registry
+spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
-spec-dna transcript ~/.claude/projects/<project> --expect auth/session
+spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
 spec-dna --help                     # commands and options (-h); --version (-V) prints the version
 spec-dna mv --help                  # the help of one command
 ```
@@ -145,7 +145,7 @@ These rules apply to a split:
 - Requirements move only into a spec, a contract or an invariant.
 - Each moved section of `HEAD` keeps its old id as an alias: `<old-id>#<anchor>` in the `aliases` of the destination.
 - Each moved requirement whose id is in `HEAD` gets an inline marker `<!-- aliases: ... -->` with that id. A key that is new in the uncommitted change gets no alias.
-- The rows of `companion-sections`, such as an acceptance map, move with their requirements. If a row names a key that moves and a key that stays, `mv` refuses the move.
+- The rows of `companion-sections`, such as a coverage table, move with their requirements. If a row names a key that moves and a key that stays, `mv` refuses the move.
 - Each moved section leaves its heading in the source, with a one-line pointer to its new place.
 - Links to a moved key or section follow it. This rule also applies in accepted decisions, because a link destination is not frozen text.
 - A decision keeps its frozen text. Only its amendment and history sections move, into a reference document. `mv` lists the moved amendments that can change the outcome. These amendments are candidates for a new decision that supersedes the old one.

@@ -1,6 +1,6 @@
 //! `spec-dna index <dir or file>` writes a generated index of the documents of
 //! a directory: one table row for each entry document, with its name, title
-//! and status. It replaces a large hand-kept registry file when the entries
+//! and status. It replaces a large hand-kept list when the entries
 //! exist as separate documents. The front matter field `generated: spec-dna
 //! index h:<hash>` marks the file. `check` gives SD610 when the entries
 //! changed after the last run, or when the rows have a manual edit.

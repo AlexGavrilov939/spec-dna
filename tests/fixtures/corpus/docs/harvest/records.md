@@ -1,6 +1,6 @@
 ---
 status: superseded
 ---
-# Invoices
+# Harvest records
 
 No successor names this document.

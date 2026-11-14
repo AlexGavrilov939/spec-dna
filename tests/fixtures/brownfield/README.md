@@ -1,3 +1,3 @@
-# Shop
+# Greenhouse
 
-An example shop.
+An example greenhouse controller.

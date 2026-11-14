@@ -1,3 +1,3 @@
 # Documentation
 
-The documents of the shop.
+The documents of the greenhouse.

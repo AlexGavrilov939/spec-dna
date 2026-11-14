@@ -1,5 +1,5 @@
 ---
-aliases: [auth/session]
+aliases: [irrigation/valves]
 ---
 # Alias clash
 

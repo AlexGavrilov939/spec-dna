@@ -26,7 +26,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | Requirement keys | Bold keys at the start of list items, such as `- **R-12** text`. They give `legacy-keys = ["R-{n}"]`. If some keys have a letter suffix, the pattern is `R-{n}*` |
 | Statuses | The status words in the front matter of each root. A word that the type does not allow gets a `status-map` entry. For example, `shipped` and `implemented` map to `active`, and `approved` maps to `accepted` for a decision. An unknown word maps to the default status of the root |
 | Heading languages and aliases | The scripts of the headings. Known translations of `Decision Outcome` and `Amendments` in decisions (for example `Решение`, `Entscheidung`, `Nachtrag`) become `required-sections` and `amendment-sections` |
-| Exclusions | Vendored directories (`vendor`, `node_modules`, `third_party`), generated directories (`dist`, `build`, `generated`), files that say that a generator wrote them, sibling directories with a vendor prefix (`ext-*`), and the files of a decision root that are not decisions (a README without an outcome, `*-implementation-plan.md`) |
+| Exclusions | Vendored directories (`vendor`, `node_modules`, `third_party`), generated directories (`dist`, `build`, `generated`), files that say that a generator wrote them, sibling directories with a vendor prefix (`vendor-*`, `external-*`), and the files of a decision root that are not decisions (a README without an outcome, `*-implementation-plan.md`) |
 | Large reference directories | A directory with 100 Markdown files or more, or 1,000,000 characters or more, and with no typed directory in it. It becomes a `reference` root |
 | Required sections | If most documents of a type in a root do not have the required sections, the root removes the requirement |
 | Budgets | The documents over the hard budget, at 3 levels |
@@ -49,14 +49,17 @@ The name of a directory gives the type of the root:
 - `runbooks` gives `runbook`.
 - `incidents`, `incident`, `postmortems` and `postmortem` give `incident`.
 - `rfcs`, `tasks` and `plans` give `change`.
-- `research`, `validation`, `validations`, `briefs` and `archive` give `reference`.
+- `research`, `references`, `meetings` and `archive` give `reference`.
 
-This rule also applies to a top-level directory, such as `rfcs/`. The names `incident`, `postmortem`, `validation` and `validations` are also common names of code directories. They give a type only inside a documentation tree, or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `guide`. A root becomes mixed if the front matter of its documents names another type.
+This rule also applies to a top-level directory, such as `rfcs/`. The names `incident` and `postmortem` are also common names of code directories. They give a type only inside a documentation tree, or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `guide`. A root becomes mixed if the front matter of its documents names another type.
 
 ### Id patterns
 
 - File names such as `ADR-012-cache.md` give `legacy-ids = ["ADR-{n}"]`. A directory of such files becomes a root.
-- Decision files such as `0001-use-postgres.md` (adr-tools, for example in `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }`. This applies if each number of the root is unique, no file of the root starts with a date, and no other root makes the same alias.
+- Decision files such as `0001-use-postgres.md` (adr-tools, for example in `doc/adr`) give `{ alias = "ADR-{n}", file = "{n}-*" }`. These conditions apply:
+  - each number of the root is unique;
+  - no file of the root starts with a date;
+  - no other root makes the same alias.
 - Files with a number and no prefix make a root only for decisions and changes.
 
 ### Types of numbered directories

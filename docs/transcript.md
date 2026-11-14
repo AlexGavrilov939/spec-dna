@@ -4,7 +4,7 @@
 
 ```sh
 spec-dna transcript ~/.claude/projects/<project>/<session>.jsonl
-spec-dna transcript <dir> --expect auth/session --expect ADR-12 --json
+spec-dna transcript <dir> --expect irrigation/valves --expect ADR-12 --json
 ```
 
 An argument is a file or a directory. A directory gives every `.jsonl` file below it, so the command also reads the files of subagents. In a directory, a file that no adapter reads (for example a workflow journal) gives a warning, and the command continues. A file that you name must be a transcript. The command reads a file once, even if two arguments give it.
