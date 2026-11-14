@@ -215,8 +215,7 @@ pub struct Doc {
     pub verified_by: Vec<(String, u32)>,
     pub owner: Option<String>,
     /// The 0.5 type of a document that `upgrade` changed (`note` or
-    /// `change`). Only the SD202 exemption reads it (a later slice).
-    #[allow(dead_code)]
+    /// `change`). Only the SD202 exemption reads it.
     pub was_type: Option<String>,
     pub issues: Vec<Issue>,
     /// Indices into `parsed.reqs` of the valid requirements.

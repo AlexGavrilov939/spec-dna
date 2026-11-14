@@ -110,7 +110,7 @@ sonnet = "high"
 | `layers.<name>.paths` | list of globs | `[]` | Globs, relative to the root. A document that matches belongs to this layer, also when its type is in another layer. The first layer in the file that matches wins. |
 | `layers.<name>.moves-to` | list of strings | `[]` | The layers that the text of this layer matures into. Each name is a layer of `[layers]`. The edges have no cycle. |
 | `layers.<name>.linked-from` | list of strings | `[]` | The layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`. |
-| `layers.<name>.keep` | string | `"forever"` | `"forever"` or `"until-finished"`. |
+| `layers.<name>.keep` | string | `"forever"` | `"forever"` or `"until-finished"`. In an `until-finished` layer, a deleted document gives no SD202. |
 | `layers.<name>.context` | string | `"always"` | `"always"` or `"on-request"`. |
 | `layers.<name>.max-docs` | integer | none | The most documents in the layer. |
 | `layers.<name>.max-chars` | integer | none | The most body characters in the layer. |

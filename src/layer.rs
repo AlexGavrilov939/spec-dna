@@ -359,8 +359,6 @@ impl Graph {
     /// The layer of a document: the first layer in the file whose `paths`
     /// match the path, else the layer that has the type of the document. The
     /// path is relative to the root.
-    // `context` reads it (slice S7).
-    #[allow(dead_code)]
     pub fn layer_of(&self, rel_path: &str, ty: DocType) -> Option<usize> {
         self.placement(rel_path, ty).map(|(i, _)| i)
     }

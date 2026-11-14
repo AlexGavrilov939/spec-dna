@@ -34,7 +34,7 @@ Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as inp
 | `contract` | `interface` | |
 | `invariant` | `rule` | The tier label of `context` is `rule` |
 | `guide`, `runbook` | `procedure` | A runbook had the required section `Steps`. Set `required-sections = { procedure = ["Steps"] }` to keep it |
-| `note`, `reference` | `research` | The behavior of `reference` stays: no budget, `context` never serves it, and SD202 reports its deletion |
+| `note`, `reference` | `research` | The behavior of `reference` stays: no budget, `context` never serves it, and SD202 reports its deletion, unless the document has `was-type: note` |
 | `change` | `intent` | The statuses are draft, accepted and closed. Use `draft` for `proposed`, and `closed` for `rejected`. A finished change (`done`) is a `research` document |
 
 ## Place gives the type

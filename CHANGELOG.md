@@ -10,6 +10,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - The document types of 0.6: 15 types. `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, `note` and `reference` are `research`, and `change` is `intent`. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The tier label `invariant` of `context` is now `rule`.
 - The statuses of an `intent` are `draft`, `accepted` and `closed`. SD304 names the new status for `proposed`, `rejected` and `done`.
 - A `research` document has the behavior of `reference`: no budget, `context` never serves it, and SD202 reports its deletion. A `procedure` has the budget of a guide and no default required section.
+- SD202 follows the layer graph. A deleted document of a layer with `keep = "until-finished"` gives no SD202. The `intent` layer is such a layer by default, and so is a custom layer with this value. In a `forever` layer, only the field `was-type: note` or `was-type: change` allows a deletion, as 0.5 did for a `note` and a finished `change`. The status `closed` gives no exemption any more.
 - The place gives the type. In a mixed root, the type of a document comes from these sources, in this order:
   - The `type` field of the front matter.
   - A top file, such as `terms.md`.

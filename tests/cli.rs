@@ -3938,7 +3938,7 @@ fn the_statuses_of_an_intent_a_spec_and_a_plan_move_forward_only() {
 }
 
 #[test]
-fn only_a_closed_intent_can_be_deleted() {
+fn a_deleted_intent_gives_no_sd202_but_a_research_document_does() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
@@ -3960,13 +3960,13 @@ fn only_a_closed_intent_can_be_deleted() {
     }
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    for id in ["intent/accepted/intent", "research"] {
-        assert!(
-            out.contains(&format!("SD202 id-removed: `{id}` was removed")),
-            "{out}"
-        );
-    }
-    assert_eq!(out.matches("error SD202").count(), 2, "{out}");
+    // The layer decides: the `intent` layer is `until-finished`, so no status
+    // of an intent matters. A `research` document is in a `forever` layer.
+    assert!(
+        out.contains("SD202 id-removed: `research` was removed"),
+        "{out}"
+    );
+    assert_eq!(out.matches("error SD202").count(), 1, "{out}");
 }
 
 #[test]

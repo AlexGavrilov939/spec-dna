@@ -5,6 +5,7 @@
 use crate::config::Config;
 use crate::diag::{Code, Diag};
 use crate::evidence::{Evidence, needs_evidence};
+use crate::layer::Keep;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
 use std::collections::{HashMap, HashSet};
@@ -387,8 +388,8 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
 }
 
 /// SD611: an accepted decision links a document of the type `intent` in its
-/// frozen text, or in `depends-on`. An intent can be deleted when it is closed
-/// (SD202 allows it), and the frozen text cannot drop the link. A link
+/// frozen text, or in `depends-on`. An intent can be deleted when it is finished
+/// (SD202 allows it: its layer is `until-finished`), and the frozen text cannot drop the link. A link
 /// in an amendment, history or live section can change, so it is allowed.
 fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) {
     let p = &d.parsed;
@@ -492,6 +493,26 @@ fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
     }
 }
 
+/// True if SD202 allows the deletion of a base document. The layer of the
+/// document in the base tree decides: a layer with `keep = "until-finished"`
+/// allows it. In a `forever` layer, only the field `was-type` (`note` or
+/// `change`, written by `upgrade`) allows it. The status gives no exemption.
+fn deletion_allowed(config: &Config, b: &Doc) -> bool {
+    if matches!(b.was_type.as_deref(), Some("note" | "change")) {
+        return true;
+    }
+    // The head configuration gives the root. A root that moved gives the full path.
+    let rel = config
+        .roots
+        .get(b.root)
+        .filter(|r| b.path.starts_with(&format!("{}/", r.path)) || r.path.is_empty())
+        .map_or(b.path.as_str(), |r| r.rel(&b.path));
+    config
+        .layers
+        .layer_of(rel, b.ty)
+        .is_some_and(|i| config.layers.layers()[i].keep == Keep::UntilFinished)
+}
+
 /// Returns the diagnostics that compare the base tree with the head tree. All
 /// of them are new by definition.
 pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
@@ -502,7 +523,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
             Some([i]) => Some(&head.docs[*i as usize]),
             Some(_) => None,
             None => {
-                let deletable = matches!((b.ty, b.status_str()), (DocType::Intent, "closed"));
+                let deletable = deletion_allowed(config, b);
                 if !deletable && !head.files.contains(&b.path) {
                     out.push(Diag {
                         path: b.path.clone(),

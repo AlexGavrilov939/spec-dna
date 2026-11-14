@@ -53,7 +53,7 @@ codes! {
     KeyDuplicate = "SD204", "key-duplicate", Error, "Rename one of the requirements. The keys in a document must be unique.";
     FrontMatterSyntax = "SD301", "front-matter-syntax", Error, "Use the front matter subset: `key: value` lines, where each value is a string or a list of strings.";
     FrontMatterField = "SD302", "front-matter-field", Error, "Give the field a string or a list of strings.";
-    TypeInvalid = "SD303", "type-invalid", Error, "Use a type of the root and of the `types` list of spec-dna.toml (without the list: product, system, terms, roadmap, questions, rule, requirements, interface, decision, procedure, incident, research, intent, spec, plan), or add the type to the list. The message names the new type of a type of 0.5.";
+    TypeInvalid = "SD303", "type-invalid", Error, "Use a type of the root and of the `types` list of spec-dna.toml (without the list: product, system, terms, roadmap, questions, rule, requirements, interface, decision, procedure, incident, research, intent, spec, plan), or add the type to the list. If no layer has the type, run `spec-dna layer add <name> --types <type>`. The message names the new type of a type of 0.5.";
     StatusInvalid = "SD304", "status-invalid", Error, "Set a `status` that the document type allows.";
     SectionMissing = "SD305", "section-missing", Error, "Add the required section heading.";
     PlaceholderLeft = "SD306", "placeholder-left", Error, "Replace the template placeholder (`{{...}}`) with the text of the document.";
@@ -61,7 +61,7 @@ codes! {
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
-    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, such as a progress section) can change in place. As an alternative, write a decision that supersedes this one.";
+    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, default `Status`) can change in place. As an alternative, write a decision that supersedes this one.";
     AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. For a harness file or the model-team line, delete it first. Put your own text outside of the generated text.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
     ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";
@@ -77,7 +77,7 @@ codes! {
     RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, rules, decisions and procedures that the incident involves, with `[[<id>]]` or a Markdown link.";
     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
-    DecisionLinksChange = "SD611", "decision-links-change", Warning, "Link the decision from the intent instead. An intent can be deleted when it is closed, but the frozen text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent in an amendment or a live section.";
+    DecisionLinksChange = "SD611", "decision-links-change", Warning, "Link the decision from the intent instead. A finished intent can be deleted (SD202 allows it), but the frozen text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent in an amendment or a live section.";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
