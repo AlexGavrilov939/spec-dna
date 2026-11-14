@@ -16,6 +16,7 @@ mod git;
 mod glob;
 mod harness;
 mod hash;
+mod hook;
 mod index;
 mod init;
 mod json;
@@ -113,6 +114,13 @@ reports a stale index (SD610).",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
 episode of agent transcripts. It prints counts and ids only.",
+    ),
+    (
+        "hook",
+        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]",
+        "Runs a hook of a coding agent. It reads one JSON object from stdin,
+prints JSON only when the agent must see a message, and exits with 0.
+It reads no configuration.",
     ),
 ];
 
@@ -265,7 +273,13 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args(std::env::args().skip(1).collect()) {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    // A hook has its own flags and always exits with 0.
+    if argv.first().map(String::as_str) == Some("hook") {
+        hook::run(&argv[1..]);
+        return ExitCode::SUCCESS;
+    }
+    let args = match parse_args(argv) {
         Ok(a) => a,
         Err(e) => return fail(&e),
     };
