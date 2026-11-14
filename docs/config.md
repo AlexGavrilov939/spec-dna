@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3). Thus a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.4.2"              # required: the pinned version
+spec-dna = "0.5.0"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
@@ -11,7 +11,7 @@ self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repositor
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
 
 [spec-dna-sha256]               # optional: the release assets of the pin, and their SHA-256 sums
-"spec-dna-0.4.2-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
 
 [rules]                         # severity overrides (docs/profiles.md)
 drift = "error"                 # a rule group, or a code such as SD704
@@ -56,6 +56,23 @@ platform = "https://example.org/platform.git"   # alias for `platform:<namespace
 [conventions]                   # sections that state the project conventions, per type
 contract = ["docs/README.md#contract-changes"]
 decision = ["docs/adr/README.md#how-to-amend"]
+
+[harness]                       # the agent harness (docs/harness.md)
+level = "lean"                  # required in the table: "none", "lean" or "full"
+deny = ["NotebookEdit"]         # tools that no generated agent gets (default [])
+context-meter = [300000, 600000]  # context sizes of the main session for the hook; [] = off
+subagent-meter = 250000         # context size of a subagent for the hook; 0 = off
+fanout-cap = 10                 # agents that a workflow can start before the hook asks; 0 = off
+
+[harness.roles]                 # a role that is not here takes its default
+orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
+advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
+reviewer = { claude-code = "opus", effort = "high" }
+researcher = { claude-code = "haiku", effort = "high" }
+helper = { claude-code = "haiku" }
+
+[harness.efforts]               # the effort for each model, after a /model selection
+sonnet = "high"
 ```
 
 ## Keys
@@ -96,6 +113,14 @@ decision = ["docs/adr/README.md#how-to-amend"]
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
+| `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
+| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them. |
+| `harness.deny` | list of strings | `[]` | Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
+| `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
+| `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
+| `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
+| `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
+| `harness.efforts` | table | `{ sonnet = "high" }` | The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 
 ## Details of keys
 
@@ -150,21 +175,56 @@ The value of a type is a list of pointers. Each pointer names a section of a pro
 
 When a target of `context` is a document of that type, `context` serves these sections first. The sections of files that are not documents come before the sections of documents (`"type": "file"` in `--json`). `show --conventions <type>` prints the sections. `show <path>#<anchor>` prints one section of such a file.
 
+## The table `harness`
+
+[ADR 0004](adr/0004-harness.md) gives the roles. [docs/harness.md](harness.md) gives the generated files and the hooks.
+
+`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `reviewer`, `researcher`, `implementer`, `spec-writer` and `helper`.
+
+| Key | Roles | Meaning |
+| --- | --- | --- |
+| `claude-code` | all | The model for Claude Code: an alias (`opus`, `sonnet`, `haiku`, `fable`), a model id, `inherit` or `none`. `none` disables the role. `inherit` gives the agent file `model: inherit`; for the orchestrator and the helper it writes no key. A later adapter adds its own key, for example `codex`. |
+| `effort` | all but `helper` | `low`, `medium`, `high`, `xhigh`, `max` or `inherit` (no effort is written). For the advisor, it is the effort of the `fallback-advisor` agent. |
+| `agent` | `advisor` | The model of the `fallback-advisor` agent: a model or `none` (no agent file). Default `opus`. |
+| `fallback` | `orchestrator` | The models of `fallbackModel` in `.claude/settings.json`, in order. Default `["opus", "sonnet"]`. `[]` writes no `fallbackModel`. |
+
+The defaults:
+
+| Role | Model | Effort | Levels |
+| --- | --- | --- | --- |
+| `orchestrator` | `opus` | `xhigh` | `lean`, `full` |
+| `advisor` | `fable` (agent: `opus`) | `xhigh` (agent) | `lean`, `full` |
+| `reviewer` | `opus` | `high` | `lean`, `full` |
+| `researcher` | `haiku` | `high` | `lean`, `full` |
+| `implementer` | `sonnet` | `high` | `full` |
+| `spec-writer` | `sonnet` | `high` | `full` |
+| `helper` | `haiku` | none | `lean`, `full` |
+
+A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in level full. These rules apply to the values:
+
+- A model is a string that is not empty and has no spaces.
+- The orchestrator cannot be `none`, and its effort cannot be `max`. The advisor model cannot be `inherit`, and cannot be `haiku` in any letter case.
+- A value in `[harness.efforts]` cannot be `max`.
+- For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` reports it.
+- The advisor should not be a weaker model than the orchestrator. If it is weaker, the configuration is still valid, and `init` prints a warning. spec-dna ranks the known aliases from strong to weak: `fable`, `opus`, `sonnet`, `haiku`.
+
+An unknown key in `[harness]` is an error, as in the rest of the file. `spec-dna init` writes the table, and `spec-dna check` compares the generated files with it (SD501, SD502, SD504 and SD505).
+
 ## The table `spec-dna-sha256`
 
 [ADR 0003](adr/0003-distribution.md) (amendment "phase 2") gives the form of this table. Each release has the file `spec-dna-pin.toml`. It has the key `spec-dna` and the full table of that release. Copy both into `spec-dna.toml`. You can remove the lines of the targets that your project does not use.
 
 ```toml
-spec-dna = "0.4.2"
+spec-dna = "0.5.0"
 
 [spec-dna-sha256]
-"spec-dna-0.4.2-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
-"spec-dna-0.4.2-aarch64-pc-windows-gnullvm.exe" = "<...>"
-"spec-dna-0.4.2-aarch64-unknown-linux-gnu" = "<...>"
-"spec-dna-0.4.2-x86_64-apple-darwin" = "<...>"
-"spec-dna-0.4.2-x86_64-pc-windows-gnu.exe" = "<...>"
-"spec-dna-0.4.2-x86_64-unknown-linux-gnu" = "<...>"
-"spec-dna-0.4.2-x86_64-unknown-linux-musl" = "<...>"
+"spec-dna-0.5.0-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.5.0-aarch64-pc-windows-gnullvm.exe" = "<...>"
+"spec-dna-0.5.0-aarch64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.5.0-x86_64-apple-darwin" = "<...>"
+"spec-dna-0.5.0-x86_64-pc-windows-gnu.exe" = "<...>"
+"spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.5.0-x86_64-unknown-linux-musl" = "<...>"
 ```
 
 - If the pin is the version of the binary, each command validates the table. Each key must be a release asset of that version: one of the 7 targets, with `.exe` for the 2 Windows targets. Each value must be 64 lowercase hexadecimal characters. A table error is a configuration error (exit code 3).

@@ -521,6 +521,15 @@ impl Git {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }
 
+    /// Returns true if an ignore rule of git matches the path. A tracked
+    /// file is never ignored.
+    pub fn is_ignored(&self, path: &str) -> bool {
+        self.cmd(&["check-ignore", "-q", "--", path])
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
     pub fn is_tracked(&self, path: &str) -> bool {
         self.run(&["ls-files", "--error-unmatch", "--", path])
             .is_ok()

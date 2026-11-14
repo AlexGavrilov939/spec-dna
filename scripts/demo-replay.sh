@@ -68,8 +68,13 @@ start=$(block Start)
     eval "$start"
 ) || fail "the Start block of the quickstart failed"
 [ "$(gitc log --format=%s -1)" = "build: adopt spec-dna" ] || fail "the Start block did not commit"
+# The spec-dna line and the model-team line of the lean harness.
 added=$(diff <(printf '%s\n' "$before_claude") CLAUDE.md | grep -c '^> .' || true)
-[ "$added" = 1 ] || fail "init added $added non-empty lines to CLAUDE.md, not 1"
+[ "$added" = 2 ] || fail "init added $added non-empty lines to CLAUDE.md, not 2"
+grep -q '^Model team: ' CLAUDE.md || fail "init wrote no model-team line"
+for f in checker Explore fallback-advisor model-team; do
+    [ -f ".claude/agents/$f.md" ] || fail "init wrote no .claude/agents/$f.md"
+done
 grep -q '@' CLAUDE.md && fail "init wrote an import into CLAUDE.md"
 [ -e AGENTS.md ] && fail "init created AGENTS.md next to an existing CLAUDE.md"
 bytes=$(spec-dna init | sed -n 's/^per-request prefix: \([0-9]*\) bytes.*/\1/p')
@@ -119,6 +124,7 @@ spec-dna init
 gitc diff --stat
 grep -q "<!-- spec-dna v$nextv h:" CLAUDE.md || fail "init did not regenerate the CLAUDE.md line"
 grep -q "spec-dna:begin skill v$nextv" .claude/skills/spec-dna/SKILL.md || fail "init did not regenerate the skill"
+grep -q "<!-- spec-dna harness v$nextv h:" .claude/agents/checker.md || fail "init did not regenerate the harness files"
 spec-dna check
 gitc commit -q -am "build: upgrade spec-dna to $nextv"
 use current
@@ -133,6 +139,10 @@ grep -q "<!-- spec-dna v$version h:" CLAUDE.md || fail "the rollback did not res
 
 step "step 6: uninstall"
 docs_before=$(gitc ls-files -s docs)
+# The quickstart first turns the harness off with `init --reconfigure`.
+printf 'harness = "none"\n' >"$work/none.toml"
+spec-dna init --reconfigure --answers "$work/none.toml"
+[ -e .claude/agents/checker.md ] && fail "init --reconfigure did not remove the agent files"
 uninstall=$(block Uninstall | grep -v '^cargo uninstall')
 [ -n "$uninstall" ] || fail "no sh block under \"## Uninstall\" in the quickstart"
 eval "$uninstall"
@@ -140,7 +150,9 @@ eval "$uninstall"
 gitc add -A
 [ "$(gitc ls-files -s docs)" = "$docs_before" ] || fail "the uninstall changed a document"
 gitc diff --cached --name-status | tee "$work/uninstall.txt"
-if grep -v -E '^D[[:space:]]+(spec-dna\.toml|\.claude/skills/spec-dna/SKILL\.md)$|^M[[:space:]]+CLAUDE\.md$' "$work/uninstall.txt"; then
+# The harness agent files go. `.claude/settings.json` stays, because it can
+# hold keys of the project.
+if grep -v -E '^D[[:space:]]+(spec-dna\.toml|\.claude/skills/spec-dna/SKILL\.md|\.claude/agents/[A-Za-z-]+\.md)$|^M[[:space:]]+(CLAUDE\.md|\.claude/settings\.json)$' "$work/uninstall.txt"; then
     fail "the uninstall changed other files"
 fi
 grep -rl 'spec-dna' docs && fail "a document refers to spec-dna"

@@ -160,6 +160,191 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "harness": {
+      "description": "The agent harness (ADR 0004): generic agent roles, and the files that `init` writes for Claude Code. No table is the same as level `none`. See docs/harness.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level"
+      ],
+      "properties": {
+        "level": {
+          "description": "`none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them.",
+          "enum": [
+            "none",
+            "lean",
+            "full"
+          ]
+        },
+        "deny": {
+          "description": "Tools that spec-dna removes from the `tools` list of each generated agent, and writes to `permissions.deny` of `.claude/settings.json`. A list that removes each tool of a generated agent is an error. Default: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\S+$"
+          }
+        },
+        "context-meter": {
+          "description": "The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. Ascending, each above 0. An empty list turns the main-session meter off. Default `[300000, 600000]`.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          }
+        },
+        "subagent-meter": {
+          "description": "The context size of a subagent, in tokens, at which the hook `context-meter` tells it its size. 0 turns it off. Default 250000.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "fanout-cap": {
+          "description": "The number of agents that a workflow can start before the hook `fanout-cap` asks the person. 0 turns it off. Default 10.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "roles": {
+          "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "orchestrator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The orchestrator cannot be `none`.",
+                  "not": {
+                    "const": "none"
+                  }
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort-main"
+                },
+                "fallback": {
+                  "description": "The models of `fallbackModel`, in order. Default `[\"opus\", \"sonnet\"]`. An empty list writes no `fallbackModel`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^\\S+$",
+                    "not": {
+                      "enum": [
+                        "none",
+                        "inherit"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "advisor": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The advisor cannot be `haiku`, a model id with `haiku` in it, or `inherit`.",
+                  "not": {
+                    "enum": [
+                      "haiku",
+                      "inherit"
+                    ]
+                  }
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                },
+                "agent": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the `fallback-advisor` agent. `none` writes no agent file. Default `opus`."
+                }
+              }
+            },
+            "reviewer": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "researcher": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "implementer": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "spec-writer": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "helper": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). `inherit` writes no `CLAUDE_CODE_SUBAGENT_MODEL`."
+                }
+              }
+            }
+          }
+        },
+        "efforts": {
+          "description": "The effort for each model alias, in `modelSettings` of `.claude/settings.json`. A `/model` switch uses it. Default `{ sonnet = \"high\" }`.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S+$"
+          },
+          "additionalProperties": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "inherit"
+            ]
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -416,6 +601,31 @@
         "lite",
         "standard",
         "strict"
+      ]
+    },
+    "harness-model": {
+      "description": "An alias, a model id, `inherit` or `none`.",
+      "type": "string",
+      "pattern": "^\\S+$"
+    },
+    "harness-effort": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "inherit"
+      ]
+    },
+    "harness-effort-main": {
+      "description": "The effort of the main model. `max` is not allowed.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "inherit"
       ]
     }
   }

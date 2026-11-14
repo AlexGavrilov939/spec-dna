@@ -62,9 +62,11 @@ codes! {
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
     DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, such as a progress section) can change in place. As an alternative, write a decision that supersedes this one.";
-    AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. Put your own text outside of the generated block.";
+    AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. For a harness file or the model-team line, delete it first. Put your own text outside of the generated text.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
     ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";
+    HarnessMissing = "SD504", "harness-missing", Error, "Run `spec-dna init` to write the harness files. To keep a file of your own, rename its agent or set the role to \"none\" in [harness.roles].";
+    HarnessSettingsInvalid = "SD505", "harness-settings-invalid", Error, "Make .claude/settings.json valid JSON, with the value types that the message names. spec-dna cannot check the harness settings in a file that it cannot read.";
     TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.";
     AnchorMissing = "SD602", "anchor-missing", Warning, "Link to an existing heading anchor or requirement key.";
     CrossRepoUnpinned = "SD603", "cross-repo-unpinned", Warning, "A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.";

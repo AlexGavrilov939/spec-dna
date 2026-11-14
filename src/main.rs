@@ -28,7 +28,9 @@ mod evidence;
 mod frontmatter;
 mod git;
 mod glob;
+mod harness;
 mod hash;
+mod hook;
 mod index;
 mod init;
 mod json;
@@ -58,11 +60,12 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "init",
         "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]",
-        "Detects the repository, asks at most 8 questions with the detected
+        "Detects the repository, asks at most 10 questions with the detected
 defaults, shows spec-dna.toml and the files to change, and writes them
 after a confirmation. Without a terminal, it uses the defaults. If
-spec-dna.toml exists, it updates the agent adapters only, unless
---reconfigure is set.",
+spec-dna.toml exists, it updates the agent adapters, and the harness
+files if the file has a [harness] table, unless --reconfigure is set.
+With --reconfigure, it asks the questions again.",
     ),
     (
         "check",
@@ -132,6 +135,13 @@ reports a stale index (SD610).",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
 episode of agent transcripts. It prints counts and ids only.",
+    ),
+    (
+        "hook",
+        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]",
+        "Runs a hook of a coding agent. It reads one JSON object from stdin,
+prints JSON only when the agent must see a message, and exits with 0.
+It reads no configuration.",
     ),
 ];
 
@@ -287,7 +297,21 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args(std::env::args().skip(1).collect()) {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    // A hook has its own flags and always exits with 0.
+    if argv.first().map(String::as_str) == Some("hook") {
+        // Without a hook name, or with a help flag, print the help.
+        if matches!(
+            argv.get(1).map(String::as_str),
+            None | Some("--help" | "-h")
+        ) {
+            println!("{}", command_usage("hook").unwrap_or_default());
+            return ExitCode::SUCCESS;
+        }
+        hook::run(&argv[1..]);
+        return ExitCode::SUCCESS;
+    }
+    let args = match parse_args(argv) {
         Ok(a) => a,
         Err(e) => return fail(&e),
     };
@@ -429,6 +453,83 @@ fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, Stri
     Ok(out)
 }
 
+/// Reads the harness files of a snapshot: (path, text). The working tree reads
+/// the files from disk, because the snapshot lists untracked files in the
+/// document roots only. A gate against `--base` reads tracked files only. The
+/// git index (`--staged`) and a commit read the blobs of the snapshot, so an
+/// edit that is not staged does not count.
+fn harness_texts(
+    repo: &Repo,
+    snap: &Snapshot,
+    untracked: bool,
+) -> Result<Vec<(String, String)>, Fatal> {
+    let mut paths: Vec<String> = snap
+        .files
+        .iter()
+        .filter(|e| harness::wanted(&e.path))
+        .map(|e| e.path.clone())
+        .collect();
+    let mut out = Vec::new();
+    if snap.worktree {
+        if untracked {
+            let st = repo
+                .git
+                .status(
+                    &[
+                        format!(":(literal){}", harness::CLAUDE),
+                        ":(literal).claude".to_string(),
+                    ],
+                    true,
+                )
+                .map_err(Fatal::Io)?;
+            paths.extend(st.untracked.into_iter().filter(|p| harness::wanted(p)));
+            paths.sort();
+            paths.dedup();
+        }
+        for p in paths {
+            if let Ok(t) = std::fs::read_to_string(repo.root.join(&p)) {
+                out.push((p, t));
+            }
+        }
+        return Ok(out);
+    }
+    let ids: Vec<(String, String)> = paths
+        .into_iter()
+        .filter_map(|p| {
+            snap.blob_of(&p)
+                .and_then(|e| e.blob.clone())
+                .map(|b| (p, b))
+        })
+        .collect();
+    let blobs = repo
+        .git
+        .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
+        .map_err(Fatal::Io)?;
+    for (p, b) in ids {
+        if let Some(bytes) = blobs.get(&b) {
+            out.push((p, String::from_utf8_lossy(bytes).into_owned()));
+        }
+    }
+    Ok(out)
+}
+
+/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
+/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
+/// configuration that does not parse.
+fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+    let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
+        return Ok(None);
+    };
+    let blobs = repo
+        .git
+        .read_blobs(std::slice::from_ref(&blob))
+        .map_err(Fatal::Io)?;
+    Ok(blobs
+        .get(&blob)
+        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok())
+        .and_then(|c| c.harness))
+}
+
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     // With `--staged`, the head tree is the git index. Each read of the head
@@ -558,6 +659,36 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.head.push(d);
         outcome.new.push(is_new);
     }
+    if let Some(h) = cfg
+        .harness
+        .as_ref()
+        .filter(|h| h.level != harness::Level::None)
+    {
+        let head_files = harness_texts(repo, &head_snap, untracked)?;
+        let head_hd = check::apply_severity(&cfg, harness::check(h, &head_files));
+        // A base without any harness file has nothing to compare: the harness
+        // is new in this change, so each finding of the head is new.
+        let base_hd: Vec<_> = if use_base {
+            let base_files = harness_texts(repo, &base_snap, false)?;
+            // The base findings use the configuration of the base, so a
+            // change of `[harness]` makes new drift. A base with no
+            // `[harness]`, or with a configuration that does not parse, has
+            // no findings.
+            match base_harness(repo, &base_snap)? {
+                Some(bh) if harness::is_installed(&base_files) => {
+                    check::apply_severity(&cfg, harness::check(&bh, &base_files))
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        for d in head_hd {
+            let is_new = !base_hd.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
     if let Some(c) = &base_commit
         && let Some(d) = config_not_alone(repo, &cfg, c, untracked)?
     {
@@ -651,8 +782,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
-/// `init` writes with it (the adapters and files named `spec-dna*`) do not
-/// count, and a new `spec-dna.toml` (the adoption) is not checked.
+/// `init` writes with it (the adapters, the harness files, the hook files
+/// that `init` writes or upgrades, and files named `spec-dna*`) do not count,
+/// and a new `spec-dna.toml` (the adoption) is not checked.
 fn config_not_alone(
     repo: &Repo,
     cfg: &config::Config,
@@ -672,6 +804,8 @@ fn config_not_alone(
         .filter(|p| {
             *p != config::FILE_NAME
                 && !adapters::PATHS.contains(p)
+                && !harness::is_output_path(p)
+                && !init::HOOK_FILES.contains(p)
                 && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
         })
         .collect();
