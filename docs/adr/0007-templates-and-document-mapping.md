@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0007. Templates and the mapping of standard documents
@@ -31,13 +31,6 @@ Evidence (the details stay outside this repository):
 3. Few types, each with a lifetime of its own. Standard documents are templates of these types, in a template language with logic, such as Jinja.
 4. As option 3, but each template is plain Markdown with `{{text}}` placeholders. spec-dna ships templates, and a project adds its own in a folder outside every root.
 
-| Option | Types | A project can change a form | New syntax or dependency | Cost to agents |
-| --- | --- | --- | --- | --- |
-| 1 | One for each standard document, with no end to the list | Only by a release | None | High: more types to learn and to choose from |
-| 2 | Those of the framework | As the framework allows | The tool of the framework | Process text in the search path |
-| 3 | 15 | Yes | A template engine, and braces with 2 senses | Low |
-| 4 | 15 | Yes | None | Low |
-
 ## Decision Outcome
 
 Chosen option: 4.
@@ -55,7 +48,7 @@ Chosen option: 4.
 - A standard document with parts of different lifetimes splits. Each part goes to the type of its lifetime. For example, a threat model is `research`, and each mitigation is a `rule`.
 - A standard document that differs from a type only by its sections is a template of that type. Its sections never make a new type. Its headings map by `required-sections`, as the headings of a Nygard ADR do.
 - This ADR adds no type. A later type needs an ADR that names its lifecycle, its layer, or a check that no root key can give.
-- The [mapping table](../design/0.6.0.md#mapping-of-standard-documents) of the design page holds the rows. This ADR does not copy them.
+- The [mapping table](../design/0.6.0.md#mapping-of-standard-documents) of the design page holds the rows.
 
 ### Runbook, PRD and RFC
 
@@ -68,21 +61,17 @@ Chosen option: 4.
 
 ### Shipped templates
 
-- spec-dna embeds the templates of the [Templates table](../design/0.6.0.md#templates). Each type that `new` writes has one default template. Its name is the name of the type, except `madr` for `decision` and `post-mortem` for `incident`. `new <type>` writes a top file such as `docs/terms.md`, and `init` writes no top file.
+- spec-dna embeds the templates of the [Templates table](../design/0.6.0.md#templates). Each type that `new` writes has one default template.
 - Each shipped template is in the words of spec-dna. `madr` adapts the minimal template of MADR 4.0.0 under its MIT licence. No template copies share-alike or paid text.
 - A shipped template stays small, because each new document starts from it. A test parses each shipped template as its type, and checks its required sections and its size.
 
 ### Project templates
 
-- `[templates] dir` names the folder of the project templates. The default is `.spec-dna/templates`.
-- The folder is outside every root, or an `exclude` glob removes it, as for a convention file (ADR 0001, amendment of 2026-11-13 for 0.3.3). Otherwise the configuration is not valid (exit code 3). `init` writes that `exclude` for a root with the path `.`.
-- A project template is a file `<name>.md`. Its front matter names its `type`.
-- `new <type> <id> --template <name>` reads `<dir>/<name>.md` first, and then the shipped template of that name. Without `--template`, `new` uses the default template of the type.
-- Thus a project file with the name of a shipped template replaces it: `madr.md` replaces the default template of `decision`.
-- `new` stops with exit code 2 when no template has the name, or when the `type` of the template is not `<type>`.
-- `new` copies the template, sets `status` to the first status of the type, and writes the title of the id as the first H1. The `type` line stays.
-- `new` removes `was-type` from the copy. This field marks a document that `upgrade` migrated, and SD202 allows the deletion of such a document.
-- spec-dna does not check a project template. The document that `new` writes gets the usual checks, such as SD305 and SD306. The document does not record its template.
+- `[templates] dir` (default `.spec-dna/templates`) holds the project templates. The folder is outside every root, or an `exclude` glob removes it, as for a convention file (ADR 0001, amendment of 2026-11-13 for 0.3.3).
+- A project template is a file `<name>.md` whose front matter names its `type`. A project file with the name of a shipped template replaces it.
+- The [Templates](../design/0.6.0.md#templates) section gives the exit codes and the edits that `new` makes to the copy.
+- `new` removes `was-type` from the copy, because SD202 allows the deletion of a document with that field.
+- spec-dna does not check a project template. The document that `new` writes gets the usual checks, such as SD305 and SD306.
 
 ### Placeholders
 
@@ -92,31 +81,28 @@ Chosen option: 4.
 
 ### Documents that `finish` writes
 
-- `finish` applies an `ADD` line to a `requirements` document that does not exist. Then it writes a minimal document, not a template copy.
-- The document has front matter with the status `active`, the H1 from the id, a `Requirements` section and the `ADD` items. It has no placeholder.
+- For an `ADD` line to a `requirements` document that does not exist, `finish` writes a minimal document with no placeholder, not a template copy. [Finish](../design/0.6.0.md#finish), step 4, gives its content.
 - `new` starts a document that a person writes. Thus it has placeholders and the first status of the type, and SD306 stops the gate until the author replaces them.
 - `finish` writes only text that an approved spec holds. Thus it reads no template, and a project template cannot add a placeholder to the result.
 
 ### Decision template
 
 - `madr` has a `Status` section. The default of `live-sections` for `decision` is `Status`, so this section can change after the outcome is locked.
-- `Status` comes before `Amendments`. Thus an amendment that an author adds at the end of the file stays outside the live section, and SD405 and SD605 apply to it.
+- `Status` comes before `Amendments`. Thus an amendment at the end of the file stays outside the live section, and SD405 and SD605 apply to it.
 - The `Status` section records the state of the work that the decision starts, and spec-dna does not read its words. The front matter `status` records the lifecycle of the decision. spec-dna reads only this field, or the default of the root.
 - A Nygard record keeps its lifecycle word in a `Status` section. In a new root, that section is live, so an author can write "Superseded by" in place without SD405.
-- `upgrade` writes `live-sections = {}` for each root that has no such key. Thus no 0.5 decision gets a live section that it did not have.
 
 ### Post-mortem template and evals
 
 - `post-mortem` has an `Eval` section with a placeholder, so SD306 stops the gate until the author replaces the placeholder. The author links the eval file in `[evals] dir` (SD102 checks the path), or writes why the incident has no eval.
-- SD918 ([ADR 0006](0006-change-lifecycle.md)) reads the diff. It warns about a change that adds an incident and adds or edits no file in `[evals] dir`. It applies only when the configuration has `[evals]`.
+- SD918 ([ADR 0006](0006-change-lifecycle.md)) warns about a change that adds an incident and no eval ([Incidents](../design/0.6.0.md#incidents)).
 - These rules apply the owner decision that every incident adds an eval.
-- `Follow-ups` is a task list. An open item (`- [ ]`) puts the incident in the Maintain stage, and `status` lists it as an open follow-up.
-- A lesson moves up by a new intent with `from:` that names the incident. The author checks the item (`- [x]`) when the follow-up is complete.
+- `Follow-ups` is a task list. An open item puts the incident in the Maintain stage, and a lesson moves up by an intent with `from:` ([Stage derivation](../design/0.6.0.md#stage-derivation)).
 
 ### Rejected
 
 - One type for each standard document (an RFC type, a PRD type, a runbook type). An RFC, a PRD and an intent have one lifecycle, and a runbook and a guide have another. New types add statuses, places, budgets, configuration keys and `upgrade` steps. They add no check that `required-sections` cannot give. Teams use many names for one form, so the list of types has no end.
-- The layout of another framework, with no change. Spec Kit numbers its change folders, and ADR 0001 rejects counters. OpenSpec keeps each finished change in an archive folder in the tree, so process text stays in the search path. BMAD stores process output, not a current truth. arc42 has many sections and a share-alike licence.
+- The layout of another framework, with no change. It needs the tool of the framework. Spec Kit numbers its change folders, and ADR 0001 rejects counters. OpenSpec keeps each finished change in an archive folder in the tree, so process text stays in the search path. BMAD stores process output, not a current truth. arc42 has many sections and a share-alike licence.
 - A template language with logic (such as Jinja). It adds a dependency and a syntax that authors and agents must learn. `{{ x }}` is a Jinja expression and not a placeholder, so one pair of braces would have 2 senses. Logic also hides the form of the document.
 - Templates only inside the binary. A project cannot change its sections, its heading aliases or the language of its documents. Each change of a form would need a release of spec-dna.
 - Templates inside a document root. There a template is a document: it gets an id, SD306 errors, a budget and link checks, and `context` can serve it as truth. An `exclude` glob is a second step that a project can forget.
@@ -132,9 +118,9 @@ Chosen option: 4.
 - Good: no new dependency and no new syntax. SD306 keeps its sense.
 - Bad: `finish` deletes the text of a PRD or an RFC. A permanent part that the author does not move stays only in git, and `spec-dna log` lists the change.
 - Bad: the word "status" names the front matter field and the live section. The `madr` template says which is which.
-- Bad: spec-dna does not check a project template. A template without a required section gives SD305 on each new document.
+- Bad: a project template without a required section gives SD305 on each new document.
 - Bad: a root that requires more sections of `requirements` gets SD305 on a document that `finish` writes. The author adds the sections before the commit.
-- Bad: a project without `[evals]` gets no SD918. There, only the `Eval` section of the template asks for an eval.
+- Bad: an upgraded project, or a project that answers `none` at question 14, gets no SD918. There, only the `Eval` section of the template asks for an eval.
 - Neutral: the shipped templates are in English. A root with another `language` or other heading aliases needs its own templates, and a project can write them.
 - Neutral: a former runbook gets the larger budget of `procedure`. It keeps the required section `Steps` only in a root that held only runbooks, because `upgrade` writes `required-sections` there.
 
