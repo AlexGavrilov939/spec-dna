@@ -890,6 +890,12 @@ fn destination(
                     ty.name()
                 )));
             }
+            if config.layers.layer_of_type(ty).is_none() {
+                return Err(Fatal::Usage(format!(
+                    "no layer of spec-dna.toml has type `{0}`, so the move would give the new document SD303; nothing changed. Run `spec-dna layer add {0} --types {0}`, then run this command again",
+                    ty.name()
+                )));
+            }
             Ok((None, path, id, ty))
         }
     }

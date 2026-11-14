@@ -1449,6 +1449,9 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         new.dir_key =
             Some(layer::check_dir(d).map_err(|e| Fatal::Usage(format!("--dir: `{d}` {e}")))?);
     }
+    for file in &f.files {
+        layer::check_file(file).map_err(|e| Fatal::Usage(format!("--files {e}")))?;
+    }
     new.files = f.files.clone();
     new.paths = f.paths.clone();
     let dedup = |v: &[String]| {
@@ -1544,7 +1547,11 @@ fn layer_list(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let mut placed = Vec::new();
     for d in &c.docs {
         let rel = cfg.roots[d.root].rel(&d.path);
-        let p = g.placement(rel, d.ty);
+        let p = if d.untyped {
+            None
+        } else {
+            g.placement(rel, d.ty)
+        };
         match p {
             Some((i, r)) => counts[i][rules.iter().position(|&x| x == r).unwrap_or(0)] += 1,
             None => unplaced += 1,

@@ -106,7 +106,7 @@ sonnet = "high"
 | `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). See [The table `layers`](#the-table-layers). |
 | `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
 | `layers.<name>.dir` | string | the name of the layer | The folder of the layer, relative to the root. No 2 layers have the same folder. |
-| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. A layer with `files` has no `dir`. |
+| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no leading `/`, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
 | `layers.<name>.paths` | list of globs | `[]` | Globs, relative to the root. A document that matches belongs to this layer, also when its type is in another layer. The first layer in the file that matches wins. |
 | `layers.<name>.moves-to` | list of strings | `[]` | The layers that the text of this layer matures into. Each name is a layer of `[layers]`. The edges have no cycle. |
 | `layers.<name>.linked-from` | list of strings | `[]` | The layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`. |
@@ -220,6 +220,7 @@ The graph has these rules. A break of a rule is a configuration error (exit code
 - A type is in one layer at most.
 - Each name in `moves-to` and in `linked-from` is a layer of `[layers]`.
 - A layer has `files` or `dir`, not both.
+- An entry of `files` is a relative path inside the root, and no 2 layers have the same file.
 - No 2 layers have the same folder. A layer with no `dir` has the folder of its name.
 - A layer has only the keys of the table above.
 

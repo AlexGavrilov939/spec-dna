@@ -135,6 +135,9 @@ impl Layer {
                 return Err(format!("`{prefix}{key}` has an empty entry"));
             }
         }
+        for file in &l.files {
+            check_file(file).map_err(|e| format!("`{prefix}files` {e}"))?;
+        }
         l.moves_to = dedup(f.opt_strs("moves-to")?);
         l.linked_from = dedup(f.opt_strs("linked-from")?);
         if let Some(k) = f.opt_str("keep")? {
@@ -168,6 +171,22 @@ pub fn check_dir(dir: &str) -> Result<String, String> {
         return Err("must be a plain folder inside the root, such as `requirements`".to_string());
     }
     Ok(d.to_string())
+}
+
+/// Checks one entry of `files`: a path inside the root, such as `terms.md`.
+/// The error continues the sentence "`files` ...".
+pub fn check_file(file: &str) -> Result<(), String> {
+    let f = file.trim_start_matches("./");
+    if f.is_empty()
+        || f.starts_with('/')
+        || f.contains(['\\', ':'])
+        || f.split('/').any(|s| s.is_empty() || s == "." || s == "..")
+    {
+        return Err(format!(
+            "has the entry `{file}`: it must be a relative path inside the root, such as `terms.md`, with no `..`, no `\\` and no `:`"
+        ));
+    }
+    Ok(())
 }
 
 fn dedup(v: Vec<String>) -> Vec<String> {
@@ -229,6 +248,18 @@ impl Graph {
                         l.name,
                         ty.name(),
                         o.name
+                    ));
+                }
+            }
+            for file in &l.files {
+                let f = file.trim_start_matches("./");
+                if let Some(o) = layers[..i]
+                    .iter()
+                    .find(|o| o.files.iter().any(|x| x.trim_start_matches("./") == f))
+                {
+                    return Err(format!(
+                        "`layers.{}.files`: the file `{file}` is already a top file of layer `{}`",
+                        l.name, o.name
                     ));
                 }
             }
@@ -811,7 +842,7 @@ struct Splice {
 /// - The list does not exist and the layer is a table with a header: the
 ///   insertion is a new line after the header.
 /// - Another form, with no list: the error asks for a hand edit.
-fn edge_splice(text: &str, name: &str, target: &str) -> Result<Splice, String> {
+fn edge_splice(text: &str, name: &str, target: &str, eol: &str) -> Result<Splice, String> {
     let by_hand = || {
         format!(
             "`layers.{name}` has no `moves-to` key and is not written as a table with a header: add `moves-to = [\"{target}\"]` to it by hand"
@@ -852,11 +883,11 @@ fn edge_splice(text: &str, name: &str, target: &str) -> Result<Splice, String> {
     }
     let (at, lead) = match text[start..].find('\n') {
         Some(i) => (start + i + 1, ""),
-        None => (text.len(), "\n"),
+        None => (text.len(), eol),
     };
     Ok(Splice {
         at,
-        text: format!("{lead}moves-to = [{}]\n", quote(target)),
+        text: format!("{lead}moves-to = [{}]{eol}", quote(target)),
     })
 }
 
@@ -893,12 +924,14 @@ pub fn add_layer(
     }
     layers.push(new.clone());
     let expected = Graph::new(layers.clone())?;
+    // Each line that this function writes ends as the lines of the file.
+    let eol = line_ending(text);
     let mut out;
     if declared {
         let mut splices = Vec::new();
         for from in moved_from {
             // A layer that has the new layer already cannot happen: the name is new.
-            splices.push(edge_splice(text, from, &new.name)?);
+            splices.push(edge_splice(text, from, &new.name, eol)?);
         }
         // From the end of the text to its start: an offset stays valid.
         splices.sort_by_key(|s| std::cmp::Reverse(s.at));
@@ -906,10 +939,10 @@ pub fn add_layer(
         for s in splices {
             out.insert_str(s.at, &s.text);
         }
-        append_tables(&mut out, &render_table(&new));
+        append_tables(&mut out, &render_table(&new), eol);
     } else {
         out = text.to_string();
-        append_tables(&mut out, &render_graph(&expected));
+        append_tables(&mut out, &render_graph(&expected), eol);
     }
     let read = crate::config::Config::parse(&out).map_err(|e| {
         format!("the new spec-dna.toml would not be valid ({e}); add the layer by hand")
@@ -923,15 +956,25 @@ pub fn add_layer(
     Ok(out)
 }
 
-/// Appends tables at the end of a text, after one empty line.
-fn append_tables(out: &mut String, tables: &str) {
+/// The line ending of a text: `\r\n` if its first line ends so, else `\n`.
+fn line_ending(text: &str) -> &'static str {
+    match text.find('\n') {
+        Some(i) if text[..i].ends_with('\r') => "\r\n",
+        _ => "\n",
+    }
+}
+
+/// Appends tables at the end of a text, after one empty line. The tables
+/// have `\n` line endings. This function gives them the ending `eol`.
+fn append_tables(out: &mut String, tables: &str, eol: &str) {
     if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+        out.push_str(eol);
     }
-    if !out.is_empty() && !out.ends_with("\n\n") {
-        out.push('\n');
+    let blank = format!("{eol}{eol}");
+    if !out.is_empty() && !out.ends_with(&blank) && !out.ends_with("\n\n") {
+        out.push_str(eol);
     }
-    out.push_str(tables);
+    out.push_str(&tables.replace('\n', eol));
 }
 
 #[cfg(test)]
@@ -1264,7 +1307,7 @@ mod tests {
 
     /// Applies the insertion of `edge_splice` to a text.
     fn spliced(text: &str, name: &str, target: &str) -> Result<String, String> {
-        let s = edge_splice(text, name, target)?;
+        let s = edge_splice(text, name, target, "\n")?;
         let mut out = text.to_string();
         out.insert_str(s.at, &s.text);
         Ok(out)

@@ -465,7 +465,7 @@
           "minLength": 1
         },
         "files": {
-          "description": "Top files of the layer, relative to the root. A layer with `files` has no `dir`.",
+          "description": "Top files of the layer, relative to the root. An entry has no `..`, no leading `/`, no `\\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file.",
           "type": "array",
           "items": {
             "type": "string",

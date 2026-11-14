@@ -275,7 +275,7 @@ def spec_dna_corpus(a):
         write(d["id"], "\n".join(fm + body))
     for i in range(n_chg):
         t = rng.choice(specs)["id"]
-        write(f"changes/chg-{i:05d}", "\n".join(["---", "type: intent", "status: draft", "---", "", f"# Change {i}", "", "## Intent", "",
+        write(f"intent/chg-{i:05d}/intent", "\n".join(["---", "type: intent", "status: draft", "---", "", f"# Change {i}", "", "## Intent", "",
                                                     f"Changes [[{t}]]. " + prose(rng.randint(1, 3)), ""]))
     for i in range(n_note):
         t = rng.choice(specs)["id"]

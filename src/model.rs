@@ -242,6 +242,13 @@ pub struct Doc {
     /// For an index that `spec-dna index` generated: the hash in its
     /// `generated` field.
     pub generated: Option<String>,
+    /// True if the document has no valid type: its `type` is unknown, it
+    /// is the type of one change at a wrong place, or it has no type. The
+    /// type of the document is then a fallback. SD303 gives the problem, and
+    /// the rules of a type (statuses, sections, budgets) do not apply.
+    pub type_failed: bool,
+    /// True if the document has no type at all. It is in no layer.
+    pub untyped: bool,
 }
 
 impl Doc {
@@ -267,9 +274,10 @@ impl Doc {
         ) || self.moved_to.is_some()
     }
 
-    /// A stub or a generated index: no budget applies.
+    /// A stub, a generated index, or a document with no valid type: no
+    /// budget applies.
     pub fn is_exempt_from_budgets(&self) -> bool {
-        self.moved_to.is_some() || self.generated.is_some()
+        self.moved_to.is_some() || self.generated.is_some() || self.type_failed
     }
 
     /// Returns true if the chunk holds at least one valid requirement.
@@ -744,6 +752,8 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             frozen_hash: Hash::default(),
             moved_to,
             generated: None,
+            type_failed: false,
+            untyped: false,
         };
     }
 
@@ -751,11 +761,14 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     // matter, then the place, then `default-type`. At most one SD303 gives
     // the problem.
     let mut wrong_type = false;
+    let mut type_failed = false;
+    let mut untyped = false;
     let mut want = root.single_type;
     if let Some((t, line)) = fm_type {
         match DocType::from_name(&t) {
             None => {
                 wrong_type = true;
+                type_failed = true;
                 issues.push(Issue {
                     code: Code::TypeInvalid,
                     line,
@@ -808,6 +821,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                 });
             } else if w.is_intent_type() && !config.layers.is_intent_place(w, rel) {
                 ty = fallback;
+                type_failed = true;
                 issues.push(Issue {
                     code: Code::TypeInvalid,
                     line: 1,
@@ -834,20 +848,24 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             }
         }
         Some(_) => {}
-        None if !wrong_type => issues.push(Issue {
-            code: Code::TypeInvalid,
-            line: 1,
-            target: String::new(),
-            message: format!(
-                "the document has no type: its front matter has no `type`, its place in root `{}` gives none, and the root has no `default-type`; add `type:`, or move the document into the folder of a layer",
-                root.path
-            ),
-        }),
+        None if !wrong_type => {
+            type_failed = true;
+            untyped = true;
+            issues.push(Issue {
+                code: Code::TypeInvalid,
+                line: 1,
+                target: String::new(),
+                message: format!(
+                    "the document has no type: its front matter has no `type`, its place in root `{}` gives none, and the root has no `default-type`; add `type:`, or move the document into the folder of a layer",
+                    root.path
+                ),
+            });
+        }
         None => {}
     }
     let status = match fm_status {
         Some((s, line)) => {
-            let allowed = |x: &str| !ty.has_status() || ty.statuses().contains(&x);
+            let allowed = |x: &str| type_failed || !ty.has_status() || ty.statuses().contains(&x);
             // If the root maps a legacy word, use the mapped status. The file
             // keeps the legacy word.
             let canon = if allowed(&s) {
@@ -896,7 +914,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         None if Some(ty) == root.default_type => root.status.clone(),
         None => None,
     };
-    if status.is_none() && ty.has_status() {
+    if status.is_none() && ty.has_status() && !type_failed {
         issues.push(Issue {
             code: Code::StatusInvalid,
             line: 1,
@@ -1019,7 +1037,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     // The chunks that match the first group are the outcome of a decision.
     let mut matched: Vec<usize> = Vec::new();
     // A generated index has no required sections.
-    let required: &[Vec<String>] = if generated.is_some() {
+    let required: &[Vec<String>] = if generated.is_some() || type_failed {
         &[]
     } else {
         &root.required_sections[ty as usize]
@@ -1095,6 +1113,8 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         frozen_hash,
         moved_to: None,
         generated,
+        type_failed,
+        untyped,
     }
 }
 
