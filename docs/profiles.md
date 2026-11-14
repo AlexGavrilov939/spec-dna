@@ -21,7 +21,11 @@ An error fails `check` when the error is new against the base. A warning never f
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
-| `changes` | SD921 (truth changed without a change). It runs only with `--base`, and it needs `[change] policy` other than `none`: with `none` it is off, and no rule turns it on | off | warning | error |
+| `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan) | off | warning | warning |
+| `changes` | SD912 (started limit), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
+| `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted) | warning | error | error |
+
+The group `changes` needs a `[change] policy` other than `none`: with `none`, each of its codes is off, and no rule turns it on. SD921 runs only with `--base`. SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off), and then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate. SD918 is not in the group yet.
 
 The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the frozen text of an accepted decision changed) is always an error.
 

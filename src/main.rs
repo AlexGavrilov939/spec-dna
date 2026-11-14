@@ -36,6 +36,7 @@ mod index;
 mod init;
 mod json;
 mod layer;
+mod lifecycle;
 mod lint;
 mod model;
 mod mv;
@@ -671,6 +672,10 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         None => repo.head_commit(),
     };
+    // The lifecycle base for the change checks. With the policy `none` it
+    // reads nothing.
+    let change_base =
+        lifecycle::change_base(&cfg, &repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
@@ -852,13 +857,18 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .num("requirements", d.reqs.len())
                 .end()
         });
+        let mut obj = Obj::new()
+            .str("version", VERSION)
+            .str("mode", if a.all { "all" } else { "base" })
+            .opt_str("base", base_commit.as_deref());
+        // The lifecycle base: a SHA, or null if git cannot name it. The field
+        // is absent when the policy is `none`.
+        if cfg.change_policy != config::ChangePolicy::None {
+            obj = obj.opt_str("change_base", change_base.as_deref());
+        }
         println!(
             "{}",
-            Obj::new()
-                .str("version", VERSION)
-                .str("mode", if a.all { "all" } else { "base" })
-                .opt_str("base", base_commit.as_deref())
-                .bool("ok", !failed)
+            obj.bool("ok", !failed)
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
                 .raw("documents", &json::array(docs))
@@ -888,6 +898,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             (None, false) => format!("{total} (no base commit, so all are new)"),
         };
         println!("spec-dna check: {} documents; {counts}", head.docs.len());
+        if cfg.change_policy != config::ChangePolicy::None && change_base.is_none() {
+            eprintln!("note: {}", lifecycle::NO_BASE_NOTE);
+        }
     }
     Ok(if failed { 1 } else { 0 })
 }

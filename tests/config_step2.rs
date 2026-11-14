@@ -1,8 +1,10 @@
 //! Integration tests of the configuration keys of step 2 of 0.6.0: `language`,
 //! `[lint] history-terms`, `[change] policy` and the rule groups `layers` and
-//! `changes`. A bad value is a configuration error: exit code 3, and the
-//! message names the key. A document with a table of terms checks the same
-//! twice, with a cold and a warm cache. The helpers are small copies of the ones in tests/new_place.rs.
+//! `changes`. The other keys of `[change]` have their tests in
+//! tests/change_config.rs. A bad value is a configuration error: exit code 3,
+//! and the message names the key. A document with a table of terms checks the
+//! same twice, with a cold and a warm cache. The helpers are small copies of
+//! the ones in tests/new_place.rs.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -181,20 +183,21 @@ fn the_change_table_needs_a_policy() {
 }
 
 #[test]
-fn another_key_of_the_change_table_comes_in_a_later_step() {
+fn an_invented_key_of_the_change_table_is_unknown() {
+    rejects(
+        "",
+        "[change]\npolicy = \"three-class\"\ninvented = true\n",
+        &["unknown key `change.invented`"],
+    );
+    // The other keys of the design are valid since step 3. The tests of their
+    // values are in tests/change_config.rs.
     for key in [
         "gate = \"block\"",
         "high-risk-layers = [\"rules\"]",
         "high-risk-paths = []",
         "max-fanout = 8",
-        "invented = true",
     ] {
-        let name = key.split(' ').next().unwrap();
-        rejects(
-            "",
-            &format!("[change]\npolicy = \"three-class\"\n{key}\n"),
-            &[&format!("`change.{name}`"), "later step"],
-        );
+        accepts("", &format!("[change]\npolicy = \"three-class\"\n{key}\n"));
     }
 }
 

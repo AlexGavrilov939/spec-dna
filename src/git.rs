@@ -1,6 +1,17 @@
 //! This module accesses git through the commands of the git CLI (ADR 0002, git
 //! access decision). Every command runs with `GIT_OPTIONAL_LOCKS=0`, so that a
 //! read never writes the index of the repository. No command uses the network.
+//!
+//! This module uses only `std`. `tests/git_lifecycle.rs` compiles it as a
+//! module of its own, because the crate has no library.
+//!
+//! A shallow clone has fewer commits than the full repository. For a path, the
+//! oldest commit that the clone has (the boundary commit) shows each of its
+//! files as added. Thus `last_touch` in a shallow clone gives a date that is
+//! the same as the date of the full repository or later. A shallow clone can
+//! hide a stale change, but it never reports a false one. `deleted_intents`
+//! and `added_intents` can miss a commit that the clone does not have. They
+//! never give an entry that the full repository does not have.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -18,6 +29,28 @@ pub struct Git {
 
 /// A tree entry: path, object id, and whether it is a submodule.
 pub type Entry = (String, String, bool);
+
+/// The kind of a change of one path in a diff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathChange {
+    Added,
+    Modified,
+    Deleted,
+}
+
+/// A commit that deleted an `intent.md` (`Git::deleted_intents`).
+#[allow(dead_code)] // reader: S8
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletedIntent {
+    /// The deleting commit. It has at most 1 parent.
+    pub commit: String,
+    /// Its parent, or `None` for a root commit.
+    pub parent: Option<String>,
+    /// The committer date of the commit, in seconds.
+    pub time: i64,
+    /// The deleted file, from the repository root.
+    pub path: String,
+}
 
 #[derive(Default)]
 pub struct Status {
@@ -101,6 +134,21 @@ impl Git {
     /// `untracked`, it also returns the untracked files that git does not
     /// ignore, as new paths.
     pub fn changed_since(&self, rev: &str, untracked: bool) -> Result<Vec<(String, bool)>, String> {
+        Ok(self
+            .diff_paths(rev, untracked)?
+            .into_iter()
+            .map(|(p, k)| (p, k == PathChange::Added))
+            .collect())
+    }
+
+    /// Like `changed_since`, with the kind of each change. A deleted file is
+    /// in the result. The diff has no rename detection, so a move is a deletion
+    /// and an addition.
+    pub fn diff_paths(
+        &self,
+        rev: &str,
+        untracked: bool,
+    ) -> Result<Vec<(String, PathChange)>, String> {
         let untracked = untracked && !self.staged;
         let mut args = vec!["diff"];
         if self.staged {
@@ -118,15 +166,17 @@ impl Git {
         let mut v = Vec::new();
         let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
         while let (Some(status), Some(path)) = (recs.next(), recs.next()) {
-            v.push((
-                String::from_utf8_lossy(path).into_owned(),
-                status.first() == Some(&b'A'),
-            ));
+            let kind = match status.first() {
+                Some(b'A') => PathChange::Added,
+                Some(b'D') => PathChange::Deleted,
+                _ => PathChange::Modified,
+            };
+            v.push((String::from_utf8_lossy(path).into_owned(), kind));
         }
         if untracked {
             let out = self.run(&["ls-files", "--others", "--exclude-standard", "-z"])?;
             for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
-                v.push((String::from_utf8_lossy(rec).into_owned(), true));
+                v.push((String::from_utf8_lossy(rec).into_owned(), PathChange::Added));
             }
         }
         Ok(v)
@@ -233,6 +283,253 @@ impl Git {
         let out = self.run(&["merge-base", a, b]).ok()?;
         let s = String::from_utf8_lossy(&out).trim().to_string();
         (!s.is_empty()).then_some(s)
+    }
+
+    /// Returns the commit that `refs/remotes/origin/HEAD` names, or `None`.
+    /// It reads only this ref, with no fallback to a local branch, so that the
+    /// result is the same for every checkout. `git remote set-head origin
+    /// <branch>` sets the ref.
+    pub fn remote_head(&self) -> Option<String> {
+        self.commit("refs/remotes/origin/HEAD")
+    }
+
+    /// Returns true if `a` is `b` or an ancestor of `b`. An error means that
+    /// a commit is absent, as in a shallow clone.
+    #[allow(dead_code)] // reader: S5
+    pub fn is_ancestor(&self, a: &str, b: &str) -> Result<bool, String> {
+        let out = self
+            .cmd(&["merge-base", "--is-ancestor", a, b])
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(format!(
+                "git merge-base --is-ancestor failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+        }
+    }
+
+    /// Returns the committer date of a commit, in seconds. It never reads the
+    /// clock.
+    #[allow(dead_code)] // reader: S5
+    pub fn commit_time(&self, rev: &str) -> Result<i64, String> {
+        let out = self.run(&["log", "-1", "--format=%ct", rev, "--"])?;
+        String::from_utf8_lossy(&out)
+            .trim()
+            .parse()
+            .map_err(|_| format!("`{rev}` has no committer date"))
+    }
+
+    /// Returns true if the repository is a shallow clone.
+    #[allow(dead_code)] // reader: S8
+    pub fn is_shallow(&self) -> bool {
+        self.run(&["rev-parse", "--is-shallow-repository"])
+            .is_ok_and(|o| String::from_utf8_lossy(&o).trim() == "true")
+    }
+
+    /// Returns, for each file under `specs` that a commit touched, the newest
+    /// committer date (seconds) of such a commit. It walks the history of
+    /// `rev` once. A spec is a path or a glob from the repository root. A
+    /// folder covers all files under it. A touch is an addition, a change, a
+    /// deletion or a rename of the file. Without a spec it returns an empty
+    /// map and runs no git command.
+    ///
+    /// The maximum of the dates is the answer, not the first line: the
+    /// committer dates of a history are not always in order. In a shallow
+    /// clone, the boundary commit shows its files as added, so each date is
+    /// the same as in the full repository or later (see the top of this file).
+    #[allow(dead_code)] // reader: S5
+    pub fn last_touch(&self, rev: &str, specs: &[String]) -> Result<HashMap<String, i64>, String> {
+        let mut touched = HashMap::new();
+        let pathspecs = glob_pathspecs(specs);
+        if pathspecs.is_empty() {
+            return Ok(touched);
+        }
+        let mut args = vec![
+            "-c".to_string(),
+            "log.showRoot=true".to_string(),
+            "log".to_string(),
+            "--no-renames".to_string(),
+            "--format=%x01%ct".to_string(),
+            "--name-only".to_string(),
+            "-z".to_string(),
+            rev.to_string(),
+            "--".to_string(),
+        ];
+        args.extend(pathspecs);
+        let out = self.run(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+        // The output is `\x01<seconds> NUL LF <path> NUL <path> NUL ...` for
+        // each commit.
+        let mut when: Option<i64> = None;
+        let mut first = false;
+        for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let rec = String::from_utf8_lossy(rec);
+            if let Some(ts) = rec.strip_prefix('\x01') {
+                when = ts.trim().parse().ok();
+                first = true;
+                continue;
+            }
+            let path = if first {
+                rec.strip_prefix('\n').unwrap_or(&rec)
+            } else {
+                &rec
+            };
+            first = false;
+            if let Some(t) = when
+                && !path.is_empty()
+            {
+                let e = touched.entry(path.to_string()).or_insert(t);
+                *e = (*e).max(t);
+            }
+        }
+        Ok(touched)
+    }
+
+    /// Returns the commits (id and committer date) that touched a path, the
+    /// newest first. A touch is an addition, a change or a deletion of the
+    /// file. The path is a literal path from the repository root.
+    #[allow(dead_code)] // reader: S8
+    pub fn file_log(&self, rev: &str, path: &str) -> Result<Vec<(String, i64)>, String> {
+        let spec = format!(":(literal){path}");
+        let out = self.run(&[
+            "-c",
+            "log.showRoot=true",
+            "log",
+            "--no-renames",
+            "--format=%H %ct",
+            rev,
+            "--",
+            &spec,
+        ])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|l| {
+                let (id, t) = l.split_once(' ')?;
+                Some((id.to_string(), t.parse().ok()?))
+            })
+            .collect())
+    }
+
+    /// Returns the folders (without `/intent.md`) under `dir` whose
+    /// `intent.md` a commit of `<base>..<head>` adds, and that are in neither
+    /// the tree of `base` nor the tree of `head`. Such a change was born and
+    /// finished (or removed) in the branch. `dir` is the folder of the
+    /// `intent` layer, from the repository root, with no final `/`. The
+    /// result is sorted.
+    #[allow(dead_code)] // reader: S4
+    pub fn added_intents(&self, base: &str, head: &str, dir: &str) -> Result<Vec<String>, String> {
+        let range = format!("{base}..{head}");
+        let spec = intent_glob(dir);
+        let out = self.run(&[
+            "log",
+            "--no-renames",
+            "--diff-filter=A",
+            "--name-only",
+            "--format=",
+            "-z",
+            &range,
+            "--",
+            &spec,
+        ])?;
+        let mut folders: Vec<String> = String::from_utf8_lossy(&out)
+            .split('\0')
+            .map(|p| p.trim_start_matches('\n'))
+            .filter_map(|p| p.strip_suffix("/intent.md"))
+            .map(str::to_string)
+            .collect();
+        folders.sort();
+        folders.dedup();
+        if folders.is_empty() {
+            return Ok(folders);
+        }
+        let mut present: HashSet<String> = HashSet::new();
+        for rev in [base, head] {
+            present.extend(self.files_under(rev, dir)?);
+        }
+        folders.retain(|f| !present.contains(&format!("{f}/intent.md")));
+        Ok(folders)
+    }
+
+    /// Lists the files under `dir` in the tree of a commit.
+    fn files_under(&self, rev: &str, dir: &str) -> Result<Vec<String>, String> {
+        let mut args = vec!["ls-tree", "-r", "-z", "--full-tree", rev];
+        if !dir.is_empty() {
+            args.push("--");
+            args.push(dir);
+        }
+        let out = self.run(&args)?;
+        let mut v = Vec::new();
+        for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let rec = String::from_utf8_lossy(rec);
+            if let Some((_, path)) = rec.split_once('\t') {
+                v.push(path.to_string());
+            }
+        }
+        Ok(v)
+    }
+
+    /// Returns the commits of the history of `HEAD` that deleted an
+    /// `intent.md` under `dir` (the folder of the `intent` layer, from the
+    /// repository root, with no final `/`), the newest first. With `since`,
+    /// only the commits of `<since>..HEAD`. A move is not a deletion. The walk
+    /// follows every parent and shows no merge commit: a squash, a merge
+    /// commit and a rebase merge each give one entry for a deleted file. An
+    /// entry is the non-merge commit that deleted the file. Its parent gives
+    /// the status of the intent before the deletion.
+    #[allow(dead_code)] // reader: S8
+    pub fn deleted_intents(
+        &self,
+        dir: &str,
+        since: Option<&str>,
+    ) -> Result<Vec<DeletedIntent>, String> {
+        let range = since.map_or("HEAD".to_string(), |s| format!("{s}..HEAD"));
+        let spec = intent_glob(dir);
+        let out = self.run(&[
+            "log",
+            "-M",
+            "--diff-filter=D",
+            "--name-only",
+            "--format=%x01%H %P|%ct",
+            "-z",
+            &range,
+            "--",
+            &spec,
+        ])?;
+        let mut found = Vec::new();
+        let mut head: Option<(String, Vec<String>, i64)> = None;
+        let mut first = false;
+        for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let rec = String::from_utf8_lossy(rec);
+            if let Some(h) = rec.strip_prefix('\x01') {
+                head = parse_commit_header(h);
+                first = true;
+                continue;
+            }
+            let path = if first {
+                rec.strip_prefix('\n').unwrap_or(&rec)
+            } else {
+                &rec
+            };
+            first = false;
+            let Some((commit, parents, time)) = &head else {
+                continue;
+            };
+            // A merge commit has no diff here, and the check keeps a
+            // guard against a git that shows one.
+            if parents.len() > 1 || !path.ends_with("/intent.md") {
+                continue;
+            }
+            found.push(DeletedIntent {
+                commit: commit.clone(),
+                parent: parents.first().cloned(),
+                time: *time,
+                path: path.to_string(),
+            });
+        }
+        Ok(found)
     }
 
     /// Reads blobs with one `git cat-file --batch` process.
@@ -534,4 +831,62 @@ impl Git {
         self.run(&["ls-files", "--error-unmatch", "--", path])
             .is_ok()
     }
+}
+
+/// Reads `<id> <parents>|<seconds>` of a commit header.
+fn parse_commit_header(h: &str) -> Option<(String, Vec<String>, i64)> {
+    let (ids, time) = h.trim().rsplit_once('|')?;
+    let mut parts = ids.split(' ').filter(|p| !p.is_empty());
+    let commit = parts.next()?.to_string();
+    let parents = parts.map(str::to_string).collect();
+    Some((commit, parents, time.trim().parse().ok()?))
+}
+
+/// Escapes the characters that a git `glob` pathspec reads as magic.
+fn glob_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '*' | '?' | '[' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The pathspec of the `intent.md` files one level under `dir`.
+fn intent_glob(dir: &str) -> String {
+    let dir = dir.trim_matches('/');
+    if dir.is_empty() {
+        ":(glob)*/intent.md".to_string()
+    } else {
+        format!(":(glob){}/*/intent.md", glob_escape(dir))
+    }
+}
+
+/// Turns paths and globs of the repository root into git pathspecs. A value
+/// that git does not accept (empty, or with a `.` or `..` segment) is left out.
+fn glob_pathspecs(specs: &[String]) -> Vec<String> {
+    specs
+        .iter()
+        .map(|g| g.trim_matches('/'))
+        .filter(|g| !g.is_empty() && !g.split('/').any(|s| s == ".." || s == "."))
+        // `crate::glob`, which reads the globs of the configuration, has only
+        // `*`, `**` and `?`. A path with none of them is a literal path (a
+        // folder covers the files under it). In a git `glob` pathspec, `[` and
+        // `\` are also magic, so they are escaped.
+        .map(|g| {
+            if !g.contains(['*', '?']) {
+                return format!(":(literal){g}");
+            }
+            let g: String = g
+                .chars()
+                .flat_map(|c| match c {
+                    '[' | '\\' => vec!['\\', c],
+                    _ => vec![c],
+                })
+                .collect();
+            format!(":(glob){g}")
+        })
+        .collect()
 }
