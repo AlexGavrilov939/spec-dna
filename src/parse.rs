@@ -9,7 +9,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 10;
+pub const PARSER_VERSION: u32 = 11;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -40,6 +40,91 @@ pub struct ParsedDoc {
     pub placeholders: Vec<Token>,
     /// Characters of the body without fenced or indented code blocks.
     pub body_chars: u32,
+    /// The rows of each table whose header has the cells `Term` and
+    /// `Forbidden synonyms`, in any order and in any case. The parser does not
+    /// know the type of the document, so it stores the rows of every document.
+    /// Only a `terms` document uses them (SD904).
+    pub terms: Vec<TermRow>,
+}
+
+/// One row of a table of terms.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TermRow {
+    pub term: String,
+    /// The forbidden synonyms: the cell split at `,` and `;`, each part
+    /// trimmed, no empty part.
+    pub forbidden: Vec<String>,
+    pub line: u32,
+}
+
+/// The state of the table that the parser reads. It keeps the text of each
+/// cell. Only a header with the 2 cells of a table of terms gives rows.
+#[derive(Default)]
+struct TableState {
+    in_head: bool,
+    in_cell: bool,
+    cell: String,
+    head: Vec<String>,
+    row: Vec<String>,
+    row_line: u32,
+    /// The columns of `Term` and `Forbidden synonyms`, if the header has both.
+    cols: Option<(usize, usize)>,
+}
+
+impl TableState {
+    /// True if the text of a cell matters: a header cell, or a cell of a
+    /// table of terms. Other tables thus need less work.
+    fn wants_text(&self) -> bool {
+        self.in_cell && (self.in_head || self.cols.is_some())
+    }
+
+    fn end_cell(&mut self) {
+        self.in_cell = false;
+        let cell = crate::hash::normalize(&self.cell);
+        self.cell.clear();
+        if self.in_head {
+            self.head.push(cell);
+        } else {
+            self.row.push(cell);
+        }
+    }
+
+    fn end_head(&mut self) {
+        self.in_head = false;
+        let col = |name: &str| self.head.iter().position(|h| h.eq_ignore_ascii_case(name));
+        self.cols = col("Term").zip(col("Forbidden synonyms"));
+    }
+
+    fn end_row(&mut self, out: &mut Vec<TermRow>) {
+        let row = std::mem::take(&mut self.row);
+        let Some((t, f)) = self.cols else { return };
+        // A row with a `{{...}}` placeholder is a row of a template. SD306
+        // reports it. It is not a term.
+        if row
+            .iter()
+            .any(|c| c.find("{{").is_some_and(|i| c[i + 2..].contains("}}")))
+        {
+            return;
+        }
+        let term = row.get(t).cloned().unwrap_or_default();
+        let forbidden: Vec<String> = row
+            .get(f)
+            .map(|c| {
+                c.split([',', ';'])
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !term.is_empty() || !forbidden.is_empty() {
+            out.push(TermRow {
+                term,
+                forbidden,
+                line: self.row_line,
+            });
+        }
+    }
 }
 
 /// A section unit: one heading and its text up to the next heading of any
@@ -137,11 +222,26 @@ pub fn parse(text: &str) -> ParsedDoc {
     let mut starts: Vec<(u8, String, usize)> = vec![(0, String::new(), 0)];
     let mut items: Vec<Item> = Vec::new();
     let mut cands: Vec<Cand> = Vec::new();
+    let mut table = TableState::default();
 
     for (ev, range) in Parser::new_ext(body, opts).into_offset_iter() {
         // Requirement detection looks at the first events of the innermost item.
         if let Some(item) = items.last_mut() {
             item.step(&ev, range.start, range.end);
+        }
+        match &ev {
+            Event::Start(Tag::Table(_)) => table = TableState::default(),
+            Event::Start(Tag::TableHead) => table.in_head = true,
+            Event::End(TagEnd::TableHead) => table.end_head(),
+            Event::Start(Tag::TableCell) => table.in_cell = true,
+            Event::End(TagEnd::TableCell) => table.end_cell(),
+            Event::End(TagEnd::TableRow) => table.end_row(&mut doc.terms),
+            Event::Text(t) | Event::Code(t) if table.wants_text() => table.cell.push_str(t),
+            Event::SoftBreak | Event::HardBreak if table.wants_text() => table.cell.push(' '),
+            _ => {}
+        }
+        if let Event::Start(Tag::TableRow) = &ev {
+            table.row_line = lines.line(body_start + range.start);
         }
         match ev {
             Event::Start(Tag::Heading { level, .. }) => {
@@ -918,5 +1018,70 @@ mod tests {
         );
         let p: Vec<&str> = d.placeholders.iter().map(|t| t.text.as_str()).collect();
         assert_eq!(p, ["{{key}}", "{{trigger}}"]);
+    }
+
+    fn rows(text: &str) -> Vec<(String, Vec<String>, u32)> {
+        parse(text)
+            .terms
+            .into_iter()
+            .map(|r| (r.term, r.forbidden, r.line))
+            .collect()
+    }
+
+    fn row(term: &str, forbidden: &[&str], line: u32) -> (String, Vec<String>, u32) {
+        (
+            term.to_string(),
+            forbidden.iter().map(|f| f.to_string()).collect(),
+            line,
+        )
+    }
+
+    #[test]
+    fn a_table_of_terms_gives_its_rows() {
+        let text = "# Terms\n\n| Term | Meaning | Forbidden synonyms |\n| --- | --- | --- |\n| Valve | A device that stops a flow. | gate, shutter ; door;, |\n| Zone | An area. | |\n";
+        assert_eq!(
+            rows(text),
+            [
+                row("Valve", &["gate", "shutter", "door"], 5),
+                row("Zone", &[], 6)
+            ]
+        );
+        // The columns can come in any order and in any case. The column of the
+        // meaning is ignored, also if it mentions a synonym.
+        let text = "| FORBIDDEN synonyms | meaning | term |\n| --- | --- | --- |\n| gate | Not a gate. | Valve |\n";
+        assert_eq!(rows(text), [row("Valve", &["gate"], 3)]);
+        // Inline code and emphasis in a cell are text. A cell has one space
+        // for each run of white space.
+        let text = "| Term | Forbidden synonyms |\n| --- | --- |\n| **Sensor head** | `probe`,  the   *tip* |\n";
+        assert_eq!(rows(text), [row("Sensor head", &["probe", "the tip"], 3)]);
+    }
+
+    #[test]
+    fn a_table_with_other_headers_gives_no_term() {
+        for text in [
+            "| Term | Meaning |\n| --- | --- |\n| Valve | A device. |\n",
+            "| Name | Forbidden synonyms |\n| --- | --- |\n| Valve | gate |\n",
+            "| Terms | Forbidden synonym |\n| --- | --- |\n| Valve | gate |\n",
+            "| Term and Forbidden synonyms |\n| --- |\n| Valve |\n",
+            "Term and Forbidden synonyms: Valve, gate\n",
+        ] {
+            assert!(rows(text).is_empty(), "{text}");
+        }
+        // A table of terms does not give its columns to the next table.
+        let text = "| Term | Forbidden synonyms |\n| --- | --- |\n| Valve | gate |\n\n| A | B |\n| --- | --- |\n| x | y |\n";
+        assert_eq!(rows(text), [row("Valve", &["gate"], 3)]);
+    }
+
+    #[test]
+    fn each_table_of_terms_gives_rows_and_a_short_row_is_safe() {
+        let text = "| Term | Forbidden synonyms |\n| --- | --- |\n| Valve | gate |\n| Pump |\n\n| Forbidden synonyms | Term |\n| --- | --- |\n| duct | Pipe |\n| | |\n";
+        assert_eq!(
+            rows(text),
+            [
+                row("Valve", &["gate"], 3),
+                row("Pump", &[], 4),
+                row("Pipe", &["duct"], 8)
+            ]
+        );
     }
 }

@@ -377,7 +377,7 @@ fn lifecycle_rules_compare_base_and_head() {
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
-    assert!(out.contains("SD405 decision-frozen"), "{out}");
+    assert!(out.contains("SD405 decision-locked"), "{out}");
     assert!(
         out.contains("SD401 status-transition: status cannot move from `active` to `draft`"),
         "{out}"
@@ -442,7 +442,7 @@ fn localized_amendments_are_not_frozen_text() {
     assert_eq!(code, 1, "{out}");
     assert!(
         out.contains(
-            "SD405 decision-frozen: the text outside the amendment and live sections changed"
+            "SD405 decision-locked: the text outside the amendment and live sections changed"
         ),
         "{out}"
     );
@@ -477,7 +477,7 @@ fn live_sections_change_in_place_and_frozen_text_does_not() {
     r.write(adr, &r.read(adr).replace("in 2 steps", "in 3 steps"));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("SD405 decision-frozen"), "{out}");
+    assert!(out.contains("SD405 decision-locked"), "{out}");
     // A live section of the wrong type is a configuration error.
     r.write(
         "spec-dna.toml",
@@ -1855,7 +1855,7 @@ fn moving_a_document_keeps_accepted_decisions_frozen() {
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
-    assert!(out.contains("error SD405 decision-frozen"), "{out}");
+    assert!(out.contains("error SD405 decision-locked"), "{out}");
 }
 
 fn split_project() -> Repo {
@@ -4146,7 +4146,7 @@ fn an_accepted_decision_that_links_an_intent_gets_sd611() {
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "a warning never fails the gate: {out}");
     assert!(
-        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-change: the accepted decision links the intent `intent/rollout/intent`"),
+        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-intent: the accepted decision links the intent `intent/rollout/intent`"),
         "{out}"
     );
     // A Markdown link to the intent file counts too, and it is one finding.

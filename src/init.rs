@@ -309,6 +309,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         adapters_default.insert(0, Adapter::AgentsMd);
     }
     adapters_default.insert(adapters_default.len() - 1, Adapter::ClaudeMd);
+    let (language, language_note) = detected_language(facts);
     Plan {
         kind: if facts.brownfield {
             "brownfield"
@@ -321,12 +322,12 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         areas: facts.areas.clone(),
         documents,
         root: docs_root.to_string(),
-        notes: Vec::new(),
+        notes: language_note.into_iter().collect(),
         kept_types: Vec::new(),
         evidence: None,
         style: Style::Both,
         tests: facts.tests.iter().map(|t| t.0.clone()).collect(),
-        language: "en".into(),
+        language,
         outcome: facts.outcome_aliases.clone(),
         amendments: facts.amendment_aliases.clone(),
         rows: if layout { layout_rows(docs_root) } else { rows },
@@ -365,6 +366,10 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
 fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     let mut p = defaults(facts, None);
     p.kind = "reconfigure";
+    // The language of the current file is the default of question 7. The only
+    // note of `defaults` is about the detected language, so it ends here.
+    p.language = cfg.language.clone();
+    p.notes.clear();
     p.profile = cfg.profile;
     p.layout = false;
     // The current layers are the default of question 2.
@@ -402,6 +407,7 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     }
     for key in [
         "lint",
+        "change",
         "context",
         "repos",
         "conventions",
@@ -612,6 +618,12 @@ pub fn render(plan: &Plan) -> String {
             toml_list(&plan.areas)
         ));
     }
+    if !plan.language.eq_ignore_ascii_case(config::DEFAULT_LANGUAGE) {
+        out.push_str(&format!(
+            "language = {}  # the language of normative text (a BCP 47 tag)\n",
+            toml_str(&plan.language)
+        ));
+    }
     if plan.kept.iter().all(|k| !k.starts_with("install-source")) {
         out.push_str(&format!(
             "# install-source = {}  # a local or private clone\n",
@@ -656,9 +668,6 @@ pub fn render(plan: &Plan) -> String {
         // A budget level replaces a rule that turned the budgets off.
         _ if plan.rules.iter().any(|r| r.0 == "budgets" && r.1.is_none()) => set("budgets", None),
         _ => {}
-    }
-    if plan.language != "en" {
-        set("lint", Some("off"));
     }
     if !rules.is_empty() {
         out.push_str("\n[rules]  # overrides of the profile, by rule group or by code\n");
@@ -1846,6 +1855,121 @@ fn evidence_value(plan: &Plan) -> String {
     format!("{ev}, {st}")
 }
 
+/// Checks the answer of question 7: a BCP 47 language tag. `config` owns the
+/// rule.
+fn check_language(tag: &str) -> Result<(), String> {
+    if config::is_language_tag(tag) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{tag}`: the language must be a BCP 47 tag, such as `en`, `en-GB` or `de`"
+        ))
+    }
+}
+
+/// The scripts of the headings that give a language, with the tag of each.
+/// A script that several languages use (Cyrillic, Han) gets the most common
+/// language. The heading aliases can give a better answer ([`ALIAS_LANGUAGES`]).
+const SCRIPT_LANGUAGES: [(&str, &str); 9] = [
+    ("Greek", "el"),
+    ("Cyrillic", "ru"),
+    ("Hebrew", "he"),
+    ("Arabic", "ar"),
+    ("Devanagari", "hi"),
+    ("Thai", "th"),
+    ("Japanese kana", "ja"),
+    ("Hangul", "ko"),
+    ("Han", "zh"),
+];
+
+/// The scripts of [`SCRIPT_LANGUAGES`] that several languages use. The tag of
+/// such a script is a guess, so the preview has a note.
+const SHARED_SCRIPTS: [&str; 4] = ["Cyrillic", "Arabic", "Devanagari", "Han"];
+
+/// The language of each heading alias that detection can find. An alias in a
+/// script that the table above shares between languages gives the language
+/// that the alias proves.
+const ALIAS_LANGUAGES: [(&str, &str); 29] = [
+    ("Решение", "ru"),
+    ("Поправки", "ru"),
+    ("Дополнения", "ru"),
+    ("Рішення", "uk"),
+    ("Entscheidung", "de"),
+    ("Lösung", "de"),
+    ("Nachtrag", "de"),
+    ("Nachträge", "de"),
+    ("Änderungen", "de"),
+    ("Décision", "fr"),
+    ("Amendements", "fr"),
+    ("Decisión", "es"),
+    ("Enmiendas", "es"),
+    ("Decisão", "pt"),
+    ("Emendas", "pt"),
+    ("Decisione", "it"),
+    ("Emendamenti", "it"),
+    ("Besluit", "nl"),
+    ("Wijzigingen", "nl"),
+    ("Beslut", "sv"),
+    ("Decyzja", "pl"),
+    ("Poprawki", "pl"),
+    ("Rozhodnutí", "cs"),
+    ("Karar", "tr"),
+    ("Değişiklikler", "tr"),
+    ("決定", "ja"),
+    ("决策", "zh"),
+    ("决定", "zh"),
+    ("결정", "ko"),
+];
+
+/// The language that question 7 proposes, from the result of detection: the
+/// heading aliases first, then the most common script of the headings. A
+/// Latin script with no alias is `en`, with no note. If the result gives no
+/// tag, or two tags, the language is `en` and a note says why.
+fn detected_language(facts: &Facts) -> (String, Option<String>) {
+    let en = || config::DEFAULT_LANGUAGE.to_string();
+    let aliases = facts.outcome_aliases.iter().chain(&facts.amendment_aliases);
+    let mut tags: Vec<&str> = Vec::new();
+    for a in aliases {
+        let tag = ALIAS_LANGUAGES
+            .iter()
+            .find(|(w, _)| w == a)
+            .map(|(_, t)| *t);
+        if let Some(t) = tag
+            && !tags.contains(&t)
+        {
+            tags.push(t);
+        }
+    }
+    let script = facts.scripts.first().map(|s| s.0.as_str());
+    match (tags.as_slice(), script) {
+        ([one], _) => ((*one).to_string(), None),
+        ([], None | Some("Latin")) => (en(), None),
+        ([], Some(s)) => match SCRIPT_LANGUAGES.iter().find(|(n, _)| *n == s) {
+            Some((_, t)) if SHARED_SCRIPTS.contains(&s) => (
+                (*t).to_string(),
+                Some(format!(
+                    "the headings are mostly in the script `{s}`, which several languages use: question 7 proposes `{t}` as a guess. Enter the tag of the language of the text"
+                )),
+            ),
+            Some((_, t)) => ((*t).to_string(), None),
+            None => (
+                en(),
+                Some(format!(
+                    "the headings are mostly in a script (`{s}`) that has no language tag in detection: question 7 proposes `en`. Enter the tag of the language of the text"
+                )),
+            ),
+        },
+        (many, _) => (
+            en(),
+            Some(format!(
+                "the heading aliases belong to {} languages ({}): question 7 proposes `en`. Enter the tag of the language of the text",
+                many.len(),
+                many.join(", ")
+            )),
+        ),
+    }
+}
+
 /// The value of the language answer, as the question shows it.
 fn language_value(plan: &Plan) -> String {
     let aliases = |v: &[String]| {
@@ -1959,7 +2083,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         .map(|(s, n)| format!("{s} {n}"))
         .collect();
     io.say(&format!(
-        "    Heading scripts: {}. The requirement lint reads English only.",
+        "    Heading scripts: {}. The word lists of the lint are English, so another language turns them off.",
         if scripts.is_empty() {
             "none".into()
         } else {
@@ -1986,6 +2110,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     );
     let mut parts = a.split(';');
     plan.language = parts.next().unwrap_or("en").trim().to_string();
+    check_language(&plan.language)?;
     for part in parts {
         let (k, v) = part.split_once(':').unwrap_or((part, ""));
         let v: Vec<String> = v
@@ -2194,6 +2319,7 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
         plan.style = parse_style(&e)?;
     }
     if let Some(v) = s("language")? {
+        check_language(&v).map_err(|e| format!("answers: {e}"))?;
         plan.language = v;
     }
     if let Some(v) = l("outcome-headings")? {
@@ -2640,14 +2766,14 @@ fn resolved_answers(
         evidence.push("[evidence] tests");
     }
     let mut language = Vec::new();
-    if plan.language != "en" {
-        language.push("[rules] lint = \"off\"");
+    if !plan.language.eq_ignore_ascii_case(config::DEFAULT_LANGUAGE) {
+        language.push(format!("language = {}", toml_str(&plan.language)));
     }
     if !plan.outcome.is_empty() && has("required-sections = { decision =") {
-        language.push("required-sections");
+        language.push("required-sections".to_string());
     }
     if !plan.amendments.is_empty() && has("amendment-sections = { decision =") {
-        language.push("amendment-sections");
+        language.push("amendment-sections".to_string());
     }
     let budgets = match plan.budgets {
         Budgets::Default => String::new(),
@@ -3080,6 +3206,8 @@ mod tests {
         plan.language = "de".into();
         let text = render(&plan);
         let cfg = Config::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert_eq!(cfg.language, "de");
+        assert!(!text.contains("lint"), "{text}");
         assert_eq!(cfg.roots.len(), 1);
         assert_eq!(cfg.roots[0].path, "docs");
         assert!(cfg.types.is_empty(), "every type by default");
@@ -3258,5 +3386,52 @@ mod tests {
         let notes = apply_conflicts(&mut h, &existing, true);
         assert_eq!(notes.len(), 1, "{notes:?}");
         assert_eq!(h.cfg(Role::Reviewer).model, Model::Id("opus".into()));
+    }
+
+    fn facts_with(scripts: &[(&str, usize)], outcome: &[&str]) -> Facts {
+        Facts {
+            scripts: scripts.iter().map(|s| (s.0.to_string(), s.1)).collect(),
+            outcome_aliases: outcome.iter().map(|s| s.to_string()).collect(),
+            ..Facts::default()
+        }
+    }
+
+    #[test]
+    fn detection_proposes_a_language_tag() {
+        let tag = |f: &Facts| detected_language(f);
+        assert_eq!(tag(&Facts::default()), ("en".into(), None));
+        assert_eq!(tag(&facts_with(&[("Latin", 9)], &[])), ("en".into(), None));
+        assert_eq!(
+            tag(&facts_with(&[("Latin", 9)], &["Entscheidung"])),
+            ("de".into(), None)
+        );
+        assert_eq!(tag(&facts_with(&[("Greek", 4)], &[])), ("el".into(), None));
+        // An alias decides between the languages of one script.
+        assert_eq!(
+            tag(&facts_with(&[("Cyrillic", 4)], &["Рішення"])),
+            ("uk".into(), None)
+        );
+        // A script that several languages use gives a guess, and a note.
+        let (t, note) = tag(&facts_with(&[("Cyrillic", 4)], &[]));
+        assert_eq!(t, "ru");
+        assert!(note.is_some_and(|n| n.contains("`Cyrillic`") && n.contains("guess")));
+        // No tag for the script: `en`, and a note.
+        let (t, note) = tag(&facts_with(&[("other", 4)], &[]));
+        assert_eq!(t, "en");
+        assert!(note.is_some_and(|n| n.contains("`other`")));
+        // Aliases of 2 languages: `en`, and a note.
+        let (t, note) = tag(&facts_with(&[("Latin", 4)], &["Entscheidung", "Décision"]));
+        assert_eq!(t, "en");
+        assert!(note.is_some_and(|n| n.contains("de, fr")));
+    }
+
+    #[test]
+    fn the_answer_of_question_7_is_a_language_tag() {
+        for ok in ["en", "de", "en-GB", "zh-Hans", "yue"] {
+            assert!(check_language(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "German", "e", "de_DE", "x-private"] {
+            assert!(check_language(bad).is_err(), "{bad}");
+        }
     }
 }

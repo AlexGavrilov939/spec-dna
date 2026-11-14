@@ -252,6 +252,22 @@ pub struct Doc {
 }
 
 impl Doc {
+    /// True if the document can be in a layer. A document with no valid type
+    /// is in no layer (D12): `layer list`, SD901 and SD902 use this rule.
+    pub fn has_layer(&self) -> bool {
+        !(self.type_failed || self.untyped)
+    }
+
+    /// The rows of the tables of terms (header `Term` and `Forbidden
+    /// synonyms`) of a `terms` document. Another document has none.
+    pub fn term_rows(&self) -> &[crate::parse::TermRow] {
+        if self.ty == DocType::Terms && !self.type_failed {
+            &self.parsed.terms
+        } else {
+            &[]
+        }
+    }
+
     pub fn has_anchor(&self, frag: &str) -> bool {
         self.parsed.chunks.iter().any(|c| c.anchor == frag) || self.req(frag).is_some()
     }
@@ -1309,6 +1325,33 @@ mod tests {
         for (i, t) in DocType::ALL.into_iter().enumerate() {
             assert_eq!(t as usize, i, "{}", t.name());
         }
+    }
+
+    #[test]
+    fn only_a_terms_document_gives_term_rows() {
+        let table = "| Term | Meaning | Forbidden synonyms |\n| --- | --- | --- |\n| Valve | A device. | gate; door |\n";
+        let c = corpus_with(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n",
+            &[
+                ("docs/terms.md", &format!("# Terms\n\n{table}")),
+                (
+                    "docs/rules/valves.md",
+                    &format!("---\ntype: rule\n---\n# Valves\n\n{table}"),
+                ),
+            ],
+        );
+        let terms = c.docs.iter().find(|d| d.path == "docs/terms.md").unwrap();
+        assert_eq!(terms.ty, DocType::Terms);
+        assert_eq!(terms.term_rows().len(), 1);
+        assert_eq!(terms.term_rows()[0].term, "Valve");
+        assert_eq!(terms.term_rows()[0].forbidden, ["gate", "door"]);
+        let rule = c
+            .docs
+            .iter()
+            .find(|d| d.path == "docs/rules/valves.md")
+            .unwrap();
+        assert_eq!(rule.parsed.terms.len(), 1);
+        assert!(rule.term_rows().is_empty());
     }
 
     #[test]

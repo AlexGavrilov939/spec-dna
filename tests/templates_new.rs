@@ -544,7 +544,7 @@ fn the_status_section_of_an_accepted_decision_is_live_by_default() {
     r.write(path, &r.read(path).replace("is faster", "is cheaper"));
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("SD405 decision-frozen"), "{out}");
+    assert!(out.contains("SD405 decision-locked"), "{out}");
 }
 
 #[test]
@@ -561,7 +561,7 @@ fn an_empty_live_sections_list_turns_the_default_off() {
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("SD405 decision-frozen"), "{out}");
+    assert!(out.contains("SD405 decision-locked"), "{out}");
 }
 
 #[test]

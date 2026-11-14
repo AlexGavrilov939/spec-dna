@@ -30,6 +30,30 @@
       },
       "uniqueItems": true
     },
+    "language": {
+      "description": "The language of the normative text: a BCP 47 language tag. A primary subtag other than `en` turns off the checks that read English word lists. Top level only. Default `en`.",
+      "type": "string",
+      "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$",
+      "default": "en"
+    },
+    "change": {
+      "description": "The change process. Without this table the policy is `none`. In 0.6.0 step 2 the table has only the key `policy`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy"
+      ],
+      "properties": {
+        "policy": {
+          "description": "The change classes. With `none`, SD921 is off and no rule can turn it on.",
+          "enum": [
+            "three-class",
+            "two-class",
+            "none"
+          ]
+        }
+      }
+    },
     "areas": {
       "description": "The areas of the project: the names of the folders of `requirements/`. Each name is one folder name.",
       "type": "array",
@@ -183,6 +207,15 @@
           "description": "The maximum number of words in a requirement sentence. A longer sentence gives a warning. Default 30.",
           "type": "integer",
           "minimum": 0
+        },
+        "history-terms": {
+          "description": "The phrases that SD903 reports in a requirement. They replace the default phrases. An empty list gives no phrase. Each phrase is not blank, and the phrases are unique.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "uniqueItems": true
         }
       }
     },
@@ -749,10 +782,10 @@
       ]
     },
     "rules": {
-      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, lint) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(references|ids|budgets|drift|evidence|lint|SD[0-9]{3})$"
+        "pattern": "^(references|ids|budgets|drift|evidence|lint|layers|changes|SD[0-9]{3})$"
       },
       "additionalProperties": {
         "$ref": "#/$defs/severity"

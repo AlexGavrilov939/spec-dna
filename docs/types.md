@@ -89,7 +89,7 @@ In a new corpus, link the documents in these directions. A link of another direc
 
 A permanent document does not link an intent. An intent ends with the status `closed`, and then you can delete it (SD202 allows it). A link to a deleted intent breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is frozen (SD405).
 
-Thus an accepted decision that links an intent in its frozen text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it.
+Thus an accepted decision that links an intent in its locked text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it. In such a section, name the intent as plain text, not as a link. SD901 and `finish` would stop on a link.
 
 ## Rule
 
@@ -128,7 +128,7 @@ An intent holds the request for one change. A spec holds the delta that the chan
 | `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |
 | `runbook` | `procedure` | `new procedure <slug> --template runbook` | When to use, Steps, Verify, Rollback |
 | `procedure` (default) | `procedure` | `new procedure <slug>` | Purpose, Steps |
-| `product`, `system`, `terms`, `roadmap`, `questions` (default) | by name | `new <type>` | Writes `<root>/<type>.md`. `terms` has the table term, meaning and forbidden synonyms |
+| `product`, `system`, `terms`, `roadmap`, `questions` (default) | by name | `new <type>` | Writes `<root>/<type>.md`. `terms` has the table term, meaning and forbidden synonyms. The header cells `Term` and `Forbidden synonyms` (any order, any case) mark the table that SD904 reads. A cell of synonyms splits at `,` and `;`. The column `Meaning` is not read |
 | `requirements`, `rule`, `interface`, `research` (default) | by name | `new <type> <id>` | One form for each type |
 
 The `prd` and `rfc` templates satisfy the required section of an `intent`, because each has a `Problem` or a `Summary` heading. Each embedded template is under 700 bytes, and a test checks it.

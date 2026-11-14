@@ -20,6 +20,8 @@ An error fails `check` when the error is new against the base. A warning never f
 | `evidence` | SD103 (a `verified-by` path is not in the git tree), SD105 (a `covers:` tag names no requirement) | warning | error | error |
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
+| `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
+| `changes` | SD921 (truth changed without a change). It runs only with `--base`, and it needs `[change] policy` other than `none`: with `none` it is off, and no rule turns it on | off | warning | error |
 
 The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the frozen text of an accepted decision changed) is always an error.
 

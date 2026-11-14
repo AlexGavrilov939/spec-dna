@@ -191,7 +191,8 @@ fn a_group_area_that_is_not_in_areas_is_an_error() {
 
 #[test]
 fn a_key_of_a_later_step_is_still_unknown() {
-    rejects("language = \"en\"", "", &["unknown key", "language"]);
+    // `language` and `[change]` came in step 2. `[evals]` comes in step 4.
+    rejects("", "[evals]\ndir = \"e\"\n", &["unknown key", "evals"]);
 }
 
 #[test]

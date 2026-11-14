@@ -33,7 +33,7 @@ An agent changed the outcome of an accepted decision. `check` stops the change:
 
 ```console
 $ spec-dna check
-docs/decisions/water-source.md:1: error SD405 decision-frozen: the text outside the amendment and live sections changed after the decision was accepted
+docs/decisions/water-source.md:1: error SD405 decision-locked: the text outside the amendment and live sections changed after the decision was accepted
 SD405 fix: Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, default `Status`) can change in place. As an alternative, write a decision that supersedes this one.
 spec-dna check: 2 documents; 1 new error and 0 new warnings against 3bd199ae40b9 (1 error and 1 warning in total)
 ```

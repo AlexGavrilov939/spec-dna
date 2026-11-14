@@ -73,6 +73,60 @@ pub struct Config {
     /// repository root, with no `./` and no final `/`. It is never part of a
     /// root: `is_excluded` is true for each path in it.
     pub templates_dir: String,
+    /// The language of the normative text: a BCP 47 tag (`language`). The
+    /// default is `en`. A primary subtag other than `en` turns off the checks
+    /// that read English word lists (SD801 to SD805 and SD904).
+    pub language: String,
+    /// `[lint] history-terms`: the phrases that SD903 reports. They replace
+    /// the default phrases. `None`: the key is absent, so the default
+    /// phrases apply. `Some` with an empty list: no phrase.
+    pub history_terms: Option<Vec<String>>,
+    /// `[change] policy`. With no `[change]` table it is `None`.
+    pub change_policy: ChangePolicy,
+}
+
+/// The change policy (`[change] policy`, design 0.6.0, "Change classes").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangePolicy {
+    ThreeClass,
+    TwoClass,
+    None,
+}
+
+impl ChangePolicy {
+    pub fn name(self) -> &'static str {
+        match self {
+            ChangePolicy::ThreeClass => "three-class",
+            ChangePolicy::TwoClass => "two-class",
+            ChangePolicy::None => "none",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<ChangePolicy> {
+        [
+            ChangePolicy::ThreeClass,
+            ChangePolicy::TwoClass,
+            ChangePolicy::None,
+        ]
+        .into_iter()
+        .find(|p| p.name() == s)
+    }
+}
+
+/// The default language of the normative text.
+pub const DEFAULT_LANGUAGE: &str = "en";
+
+/// Checks the form of a BCP 47 language tag: a primary subtag of 2 or 3
+/// letters, then subtags of 1 to 8 letters or digits, separated by `-`. The
+/// check does not look at the registry. The grandfathered tags and the
+/// private-use tags (`i-...`, `x-...`) are not valid. The schema has the same
+/// pattern.
+pub fn is_language_tag(s: &str) -> bool {
+    let mut parts = s.split('-');
+    let primary = parts.next().unwrap_or("");
+    (2..=3).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| (1..=8).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// The default folder of the project templates.
@@ -278,6 +332,8 @@ impl Profile {
             "SD701" | "SD703" | "SD704" => (Some(W), Some(W), Some(E)),
             "SD606" | "SD607" | "SD608" => (None, Some(W), Some(E)),
             "SD801" | "SD802" | "SD803" | "SD804" | "SD805" => (None, None, Some(W)),
+            "SD901" | "SD902" | "SD903" | "SD904" => (None, Some(W), Some(W)),
+            "SD921" => (None, Some(W), Some(E)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -293,13 +349,16 @@ impl Profile {
 pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
-pub const GROUPS: [(&str, &[&str]); 6] = [
+pub const GROUPS: [(&str, &[&str]); 8] = [
     ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
     ("drift", &["SD606", "SD607"]),
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
+    ("layers", &["SD901", "SD902", "SD903", "SD904"]),
+    // SD905 and SD910 to SD920 have no code before step 3.
+    ("changes", &["SD921"]),
 ];
 
 /// Reads a severity value: `"off"` (`None`), `"warning"` or `"error"`.
@@ -584,10 +643,25 @@ impl Config {
             b.done()?;
         }
         let mut max_words = 30;
+        let mut history_terms = None;
         if let Some(v) = t.take("lint") {
             let tbl = v.as_table().ok_or("`lint` must be a table")?;
             let mut f = Fields::new(tbl, "lint.");
             max_words = f.opt_u32("max-words")?.unwrap_or(max_words);
+            if f.table.contains_key("history-terms") {
+                let terms = f.opt_strs("history-terms")?;
+                for (i, term) in terms.iter().enumerate() {
+                    if term.trim().is_empty() {
+                        return Err("`lint.history-terms` has an empty phrase".into());
+                    }
+                    if terms[..i].contains(term) {
+                        return Err(format!(
+                            "`lint.history-terms` lists `{term}` more than once"
+                        ));
+                    }
+                }
+                history_terms = Some(terms);
+            }
             f.done()?;
         }
         // 8,000 characters (about 2,000 tokens): every later request of an
@@ -711,6 +785,35 @@ impl Config {
             }
             None => DEFAULT_TEMPLATES_DIR.to_string(),
         };
+        let language = match t.opt_str("language")? {
+            None => DEFAULT_LANGUAGE.to_string(),
+            Some(l) if is_language_tag(&l) => l,
+            Some(l) => {
+                return Err(format!(
+                    "`language` must be a BCP 47 language tag, such as `en`, `en-GB` or `de`, not `{l}`"
+                ));
+            }
+        };
+        let change_policy = match t.take("change") {
+            None => ChangePolicy::None,
+            Some(v) => {
+                let tbl = v.as_table().ok_or("`change` must be a table")?;
+                let mut f = Fields::new(tbl, "change.");
+                let policy = f.req_str("policy")?;
+                let policy = ChangePolicy::from_name(&policy).ok_or_else(|| {
+                    format!(
+                        "`change.policy` must be \"three-class\", \"two-class\" or \"none\", not `{policy}`"
+                    )
+                })?;
+                if let Some(k) = tbl.keys().find(|k| k.as_str() != "policy") {
+                    return Err(format!(
+                        "unknown key `change.{k}`: spec-dna 0.6.0 reads only `change.policy` in this step, and the other keys of `[change]` come in a later step"
+                    ));
+                }
+                f.done()?;
+                policy
+            }
+        };
         t.done()?;
         Ok(Config {
             pin,
@@ -736,7 +839,19 @@ impl Config {
             areas,
             groups,
             templates_dir,
+            language,
+            history_terms,
+            change_policy,
         })
+    }
+
+    /// True if the primary subtag of `language` is `en`. The word lists of the
+    /// prose lint and of SD904 are English.
+    pub fn language_is_english(&self) -> bool {
+        self.language
+            .split('-')
+            .next()
+            .is_some_and(|p| p.eq_ignore_ascii_case("en"))
     }
 
     /// Returns the severity of a code for a file of a root. It returns `None`
@@ -752,6 +867,11 @@ impl Config {
     }
 
     fn configured_severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
+        // With no change policy, SD921 has no meaning. No rule of the file can
+        // turn it on.
+        if code.code() == "SD921" && self.change_policy == ChangePolicy::None {
+            return None;
+        }
         let root = root.map(|r| &self.roots[r]);
         if let Some(s) = root.and_then(|r| rule_for(&r.rules, code)) {
             return s;
@@ -1922,17 +2042,240 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
     #[test]
     fn a_later_step_key_is_still_unknown() {
-        for head in [
-            "language = \"en\"\n",
-            "[change]\npolicy = \"none\"\n",
-            "[evals]\ndir = \"e\"\n",
+        // `language`, `[lint] history-terms` and `[change] policy` come in
+        // step 2. `[evals]` comes in step 4.
+        let e =
+            Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n[evals]\ndir = \"e\"\n")
+                .unwrap_err();
+        assert!(e.contains("unknown key"), "{e}");
+    }
+
+    #[test]
+    fn language_has_a_default_and_a_form() {
+        let c = Config::parse(BASE).unwrap();
+        assert_eq!(c.language, "en");
+        assert!(c.language_is_english());
+        for (tag, english) in [
+            ("en", true),
+            ("EN", true),
+            ("en-GB", true),
+            ("en-Latn-US", true),
+            ("de", false),
+            ("de-AT", false),
+            ("zh-Hant-TW", false),
+            ("fil", false),
         ] {
-            let e = Config::parse(&format!(
-                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n{head}"
-            ));
-            let e = e.unwrap_err();
-            assert!(e.contains("unknown key"), "{head}: {e}");
+            let c = with(&format!("language = \"{tag}\""), "").unwrap();
+            assert_eq!(c.language, tag);
+            assert_eq!(c.language_is_english(), english, "{tag}");
         }
+        for bad in [
+            "\"\"",
+            "\"e\"",
+            "\"english\"",
+            "\"en_GB\"",
+            "\"en-\"",
+            "\"-en\"",
+            "\"en--GB\"",
+            "\"en-toolongsubtag\"",
+            "\"x-private\"",
+            "\"en GB\"",
+            "\"d\u{e9}\"",
+        ] {
+            let e = with(&format!("language = {bad}"), "").unwrap_err();
+            assert!(e.contains("`language` must be a BCP 47"), "{bad}: {e}");
+        }
+        for bad in ["1", "[\"en\"]"] {
+            let e = with(&format!("language = {bad}"), "").unwrap_err();
+            assert!(e.contains("`language` must be a string"), "{bad}: {e}");
+        }
+        // The key is a top-level key. A root does not have it.
+        let e = Config::parse(&format!("{BASE}language = \"en\"\n")).unwrap_err();
+        assert!(e.contains("unknown key `roots[0].language`"), "{e}");
+    }
+
+    #[test]
+    fn history_terms_are_unique_strings_that_keep_absent_apart_from_empty() {
+        let c = Config::parse(BASE).unwrap();
+        assert_eq!(c.history_terms, None);
+        let c = with("", "[lint]\nmax-words = 20\n").unwrap();
+        assert_eq!(c.history_terms, None);
+        let c = with("", "[lint]\nhistory-terms = []\n").unwrap();
+        assert_eq!(c.history_terms, Some(Vec::new()));
+        let c = with("", "[lint]\nhistory-terms = [\"no longer\", \"vormals\"]\n").unwrap();
+        assert_eq!(
+            c.history_terms,
+            Some(vec!["no longer".to_string(), "vormals".to_string()])
+        );
+        for (value, want) in [
+            ("1", "`lint.history-terms` must be an array of strings"),
+            ("[1]", "`lint.history-terms` must hold strings"),
+            (
+                "[\"a\", \"a\"]",
+                "`lint.history-terms` lists `a` more than once",
+            ),
+            (
+                "[\"a\", \"  \"]",
+                "`lint.history-terms` has an empty phrase",
+            ),
+            ("[\"\"]", "`lint.history-terms` has an empty phrase"),
+        ] {
+            let e = with("", &format!("[lint]\nhistory-terms = {value}\n")).unwrap_err();
+            assert!(e.contains(want), "{value}: {e}");
+        }
+    }
+
+    #[test]
+    fn the_change_table_has_only_the_policy() {
+        // No table: the policy is `none`.
+        assert_eq!(
+            Config::parse(BASE).unwrap().change_policy,
+            ChangePolicy::None
+        );
+        for (value, want) in [
+            ("three-class", ChangePolicy::ThreeClass),
+            ("two-class", ChangePolicy::TwoClass),
+            ("none", ChangePolicy::None),
+        ] {
+            let c = with("", &format!("[change]\npolicy = \"{value}\"\n")).unwrap();
+            assert_eq!(c.change_policy, want);
+            assert_eq!(want.name(), value);
+        }
+        for (tail, want) in [
+            ("[change]\n", "`change.policy` is required"),
+            (
+                "[change]\ngate = \"block\"\n",
+                "`change.policy` is required",
+            ),
+            ("[change]\npolicy = 1\n", "`change.policy` must be a string"),
+            (
+                "[change]\npolicy = \"four-class\"\n",
+                "`change.policy` must be \"three-class\", \"two-class\" or \"none\", not `four-class`",
+            ),
+            ("[change]\npolicy = \"\"\n", "`change.policy` must be"),
+        ] {
+            let e = with("", tail).unwrap_err();
+            assert!(e.contains(want), "{tail}: {e}");
+        }
+        let e = with("change = true", "").unwrap_err();
+        assert!(e.contains("`change` must be a table"), "{e}");
+        // Each other key of the design, and an invented key, is an error that
+        // says that it comes in a later step.
+        for key in [
+            "gate = \"block\"",
+            "high-risk-layers = []",
+            "high-risk-paths = []",
+            "max-fanout = 8",
+            "invented = 1",
+        ] {
+            let e = with("", &format!("[change]\npolicy = \"none\"\n{key}\n")).unwrap_err();
+            let name = key.split(' ').next().unwrap();
+            assert!(
+                e.contains(&format!("unknown key `change.{name}`")) && e.contains("later step"),
+                "{key}: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_new_codes_follow_the_profile_table_and_the_new_groups() {
+        use Severity::{Error as E, Warning as W};
+        let by = |profile: &str, code: Code| {
+            let c = with(
+                &format!("profile = \"{profile}\""),
+                "[change]\npolicy = \"three-class\"\n",
+            )
+            .unwrap();
+            c.severity(code, Some(0))
+        };
+        for code in [
+            Code::LinkDirection,
+            Code::LayerLimit,
+            Code::HistoryInRequirements,
+            Code::TermForbidden,
+        ] {
+            assert_eq!(by("lite", code), None, "{}", code.code());
+            assert_eq!(by("standard", code), Some(W), "{}", code.code());
+            assert_eq!(by("strict", code), Some(W), "{}", code.code());
+        }
+        assert_eq!(by("lite", Code::TruthChangedWithoutChange), None);
+        assert_eq!(by("standard", Code::TruthChangedWithoutChange), Some(W));
+        assert_eq!(by("strict", Code::TruthChangedWithoutChange), Some(E));
+        for (code, name) in [
+            (Code::LinkDirection, "link-direction"),
+            (Code::LayerLimit, "layer-limit"),
+            (Code::HistoryInRequirements, "history-in-requirements"),
+            (Code::TermForbidden, "term-forbidden"),
+            (
+                Code::TruthChangedWithoutChange,
+                "truth-changed-without-change",
+            ),
+        ] {
+            assert_eq!(code.name(), name);
+            assert_eq!(Code::from_code(code.code()), Some(code));
+        }
+        // The group `layers` holds SD901 to SD904. The group `changes` holds
+        // SD921 (SD905 and SD910 to SD920 have no code before step 3).
+        let c = with(
+            "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
+            "[change]\npolicy = \"two-class\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::LinkDirection, Some(0)), Some(E));
+        assert_eq!(c.severity(Code::LayerLimit, Some(0)), None);
+        assert_eq!(c.severity(Code::TermForbidden, Some(0)), Some(E));
+        assert_eq!(
+            c.severity(Code::TruthChangedWithoutChange, Some(0)),
+            Some(W)
+        );
+    }
+
+    #[test]
+    fn no_rule_turns_sd921_on_without_a_change_policy() {
+        let rule_sets = [
+            "[rules]\nchanges = \"error\"\n",
+            "[rules]\nSD921 = \"error\"\n",
+            "[rules]\nSD921 = \"warning\"\nchanges = \"error\"\n",
+        ];
+        for rules in rule_sets {
+            for profile in ["lite", "standard", "strict"] {
+                let parse = |change: &str| {
+                    Config::parse(&format!(
+                        "spec-dna = \"0.1.0\"\nprofile = \"{profile}\"\n{change}{rules}[[roots]]\npath = \"docs\"\n"
+                    ))
+                    .unwrap()
+                };
+                // No table: the policy is `none`.
+                let c = parse("");
+                assert_eq!(c.severity(Code::TruthChangedWithoutChange, Some(0)), None);
+                assert_eq!(c.severity(Code::TruthChangedWithoutChange, None), None);
+                assert!(c.is_off(Code::TruthChangedWithoutChange));
+                // The same with an explicit `none`.
+                let c = parse("[change]\npolicy = \"none\"\n");
+                assert_eq!(c.severity(Code::TruthChangedWithoutChange, Some(0)), None);
+                // With a policy, the same rule turns it on, also in `lite`.
+                let c = parse("[change]\npolicy = \"three-class\"\n");
+                assert!(
+                    c.severity(Code::TruthChangedWithoutChange, Some(0))
+                        .is_some()
+                );
+            }
+        }
+        // A rule of a root cannot turn it on either.
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nrules = { SD921 = \"error\", changes = \"error\" }\n",
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::TruthChangedWithoutChange, Some(0)), None);
+        // The other codes keep their rules under `none`.
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[rules]\nlayers = \"error\"\n[[roots]]\npath = \"docs\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            c.severity(Code::LinkDirection, Some(0)),
+            Some(Severity::Error)
+        );
     }
 
     const SCHEMA: &str = include_str!("../schema/spec-dna.schema.json");
@@ -1953,7 +2296,14 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
         // The top level.
         let top = keys(&schema);
-        for k in ["areas", "groups", "layers", "templates"] {
+        for k in [
+            "areas",
+            "groups",
+            "layers",
+            "templates",
+            "language",
+            "change",
+        ] {
             assert!(top.iter().any(|t| t == k), "the schema lacks `{k}`");
         }
         for k in &top {
@@ -1970,6 +2320,45 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         let e = Config::parse("invented = true\nspec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n")
             .unwrap_err();
         assert!(is_unknown(&e), "{e}");
+
+        // The keys of `[change]` and `[lint]` that step 2 adds.
+        let change = schema.get("properties").get("change");
+        assert_eq!(keys(change), ["policy"]);
+        assert_eq!(
+            change.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
+        );
+        let e = with("", "[change]\npolicy = \"none\"\ninvented = true\n").unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+        let e = with("", "[change]\npolicy = true\n").unwrap_err();
+        assert!(
+            !is_unknown(&e),
+            "the parser does not know `change.policy`: {e}"
+        );
+        let lint = schema.get("properties").get("lint");
+        assert!(keys(lint).iter().any(|k| k == "history-terms"));
+        let e = with("", "[lint]\nhistory-terms = true\n").unwrap_err();
+        assert!(
+            !is_unknown(&e),
+            "the parser does not know `lint.history-terms`: {e}"
+        );
+        // The rule groups of the schema are the groups of the parser.
+        let pattern = match schema
+            .get("$defs")
+            .get("rules")
+            .get("propertyNames")
+            .get("pattern")
+        {
+            crate::json::Value::Str(p) => p.clone(),
+            other => panic!("no pattern: {other:?}"),
+        };
+        for (name, _) in GROUPS {
+            assert!(
+                pattern.contains(name),
+                "the schema lacks the group `{name}`"
+            );
+            assert!(with("", &format!("[rules]\n{name} = \"off\"\n")).is_ok());
+        }
 
         // The keys of a layer: exactly the 12 keys of the design.
         let layer = &schema.get("$defs").get("layer");

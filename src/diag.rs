@@ -61,7 +61,7 @@ codes! {
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
-    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, default `Status`) can change in place. As an alternative, write a decision that supersedes this one.";
+    DecisionFrozen = "SD405", "decision-locked", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, default `Status`) can change in place. As an alternative, write a decision that supersedes this one.";
     AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. For a harness file or the model-team line, delete it first. Put your own text outside of the generated text.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
     ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";
@@ -77,7 +77,7 @@ codes! {
     RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, rules, decisions and procedures that the incident involves, with `[[<id>]]` or a Markdown link.";
     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
-    DecisionLinksChange = "SD611", "decision-links-change", Warning, "Link the decision from the intent instead. A finished intent can be deleted (SD202 allows it), but the frozen text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent in an amendment or a live section.";
+    DecisionLinksChange = "SD611", "decision-links-intent", Warning, "Link the decision from the intent instead. A finished intent can be deleted (SD202 allows it), but the locked text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent as plain text, not as a link, in an amendment or a live section. SD901 and `finish` would stop on a link.";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
@@ -89,6 +89,11 @@ codes! {
     PassiveVoice = "SD805", "passive-voice", Warning, "Name the actor as the subject (`the controller SHALL close`, not `SHALL be closed`).";
     RequirementsUnrecognized = "SD806", "requirements-unrecognized", Warning, "Write each requirement as a list item that starts with its bold key: `- **R-12**: sentence` or `- **R-12** sentence`. A key in a table, a heading or a paragraph is not a requirement.";
     RequirementColonMissing = "SD807", "requirement-colon-missing", Warning, "Write the requirement as `- **key**: sentence`, with the colon right after the bold key. Put a note, such as a rule number, after the colon.";
+    LinkDirection = "SD901", "link-direction", Warning, "Remove the reference (a link, `[[id]]`, `depends-on` or `supersedes`), or move the text to a layer that is not more stable than the target. As an alternative, add the layer of the document to `linked-from` of the target layer in spec-dna.toml.";
+    LayerLimit = "SD902", "layer-limit", Warning, "Move or merge documents of the layer. As an alternative, change `max-docs` or `max-chars` of the layer in a change of its own.";
+    HistoryInRequirements = "SD903", "history-in-requirements", Warning, "Remove the date, the round or the history phrase from the requirement. Write the current rule only. Keep the history in the git log.";
+    TermForbidden = "SD904", "term-forbidden", Warning, "Use the term that the message names instead of the forbidden synonym. The terms are in the table of the `terms` document.";
+    TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -6,9 +6,11 @@ use crate::config::Config;
 use crate::diag::{Code, Diag};
 use crate::evidence::{Evidence, needs_evidence};
 use crate::layer::Keep;
+use crate::lint::Phrases;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
-use std::collections::{HashMap, HashSet};
+use crate::repo::Snapshot;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 fn diag(
     d: &Doc,
@@ -44,7 +46,9 @@ pub fn apply_severity(config: &Config, diags: Vec<Diag>) -> Vec<Diag> {
 /// configuration.
 pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
     let (ev, mut out) = Evidence::build(c);
-    let per_doc = crate::repo::par_map(&c.docs, |d| doc_diags(config, c, d, &ev));
+    let layers = doc_layers(config, c);
+    let facts = Facts::build(config, c, &ev, &layers);
+    let per_doc = crate::repo::par_map(&c.docs, |d| doc_diags(config, c, d, &facts));
     out.extend(per_doc.into_iter().flatten());
 
     // Duplicate ids and aliases.
@@ -109,8 +113,150 @@ pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
         }
     }
     let mut out = apply_severity(config, out);
+    out.extend(layer_limits(config, c, &layers));
     out.sort();
     out
+}
+
+/// The layer of each document, as `layer list` shows it. A document with no
+/// valid type is in no layer (D12).
+fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
+    c.docs
+        .iter()
+        .map(|d| {
+            if d.has_layer() {
+                config.layers.layer_of(rel_in_root(config, d), d.ty)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// The path of a document relative to its root. The head configuration gives
+/// the root. A root that moved gives the full path.
+fn rel_in_root<'a>(config: &'a Config, d: &'a Doc) -> &'a str {
+    config
+        .roots
+        .get(d.root)
+        .filter(|r| d.path.starts_with(&format!("{}/", r.path)) || r.path.is_empty())
+        .map_or(d.path.as_str(), |r| r.rel(&d.path))
+}
+
+/// SD902: a layer with more documents than `max-docs`, or more body
+/// characters than `max-chars`. The documents of all roots count. A stub and a
+/// generated index do not count. The diagnostic is on `spec-dna.toml`, as
+/// SD106 is, so the rules and the profile of a root do not apply (D20).
+fn layer_limits(config: &Config, c: &Corpus, layers: &[Option<usize>]) -> Vec<Diag> {
+    let Some(severity) = config.severity(Code::LayerLimit, None) else {
+        return Vec::new();
+    };
+    let graph = config.layers.layers();
+    if graph
+        .iter()
+        .all(|l| l.max_docs.is_none() && l.max_chars.is_none())
+    {
+        return Vec::new();
+    }
+    let mut count = vec![(0u64, 0u64); graph.len()];
+    for (d, l) in c.docs.iter().zip(layers) {
+        if let Some(l) = l
+            && d.moved_to.is_none()
+            && d.generated.is_none()
+        {
+            count[*l].0 += 1;
+            count[*l].1 += u64::from(d.parsed.body_chars);
+        }
+    }
+    let mut out = Vec::new();
+    for (l, &(docs, chars)) in graph.iter().zip(&count) {
+        for (key, n, max, what) in [
+            ("max-docs", docs, l.max_docs, "documents"),
+            ("max-chars", chars, l.max_chars, "body characters"),
+        ] {
+            if let Some(max) = max
+                && n > u64::from(max)
+            {
+                out.push(Diag {
+                    path: crate::config::FILE_NAME.to_string(),
+                    line: 1,
+                    code: Code::LayerLimit,
+                    doc: crate::config::FILE_NAME.to_string(),
+                    target: format!("{}:{key}", l.name),
+                    message: format!(
+                        "layer `{}` has {n} {what}, more than `{key} = {max}`",
+                        l.name
+                    ),
+                    severity,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The data that a check shares between the documents of one corpus.
+struct Facts<'a> {
+    ev: &'a Evidence,
+    /// The layer of each document (`doc_layers`).
+    layers: &'a [Option<usize>],
+    /// For SD901: `bad[x * n + y]` is true if a document of layer `x` must not
+    /// link a document of layer `y`. Empty if SD901 is off.
+    bad: Vec<bool>,
+    n_layers: usize,
+    /// The names of the layers, for the messages.
+    names: Vec<String>,
+    /// The history phrases of SD903.
+    history: Phrases,
+    /// The forbidden synonyms of SD904, with their terms. Empty if the
+    /// language is not English or SD904 is off.
+    terms: Phrases,
+    english: bool,
+}
+
+impl<'a> Facts<'a> {
+    fn layer_name(&self, i: usize) -> &str {
+        &self.names[i]
+    }
+
+    fn build(config: &Config, c: &Corpus, ev: &'a Evidence, layers: &'a [Option<usize>]) -> Self {
+        let g = &config.layers;
+        let n = g.layers().len();
+        let mut bad = Vec::new();
+        if !config.is_off(Code::LinkDirection) {
+            bad = vec![false; n * n];
+            for x in 0..n {
+                for y in 0..n {
+                    bad[x * n + y] = x != y
+                        && g.more_stable(x, y)
+                        && !g.layers()[y].linked_from.contains(&g.layers()[x].name);
+                }
+            }
+        }
+        let english = config.language_is_english();
+        let mut terms = Phrases::default();
+        if english && !config.is_off(Code::TermForbidden) {
+            for d in c.docs.iter().filter(|d| !d.is_inactive()) {
+                for row in d.term_rows() {
+                    for synonym in &row.forbidden {
+                        if !synonym.eq_ignore_ascii_case(&row.term) {
+                            terms.add(synonym, &row.term);
+                        }
+                    }
+                }
+            }
+        }
+        Facts {
+            ev,
+            layers,
+            bad,
+            n_layers: n,
+            names: g.layers().iter().map(|l| l.name.clone()).collect(),
+            history: Phrases::history(config.history_terms.as_deref()),
+            terms,
+            english,
+        }
+    }
 }
 
 fn found(r: Res) -> Option<u32> {
@@ -134,7 +280,12 @@ fn reaches(edges: &[Vec<u32>], from: u32, target: u32) -> bool {
     false
 }
 
-fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
+fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
+    let ev = facts.ev;
+    // The documents that this one references, for SD901. A stub and a
+    // generated index have no such references.
+    let track = !facts.bad.is_empty() && d.moved_to.is_none() && d.generated.is_none();
+    let mut hits: Vec<(u32, u32)> = Vec::new();
     let mut out: Vec<Diag> = d
         .issues
         .iter()
@@ -149,7 +300,13 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
 
     for r in &p.refs {
         match r.kind {
-            RefKind::Wiki => id_ref(c, d, &r.target, r.line, &mut out),
+            RefKind::Wiki => {
+                if let Some(t) = id_ref(c, d, &r.target, r.line, &mut out)
+                    && track
+                {
+                    hits.push((t, r.line));
+                }
+            }
             RefKind::Link | RefKind::Image => match c.resolve_link(&d.path, &r.target) {
                 LinkRes::Missing(path) => out.push(diag(
                     d,
@@ -164,6 +321,9 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
                 LinkRes::File(path, Some(t), Some(frag))
                     if !frag.is_empty() && !c.docs[t as usize].has_anchor(&frag) =>
                 {
+                    if track && r.kind == RefKind::Link {
+                        hits.push((t, r.line));
+                    }
                     out.push(diag(
                         d,
                         r.line,
@@ -171,6 +331,11 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
                         r.target.clone(),
                         format!("`{path}` has no heading or requirement `{frag}`"),
                     ))
+                }
+                LinkRes::File(_, Some(t), _) | LinkRes::Dir(Some(t))
+                    if track && r.kind == RefKind::Link =>
+                {
+                    hits.push((t, r.line));
                 }
                 LinkRes::SelfAnchor(frag) if !d.has_anchor(&frag) => out.push(diag(
                     d,
@@ -189,10 +354,18 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
         return out;
     }
     for (t, line) in d.supersedes.iter() {
-        id_ref(c, d, t, *line, &mut out);
+        if let Some(t) = id_ref(c, d, t, *line, &mut out)
+            && track
+        {
+            hits.push((t, *line));
+        }
     }
     for (t, line) in d.depends_on.iter() {
-        id_ref(c, d, t, *line, &mut out);
+        if let Some(i) = id_ref(c, d, t, *line, &mut out)
+            && track
+        {
+            hits.push((i, *line));
+        }
         if let Some(i) = found(c.resolve(t)) {
             let target = &c.docs[i as usize];
             match target.status_str() {
@@ -282,8 +455,14 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
             "the incident links no requirement, rule, decision or procedure",
         ));
     }
-    if d.ty == DocType::Decision && d.status_str() == "accepted" && d.generated.is_none() {
-        decision_links_change(config, c, d, &mut out);
+    let locked =
+        if d.ty == DocType::Decision && d.status_str() == "accepted" && d.generated.is_none() {
+            decision_links_change(config, c, d, &mut out)
+        } else {
+            Vec::new()
+        };
+    if track {
+        link_direction(c, d, facts, &hits, &locked, &mut out);
     }
     for t in &p.tokens {
         let Some((prefix, _)) = t.text.split_once('-') else {
@@ -345,16 +524,20 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
         ));
     }
 
-    // The profile and the rules of the root can turn the lint off.
-    let lint_on = [
-        Code::RequirementKeyword,
-        Code::EarsPattern,
-        Code::SentenceLength,
-        Code::VagueTerm,
-        Code::PassiveVoice,
-    ]
-    .iter()
-    .any(|&code| config.severity(code, Some(d.root)).is_some());
+    history_and_terms(config, d, facts, &mut out);
+
+    // The profile and the rules of the root can turn the lint off. The word
+    // lists are English, so another `language` turns the lint off.
+    let lint_on = facts.english
+        && [
+            Code::RequirementKeyword,
+            Code::EarsPattern,
+            Code::SentenceLength,
+            Code::VagueTerm,
+            Code::PassiveVoice,
+        ]
+        .iter()
+        .any(|&code| config.severity(code, Some(d.root)).is_some());
     if !lint_on {
         return out;
     }
@@ -388,11 +571,12 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
 }
 
 /// SD611: an accepted decision links a document of the type `intent` in its
-/// frozen text, or in `depends-on`. You can delete a finished intent (SD202
+/// locked text, or in `depends-on`. You can delete a finished intent (SD202
 /// allows it: its layer is `until-finished`), but you cannot remove the link from
-/// the frozen text. A link in an amendment, history or live section can change,
-/// so it is allowed.
-fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) {
+/// the locked text. A link in an amendment, history or live section can change,
+/// so SD611 does not report it. SD901 reports it.
+/// Returns the intents that it reports. SD901 skips these pairs.
+fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) -> Vec<u32> {
     let p = &d.parsed;
     let live = crate::model::amendment_chunks(
         &p.chunks,
@@ -417,7 +601,7 @@ fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Dia
                 Code::DecisionLinksChange,
                 target.id.clone(),
                 format!(
-                    "the accepted decision links the intent `{}`; an intent can be deleted, and the frozen text of the decision cannot drop the link",
+                    "the accepted decision links the intent `{}`; an intent can be deleted, and the locked text of the decision cannot drop the link",
                     target.id
                 ),
             ));
@@ -446,22 +630,136 @@ fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Dia
             hit(i, *line);
         }
     }
+    seen
 }
 
-fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
-    match c.resolve(target) {
-        Res::Found(_, _, true) => {}
-        Res::Found(i, Some(frag), false) => out.push(diag(
+/// SD901: a document of layer X references a document of layer Y, X is more
+/// stable than Y, and Y does not list X in `linked-from`. One diagnostic for
+/// each (document, target) pair. `hits` has the resolved references of the
+/// document. `locked` has the intents that SD611 reports for it.
+fn link_direction(
+    c: &Corpus,
+    d: &Doc,
+    facts: &Facts,
+    hits: &[(u32, u32)],
+    locked: &[u32],
+    out: &mut Vec<Diag>,
+) {
+    let Some(x) = c
+        .by_path
+        .get(&d.path)
+        .and_then(|&i| facts.layers[i as usize])
+    else {
+        return;
+    };
+    let mut seen: Vec<u32> = Vec::new();
+    for &(t, line) in hits {
+        let target = &c.docs[t as usize];
+        let Some(y) = facts.layers[t as usize] else {
+            continue;
+        };
+        if target.moved_to.is_some()
+            || seen.contains(&t)
+            || locked.contains(&t)
+            || !facts.bad[x * facts.n_layers + y]
+        {
+            continue;
+        }
+        seen.push(t);
+        out.push(diag(
             d,
             line,
-            Code::UnresolvedReference,
-            target,
+            Code::LinkDirection,
+            target.id.clone(),
             format!(
-                "`{}` has no section or requirement `{frag}`",
-                c.docs[i as usize].id
+                "`{}` (layer `{}`) references `{}` (layer `{}`), a less stable layer that does not list `{}` in `linked-from`",
+                d.id,
+                facts.layer_name(x),
+                target.id,
+                facts.layer_name(y),
+                facts.layer_name(x),
             ),
-        )),
-        Res::Found(..) => {}
+        ));
+    }
+}
+
+/// SD903 and SD904: the history and the forbidden synonyms in the
+/// requirements of a `rule`, a `requirements` and an `interface` document.
+fn history_and_terms(config: &Config, d: &Doc, facts: &Facts, out: &mut Vec<Diag>) {
+    if !matches!(
+        d.ty,
+        DocType::Rule | DocType::Requirements | DocType::Interface
+    ) || d.type_failed
+        || d.generated.is_some()
+    {
+        return;
+    }
+    let history_on = config
+        .severity(Code::HistoryInRequirements, Some(d.root))
+        .is_some();
+    let terms_on =
+        !facts.terms.is_empty() && config.severity(Code::TermForbidden, Some(d.root)).is_some();
+    if !history_on && !terms_on {
+        return;
+    }
+    for &ri in &d.reqs {
+        let r = &d.parsed.reqs[ri];
+        let text = crate::lint::prose(&r.text);
+        let ws = if (history_on && !facts.history.is_empty()) || terms_on {
+            crate::lint::words(&text)
+        } else {
+            Vec::new()
+        };
+        if history_on {
+            for m in crate::lint::history(&text, &ws, &facts.history) {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::HistoryInRequirements,
+                    format!("{}:{m}", r.key),
+                    format!(
+                        "`{}`: the requirement has history (`{m}`); write the current rule only",
+                        r.key
+                    ),
+                ));
+            }
+        }
+        if terms_on {
+            for (synonym, term) in facts.terms.find(&ws) {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::TermForbidden,
+                    format!("{}:{}", r.key, synonym.to_lowercase()),
+                    format!(
+                        "`{}`: `{synonym}` is a forbidden synonym; use the term `{term}`",
+                        r.key
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Reports a reference that does not resolve. Returns the document that it
+/// names, if it names one.
+fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) -> Option<u32> {
+    match c.resolve(target) {
+        Res::Found(i, _, true) => return Some(i),
+        Res::Found(i, Some(frag), false) => {
+            out.push(diag(
+                d,
+                line,
+                Code::UnresolvedReference,
+                target,
+                format!(
+                    "`{}` has no section or requirement `{frag}`",
+                    c.docs[i as usize].id
+                ),
+            ));
+            return Some(i);
+        }
+        Res::Found(i, ..) => return Some(i),
         Res::Missing => out.push(diag(
             d,
             line,
@@ -492,6 +790,7 @@ fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
             ))
         }
     }
+    None
 }
 
 /// True if SD202 allows the deletion of a base document. The layer of the
@@ -502,15 +801,9 @@ fn deletion_allowed(config: &Config, b: &Doc) -> bool {
     if matches!(b.was_type.as_deref(), Some("note" | "change")) {
         return true;
     }
-    // The head configuration gives the root. A root that moved gives the full path.
-    let rel = config
-        .roots
-        .get(b.root)
-        .filter(|r| b.path.starts_with(&format!("{}/", r.path)) || r.path.is_empty())
-        .map_or(b.path.as_str(), |r| r.rel(&b.path));
     config
         .layers
-        .layer_of(rel, b.ty)
+        .layer_of(rel_in_root(config, b), b.ty)
         .is_some_and(|i| config.layers.layers()[i].keep == Keep::UntilFinished)
 }
 
@@ -786,6 +1079,198 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
         (Some(a), Some(b)) => !terminal(from) && b > a,
         _ => true, // another check reports an invalid status
     }
+}
+
+/// SD921: the diff changes a requirement of a `forever` layer, and it touches
+/// no file under the folder of the `intent` layer. A requirement is a list
+/// item of a `rule`, `requirements` or `interface` document. It changed if its
+/// key has another `frozen` hash, and it was added or removed if its key has
+/// no match on the other side. `Corpus::resolve` applies the aliases, so a move
+/// that keeps the hashes gives no diagnostic. The check compares the base with
+/// the head only. It runs only for `check --base`, because a base that is HEAD gives a
+/// false SD921 when the branch added its intent in an earlier commit. All
+/// diagnostics are new. Each diagnostic names one document.
+pub fn truth_changed(
+    config: &Config,
+    base: (&Corpus, &Snapshot),
+    head: (&Corpus, &Snapshot),
+) -> Vec<Diag> {
+    if config.is_off(Code::TruthChangedWithoutChange) {
+        return Vec::new();
+    }
+    let (base, base_snap) = base;
+    let (head, head_snap) = head;
+    if intent_changed(config, base_snap, head_snap) {
+        return Vec::new();
+    }
+    // A requirement that spec-dna reads: of a document of the 3 types in a
+    // layer that keeps its documents forever.
+    let truth = |d: &Doc| {
+        matches!(
+            d.ty,
+            DocType::Rule | DocType::Requirements | DocType::Interface
+        ) && !d.type_failed
+            && d.moved_to.is_none()
+            && d.generated.is_none()
+            && config
+                .layers
+                .layer_of(rel_in_root(config, d), d.ty)
+                .is_some_and(|i| config.layers.layers()[i].keep == Keep::Forever)
+    };
+    #[derive(Default)]
+    struct Change {
+        path: String,
+        line: u32,
+        changed: Vec<String>,
+        added: Vec<String>,
+        removed: Vec<String>,
+    }
+    let mut by_doc: BTreeMap<String, Change> = BTreeMap::new();
+    let mut matched: HashSet<(u32, usize)> = HashSet::new();
+    for b in base.docs.iter().filter(|d| truth(d)) {
+        for &ri in &b.reqs {
+            let r = &b.parsed.reqs[ri];
+            let target = format!("{}#{}", b.id, r.key);
+            let hit = match head.resolve(&target) {
+                Res::Found(hd, Some(key), true) => {
+                    head.docs[hd as usize].req(&key).map(|hri| (hd, hri))
+                }
+                // Two documents have the name, so the result is unknown.
+                Res::Ambiguous(_) => continue,
+                _ => None,
+            };
+            match hit {
+                Some((hd, hri)) => {
+                    matched.insert((hd, hri));
+                    let h = &head.docs[hd as usize];
+                    let hr = &h.parsed.reqs[hri];
+                    if hr.frozen != r.frozen {
+                        let e = by_doc.entry(h.id.clone()).or_default();
+                        e.path.clone_from(&h.path);
+                        e.line = if e.line == 0 { hr.line } else { e.line };
+                        e.changed.push(hr.key.clone());
+                    }
+                }
+                None => {
+                    // The document can be in the head, without the key.
+                    let owner = match head.resolve(&b.id) {
+                        Res::Found(hd, None, _) => &head.docs[hd as usize],
+                        _ => b,
+                    };
+                    let e = by_doc.entry(owner.id.clone()).or_default();
+                    e.path.clone_from(&owner.path);
+                    e.line = if e.line == 0 && std::ptr::eq(owner, b) {
+                        r.line
+                    } else {
+                        e.line
+                    };
+                    e.removed.push(r.key.clone());
+                }
+            }
+        }
+    }
+    for (hi, h) in head.docs.iter().enumerate().filter(|(_, d)| truth(d)) {
+        for &ri in &h.reqs {
+            if matched.contains(&(hi as u32, ri)) {
+                continue;
+            }
+            let r = &h.parsed.reqs[ri];
+            // The key can exist in the base in another kind of document, or
+            // under an old name of the document or of the key.
+            let names = std::iter::once(&h.id).chain(&h.aliases);
+            let old = names
+                .map(|n| format!("{n}#{}", r.key))
+                .chain(r.aliases.iter().cloned())
+                .any(|n| matches!(base.resolve(&n), Res::Found(_, _, true) | Res::Ambiguous(_)));
+            if !old {
+                let e = by_doc.entry(h.id.clone()).or_default();
+                e.path.clone_from(&h.path);
+                e.line = if e.line == 0 { r.line } else { e.line };
+                e.added.push(r.key.clone());
+            }
+        }
+    }
+    let list = |keys: &[String]| {
+        let shown: Vec<String> = keys.iter().take(3).map(|k| format!("`{k}`")).collect();
+        let more = keys.len().saturating_sub(3);
+        let mut s = shown.join(", ");
+        if more > 0 {
+            s.push_str(&format!(" and {more} more"));
+        }
+        s
+    };
+    let out = by_doc
+        .into_iter()
+        .map(|(id, e)| {
+            let mut parts = Vec::new();
+            for (what, keys) in [
+                ("changed", &e.changed),
+                ("added", &e.added),
+                ("removed", &e.removed),
+            ] {
+                if !keys.is_empty() {
+                    parts.push(format!("{what} {}", list(keys)));
+                }
+            }
+            Diag {
+                path: e.path,
+                line: e.line.max(1),
+                code: Code::TruthChangedWithoutChange,
+                doc: id,
+                target: String::new(),
+                message: format!(
+                    "requirements {}, and no file of the intent folder changed",
+                    parts.join("; ")
+                ),
+                severity: Code::TruthChangedWithoutChange.severity(),
+            }
+        })
+        .collect();
+    apply_severity(config, out)
+}
+
+/// True if a file under the folder of the `intent` layer is added, deleted or
+/// changed. A head file with no blob id (an edit of the working tree) counts as
+/// a change. A project with no `intent` layer has no such folder.
+fn intent_changed(config: &Config, base: &Snapshot, head: &Snapshot) -> bool {
+    let Some(dir) = config
+        .layers
+        .layer_of_type(DocType::Intent)
+        .and_then(|i| config.layers.layers()[i].dir())
+    else {
+        return false;
+    };
+    let prefixes: Vec<String> = config
+        .roots
+        .iter()
+        .map(|r| {
+            if r.path.is_empty() {
+                format!("{dir}/")
+            } else {
+                format!("{}/{dir}/", r.path)
+            }
+        })
+        .collect();
+    let under = |p: &str| prefixes.iter().any(|x| p.starts_with(x.as_str()));
+    let before: HashMap<&str, Option<&str>> = base
+        .files
+        .iter()
+        .filter(|e| under(&e.path))
+        .map(|e| (e.path.as_str(), e.blob.as_deref()))
+        .collect();
+    let mut seen = 0usize;
+    for e in head.files.iter().filter(|e| under(&e.path)) {
+        match before.get(e.path.as_str()) {
+            None => return true,
+            Some(b) => {
+                seen += 1;
+                if e.blob.is_none() || e.blob.as_deref() != *b {
+                    return true;
+                }
+            }
+        }
+    }
+    seen != before.len()
 }
 
 /// The result of the gate against the base.
