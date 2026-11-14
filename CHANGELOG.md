@@ -2,7 +2,7 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
-## Unreleased
+## 0.4.1 - 2026-11-14
 
 One example domain, greenhouse irrigation, for the tests, the fixtures, the documentation and the texts for agents.
 
