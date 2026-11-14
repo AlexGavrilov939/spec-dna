@@ -108,7 +108,10 @@ fn meter_higher_level_and_reset_after_a_drop() {
     let args = ["context-meter", "--levels", "300000,600000"];
     write_transcript(&t, &[assistant(610_000, 5)]);
     let (_, out, _) = hook(&dir, &args, &ev, &[]);
-    assert!(out.contains("Save the state of the task in a file"), "{out}");
+    assert!(
+        out.contains("Save the state of the task in a file"),
+        "{out}"
+    );
     // A compaction: the context falls under 2/3 of the first level.
     write_transcript(&t, &[assistant(50_000, 5)]);
     let (_, out, _) = hook(&dir, &args, &ev, &[]);

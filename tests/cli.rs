@@ -99,6 +99,16 @@ impl Repo {
         git(&self.dir, &["commit", "-q", "--allow-empty", "-m", msg]);
     }
 
+    /// Runs `init` with an answers file that turns the agent harness off. The
+    /// tests of the adapters use it, so that they see the adapter lines only.
+    fn init_without_harness(&self) -> (i32, String, String) {
+        let answers = PathBuf::from(format!("{}-answers.toml", self.dir.display()));
+        fs::write(&answers, "harness = \"none\"\n").unwrap();
+        let out = self.run(&["init", "--answers", answers.to_str().unwrap()]);
+        let _ = fs::remove_file(&answers);
+        out
+    }
+
     fn run(&self, args: &[&str]) -> (i32, String, String) {
         let out = Command::new(BIN)
             .args(args)
@@ -788,16 +798,20 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nper-request prefix: "
+            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/checker.md\nwrote .claude/agents/Explore.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nper-request prefix: "
         ),
         "{out}"
     );
     assert!(
-        out.ends_with("\nto commit: git add spec-dna.toml AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md\n"),
+        out.contains("\nto commit: git add spec-dna.toml AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md .claude/agents/fallback-advisor.md"),
         "{out}"
     );
+    assert!(out.contains("\nRestart Claude Code. Then check:"), "{out}");
     assert_eq!(r.read("AGENTS.md").lines().count(), 1);
-    assert_eq!(r.read("CLAUDE.md"), r.read("AGENTS.md"));
+    // CLAUDE.md has the same line, a blank line and the model-team line.
+    let claude = r.read("CLAUDE.md");
+    assert!(claude.starts_with(&r.read("AGENTS.md")), "{claude}");
+    assert_eq!(claude.lines().count(), 3, "{claude}");
     let docs = [
         (
             "docs/api/orders.md",
@@ -840,7 +854,7 @@ fn fresh_project_init_check_uninstall() {
     let status = git(&r.dir, &["status", "--porcelain"]);
     assert_eq!(
         status,
-        " D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D spec-dna.toml\n"
+        " D .claude/agents/Explore.md\n D .claude/agents/checker.md\n D .claude/agents/fallback-advisor.md\n D .claude/agents/model-team.md\n D .claude/settings.json\n D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D spec-dna.toml\n"
     );
 }
 
@@ -849,7 +863,7 @@ fn adapters_are_checked() {
     let r = Repo::empty();
     r.write("AGENTS.md", "# Rules\n\nOwn text stays.\n");
     r.write("CLAUDE.md", "@AGENTS.md\n");
-    r.run(&["init"]);
+    r.init_without_harness();
     let agents = r.read("AGENTS.md");
     assert!(agents.starts_with("# Rules\n\nOwn text stays.\n\nIf a task edits code or docs"));
     assert_eq!(agents.lines().count(), 5);
@@ -1441,7 +1455,7 @@ fn init_on_an_existing_project_adds_one_line() {
     let own = "# Project rules\n\n- Run the tests before a commit.\n";
     r.write("CLAUDE.md", own);
     r.commit("existing project");
-    let (code, out, err) = r.run(&["init"]);
+    let (code, out, err) = r.init_without_harness();
     assert_eq!(code, 0, "{err}");
     let claude = r.read("CLAUDE.md");
     let added = claude.strip_prefix(own).expect("the own text stays first");
@@ -1468,7 +1482,7 @@ fn init_on_an_existing_project_adds_one_line() {
     // CLAUDE.md gets its own line, not an import.
     let r = Repo::empty();
     r.write("AGENTS.md", "# Agents\n");
-    r.run(&["init"]);
+    r.init_without_harness();
     assert_eq!(r.read("AGENTS.md").lines().count(), 3);
     assert_eq!(r.read("CLAUDE.md").lines().count(), 1);
     assert!(!r.read("CLAUDE.md").contains("@AGENTS.md"));
@@ -1477,7 +1491,7 @@ fn init_on_an_existing_project_adds_one_line() {
 #[test]
 fn init_replaces_the_blocks_of_older_versions() {
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_without_harness();
     let block = "<!-- spec-dna:begin agents v0.0.9 h:0000000000000000 -->\n## Specifications\n\nOld text.\n<!-- spec-dna:end agents -->\n";
     r.write("AGENTS.md", &format!("# Rules\n\n{block}"));
     r.write(
@@ -1501,7 +1515,7 @@ fn init_replaces_the_blocks_of_older_versions() {
 
     // An AGENTS.md with only the old block: CLAUDE.md gets the line.
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_without_harness();
     r.write("AGENTS.md", block);
     r.write(
         "CLAUDE.md",
@@ -1513,7 +1527,7 @@ fn init_replaces_the_blocks_of_older_versions() {
 
     // A CLAUDE.md that imports AGENTS.md keeps no second copy of the line.
     let r = Repo::empty();
-    r.run(&["init"]);
+    r.init_without_harness();
     r.write(
         "CLAUDE.md",
         &format!("@AGENTS.md\n\n{}", r.read("CLAUDE.md")),
@@ -2516,7 +2530,7 @@ fn init_answers_file_on_a_new_project() {
     let answers = r.dir.join("../answers-new.toml");
     fs::write(
         &answers,
-        "profile = \"strict\"\ntypes = [\"spec\", \"decision\", \"runbook\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\n",
+        "profile = \"strict\"\ntypes = [\"spec\", \"decision\", \"runbook\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\nharness = \"none\"\n",
     )
     .unwrap();
     let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
@@ -2952,18 +2966,25 @@ fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
 fn init_asks_on_a_terminal() {
     let r = Repo::fixture("brownfield");
     // 1 profile, 2 types, 3 evidence, 4 language, 5 mapping (4 roots), 6
-    // budgets, 7 adapters, 8 CI, hook and base, then the confirmation.
-    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=spec\n\noff\nclaude-md, skill\nnone, none, main\ny\n";
+    // budgets, 7 adapters, 8 CI, hook and base, 9 harness, 10 models, then the
+    // confirmation.
+    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=spec\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
     let (code, out) = on_terminal(&r.dir, &["init"], answers);
     assert_eq!(code, 0, "{out}");
     for want in [
-        "1/8 Profile (lite, standard, strict) [standard]: ",
+        "1/10 Profile (lite, standard, strict) [standard]: ",
         "    Types in use: spec, guide, decision, note. A shorter list makes each document of another type an error.",
-        "2/8 Knowledge types [spec, contract, guide, decision, change, note, invariant, runbook, incident, reference]: ",
-        "5/8 Mapping: 4 roots.",
+        "2/10 Knowledge types [spec, contract, guide, decision, change, note, invariant, runbook, incident, reference]: ",
+        "5/10 Mapping: 4 roots.",
         "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-notes.md, README.md) [accept]: ",
-        "6/8 Budget level (default, relaxed, tight, off) [default]: ",
-        "8/8 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
+        "6/10 Budget level (default, relaxed, tight, off) [default]: ",
+        "8/10 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
+        "9/10 Agent harness (none, lean, full) [lean]: ",
+        "10/10 Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high spec-writer=sonnet:high]: ",
+        "Agent harness: full (for Claude Code)",
+        "  create .claude/agents/checker.md (agent checker: sonnet, medium)",
+        "Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.",
+        "Restart Claude Code. Then check:",
         "--- spec-dna.toml ---",
         "Write these files? [y/N]: ",
         "wrote spec-dna.toml",
@@ -2986,12 +3007,25 @@ fn init_asks_on_a_terminal() {
         "{cfg}"
     );
     assert!(r.read("CLAUDE.md").contains("spec-dna check"));
+    assert!(r.read("CLAUDE.md").contains("Model team: "));
     assert!(!r.read("AGENTS.md").contains("spec-dna"));
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("[harness]\nlevel = \"full\"\n"), "{cfg}");
+    assert!(
+        cfg.contains("reviewer = { claude-code = \"sonnet\", effort = \"medium\" }"),
+        "{cfg}"
+    );
+    assert!(
+        r.read(".claude/agents/checker.md")
+            .contains("model: sonnet\neffort: medium\n")
+    );
+    assert!(r.dir.join(".claude/agents/spec-writer.md").exists());
+    assert!(!r.dir.join(".claude/agents/implementer.md").exists());
     assert!(!r.read(".pre-commit-config.yaml").contains("spec-dna"));
 
     // A "no" at the confirmation writes nothing.
     let r = Repo::empty();
-    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\nn\n");
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\nn\n");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("nothing written"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());

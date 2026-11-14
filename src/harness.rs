@@ -8,9 +8,6 @@
 //! h:<hash> -->`. The hash covers the text above the marker. Thus `check` can
 //! tell a manual edit (SD501) from an old text (SD502).
 
-// `init` calls the planning functions. They are unused until it does.
-#![allow(dead_code)]
-
 use crate::adapters::VERSION;
 use crate::config::Fields;
 use crate::diag::{Code, Diag};
@@ -175,7 +172,8 @@ pub enum Model {
 }
 
 impl Model {
-    fn parse(s: &str) -> Model {
+    /// Reads a model value: a keyword (`none`, `inherit`) or a model.
+    pub fn parse(s: &str) -> Model {
         match s {
             "none" => Model::None,
             "inherit" => Model::Inherit,
@@ -801,7 +799,7 @@ fn team_page(h: &Harness) -> String {
             s += "`context-meter` tells an agent the size of its context once at each level. ";
         }
         if h.fanout_hook_on() {
-            s += "`fanout-cap` asks the person before a workflow that can start more agents than the cap. ";
+            s += "`fanout-cap` asks the person before a workflow whose agent count can go above the cap.";
         }
         s += "Each teammate needs spec-dna 0.5.0 or later on PATH. Without it, the hooks do nothing.\n";
     }
@@ -1431,8 +1429,10 @@ pub fn plan(
     let expected = generated_files(new);
     let mut plan = Plan::default();
     for (role, path) in name_conflicts(existing) {
-        if new.on(role) && new.cfg(role).role.agent().is_some() {
-            let def = role.agent().expect("the role has an agent file");
+        // The advisor with no `fallback-advisor` agent writes no file there.
+        if let Some(def) = role.agent()
+            && expected.iter().any(|g| g.path == def.path())
+        {
             return Err(format!(
                 "{path} holds the agent `{}`, and spec-dna did not generate it; rename the agent, or set the role `{}` to \"none\" in [harness.roles]",
                 def.name,
@@ -2534,6 +2534,20 @@ opus = "xhigh"
         let mut h = lean();
         h.cfg_mut(Role::Reviewer).model = Model::None;
         assert!(plan(&own, None, &h, Mode::Reconfigure).is_ok());
+        // The advisor with no fallback agent writes no file at that path.
+        let adv = vec![(
+            ".claude/agents/fallback-advisor.md".to_string(),
+            "mine\n".to_string(),
+        )];
+        assert!(plan(&adv, None, &lean(), Mode::Reconfigure).is_err());
+        let mut h = lean();
+        h.cfg_mut(Role::Advisor).agent = Model::None;
+        let p = plan(&adv, None, &h, Mode::Reconfigure).unwrap();
+        assert!(
+            !p.changes
+                .iter()
+                .any(|c| c.path.ends_with("fallback-advisor.md"))
+        );
         // A file without a front matter name uses its stem.
         let stem = vec![(
             ".claude/agents/Explore.md".to_string(),

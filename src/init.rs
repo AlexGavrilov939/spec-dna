@@ -1,9 +1,10 @@
 //! `spec-dna init` (docs/init.md). It detects the facts of the repository
-//! (`detect.rs`). It asks at most 8 questions with the detected defaults. It
+//! (`detect.rs`). It asks at most 10 questions with the detected defaults. It
 //! shows a preview (the full `spec-dna.toml` and the files to create or
 //! change), and it writes only after a confirmation. It never edits a
 //! document. It changes an instruction file (`AGENTS.md`, `CLAUDE.md`) only by
-//! its one generated line.
+//! its generated lines: the spec-dna line, and the model-team line of the
+//! agent harness (ADR 0004).
 //!
 //! The modes are:
 //!
@@ -14,13 +15,15 @@
 //! - `--dry-run` (the preview only)
 //!
 //! If `spec-dna.toml` exists and `--reconfigure` is not set, `init` updates
-//! the adapters only, as in 0.1.
+//! the adapters, and the harness files if the configuration has a `[harness]`
+//! table. It never removes a file then.
 
 use crate::adapters::{self, VERSION};
 use crate::config::{self, Config, DEFAULT_BUDGETS, Profile, Rules};
 use crate::detect::{self, Facts, GitInfo, Row};
 use crate::diag::Severity;
-use crate::json::Obj;
+use crate::harness::{self, Effort, Harness, Level, Model, Role};
+use crate::json::{self, Obj};
 use crate::model::DocType;
 use crate::repo::{Fatal, Repo, Snapshot};
 use std::io::{BufRead, IsTerminal, Write};
@@ -63,7 +66,7 @@ const ADAPTERS: [(Adapter, &str); 3] = [
     (Adapter::Skill, "skill"),
 ];
 
-/// The answers of the 8 questions, with the detected defaults.
+/// The answers of the 10 questions, with the detected defaults.
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub kind: &'static str,
@@ -93,6 +96,12 @@ pub struct Plan {
     /// For `--reconfigure`: the `[budgets.<type>]` tables. A new budget level
     /// replaces them.
     pub kept_budgets: Vec<String>,
+    /// The agent harness (ADR 0004).
+    pub harness: Harness,
+    /// The harness of the current configuration, for `--reconfigure`.
+    pub harness_old: Option<Harness>,
+    /// Why a role is off by default.
+    pub harness_notes: Vec<String>,
 }
 
 /// The roots of a new project: one mixed root. `spec-dna new` puts each type
@@ -193,6 +202,9 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         kept: Vec::new(),
         rules: Vec::new(),
         kept_budgets: Vec::new(),
+        harness: Harness::new(Level::Lean),
+        harness_old: None,
+        harness_notes: Vec::new(),
     }
 }
 
@@ -216,6 +228,10 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     // The current globs stay. The default list renders as no `[evidence]`.
     p.tests = cfg.evidence_tests.clone();
     p.rows = cfg.roots.iter().map(row_of_root).collect();
+    if let Some(h) = &cfg.harness {
+        p.harness = h.clone();
+        p.harness_old = Some(h.clone());
+    }
     p.types = if cfg.types.is_empty() {
         DocType::ALL.to_vec()
     } else {
@@ -517,6 +533,8 @@ pub fn render(plan: &Plan) -> String {
     for k in kept_tables {
         out.push_str(&format!("{k}\n"));
     }
+    out.push('\n');
+    out.push_str(&plan.harness.toml_section());
     for r in &plan.rows {
         out.push('\n');
         if !r.why.is_empty() {
@@ -606,8 +624,22 @@ fn render_row(plan: &Plan, r: &Row) -> String {
 pub struct Change {
     pub path: String,
     pub created: bool,
+    /// True if `init` deletes the file. Only the harness removes files.
+    pub remove: bool,
     pub text: String,
     pub note: String,
+}
+
+impl Change {
+    fn verb(&self) -> &'static str {
+        if self.remove {
+            "remove"
+        } else if self.created {
+            "create"
+        } else {
+            "change"
+        }
+    }
 }
 
 /// The adapter files for a set of adapters.
@@ -644,6 +676,7 @@ fn adapter_changes(repo: &Repo, chosen: &[Adapter]) -> Result<Vec<Change>, Fatal
             out.push(Change {
                 path: path.to_string(),
                 created: !exists(path),
+                remove: false,
                 text: new,
                 note: if target {
                     "one generated line".into()
@@ -665,6 +698,7 @@ fn adapter_changes(repo: &Repo, chosen: &[Adapter]) -> Result<Vec<Change>, Fatal
             out.push(Change {
                 path: adapters::SKILL.into(),
                 created: skill.is_empty(),
+                remove: false,
                 text: adapters::skill_file(),
                 note: "the skill".into(),
             });
@@ -783,6 +817,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
                 None => out.push(Change {
                     path: path.into(),
                     created: true,
+                    remove: false,
                     text,
                     note: "the CI job: `spec-dna check --base`".into(),
                 }),
@@ -810,6 +845,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
                 out.push(Change {
                     path: path.into(),
                     created: true,
+                    remove: false,
                     text: format!("repos:\n{}", indent2(&pre_commit_hook())),
                     note: "a local hook: `spec-dna check`".into(),
                 });
@@ -817,6 +853,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
                 out.push(Change {
                     path: path.into(),
                     created: false,
+                    remove: false,
                     text,
                     note: "a local hook at the end: `spec-dna check`".into(),
                 });
@@ -839,6 +876,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
                 out.push(Change {
                     path: path.into(),
                     created: old.is_empty(),
+                    remove: false,
                     text: t,
                     note: "one line: `spec-dna check`".into(),
                 });
@@ -976,6 +1014,333 @@ fn check_choice(what: &str, w: &str, allowed: &[&str]) -> Result<String, String>
     }
 }
 
+fn parse_level(w: &str) -> Result<Level, String> {
+    Level::from_name(w).ok_or_else(|| format!("harness level `{w}`: use none, lean or full"))
+}
+
+/// The line of question 10: one `role=model[:effort]` word for each role of
+/// the level. The advisor word has the model of `fallback-advisor` after a
+/// slash, if it is not the default.
+fn models_line(h: &Harness) -> String {
+    let lean = Role::ALL.into_iter().filter(|r| !r.full_only());
+    let full = Role::ALL.into_iter().filter(|r| r.full_only());
+    let mut out = Vec::new();
+    for r in lean.chain(full).filter(|r| h.level.includes(*r)) {
+        let c = h.cfg(r);
+        let mut w = format!("{}={}", r.key(), c.model.name());
+        if r == Role::Advisor && c.agent != Model::Id("opus".into()) {
+            w += &format!("/{}", c.agent.name());
+        }
+        let shown = match r {
+            Role::Helper => false,
+            Role::Advisor => c.effort != Effort::XHigh,
+            _ => true,
+        };
+        if shown && c.model != Model::None {
+            w += &format!(":{}", c.effort.name());
+        }
+        out.push(w);
+    }
+    out.join(" ")
+}
+
+/// Applies `role=model[:effort]` words to the harness. The advisor word can
+/// be `advisor=<model>/<agent model>[:effort]`. The effort of the advisor
+/// belongs to its agent.
+fn apply_models(h: &mut Harness, words: &[String]) -> Result<(), String> {
+    for w in words {
+        let (key, value) = w
+            .split_once('=')
+            .ok_or_else(|| format!("`{w}`: write role=model[:effort]"))?;
+        let role = Role::from_key(key).ok_or_else(|| {
+            let keys: Vec<&str> = Role::ALL.iter().map(|r| r.key()).collect();
+            format!("unknown role `{key}`; use {}", keys.join(", "))
+        })?;
+        if h.level != Level::None && !h.level.includes(role) {
+            return Err(format!("role `{key}` is in level full"));
+        }
+        // A suffix that is not an effort is part of the model id.
+        let (spec, effort) = match value.rsplit_once(':') {
+            Some((m, e)) if Effort::from_name(e).is_some() => (m, Effort::from_name(e)),
+            _ => (value, None),
+        };
+        let (model, agent) = match spec.split_once('/') {
+            Some((m, a)) if role == Role::Advisor => (m, Some(a)),
+            _ => (spec, None),
+        };
+        if model.is_empty() || agent.is_some_and(str::is_empty) {
+            return Err(format!("`{w}`: the model is empty"));
+        }
+        if role == Role::Helper && effort.is_some() {
+            return Err(format!("`{w}`: the role `helper` has no effort"));
+        }
+        let c = h.cfg_mut(role);
+        c.model = Model::parse(model);
+        if let Some(a) = agent {
+            c.agent = Model::parse(a);
+        }
+        if let Some(e) = effort {
+            c.effort = e;
+        }
+    }
+    Ok(())
+}
+
+/// Reads the `[harness]` table that the harness renders, with the rules of
+/// `spec-dna.toml`. It reports a model or an effort that the file does not
+/// accept as a usage error.
+fn validate_harness(h: &Harness) -> Result<(), String> {
+    let t: toml::Table = h
+        .toml_section()
+        .parse()
+        .map_err(|e: toml::de::Error| e.to_string())?;
+    match t.get("harness") {
+        Some(v) => Harness::parse(v).map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+/// The harness files that exist: (path, text) of `CLAUDE.md`,
+/// `.claude/settings.json` and `.claude/agents/*.md`.
+fn harness_existing(repo: &Repo) -> Vec<(String, String)> {
+    let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).ok();
+    let mut out = Vec::new();
+    for p in [harness::CLAUDE, harness::SETTINGS] {
+        if let Some(t) = read(p) {
+            out.push((p.to_string(), t));
+        }
+    }
+    if let Ok(dir) = std::fs::read_dir(repo.root.join(harness::AGENTS_DIR)) {
+        let mut names: Vec<String> = dir
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        for n in names {
+            let p = format!("{}{n}", harness::AGENTS_DIR);
+            if harness::wanted(&p)
+                && let Some(t) = read(&p)
+            {
+                out.push((p, t));
+            }
+        }
+    }
+    out
+}
+
+/// Turns off each role whose agent name belongs to a file that spec-dna did
+/// not generate, and tells why. With `outside_level`, only a role that the
+/// level does not include changes: the configuration set the other roles, and
+/// a conflict with them is an error of `plan`.
+fn apply_conflicts(
+    h: &mut Harness,
+    existing: &[(String, String)],
+    outside_level: bool,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    for (role, path) in harness::name_conflicts(existing) {
+        if outside_level && h.level.includes(role) {
+            continue;
+        }
+        let Some(def) = role.agent() else { continue };
+        if role == Role::Advisor {
+            // The advisor tool needs no file. Only the fallback agent goes.
+            h.cfg_mut(role).agent = Model::None;
+            notes.push(format!(
+                "{path} holds the agent `{}`, and spec-dna did not generate it: the advisor gets no `fallback-advisor` file",
+                def.name
+            ));
+        } else {
+            h.cfg_mut(role).model = Model::None;
+            notes.push(format!(
+                "{path} holds the agent `{}`, and spec-dna did not generate it: the role `{}` is none",
+                def.name,
+                role.key()
+            ));
+        }
+    }
+    notes
+}
+
+/// The defaults of the harness for a new configuration: level `lean`, the
+/// models of the table, the deny rule for notebooks, the main model and the
+/// advisor of an existing `.claude/settings.json`, and no role over a file of
+/// the project. Returns the harness and the reasons of the roles that are off.
+fn harness_defaults(repo: &Repo, existing: &[(String, String)]) -> (Harness, Vec<String>) {
+    let mut h = Harness::new(Level::Lean);
+    let notebooks = repo
+        .git
+        .ls_files()
+        .is_ok_and(|f| f.iter().any(|e| e.0.ends_with(".ipynb")));
+    if !notebooks {
+        h.deny.push("NotebookEdit".into());
+    }
+    let settings = existing
+        .iter()
+        .find(|e| e.0 == harness::SETTINGS)
+        .and_then(|e| json::parse(&e.1).ok());
+    if let Some(v) = settings {
+        let pick = |key: &str| {
+            v.get(key)
+                .as_str()
+                .filter(|m| !m.is_empty() && !m.contains(char::is_whitespace))
+                .filter(|m| !matches!(*m, "none" | "inherit"))
+                .map(str::to_string)
+        };
+        if let Some(m) = pick("model") {
+            h.cfg_mut(Role::Orchestrator).model = Model::Id(m);
+        }
+        if let Some(m) = pick("advisorModel").filter(|m| m != "haiku") {
+            h.cfg_mut(Role::Advisor).model = Model::Id(m);
+        }
+    }
+    let notes = apply_conflicts(&mut h, existing, false);
+    (h, notes)
+}
+
+/// Refuses the harness if git ignores a file that it writes. A team could not
+/// commit the file.
+fn refuse_ignored(repo: &Repo) -> Result<(), Fatal> {
+    for p in [harness::TEAM_PAGE, harness::SETTINGS] {
+        if repo.git.is_ignored(p) {
+            return Err(Fatal::Usage(format!(
+                "git ignores {p}, so the harness files cannot be committed; remove the ignore rule, or choose the harness level none"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The harness plan of `init`, merged into the list of changes.
+struct HarnessRun {
+    level: Level,
+    plan: harness::Plan,
+    notes: Vec<String>,
+}
+
+/// Plans the harness files and merges them into `changes`. The text of
+/// `CLAUDE.md` after the adapter line is the input of the plan, and the two
+/// changes of `CLAUDE.md` become one. Returns `None` if the harness is off and
+/// nothing of it is installed.
+fn plan_harness(
+    repo: &Repo,
+    new: &Harness,
+    old: Option<&Harness>,
+    notes: &[String],
+    mode: harness::Mode,
+    changes: &mut Vec<Change>,
+) -> Result<Option<HarnessRun>, Fatal> {
+    let mut existing = harness_existing(repo);
+    let installed = harness::is_installed(&existing);
+    if new.level == Level::None && !(mode == harness::Mode::Reconfigure && installed) {
+        return Ok(None);
+    }
+    if new.level != Level::None {
+        refuse_ignored(repo)?;
+    }
+    if let Some(c) = changes.iter().find(|c| c.path == harness::CLAUDE) {
+        existing.retain(|e| e.0 != harness::CLAUDE);
+        existing.push((harness::CLAUDE.to_string(), c.text.clone()));
+    }
+    let mut plan = harness::plan(&existing, old, new, mode).map_err(Fatal::Usage)?;
+    // The adapter step can create `CLAUDE.md`, and then the harness step sees a
+    // file. The preview must say that the file is new.
+    let claude_is_new = changes
+        .iter()
+        .any(|c| c.path == harness::CLAUDE && c.created);
+    for c in plan
+        .changes
+        .iter_mut()
+        .filter(|c| c.path == harness::CLAUDE)
+    {
+        if claude_is_new && c.action == harness::Action::Change {
+            c.action = harness::Action::Create;
+        }
+    }
+    for c in &plan.changes {
+        let remove = c.action == harness::Action::Remove;
+        match changes.iter_mut().find(|x| x.path == c.path) {
+            Some(x) => {
+                x.text = c.text.clone();
+                x.remove = remove;
+                x.note = format!("{}; {}", x.note, c.note);
+            }
+            None => changes.push(Change {
+                path: c.path.clone(),
+                created: c.action == harness::Action::Create,
+                remove,
+                text: c.text.clone(),
+                note: c.note.clone(),
+            }),
+        }
+    }
+    Ok(Some(HarnessRun {
+        level: new.level,
+        plan,
+        notes: notes.to_vec(),
+    }))
+}
+
+/// Prints the harness block of the preview, or its summary after a write.
+fn print_harness(h: &HarnessRun, with_files: bool) {
+    println!("Agent harness: {} (for Claude Code)", h.level.name());
+    for n in &h.notes {
+        println!("  note: {n}");
+    }
+    if with_files {
+        for c in &h.plan.changes {
+            println!("  {} {} ({})", c.action.name(), c.path, c.note);
+        }
+        if h.plan.changes.is_empty() {
+            println!("  no file changes");
+        }
+    }
+    for k in &h.plan.kept {
+        println!("  {k}");
+    }
+    for w in &h.plan.warnings {
+        println!("  warning: {w}");
+    }
+    if h.level != Level::None {
+        println!(
+            "  The harness adds about {} bytes to each request of the main session (the CLAUDE.md line and the agent descriptions).",
+            h.plan.request_bytes
+        );
+        println!("  Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.");
+    }
+}
+
+/// The `harness` object of `--json`.
+fn harness_json(h: Option<&HarnessRun>, level: Level) -> String {
+    let Some(h) = h else {
+        return Obj::new()
+            .str("level", level.name())
+            .raw("files", "[]")
+            .strs("kept", &[])
+            .strs("warnings", &[])
+            .strs("notes", &[])
+            .num("request_bytes", 0)
+            .end();
+    };
+    let files = h.plan.changes.iter().map(|c| {
+        Obj::new()
+            .str("path", &c.path)
+            .str("action", c.action.name())
+            .str("note", &c.note)
+            .end()
+    });
+    Obj::new()
+        .str("level", h.level.name())
+        .raw("files", &json::array(files))
+        .strs("kept", &h.plan.kept)
+        .strs("warnings", &h.plan.warnings)
+        .strs("notes", &h.notes)
+        .num("request_bytes", h.plan.request_bytes)
+        .end()
+}
+
+const RESTART: &str = "Restart Claude Code. Then check: the header shows the main model, /advisor shows the advisor, and @ lists the agents.";
+
 /// The types of a plan change the roots of a new project. They also change the
 /// type of a detected root whose type is not chosen (it becomes a note).
 fn apply_types(plan: &mut Plan, root: &str) {
@@ -1101,14 +1466,14 @@ fn row_line(r: &Row) -> String {
     )
 }
 
-/// Asks the 8 questions on a terminal.
+/// Asks the questions on a terminal.
 fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), String> {
     io.say(&format!(
         "spec-dna init: {} repository with {} files and {} Markdown documents. Press Enter to keep a default.",
         plan.kind, facts.files, facts.markdown
     ));
     io.say("lite: warnings only. standard: broken references and budget growth are errors. strict: drift, evidence and budgets are errors, and lint gives warnings.");
-    let p = io.line("1/8 Profile (lite, standard, strict)", plan.profile.name());
+    let p = io.line("1/10 Profile (lite, standard, strict)", plan.profile.name());
     plan.profile =
         Profile::from_name(&p).ok_or(format!("profile `{p}`: use lite, standard or strict"))?;
 
@@ -1121,7 +1486,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
             list(&found)
         }
     ));
-    let t = io.line("2/8 Knowledge types", &list(&type_names(&plan.types)));
+    let t = io.line("2/10 Knowledge types", &list(&type_names(&plan.types)));
     plan.types = parse_types(&words(&t))?;
     apply_types(plan, root);
 
@@ -1148,7 +1513,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         Style::Both => "both",
     };
     let a = io.line(
-        "3/8 Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both)",
+        "3/10 Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both)",
         &format!("{ev}, {st}"),
     );
     let w = words(&a);
@@ -1183,7 +1548,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
             list(&plan.amendments)
         }
     );
-    let a = io.line("4/8 Normative language and heading aliases", &default);
+    let a = io.line("4/10 Normative language and heading aliases", &default);
     let mut parts = a.split(';');
     plan.language = parts.next().unwrap_or("en").trim().to_string();
     for part in parts {
@@ -1202,7 +1567,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
     }
 
     io.say(&format!(
-        "5/8 Mapping: {} roots. For each root, press Enter to accept it, enter `drop` to remove it, or enter `key=value ...` to edit it (path, type, default-type, status, exclude, legacy-ids, legacy-keys).",
+        "5/10 Mapping: {} roots. For each root, press Enter to accept it, enter `drop` to remove it, or enter `key=value ...` to edit it (path, type, default-type, status, exclude, legacy-ids, legacy-keys).",
         plan.rows.len()
     ));
     let mut rows = Vec::new();
@@ -1234,7 +1599,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         detect::over_budget(facts, 0.5)
     ));
     let b = io.line(
-        "6/8 Budget level (default, relaxed, tight, off)",
+        "6/10 Budget level (default, relaxed, tight, off)",
         match plan.budgets {
             Budgets::Default => "default",
             Budgets::Relaxed => "relaxed",
@@ -1253,7 +1618,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         }
     ));
     let a = io.line(
-        "7/8 Agent adapters (agents-md, claude-md, skill, none)",
+        "7/10 Agent adapters (agents-md, claude-md, skill, none)",
         &list(&adapter_names(&plan.adapters)),
     );
     plan.adapters = parse_adapters(&words(&a))?;
@@ -1272,7 +1637,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         }
     ));
     let a = io.line(
-        "8/8 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch",
+        "8/10 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch",
         &format!("{}, {}, {}", plan.ci, plan.hook, plan.base),
     );
     let w = words(&a);
@@ -1285,6 +1650,29 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
     if let Some(b) = w.get(2) {
         plan.base = b.clone();
     }
+
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `checker`, `Explore`, `fallback-advisor`, 2 hooks and a model-team line in CLAUDE.md.");
+    io.say("    full also writes `implementer` and `spec-writer`. none writes nothing. The files are for Claude Code only.");
+    for n in &plan.harness_notes {
+        io.say(&format!("    {n}"));
+    }
+    let a = io.line(
+        "9/10 Agent harness (none, lean, full)",
+        plan.harness.level.name(),
+    );
+    plan.harness.level = parse_level(&a)?;
+    if plan.harness.level != Level::None {
+        io.say("    The main model sets the cost of each request.");
+        io.say("    The advisor reads the whole context at its own price each time that it is consulted. It needs Fable access, or `fallback-advisor` gives the advice.");
+        io.say("    `checker` and `Explore` run only when the main session uses them.");
+        io.say("    `none` turns a role off. Write advisor=<model>/<model of fallback-advisor> to set both.");
+        let a = io.line(
+            "10/10 Models (role=model[:effort] ...)",
+            &models_line(&plan.harness),
+        );
+        apply_models(&mut plan.harness, &words(&a))?;
+    }
+    validate_harness(&plan.harness)?;
     Ok(())
 }
 
@@ -1311,7 +1699,7 @@ fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String
             Some(_) => Err(format!("answers: `{k}` must be an array of strings")),
         }
     };
-    const KEYS: [&str; 16] = [
+    const KEYS: [&str; 19] = [
         "profile",
         "types",
         "evidence",
@@ -1327,6 +1715,9 @@ fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String
         "ci",
         "hook",
         "base",
+        "harness",
+        "harness-models",
+        "harness-deny",
         "write",
     ];
     if let Some(k) = t.keys().find(|k| !KEYS.contains(&k.as_str())) {
@@ -1400,6 +1791,21 @@ fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String
     if let Some(b) = s("base")? {
         plan.base = b;
     }
+    if let Some(v) = s("harness")? {
+        plan.harness.level = parse_level(&v).map_err(|e| format!("answers: {e}"))?;
+    }
+    if let Some(v) = l("harness-deny")? {
+        plan.harness.deny.clear();
+        for d in v {
+            if !plan.harness.deny.contains(&d) {
+                plan.harness.deny.push(d);
+            }
+        }
+    }
+    if let Some(v) = l("harness-models")? {
+        apply_models(&mut plan.harness, &v).map_err(|e| format!("answers: harness-models: {e}"))?;
+    }
+    validate_harness(&plan.harness).map_err(|e| format!("answers: {e}"))?;
     match t.get("write") {
         None => Ok(true),
         Some(toml::Value::Boolean(b)) => Ok(*b),
@@ -1429,7 +1835,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             return Err(crate::pin_mismatch(&cfg));
         }
         if !o.reconfigure {
-            return adapters_only(repo, o);
+            return adapters_only(repo, o, &cfg);
         }
     } else if o.reconfigure {
         return Err(Fatal::Usage(
@@ -1444,6 +1850,16 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     } else {
         defaults(&facts, Some(&root))
     };
+    let existing = harness_existing(repo);
+    if plan.harness_old.is_none() {
+        let (h, notes) = harness_defaults(repo, &existing);
+        plan.harness = h;
+        plan.harness_notes = notes;
+    } else {
+        // A new level can add a role whose agent name the project uses.
+        let h = &mut plan.harness;
+        plan.harness_notes = apply_conflicts(h, &existing, true);
+    }
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let interactive = !o.non_interactive && o.answers.is_none() && terminal;
     let mut write = true;
@@ -1471,6 +1887,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         changes.push(Change {
             path: config::FILE_NAME.into(),
             created: old.is_none(),
+            remove: false,
             text: text.clone(),
             note: if old.is_some() {
                 "replaced; comments of the old file are lost".into()
@@ -1482,13 +1899,22 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     changes.extend(adapter_changes(repo, &plan.adapters)?);
     let (ci, manual) = ci_changes(repo, &plan);
     changes.extend(ci);
+    // A new configuration and `--reconfigure` both replace the harness.
+    let hrun = plan_harness(
+        repo,
+        &plan.harness,
+        plan.harness_old.as_ref(),
+        &plan.harness_notes,
+        harness::Mode::Reconfigure,
+        &mut changes,
+    )?;
 
     let preview = o.dry_run || interactive || !write;
     if o.json {
         let files = changes.iter().map(|c| {
             Obj::new()
                 .str("path", &c.path)
-                .str("action", if c.created { "create" } else { "change" })
+                .str("action", c.verb())
                 .str("note", &c.note)
                 .end()
         });
@@ -1528,6 +1954,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .str("config", &text)
                 .raw("files", &crate::json::array(files))
                 .strs("manual", &manual)
+                .raw("harness", &harness_json(hrun.as_ref(), plan.harness.level))
                 .strs("written", &written)
                 .end()
         );
@@ -1540,15 +1967,18 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             println!("  none");
         }
         for c in &changes {
-            println!(
-                "  {} {} ({})",
-                if c.created { "create" } else { "change" },
-                c.path,
-                c.note
-            );
+            if hrun.as_ref().is_some_and(|h| {
+                c.path != harness::CLAUDE && h.plan.changes.iter().any(|x| x.path == c.path)
+            }) {
+                continue;
+            }
+            println!("  {} {} ({})", c.verb(), c.path, c.note);
         }
         for m in &manual {
             println!("{m}");
+        }
+        if let Some(h) = &hrun {
+            print_harness(h, true);
         }
     }
     if o.dry_run || !write {
@@ -1575,10 +2005,12 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         );
     }
     let written = apply(repo, &changes)?;
-    report(&written, &plan.adapters);
+    report(&written, &plan.adapters, &changes);
     for m in &manual {
         println!("{m}");
     }
+    report_harness(hrun.as_ref(), &written);
+    report_commit(&written);
     Ok(0)
 }
 
@@ -1587,6 +2019,15 @@ fn apply(repo: &Repo, changes: &[Change]) -> Result<Vec<String>, Fatal> {
     let mut written = Vec::new();
     for c in changes {
         let p = repo.root.join(&c.path);
+        if c.remove {
+            match std::fs::remove_file(&p) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(Fatal::Io(format!("{}: {e}", p.display()))),
+            }
+            written.push(c.path.clone());
+            continue;
+        }
         if let Some(d) = p.parent() {
             std::fs::create_dir_all(d).map_err(|e| Fatal::Io(e.to_string()))?;
         }
@@ -1615,39 +2056,68 @@ fn prefix(adapters: &[Adapter]) -> (usize, usize, usize) {
     (line, skill, agents)
 }
 
-fn report(written: &[String], adapters: &[Adapter]) {
+fn report(written: &[String], adapters: &[Adapter], changes: &[Change]) {
     if written.is_empty() {
         println!("spec-dna init: everything is up to date");
     }
     for w in written {
-        println!("wrote {w}");
+        let removed = changes.iter().any(|c| c.remove && c.path == *w);
+        println!("{} {w}", if removed { "removed" } else { "wrote" });
     }
     let (line, skill, agents) = prefix(adapters);
     println!(
         "per-request prefix: {} bytes for Claude Code (line {line}, skill description {skill}), {agents} bytes for AGENTS.md",
         line + skill
     );
+}
+
+/// Prints the `git add` command for the paths that `init` wrote.
+fn report_commit(written: &[String]) {
     if !written.is_empty() {
         println!("to commit: git add {}", written.join(" "));
     }
 }
 
-/// `init` with an existing `spec-dna.toml`: only the adapters, as in 0.1.
-fn adapters_only(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
+/// Prints the summary of the harness after a write, and the restart line.
+fn report_harness(h: Option<&HarnessRun>, written: &[String]) {
+    let Some(h) = h else { return };
+    print_harness(h, false);
+    if h.plan.changes.iter().any(|c| written.contains(&c.path)) {
+        println!("{RESTART}");
+    }
+}
+
+/// `init` with an existing `spec-dna.toml`: the adapters, and the harness
+/// files if the configuration has a `[harness]` table. It writes and never
+/// removes.
+fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
     let exists = |p: &str| repo.root.join(p).exists();
     let mut chosen = vec![Adapter::ClaudeMd, Adapter::Skill];
     if exists(adapters::AGENTS) || !exists(adapters::CLAUDE) {
         chosen.insert(0, Adapter::AgentsMd);
     }
-    let changes = adapter_changes(repo, &chosen)?;
+    let mut changes = adapter_changes(repo, &chosen)?;
+    let hrun = match &cfg.harness {
+        Some(h) => plan_harness(repo, h, Some(h), &[], harness::Mode::Upgrade, &mut changes)?,
+        None => None,
+    };
     if o.dry_run {
-        for c in &changes {
+        if o.json {
             println!(
-                "would {} {} ({})",
-                if c.created { "create" } else { "change" },
-                c.path,
-                c.note
+                "{}",
+                Obj::new()
+                    .str("version", VERSION)
+                    .bool("dry_run", true)
+                    .raw("harness", &harness_json(hrun.as_ref(), harness_level(cfg)))
+                    .end()
             );
+            return Ok(0);
+        }
+        for c in &changes {
+            println!("would {} {} ({})", c.verb(), c.path, c.note);
+        }
+        if let Some(h) = &hrun {
+            print_harness(h, false);
         }
         println!("dry run: nothing written");
         return Ok(0);
@@ -1660,6 +2130,7 @@ fn adapters_only(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             Obj::new()
                 .str("version", VERSION)
                 .strs("written", &written)
+                .raw("harness", &harness_json(hrun.as_ref(), harness_level(cfg)))
                 .raw(
                     "prefix_bytes",
                     &Obj::new()
@@ -1670,9 +2141,15 @@ fn adapters_only(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .end()
         );
     } else {
-        report(&written, &chosen);
+        report(&written, &chosen, &changes);
+        report_harness(hrun.as_ref(), &written);
+        report_commit(&written);
     }
     Ok(0)
+}
+
+fn harness_level(cfg: &Config) -> Level {
+    cfg.harness.as_ref().map_or(Level::None, |h| h.level)
 }
 
 #[cfg(test)]
@@ -1774,5 +2251,100 @@ mod tests {
         // The default test globs render as no `[evidence]` table.
         plan.tests = config::DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
         assert!(!render(&plan).contains("[evidence]"));
+    }
+
+    #[test]
+    fn the_models_line_round_trips_through_its_parser() {
+        let mut h = Harness::new(Level::Lean);
+        assert_eq!(
+            models_line(&h),
+            "orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku"
+        );
+        h.level = Level::Full;
+        assert!(
+            models_line(&h)
+                .ends_with("helper=haiku implementer=sonnet:high spec-writer=sonnet:high"),
+            "{}",
+            models_line(&h)
+        );
+        let edits: Vec<String> = [
+            "orchestrator=sonnet:inherit",
+            "advisor=opus/sonnet:high",
+            "reviewer=none",
+            "researcher=inherit",
+        ]
+        .map(String::from)
+        .to_vec();
+        apply_models(&mut h, &edits).unwrap();
+        let line = models_line(&h);
+        assert!(
+            line.starts_with(
+                "orchestrator=sonnet:inherit advisor=opus/sonnet:high reviewer=none researcher=inherit:high helper=haiku"
+            ),
+            "{line}"
+        );
+        let mut again = Harness::new(Level::Full);
+        apply_models(&mut again, &words(&line)).unwrap();
+        assert_eq!(again, h);
+        validate_harness(&h).unwrap();
+    }
+
+    #[test]
+    fn the_model_words_refuse_what_the_configuration_refuses() {
+        let lean = || Harness::new(Level::Lean);
+        for (word, want) in [
+            ("reviewer", "write role=model[:effort]"),
+            ("judge=opus", "unknown role `judge`"),
+            ("implementer=opus", "role `implementer` is in level full"),
+            ("helper=haiku:high", "the role `helper` has no effort"),
+            ("reviewer=", "the model is empty"),
+        ] {
+            let e = apply_models(&mut lean(), &[word.to_string()]).unwrap_err();
+            assert!(e.contains(want), "{word}: {e}");
+        }
+        // The configuration rules apply to the result.
+        for (word, want) in [
+            ("advisor=haiku", "cannot be \"haiku\""),
+            ("orchestrator=none", "cannot be \"none\""),
+            ("orchestrator=opus:max", "cannot be \"max\""),
+        ] {
+            let mut h = lean();
+            apply_models(&mut h, &[word.to_string()]).unwrap();
+            let e = validate_harness(&h).unwrap_err();
+            assert!(e.contains(want), "{word}: {e}");
+        }
+        // A suffix that is no effort belongs to the model id.
+        let mut h = lean();
+        apply_models(&mut h, &["reviewer=vendor.model-v1:0".to_string()]).unwrap();
+        assert_eq!(
+            h.cfg(Role::Reviewer).model,
+            Model::Id("vendor.model-v1:0".into())
+        );
+        // Level none takes any role word.
+        let mut h = Harness::new(Level::None);
+        apply_models(&mut h, &["implementer=opus".to_string()]).unwrap();
+    }
+
+    #[test]
+    fn an_agent_name_in_use_turns_off_its_role_only() {
+        let own =
+            |path: &str, name: &str| (path.to_string(), format!("---\nname: {name}\n---\nown\n"));
+        let existing = vec![
+            own(".claude/agents/mine.md", "checker"),
+            own(".claude/agents/fallback-advisor.md", "fallback-advisor"),
+            own(".claude/agents/implementer.md", "implementer"),
+        ];
+        let mut h = Harness::new(Level::Lean);
+        let notes = apply_conflicts(&mut h, &existing, false);
+        assert_eq!(notes.len(), 3, "{notes:?}");
+        assert_eq!(h.cfg(Role::Reviewer).model, Model::None);
+        assert_eq!(h.cfg(Role::Advisor).agent, Model::None);
+        assert!(h.cfg(Role::Advisor).model != Model::None);
+        assert_eq!(h.cfg(Role::Implementer).model, Model::None);
+        // For an existing configuration only the roles outside the level go.
+        let mut h = Harness::new(Level::Lean);
+        let notes = apply_conflicts(&mut h, &existing, true);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert_eq!(h.cfg(Role::Reviewer).model, Model::Id("opus".into()));
     }
 }

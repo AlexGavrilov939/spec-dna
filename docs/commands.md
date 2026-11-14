@@ -5,7 +5,7 @@ This page gives each command of spec-dna, its options and the exit codes. [quick
 ## Summary
 
 ```sh
-spec-dna init                       # detection, 8 questions, a preview, then spec-dna.toml and the adapters
+spec-dna init                       # detection, 10 questions, a preview, then spec-dna.toml, the adapters and the harness
 spec-dna init --dry-run             # the preview only (also --non-interactive, --answers <file>, --reconfigure)
 spec-dna new decision pump-choice   # a new document from the template of its type
 spec-dna context src/valves.rs      # the sections that cite a code file
@@ -48,7 +48,7 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 - the vendored, generated and large reference directories;
 - the budgets, the stack, the tests, the agent files, CI, the hooks and the default branch.
 
-Then `init` asks at most 8 questions, with the found values as defaults. It shows the full `spec-dna.toml` and the files that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+Then `init` asks at most 10 questions, with the found values as defaults. It shows the full `spec-dna.toml` and the files that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
 
 `init` writes these adapters:
 
@@ -58,7 +58,9 @@ Then `init` asks at most 8 questions, with the found values as defaults. It show
 
 The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the blocks of many lines that earlier versions wrote.
 
-If `spec-dna.toml` exists, `init` updates only the adapters. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version.
+With the questions 9 and 10, `init` also writes the [agent harness](harness.md) for Claude Code (agent files, a model-team line in `CLAUDE.md`, and a merge into `.claude/settings.json`). The default level is `lean`.
+
+If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version.
 
 At the end, `init` prints the bytes that the adapters add to the prompt prefix of each agent request (`--json`: `prefix_bytes`). It also prints the `git add` command for the files that it wrote.
 
