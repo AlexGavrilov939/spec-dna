@@ -231,7 +231,7 @@ fn fanout_asks_above_the_cap() {
     assert_eq!((code, err.as_str()), (0, ""));
     assert_eq!(
         out,
-        "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"spec-dna fan-out cap: this workflow can start 4 agents, more than the cap of 3. Approve it only if the extra agents are worth their cost. Start Claude Code with SPEC_DNA_FANOUT_CAP=<n> to change the cap.\"}}\n"
+        "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"spec-dna fan-out cap: this workflow can start 4 agents, more than the cap of 3. Approve it only if you need the extra agents. To change the cap, start Claude Code with SPEC_DNA_FANOUT_CAP=<n>.\"}}\n"
     );
     // At the cap, and with the default cap of 10: silent.
     let (_, out, _) = hook(&dir, &["fanout-cap", "--cap", "4"], &ev, &[]);

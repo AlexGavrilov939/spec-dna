@@ -29,7 +29,7 @@ Notes:
 
 - `Explore.md` replaces the built-in Explore subagent of Claude Code. The built-in Explore uses the model of the main session. The replacement uses `haiku`, has 6 tools and does not load `CLAUDE.md`, so its first request is small.
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
-- The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or judges.
+- The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
 
 ## Configuration
 

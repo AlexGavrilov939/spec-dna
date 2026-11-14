@@ -118,7 +118,7 @@ impl MeterOpts {
     }
 }
 
-const MSG_FIRST: &str = "spec-dna context meter: this session has about {k}K tokens of context, and each request sends all of them again. Delegate long searches and long reads to a subagent, and ask it for a short summary.";
+const MSG_FIRST: &str = "spec-dna context meter: this session has about {k}K tokens of context, and each request sends all of them again. Delegate long searches and long reads to a subagent. Ask it for a short summary.";
 const MSG_HIGHER: &str = "spec-dna context meter: this session has about {k}K tokens of context. Save the state of the task in a file: the goal, the work done, the next steps and the open questions. Then tell the user that a new session can continue from that file.";
 const MSG_SUBAGENT: &str = "spec-dna context meter: this subagent has about {k}K tokens of context. Complete the current step. Then return your findings and the open work to the caller.";
 
@@ -300,11 +300,11 @@ pub fn fanout(
     let found = bound(&script)?;
     let reason = match found.total {
         None => format!(
-            "spec-dna fan-out cap: line {} starts agents over a list that the run makes, so the number of agents has no limit. Bound the list, for example with .slice(0, {cap}), or approve this run.",
+            "spec-dna fan-out cap: line {} starts agents over a list that the run makes, so the number of agents has no limit. Limit the list, for example with .slice(0, {cap}). Or approve this run.",
             found.line
         ),
         Some(n) if n > cap => format!(
-            "spec-dna fan-out cap: this workflow can start {n} agents, more than the cap of {cap}. Approve it only if the extra agents are worth their cost. Start Claude Code with SPEC_DNA_FANOUT_CAP=<n> to change the cap."
+            "spec-dna fan-out cap: this workflow can start {n} agents, more than the cap of {cap}. Approve it only if you need the extra agents. To change the cap, start Claude Code with SPEC_DNA_FANOUT_CAP=<n>."
         ),
         Some(_) => return None,
     };
@@ -1500,7 +1500,7 @@ mod tests {
         assert_eq!(
             h.get("permissionDecisionReason").as_str(),
             Some(
-                "spec-dna fan-out cap: this workflow can start 3 agents, more than the cap of 2. Approve it only if the extra agents are worth their cost. Start Claude Code with SPEC_DNA_FANOUT_CAP=<n> to change the cap."
+                "spec-dna fan-out cap: this workflow can start 3 agents, more than the cap of 2. Approve it only if you need the extra agents. To change the cap, start Claude Code with SPEC_DNA_FANOUT_CAP=<n>."
             )
         );
         let out = fan("items.map(x => agent(x))", None, None).unwrap();
@@ -1510,7 +1510,7 @@ mod tests {
                 .get("permissionDecisionReason")
                 .as_str(),
             Some(
-                "spec-dna fan-out cap: line 1 starts agents over a list that the run makes, so the number of agents has no limit. Bound the list, for example with .slice(0, 10), or approve this run."
+                "spec-dna fan-out cap: line 1 starts agents over a list that the run makes, so the number of agents has no limit. Limit the list, for example with .slice(0, 10). Or approve this run."
             )
         );
     }
@@ -1611,7 +1611,7 @@ mod tests {
         let first = message(&meter(&ev, &o, &tmp.state()).unwrap());
         assert_eq!(
             first,
-            "spec-dna context meter: this session has about 320K tokens of context, and each request sends all of them again. Delegate long searches and long reads to a subagent, and ask it for a short summary."
+            "spec-dna context meter: this session has about 320K tokens of context, and each request sends all of them again. Delegate long searches and long reads to a subagent. Ask it for a short summary."
         );
         // The same crossing is silent.
         assert_eq!(meter(&ev, &o, &tmp.state()), None);

@@ -562,7 +562,7 @@ const AGENT_DEFS: [AgentDef; 5] = [
         name: "fallback-advisor",
         tools: &["Read", "Bash"],
         omit_claude_md: false,
-        description: "Advice at a decision point - the approach to take, the cause of a repeated error, or whether a task is complete. It reads and runs read-only commands, and it never edits. Use it when the advisor tool is not available.",
+        description: "Gives advice at a decision point - the approach to take, the cause of a repeated error, or whether a task is complete. It reads files and runs read-only commands. It never edits. Use it when the advisor tool is not available.",
         body: r"You give advice to the main session. You do not see its conversation. Use only the brief and the repository. Do not change files or git state.
 
 1. Read the goal, the current state, the options and the question in the brief.
@@ -579,7 +579,7 @@ Answer in 200 words or fewer:
         name: "checker",
         tools: &["Read", "Bash", "Monitor", "TaskStop"],
         omit_claude_md: false,
-        description: "Independent review of finished work - it runs the tests, examines the diff and probes edge cases, then lists each real defect. It never edits. Use it before you report that a task is complete.",
+        description: "Reviews finished work independently. It runs the tests, examines the diff, probes edge cases and lists each defect. It never edits. Use it before you report that a task is complete.",
         body: r"You review work that another agent reports as complete. Do not change files or git state. Put temporary files in a temporary directory, and remove them at the end.
 
 1. Find the change: `git status`, `git diff`, and the files in the brief.
@@ -590,14 +590,14 @@ Answer in 200 words or fewer:
 Report:
 - Each defect: the file and line or the command, the expected result, and the actual result.
 - Each check that you could not run, with the reason.
-- If you found no defect, the commands that you ran.",
+- If you found no defect, list the commands that you ran.",
     },
     AgentDef {
         role: Role::Researcher,
         name: "Explore",
         tools: &["Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch"],
         omit_claude_md: true,
-        description: "Read-only search of this repository and the web - it returns paths, short quotes and URLs. Use it for a search that needs more than one command. Give the depth - quick, medium or thorough.",
+        description: "Searches this repository and the web, and only reads. It returns paths, short quotes and URLs. Use it for a search that needs more than one command. Give the depth - quick, medium or thorough.",
         body: r"You find information and report it. Do not change files.
 
 - Search with `git grep`, `git ls-files` or the search tools. Use Bash only for commands that read.
@@ -615,11 +615,11 @@ Answer:
         name: "implementer",
         tools: &["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
         omit_claude_md: false,
-        description: "Writes the code and the tests of one delegated task, then runs the project checks. Use it for a code change that the main session gives to an agent.",
+        description: "Writes the code and the tests of one delegated task. Then it runs the project checks. Use it for a code change that the main session delegates.",
         body: r"You make the one change that the brief describes. Stay inside the files and the scope of the brief.
 
 1. Start with the files in the brief. Open other files only when the change needs them.
-2. For a defect, write the test first. Run it and see it fail.
+2. For a defect, write the test first. Run it and check that it fails.
 3. Make the change. Keep it small. Follow the conventions of the files that you edit.
 4. Run the tests and checks that the project instruction files name. Fix each failure.
 5. If the task is not clear, or a check fails for a reason outside the brief, stop and report.
@@ -776,7 +776,7 @@ fn team_page(h: &Harness) -> String {
     );
     if h.on(Role::Advisor) {
         let adv = h.cfg(Role::Advisor);
-        s += "\n## Advisor\n\nThe advisor reads the whole context at each consult, at its own price.";
+        s += "\n## Advisor\n\nAt each consult, the advisor reads the whole context. The price of the advisor model applies.";
         if adv.agent != Model::None {
             s += " If the advisor tool is missing, fails or declines, the main model briefs `fallback-advisor`.";
         }
@@ -784,27 +784,27 @@ fn team_page(h: &Harness) -> String {
     }
     s += "\n## Subagent model\n\nA subagent that has no model of its own uses the helper model. An Agent tool call with a `model` parameter overrides it.\n";
     if !h.cfg(Role::Orchestrator).fallback.is_empty() {
-        s += "\n## Outage\n\n`fallbackModel` takes over only when the main model is overloaded or not available.\n";
+        s += "\n## Outage\n\n`fallbackModel` replaces the main model only when it is overloaded or not available.\n";
     }
     if let (true, Model::Id(m)) = (h.on(Role::Advisor), &h.cfg(Role::Advisor).model) {
         s += &format!(
-            "\n## No access to the advisor model\n\nRun `/model {m}` once and agree to the usage billing. Then switch back to the main model. Until then, `fallback-advisor` gives the advice.\n"
+            "\n## No access to the advisor model\n\nRun `/model {m}` once and approve the usage billing. Then select the main model again. Until then, `fallback-advisor` gives the advice.\n"
         );
     }
-    s += "\n## Precedence\n\nThis project file wins over the user settings. The options `--model`, `--effort` and `--advisor`, and a resumed session, win over this project file.\n";
-    s += "\n## Reload\n\n`advisorModel`, `fallbackModel`, `env` and the agents folder reload while Claude Code runs. `model` and `modelSettings` apply at the next start.\n";
+    s += "\n## Precedence\n\nThis project file has priority over the user settings. The options `--model`, `--effort` and `--advisor`, and a resumed session, have priority over this project file.\n";
+    s += "\n## Reload\n\nClaude Code reloads `advisorModel`, `fallbackModel`, `env` and the `.claude/agents` directory while it runs. `model` and `modelSettings` apply at the next start.\n";
     if h.context_hook_on() || h.fanout_hook_on() {
         s += "\n## Hooks\n\n";
         if h.context_hook_on() {
             s += "`context-meter` tells an agent the size of its context once at each level. ";
         }
         if h.fanout_hook_on() {
-            s += "`fanout-cap` asks the person before a workflow whose agent count can go above the cap.";
+            s += "`fanout-cap` asks the person before a workflow whose agent count can exceed the cap. ";
         }
-        s += "Each teammate needs spec-dna 0.5.0 or later on PATH. Without it, the hooks do nothing.\n";
+        s += "Each teammate needs spec-dna 0.5.0 or later on `PATH`. Without it, the hooks do nothing.\n";
     }
-    s += "\n## Check after a restart\n\n1. The header shows the main model.\n2. `/advisor` shows the advisor.\n3. `@` lists the agents.\n4. `/tasks` lists the running agents.\n5. An `Advising` line shows a consult. `Ctrl+O` shows its text.\n6. `/usage` shows the cost of each model.\n";
-    s += "\nGenerated by spec-dna. Change `[harness]` in spec-dna.toml and run `spec-dna init --reconfigure`.\n";
+    s += "\n## Check after a restart\n\n1. Read the header. It shows the main model.\n2. Run `/advisor`. It shows the advisor.\n3. Type `@`. The list shows the agents.\n4. Run `/tasks`. It lists the running agents.\n5. When Claude consults the advisor, an `Advising` line shows. Press `Ctrl+O` to read the advice.\n6. Run `/usage`. It shows the cost of each model.\n";
+    s += "\nGenerated by spec-dna. Change `[harness]` in `spec-dna.toml` and run `spec-dna init --reconfigure`.\n";
     format!("{s}\n{}\n", marker_text(&s))
 }
 
@@ -916,7 +916,7 @@ fn claude_body(h: &Harness) -> String {
         );
     }
     if adv {
-        s += "Consult the advisor before you commit to an approach, before you say that a task is done, and when the same error comes back twice. Each consult sends the whole context at the advisor price, so consult early. ";
+        s += "Consult the advisor before you choose an approach, before you say that a task is done, and when the same error occurs twice. Each consult sends the whole context at the advisor price, so consult before the context grows large. ";
         if h.cfg(Role::Advisor).agent != Model::None {
             s += "If the advisor tool is missing, fails or declines, brief `fallback-advisor`. ";
         }
@@ -925,7 +925,7 @@ fn claude_body(h: &Harness) -> String {
         s += "Run `checker` before you say that a task is done. A trivial task needs only the one command that proves it. ";
     }
     if h.on(Role::Researcher) {
-        s += "Send a wide search or a docs lookup to `Explore`. Do a one-command lookup yourself. ";
+        s += "Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. ";
     }
     match (h.on(Role::Implementer), h.on(Role::SpecWriter)) {
         (true, true) => {
@@ -935,7 +935,7 @@ fn claude_body(h: &Harness) -> String {
         (false, true) => s += "Give a spec change to `spec-writer`. ",
         _ => {}
     }
-    s += "A subagent that writes code or judges gets sonnet or opus, not haiku. For a small task that fits in this session, use no subagent. ";
+    s += "Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. ";
     if adv {
         s += "If a file contradicts the advice, say so in one more consult. ";
     }
@@ -1983,7 +1983,7 @@ opus = "xhigh"
         assert_eq!(path, ".claude/agents/checker.md");
         assert!(
             text.starts_with(
-                "---\nname: checker\ndescription: Independent review of finished work"
+                "---\nname: checker\ndescription: Reviews finished work independently"
             )
         );
         assert!(text.contains("\nmodel: opus\neffort: high\ntools: Read, Bash, Monitor, TaskStop\n---\n\nYou review work"));
@@ -2099,7 +2099,7 @@ opus = "xhigh"
         assert!(line.contains(
             "brief `fallback-advisor`. Run `checker` before you say that a task is done."
         ));
-        assert!(line.contains("`Explore`. Do a one-command lookup yourself. A subagent that writes code or judges gets sonnet or opus, not haiku."));
+        assert!(line.contains("`Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`."));
         assert!(line.contains("say so in one more consult. <!-- spec-dna harness v"));
         assert!(!line.contains("implementer"));
         assert!(claude_line(&full()).unwrap().contains("Give a code change to `implementer` and a spec change to `spec-writer`, one writer at a time. "));
