@@ -21,6 +21,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Added
 
+- `spec-dna layer add <name>` writes a layer into `spec-dna.toml`, and `spec-dna layer list` shows each layer, its level, its edges, its limits and the number of documents that each rule put in it. `--moved-from` adds the new layer to the `moves-to` list of the named layers and keeps each comment of the file. `layer add` refuses a cycle, a name that exists, a type of another layer, an unknown layer in an edge and a bad value, with exit code 2 and no change to the file. It first writes the default graph if the file has no `[layers]` table ([docs/commands.md](docs/commands.md#layer)). `layer list --json` gives the rule that put each document in its layer.
 - The front matter field `was-type` (`note` or `change`). A value of another kind gives SD302. `check` does not use it yet.
 - The types `product`, `system`, `terms`, `roadmap`, `questions`, `spec` and `plan`, with their statuses, required sections, budgets and templates ([docs/types.md](docs/types.md)).
 - `spec-dna new intent <slug>`, `new spec <slug>` and `new plan <slug>` write the files of a change into `intent/<slug>/`. `new` names the new type for a type of 0.5.

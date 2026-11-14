@@ -24,8 +24,14 @@ pub enum Keep {
 }
 
 impl Keep {
-    // `layer list` reads it (slice S4).
-    #[allow(dead_code)]
+    pub fn from_name(s: &str) -> Option<Keep> {
+        match s {
+            "forever" => Some(Keep::Forever),
+            "until-finished" => Some(Keep::UntilFinished),
+            _ => None,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Keep::Forever => "forever",
@@ -42,8 +48,14 @@ pub enum ContextMode {
 }
 
 impl ContextMode {
-    // `layer list` reads it (slice S4).
-    #[allow(dead_code)]
+    pub fn from_name(s: &str) -> Option<ContextMode> {
+        match s {
+            "always" => Some(ContextMode::Always),
+            "on-request" => Some(ContextMode::OnRequest),
+            _ => None,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             ContextMode::Always => "always",
@@ -114,17 +126,7 @@ impl Layer {
             }
         }
         if let Some(dir) = f.opt_str("dir")? {
-            let d = dir.trim_matches('/');
-            if d.is_empty()
-                || dir.starts_with('/')
-                || d.contains('\\')
-                || d.split('/').any(|s| s.is_empty() || s == "." || s == "..")
-            {
-                return Err(format!(
-                    "`{prefix}dir` must be a plain folder inside the root, such as `requirements`"
-                ));
-            }
-            l.dir_key = Some(d.to_string());
+            l.dir_key = Some(check_dir(&dir).map_err(|e| format!("`{prefix}dir` {e}"))?);
         }
         l.files = f.opt_strs("files")?;
         l.paths = f.opt_strs("paths")?;
@@ -136,26 +138,14 @@ impl Layer {
         l.moves_to = dedup(f.opt_strs("moves-to")?);
         l.linked_from = dedup(f.opt_strs("linked-from")?);
         if let Some(k) = f.opt_str("keep")? {
-            l.keep = match k.as_str() {
-                "forever" => Keep::Forever,
-                "until-finished" => Keep::UntilFinished,
-                _ => {
-                    return Err(format!(
-                        "`{prefix}keep` must be \"forever\" or \"until-finished\", not `{k}`"
-                    ));
-                }
-            };
+            l.keep = Keep::from_name(&k).ok_or_else(|| {
+                format!("`{prefix}keep` must be \"forever\" or \"until-finished\", not `{k}`")
+            })?;
         }
         if let Some(c) = f.opt_str("context")? {
-            l.context = match c.as_str() {
-                "always" => ContextMode::Always,
-                "on-request" => ContextMode::OnRequest,
-                _ => {
-                    return Err(format!(
-                        "`{prefix}context` must be \"always\" or \"on-request\", not `{c}`"
-                    ));
-                }
-            };
+            l.context = ContextMode::from_name(&c).ok_or_else(|| {
+                format!("`{prefix}context` must be \"always\" or \"on-request\", not `{c}`")
+            })?;
         }
         l.max_docs = f.opt_u32("max-docs")?;
         l.max_chars = f.opt_u32("max-chars")?;
@@ -166,6 +156,20 @@ impl Layer {
     }
 }
 
+/// Checks the value of `dir` and returns the folder without a closing `/`.
+/// The error continues the sentence "`dir` ...".
+pub fn check_dir(dir: &str) -> Result<String, String> {
+    let d = dir.trim_matches('/');
+    if d.is_empty()
+        || dir.starts_with('/')
+        || d.contains('\\')
+        || d.split('/').any(|s| s.is_empty() || s == "." || s == "..")
+    {
+        return Err("must be a plain folder inside the root, such as `requirements`".to_string());
+    }
+    Ok(d.to_string())
+}
+
 fn dedup(v: Vec<String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for s in v {
@@ -174,6 +178,27 @@ fn dedup(v: Vec<String>) -> Vec<String> {
         }
     }
     out
+}
+
+/// The rule that put a document in its layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rule {
+    /// A glob of `paths` matches the path of the document.
+    Paths,
+    /// The document is a top file (`files`) of the layer of its type.
+    Files,
+    /// The layer has the type of the document.
+    Type,
+}
+
+impl Rule {
+    pub fn name(self) -> &'static str {
+        match self {
+            Rule::Paths => "paths",
+            Rule::Files => "files",
+            Rule::Type => "type",
+        }
+    }
 }
 
 /// The layers of a project in file order, with their levels. The graph has no
@@ -287,12 +312,6 @@ impl Graph {
         &self.layers
     }
 
-    // `layer` reads it (slice S4).
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.layers.is_empty()
-    }
-
     /// The position of a layer in the file.
     pub fn index(&self, name: &str) -> Option<usize> {
         self.layers.iter().position(|l| l.name == name)
@@ -301,8 +320,6 @@ impl Graph {
     /// The level of the layer at position `i`: the number of edges on its
     /// longest `moves-to` path to a layer with no edge out. Level 0 is the
     /// most stable.
-    // `layer list` and `context` read it (slices S4 and S7).
-    #[allow(dead_code)]
     pub fn level(&self, i: usize) -> u32 {
         self.levels[i]
     }
@@ -342,13 +359,29 @@ impl Graph {
     /// The layer of a document: the first layer in the file whose `paths`
     /// match the path, else the layer that has the type of the document. The
     /// path is relative to the root.
-    // `layer list` and `context` read it (slices S4 and S7).
+    // `context` reads it (slice S7).
     #[allow(dead_code)]
     pub fn layer_of(&self, rel_path: &str, ty: DocType) -> Option<usize> {
-        self.layers
+        self.placement(rel_path, ty).map(|(i, _)| i)
+    }
+
+    /// The layer of a document, and the rule that put the document there: a
+    /// glob of `paths`, else the type of the document. A document that is a
+    /// top file of the layer of its type (`files`) has the rule `files`.
+    pub fn placement(&self, rel_path: &str, ty: DocType) -> Option<(usize, Rule)> {
+        if let Some(i) = self
+            .layers
             .iter()
             .position(|l| l.paths.iter().any(|g| glob::matches(g, rel_path)))
-            .or_else(|| self.layer_of_type(ty))
+        {
+            return Some((i, Rule::Paths));
+        }
+        let i = self.layer_of_type(ty)?;
+        let top = self.layers[i]
+            .files
+            .iter()
+            .any(|f| f.trim_start_matches("./") == rel_path);
+        Some((i, if top { Rule::Files } else { Rule::Type }))
     }
 
     /// The layer that has a type.
@@ -704,6 +737,217 @@ fn file_order(text: &str, layers: &Table) -> Vec<String> {
     order
 }
 
+/// Writes a TOML string with double quotes.
+fn quote(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn quote_list<S: AsRef<str>>(items: &[S]) -> String {
+    let v: Vec<String> = items.iter().map(|s| quote(s.as_ref())).collect();
+    format!("[{}]", v.join(", "))
+}
+
+/// Writes the table `[layers.<name>]` of a layer. Only the keys that differ
+/// from the default are in the text. The text ends with a line feed.
+pub fn render_table(l: &Layer) -> String {
+    let mut out = format!("[layers.{}]\n", l.name);
+    if !l.types.is_empty() {
+        let names: Vec<&str> = l.types.iter().map(|t| t.name()).collect();
+        out.push_str(&format!("types = {}\n", quote_list(&names)));
+    }
+    if let Some(d) = &l.dir_key {
+        out.push_str(&format!("dir = {}\n", quote(d)));
+    }
+    for (key, list) in [
+        ("files", &l.files),
+        ("paths", &l.paths),
+        ("moves-to", &l.moves_to),
+        ("linked-from", &l.linked_from),
+    ] {
+        if !list.is_empty() {
+            out.push_str(&format!("{key} = {}\n", quote_list(list)));
+        }
+    }
+    if l.keep != Keep::Forever {
+        out.push_str(&format!("keep = {}\n", quote(l.keep.name())));
+    }
+    if l.context != ContextMode::Always {
+        out.push_str(&format!("context = {}\n", quote(l.context.name())));
+    }
+    for (key, n) in [
+        ("max-docs", l.max_docs),
+        ("max-chars", l.max_chars),
+        ("max-started", l.max_started),
+        ("stale-days", l.stale_days),
+    ] {
+        if let Some(n) = n {
+            out.push_str(&format!("{key} = {n}\n"));
+        }
+    }
+    out
+}
+
+/// Writes each layer of a graph as a table, in the order of the graph, with
+/// one empty line between the tables.
+pub fn render_graph(g: &Graph) -> String {
+    let tables: Vec<String> = g.layers().iter().map(render_table).collect();
+    tables.join("\n")
+}
+
+/// An insertion into the text of the configuration.
+#[derive(Debug, PartialEq, Eq)]
+struct Splice {
+    at: usize,
+    text: String,
+}
+
+/// The insertion that adds the layer `target` to the `moves-to` list of the
+/// layer `name`. It adds text only: each comment and each other byte of the
+/// file stay. The TOML parser gives the byte range of each value.
+///
+/// - The list exists (in each form): the insertion follows its last entry,
+///   or follows its `[` if the list is empty.
+/// - The list does not exist and the layer is a table with a header: the
+///   insertion is a new line after the header.
+/// - Another form, with no list: the error asks for a hand edit.
+fn edge_splice(text: &str, name: &str, target: &str) -> Result<Splice, String> {
+    let by_hand = || {
+        format!(
+            "`layers.{name}` has no `moves-to` key and is not written as a table with a header: add `moves-to = [\"{target}\"]` to it by hand"
+        )
+    };
+    let doc = DeTable::parse(text).map_err(|e| format!("spec-dna.toml does not parse: {e}"))?;
+    let Some(toml::de::DeValue::Table(layers)) = doc.get_ref().get("layers").map(|v| v.get_ref())
+    else {
+        return Err(by_hand());
+    };
+    let Some((key, value)) = layers.iter().find(|(k, _)| k.get_ref().as_ref() == name) else {
+        return Err(by_hand());
+    };
+    let toml::de::DeValue::Table(layer) = value.get_ref() else {
+        return Err(by_hand());
+    };
+    if let Some(list) = layer.get("moves-to") {
+        let toml::de::DeValue::Array(items) = list.get_ref() else {
+            return Err(by_hand());
+        };
+        return Ok(match items.last() {
+            Some(last) => Splice {
+                at: last.span().end,
+                text: format!(", {}", quote(target)),
+            },
+            None => Splice {
+                at: list.span().start + 1,
+                text: quote(target),
+            },
+        });
+    }
+    // A header line starts with `[`, and no other line of key spans does.
+    let start = key.span().start;
+    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line = text[line_start..].trim_start();
+    if !line.starts_with('[') || line.starts_with("[[") {
+        return Err(by_hand());
+    }
+    let (at, lead) = match text[start..].find('\n') {
+        Some(i) => (start + i + 1, ""),
+        None => (text.len(), "\n"),
+    };
+    Ok(Splice {
+        at,
+        text: format!("{lead}moves-to = [{}]\n", quote(target)),
+    })
+}
+
+/// Adds a layer to a configuration text and returns the new text. `graph` is
+/// the graph that `config` read from `text`, and `declared` is true if the
+/// text has a `[layers]` table. A text with no such table first gets the
+/// tables of the implied graph. The new table comes last. For each name in
+/// `moved_from`, the new layer joins the `moves-to` list of that layer.
+///
+/// Each error is a refusal: the caller writes nothing. The new text is read
+/// again, and the graph that it gives must be the graph that this function
+/// expects.
+pub fn add_layer(
+    text: &str,
+    graph: &Graph,
+    declared: bool,
+    new: Layer,
+    moved_from: &[String],
+) -> Result<String, String> {
+    if graph.index(&new.name).is_some() {
+        return Err(format!(
+            "layer `{}` exists; choose another name, or edit `[layers.{}]` by hand",
+            new.name, new.name
+        ));
+    }
+    let mut layers: Vec<Layer> = graph.layers().to_vec();
+    for from in moved_from {
+        let Some(l) = layers.iter_mut().find(|l| &l.name == from) else {
+            return Err(format!(
+                "`--moved-from`: layer `{from}` is not in `[layers]`"
+            ));
+        };
+        l.moves_to.push(new.name.clone());
+    }
+    layers.push(new.clone());
+    let expected = Graph::new(layers.clone())?;
+    let mut out;
+    if declared {
+        let mut splices = Vec::new();
+        for from in moved_from {
+            // A layer that has the new layer already cannot happen: the name is new.
+            splices.push(edge_splice(text, from, &new.name)?);
+        }
+        // From the end of the text to its start: an offset stays valid.
+        splices.sort_by_key(|s| std::cmp::Reverse(s.at));
+        out = text.to_string();
+        for s in splices {
+            out.insert_str(s.at, &s.text);
+        }
+        append_tables(&mut out, &render_table(&new));
+    } else {
+        out = text.to_string();
+        append_tables(&mut out, &render_graph(&expected));
+    }
+    let read = crate::config::Config::parse(&out).map_err(|e| {
+        format!("the new spec-dna.toml would not be valid ({e}); add the layer by hand")
+    })?;
+    if read.layers != expected {
+        return Err(
+            "the new spec-dna.toml would not give the expected layers; add the layer by hand"
+                .to_string(),
+        );
+    }
+    Ok(out)
+}
+
+/// Appends tables at the end of a text, after one empty line.
+fn append_tables(out: &mut String, tables: &str) {
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !out.is_empty() && !out.ends_with("\n\n") {
+        out.push('\n');
+    }
+    out.push_str(tables);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -989,5 +1233,174 @@ mod tests {
         }
         let g = graph("[layers.a]\ndir = \"x/y/\"\n").unwrap();
         assert_eq!(g.layers()[0].dir(), Some("x/y"));
+    }
+
+    /// Applies the insertion of `edge_splice` to a text.
+    fn spliced(text: &str, name: &str, target: &str) -> Result<String, String> {
+        let s = edge_splice(text, name, target)?;
+        let mut out = text.to_string();
+        out.insert_str(s.at, &s.text);
+        Ok(out)
+    }
+
+    // The byte range of `moves-to` in the 4 forms, with comments and a
+    // trailing comma. Each other byte of the text stays.
+    #[test]
+    fn edge_splice_in_the_four_forms() {
+        let header = "[layers.a]\nmoves-to = [\"b\"] # edge\n[layers.b]\n";
+        assert_eq!(
+            spliced(header, "a", "n").unwrap(),
+            "[layers.a]\nmoves-to = [\"b\", \"n\"] # edge\n[layers.b]\n"
+        );
+        let dotted = "layers.a.moves-to = [\"b\"]\nlayers.b.keep = \"forever\"\n";
+        assert_eq!(
+            spliced(dotted, "a", "n").unwrap(),
+            "layers.a.moves-to = [\"b\", \"n\"]\nlayers.b.keep = \"forever\"\n"
+        );
+        let inline = "layers = { a = { moves-to = [\"b\"] }, b = {} }\n";
+        assert_eq!(
+            spliced(inline, "a", "n").unwrap(),
+            "layers = { a = { moves-to = [\"b\", \"n\"] }, b = {} }\n"
+        );
+        let in_header = "[layers]\na = { moves-to = [\"b\"] }\nb = {}\n";
+        assert_eq!(
+            spliced(in_header, "a", "n").unwrap(),
+            "[layers]\na = { moves-to = [\"b\", \"n\"] }\nb = {}\n"
+        );
+        // A multi-line list, a comment inside it and a trailing comma.
+        let multi = "[layers.a]\nmoves-to = [\n  \"b\", # first\n  \"c\", # second\n]\n[layers.b]\n[layers.c]\n";
+        assert_eq!(
+            spliced(multi, "a", "n").unwrap(),
+            "[layers.a]\nmoves-to = [\n  \"b\", # first\n  \"c\", \"n\", # second\n]\n[layers.b]\n[layers.c]\n"
+        );
+        // An empty list, with and without a comment inside.
+        assert_eq!(
+            spliced("[layers.a]\nmoves-to = []\n", "a", "n").unwrap(),
+            "[layers.a]\nmoves-to = [\"n\"]\n"
+        );
+        assert_eq!(
+            spliced("[layers.a]\nmoves-to = [ # none\n]\n", "a", "n").unwrap(),
+            "[layers.a]\nmoves-to = [\"n\" # none\n]\n"
+        );
+    }
+
+    #[test]
+    fn edge_splice_without_a_list() {
+        // A table with a header gets a new line after the header.
+        assert_eq!(
+            spliced("[layers.a] # c\ntypes = [\"rule\"]\n", "a", "n").unwrap(),
+            "[layers.a] # c\nmoves-to = [\"n\"]\ntypes = [\"rule\"]\n"
+        );
+        assert_eq!(
+            spliced("[layers.a]", "a", "n").unwrap(),
+            "[layers.a]\nmoves-to = [\"n\"]\n"
+        );
+        // A quoted name, and a multi-line string that looks like a header.
+        assert_eq!(
+            spliced(
+                "[layers.\"a\"]\npaths = [\"\"\"\n[layers.b]\n\"\"\"]\n",
+                "a",
+                "n"
+            )
+            .unwrap(),
+            "[layers.\"a\"]\nmoves-to = [\"n\"]\npaths = [\"\"\"\n[layers.b]\n\"\"\"]\n"
+        );
+        // The dotted and the inline form give no place: the caller asks for a
+        // hand edit.
+        for text in [
+            "layers.a.keep = \"forever\"\n",
+            "layers = { a = { keep = \"forever\" } }\n",
+            "[layers]\na = { keep = \"forever\" }\n",
+        ] {
+            let e = spliced(text, "a", "n").unwrap_err();
+            assert!(e.contains("by hand"), "{text}: {e}");
+        }
+    }
+
+    #[test]
+    fn written_tables_read_back_as_the_same_graph() {
+        for g in [Graph::small(), Graph::default_graph()] {
+            let text = render_graph(&g);
+            assert_eq!(graph(&text).unwrap(), g, "{text}");
+        }
+        // A name with a quote or a backslash is escaped.
+        let mut l = Layer::new("a");
+        l.paths = vec!["x\"y\\z/**".to_string()];
+        let g = Graph::new(vec![l]).unwrap();
+        assert_eq!(graph(&render_graph(&g)).unwrap(), g);
+    }
+
+    fn config_text(extra: &str) -> String {
+        format!(
+            "spec-dna = \"{}\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n{extra}",
+            crate::adapters::VERSION
+        )
+    }
+
+    #[test]
+    fn add_layer_edits_only_what_it_adds() {
+        use crate::config::Config;
+        let text = config_text(
+            "# the layers\n[layers.a]\ntypes = [\"rule\"]\n# edge below\nmoves-to = [\"b\"] # keep me\n\n[layers.b]\ntypes = [\"decision\"]\n",
+        );
+        let cfg = Config::parse(&text).unwrap();
+        let mut n = Layer::new("n");
+        n.types = vec![DocType::Interface];
+        let out = add_layer(
+            &text,
+            &cfg.layers,
+            true,
+            n,
+            &["a".to_string(), "b".to_string()],
+        )
+        .unwrap();
+        assert!(
+            out.starts_with(
+                &text
+                    .replace("[\"b\"] # keep me", "[\"b\", \"n\"] # keep me")
+                    .replace(
+                        "types = [\"decision\"]\n",
+                        "moves-to = [\"n\"]\ntypes = [\"decision\"]\n"
+                    )
+            ),
+            "{out}"
+        );
+        assert!(
+            out.ends_with("\n\n[layers.n]\ntypes = [\"interface\"]\n"),
+            "{out}"
+        );
+        let read = Config::parse(&out).unwrap();
+        assert_eq!(read.layers.layers()[2].name, "n");
+        assert_eq!(read.layers.level(0), 2);
+    }
+
+    #[test]
+    fn add_layer_refuses_and_returns_an_error() {
+        use crate::config::Config;
+        let text = config_text(
+            "[layers.a]\ntypes = [\"rule\"]\n[layers.b]\ntypes = [\"decision\"]\nmoves-to = [\"a\"]\n",
+        );
+        let cfg = Config::parse(&text).unwrap();
+        let add = |n: Layer, from: &[&str]| {
+            let from: Vec<String> = from.iter().map(|s| s.to_string()).collect();
+            add_layer(&text, &cfg.layers, true, n, &from)
+        };
+        let named = |name: &str| Layer::new(name);
+        // An existing name.
+        assert!(add(named("a"), &[]).unwrap_err().contains("exists"));
+        // A type that another layer has.
+        let mut l = named("n");
+        l.types = vec![DocType::Rule];
+        assert!(add(l, &[]).unwrap_err().contains("already in layer `a`"));
+        // A cycle: `a` is below `b`, so `n` moves from `a` and to `b`... and
+        // `b` moves to `a`.
+        let mut l = named("n");
+        l.moves_to = vec!["b".to_string()];
+        assert!(add(l, &["a"]).unwrap_err().contains("cycle"));
+        // An unknown layer in an edge.
+        let mut l = named("n");
+        l.moves_to = vec!["zzz".to_string()];
+        assert!(add(l, &[]).unwrap_err().contains("`zzz`"));
+        assert!(add(named("n"), &["zzz"]).unwrap_err().contains("`zzz`"));
     }
 }

@@ -62,7 +62,6 @@ pub struct Config {
     /// is false). The commands read it from the place rule on.
     pub layers: Graph,
     /// True if the file has the table `[layers]`.
-    #[allow(dead_code)]
     pub layers_declared: bool,
     /// The areas of the project: the folders of `requirements/`.
     #[allow(dead_code)]

@@ -109,6 +109,20 @@ intent/<slug>/intent.md, and spec and plan need that folder. Where the place
 gives the type, the file has no type: line.",
     ),
     (
+        "layer",
+        "layer add <name> [--types <t,..>] [--paths <glob,..>] [--files <f,..>] [--dir <d>] [--moves-to <l,..>] [--moved-from <l,..>] [--linked-from <l,..>] [--keep <k>] [--context <c>] [--max-docs <n>] [--max-chars <n>] [--max-started <n>] [--stale-days <n>]\nlayer list",
+        "`add` writes the table [layers.<name>] at the end of spec-dna.toml. --keep is
+forever or until-finished, and --context is always or on-request. With
+--moved-from, the new layer joins the moves-to list of each named layer; the
+file keeps every comment. It refuses a cycle, a name that exists, a type that
+another layer has, a layer that the graph does not have and a bad value, with
+exit code 2 and no change to the file. If the file has no [layers] table, it
+writes the default graph first. Commit spec-dna.toml as a change of its own.
+`list` prints each layer: its level, its selection, its edges, its limits and
+the number of documents that each rule put in it. With --json, it also lists
+the rule of each document.",
+    ),
+    (
         "mv",
         "mv <from> <to> [--stub]\nmv <doc-id>#<key or section>... <doc-id or path> [--type <type>]",
         "Moves a document; --stub leaves a stub at the old path for tools that
@@ -219,6 +233,44 @@ struct Args {
     stub: bool,
     replace: bool,
     conventions: Option<String>,
+    layer: LayerFlags,
+}
+
+/// The options of `layer add`.
+#[derive(Default)]
+struct LayerFlags {
+    /// True if the command line has at least one of these options.
+    given: bool,
+    types: Vec<String>,
+    paths: Vec<String>,
+    files: Vec<String>,
+    moves_to: Vec<String>,
+    moved_from: Vec<String>,
+    linked_from: Vec<String>,
+    keep: Option<String>,
+    context: Option<String>,
+    dir: Option<String>,
+    max_docs: Option<u32>,
+    max_chars: Option<u32>,
+    max_started: Option<u32>,
+    stale_days: Option<u32>,
+}
+
+/// Splits the value of a list option at the commas. An empty entry is an
+/// error.
+fn list_value(name: &str, v: &str) -> Result<Vec<String>, Fatal> {
+    let items: Vec<String> = v.split(',').map(|s| s.trim().to_string()).collect();
+    if items.iter().any(String::is_empty) {
+        return Err(Fatal::Usage(format!(
+            "{name}: `{v}` has an empty entry; write a comma-separated list"
+        )));
+    }
+    Ok(items)
+}
+
+fn number_value(name: &str, v: &str) -> Result<u32, Fatal> {
+    v.parse()
+        .map_err(|_| Fatal::Usage(format!("{name}: `{v}` is not a number")))
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -247,6 +299,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         stub: false,
         replace: false,
         conventions: None,
+        layer: LayerFlags::default(),
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -283,6 +336,40 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--query" => a.query = Some(value("--query")?),
             "--expect" => a.expect.push(value("--expect")?),
             "--format" => a.format = Some(value("--format")?),
+            "--types" | "--paths" | "--files" | "--moves-to" | "--moved-from" | "--linked-from" => {
+                let v = list_value(&flag, &value(&flag)?)?;
+                let l = &mut a.layer;
+                l.given = true;
+                match flag.as_str() {
+                    "--types" => l.types.extend(v),
+                    "--paths" => l.paths.extend(v),
+                    "--files" => l.files.extend(v),
+                    "--moves-to" => l.moves_to.extend(v),
+                    "--moved-from" => l.moved_from.extend(v),
+                    _ => l.linked_from.extend(v),
+                }
+            }
+            "--keep" | "--context" | "--dir" => {
+                let v = value(&flag)?;
+                let l = &mut a.layer;
+                l.given = true;
+                match flag.as_str() {
+                    "--keep" => l.keep = Some(v),
+                    "--context" => l.context = Some(v),
+                    _ => l.dir = Some(v),
+                }
+            }
+            "--max-docs" | "--max-chars" | "--max-started" | "--stale-days" => {
+                let n = Some(number_value(&flag, &value(&flag)?)?);
+                let l = &mut a.layer;
+                l.given = true;
+                match flag.as_str() {
+                    "--max-docs" => l.max_docs = n,
+                    "--max-chars" => l.max_chars = n,
+                    "--max-started" => l.max_started = n,
+                    _ => l.stale_days = n,
+                }
+            }
             "--budget" => {
                 let v = value("--budget")?;
                 a.budget = Some(
@@ -367,6 +454,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
         "new" => new_doc(&Repo::discover(&cwd)?, &a),
+        "layer" => layer_cmd(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
@@ -1290,6 +1378,266 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "wrote {path} ({} template); replace each {{{{...}}}} placeholder",
             ty.name()
         );
+    }
+    Ok(0)
+}
+
+fn layer_cmd(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    match a.positional.first().map(String::as_str) {
+        Some("add") => layer_add(repo, a),
+        Some("list") => layer_list(repo, a),
+        Some(other) => Err(Fatal::Usage(format!(
+            "unknown `layer` command `{other}`; use `layer add <name>` or `layer list`"
+        ))),
+        None => Err(Fatal::Usage(
+            "`layer` needs a command: `layer add <name>` or `layer list`".into(),
+        )),
+    }
+}
+
+fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    use layer::{ContextMode, Keep, Layer};
+    use model::DocType;
+    expect_args(a, 2, 2)?;
+    let f = &a.layer;
+    let name = &a.positional[1];
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(Fatal::Usage(format!(
+            "`{name}` is not a layer name: use only letters, digits, `-` and `_`"
+        )));
+    }
+    let mut new = Layer::new(name);
+    for t in &f.types {
+        let ty = DocType::from_name(t)
+            .ok_or_else(|| Fatal::Usage(config::unknown_type("`--types`", t)))?;
+        if !new.types.contains(&ty) {
+            new.types.push(ty);
+        }
+    }
+    if let Some(d) = &f.dir {
+        new.dir_key =
+            Some(layer::check_dir(d).map_err(|e| Fatal::Usage(format!("--dir: `{d}` {e}")))?);
+    }
+    new.files = f.files.clone();
+    new.paths = f.paths.clone();
+    let dedup = |v: &[String]| {
+        let mut out: Vec<String> = Vec::new();
+        for s in v {
+            if !out.contains(s) {
+                out.push(s.clone());
+            }
+        }
+        out
+    };
+    new.moves_to = dedup(&f.moves_to);
+    new.linked_from = dedup(&f.linked_from);
+    if let Some(k) = &f.keep {
+        new.keep = Keep::from_name(k).ok_or_else(|| {
+            Fatal::Usage(format!(
+                "--keep: `{k}` is not `forever` or `until-finished`"
+            ))
+        })?;
+    }
+    if let Some(c) = &f.context {
+        new.context = ContextMode::from_name(c).ok_or_else(|| {
+            Fatal::Usage(format!("--context: `{c}` is not `always` or `on-request`"))
+        })?;
+    }
+    new.max_docs = f.max_docs;
+    new.max_chars = f.max_chars;
+    new.max_started = f.max_started;
+    new.stale_days = f.stale_days;
+    let moved_from = dedup(&f.moved_from);
+
+    let path = repo.config_path();
+    let text = std::fs::read_to_string(&path).map_err(|_| {
+        Fatal::Config(format!(
+            "no {} at {}; run `spec-dna init`",
+            config::FILE_NAME,
+            repo::shown(&repo.root)
+        ))
+    })?;
+    let cfg = Repo::parse_config(&text)?;
+    warn_pin(&cfg);
+    let out = layer::add_layer(&text, &cfg.layers, cfg.layers_declared, new, &moved_from)
+        .map_err(Fatal::Usage)?;
+    // `add_layer` read the new text: this cannot fail.
+    let read = Repo::parse_config(&out)?;
+    let level = read.layers.index(name).map_or(0, |i| read.layers.level(i));
+    mv::write(&path, &out)?;
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("layer", name)
+                .num("level", level)
+                .str("path", config::FILE_NAME)
+                .bool("wrote_implied_graph", !cfg.layers_declared)
+                .strs("moved_from", &moved_from)
+                .end()
+        );
+    } else {
+        println!(
+            "added layer `{name}` (level {level}) to {}",
+            config::FILE_NAME
+        );
+        if !cfg.layers_declared {
+            println!(
+                "{} had no [layers] table: it now has the tables of the default graph, then `{name}`",
+                config::FILE_NAME
+            );
+        }
+        for from in &moved_from {
+            println!("`{from}` now moves to `{name}`");
+        }
+        println!(
+            "Commit {} as a change of its own: `check` reports a configuration change with other files (SD503).",
+            config::FILE_NAME
+        );
+    }
+    Ok(0)
+}
+
+fn layer_list(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    if a.layer.given {
+        return Err(Fatal::Usage(
+            "`layer list` takes no layer option; the options are for `layer add`".into(),
+        ));
+    }
+    let (cfg, c) = load_head(repo, a)?;
+    let g = &cfg.layers;
+    let rules = [layer::Rule::Type, layer::Rule::Paths, layer::Rule::Files];
+    let mut counts = vec![[0usize; 3]; g.layers().len()];
+    let mut unplaced = 0usize;
+    let mut placed = Vec::new();
+    for d in &c.docs {
+        let rel = cfg.roots[d.root].rel(&d.path);
+        let p = g.placement(rel, d.ty);
+        match p {
+            Some((i, r)) => counts[i][rules.iter().position(|&x| x == r).unwrap_or(0)] += 1,
+            None => unplaced += 1,
+        }
+        placed.push((d, p));
+    }
+    if a.json {
+        let layers = g.layers().iter().enumerate().map(|(i, l)| {
+            let types: Vec<String> = l.types.iter().map(|t| t.name().to_string()).collect();
+            let mut o = Obj::new()
+                .str("name", &l.name)
+                .num("level", g.level(i))
+                .strs("types", &types)
+                .opt_str("dir", l.dir())
+                .strs("files", &l.files)
+                .strs("paths", &l.paths)
+                .strs("moves_to", &l.moves_to)
+                .strs("linked_from", &l.linked_from)
+                .str("keep", l.keep.name())
+                .str("context", l.context.name());
+            for (key, n) in [
+                ("max_docs", l.max_docs),
+                ("max_chars", l.max_chars),
+                ("max_started", l.max_started),
+                ("stale_days", l.stale_days),
+            ] {
+                o = match n {
+                    Some(n) => o.num(key, n),
+                    None => o.raw(key, "null"),
+                };
+            }
+            let mut by = Obj::new();
+            for (k, r) in rules.iter().enumerate() {
+                by = by.num(r.name(), counts[i][k]);
+            }
+            o.num("documents", counts[i].iter().sum::<usize>())
+                .raw("by_rule", &by.end())
+                .end()
+        });
+        let docs = placed.iter().map(|(d, p)| {
+            Obj::new()
+                .str("path", &d.path)
+                .str("id", &d.id)
+                .str("type", d.ty.name())
+                .opt_str("layer", p.map(|(i, _)| g.layers()[i].name.as_str()))
+                .opt_str("rule", p.map(|(_, r)| r.name()))
+                .end()
+        });
+        println!(
+            "{}",
+            Obj::new()
+                .bool("declared", cfg.layers_declared)
+                .raw("layers", &json::array(layers))
+                .raw("documents", &json::array(docs))
+                .num("unplaced", unplaced)
+                .end()
+        );
+        return Ok(0);
+    }
+    if !cfg.layers_declared {
+        println!(
+            "{} has no [layers] table: these layers are the default graph (`layer add` writes it)",
+            config::FILE_NAME
+        );
+    }
+    for (i, l) in g.layers().iter().enumerate() {
+        let mut parts = vec![l.name.clone(), format!("level {}", g.level(i))];
+        let types: Vec<&str> = l.types.iter().map(|t| t.name()).collect();
+        for (key, list) in [
+            ("types", types),
+            ("files", l.files.iter().map(String::as_str).collect()),
+            ("paths", l.paths.iter().map(String::as_str).collect()),
+            ("moves-to", l.moves_to.iter().map(String::as_str).collect()),
+            (
+                "linked-from",
+                l.linked_from.iter().map(String::as_str).collect(),
+            ),
+        ] {
+            if !list.is_empty() {
+                parts.push(format!("{key} {}", list.join(",")));
+            }
+        }
+        if l.dir_key.is_some()
+            && let Some(d) = l.dir()
+        {
+            parts.push(format!("dir {d}"));
+        }
+        parts.push(format!("keep {}", l.keep.name()));
+        parts.push(format!("context {}", l.context.name()));
+        for (key, n) in [
+            ("max-docs", l.max_docs),
+            ("max-chars", l.max_chars),
+            ("max-started", l.max_started),
+            ("stale-days", l.stale_days),
+        ] {
+            if let Some(n) = n {
+                parts.push(format!("{key} {n}"));
+            }
+        }
+        let total: usize = counts[i].iter().sum();
+        let by: Vec<String> = rules
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| counts[i][*k] > 0)
+            .map(|(k, r)| format!("{} {}", r.name(), counts[i][k]))
+            .collect();
+        parts.push(if by.is_empty() {
+            format!("docs {total}")
+        } else {
+            format!("docs {total} ({})", by.join(", "))
+        });
+        println!("{}", parts.join("  "));
+    }
+    if unplaced > 0 {
+        let (noun, verb) = if unplaced == 1 {
+            ("document has", "its")
+        } else {
+            ("documents have", "their")
+        };
+        println!("{unplaced} {noun} no layer (no layer has {verb} type)");
     }
     Ok(0)
 }

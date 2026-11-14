@@ -157,7 +157,8 @@ impl Repo {
         Self::parse_config(&String::from_utf8_lossy(bytes))
     }
 
-    fn parse_config(text: &str) -> Result<Config, Fatal> {
+    /// Reads the text of `spec-dna.toml`.
+    pub fn parse_config(text: &str) -> Result<Config, Fatal> {
         let text = text.to_string();
         Config::parse(&text).map_err(|e| {
             // The pin comes first: a configuration of another version can

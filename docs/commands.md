@@ -8,6 +8,8 @@ This page gives each command of spec-dna, its options and the exit codes. [quick
 spec-dna init                       # detection, 10 questions, a preview, then spec-dna.toml, the adapters and the harness
 spec-dna init --dry-run             # the preview only (also --non-interactive, --answers <file>, --reconfigure)
 spec-dna new decision pump-choice   # a new document from the template of its type
+spec-dna layer add interfaces --types interface --moved-from intent   # a new layer in spec-dna.toml
+spec-dna layer list                 # each layer, its level and its documents
 spec-dna context src/valves.rs      # the sections that cite a code file
 spec-dna check                      # new diagnostics against HEAD; exit 1 on a new error
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
@@ -144,6 +146,62 @@ spec-dna new <type> [<id>] [--root <dir>]
 
 `new` writes no `type:` line where the place gives the type. It uses `--root <dir>`, or the first root of that single type, or the first mixed root. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
 
+## layer
+
+```text
+spec-dna layer add <name> [--types t1,t2] [--paths g1,g2] [--files f1,f2] [--dir d]
+  [--moves-to a,b] [--moved-from a,b] [--linked-from a,b]
+  [--keep forever|until-finished] [--context always|on-request]
+  [--max-docs n] [--max-chars n] [--max-started n] [--stale-days n]
+spec-dna layer list
+```
+
+A layer is a named set of documents ([The table `layers`](config.md#the-table-layers)). `layer add` adds one to `spec-dna.toml`. `layer list` shows the layers.
+
+### layer add
+
+`layer add` writes `[layers.<name>]` at the end of `spec-dna.toml`, so the new layer is last in the file order. The options give the keys of the table ([config.md](config.md#the-table-layers)): `--types`, `--paths`, `--files`, `--dir`, `--moves-to`, `--linked-from`, `--keep`, `--context`, `--max-docs`, `--max-chars`, `--max-started` and `--stale-days`. A list option takes names or globs that a comma separates. The table has only the keys that the command line gives.
+
+`--moved-from a,b` adds the new layer to the `moves-to` list of the layers `a` and `b`. The command edits that list in place. It inserts the new name and changes no other byte of the file, so each comment stays.
+
+- A layer that has a `moves-to` key gets the name at the end of the list. This works for a table and for dotted keys.
+- A layer that has no `moves-to` key and is written as a table (`[layers.a]`) gets a new `moves-to` line below its header.
+- A layer that has no `moves-to` key and is written as dotted keys or as an inline table gives exit code 2. Add `moves-to` to it by hand.
+
+If `spec-dna.toml` has no `[layers]` table, the project uses the default graph ([config.md](config.md#the-table-layers)). In this case, `layer add` first writes the tables of that graph, with the effect of `types` (the layers that hold none of the types drop, with the edges to them). It then adds the new layer.
+
+The command refuses these cases with exit code 2. It writes nothing, and the file keeps its bytes:
+
+- A cycle in the `moves-to` edges.
+- A name that a layer already has.
+- A type that another layer has.
+- A layer in an edge (`--moves-to`, `--linked-from`, `--moved-from`) that the graph does not have.
+- A value that is not valid: a name with other characters than letters, digits, `-` and `_`, an unknown type, a number that is not a number, a `--keep` or `--context` value that is not in the list, a `--dir` that leaves the root, `--files` with `--dir`, or a folder that another layer has.
+- A file layout where the new table has no place, for example `layers = { ... }` as an inline table of the root.
+
+The command reads its own result before it writes it. The result must give the layers that the command expects.
+
+The change goes into `spec-dna.toml` only. Commit it as a change of its own: `check` gives SD503 for a change of `spec-dna.toml` that comes with other files ([diagnostics.md](diagnostics.md)). With `--json`, the output is one object:
+
+```json
+{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"]}
+```
+
+### layer list
+
+`layer list` prints one line for each layer, in the order of the file:
+
+- The name and the level. Level 0 is the most stable layer.
+- The selection: `types`, `files` and `paths`, if the layer has them. It also gives `dir` if the file sets it.
+- The edges: `moves-to` and `linked-from`.
+- `keep` and `context`.
+- The limits that the layer sets: `max-docs`, `max-chars`, `max-started` and `stale-days`.
+- `docs`: the number of documents of the layer, and the number that each rule put there. The rules are the type of the layer (`type`), a glob of `paths` (`paths`) and a top file of the layer (`files`). A glob of `paths` comes first: a document that matches belongs to that layer, also when its type is in another layer.
+
+A document of a type that no layer has is in no layer. A last line gives their number. `layer list` reads the same documents as `check`. If the file has no `[layers]` table, the first line says so, and the list is the default graph.
+
+With `--json`, the output is one object with the keys `declared`, `layers`, `documents` and `unplaced`. Each entry of `documents` has `path`, `id`, `type`, `layer` and `rule`. `layer` and `rule` are `null` for a document that is in no layer.
+
 ## mv
 
 ```text
@@ -240,7 +298,7 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), or the preservation check of `mv`, `history` or `index` refused the change |
-| 2 | Usage error |
+| 2 | Usage error. Also a refusal of `layer add`: it changes nothing |
 | 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository |
 | 4 | Git or file system error |
 | 5 | A target names no document, section or requirement |

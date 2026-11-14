@@ -211,7 +211,7 @@ When a target of `context` is a document of that type, `context` serves these se
 
 ## The table `layers`
 
-A layer is a named set of documents. The table `[layers.<name>]` gives its keys. The name has only letters, digits, `-` and `_`. The file order of the tables is the order of the layers. Write each layer as a table (`[layers.intent]`), as dotted keys (`layers.intent.keep = "forever"`) or as an inline table. The order is the same in each form.
+A layer is a named set of documents. The table `[layers.<name>]` gives its keys. The name has only letters, digits, `-` and `_`. The file order of the tables is the order of the layers. Write each layer as a table (`[layers.intent]`), as dotted keys (`layers.intent.keep = "forever"`) or as an inline table. The order is the same in each form. `spec-dna layer add` adds a layer to the file, and `spec-dna layer list` shows the layers ([commands.md](commands.md#layer)).
 
 The graph has these rules. A break of a rule is a configuration error (exit code 3), and the message names the key:
 
@@ -224,7 +224,7 @@ The graph has these rules. A break of a rule is a configuration error (exit code
 
 The layers also give the place of a document: its type, if the front matter has no `type`. [Place gives the type](types.md#place-gives-the-type) has the rule. A mixed root with `[layers]` needs a layer for each type that its documents have. A document of a type that no layer has gives SD303, and the message says to run `spec-dna layer add`.
 
-The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type.
+The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
 
 A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types, and it drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
 
