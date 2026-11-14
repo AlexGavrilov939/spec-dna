@@ -119,7 +119,7 @@ impl MeterOpts {
 }
 
 const MSG_FIRST: &str = "spec-dna context meter: this session has about {k}K tokens of context, and each request sends all of them again. Delegate long searches and long reads to a subagent, and ask it for a short summary.";
-const MSG_HIGHER: &str = "spec-dna context meter: this session has about {k}K tokens of context. Write the task state to a file: the goal, the work done, the next steps and the open questions. Then tell the user that a new session can continue from that file.";
+const MSG_HIGHER: &str = "spec-dna context meter: this session has about {k}K tokens of context. Save the state of the task in a file: the goal, the work done, the next steps and the open questions. Then tell the user that a new session can continue from that file.";
 const MSG_SUBAGENT: &str = "spec-dna context meter: this subagent has about {k}K tokens of context. Complete the current step. Then return your findings and the open work to the caller.";
 
 /// An id of a session or of a subagent: 1 to 64 of `A-Za-z0-9_-`.
@@ -1619,7 +1619,7 @@ mod tests {
         let higher = message(&meter(&ev, &o, &tmp.state()).unwrap());
         assert_eq!(
             higher,
-            "spec-dna context meter: this session has about 720K tokens of context. Write the task state to a file: the goal, the work done, the next steps and the open questions. Then tell the user that a new session can continue from that file."
+            "spec-dna context meter: this session has about 720K tokens of context. Save the state of the task in a file: the goal, the work done, the next steps and the open questions. Then tell the user that a new session can continue from that file."
         );
         assert_eq!(meter(&ev, &o, &tmp.state()), None);
     }
@@ -1634,7 +1634,7 @@ mod tests {
             &opts(&[300_000, 600_000], 0),
             &tmp.state(),
         );
-        assert!(message(&out.unwrap()).contains("Write the task state"));
+        assert!(message(&out.unwrap()).contains("Save the state of the task"));
     }
 
     #[test]
