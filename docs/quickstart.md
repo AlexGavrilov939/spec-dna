@@ -24,7 +24,7 @@ Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has these a
 On macOS and Linux, use these commands. They download the binary of your target, compare its sum with `SHA256SUMS`, and install it to `~/.local/bin`. Make sure that `~/.local/bin` is on your `PATH`:
 
 ```sh
-v=0.4.1 t=aarch64-apple-darwin
+v=0.5.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS     # Linux: sha256sum -c --ignore-missing SHA256SUMS
@@ -37,7 +37,7 @@ Apple does not notarize the macOS binaries. `curl` does not set the quarantine a
 On Windows, use these commands in PowerShell:
 
 ```powershell
-$v = "0.4.1"; $t = "x86_64-pc-windows-gnu"
+$v = "0.5.0"; $t = "x86_64-pc-windows-gnu"
 $base = "https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v"
 Invoke-WebRequest "$base/spec-dna-$v-$t.exe" -OutFile spec-dna.exe
 Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
@@ -58,14 +58,14 @@ gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. Keep the package name `spec-dna` at the end, because the repository has other packages.
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.4.1 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0 spec-dna
 ```
 
 A team can also build from a local or a private clone. Give its git URL to `--git`. A plain path does not work.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.4.1 spec-dna            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.4.1 spec-dna  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.5.0 spec-dna            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.5.0 spec-dna  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source. The CI job below also builds from it.

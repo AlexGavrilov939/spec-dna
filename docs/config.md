@@ -3,7 +3,7 @@
 `spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3). Thus a typo cannot disable a rule without an error message.
 
 ```toml
-spec-dna = "0.4.1"              # required: the pinned version
+spec-dna = "0.5.0"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
 exclude = ["**/vendor/**"]      # repository globs that are never documents
@@ -11,7 +11,7 @@ self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repositor
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
 
 [spec-dna-sha256]               # optional: the release assets of the pin, and their SHA-256 sums
-"spec-dna-0.4.1-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
 
 [rules]                         # severity overrides (docs/profiles.md)
 drift = "error"                 # a rule group, or a code such as SD704
@@ -215,16 +215,16 @@ The keys of `[harness]` are checked as the rest of the file is: an unknown key i
 [ADR 0003](adr/0003-distribution.md) (amendment "phase 2") gives the form of this table. Each release has the file `spec-dna-pin.toml`. It has the key `spec-dna` and the full table of that release. Copy both into `spec-dna.toml`. You can remove the lines of the targets that your project does not use.
 
 ```toml
-spec-dna = "0.4.1"
+spec-dna = "0.5.0"
 
 [spec-dna-sha256]
-"spec-dna-0.4.1-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
-"spec-dna-0.4.1-aarch64-pc-windows-gnullvm.exe" = "<...>"
-"spec-dna-0.4.1-aarch64-unknown-linux-gnu" = "<...>"
-"spec-dna-0.4.1-x86_64-apple-darwin" = "<...>"
-"spec-dna-0.4.1-x86_64-pc-windows-gnu.exe" = "<...>"
-"spec-dna-0.4.1-x86_64-unknown-linux-gnu" = "<...>"
-"spec-dna-0.4.1-x86_64-unknown-linux-musl" = "<...>"
+"spec-dna-0.5.0-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.5.0-aarch64-pc-windows-gnullvm.exe" = "<...>"
+"spec-dna-0.5.0-aarch64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.5.0-x86_64-apple-darwin" = "<...>"
+"spec-dna-0.5.0-x86_64-pc-windows-gnu.exe" = "<...>"
+"spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.5.0-x86_64-unknown-linux-musl" = "<...>"
 ```
 
 - If the pin is the version of the binary, each command validates the table. Each key must be a release asset of that version: one of the 7 targets, with `.exe` for the 2 Windows targets. Each value must be 64 lowercase hexadecimal characters. A table error is a configuration error (exit code 3).
