@@ -78,6 +78,7 @@ The user documentation is in `docs/`. [docs/README.md](docs/README.md) is its ma
 - Add each new page to the map in the same pull request.
 - Keep the path of a reference page. The code, the schema and the tests name these paths.
 - Give an image a light file and a dark file with the same geometry. Show it with `picture`.
+- Keep an animation slow and quiet: no motion that blinks or loops faster than 10 seconds. Stop it for `prefers-reduced-motion`.
 
 ## Branches
 
