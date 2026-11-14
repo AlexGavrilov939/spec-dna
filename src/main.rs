@@ -34,6 +34,7 @@ mod hook;
 mod index;
 mod init;
 mod json;
+mod layer;
 mod lint;
 mod model;
 mod mv;

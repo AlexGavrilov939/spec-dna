@@ -9,6 +9,23 @@ types = ["requirements", "decision", "rule", "procedure", "incident", "research"
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
+areas = ["valves", "sensors", "reports"]  # the folders of requirements/
+
+[layers.intent]                 # one table for each layer (see "The table `layers`")
+types = ["intent", "spec", "plan"]
+moves-to = ["requirements", "decisions"]
+keep = "until-finished"
+context = "on-request"
+max-started = 3
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.decisions]
+types = ["decision"]
+
+[groups]                        # named sets of areas
+operations = ["valves", "sensors"]
 
 [spec-dna-sha256]               # optional: the release assets of the pin, and their SHA-256 sums
 "spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
@@ -84,6 +101,21 @@ sonnet = "high"
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
 | `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
+| `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
+| `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
+| `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). See [The table `layers`](#the-table-layers). |
+| `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
+| `layers.<name>.dir` | string | the name of the layer | The folder of the layer, relative to the root. No 2 layers have the same folder. |
+| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. A layer with `files` has no `dir`. |
+| `layers.<name>.paths` | list of globs | `[]` | Globs, relative to the root. A document that matches belongs to this layer, also when its type is in another layer. The first layer in the file that matches wins. |
+| `layers.<name>.moves-to` | list of strings | `[]` | The layers that the text of this layer matures into. Each name is a layer of `[layers]`. The edges have no cycle. |
+| `layers.<name>.linked-from` | list of strings | `[]` | The layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`. |
+| `layers.<name>.keep` | string | `"forever"` | `"forever"` or `"until-finished"`. |
+| `layers.<name>.context` | string | `"always"` | `"always"` or `"on-request"`. |
+| `layers.<name>.max-docs` | integer | none | The most documents in the layer. |
+| `layers.<name>.max-chars` | integer | none | The most body characters in the layer. |
+| `layers.<name>.max-started` | integer | none | The most started changes. |
+| `layers.<name>.stale-days` | integer | none | The days without a commit before a change is stale. |
 | `evidence.tests` | list of globs | the usual test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list turns the tags off. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
@@ -176,6 +208,23 @@ The value of a type is a list of pointers. Each pointer names a section of a pro
 - A pointer gives SD106 if it names no document, no file of the git tree or no section. A file that git ignores is not in the tree. With `--base`, a file that git does not track is not in the tree. spec-dna does not read a symlink whose target is outside the repository.
 
 When a target of `context` is a document of that type, `context` serves these sections first. The sections of files that are not documents come before the sections of documents (`"type": "file"` in `--json`). `show --conventions <type>` prints the sections. `show <path>#<anchor>` prints one section of such a file.
+
+## The table `layers`
+
+A layer is a named set of documents. The table `[layers.<name>]` gives its keys. The name has only letters, digits, `-` and `_`. The file order of the tables is the order of the layers. Write each layer as a table (`[layers.intent]`), as dotted keys (`layers.intent.keep = "forever"`) or as an inline table. The order is the same in each form.
+
+The graph has these rules. A break of a rule is a configuration error (exit code 3), and the message names the key:
+
+- The `moves-to` edges have no cycle.
+- A type is in one layer at most.
+- Each name in `moves-to` and in `linked-from` is a layer of `[layers]`.
+- A layer has `files` or `dir`, not both.
+- No 2 layers have the same folder. A layer with no `dir` has the folder of its name.
+- A layer has only the keys of the table above.
+
+The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type.
+
+A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types, and it drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
 
 ## The table `harness`
 

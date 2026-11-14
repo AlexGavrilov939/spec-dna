@@ -5,6 +5,7 @@
 use crate::adapters::VERSION;
 use crate::diag::{Code, Severity};
 use crate::harness::Harness;
+use crate::layer::{self, Graph};
 use crate::model::DocType;
 use crate::release;
 use toml::{Table, Value};
@@ -56,6 +57,20 @@ pub struct Config {
     pub conventions: [Vec<String>; DocType::COUNT],
     /// The agent harness (`[harness]`, ADR 0004). `None`: no table.
     pub harness: Option<Harness>,
+    /// The layer graph: the table `[layers]`, or the default graph for the
+    /// types of the project if the file has no such table (`layers_declared`
+    /// is false). The commands read it from the place rule on.
+    #[allow(dead_code)]
+    pub layers: Graph,
+    /// True if the file has the table `[layers]`.
+    #[allow(dead_code)]
+    pub layers_declared: bool,
+    /// The areas of the project: the folders of `requirements/`.
+    #[allow(dead_code)]
+    pub areas: Vec<String>,
+    /// `[groups]`: a name and its areas, in the order of the name.
+    #[allow(dead_code)]
+    pub groups: Vec<(String, Vec<String>)>,
 }
 
 /// The default growth allowance: about one amendment or a few registry rows.
@@ -444,7 +459,7 @@ fn match_parts(parts: &[Part], s: &str, cap: &mut Option<String>) -> bool {
 
 /// The message for a type name that is not a type. For a type name of 0.5,
 /// it names the new type. `key` is the key that holds the name.
-fn unknown_type(key: &str, name: &str) -> String {
+pub(crate) fn unknown_type(key: &str, name: &str) -> String {
     format!(
         "{key}: unknown type `{name}`; {}",
         DocType::unknown_hint(name)
@@ -659,6 +674,18 @@ impl Config {
             Some(v) => Some(Harness::parse(v)?),
             None => None,
         };
+        let (layers, layers_declared) = match t.take("layers") {
+            Some(v) => {
+                let tbl = v.as_table().ok_or("`layers` must be a table")?;
+                (layer::parse_table(tbl, text)?, true)
+            }
+            None => (Graph::implied(&types), false),
+        };
+        let areas = areas_list(&t.opt_strs("areas")?)?;
+        let groups = match t.take("groups") {
+            Some(v) => groups_table(v, &areas)?,
+            None => Vec::new(),
+        };
         t.done()?;
         Ok(Config {
             pin,
@@ -679,6 +706,10 @@ impl Config {
             growth,
             conventions,
             harness,
+            layers,
+            layers_declared,
+            areas,
+            groups,
         })
     }
 
@@ -1022,6 +1053,56 @@ fn set_namespaces(roots: &mut [Root]) {
             .unwrap_or(own.len());
         roots[i].namespace = Some(suffix(own, n));
     }
+}
+
+/// Checks `areas`: each area is one plain folder name, once.
+fn areas_list(areas: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for a in areas {
+        if a.is_empty() || a == "." || a == ".." || a.contains(['/', '\\']) || a.trim() != a {
+            return Err(format!(
+                "`areas`: `{a}` must be the name of one folder of `requirements/`"
+            ));
+        }
+        if out.contains(a) {
+            return Err(format!("`areas`: `{a}` is listed twice"));
+        }
+        out.push(a.clone());
+    }
+    Ok(out)
+}
+
+/// Reads `[groups]`: each key is a group, and its value is a list of areas
+/// that `areas` has.
+fn groups_table(v: &Value, areas: &[String]) -> Result<Vec<(String, Vec<String>)>, String> {
+    let tbl = v.as_table().ok_or("`groups` must be a table")?;
+    let mut out = Vec::new();
+    for (name, list) in tbl {
+        let key = format!("groups.{name}");
+        let items = list
+            .as_array()
+            .and_then(|a| {
+                a.iter()
+                    .map(|p| p.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+        for a in &items {
+            if !areas.contains(a) {
+                return Err(format!(
+                    "`{key}`: `{a}` is not in `areas`; a group names only areas of `areas`"
+                ));
+            }
+        }
+        let mut uniq: Vec<String> = Vec::new();
+        for a in items {
+            if !uniq.contains(&a) {
+                uniq.push(a);
+            }
+        }
+        out.push((name.clone(), uniq));
+    }
+    Ok(out)
 }
 
 /// Reads `required-sections` into `out`. For each type, the value is a list
@@ -1671,6 +1752,186 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
             )),
             "{m}"
+        );
+    }
+
+    const BASE: &str = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n";
+
+    /// A configuration with the top-level lines `head` before the roots, and
+    /// the tables `tail` after them.
+    fn with(head: &str, tail: &str) -> Result<Config, String> {
+        Config::parse(&format!(
+            "spec-dna = \"0.1.0\"\n{head}\n[[roots]]\npath = \"docs\"\n{tail}"
+        ))
+    }
+
+    #[test]
+    fn no_layers_table_gives_the_implied_graph() {
+        let c = Config::parse(BASE).unwrap();
+        assert!(!c.layers_declared);
+        assert_eq!(c.layers, Graph::default_graph());
+        assert!(c.areas.is_empty() && c.groups.is_empty());
+        // A `types` list keeps the layers that hold one of its types.
+        let c = with("types = [\"requirements\", \"decision\"]", "").unwrap();
+        let names: Vec<&str> = c.layers.layers().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["requirements", "decisions"]);
+        // An explicit table wins, and `types` does not filter it.
+        let c = with(
+            "types = [\"decision\"]",
+            "[layers.mine]\ntypes = [\"rule\"]\n[layers.other]\n",
+        )
+        .unwrap();
+        assert!(c.layers_declared);
+        let names: Vec<&str> = c.layers.layers().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["mine", "other"]);
+    }
+
+    #[test]
+    fn layers_keep_the_order_of_the_file() {
+        let c = Config::parse(&format!(
+            "{BASE}[layers.zeta]\ntypes = [\"rule\"]\n[layers.alpha]\ntypes = [\"decision\"]\nmoves-to = [\"zeta\"]\nkeep = \"until-finished\"\ncontext = \"on-request\"\nmax-docs = 3\nmax-chars = 900\nmax-started = 2\nstale-days = 7\n"
+        ))
+        .unwrap();
+        let l = c.layers.layers();
+        assert_eq!((l[0].name.as_str(), l[1].name.as_str()), ("zeta", "alpha"));
+        assert_eq!(c.layers.level(1), 1);
+        assert_eq!(l[1].keep, layer::Keep::UntilFinished);
+        assert_eq!(l[1].context, layer::ContextMode::OnRequest);
+        assert_eq!(
+            (
+                l[1].max_docs,
+                l[1].max_chars,
+                l[1].max_started,
+                l[1].stale_days
+            ),
+            (Some(3), Some(900), Some(2), Some(7))
+        );
+        assert_eq!(l[0].keep, layer::Keep::Forever);
+        assert_eq!(l[0].dir(), Some("zeta"));
+    }
+
+    #[test]
+    fn areas_and_groups() {
+        let c = with(
+            "areas = [\"valves\", \"sensors\", \"reports\"]",
+            "[groups]\noperations = [\"valves\", \"sensors\"]\nreporting = [\"reports\"]\n",
+        )
+        .unwrap();
+        assert_eq!(c.areas, ["valves", "sensors", "reports"]);
+        assert_eq!(c.groups.len(), 2);
+        assert_eq!(
+            c.groups[0],
+            ("operations".into(), vec!["valves".into(), "sensors".into()])
+        );
+        // An area is in 2 groups: allowed.
+        assert!(
+            with(
+                "areas = [\"a\", \"b\"]",
+                "[groups]\nx = [\"a\"]\ny = [\"a\", \"b\"]\n"
+            )
+            .is_ok()
+        );
+        let e = with("areas = [\"a\"]", "[groups]\nx = [\"b\"]\n").unwrap_err();
+        assert!(
+            e.contains("groups.x") && e.contains("`b`") && e.contains("areas"),
+            "{e}"
+        );
+        let e = with("", "[groups]\nx = [\"b\"]\n").unwrap_err();
+        assert!(e.contains("groups.x"), "{e}");
+        let e = with("", "[groups]\nx = \"a\"\n").unwrap_err();
+        assert!(e.contains("groups.x") && e.contains("array"), "{e}");
+        for bad in ["\"a/b\"", "\"\"", "\"..\"", "\"a\", \"a\""] {
+            let e = with(&format!("areas = [{bad}]"), "").unwrap_err();
+            assert!(e.contains("`areas`"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_later_step_key_is_still_unknown() {
+        for head in [
+            "language = \"en\"\n",
+            "[change]\npolicy = \"none\"\n",
+            "[evals]\ndir = \"e\"\n",
+        ] {
+            let e = Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n{head}"
+            ));
+            let e = e.unwrap_err();
+            assert!(e.contains("unknown key"), "{head}: {e}");
+        }
+    }
+
+    const SCHEMA: &str = include_str!("../schema/spec-dna.schema.json");
+
+    /// The schema and the parser accept the same keys. For each key of the
+    /// schema, the parser must not call the key unknown, and an invented key
+    /// must be unknown.
+    #[test]
+    fn the_schema_and_the_parser_accept_the_same_keys() {
+        let schema = crate::json::parse(SCHEMA).unwrap();
+        let keys = |v: &crate::json::Value| -> Vec<String> {
+            match v.get("properties") {
+                crate::json::Value::Obj(f) => f.iter().map(|(k, _)| k.clone()).collect(),
+                _ => Vec::new(),
+            }
+        };
+        let is_unknown = |e: &str| e.contains("unknown key");
+
+        // The top level.
+        let top = keys(&schema);
+        for k in ["areas", "groups", "layers"] {
+            assert!(top.iter().any(|t| t == k), "the schema lacks `{k}`");
+        }
+        for k in &top {
+            // `with` writes these 2 keys.
+            if k == "spec-dna" || k == "roots" {
+                continue;
+            }
+            // A value of the wrong type is an error that is not "unknown key".
+            // A key can also accept the value `true`.
+            if let Err(e) = with(&format!("{k} = true"), "") {
+                assert!(!is_unknown(&e), "the parser does not know `{k}`: {e}");
+            }
+        }
+        let e = Config::parse("invented = true\nspec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n")
+            .unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+
+        // The keys of a layer: exactly the 12 keys of the design.
+        let layer = &schema.get("$defs").get("layer");
+        let mut lkeys = keys(layer);
+        lkeys.sort();
+        let mut want = [
+            "types",
+            "dir",
+            "files",
+            "paths",
+            "moves-to",
+            "linked-from",
+            "keep",
+            "context",
+            "max-docs",
+            "max-chars",
+            "max-started",
+            "stale-days",
+        ]
+        .map(String::from)
+        .to_vec();
+        want.sort();
+        assert_eq!(lkeys, want);
+        for k in &lkeys {
+            let e = with("", &format!("[layers.a]\n{k} = true\n")).unwrap_err();
+            assert!(
+                !is_unknown(&e),
+                "the parser does not know `layers.a.{k}`: {e}"
+            );
+        }
+        let e = with("", "[layers.a]\ninvented = true\n").unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+        // The schema forbids other keys of a layer, as the parser does.
+        assert_eq!(
+            layer.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
         );
     }
 }

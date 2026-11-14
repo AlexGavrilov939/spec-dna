@@ -14,6 +14,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 - The types `product`, `system`, `terms`, `roadmap`, `questions`, `spec` and `plan`, with their statuses, required sections, budgets and templates ([docs/types.md](docs/types.md)).
 - `spec-dna new intent <slug>`, `new spec <slug>` and `new plan <slug>` write the files of a change into `intent/<slug>/`. `new` names the new type for a type of 0.5.
+- The configuration keys `[layers.<name>]`, `areas` and `[groups]` ([docs/config.md](docs/config.md)). A layer has the keys `types`, `dir`, `files`, `paths`, `moves-to`, `linked-from`, `keep`, `context`, `max-docs`, `max-chars`, `max-started` and `stale-days`. A cycle in `moves-to`, a type in 2 layers, an absent layer in an edge, `files` with `dir`, 2 layers with the same `dir`, an unknown key, a bad value and a group area that is not in `areas` are errors (exit code 3). No command reads the graph yet.
 
 ## 0.5.0 - 2026-11-14
 
