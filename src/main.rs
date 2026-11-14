@@ -740,6 +740,12 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.new.extend(std::iter::repeat_n(true, drift.len()));
         outcome.head.extend(drift);
         repo::trace("drift", &mut t);
+        // SD921 runs only with `--base` (D16).
+        if a.base.is_some() {
+            let truth = check::truth_changed(&cfg, (base, &base_snap), (head, &head_snap));
+            outcome.new.extend(std::iter::repeat_n(true, truth.len()));
+            outcome.head.extend(truth);
+        }
     }
     let head_ad = check::apply_severity(
         &cfg,

@@ -83,11 +83,13 @@ spec-dna check [--base <rev>] [--all] [--lint] [--staged]
 
 The hook that `init` writes runs `spec-dna check --staged`. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101).
 
+`check --base` also compares the requirements of the base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder did, it gives SD921. This needs a `[change] policy` other than `none`.
+
 A change can remove or rename a path or an identifier that a document cites. Then `check` gives a warning that names the document (SD606, SD607). In an accepted decision, an amendment section that cites the new path or identifier clears these warnings.
 
 The text output gives the errors first, then SD606 and SD607, then the other warnings. Each prose lint code (SD801 to SD805) gets one line with a count. Another warning code with more than 10 diagnostics also gets one line with a count. At the end, the output gives the fix of each listed code once.
 
-`--lint` lists each prose lint warning. It also runs the lint in a profile that has it off (`lite`, `standard`), and it overrides a `lint = "off"` rule. The findings are warnings, so they never fail the gate. Without `--all`, `--lint` lists the new findings only.
+`--lint` lists each prose lint warning. It also runs the lint in a profile that has it off (`lite`, `standard`), and it overrides a `lint = "off"` rule. It does not run the lint when `language` is not English. The findings are warnings, so they never fail the gate. Without `--all`, `--lint` lists the new findings only.
 
 The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 

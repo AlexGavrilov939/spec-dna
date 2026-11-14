@@ -357,8 +357,6 @@ impl Graph {
 
     /// True if layer `x` is more stable than layer `y`: `x` is reachable from
     /// `y` by `moves-to` edges.
-    // SD901 reads it (step 2).
-    #[allow(dead_code)]
     pub fn more_stable(&self, x: usize, y: usize) -> bool {
         let mut seen = vec![false; self.layers.len()];
         let mut todo = vec![y];

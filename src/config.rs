@@ -75,13 +75,11 @@ pub struct Config {
     pub templates_dir: String,
     /// The language of the normative text: a BCP 47 tag (`language`). The
     /// default is `en`. A primary subtag other than `en` turns off the checks
-    /// that read English word lists (step 2, slice 2).
-    #[allow(dead_code)]
+    /// that read English word lists (SD801 to SD805 and SD904).
     pub language: String,
     /// `[lint] history-terms`: the phrases that SD903 reports. They replace
     /// the default phrases. `None`: the key is absent, so the default
     /// phrases apply. `Some` with an empty list: no phrase.
-    #[allow(dead_code)]
     pub history_terms: Option<Vec<String>>,
     /// `[change] policy`. With no `[change]` table it is `None`.
     pub change_policy: ChangePolicy,
@@ -849,7 +847,6 @@ impl Config {
 
     /// True if the primary subtag of `language` is `en`. The word lists of the
     /// prose lint and of SD904 are English.
-    #[allow(dead_code)]
     pub fn language_is_english(&self) -> bool {
         self.language
             .split('-')

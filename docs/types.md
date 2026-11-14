@@ -89,7 +89,7 @@ In a new corpus, link the documents in these directions. A link of another direc
 
 A permanent document does not link an intent. An intent ends with the status `closed`, and then you can delete it (SD202 allows it). A link to a deleted intent breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is frozen (SD405).
 
-Thus an accepted decision that links an intent in its frozen text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it.
+Thus an accepted decision that links an intent in its locked text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it. In such a section, name the intent as plain text, not as a link. SD901 and `finish` would stop on a link.
 
 ## Rule
 

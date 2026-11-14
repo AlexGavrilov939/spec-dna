@@ -254,7 +254,6 @@ pub struct Doc {
 impl Doc {
     /// The rows of the tables of terms (header `Term` and `Forbidden
     /// synonyms`) of a `terms` document. Another document has none.
-    #[allow(dead_code)]
     pub fn term_rows(&self) -> &[crate::parse::TermRow] {
         if self.ty == DocType::Terms && !self.type_failed {
             &self.parsed.terms
