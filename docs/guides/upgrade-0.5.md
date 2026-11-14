@@ -47,7 +47,14 @@ If one of these checks fails, `upgrade` exits with code 1 and writes nothing.
 
 ## Read the report
 
-The report lists, for example, the changes that no document cites, the decisions with no `Status` section, the harness files that `upgrade` kept, and the changes of behavior from [What changes](#what-changes). [commands.md](../commands.md) gives the full report.
+The report lists these items, among others:
+
+- the changes that no document cites;
+- the decisions with no `Status` section;
+- the harness files that `upgrade` kept;
+- the changes of behavior from [What changes](#what-changes).
+
+[commands.md](../commands.md) gives the full report.
 
 `upgrade` deletes no document. The report proposes each `done` or `rejected` change that no document cites for deletion. The owner approves each batch, and a later pull request deletes it.
 
@@ -65,4 +72,4 @@ To enable any of them, run `spec-dna init --reconfigure`. Choose the change poli
 
 ## Undo the upgrade
 
-Revert the upgrade before the merge, if possible. After the merge, the revert needs 2 pull requests, because the old binary rejects a pull request that changes the configuration and the documents together (SD503). In the second pull request, `check` also reports SD202 for each moved change, and for each moved id if you used `--layout`.
+Revert the upgrade before the merge, if possible. After the merge, the revert needs 2 pull requests. The reason is SD503: the old binary rejects a pull request that changes the configuration and the documents together. In the second pull request, `check` also reports SD202 for each moved change, and for each moved id if you used `--layout`.

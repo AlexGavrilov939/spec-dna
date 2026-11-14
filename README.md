@@ -10,7 +10,7 @@ spec-dna is a command-line tool for the specifications that a team keeps as Mark
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
-  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the current truth in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="docs/assets/how-it-works.svg">
+  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the requirements in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="docs/assets/how-it-works.svg">
 </picture>
 
 ## See it in action

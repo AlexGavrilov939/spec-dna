@@ -64,7 +64,7 @@ spec-dna mv valves docs/requirements/valves/closing.md
 
 ## Turn on the change process
 
-When the team is ready, run `spec-dna init --reconfigure`. Choose the policy `three-class` or `two-class`. From then on, a change of a requirement needs an intent folder (SD921). [The change guide](change.md) gives the steps.
+When the team is ready, run `spec-dna init --reconfigure`. Choose the policy `three-class` or `two-class`. From then on, a change of a requirement needs an intent folder. `check --base` reports SD921 for a change with no intent folder. [The change guide](change.md) gives the steps.
 
 The intent folder must be in a root of the type `mixed`. If each root of your repository has one type, `spec-dna new intent` stops with exit code 2. Add a mixed root for the changes to `spec-dna.toml`:
 

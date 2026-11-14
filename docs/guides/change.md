@@ -39,10 +39,10 @@ Open a pull request. When the owner agrees with the intent, set `status: accepte
 
 ```sh
 spec-dna new spec sensor-timeout
-spec-dna show requirements/valves/closing
+spec-dna show requirements/valves/closing#flush-time
 ```
 
-`show` prints each requirement of the document with its hash. The `Delta` section of `spec.md` lists the edits of the requirements. `ADD` names a new key. `CHANGE` and `REMOVE` name a key and the hash of the text that you read:
+`show` with a requirement id prints that requirement with its hash. Run it for each requirement that the change edits or removes. The `Delta` section of `spec.md` lists the edits of the requirements. `ADD` names a new key. `CHANGE` and `REMOVE` name a key and the hash of the text that you read:
 
 ```md
 ## Delta
@@ -94,7 +94,9 @@ spec-dna finish sensor-timeout --dry-run
 spec-dna finish sensor-timeout
 ```
 
-`finish` checks the approvals, the concerns, the decisions and the hashes of the delta. Then it applies the delta to `requirements/valves/closing`. It checks the evidence of each new or changed requirement (SD916). It deletes the folder of the change. `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
+`finish` checks the approvals, the concerns, the decisions and the hashes of the delta. Then it applies the delta to `requirements/valves/closing`. It checks the evidence of each new or changed requirement (SD916). It deletes the folder of the change.
+
+`--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
 ## A routine change
 

@@ -4,7 +4,7 @@ This page explains how spec-dna works and why. It gives the model, not each opti
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the current truth in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="assets/how-it-works.svg">
+  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the requirements in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="assets/how-it-works.svg">
 </picture>
 
 An agent writes one change. `finish` applies the delta of the change to the current truth and deletes the folder of the change. `check` gates the pull request of each step. `context` gives the agent only the sections that its task needs. A small fix has no folder: it is a pull request only.
@@ -55,7 +55,7 @@ The id of a document is its path in its root, without `.md`, for example `requir
 
 The id of this requirement is `requirements/valves/closing#sensor-timeout`. Other documents, tests and changes refer to it by this id.
 
-- **Hash.** spec-dna keeps a hash of each requirement and each section: the first 16 hexadecimal digits of SHA-256 over the normalized text. The key is not part of the hash, so a move or a new key keeps the hash. `show` and `context` print the hash next to the id.
+- **Hash.** spec-dna keeps a hash of each requirement and each section: the first 16 hexadecimal digits of SHA-256 over the normalized text. The key is not part of the hash, so a move or a new key keeps the hash. `spec-dna show <requirement id>` prints the hash of a requirement, and `context` prints the hash of each section.
 - **Alias.** `spec-dna mv` moves a document or a requirement and writes the old id as an alias. A reference to the old id continues to resolve.
 - **Evidence.** A test links itself to a requirement with a comment such as `# covers: requirements/valves/closing#sensor-timeout`. A document can also name its tests in `verified-by`. `show` lists the tests of each requirement.
 - **Code citations.** A code span in a document can name a file or a symbol, such as `src/valves.rs` or `close_valve()`. `check` reports a citation that does not resolve after a change.
@@ -106,7 +106,7 @@ Thus a mature repository can adopt spec-dna before it fixes the old problems. `c
 - A document over its budget, or with no required section.
 - A code citation that a change made stale.
 - A link from a stable layer to a less stable layer (SD901).
-- A change of a requirement, a rule or an interface with no intent folder (SD921).
+- A change of a requirement, a rule or an interface with no intent folder (SD921, with `--base` only).
 - An artifact of a change with no approval of the stage before it (SD910).
 
 A profile (`lite`, `standard` or `strict`) gives the default severity of each code, and `[rules]` changes the severity of one code. `spec-dna.toml` pins the version of spec-dna, so each person and each CI job uses the same rules.
@@ -115,7 +115,13 @@ Reference: [commands.md](commands.md#check), [diagnostics.md](diagnostics.md), [
 
 ## The change lifecycle
 
-A change is a folder `docs/intent/<slug>/`. It holds `intent.md` (what the originator wants and why), `spec.md` (the delta of the requirements) and `plan.md` (the files, the order, the risks and the proof). The folder stays on the default branch while the work continues. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished changes.
+A change is a folder `docs/intent/<slug>/`. It holds these documents:
+
+- `intent.md`: what the originator wants and why.
+- `spec.md`: the delta of the requirements.
+- `plan.md`: the files, the order, the risks and the proof.
+
+The folder stays on the default branch while the work continues. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished changes.
 
 A change has a class: `small-fix` (a pull request only), `routine` (an intent and a plan) or `higher-risk` (an intent, a spec and a plan). [The change guide](guides/change.md#choose-the-class) gives the documents, the approver and the minimum class of each change.
 
@@ -149,7 +155,9 @@ For Claude Code, `init` can also write a harness at the level `lean` or `full`:
 
 `check` reports a generated file that a person edited (SD501), so the harness stays in agreement with the configuration.
 
-An eval is a task with checks that tests the agent setup of a project. `spec-dna eval run` runs each eval with headless Claude Code in a temporary directory. The directory holds the fixture of the eval and the harness files of the project. A cost limit stops the runs. For a new project, `init` writes an example eval and a CI workflow. The workflow runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. A new incident needs a new eval (SD918).
+An eval is a task with checks that tests the agent setup of a project. `spec-dna eval run` runs each eval with headless Claude Code in a temporary directory. The directory holds the fixture of the eval and the harness files of the project. A cost limit stops the runs.
+
+For a new project, `init` writes an example eval and a CI workflow. The workflow runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. A new incident needs a new eval (SD918).
 
 Reference: [harness.md](harness.md), [init.md](init.md).
 

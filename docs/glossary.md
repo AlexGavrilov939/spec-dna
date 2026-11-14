@@ -10,11 +10,13 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD` | | [concepts](concepts.md#the-gate) |
+| base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree | | [concepts](concepts.md#the-change-lifecycle) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
 | change class | The weight of a change: `small-fix`, `routine` or `higher-risk` | | [change guide](guides/change.md#choose-the-class) |
 | change policy | The change classes that a project uses: `three-class`, `two-class` or `none` (`[change] policy`) | | [config](config.md) |
 | code citation | A file path or a symbol in a code span of a document. `check` reports a citation that does not resolve | | [diagnostics](diagnostics.md#code-citations) |
+| concern | An item of the task list in the `Concerns` section of a spec. An approved spec has no open concern (SD919) | | [change guide](guides/change.md) |
 | `covers:` tag | A comment in a test, such as `# covers: valves#shutoff`, that links the test to a requirement | | [concepts](concepts.md#ids-and-requirements) |
 | current truth | The requirements, rules and interfaces of the project, in `requirements/`, `rules/` and `interfaces/`. A delta changes them, and SD921 guards them | | [concepts](concepts.md#layers-and-the-graph) |
 | decision | A MADR record of a choice. After the acceptance, its text is locked, except its amendment, history and live sections | | [types](types.md) |
@@ -35,14 +37,17 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | incident | A post-mortem record of one event, in `incidents/` | | [types](types.md) |
 | indicator | A measure of one stage of the playbook that `stats --sdlc` prints. It is leading or lagging | | [concepts](concepts.md#the-change-lifecycle) |
 | intent | `intent.md`: the request of one change, in the words of its originator | type `change` | [change guide](guides/change.md) |
+| intent folder | `docs/intent/<slug>/`: the folder of one change, with `intent.md`, `spec.md` and `plan.md`. `finish` deletes it | | [change guide](guides/change.md) |
 | interface | An API, an event or a tool schema, in `interfaces/` | type `contract` | [types](types.md) |
 | layer | A named set of document types with a place in the graph of stability | | [concepts](concepts.md#layers-and-the-graph) |
 | level | The longest `moves-to` path from a layer to a layer with no outgoing edge. Level 0 is the most stable | | [concepts](concepts.md#layers-and-the-graph) |
 | live section | A section of an accepted decision that can change without an amendment. The default is `Status` | | [config](config.md) |
 | locked | The state of the text of an accepted decision outside its amendment, history and live sections. SD405 checks it | frozen | [diagnostics](diagnostics.md) |
+| mixed root | A root with documents of more than one type. The place or the front matter gives the type of each document | | [types](types.md#place-gives-the-type) |
 | `moves-to` | An edge of the layer graph: the text of the source layer matures into the target layer | | [concepts](concepts.md#layers-and-the-graph) |
 | pass rate | The share of evals that pass | | [concepts](concepts.md#harness-and-evals) |
 | pending | The layer of the top files `roadmap.md` and `questions.md` | | [concepts](concepts.md#layers-and-the-graph) |
+| pin | The version of spec-dna in `spec-dna.toml` (`spec-dna = "<version>"`), with the sums of its binaries as an option | | [config](config.md#the-pin-comes-first) |
 | plan | `plan.md`: the approved plan of one change, with its files, order, risks and proof | | [change guide](guides/change.md) |
 | procedure | A guide or a runbook, in `procedures/` | types `guide`, `runbook` | [types](types.md) |
 | profile | A set of default severities of the diagnostic codes: `lite`, `standard` or `strict` | | [profiles](profiles.md) |
@@ -57,6 +62,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |
 | section id | `<document id>#<heading slug>`: the unit that `context` gives to an agent | | [concepts](concepts.md#context) |
 | skill | A `SKILL.md` folder that gives a procedure to the agent | | [harness](harness.md) |
+| slug | The name of a change or a document in an id, in lowercase words with hyphens, such as `sensor-timeout` | | [change guide](guides/change.md) |
 | `small-fix` | A change class with no intent: a pull request only | | [change guide](guides/change.md#choose-the-class) |
 | spec | `spec.md`: the delta, the interfaces, the decisions and the concerns of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
 | stable layer | A layer of level 0, such as `rules` or `decisions`. The current truth is in stable layers | | [concepts](concepts.md#layers-and-the-graph) |
@@ -65,5 +71,6 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | subagent | An agent with its own context, defined in `.claude/agents/` | | [harness](harness.md) |
 | template | The text that `spec-dna new` writes for a new document | | [types](types.md#templates) |
 | `terms` | The type of `terms.md`: a table of terms, meanings and forbidden synonyms. SD904 reads it | | [types](types.md) |
+| top file | A document of a layer that has a fixed file name, such as `terms.md` or `roadmap.md` | | [types](types.md#place-gives-the-type) |
 | `verified-by` | A front matter field with the paths of the tests or verification records of a document | | [config](config.md#evidence) |
 | `verifier` | The subagent that runs the work and reports. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |
