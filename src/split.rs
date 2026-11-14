@@ -380,7 +380,11 @@ pub fn run(
             let src = &c.docs[first_doc as usize];
             let root = &config.roots[dest_root];
             let mut fm = String::new();
-            if root.single_type.is_none() && to_type != root.default_type {
+            let placed = config
+                .layers
+                .place_type(root.rel(&to_path))
+                .or(root.default_type);
+            if root.single_type.is_none() && Some(to_type) != placed {
                 fm.push_str(&format!("type: {}\n", to_type.name()));
             }
             if to_type.has_status() {

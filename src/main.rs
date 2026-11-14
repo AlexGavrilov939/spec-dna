@@ -102,8 +102,11 @@ spec-dna.toml).",
     ),
     (
         "new",
-        "new <type> <id> [--root <dir>]",
-        "Writes a new document from the template of its type.",
+        "new <type> [<id>] [--root <dir>]",
+        "Writes a new document from the template of its type, at the place of its
+layer. A top file such as terms takes no id. intent <slug> writes
+intent/<slug>/intent.md, and spec and plan need that folder. Where the place
+gives the type, the file has no type: line.",
     ),
     (
         "mv",
@@ -1114,11 +1117,14 @@ fn section_names(cfg: &config::Config, ty: model::DocType) {
 
 /// Writes a new document from the template of its type. The root is
 /// `--root`, or the first root of that single type, or the first mixed root.
-/// In a mixed root, an id without a namespace gets the namespace of its type,
-/// such as `decisions/<id>`.
+/// The place follows the layer of the type (docs/types.md): a top file such as
+/// `terms.md` takes no id, `intent` writes `<dir>/<slug>/intent.md`, `spec`
+/// and `plan` need that folder, and another type writes `<dir>/<id>.md`. In a
+/// root of one type, the file is `<id>.md`. The file has no `type:` line where
+/// its place gives the type.
 fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     use model::DocType;
-    expect_args(a, 2, 2)?;
+    expect_args(a, 1, 2)?;
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     let name = &a.positional[0];
@@ -1134,13 +1140,19 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "type `{name}` is not a type of this project (`types` in spec-dna.toml)"
         )));
     }
-    let id = a.positional[1].trim_matches('/');
-    let id = id.strip_suffix(".md").unwrap_or(id);
-    if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
-        return Err(Fatal::Usage(format!(
-            "`{id}` is not a document id (`<namespace>/<slug>`)"
-        )));
-    }
+    let id = match a.positional.get(1) {
+        None => None,
+        Some(id) => {
+            let id = id.trim_matches('/');
+            let id = id.strip_suffix(".md").unwrap_or(id);
+            if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
+                return Err(Fatal::Usage(format!(
+                    "`{id}` is not a document id (`<slug>`, or `<area>/<slug>`)"
+                )));
+            }
+            Some(id)
+        }
+    };
     let root_i = match &a.root {
         Some(r) => {
             let r = r.trim_matches('/');
@@ -1163,17 +1175,6 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             })?,
     };
     let root = &cfg.roots[root_i];
-    let id = match templates::namespace(ty) {
-        Some(ns) if root.single_type.is_none() && !id.contains('/') => {
-            if templates::in_intent_folder(ty) {
-                format!("{ns}/{id}/{}", ty.name())
-            } else {
-                format!("{ns}/{id}")
-            }
-        }
-        _ => id.to_string(),
-    };
-    let id = id.as_str();
     if let Some(t) = root.single_type.filter(|&t| t != ty) {
         return Err(Fatal::Usage(format!(
             "root `{}` holds only `{}` documents",
@@ -1181,10 +1182,84 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             t.name()
         )));
     }
-    let path = if root.path.is_empty() {
-        format!("{id}.md")
+    let need_id = || {
+        id.ok_or_else(|| {
+            Fatal::Usage(format!(
+                "`new {}` needs an id: `new {} <id>`",
+                ty.name(),
+                ty.name()
+            ))
+        })
+    };
+    // `rel` is the path inside the root, `title` is the H1 of the document.
+    let (rel, title) = if root.single_type.is_some() {
+        let id = need_id()?;
+        (format!("{id}.md"), templates::title_of(id))
     } else {
-        format!("{}/{id}.md", root.path)
+        let layer = cfg
+            .layers
+            .layer_of_type(ty)
+            .map(|i| &cfg.layers.layers()[i])
+            .ok_or_else(|| {
+                Fatal::Usage(format!(
+                    "no layer of spec-dna.toml has type `{0}`; run `spec-dna layer add <name> --types {0}` to add one",
+                    ty.name()
+                ))
+            })?;
+        match layer.dir() {
+            // A layer with top files: the type is a file of the root.
+            None => {
+                if let Some(id) = id {
+                    return Err(Fatal::Usage(format!(
+                        "`new {0}` takes no id: it writes the top file `{0}.md`; got `{id}`",
+                        ty.name()
+                    )));
+                }
+                let file = format!("{}.md", ty.name());
+                if !layer
+                    .files
+                    .iter()
+                    .any(|f| f.trim_start_matches("./") == file)
+                {
+                    return Err(Fatal::Usage(format!(
+                        "layer `{}` has no top file `{file}` in `files`; add it, or use another layer",
+                        layer.name
+                    )));
+                }
+                (file, templates::title_of(ty.name()))
+            }
+            Some(dir) if ty.is_intent_type() => {
+                let slug = need_id()?;
+                if slug.contains('/') {
+                    return Err(Fatal::Usage(format!(
+                        "`{slug}` is not a slug: the folder of a change has one name"
+                    )));
+                }
+                let folder = repo.root.join(&root.path).join(dir).join(slug);
+                if ty != DocType::Intent && !folder.is_dir() {
+                    return Err(Fatal::NotFound(format!(
+                        "the folder `{}` does not exist; run `spec-dna new intent {slug}` first",
+                        folder
+                            .strip_prefix(&repo.root)
+                            .unwrap_or(&folder)
+                            .to_string_lossy()
+                    )));
+                }
+                (
+                    format!("{dir}/{slug}/{}.md", ty.name()),
+                    templates::title_of(slug),
+                )
+            }
+            Some(dir) => {
+                let id = need_id()?;
+                (format!("{dir}/{id}.md"), templates::title_of(id))
+            }
+        }
+    };
+    let path = if root.path.is_empty() {
+        rel.clone()
+    } else {
+        format!("{}/{rel}", root.path)
     };
     if cfg.root_of(&path) != Some(root_i) || cfg.is_excluded(root_i, &path) {
         return Err(Fatal::Usage(format!(
@@ -1198,7 +1273,9 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
     }
-    mv::write(&file, &templates::render(ty, &templates::title_of(id)))?;
+    let place_gives_type = root.single_type == Some(ty) || cfg.layers.place_type(&rel) == Some(ty);
+    let text = templates::strip_was_type(&templates::render(ty, &title, !place_gives_type));
+    mv::write(&file, &text)?;
     if a.json {
         println!(
             "{}",

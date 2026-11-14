@@ -60,7 +60,6 @@ pub struct Config {
     /// The layer graph: the table `[layers]`, or the default graph for the
     /// types of the project if the file has no such table (`layers_declared`
     /// is false). The commands read it from the place rule on.
-    #[allow(dead_code)]
     pub layers: Graph,
     /// True if the file has the table `[layers]`.
     #[allow(dead_code)]
@@ -193,7 +192,10 @@ pub struct Root {
     pub path: String,
     /// `None` for a mixed root.
     pub single_type: Option<DocType>,
-    pub default_type: DocType,
+    /// The type of a document that its front matter and its place give no
+    /// type. A root of one type has it. A mixed root has it only if the file
+    /// sets `default-type`: with none, such a document gives SD303.
+    pub default_type: Option<DocType>,
     pub status: Option<String>,
     pub exclude: Vec<String>,
     pub legacy_ids: Vec<LegacyId>,
@@ -835,10 +837,12 @@ impl Root {
         let single_type = if ty == "mixed" {
             None
         } else {
-            Some(
-                DocType::from_name(&ty)
-                    .ok_or_else(|| unknown_type(&format!("`{prefix}type`"), &ty))?,
-            )
+            let t = DocType::from_name(&ty)
+                .ok_or_else(|| unknown_type(&format!("`{prefix}type`"), &ty))?;
+            if t.is_intent_type() {
+                return Err(format!("`{prefix}type`: {}", t.intent_only_hint()));
+            }
+            Some(t)
         };
         let default_type = match f.opt_str("default-type")? {
             Some(d) => {
@@ -847,19 +851,28 @@ impl Root {
                         "`{prefix}default-type` is only for `type = \"mixed\"`"
                     ));
                 }
-                DocType::from_name(&d)
-                    .ok_or_else(|| unknown_type(&format!("`{prefix}default-type`"), &d))?
+                let t = DocType::from_name(&d)
+                    .ok_or_else(|| unknown_type(&format!("`{prefix}default-type`"), &d))?;
+                if t.is_intent_type() {
+                    return Err(format!("`{prefix}default-type`: {}", t.intent_only_hint()));
+                }
+                Some(t)
             }
-            None => single_type.unwrap_or(DocType::Research),
+            None => single_type,
         };
         let status = f.opt_str("status")?;
-        if let Some(s) = &status
-            && !default_type.statuses().contains(&s.as_str())
-        {
-            return Err(format!(
-                "`{prefix}status`: `{s}` is not a status of type `{}`",
-                default_type.name()
-            ));
+        if let Some(s) = &status {
+            let Some(dt) = default_type else {
+                return Err(format!(
+                    "`{prefix}status` needs `{prefix}default-type`: the status is for the documents of that type"
+                ));
+            };
+            if !dt.statuses().contains(&s.as_str()) {
+                return Err(format!(
+                    "`{prefix}status`: `{s}` is not a status of type `{}`",
+                    dt.name()
+                ));
+            }
         }
         let exclude = f.opt_strs("exclude")?;
         let mut legacy_ids = Vec::new();
@@ -1311,7 +1324,7 @@ budget = 9000
         let c = Config::parse(FULL).unwrap();
         assert_eq!(c.pin, "0.1.0");
         assert_eq!(c.roots.len(), 2);
-        assert_eq!(c.roots[0].default_type, DocType::Requirements);
+        assert_eq!(c.roots[0].default_type, Some(DocType::Requirements));
         assert_eq!(c.roots[1].single_type, Some(DocType::Decision));
         assert_eq!(c.budgets[DocType::Requirements as usize], (100, 200));
         assert_eq!(c.max_words, 25);

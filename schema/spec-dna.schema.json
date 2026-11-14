@@ -417,6 +417,23 @@
         "plan"
       ]
     },
+    "rootType": {
+      "description": "A type of a root or of `default-type`. The types `intent`, `spec` and `plan` are valid only in the `intent` layer, as `<dir>/<slug>/<type>.md`.",
+      "enum": [
+        "product",
+        "system",
+        "terms",
+        "roadmap",
+        "questions",
+        "rule",
+        "requirements",
+        "interface",
+        "decision",
+        "procedure",
+        "incident",
+        "research"
+      ]
+    },
     "layer": {
       "type": "object",
       "additionalProperties": false,
@@ -531,10 +548,10 @@
           "type": "string"
         },
         "type": {
-          "description": "The type of every document in the root. With `mixed` (the default), the front matter of each document gives the type.",
+          "description": "The type of every document in the root. With `mixed` (the default), the front matter, then the place of each document gives the type.",
           "anyOf": [
             {
-              "$ref": "#/$defs/type"
+              "$ref": "#/$defs/rootType"
             },
             {
               "const": "mixed"
@@ -542,8 +559,8 @@
           ]
         },
         "default-type": {
-          "description": "For mixed roots only: the type of a document that has no `type` field. Default `research`.",
-          "$ref": "#/$defs/type"
+          "description": "For mixed roots only: the type of a document that has no `type` field and a place that gives no type. No default: such a document gives SD303.",
+          "$ref": "#/$defs/rootType"
         },
         "status": {
           "description": "The status of a document that has the default type of the root and no `status` field.",

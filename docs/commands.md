@@ -131,10 +131,18 @@ spec-dna show --conventions <type>
 ## new
 
 ```text
-spec-dna new <type> <id> [--root <dir>]
+spec-dna new <type> [<id>] [--root <dir>]
 ```
 
-`new` writes a new document from the template of its type ([types.md](types.md)). In a mixed root, an id without a namespace gets the namespace of its type, such as `decisions/<id>`. For an `intent`, a `spec` or a `plan`, the id is the slug of a change, and `new` writes `intent/<slug>/<type>.md`. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
+`new` writes a new document from the template of its type ([types.md](types.md)). The place follows the layer of the type ([Place gives the type](types.md#place-gives-the-type)):
+
+- A top file type (`product`, `system`, `terms`, `roadmap`, `questions`) takes no id. `new terms` writes `<root>/terms.md`. An id gives exit code 2.
+- `new intent <slug>` writes `<root>/intent/<slug>/intent.md`. `new spec <slug>` and `new plan <slug>` write `spec.md` and `plan.md` into that folder. Without the folder, they stop with exit code 5 and write nothing.
+- Another type writes `<root>/<dir>/<id>.md` in a mixed root. `<dir>` is the folder of the layer of the type, and the id is relative to it. For example, `new requirements valves/closing` writes `<root>/requirements/valves/closing.md`.
+- In a root of one type, the file is `<root>/<id>.md`.
+- A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
+
+`new` writes no `type:` line where the place gives the type. It uses `--root <dir>`, or the first root of that single type, or the first mixed root. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
 
 ## mv
 

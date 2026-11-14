@@ -139,6 +139,25 @@ impl DocType {
         )
     }
 
+    /// True for the 3 types of one change: `intent`, `spec` and `plan`. They
+    /// are valid only in the `intent` layer, as `<dir>/<slug>/<type>.md`.
+    pub fn is_intent_type(self) -> bool {
+        matches!(self, DocType::Intent | DocType::Spec | DocType::Plan)
+    }
+
+    /// The part of a message that tells where a type of one change is valid.
+    /// The name `spec` also names the 0.5 type that is now `requirements`.
+    pub fn intent_only_hint(self) -> String {
+        let mut m = format!(
+            "type `{0}` is valid only in the `intent` layer, as `<dir>/<slug>/{0}.md`",
+            self.name()
+        );
+        if self == DocType::Spec {
+            m.push_str("; the 0.5 type `spec` is the 0.6 type `requirements`");
+        }
+        m
+    }
+
     /// Normative types: `context` serves them for a matching `applies-to`.
     pub fn is_normative(self) -> bool {
         matches!(
@@ -195,6 +214,10 @@ pub struct Doc {
     pub applies_to: Vec<String>,
     pub verified_by: Vec<(String, u32)>,
     pub owner: Option<String>,
+    /// The 0.5 type of a document that `upgrade` changed (`note` or
+    /// `change`). Only the SD202 exemption reads it (a later slice).
+    #[allow(dead_code)]
+    pub was_type: Option<String>,
     pub issues: Vec<Issue>,
     /// Indices into `parsed.reqs` of the valid requirements.
     pub reqs: Vec<usize>,
@@ -666,19 +689,43 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     };
     let owner = scalar("owner", &mut issues).map(|(s, _)| s);
     let fm_type = scalar("type", &mut issues);
+    let was_type = scalar("was-type", &mut issues);
+    if let Some((v, line)) = &was_type
+        && !matches!(v.as_str(), "note" | "change")
+    {
+        issues.push(Issue {
+            code: Code::FrontMatterField,
+            line: *line,
+            target: "was-type".to_string(),
+            message: format!("`was-type` must be `note` or `change`, not `{v}`"),
+        });
+    }
     let fm_status = scalar("status", &mut issues);
     let moved_to = scalar("moved-to", &mut issues).filter(|(s, _)| !s.is_empty());
     let generated = scalar("generated", &mut issues).and_then(|(s, _)| {
         s.strip_prefix(crate::registry::MARKER)
             .map(|h| h.trim().to_string())
     });
+    let rel = root.rel(&path);
+    // The type of the place. A type of one change is valid only at its exact
+    // place: the other file of such a name gives SD303 below.
+    let raw_place = match root.single_type {
+        None => config.layers.place_type(rel),
+        Some(_) => None,
+    };
+    let place = raw_place.filter(|&t| !t.is_intent_type() || config.layers.is_intent_place(t, rel));
     if moved_to.is_some() {
         // A stub: no type rules, no status, no requirements, no budget.
+        let ty = root
+            .single_type
+            .or(place)
+            .or(root.default_type)
+            .unwrap_or(DocType::Research);
         return Doc {
             path,
             id,
             root: root_i,
-            ty: root.default_type,
+            ty,
             status: None,
             parsed,
             aliases: Vec::new(),
@@ -688,6 +735,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             applies_to: Vec::new(),
             verified_by: Vec::new(),
             owner,
+            was_type: None,
             issues,
             reqs: Vec::new(),
             outcome: Vec::new(),
@@ -700,42 +748,103 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         };
     }
 
-    let mut ty = root.default_type;
+    // The type: in a root of one type, the root. In a mixed root, the front
+    // matter, then the place, then `default-type`. At most one SD303 gives
+    // the problem.
+    let mut wrong_type = false;
+    let mut want = root.single_type;
     if let Some((t, line)) = fm_type {
         match DocType::from_name(&t) {
-            None => issues.push(Issue {
-                code: Code::TypeInvalid,
-                line,
-                target: t.clone(),
-                message: format!("unknown type `{t}`; {}", DocType::unknown_hint(&t)),
-            }),
-            Some(t2) => match root.single_type {
-                Some(st) if st != t2 => issues.push(Issue {
+            None => {
+                wrong_type = true;
+                issues.push(Issue {
                     code: Code::TypeInvalid,
                     line,
                     target: t.clone(),
-                    message: format!(
-                        "type `{t}` disagrees with root `{}` of type `{}`",
-                        root.path,
-                        st.name()
-                    ),
-                }),
-                _ => ty = t2,
+                    message: format!("unknown type `{t}`; {}", DocType::unknown_hint(&t)),
+                });
+            }
+            Some(t2) => match root.single_type {
+                Some(st) if st != t2 => {
+                    wrong_type = true;
+                    issues.push(Issue {
+                        code: Code::TypeInvalid,
+                        line,
+                        target: t.clone(),
+                        message: format!(
+                            "type `{t}` disagrees with root `{}` of type `{}`",
+                            root.path,
+                            st.name()
+                        ),
+                    });
+                }
+                Some(_) => {}
+                None => want = Some(t2),
             },
         }
     }
-    if !config.allows(ty) {
-        let names: Vec<&str> = config.types.iter().map(|t| t.name()).collect();
-        issues.push(Issue {
+    if want.is_none() {
+        want = raw_place.or(root.default_type);
+    }
+    let fallback = root
+        .single_type
+        .or(place)
+        .or(root.default_type)
+        .unwrap_or(DocType::Research);
+    let mut ty = fallback;
+    match want {
+        Some(w) if !wrong_type => {
+            ty = w;
+            if !config.allows(w) {
+                let names: Vec<&str> = config.types.iter().map(|t| t.name()).collect();
+                issues.push(Issue {
+                    code: Code::TypeInvalid,
+                    line: 1,
+                    target: w.name().to_string(),
+                    message: format!(
+                        "type `{}` is not a type of this project (`types` in spec-dna.toml: {})",
+                        w.name(),
+                        names.join(", ")
+                    ),
+                });
+            } else if w.is_intent_type() && !config.layers.is_intent_place(w, rel) {
+                ty = fallback;
+                issues.push(Issue {
+                    code: Code::TypeInvalid,
+                    line: 1,
+                    target: w.name().to_string(),
+                    message: w.intent_only_hint().replace(
+                        "<dir>",
+                        config
+                            .layers
+                            .layer_of_type(w)
+                            .and_then(|i| config.layers.layers()[i].dir())
+                            .unwrap_or("intent"),
+                    ),
+                });
+            } else if config.layers.layer_of_type(w).is_none() {
+                issues.push(Issue {
+                    code: Code::TypeInvalid,
+                    line: 1,
+                    target: w.name().to_string(),
+                    message: format!(
+                        "no layer of spec-dna.toml has type `{0}`; run `spec-dna layer add <name> --types {0}` to add one",
+                        w.name()
+                    ),
+                });
+            }
+        }
+        Some(_) => {}
+        None if !wrong_type => issues.push(Issue {
             code: Code::TypeInvalid,
             line: 1,
-            target: ty.name().to_string(),
+            target: String::new(),
             message: format!(
-                "type `{}` is not a type of this project (`types` in spec-dna.toml: {})",
-                ty.name(),
-                names.join(", ")
+                "the document has no type: its front matter has no `type`, its place in root `{}` gives none, and the root has no `default-type`; add `type:`, or move the document into the folder of a layer",
+                root.path
             ),
-        });
+        }),
+        None => {}
     }
     let status = match fm_status {
         Some((s, line)) => {
@@ -785,7 +894,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             }
             Some(canon)
         }
-        None if ty == root.default_type => root.status.clone(),
+        None if Some(ty) == root.default_type => root.status.clone(),
         None => None,
     };
     if status.is_none() && ty.has_status() {
@@ -977,6 +1086,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         applies_to,
         verified_by,
         owner,
+        was_type: was_type.map(|(s, _)| s),
         issues,
         reqs,
         outcome,

@@ -276,7 +276,7 @@ fn row_of_root(r: &config::Root) -> Row {
     let mut row = blank_row(
         if r.path.is_empty() { "." } else { &r.path },
         r.single_type,
-        r.default_type,
+        r.default_type.unwrap_or(DocType::Research),
     );
     row.status = r.status.clone();
     row.exclude = r.exclude.clone();

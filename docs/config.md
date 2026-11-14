@@ -38,8 +38,8 @@ tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
 
 [[roots]]                       # required: one table per document root
 path = "docs"
-type = "mixed"                  # one of the 15 types, or "mixed" (default)
-default-type = "requirements"   # mixed root: the type of a document with no `type` in the front matter (default "research")
+type = "mixed"                  # one type of a root (not intent, spec or plan), or "mixed" (default)
+default-type = "requirements"   # mixed root: the type of a document with no `type` and no type from its place (no default)
 status = "draft"                # the status of a default-type document with no `status`
 exclude = ["drafts/**"]         # globs relative to the root
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
@@ -122,9 +122,9 @@ sonnet = "high"
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`. The value is a URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
 | `roots` | list of tables | required | The document roots. A path belongs to the deepest root that contains it. |
 | `roots.path` | string | required | The directory, relative to the repository root. `.` means the whole repository. |
-| `roots.type` | string | `mixed` | The type of every document in the root (one of the 15 types of [docs/types.md](types.md)), or `mixed`. |
-| `roots.default-type` | string | `research` | For a mixed root: the type of a document that has no `type` field. |
-| `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type. |
+| `roots.type` | string | `mixed` | The type of every document in the root, or `mixed`. The value is a type of [docs/types.md](types.md), but not `intent`, `spec` or `plan`. These 3 types are valid only in the `intent` layer, so a root of one of them is an error (exit code 3). In a mixed root, the front matter and the place of a document give its type ([Place gives the type](types.md#place-gives-the-type)). |
+| `roots.default-type` | string | none | For a mixed root: the type of a document that has no `type` field and a place that gives no type. The value is a type of a root (not `intent`, `spec` or `plan`). Without it, such a document gives SD303. |
+| `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type, so the root needs a `default-type` or one type. |
 | `roots.exclude` | list of globs | `[]` | Paths, relative to the root, that are not documents. |
 | `roots.legacy-ids` | list | `[]` | Patterns that make aliases from the names of files. A string `ADR-{n}` makes the alias `ADR-{n}` from a slug that starts with it. In a table, `file` sets the slug pattern. |
 | `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. For a legacy key, the colon after the bold key is optional. See [Legacy keys](#legacy-keys). |
@@ -221,6 +221,8 @@ The graph has these rules. A break of a rule is a configuration error (exit code
 - A layer has `files` or `dir`, not both.
 - No 2 layers have the same folder. A layer with no `dir` has the folder of its name.
 - A layer has only the keys of the table above.
+
+The layers also give the place of a document: its type, if the front matter has no `type`. [Place gives the type](types.md#place-gives-the-type) has the rule. A mixed root with `[layers]` needs a layer for each type that its documents have. A document of a type that no layer has gives SD303, and the message says to run `spec-dna layer add`.
 
 The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type.
 

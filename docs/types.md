@@ -1,6 +1,6 @@
 # Document types
 
-spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a template: `spec-dna new <type> <id>` writes a document from it.
+spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a template: `spec-dna new <type> [<id>]` writes a document from it.
 
 | Type | Purpose | Statuses | Required sections | Budget (soft, hard) | In `context` |
 | --- | --- | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ The types `intent`, `spec` and `plan` are the documents of one change. Their fil
 
 ## Types of 0.5
 
-Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as input. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The name `spec` is also a type of 0.6, so a message cannot tell the 0.5 `spec` from the new one. Use `requirements` for the type that was `spec`.
+Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as input. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The name `spec` is also a type of 0.6, so a message cannot tell the 0.5 `spec` from the new one. Use `requirements` for the type that was `spec`. A `spec` document outside the `intent` layer gives SD303, and its message names `requirements` ([Place gives the type](#place-gives-the-type)).
 
 | 0.5 type | 0.6 type | Note |
 | --- | --- | --- |
@@ -37,21 +37,39 @@ Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as inp
 | `note`, `reference` | `research` | The behavior of `reference` stays: no budget, `context` never serves it, and SD202 reports its deletion |
 | `change` | `intent` | The statuses are draft, accepted and closed. Use `draft` for `proposed`, and `closed` for `rejected`. A finished change (`done`) is a `research` document |
 
-## Statuses and namespaces
+## Place gives the type
 
-Each type has its own first status and its own namespace in a mixed root.
+In a mixed root, a document gets its type from this list. The first rule that gives a type wins:
 
-| Type | First status | Namespace of `spec-dna new` |
+1. The `type` field of its front matter. Only a mixed root lets the front matter set the type. In a root of one type, the root gives the type, and a different `type` field gives SD303.
+2. A top file of a layer, named by its type: `terms.md` has the type `terms`. The layer lists it in `files`.
+3. The folder of a layer that has one type: each document under `rules/` has the type `rule`. A subfolder, such as an area of `requirements/`, does not change the type.
+4. The file name, in the folder of a layer that has more types: `intent/<slug>/intent.md`, `spec.md` and `plan.md` have the types `intent`, `spec` and `plan`.
+5. `default-type` of the root.
+
+If no rule gives a type, the document gives SD303. A mixed root has no `default-type` unless the file sets it. Thus `type:` is optional in a new corpus, wherever the place gives the type.
+
+The layer of a document is the first layer in the file whose `paths` match it. If no layer matches, it is the layer that has the type of the document. A `paths` match does not give a type.
+
+The types `intent`, `spec` and `plan` are valid only as `<dir>/<slug>/<type>.md`, where `<dir>` is the folder of the layer that has the type (`intent` by default). A document of one of these types at another place gives SD303. For a `spec`, the message says that the 0.5 type `spec` is the 0.6 type `requirements`, and the document probably needs `type: requirements`. These 3 types are also not valid as `type` or `default-type` of a root: that is an error (exit code 3).
+
+A document of a type that no layer has gives SD303. The message says to run `spec-dna layer add`. A project with no `[layers]` table has the [default graph](design/0.6.0.md#default-graph), so each type has a layer.
+
+The default graph gives these places. The folder is the name of the layer, unless the layer sets `dir`.
+
+| Type | Place | First status |
 | --- | --- | --- |
-| `product`, `system`, `terms`, `roadmap`, `questions` | none | none |
-| `rule` | draft | `rules/` |
-| `requirements` | draft | none |
-| `interface` | draft | `interfaces/` |
-| `decision` | proposed | `decisions/` |
-| `procedure` | draft | `procedures/` |
-| `incident` | none | `incidents/` |
-| `research` | none | `research/` |
-| `intent`, `spec`, `plan` | draft | `intent/<slug>/` |
+| `product`, `system`, `terms`, `roadmap`, `questions` | The top file `<type>.md` | none |
+| `rule` | `rules/` | draft |
+| `requirements` | `requirements/<area>/` | draft |
+| `interface` | `interfaces/` | draft |
+| `decision` | `decisions/` | proposed |
+| `procedure` | `procedures/` | draft |
+| `incident` | `incidents/` | none |
+| `research` | `research/` | none |
+| `intent`, `spec`, `plan` | `intent/<slug>/<type>.md` | draft |
+
+## Statuses
 
 `draft` is the state of a document that waits for approval. The types `rule`, `requirements`, `interface`, `procedure` and `intent` have no `proposed` status. `proposed` belongs to a decision, which a person accepts or rejects. When a document of another type has the status `proposed`, `check` gives SD304 and names `draft`. A root that uses `proposed` for its requirements can map it: `status-map = { proposed = "draft" }`.
 
@@ -97,15 +115,21 @@ An intent holds the request for one change. A spec holds the delta that the chan
 
 ## Templates
 
-`spec-dna new <type> <id>` writes the template of a type. In a mixed root, an id without a namespace gets the namespace of its type. For example, `spec-dna new decision pump-choice` writes `<root>/decisions/pump-choice.md`. A requirements document has no namespace. For an intent, a spec or a plan, the id is the slug of the change: `spec-dna new intent add-sensor` writes `<root>/intent/add-sensor/intent.md`. `spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root.
+`spec-dna new <type> [<id>]` writes the template of a type at its place:
+
+- A top file type (`product`, `system`, `terms`, `roadmap`, `questions`) takes no id. `spec-dna new terms` writes `<root>/terms.md`.
+- `spec-dna new intent add-sensor` writes `<root>/intent/add-sensor/intent.md`. `spec-dna new spec add-sensor` and `spec-dna new plan add-sensor` write the 2 other files into the same folder. Without that folder, they stop with exit code 5.
+- Another type writes `<root>/<dir>/<id>.md` in a mixed root, where `<dir>` is the folder of the layer of the type. For example, `spec-dna new decision pump-choice` writes `<root>/decisions/pump-choice.md`, and `spec-dna new requirements valves/closing` writes `<root>/requirements/valves/closing.md`. The id is relative to that folder.
+- In a root of one type, the file is `<root>/<id>.md`.
+
+`spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root. It writes no `type:` line where the place gives the type, and it writes the line where the place gives none. In a template that has the field `was-type`, it removes the field from the copy.
 
 A placeholder of a template has the form `{{text}}`, such as `{{key}}` or `{{The cause.}}`. `check` reports each placeholder that remains in a document (SD306, an error). Thus a template cannot pass the gate before an author replaces each placeholder. `${{ ... }}` and `{{ ... }}` with spaces inside the braces (GitHub Actions and Jinja syntax) are not placeholders.
 
-This is the template of a rule:
+This is the template of a rule. It has no `type:` line, because the folder `rules/` gives the type. Where the place gives no type, `new` writes `type: rule`.
 
 ```md
 ---
-type: rule
 status: draft
 applies-to: ["**"]
 ---

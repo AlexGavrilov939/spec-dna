@@ -1562,8 +1562,8 @@ fn code_project() -> Repo {
         "---\ntype: procedure\nstatus: active\n---\n# Layout\n\nAll library code is in src/library/.\n",
     );
     r.write(
-        "docs/notes/idea.md",
-        "---\ntype: intent\nstatus: draft\n---\n# Idea\n\n## Intent\n\nRewrite [loans](../../src/library/loans.py).\n",
+        "docs/intent/idea/intent.md",
+        "---\ntype: intent\nstatus: draft\n---\n# Idea\n\n## Intent\n\nRewrite [loans](../../../src/library/loans.py).\n",
     );
     r.commit("project");
     r
@@ -1595,7 +1595,7 @@ fn context_serves_the_sections_that_cite_a_code_path() {
     assert!(out.contains("<!-- loans#code h:"), "{out}");
     assert!(out.contains(" cites -->"), "{out}");
     assert!(
-        out.contains("- `notes/idea#intent`"),
+        out.contains("- `intent/idea/intent#intent`"),
         "an intent is only listed: {out}"
     );
     assert!(out.contains("- `loans#history`"), "{out}");
@@ -2157,8 +2157,8 @@ fn an_amendment_that_names_the_new_code_clears_drift_of_a_decision() {
             .replace("return loan", "return (loan)"),
     );
     r.write(
-        "docs/notes/idea.md",
-        &r.read("docs/notes/idea.md")
+        "docs/intent/idea/intent.md",
+        &r.read("docs/intent/idea/intent.md")
             .replace("loans.py", "lending.py"),
     );
     let warned = |out: &str| {
@@ -2432,10 +2432,10 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     r.commit("start");
     // `new` writes each type into the right root, from its template.
     for (ty, id, path) in [
-        ("rule", "rules/water", "docs/rules/water.md"),
-        ("procedure", "ops/restart", "docs/ops/restart.md"),
-        ("incident", "ops/flooded-bed", "docs/ops/flooded-bed.md"),
-        ("research", "research/pumps", "docs/research/pumps.md"),
+        ("rule", "water", "docs/rules/water.md"),
+        ("procedure", "restart", "docs/procedures/restart.md"),
+        ("incident", "flooded-bed", "docs/incidents/flooded-bed.md"),
+        ("research", "pumps", "docs/research/pumps.md"),
         ("decision", "pump-choice", "docs/decisions/pump-choice.md"),
     ] {
         let (code, out, err) = r.run(&["new", ty, id]);
@@ -2445,33 +2445,31 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
             "{out}"
         );
     }
-    let (code, _, err) = r.run(&["new", "requirements", "decisions/x"]);
+    let (code, _, err) = r.run(&["new", "decision", "x", "--root", "docs"]);
     assert_eq!(code, 2, "{err}");
-    let (code, _, err) = r.run(&["new", "rule", "rules/water"]);
+    let (code, _, err) = r.run(&["new", "rule", "water"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("exists"), "{err}");
     let inv = r.read("docs/rules/water.md");
     assert!(
-        inv.starts_with(
-            "---\ntype: rule\nstatus: draft\napplies-to: [\"**\"]\n---\n# Water\n\n## Rules\n"
-        ),
+        inv.starts_with("---\nstatus: draft\napplies-to: [\"**\"]\n---\n# Water\n\n## Rules\n"),
         "{inv}"
     );
     // The placeholders of a template stay errors until an author fills them.
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("docs/ops/flooded-bed.md"), "{out}");
+    assert!(out.contains("docs/incidents/flooded-bed.md"), "{out}");
     // Fill the documents.
     r.write(
         "docs/rules/water.md",
         "---\ntype: rule\nstatus: active\napplies-to: [\"src/dosing/**\"]\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
     );
     r.write(
-        "docs/ops/restart.md",
+        "docs/procedures/restart.md",
         "---\ntype: procedure\nstatus: active\n---\n# Restart\n\n## When to use\n\nThe queue stops.\n",
     );
     r.write(
-        "docs/ops/flooded-bed.md",
+        "docs/incidents/flooded-bed.md",
         "---\ntype: incident\n---\n# Flooded bed\n\n## Summary\n\nWater ran over one bed.\n\n## Root cause\n\nA valve without a timeout.\n",
     );
     r.write(
@@ -2485,20 +2483,20 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("docs/ops/restart.md:1: error SD305 section-missing: type `procedure` needs a section headed `Steps`"),
+        out.contains("docs/procedures/restart.md:1: error SD305 section-missing: type `procedure` needs a section headed `Steps`"),
         "{out}"
     );
     assert!(
-        out.contains("docs/ops/flooded-bed.md:1: warning SD609 incident-unlinked"),
+        out.contains("docs/incidents/flooded-bed.md:1: warning SD609 incident-unlinked"),
         "{out}"
     );
     r.append(
-        "docs/ops/restart.md",
+        "docs/procedures/restart.md",
         "\n## Steps\n\n1. Restart the worker.\n",
     );
     r.append(
-        "docs/ops/flooded-bed.md",
-        "\n## Links\n\n- [[dosing#dose]], [[pump-choice]], [[ops/restart]]\n",
+        "docs/incidents/flooded-bed.md",
+        "\n## Links\n\n- [[dosing#dose]], [[pump-choice]], [[procedures/restart]]\n",
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
@@ -3076,7 +3074,7 @@ fn review_fixes_on_the_command_line() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("docs/loans.md:9: error SD306 placeholder-left: the template placeholder `{{trigger}}` is still in the document"),
+        out.contains("docs/requirements/loans.md:8: error SD306 placeholder-left: the template placeholder `{{trigger}}` is still in the document"),
         "{out}"
     );
     // init does not replace a workflow of the project, and `write = false`
@@ -3544,7 +3542,7 @@ fn new_names_the_placeholder_form_that_the_templates_use() {
     assert!(out.contains("replace each {{...}} placeholder"), "{out}");
     assert!(!out.contains("<placeholder>"), "{out}");
     // The text of the message is true: the template has `{{...}}` placeholders.
-    assert!(r.read("docs/loans.md").contains("{{"));
+    assert!(r.read("docs/requirements/loans.md").contains("{{"));
 }
 
 #[test]
@@ -3808,7 +3806,7 @@ fn a_status_of_0_5_on_an_intent_names_the_new_status() {
     );
     for status in ["proposed", "rejected", "done"] {
         r.write(
-            &format!("docs/{status}.md"),
+            &format!("docs/intent/{status}/intent.md"),
             &format!("---\ntype: intent\nstatus: {status}\n---\n# I\n\n## Intent\n\nText.\n"),
         );
     }
@@ -3822,7 +3820,7 @@ fn a_status_of_0_5_on_an_intent_names_the_new_status() {
     ] {
         let line = out
             .lines()
-            .find(|l| l.starts_with(&format!("docs/{status}.md:3: error SD304")))
+            .find(|l| l.starts_with(&format!("docs/intent/{status}/intent.md:3: error SD304")))
             .unwrap_or_else(|| panic!("{status}: {out}"));
         assert!(
             line.contains("(draft, accepted, closed)") && line.contains(hint),
@@ -3845,23 +3843,28 @@ fn new_names_the_new_type_for_a_type_of_0_5() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("use `new intent`"), "{err}");
     assert!(!r.dir.join("docs").exists());
-    // The new names work. The files of a change go into one folder.
-    for (ty, path) in [
-        ("interface", "docs/interfaces/x.md"),
-        ("intent", "docs/intent/x/intent.md"),
-        ("spec", "docs/intent/x/spec.md"),
-        ("plan", "docs/intent/x/plan.md"),
-        ("product", "docs/x.md"),
+    // The new names work. The place gives the type, so the file has no
+    // `type:` line. The files of a change go into one folder.
+    for (ty, id, path) in [
+        ("interface", Some("x"), "docs/interfaces/x.md"),
+        ("intent", Some("x"), "docs/intent/x/intent.md"),
+        ("spec", Some("x"), "docs/intent/x/spec.md"),
+        ("plan", Some("x"), "docs/intent/x/plan.md"),
+        ("product", None, "docs/product.md"),
     ] {
-        let (code, out, err) = r.run(&["new", ty, "x"]);
+        let mut args = vec!["new", ty];
+        args.extend(id);
+        let (code, out, err) = r.run(&args);
         assert_eq!(code, 0, "{ty}: {out}{err}");
         assert!(
             out.starts_with(&format!("wrote {path} ({ty} template)")),
             "{out}"
         );
+        assert!(!r.read(path).contains("type:"), "{ty}");
+        let (_, json, _) = r.run(&["check", "--all", "--json"]);
         assert!(
-            r.read(path).starts_with(&format!("---\ntype: {ty}\n")),
-            "{ty}"
+            json.contains(&format!("\"path\":\"{path}\",\"type\":\"{ty}\"")),
+            "{ty}: {json}"
         );
     }
 }
@@ -3942,7 +3945,7 @@ fn only_a_closed_intent_can_be_deleted() {
     );
     for status in ["closed", "accepted"] {
         r.write(
-            &format!("docs/{status}.md"),
+            &format!("docs/intent/{status}/intent.md"),
             &format!("---\ntype: intent\nstatus: {status}\n---\n# I\n\n## Intent\n\nText.\n"),
         );
     }
@@ -3951,12 +3954,12 @@ fn only_a_closed_intent_can_be_deleted() {
         "---\ntype: research\n---\n# R\n\nText.\n",
     );
     r.commit("start");
-    for f in ["closed", "accepted", "research"] {
+    for f in ["intent/closed/intent", "intent/accepted/intent", "research"] {
         fs::remove_file(r.dir.join(format!("docs/{f}.md"))).unwrap();
     }
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    for id in ["accepted", "research"] {
+    for id in ["intent/accepted/intent", "research"] {
         assert!(
             out.contains(&format!("SD202 id-removed: `{id}` was removed")),
             "{out}"
@@ -4062,7 +4065,7 @@ fn an_accepted_decision_that_links_an_intent_gets_sd611() {
         "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
-        "docs/changes/rollout.md",
+        "docs/intent/rollout/intent.md",
         "---\ntype: intent\nstatus: draft\n---\n# Rollout\n\n## Intent\n\nMove the pump.\n",
     );
     let decision = |body: &str, front: &str| {
@@ -4072,20 +4075,20 @@ fn an_accepted_decision_that_links_an_intent_gets_sd611() {
     };
     r.write(
         "docs/decisions/pump.md",
-        &decision(" See [[changes/rollout]].", ""),
+        &decision(" See [[intent/rollout/intent]].", ""),
     );
     r.commit("start");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "a warning never fails the gate: {out}");
     assert!(
-        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-change: the accepted decision links the intent `changes/rollout`"),
+        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-change: the accepted decision links the intent `intent/rollout/intent`"),
         "{out}"
     );
     // A Markdown link to the intent file counts too, and it is one finding.
     r.write(
         "docs/decisions/pump.md",
         &decision(
-            " See [[changes/rollout]] and [the plan](../changes/rollout.md).",
+            " See [[intent/rollout/intent]] and [the plan](../intent/rollout/intent.md).",
             "",
         ),
     );
@@ -4094,7 +4097,7 @@ fn an_accepted_decision_that_links_an_intent_gets_sd611() {
     // `depends-on` counts.
     r.write(
         "docs/decisions/pump.md",
-        &decision("", "depends-on: [changes/rollout]\n"),
+        &decision("", "depends-on: [intent/rollout/intent]\n"),
     );
     let (_, out, _) = r.run(&["check", "--all"]);
     assert!(out.contains("warning SD611"), "{out}");
@@ -4102,7 +4105,7 @@ fn an_accepted_decision_that_links_an_intent_gets_sd611() {
     r.write(
         "docs/decisions/pump.md",
         &decision(
-            "\n\n## Amendments\n\nThe plan is in [[changes/rollout]].",
+            "\n\n## Amendments\n\nThe plan is in [[intent/rollout/intent]].",
             "",
         ),
     );
@@ -4111,14 +4114,15 @@ fn an_accepted_decision_that_links_an_intent_gets_sd611() {
     // A proposed decision may link a change.
     r.write(
         "docs/decisions/pump.md",
-        &decision(" See [[changes/rollout]].", "").replace("status: accepted", "status: proposed"),
+        &decision(" See [[intent/rollout/intent]].", "")
+            .replace("status: accepted", "status: proposed"),
     );
     let (_, out, _) = r.run(&["check", "--all"]);
     assert!(!out.contains("SD611"), "{out}");
     // A decision that links a spec is fine, and `[rules] SD611 = "off"` works.
     r.write(
         "docs/decisions/pump.md",
-        &decision(" See [[changes/rollout]].", ""),
+        &decision(" See [[intent/rollout/intent]].", ""),
     );
     r.write(
         "spec-dna.toml",

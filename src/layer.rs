@@ -5,11 +5,8 @@
 //! This module parses `[layers.<name>]`, checks the graph and answers the
 //! questions that the other modules ask: the level, "more stable", the context
 //! order and the layer of a document. The parser of the configuration calls it.
-//! The commands read it from later steps on.
-
-// The place rule, `layer` and `context` read most of these items in the next
-// slices. Remove this attribute when they do.
-#![allow(dead_code)]
+//! The place rule reads it. The commands `layer` and `context` and the checks of
+//! the graph read the rest in later slices.
 
 use crate::config::{Fields, unknown_type};
 use crate::glob;
@@ -27,6 +24,8 @@ pub enum Keep {
 }
 
 impl Keep {
+    // `layer list` reads it (slice S4).
+    #[allow(dead_code)]
     pub fn name(self) -> &'static str {
         match self {
             Keep::Forever => "forever",
@@ -43,6 +42,8 @@ pub enum ContextMode {
 }
 
 impl ContextMode {
+    // `layer list` reads it (slice S4).
+    #[allow(dead_code)]
     pub fn name(self) -> &'static str {
         match self {
             ContextMode::Always => "always",
@@ -286,6 +287,8 @@ impl Graph {
         &self.layers
     }
 
+    // `layer` reads it (slice S4).
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
     }
@@ -298,12 +301,16 @@ impl Graph {
     /// The level of the layer at position `i`: the number of edges on its
     /// longest `moves-to` path to a layer with no edge out. Level 0 is the
     /// most stable.
+    // `layer list` and `context` read it (slices S4 and S7).
+    #[allow(dead_code)]
     pub fn level(&self, i: usize) -> u32 {
         self.levels[i]
     }
 
     /// True if layer `x` is more stable than layer `y`: `x` is reachable from
     /// `y` by `moves-to` edges.
+    // SD901 reads it (step 2).
+    #[allow(dead_code)]
     pub fn more_stable(&self, x: usize, y: usize) -> bool {
         let mut seen = vec![false; self.layers.len()];
         let mut todo = vec![y];
@@ -324,6 +331,8 @@ impl Graph {
 
     /// The positions of the layers in the order of `context`: by level from
     /// 0 up, and the file order inside one level.
+    // `context` reads it (slice S7).
+    #[allow(dead_code)]
     pub fn context_order(&self) -> Vec<usize> {
         let mut v: Vec<usize> = (0..self.layers.len()).collect();
         v.sort_by_key(|&i| (self.levels[i], i));
@@ -333,6 +342,8 @@ impl Graph {
     /// The layer of a document: the first layer in the file whose `paths`
     /// match the path, else the layer that has the type of the document. The
     /// path is relative to the root.
+    // `layer list` and `context` read it (slices S4 and S7).
+    #[allow(dead_code)]
     pub fn layer_of(&self, rel_path: &str, ty: DocType) -> Option<usize> {
         self.layers
             .iter()
@@ -343,6 +354,58 @@ impl Graph {
     /// The layer that has a type.
     pub fn layer_of_type(&self, ty: DocType) -> Option<usize> {
         self.layers.iter().position(|l| l.types.contains(&ty))
+    }
+
+    /// The type that the place of a document gives (design, "Place gives the
+    /// type"), or `None`. `rel` is the path relative to the root. The order
+    /// is: a top file of a layer, then the folder of a layer with one type,
+    /// then the file name in the folder of a layer with more types. The front
+    /// matter and `default-type` come before and after this rule: the caller
+    /// orders them.
+    pub fn place_type(&self, rel: &str) -> Option<DocType> {
+        let stem = file_stem(rel);
+        let named = |l: &Layer| DocType::from_name(stem).filter(|t| l.types.contains(t));
+        if let Some(l) = self
+            .layers
+            .iter()
+            .find(|l| l.files.iter().any(|f| f.trim_start_matches("./") == rel))
+        {
+            return named(l).or(match l.types.as_slice() {
+                [t] => Some(*t),
+                _ => None,
+            });
+        }
+        // The deepest folder wins: a layer can have a folder inside the
+        // folder of another layer.
+        let l = self
+            .layers
+            .iter()
+            .filter_map(|l| {
+                let d = l.dir()?;
+                rel.strip_prefix(d)
+                    .is_some_and(|r| r.starts_with('/'))
+                    .then_some((d.len(), l))
+            })
+            .max_by_key(|(n, _)| *n)?
+            .1;
+        match l.types.as_slice() {
+            [] => None,
+            [t] => Some(*t),
+            _ => named(l),
+        }
+    }
+
+    /// True if `rel` is a valid place for a type of one change: the file
+    /// `<dir>/<slug>/<type>.md` in the folder of the layer that has the type.
+    pub fn is_intent_place(&self, ty: DocType, rel: &str) -> bool {
+        let Some(dir) = self.layer_of_type(ty).and_then(|i| self.layers[i].dir()) else {
+            return false;
+        };
+        let Some(rest) = rel.strip_prefix(dir).and_then(|r| r.strip_prefix('/')) else {
+            return false;
+        };
+        matches!(rest.split_once('/'), Some((slug, file))
+            if !slug.is_empty() && file == format!("{}.md", ty.name()))
     }
 
     /// The graph of a project that has no `[layers]` table: the default
@@ -360,17 +423,23 @@ impl Graph {
 
     /// The graph that `init` writes for a project with fewer than 30
     /// documents.
+    // `init` reads it (slice S6a).
+    #[allow(dead_code)]
     pub fn small() -> Graph {
         build(SMALL_GRAPH.iter(), &SMALL_NAMES)
     }
 
     /// The graph that `init` writes for a project with 30 documents or more.
+    // `init` reads it (slice S6a).
+    #[allow(dead_code)]
     pub fn default_graph() -> Graph {
         let names: Vec<&str> = DEFAULT_GRAPH.iter().map(|d| d.name).collect();
         build(DEFAULT_GRAPH.iter(), &names)
     }
 
     /// The graph of a size name: `small` or `default`.
+    // `init` reads it (slice S6a).
+    #[allow(dead_code)]
     pub fn of_size(size: &str) -> Option<Graph> {
         match size {
             "small" => Some(Graph::small()),
@@ -378,6 +447,12 @@ impl Graph {
             _ => None,
         }
     }
+}
+
+/// The file name of a path without its folder and its extension.
+fn file_stem(rel: &str) -> &str {
+    let file = rel.rsplit('/').next().unwrap_or(rel);
+    file.rsplit_once('.').map_or(file, |(s, _)| s)
 }
 
 /// Builds a graph from constant definitions. An edge to a layer that is not in
@@ -549,6 +624,8 @@ const DEFAULT_GRAPH: [LayerDef; 10] = [
 /// differs from the default graph in 3 keys: `pending` moves only to
 /// `intent`, and the edges of `intent` and `incidents` name only the layers
 /// of this graph.
+// `init` reads it (slice S6a).
+#[allow(dead_code)]
 const SMALL_GRAPH: [LayerDef; 7] = [
     FOUNDATION,
     LayerDef {
@@ -565,6 +642,8 @@ const SMALL_GRAPH: [LayerDef; 7] = [
     INCIDENTS,
 ];
 
+// `init` reads it (slice S6a).
+#[allow(dead_code)]
 const SMALL_NAMES: [&str; 7] = [
     "foundation",
     "pending",

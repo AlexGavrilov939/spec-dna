@@ -8,13 +8,23 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 - The document types of 0.6: 15 types. `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, `note` and `reference` are `research`, and `change` is `intent`. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The tier label `invariant` of `context` is now `rule`.
 - The statuses of an `intent` are `draft`, `accepted` and `closed`. SD304 names the new status for `proposed`, `rejected` and `done`.
-- A `research` document has the behavior of `reference`: no budget, `context` never serves it, and SD202 reports its deletion. The default of `default-type` is `research`. A `procedure` has the budget of a guide and no default required section.
+- A `research` document has the behavior of `reference`: no budget, `context` never serves it, and SD202 reports its deletion. A `procedure` has the budget of a guide and no default required section.
+- The place gives the type. In a mixed root, the type of a document comes from these sources, in this order:
+  - The `type` field of the front matter.
+  - A top file, such as `terms.md`.
+  - The folder of a layer.
+  - The file name in the `intent` folder.
+  - `default-type`.
+- `type:` is optional where the place gives the type. A mixed root has no default for `default-type`, so a document with no type gives SD303.
+- The types `intent`, `spec` and `plan` are valid only as `intent/<slug>/<type>.md`. A `spec` at another place gives SD303, and its message names `requirements`. A root `type` or `default-type` of one of these types is an error (exit code 3). A document of a type that no layer has gives SD303 ([docs/types.md](docs/types.md)).
+- `spec-dna new` writes each document at the place of its layer. `new requirements loans` writes `requirements/loans.md`, and an id is relative to the folder of the layer. A top file type takes no id (`new terms`). `new spec` and `new plan` stop with exit code 5 when the folder of the change does not exist. `new` writes no `type:` line where the place gives the type.
 
 ### Added
 
+- The front matter field `was-type` (`note` or `change`). A value of another kind gives SD302. `check` does not use it yet.
 - The types `product`, `system`, `terms`, `roadmap`, `questions`, `spec` and `plan`, with their statuses, required sections, budgets and templates ([docs/types.md](docs/types.md)).
 - `spec-dna new intent <slug>`, `new spec <slug>` and `new plan <slug>` write the files of a change into `intent/<slug>/`. `new` names the new type for a type of 0.5.
-- The configuration keys `[layers.<name>]`, `areas` and `[groups]` ([docs/config.md](docs/config.md)). A layer has the keys `types`, `dir`, `files`, `paths`, `moves-to`, `linked-from`, `keep`, `context`, `max-docs`, `max-chars`, `max-started` and `stale-days`. A cycle in `moves-to`, a type in 2 layers, an absent layer in an edge, `files` with `dir`, 2 layers with the same `dir`, an unknown key, a bad value and a group area that is not in `areas` are errors (exit code 3). No command reads the graph yet.
+- The configuration keys `[layers.<name>]`, `areas` and `[groups]` ([docs/config.md](docs/config.md)). A layer has the keys `types`, `dir`, `files`, `paths`, `moves-to`, `linked-from`, `keep`, `context`, `max-docs`, `max-chars`, `max-started` and `stale-days`. A cycle in `moves-to`, a type in 2 layers, an absent layer in an edge, `files` with `dir`, 2 layers with the same `dir`, an unknown key, a bad value and a group area that is not in `areas` are errors (exit code 3). Only the place rule reads the graph so far.
 
 ## 0.5.0 - 2026-11-14
 
