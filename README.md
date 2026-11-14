@@ -75,7 +75,7 @@ You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the ta
 
 ## Use it in a project
 
-1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 8 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml` and the agent adapters. It does not change your documents.
+1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 10 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml`, the agent adapters and, by default, a small agent harness for Claude Code (a main model, an advisor, a reviewer and a search agent). It does not change your documents.
 2. Run `spec-dna check --all`. It shows each problem in the documents once. You do not have to fix the old problems: the gate reports only new ones.
 3. Commit `spec-dna.toml` and the adapters.
 4. Add the gate to CI with `spec-dna check --base origin/<main branch>`, or as a git hook. `init` can write a GitHub Actions job or a pre-commit hook for you.
@@ -131,13 +131,14 @@ In agent experiments, 2 blind graders checked each run. Agents with the gate kep
 - [Quickstart](docs/quickstart.md): install, setup, CI job, upgrade, uninstall
 - [Commands](docs/commands.md): each command, its options and the exit codes
 - [init](docs/init.md): what `init` finds and asks
+- [Agent harness](docs/harness.md): the roles, models and hooks that `init` installs for Claude Code
 - [Configuration](docs/config.md): each key of `spec-dna.toml`
 - [Document types](docs/types.md): the types, their statuses and templates
 - [Diagnostics](docs/diagnostics.md): each diagnostic code and its fix
 - [Profiles](docs/profiles.md): the severity of each code in each profile
 - [Transcripts](docs/transcript.md): token and read counts from agent sessions
 - [Evidence](docs/evidence.md): the experiments and their limits
-- [Decisions](docs/adr/): the information model, the language and the distribution
+- [Decisions](docs/adr/): the information model, the language, the distribution and the agent harness
 
 ## Contributing
 

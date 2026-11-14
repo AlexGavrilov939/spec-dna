@@ -77,11 +77,11 @@ Run these commands in the root of your git repository:
 ```sh
 spec-dna init                # asks the questions with the detected defaults, shows a preview, then asks for a confirmation
 spec-dna check
-git add spec-dna.toml CLAUDE.md .claude/skills/spec-dna   # `init` prints the full `git add` command
+git add spec-dna.toml CLAUDE.md .claude   # `init` prints the full `git add` command
 git commit -m "build: adopt spec-dna"
 ```
 
-`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 8 questions, for example the profile and the knowledge types. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
+`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 10 questions, for example the profile, the knowledge types and the agent harness. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
 
 `init` never edits a document. Without a terminal, or with `--non-interactive`, it uses the detected defaults. `--dry-run` shows the preview only.
 
@@ -91,6 +91,7 @@ git commit -m "build: adopt spec-dna"
 - One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` once for a task that edits code or docs. It also tells them to run `spec-dna check` before a commit. On an existing project, `init` adds only this line. The line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
+- The agent harness for Claude Code (level `lean` by default): agent files in `.claude/agents/`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
 
@@ -212,14 +213,18 @@ For a private `install-source`, give the job read access to it, for example with
 1. Download `spec-dna-pin.toml` of the new release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
 2. In `spec-dna.toml`, replace the key `spec-dna` and the table `[spec-dna-sha256]` with the content of that file.
 3. Install the new binary. Verify it against the new sum in `spec-dna.toml`.
-4. Run `spec-dna init`. It writes the adapters of the new version.
+4. Run `spec-dna init`. It writes the adapters and the harness files of the new version. It keeps a harness file that you edited.
 5. Run `spec-dna check`. Commit the result.
 
 If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To roll back, install the old version and revert the upgrade commit.
 
+To add the agent harness to a project of 0.4 or older, run `spec-dna init --reconfigure` and choose a level. An upgrade alone does not add it.
+
 To upgrade from 0.1 to 0.2, note this change. A configuration without `profile` uses `standard`. In this profile, the requirement lint is off, and an active requirement without evidence gives SD608. [docs/profiles.md](profiles.md#changes-from-01) gives the 2 rules that keep the behavior of 0.1. `spec-dna init --reconfigure` asks the questions again, with the current values as defaults.
 
 ## Uninstall
+
+If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. It removes the generated agent files, the `CLAUDE.md` line and the hook handlers.
 
 ```sh
 rm spec-dna.toml

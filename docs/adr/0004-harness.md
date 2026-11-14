@@ -81,7 +81,7 @@ The defaults are the setup that the owner of spec-dna uses (owner ruling, 2026-1
 ### Hooks
 
 - `spec-dna hook context-meter` (PostToolUse): tells an agent its context size once at each level.
-- `spec-dna hook fanout-cap` (PreToolUse on `Workflow`): asks the person before a workflow that can start more agents than the cap.
+- `spec-dna hook fanout-cap` (PreToolUse on `Workflow`): asks the person before a workflow whose agent count can go above the cap.
 
 A hook reads one JSON object from stdin. It reads no configuration: the generated command carries the values. It never fails: any error gives no output and exit code 0. The generated command ends with `2>/dev/null || true`, so a teammate without spec-dna 0.5.0 or later gets no error.
 

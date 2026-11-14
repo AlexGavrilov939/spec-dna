@@ -14,6 +14,7 @@ mod evidence;
 mod frontmatter;
 mod git;
 mod glob;
+mod harness;
 mod hash;
 mod index;
 mod init;
@@ -406,6 +407,64 @@ fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, Stri
     Ok(out)
 }
 
+/// Reads the harness files of a snapshot: (path, text). The working tree reads
+/// the files from disk, because the snapshot lists untracked files in the
+/// document roots only. A gate against `--base` reads tracked files only.
+fn harness_texts(
+    repo: &Repo,
+    snap: &Snapshot,
+    untracked: bool,
+) -> Result<Vec<(String, String)>, Fatal> {
+    let mut paths: Vec<String> = snap
+        .files
+        .iter()
+        .filter(|e| harness::wanted(&e.path))
+        .map(|e| e.path.clone())
+        .collect();
+    let mut out = Vec::new();
+    if snap.worktree {
+        if untracked {
+            let st = repo
+                .git
+                .status(
+                    &[
+                        format!(":(literal){}", harness::CLAUDE),
+                        ":(literal).claude".to_string(),
+                    ],
+                    true,
+                )
+                .map_err(Fatal::Io)?;
+            paths.extend(st.untracked.into_iter().filter(|p| harness::wanted(p)));
+            paths.sort();
+            paths.dedup();
+        }
+        for p in paths {
+            if let Ok(t) = std::fs::read_to_string(repo.root.join(&p)) {
+                out.push((p, t));
+            }
+        }
+        return Ok(out);
+    }
+    let ids: Vec<(String, String)> = paths
+        .into_iter()
+        .filter_map(|p| {
+            snap.blob_of(&p)
+                .and_then(|e| e.blob.clone())
+                .map(|b| (p, b))
+        })
+        .collect();
+    let blobs = repo
+        .git
+        .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
+        .map_err(Fatal::Io)?;
+    for (p, b) in ids {
+        if let Some(bytes) = blobs.get(&b) {
+            out.push((p, String::from_utf8_lossy(bytes).into_owned()));
+        }
+    }
+    Ok(out)
+}
+
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let cfg = repo.load_config()?;
@@ -508,6 +567,31 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.head.push(d);
         outcome.new.push(is_new);
     }
+    if let Some(h) = cfg
+        .harness
+        .as_ref()
+        .filter(|h| h.level != harness::Level::None)
+    {
+        let head_files = harness_texts(repo, &head_snap, a.base.is_none())?;
+        let head_hd = check::apply_severity(&cfg, harness::check(h, &head_files));
+        // A base without any harness file has nothing to compare: the harness
+        // is new in this change, so each finding of the head is new.
+        let base_hd: Vec<_> = if use_base {
+            let base_files = harness_texts(repo, &base_snap, false)?;
+            if harness::is_installed(&base_files) {
+                check::apply_severity(&cfg, harness::check(h, &base_files))
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        for d in head_hd {
+            let is_new = !base_hd.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
     if let Some(c) = &base_commit
         && let Some(d) = config_not_alone(repo, &cfg, c, a.base.is_none())?
     {
@@ -601,7 +685,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
-/// `init` writes with it (the adapters and files named `spec-dna*`) do not
+/// `init` writes with it (the adapters, the harness files and files named
+/// `spec-dna*`) do not
 /// count, and a new `spec-dna.toml` (the adoption) is not checked.
 fn config_not_alone(
     repo: &Repo,
@@ -622,6 +707,7 @@ fn config_not_alone(
         .filter(|p| {
             *p != config::FILE_NAME
                 && !adapters::PATHS.contains(p)
+                && !harness::is_output_path(p)
                 && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
         })
         .collect();

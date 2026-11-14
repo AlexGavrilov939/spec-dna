@@ -154,6 +154,58 @@ impl Value {
     }
 }
 
+/// Writes a value as indented JSON for a file that people read: 2 spaces per
+/// level, one item per line, the key order of the value, a number without a
+/// fraction as an integer, and a final line break. An empty array or object is
+/// `[]` or `{}`.
+pub fn pretty(v: &Value) -> String {
+    let mut out = String::new();
+    pretty_into(&mut out, v, 0);
+    out.push('\n');
+    out
+}
+
+fn pretty_into(out: &mut String, v: &Value, depth: usize) {
+    let pad = |out: &mut String, d: usize| out.push_str(&"  ".repeat(d));
+    match v {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Num(n) => {
+            // 2^53 is the largest range in which an f64 holds each integer.
+            if n.fract() == 0.0 && n.abs() < 9_007_199_254_740_992.0 {
+                let _ = write!(out, "{}", *n as i64);
+            } else {
+                let _ = write!(out, "{n}");
+            }
+        }
+        Value::Str(s) => string(out, s),
+        Value::Arr(items) if items.is_empty() => out.push_str("[]"),
+        Value::Arr(items) => {
+            out.push_str("[\n");
+            for (i, item) in items.iter().enumerate() {
+                pad(out, depth + 1);
+                pretty_into(out, item, depth + 1);
+                out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+            }
+            pad(out, depth);
+            out.push(']');
+        }
+        Value::Obj(fields) if fields.is_empty() => out.push_str("{}"),
+        Value::Obj(fields) => {
+            out.push_str("{\n");
+            for (i, (k, item)) in fields.iter().enumerate() {
+                pad(out, depth + 1);
+                string(out, k);
+                out.push_str(": ");
+                pretty_into(out, item, depth + 1);
+                out.push_str(if i + 1 < fields.len() { ",\n" } else { "\n" });
+            }
+            pad(out, depth);
+            out.push('}');
+        }
+    }
+}
+
 /// Parses one JSON text (RFC 8259). Numbers become `f64`.
 pub fn parse(text: &str) -> Result<Value, String> {
     let mut p = Reader {
@@ -387,5 +439,19 @@ mod tests {
         }
         let deep = "[".repeat(300) + &"]".repeat(300);
         assert!(parse(&deep).is_err());
+    }
+
+    #[test]
+    fn pretty_text_round_trips_and_keeps_the_key_order() {
+        let src = r#"{"z": 1, "a": {"list": [1, 2.5, -3, "q\"\n", null, true, [], {}], "n": 300000}, "m": []}"#;
+        let v = parse(src).unwrap();
+        let text = pretty(&v);
+        assert_eq!(
+            text,
+            "{\n  \"z\": 1,\n  \"a\": {\n    \"list\": [\n      1,\n      2.5,\n      -3,\n      \"q\\\"\\n\",\n      null,\n      true,\n      [],\n      {}\n    ],\n    \"n\": 300000\n  },\n  \"m\": []\n}\n"
+        );
+        assert_eq!(parse(&text).unwrap(), v);
+        assert_eq!(pretty(&parse(&text).unwrap()), text);
+        assert_eq!(pretty(&Value::Num(0.0)), "0\n");
     }
 }
