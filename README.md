@@ -4,30 +4,16 @@
 [![Release](https://img.shields.io/github/v/release/AlexGavrilov939/spec-dna)](https://github.com/AlexGavrilov939/spec-dna/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository: specs, contracts, decisions, guides and runbooks. It checks each change of these documents, as a linter checks code. It also gives an AI coding agent only the parts of the documents that its task needs.
+**Engineering specs that stay small, linked and checked, for AI coding agents.**
 
-spec-dna works in any repository, with any language and any agent. It uses no network and no language model.
+spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives an AI coding agent only the parts of the documents that its task needs. It works in any repository, with any language and any agent. It uses no network and no language model. The one exception is `spec-dna eval run`, which starts Claude Code to test the agent setup.
 
-## Why
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the current truth in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="docs/assets/how-it-works.svg">
+</picture>
 
-When AI agents write a large part of the code, the specifications are the main input of each task. Then these problems occur:
-
-1. An agent changes a decision that the team accepted. For example, it edits the text of an accepted decision record so that the text agrees with its new code. A review can miss this edit.
-2. References go stale. A change renames a file or a function, but a spec still names the old one. A link points to a heading that no longer exists.
-3. Documents grow. Each task adds text, and nobody removes it. An agent reads whole long files to find one rule, and this costs time and tokens on each task.
-
-spec-dna treats the specifications like code. Each document has a type, a stable id and a status. Each requirement has a key. `check` compares a change with its base and reports the new problems, in CI or before a commit. `context` gives an agent the few sections that apply to the files that it will change.
-
-## How it works
-
-- Your documents stay plain Markdown. spec-dna reads their front matter (`type`, `status`), headings, links, code spans and requirement list items.
-- A requirement is a list item with a bold key, for example `- **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray.` Its id is `<document id>#<key>`. Other documents and tests refer to it by this id.
-- `spec-dna.toml` maps your directories to document types and sets the rules. It also pins the version of spec-dna, so each person and each CI job uses the same rules.
-- `check` reports only the problems that a change adds. A mature repository can adopt spec-dna without a fix of all old problems first.
-- An accepted decision is frozen. A change goes into a new amendment section, or into a new decision that supersedes the old one.
-- `init` writes one line into `AGENTS.md` and `CLAUDE.md`, and one skill. They tell the agent to run `spec-dna context` before it edits files, and `spec-dna check` before it finishes.
-
-## Example
+## See it in action
 
 An agent changed the outcome of an accepted decision. `check` stops the change:
 
@@ -38,7 +24,7 @@ SD405 fix: Restore the accepted text and write the change in a new amendment sec
 spec-dna check: 2 documents; 1 new error and 0 new warnings against 3bd199ae40b9 (1 error and 1 warning in total)
 ```
 
-Before an agent edits `src/valves.rs`, `context` gives it the requirement that cites the file:
+Before an agent edits `src/valves.rs`, `context` gives it the requirement that cites the file, and not the whole document:
 
 ```console
 $ spec-dna context src/valves.rs
@@ -52,6 +38,43 @@ $ spec-dna context src/valves.rs
 <!-- valves#valves h:678c75294fdea71f requirements/active cites -->
 # Valves
 ```
+
+A change of the requirements has its own folder. Each document of the change needs an approval before the next one:
+
+```sh
+spec-dna new intent sensor-timeout   # docs/intent/sensor-timeout/intent.md: what and why
+spec-dna new spec sensor-timeout     # the delta: ADD, CHANGE and REMOVE lines of requirements
+spec-dna new plan sensor-timeout     # the files, the order, the risks and the proof
+spec-dna next sensor-timeout         # the checklist to the next gate
+spec-dna finish sensor-timeout       # apply the delta, check the tests, delete the folder
+```
+
+## Why
+
+When AI agents write a large part of the code, the specifications are the main input of each task. Then these problems occur:
+
+| Problem | What spec-dna does | Command |
+| --- | --- | --- |
+| An agent edits an accepted decision so that it agrees with its new code | Locks the text of an accepted decision. A new fact goes into an amendment or a new decision | `check` (SD405) |
+| A change renames a file or a function, and a spec still names the old one | Checks the links, ids, anchors and code citations of each change against its base | `check` |
+| Documents grow, and an agent reads whole files to find one rule | Gives the sections that apply to a file, under a budget, and limits the size of documents and layers | `context` |
+| Proposals and plans stay in the tree after the work | Keeps each change in one folder, applies its delta to the requirements and deletes the folder | `finish` |
+
+## How it works
+
+- Your documents stay plain Markdown. spec-dna reads their front matter, headings, links, code spans and requirement list items.
+- The place of a file gives its type: a file under `rules/` is a rule, and a file under `decisions/` is a decision. The folders form a graph of layers, from the current truth to the work in progress.
+- A requirement is a list item with a bold key, such as `- **shutoff**: ... SHALL ...`. Its id is `<document id>#<key>`. Tests and other documents refer to it by this id.
+- A change lives in `docs/intent/<slug>/` with its intent, spec and plan. `finish` applies its delta to the requirements and deletes the folder. Git keeps the history.
+- `check` compares a change with its base and reports only the new problems. A mature repository can adopt spec-dna before it fixes the old problems.
+- `context` gives an agent the sections that apply to the files of its task, with the current truth first.
+- `init` writes one line into `AGENTS.md` and `CLAUDE.md`, and a skill. They tell the agent to run `context` before an edit and `check` before it finishes. For Claude Code, `init` can also write a harness of agent roles, stage skills, hooks and evals.
+
+[docs/concepts.md](docs/concepts.md) explains the model.
+
+## Where it fits
+
+Spec frameworks such as [OpenSpec](https://github.com/Fission-AI/OpenSpec), [Spec Kit](https://github.com/github/spec-kit) and [BMAD](https://github.com/bmad-code-org/BMAD-METHOD) give an agent a process to write specifications. spec-dna checks the specifications and the code that follows from them, with no model. It can work next to such a framework. The change folder of a framework maps to an intent folder, and a constitution maps to `rule` documents. [docs/types.md](docs/types.md#standard-documents) maps the standard documents, such as an ADR, an RFC or a PRD.
 
 ## Install
 
@@ -71,54 +94,34 @@ To build from source, you need Rust 1.88 or later:
 cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
 ```
 
-This command needs no package name from v0.4.2 on. For v0.4.1 and earlier, add `spec-dna` at the end.
-
 You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the targets of the other platforms, the commands for Windows, and the verification of the attestations.
 
-## Use it in a project
+## Quick start
 
-1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 14 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml` and the agent adapters. By default, it also writes a small agent harness for Claude Code: a main model, an advisor, a reviewer and a search agent. It does not change your documents.
-2. Run `spec-dna check --all`. It shows each problem in the documents once. You do not have to fix the old problems: the gate reports only new ones.
-3. Commit `spec-dna.toml` and the adapters.
-4. Add the gate to CI with `spec-dna check --base origin/<main branch>`, or as a git hook. `init` can write a GitHub Actions job or a pre-commit hook for you.
-5. Write new requirements as list items with a bold key, and cite the code that implements them:
+In the root of your repository:
 
-    ```md
-    ---
-    type: requirements
-    status: active
-    ---
-    # Valves
+```sh
+spec-dna init         # detect, ask, show a preview, then write spec-dna.toml and the agent files
+spec-dna check --all  # show each problem once: the gate reports only new ones
+```
 
-    ## Requirements
+Commit the files that `init` wrote. Then add `spec-dna check --base origin/<main branch>` to CI, or let `init` write the job.
 
-    - **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray.
-
-    The code is in `src/valves.rs` (`close_valve()`).
-    ```
-
-6. Link a test to a requirement with a comment such as `# covers: valves#shutoff`. `spec-dna show valves` lists the tests of each requirement.
-
-[docs/quickstart.md](docs/quickstart.md) gives each step in full, with the upgrade and the uninstall. [docs/demo.md](docs/demo.md) shows the steps on a small example project.
+[docs/quickstart.md](docs/quickstart.md) gives each step. For a repository that already has documents, read [docs/guides/existing-repo.md](docs/guides/existing-repo.md).
 
 ## Daily use
 
-An agent does these steps itself, because the skill tells it to:
+An agent runs `context` and `check` itself, because the skill tells it to. People use the same commands:
 
-```sh
-spec-dna context src/valves.rs   # before an edit: the sections that apply to this file
-spec-dna check                   # before it finishes: exit code 1 on a new error
-```
-
-People use the same commands, and these ones:
-
-```sh
-spec-dna show valves                         # a document, with the tests of each requirement
-spec-dna new decision pump-choice            # a new document from a template
-spec-dna mv valves#shutoff safety            # move a requirement; the old id stays an alias
-spec-dna history decisions/water-source      # move the amendments of a long decision into a reference document
-spec-dna index docs/incidents --replace      # a generated index of a directory
-```
+| When | Command | Result |
+| --- | --- | --- |
+| Before an edit | `spec-dna context src/valves.rs` | The sections that apply to the file |
+| Before a commit | `spec-dna check` | Exit code 1 on a new error |
+| To start a change | `spec-dna new intent <slug>` | The folder of the change |
+| To see the next step | `spec-dna next <slug>` | The checklist to the next gate |
+| To end a change | `spec-dna finish <slug>` | The delta in the requirements, and no folder |
+| To read a document | `spec-dna show requirements/valves/closing` | The document, with the tests of each requirement |
+| To move a document | `spec-dna mv <from> <to>` | The old id stays an alias |
 
 [docs/commands.md](docs/commands.md) gives each command and its options.
 
@@ -130,17 +133,13 @@ In agent experiments, 2 blind graders checked each run. Agents with the gate kep
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md): install, setup, CI job, upgrade, uninstall
-- [Commands](docs/commands.md): each command, its options and the exit codes
-- [init](docs/init.md): what `init` finds and asks
-- [Agent harness](docs/harness.md): the roles, models and hooks that `init` installs for Claude Code
-- [Configuration](docs/config.md): each key of `spec-dna.toml`
-- [Document types](docs/types.md): the types, their statuses and templates
-- [Diagnostics](docs/diagnostics.md): each diagnostic code and its fix
-- [Profiles](docs/profiles.md): the severity of each code in each profile
-- [Transcripts](docs/transcript.md): token and read counts from agent sessions
-- [Evidence](docs/evidence.md): the experiments and their limits
-- [Decisions](docs/adr/): the information model, the language, the distribution and the agent harness
+[docs/README.md](docs/README.md) is the map of all pages.
+
+- Start: [Quickstart](docs/quickstart.md), [Demo](docs/demo.md)
+- Concepts: [Concepts](docs/concepts.md), [Glossary](docs/glossary.md)
+- Guides: [One change](docs/guides/change.md), [Existing repository](docs/guides/existing-repo.md), [Upgrade from 0.5](docs/guides/upgrade-0.5.md)
+- Reference: [Commands](docs/commands.md), [Configuration](docs/config.md), [Types](docs/types.md), [Diagnostics](docs/diagnostics.md), [Profiles](docs/profiles.md), [init](docs/init.md), [Harness](docs/harness.md), [Transcripts](docs/transcript.md)
+- Project: [Evidence](docs/evidence.md), [Decisions](docs/adr/), [Changelog](CHANGELOG.md)
 
 ## Contributing
 
