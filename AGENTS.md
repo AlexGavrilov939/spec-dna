@@ -9,7 +9,8 @@ spec-dna is a small CLI for any project. It keeps engineering specifications sma
 Rule zero: do not put the name, paths, ids, text, metrics or conventions of a consumer project into this repository. This rule applies to code, docs, ADRs, tests, fixtures and commit messages. Refer to a consumer corpus only as an anonymized profile, for example "corpus A: mature product, about 2.3k docs".
 
 - Standards and prior art: `docs/research/matrix.md`
-- Decisions: `docs/adr/` (information model, language, distribution)
+- Decisions: `docs/adr/` (information model, language, distribution, harness, layout, change lifecycle, templates, evals, upgrade)
+- User documentation: `docs/README.md` is the map
 - Language benchmark prototype, not the tool: `bench/`
 
 The project is at an early stage. It has one Rust crate at the repository root (`src/`, `tests/`). `Cargo.toml` gives the version. Releases are public (`.github/workflows/release.yml`). Do not add structure, languages or tools that the task does not ask for. Give each new dependency a one-line reason in the dependency table of `CONTRIBUTING.md`.
@@ -34,5 +35,6 @@ CI runs the same hooks (`.github/workflows/ci.yml`). A change is complete only w
 - Work on a branch. Do not commit to `master` directly.
 - GitHub Actions: pin each `uses:` to a full commit SHA, with the version tag in a trailing comment. Set `permissions: {}` at the workflow level, and give each job only the permissions that it needs.
 - Do not commit secrets or local agent state: `.env*`, `.claude/settings.local.json`, `CLAUDE.local.md`.
+- Docs: follow `CONTRIBUTING.md`, section "Docs layout". Each page has one kind, each detail lives in one reference page, and each new page goes into `docs/README.md`.
 - Claude Code: `.claude/settings.json` and `.claude/agents/` set a team of models and agents, and `CLAUDE.md` gives its rule. `.claude/agents/README.md` describes the team. `.claude/agents/ownership.md` gives the responsible agent of each task and each path.
 - If you change a convention, update `CONTRIBUTING.md` and this file in the same pull request.

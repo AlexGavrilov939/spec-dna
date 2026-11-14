@@ -173,6 +173,9 @@ docs/transcript.md                   TRN
 docs/evidence.md                     ARC (OWN)
 docs/adr/                            ARC (OWN)
 docs/research/                       ARC
+docs/README.md, docs/concepts.md     ARC: the facts. DOC: the language
+docs/glossary.md, docs/guides/       ARC: the facts. DOC: the language
+docs/assets/                         ARC (OWN)
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA

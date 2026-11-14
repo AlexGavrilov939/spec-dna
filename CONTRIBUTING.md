@@ -26,8 +26,11 @@ The golden outputs of the integration tests are in `tests/golden/`. After an int
 | `src/` | The `spec-dna` crate |
 | `tests/` | Integration tests, fixtures and golden outputs |
 | `schema/spec-dna.schema.json` | The JSON Schema of `spec-dna.toml`. [docs/config.md](docs/config.md) describes the keys. |
-| `docs/` | The user documentation |
-| `docs/adr/` | Decisions: the information model, the language and the distribution |
+| `docs/` | The user documentation. [docs/README.md](docs/README.md) is its map |
+| `docs/guides/` | How-to guides |
+| `docs/assets/` | Images, each in a light and a dark file |
+| `docs/design/` | The design of a version, with the deviations of each step |
+| `docs/adr/` | The decisions of the project (ADRs) |
 | `docs/research/` | Standards and prior art |
 | `scripts/` | The cross-build, the run test, the release assets and the demo replay |
 | `bench/` | Benchmarks, retrieval measurements and the prototypes of the language decision |
@@ -40,6 +43,8 @@ The golden outputs of the integration tests are in `tests/golden/`. After an int
 ## Formatting
 
 `.editorconfig` contains the whitespace rules: a 2-space indent by default, 4 spaces for Python, TOML and Rust, and tabs for Go. Use `gofmt` to format Go and `cargo fmt` to format Rust.
+
+Markdown files contain no HTML, except the elements `picture`, `source` and `img` for an image with a dark variant. `.markdownlint-cli2.yaml` enforces this rule.
 
 ## Writing
 
@@ -61,6 +66,18 @@ Write all specifications, documentation and code comments in ASD-STE100 Simplifi
 Code names, commands, configuration keys and diagnostic codes are technical names. Write them as they are, in backticks.
 
 Write a code comment only when it gives information that the code and its names cannot give. Examples are a reason, a constraint, an invariant, a format, an edge case or a reference to an ADR. Do not write a comment that repeats the code. Remove a comment that is wrong or that has no use. A doc comment on a public item states its contract: what it means, its inputs, its outputs and its errors.
+
+### Docs layout
+
+The user documentation is in `docs/`. [docs/README.md](docs/README.md) is its map.
+
+- Give each page one kind: a tutorial, an explanation, a how-to guide or a reference.
+- Put a how-to guide in `docs/guides/` and an image in `docs/assets/`.
+- Write each detail in one reference page. Other pages link to it and do not copy it.
+- Use the terms of [docs/glossary.md](docs/glossary.md). Add a new term to the glossary in the same pull request.
+- Add each new page to the map in the same pull request.
+- Keep the path of a reference page. The code, the schema and the tests name these paths.
+- Give an image a light and a dark file with the same geometry, and show it with `picture`.
 
 ## Branches
 
