@@ -88,7 +88,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Git access | `src/git.rs` | ARC | COR | TST | REL |
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
 | Convention | `AGENTS.md`, `CONTRIBUTING.md`, `README.md` and `.github/pull_request_template.md`; lint and editor configs | OWN | ARC | DOC, REL | All |
-| Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` and the version in `README.md`; the tag | OWN | REL | ARC, TST | All |
+| Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the tag | OWN | REL | ARC, TST | All |
 | CI or hooks | `.github/` except the PR template, `.pre-commit-config.yaml`, `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh` and `src/release.rs` | ARC | REL | TST | OWN |
 | Agent team | `.claude/` and `CLAUDE.md`; the pointers in `AGENTS.md` and `CONTRIBUTING.md` | OWN | ARC | DOC | All |
 
@@ -162,11 +162,11 @@ src/adapters.rs                      INI
 src/transcript.rs                    TRN
 src/release.rs                       REL
 schema/spec-dna.schema.json          COR
-docs/config.md, docs/types.md        COR
-docs/commands.md                     The agent of each command: its section. COR: the summary and the exit codes
+docs/config.md, docs/types.md        COR. REL: the version in docs/config.md
+docs/commands.md                     The agent of each command: its section. COR: the summary, the exit codes and the cache
 docs/diagnostics.md                  DIA
 docs/profiles.md                     DIA
-docs/init.md, docs/quickstart.md     INI
+docs/init.md, docs/quickstart.md     INI. REL: the version in docs/quickstart.md
 docs/demo.md                         INI
 docs/transcript.md                   TRN
 docs/evidence.md                     ARC (OWN)

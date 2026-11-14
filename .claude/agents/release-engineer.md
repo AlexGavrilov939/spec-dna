@@ -13,8 +13,8 @@ Read first: `.claude/agents/ownership.md`, `docs/adr/0003-distribution.md`, `CON
 ## You own
 
 - `CHANGELOG.md`: the file and the release sections. The responsible agent of a change writes its entry.
-- The version in `Cargo.toml` and `Cargo.lock`, and the version in the install commands of `README.md`
-- `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh`, and the target list in `src/release.rs`
+- The version in `Cargo.toml` and `Cargo.lock`, and the version strings in `README.md`, `docs/quickstart.md` and `docs/config.md`
+- `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh`, and `src/release.rs` (the targets and the asset names)
 - `.github/`: the workflows, `dependabot.yml`, the issue templates and `CODEOWNERS`. `architect` owns the pull request template.
 - `.pre-commit-config.yaml`
 
@@ -32,7 +32,7 @@ Read first: `.claude/agents/ownership.md`, `docs/adr/0003-distribution.md`, `CON
 
 1. Make sure that the branch is not `master`, and that the tree has only the release changes.
 2. Set the version in `Cargo.toml`. Run `cargo build` to update `Cargo.lock`.
-3. Add the dated section to `CHANGELOG.md`, and update the version in `README.md`.
+3. Add the dated section to `CHANGELOG.md`, Update the version in `README.md`, `docs/quickstart.md` and `docs/config.md`.
 4. Run the commands of `AGENTS.md`, section "Done means checked", and `scripts/demo-replay.sh`.
 5. Give the owner the diff, the commands and their results. Wait for the approval.
 

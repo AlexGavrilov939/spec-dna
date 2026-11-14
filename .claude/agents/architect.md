@@ -14,7 +14,8 @@ Read first: `.claude/agents/ownership.md` for the responsible agents and the app
 
 - `docs/adr/` and `docs/research/matrix.md`. You write an ADR or a dated amendment. The owner accepts it.
 - The contracts in the "Change sets" table of the RACI matrix. They include the information model, hashes, ids, diagnostic codes and `spec-dna.toml` keys. They also include the CLI surface, the exit codes, the `--json` shape, the adapter format and the cache format.
-- The conventions: `AGENTS.md`, `CONTRIBUTING.md`, `.github/pull_request_template.md`, `.editorconfig`, `.gitattributes`, `.gitignore` and `.markdownlint-cli2.yaml`. The owner accepts each change.
+- The conventions: `AGENTS.md`, `CONTRIBUTING.md`, `.github/pull_request_template.md`, `.editorconfig`, `.gitattributes`, `.gitignore`, `.markdownlint-cli2.yaml`, `_typos.toml` and `SECURITY.md`. The owner accepts each change.
+- `docs/evidence.md`, and the text of `README.md` except the version. The owner accepts each change.
 - The agent team: `CLAUDE.md`, `.claude/settings.json` and the files in `.claude/agents/`. The owner accepts each change.
 - The evidence of ADR 0002: `bench/go/`, `bench/rust/`, `bench/gen/`, `bench/git-access/`, `bench/run.py`, `bench/README.md`, `bench/.gitignore` and their results.
 
