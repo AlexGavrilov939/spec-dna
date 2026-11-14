@@ -34,6 +34,7 @@ The golden outputs of the integration tests are in `tests/golden/`. After an int
 | `AGENTS.md` | Rules for AI agents that work in this repository. `CLAUDE.md` imports it. |
 | `CHANGELOG.md` | The changes of each version |
 | `SECURITY.md` | How to report a vulnerability |
+| `.claude/` | Claude Code settings, the agent team and its RACI matrix |
 | `.github/` | CI workflows, Dependabot, issue and pull request templates, code owners |
 
 ## Formatting
@@ -129,3 +130,12 @@ The repository has its own code, without dependencies, for argument parsing, fro
 Dependabot opens grouped pull requests each week for GitHub Actions and pre-commit hooks. It waits 7 days after a release before it proposes that release.
 
 Pin each `uses:` in a workflow to a full commit SHA, with the version tag in a trailing comment. Keep this format when you add or change a workflow, because `zizmor` and Dependabot need it.
+
+## Claude Code agents
+
+`.claude/settings.json` and `.claude/agents/` give Claude Code a team of models and agents. `CLAUDE.md` tells the main session when to use an agent.
+
+- `.claude/agents/README.md` lists the agents, the model of each agent, the model team, and the steps to check it.
+- `.claude/agents/ownership.md` gives the responsible agent of each task and each path, the change sets, and the escalation rules.
+
+To change the team, follow `.claude/agents/README.md`, section "Change the team".
