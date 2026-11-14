@@ -36,7 +36,7 @@ The codes of the group `changes` depend on the `[change]` table:
 - With `policy = "none"`, SD905 and SD910 to SD921 are off. No `[rules]` entry turns SD921 on under `none`.
 - Without a `[change]` table, the policy is `none`.
 - SD910 follows `[change] gate`. `block` makes it an error, `warn` makes it a warning, and `off` disables it. If `gate` is absent, SD910 takes the severity of its profile column. `init` always writes `gate`.
-- SD921 runs only with `--base`.
+- Without `--base`, the change codes use the merge base with the default branch.
 - `[rules]` can override SD910 and SD921, as it overrides each code.
 
 Use the profiles in this order:

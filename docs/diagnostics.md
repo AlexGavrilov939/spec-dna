@@ -182,7 +182,7 @@ The codes SD901 to SD904 and SD921 are new in 0.6.0. They are warnings in `stand
 - SD904. The table of terms has the header cells `Term` and `Forbidden synonyms` (in any order). spec-dna splits a cell of synonyms at `,` and `;`. A synonym that matches a whole phrase of the requirement text gives SD904. The target of the diagnostic is `<key>:<synonym>`.
 - SD921. The check compares each requirement of the base with the requirement of the head that has the same key. It applies the aliases of `mv`. A requirement has changed if the hash of its text, without link destinations, is different.
 - SD921 keys. A key that has no match on the other side was added or removed. A move or a split with `spec-dna mv` keeps the keys through aliases, so it gives nothing. A split by hand with no alias gives 2 diagnostics (an added key and a removed key).
-- SD921 scope. It gives one diagnostic for each document. It does not run without `--base`. It is off in the `lite` profile and with `[change] policy = "none"`. No rule turns it on under `none`.
+- SD921 scope. It gives one diagnostic for each document. Without `--base`, its base is the merge base with the default branch, as for the other change codes. It is off in the `lite` profile and with `[change] policy = "none"`. No rule turns it on under `none`.
 
 ## Code citations
 
