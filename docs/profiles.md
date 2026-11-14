@@ -21,15 +21,29 @@ An error fails `check` when the error is new against the base. A warning never f
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
-| `changes` | SD921 (truth changed without a change). It runs only with `--base`, and it needs `[change] policy` other than `none`: with `none` it is off, and no rule turns it on | off | warning | error |
+| `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted) | warning | error | error |
+| `changes` | SD912 (too many started changes), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
+| `changes` | SD905 (fan-out), SD911 (stale change), SD913 (file outside the plan), SD918 (incident with no eval) | off | warning | warning |
 
-The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the frozen text of an accepted decision changed) is always an error.
+The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) and SD506 (an invalid eval) are always errors.
+
+The rule groups `layers` and `changes` are new in 0.6.0. The word `rules` still names the severity table of the file. A layer named `rules` is not that table: `[rules]` is the severity table, and `[layers.rules]` is the layer.
+
+## The change codes
+
+The codes of the group `changes` depend on the `[change]` table:
+
+- With `policy = "none"`, SD905 and SD910 to SD921 are off. No `[rules]` entry turns SD921 on under `none`.
+- Without a `[change]` table, the policy is `none`.
+- SD910 follows `[change] gate`. `block` makes it an error, `warn` makes it a warning, and `off` disables it. If `gate` is absent, SD910 takes the severity of its profile column. `init` always writes `gate`.
+- SD921 runs only with `--base`.
+- `[rules]` can override SD910 and SD921, as it overrides each code.
 
 Use the profiles in this order:
 
-- `lite`: adoption. Nothing fails `check`, except the structural errors of the model, such as invalid front matter or a changed accepted decision.
-- `standard`: daily work. Broken references and ids fail `check`. A document that grows over its hard budget fails `check`. Drift and requirements without evidence give warnings.
-- `strict`: a mature corpus. Drift, requirements without evidence and every budget diagnostic fail `check`. The requirement lint gives warnings.
+- `lite`: adoption. Nothing fails `check`, except the structural errors of the model, such as invalid front matter, a changed accepted decision or an invalid eval.
+- `standard`: daily work. Broken references and ids fail `check`. A document that grows over its hard budget fails `check`. A break of the gate or of the finish rules of a change fails `check`. Drift and requirements without evidence give warnings.
+- `strict`: a mature corpus. Drift, requirements without evidence and every budget diagnostic fail `check`. Too many started changes, a class that is too low and a truth that changed without a change fail `check` too. The requirement lint gives warnings.
 
 In `standard`, a mature corpus that links no tests yet gets one SD608 for each active requirement. `check` prints more than 10 warnings of one code as one count. The gate against the base reports only the new warnings. To disable them until the project links tests, set `[rules] evidence = "off"`.
 
