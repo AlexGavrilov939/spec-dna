@@ -25,7 +25,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | Types of numbered directories | The files of the directory. See [Types of numbered directories](#types-of-numbered-directories) |
 | Requirement keys | Bold keys at the start of list items, such as `- **R-12** text`. They give `legacy-keys = ["R-{n}"]`. If some keys have a letter suffix, the pattern is `R-{n}*` |
 | Statuses | The status words in the front matter of each root. A word that the type does not allow gets a `status-map` entry. For example, `shipped` and `implemented` map to `active`, and `approved` maps to `accepted` for a decision. An unknown word maps to the default status of the root |
-| Heading languages and aliases | The scripts of the headings. Known translations of `Decision Outcome` and `Amendments` in decisions (for example `Решение`, `Entscheidung`, `Nachtrag`) become `required-sections` and `amendment-sections` |
+| Heading languages and aliases | The scripts of the headings. Known translations of `Decision Outcome` and `Amendments` in decisions (for example `Entscheidung`, `Decisión`, `Nachtrag`) become `required-sections` and `amendment-sections` |
 | Exclusions | Vendored directories (`vendor`, `node_modules`, `third_party`), generated directories (`dist`, `build`, `generated`), files that say that a generator wrote them, sibling directories with a vendor prefix (`vendor-*`, `external-*`), and the files of a decision root that are not decisions (a README without an outcome, `*-implementation-plan.md`) |
 | Large reference directories | A directory with 100 Markdown files or more, or 1,000,000 characters or more, and with no typed directory in it. It becomes a `reference` root |
 | Required sections | If most documents of a type in a root do not have the required sections, the root removes the requirement |
@@ -83,7 +83,7 @@ If the files show no type, the type is the type of the enclosing root, if that r
 | 1 | The profile: `lite`, `standard` or `strict` ([profiles.md](profiles.md)) | `standard` |
 | 2 | The knowledge types of the project. A shorter list writes `types` into `spec-dna.toml`. Then a document of another type is an error | Every type (no `types` key). The question shows the detected types |
 | 3 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
-| 4 | The normative language and the heading aliases: `en; outcome: Решение; amendments: Поправки` | The detected aliases |
+| 4 | The normative language and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected aliases |
 | 5 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it (`type=spec status=active exclude=a/**,b.md`) | Accept |
 | 6 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
 | 7 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
@@ -112,8 +112,8 @@ types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]
 evidence = "warning"            # "profile", "off", "warning" or "error"
 evidence-style = "both"         # "covers", "verified-by" or "both"
 language = "en"
-outcome-headings = ["Решение"]
-amendment-headings = ["Поправки"]
+outcome-headings = ["Entscheidung"]
+amendment-headings = ["Nachtrag"]
 mapping = "accept"
 drop = ["docs/archive"]         # detected roots to drop
 budgets = "default"             # "default", "relaxed", "tight" or "off"
