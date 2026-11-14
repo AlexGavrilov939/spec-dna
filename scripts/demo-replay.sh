@@ -90,7 +90,7 @@ python3 -m unittest discover -s tests -t . 2>&1 | tail -n 1
 step "daily use: context, show, check, mv"
 spec-dna context library/loans.py >"$work/context.txt"
 head -n 3 "$work/context.txt"
-grep -q '^<!-- loans#renewals h:[0-9a-f]* spec/active cites -->$' "$work/context.txt" ||
+grep -q '^<!-- loans#renewals h:[0-9a-f]* requirements/active cites -->$' "$work/context.txt" ||
     fail "context library/loans.py does not serve loans#renewals"
 spec-dna show loans#loan-period | grep -q 'LOAN_DAYS' || fail "show loans#loan-period"
 spec-dna mv decisions/in-memory-store decisions/storage

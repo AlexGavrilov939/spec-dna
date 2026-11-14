@@ -1,5 +1,5 @@
 docs/changes/add-drip-lines.md:4: error SD101 unresolved-reference: `irrigation/valves` has no section or requirement `drip`
-docs/decisions/ADR-2-pump-schedule.md:1: error SD305 section-missing: a decision needs a section headed `Decision Outcome` or `Decision`
+docs/decisions/ADR-2-pump-schedule.md:1: error SD305 section-missing: type `decision` needs a section headed `Decision Outcome` or `Decision`
 docs/harvest/records.md:1: error SD402 superseded-without-successor: no active document names `harvest/records` in `supersedes`
 docs/irrigation/alias-clash.md:1: error SD201 duplicate-id: `irrigation/valves` also names docs/irrigation/valves.md
 docs/irrigation/legacy.md:1: error SD402 superseded-without-successor: no active document names `irrigation/legacy` in `supersedes`

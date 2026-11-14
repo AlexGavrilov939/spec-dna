@@ -5,10 +5,55 @@
 
 use crate::model::DocType;
 
-/// Returns the body of the template of a type, after the front matter.
+/// Returns the body of the default template of a type, after the front
+/// matter.
 fn body(ty: DocType) -> &'static str {
     match ty {
-        DocType::Spec => {
+        DocType::Product => {
+            "## Purpose
+
+{{What the product does, and for whom.}}
+
+## Scope
+
+{{What the product covers, and what it leaves out.}}
+"
+        }
+        DocType::System => {
+            "## Overview
+
+{{The parts of the system and how they work together.}}
+
+## Constraints
+
+- {{A constraint that every part keeps.}}
+"
+        }
+        DocType::Terms => {
+            "## Terms
+
+| Term | Meaning | Forbidden synonyms |
+| --- | --- | --- |
+| {{term}} | {{meaning}} | {{synonyms}} |
+"
+        }
+        DocType::Roadmap => {
+            "## Next
+
+- {{Planned work.}}
+
+## Later
+
+- {{Work with no date.}}
+"
+        }
+        DocType::Questions => {
+            "## Open
+
+- {{A question that has no answer yet, and who can answer it.}}
+"
+        }
+        DocType::Requirements => {
             "## Requirements
 
 - **{{key}}**: When {{trigger}}, the {{system}} SHALL {{response}}.
@@ -18,7 +63,7 @@ fn body(ty: DocType) -> &'static str {
 {{Notes. Cite the code of the requirements in inline code spans.}}
 "
         }
-        DocType::Contract => {
+        DocType::Interface => {
             "## Interface
 
 {{The operations, or a link to the OpenAPI, AsyncAPI or schema file.}}
@@ -28,14 +73,15 @@ fn body(ty: DocType) -> &'static str {
 - **{{key}}**: The {{service}} SHALL {{behavior of the interface}}.
 "
         }
-        DocType::Guide => {
-            "## Rules
+        DocType::Procedure => {
+            "## Purpose
 
-- {{One convention for each item.}}
+{{When to use this procedure, and what it gives.}}
 
-## Procedure
+## Steps
 
-1. {{Step.}}
+1. {{Command or action.}}
+2. {{Check.}}
 "
         }
         DocType::Decision => {
@@ -53,18 +99,57 @@ Chosen option: {{option}}, because {{reason}}.
 - Bad: {{effect}}.
 "
         }
-        DocType::Change => {
-            "## Proposal
+        DocType::Intent => {
+            "## Intent
 
-{{What changes, and why.}}
+{{What this change gives, and for whom.}}
 
-## Plan
+## Why now
 
-1. {{Step.}}
+{{The reason to do it now.}}
+
+## Out of scope
+
+- {{What this change does not do.}}
 "
         }
-        DocType::Note => "{{Observations, research or reference material.}}\n",
-        DocType::Invariant => {
+        DocType::Spec => {
+            "## Delta
+
+{{The requirements that this change adds, changes or removes.}}
+
+## Interfaces
+
+{{The interfaces that this change touches.}}
+
+## Decisions
+
+{{The decisions that this change needs.}}
+
+## Concerns
+
+- {{An open concern.}}
+"
+        }
+        DocType::Plan => {
+            "## Files
+
+- {{A path that this change touches.}}
+
+## Order
+
+1. {{Step.}}
+
+## Risks
+
+- {{Risk.}}
+
+## Proof
+
+{{How to see that the change works.}}
+"
+        }
+        DocType::Rule => {
             "## Rules
 
 - **{{key}}**: The {{system}} SHALL {{rule that every change in the scope keeps}}.
@@ -72,25 +157,6 @@ Chosen option: {{option}}, because {{reason}}.
 ## Rationale
 
 {{Why the rule exists. Link the decision.}}
-"
-        }
-        DocType::Runbook => {
-            "## When to use
-
-{{The alert, symptom or request that starts this runbook.}}
-
-## Steps
-
-1. {{Command or action.}}
-2. {{Check.}}
-
-## Verify
-
-{{How to see that the system is healthy again.}}
-
-## Rollback
-
-{{How to undo the steps.}}
 "
         }
         DocType::Incident => {
@@ -110,40 +176,50 @@ Chosen option: {{option}}, because {{reason}}.
 
 - Requirements: {{links to the requirements, such as [[doc-id#key]]}}
 - Decisions: {{links to the decisions}}
-- Runbooks: {{links to the runbooks}}
+- Procedures: {{links to the procedures}}
 
 ## Follow-ups
 
 - {{Action.}}
 "
         }
-        DocType::Reference => {
+        DocType::Research => {
             "{{Research, data or other cold material. spec-dna context does not serve this document unless a target names it.}}\n"
         }
     }
 }
 
 /// The namespace of a new document of a type, when its id has none: each type
-/// gets its own directory in a mixed root. A spec has no namespace.
+/// gets its own directory in a mixed root. The foundation and pending types
+/// are files of the root, and a requirements document has no namespace.
 pub fn namespace(ty: DocType) -> Option<&'static str> {
     match ty {
-        DocType::Spec => None,
-        DocType::Contract => Some("contracts"),
-        DocType::Guide => Some("guides"),
+        DocType::Product
+        | DocType::System
+        | DocType::Terms
+        | DocType::Roadmap
+        | DocType::Questions
+        | DocType::Requirements => None,
+        DocType::Rule => Some("rules"),
+        DocType::Interface => Some("interfaces"),
         DocType::Decision => Some("decisions"),
-        DocType::Change => Some("changes"),
-        DocType::Note => Some("notes"),
-        DocType::Invariant => Some("invariants"),
-        DocType::Runbook => Some("runbooks"),
+        DocType::Procedure => Some("procedures"),
         DocType::Incident => Some("incidents"),
-        DocType::Reference => Some("reference"),
+        DocType::Research => Some("research"),
+        DocType::Intent | DocType::Spec | DocType::Plan => Some("intent"),
     }
+}
+
+/// Returns true for a type that has a file of its own in the folder of a
+/// change: `intent/<slug>/<type>.md`.
+pub fn in_intent_folder(ty: DocType) -> bool {
+    matches!(ty, DocType::Intent | DocType::Spec | DocType::Plan)
 }
 
 /// Returns the first status of a new document of a type.
 pub fn first_status(ty: DocType) -> Option<&'static str> {
     match ty {
-        DocType::Decision | DocType::Change => Some("proposed"),
+        DocType::Decision => Some("proposed"),
         t if t.has_status() => Some("draft"),
         _ => None,
     }
@@ -155,8 +231,8 @@ pub fn render(ty: DocType, title: &str) -> String {
     if let Some(s) = first_status(ty) {
         fm.push_str(&format!("status: {s}\n"));
     }
-    if ty == DocType::Invariant {
-        // An invariant applies to the paths of its scope. "**" is the whole
+    if ty == DocType::Rule {
+        // A rule applies to the paths of its scope. "**" is the whole
         // project: narrow it.
         fm.push_str("applies-to: [\"**\"]\n");
     }

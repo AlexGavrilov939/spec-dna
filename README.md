@@ -42,14 +42,14 @@ Before an agent edits `src/valves.rs`, `context` gives it the requirement that c
 
 ```console
 $ spec-dna context src/valves.rs
-<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 275 of 8000 characters; about 69 tokens (estimated) -->
+<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 291 of 8000 characters; about 73 tokens (estimated) -->
 
-<!-- valves#requirements h:e27a5916071223ee spec/active cites -->
+<!-- valves#requirements h:e27a5916071223ee requirements/active cites -->
 ## Requirements
 
 - **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray. The check is in `src/valves.rs`.
 
-<!-- valves#valves h:678c75294fdea71f spec/active cites -->
+<!-- valves#valves h:678c75294fdea71f requirements/active cites -->
 # Valves
 ```
 
@@ -85,7 +85,7 @@ You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the ta
 
     ```md
     ---
-    type: spec
+    type: requirements
     status: active
     ---
     # Valves

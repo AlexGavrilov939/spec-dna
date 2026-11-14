@@ -376,7 +376,7 @@ pub const BY_DIR: u8 = 2;
 /// file. The order of the documents is:
 ///
 /// - documents that cite a file, then an identifier, then a directory
-/// - specs and contracts, guides, decisions, changes, notes
+/// - requirements, interfaces and rules, procedures, decisions, intents, research
 /// - the higher total score
 /// - the document id
 pub fn citing(
@@ -438,11 +438,16 @@ pub fn citing(
             .push((*ch, class(s), points(s)));
     }
     let type_rank = |t: DocType| match t {
-        DocType::Invariant | DocType::Spec | DocType::Contract => 0,
-        DocType::Guide | DocType::Runbook => 1,
+        DocType::Rule | DocType::Requirements | DocType::Interface => 0,
+        DocType::Procedure | DocType::Product | DocType::System | DocType::Terms => 1,
         DocType::Decision => 2,
-        DocType::Change | DocType::Incident => 3,
-        DocType::Note | DocType::Reference => 4,
+        DocType::Intent
+        | DocType::Spec
+        | DocType::Plan
+        | DocType::Incident
+        | DocType::Roadmap
+        | DocType::Questions => 3,
+        DocType::Research => 4,
     };
     let mut docs: Vec<(u32, u8, u32, Vec<usize>)> = by_doc
         .into_iter()

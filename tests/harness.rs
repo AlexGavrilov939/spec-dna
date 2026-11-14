@@ -1171,13 +1171,13 @@ fn the_upgrade_changes_the_hook_of_0_4_1_and_the_harness_files_together() {
 fn the_skill_lists_the_project_types_and_check_accepts_it_with_the_harness() {
     let r = Repo::empty();
     let (code, out, err) = r.init_with(
-        "types = [\"spec\", \"decision\"]\nharness = \"lean\"\n",
+        "types = [\"requirements\", \"decision\"]\nharness = \"lean\"\n",
         &[],
     );
     assert_eq!(code, 0, "{out}{err}");
     let skill = r.read(".claude/skills/spec-dna/SKILL.md");
     assert!(
-        skill.contains("Types of this project: spec, decision."),
+        skill.contains("Types of this project: requirements, decision."),
         "{skill}"
     );
     let (code, out) = r.run(&["check", "--all"]);

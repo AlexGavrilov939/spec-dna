@@ -1,5 +1,5 @@
 ---
-type: guide
+type: procedure
 status: active
 applies-to: [irrigation, "src/**"]
 ---

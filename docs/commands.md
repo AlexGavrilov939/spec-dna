@@ -22,7 +22,7 @@ spec-dna mv irrigation/valves#sensor-timeout irrigation/sensors
 spec-dna mv irrigation/valves#flush irrigation/valves#sensor-timeout irrigation/sensors   # several keys
 spec-dna mv irrigation/valves#drip irrigation/drip-lines  # a whole section into a new spec
 spec-dna mv guides/deploy#rollback runbooks/rollback --type runbook   # a section of a guide into a new runbook
-spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a reference document
+spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a research document
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
 spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
@@ -104,7 +104,7 @@ spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <tex
 5. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
 6. The other sections.
 
-`context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file. It lists a change or a note that cites the file, but it does not serve that document.
+`context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file. It lists an intent, an incident or a roadmap that cites the file, but it does not serve that document. It never lists a research document.
 
 In a document with requirements, the requirement sections come first, then the title section. `context` lists the other sections of that document.
 
@@ -121,7 +121,7 @@ spec-dna show <id>[#<anchor>]
 spec-dna show --conventions <type>
 ```
 
-`show <id>` prints a document, a section with its subsections, or one requirement, with ids and hashes. For a spec or a contract, it also prints these items:
+`show <id>` prints a document, a section with its subsections, or one requirement, with ids and hashes. For a requirements, interface or rule document, it also prints these items:
 
 - the number of recognized requirements (`--json`: their keys);
 - the evidence of each requirement: its `verified-by` paths and the `covers:` tags of the tests.
@@ -134,7 +134,7 @@ spec-dna show --conventions <type>
 spec-dna new <type> <id> [--root <dir>]
 ```
 
-`new` writes a new document from the template of its type ([types.md](types.md)). In a mixed root, an id without a namespace gets the namespace of its type, such as `decisions/<id>`.
+`new` writes a new document from the template of its type ([types.md](types.md)). In a mixed root, an id without a namespace gets the namespace of its type, such as `decisions/<id>`. For an `intent`, a `spec` or a `plan`, the id is the slug of a change, and `new` writes `intent/<slug>/<type>.md`. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
 
 ## mv
 
@@ -148,17 +148,17 @@ The first form moves a document with `git mv`. It adds the old id to the `aliase
 The second form splits a document of any type. It moves requirements, or whole sections with their subsections, into one of these documents:
 
 - an existing document of any type;
-- a new document. `mv` writes its front matter and its title. Its type is the type of its root, `--type`, `reference` for the history of a decision, or the type of the source.
+- a new document. `mv` writes its front matter and its title. Its type is the type of its root, `--type`, `research` for the history of a decision, or the type of the source.
 
 These rules apply to a split:
 
-- Requirements move only into a spec, a contract or an invariant.
+- Requirements move only into a requirements, interface or rule document.
 - Each moved section of `HEAD` keeps its old id as an alias: `<old-id>#<anchor>` in the `aliases` of the destination.
 - Each moved requirement whose id is in `HEAD` gets an inline marker `<!-- aliases: ... -->` with that id. A key that is new in the uncommitted change gets no alias.
 - The rows of `companion-sections`, such as a coverage table, move with their requirements. If a row names a key that moves and a key that stays, `mv` refuses the move.
 - Each moved section leaves its heading in the source, with a one-line pointer to its new place.
 - Links to a moved key or section follow it. This rule also applies in accepted decisions, because a link destination is not frozen text.
-- A decision keeps its frozen text. Only its amendment and history sections move, into a reference document. `mv` lists the moved amendments that can change the outcome. These amendments are candidates for a new decision that supersedes the old one.
+- A decision keeps its frozen text. Only its amendment and history sections move, into a research document. `mv` lists the moved amendments that can change the outcome. These amendments are candidates for a new decision that supersedes the old one.
 
 Before `mv` changes a file, a preservation check compares the result with the current tree:
 
@@ -175,7 +175,7 @@ If a check fails, `mv` changes nothing. It names each requirement whose text wou
 spec-dna history <doc-id> [<to>]
 ```
 
-`history` moves the history sections of a document into a reference document. The history sections are the `history-sections`, and the amendment sections of a decision. `history` leaves a pointer for each section, and it adds a backlink. The default destination is `<name>-history.md` next to the document, in a mixed root.
+`history` moves the history sections of a document into a research document. The history sections are the `history-sections`, and the amendment sections of a decision. `history` leaves a pointer for each section, and it adds a backlink. The default destination is `<name>-history.md` next to the document, in a mixed root.
 
 ## index
 

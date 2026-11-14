@@ -1,6 +1,6 @@
 # spec-dna configuration for corpus D (rust-lang/rfcs). The retrieval
 # measurement uses it. RFCs are proposals that were merged, so the root gives
-# them the type `change`, as for corpus B.
+# them the type `research`, as for corpus B.
 spec-dna = "0.1.0"
 # Some RFCs link to other RFCs with URLs of this repository.
 self-urls = [
@@ -10,6 +10,5 @@ self-urls = [
 
 [[roots]]
 path = "text"
-type = "change"
-status = "accepted"
+type = "research"
 legacy-ids = [{ alias = "RFC-{n}", file = "{n}-*" }]

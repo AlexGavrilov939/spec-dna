@@ -108,9 +108,9 @@ pub struct Plan {
 /// into its own namespace there (`decisions/<id>`), so that the ids of
 /// different types cannot clash.
 fn layout_rows(root: &str) -> Vec<Row> {
-    let mut main = blank_row(root, None, DocType::Spec);
+    let mut main = blank_row(root, None, DocType::Requirements);
     main.status = Some("draft".into());
-    main.why = "new documents: specs by default; `spec-dna new <type> <id>` uses one namespace for each type".into();
+    main.why = "new documents: requirements by default; `spec-dna new <type> <id>` uses one namespace for each type".into();
     vec![main]
 }
 
@@ -989,7 +989,7 @@ fn parse_types(v: &[String]) -> Result<Vec<DocType>, String> {
     let mut out = Vec::new();
     for w in v {
         let t = DocType::from_name(w)
-            .ok_or_else(|| format!("unknown type `{w}`; use {}", DocType::names()))?;
+            .ok_or_else(|| format!("unknown type `{w}`; {}", DocType::unknown_hint(w)))?;
         if !out.contains(&t) {
             out.push(t);
         }
@@ -1414,7 +1414,7 @@ fn harness_json(h: Option<&HarnessRun>, level: Level) -> String {
 const RESTART: &str = "Restart Claude Code. Then check: the header shows the main model, /advisor shows the advisor, and @ lists the agents.";
 
 /// The types of a plan change the roots of a new project. They also change the
-/// type of a detected root whose type is not chosen (it becomes a note).
+/// type of a detected root whose type is not chosen (it becomes research).
 fn apply_types(plan: &mut Plan, root: &str) {
     if plan.layout {
         plan.rows = layout_rows(root);
@@ -1422,12 +1422,12 @@ fn apply_types(plan: &mut Plan, root: &str) {
     }
     for r in &mut plan.rows {
         let t = r.ty.unwrap_or(r.default_type);
-        if !plan.types.contains(&t) && t != DocType::Note {
-            r.why = format!("{} (type `{}` not chosen: note)", r.why, t.name());
+        if !plan.types.contains(&t) && t != DocType::Research {
+            r.why = format!("{} (type `{}` not chosen: research)", r.why, t.name());
             if r.ty.is_some() {
-                r.ty = Some(DocType::Note);
+                r.ty = Some(DocType::Research);
             }
-            r.default_type = DocType::Note;
+            r.default_type = DocType::Research;
             r.status = None;
             r.status_map.clear();
             r.required_off.clear();
@@ -1457,14 +1457,15 @@ fn edit_row(r: &mut Row, edits: &str) -> Result<(), String> {
             "path" => r.path = v.trim_matches('/').to_string(),
             "type" if v == "mixed" => r.ty = None,
             "type" => {
-                let t = DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?;
+                let t = DocType::from_name(v)
+                    .ok_or_else(|| format!("unknown type `{v}`; {}", DocType::unknown_hint(v)))?;
                 r.ty = Some(t);
                 r.default_type = t;
                 retype(r);
             }
             "default-type" => {
-                r.default_type =
-                    DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?;
+                r.default_type = DocType::from_name(v)
+                    .ok_or_else(|| format!("unknown type `{v}`; {}", DocType::unknown_hint(v)))?;
                 retype(r);
             }
             "status" => r.status = (!v.is_empty() && v != "none").then(|| v.to_string()),
@@ -1487,7 +1488,8 @@ fn retype(r: &mut Row) {
         .is_some_and(|s| !r.default_type.statuses().contains(&s))
     {
         r.status = match r.default_type {
-            DocType::Decision | DocType::Change => Some("proposed".into()),
+            DocType::Decision => Some("proposed".into()),
+            DocType::Intent | DocType::Spec | DocType::Plan => Some("draft".into()),
             t if t.has_status() => Some("active".into()),
             _ => None,
         };
@@ -2715,7 +2717,7 @@ mod tests {
         assert_eq!(cfg.roots.len(), 1);
         assert_eq!(cfg.roots[0].path, "docs");
         assert!(cfg.types.is_empty(), "every type by default");
-        assert!(cfg.allows(DocType::Contract));
+        assert!(cfg.allows(DocType::Interface));
         assert_eq!(
             cfg.roots[0].required_sections[DocType::Decision as usize],
             [["Decisión", "Decision Outcome", "Decision"]]
@@ -2728,14 +2730,17 @@ mod tests {
             cfg.severity(crate::diag::Code::RequirementKeyword, Some(0)),
             None
         );
-        assert_eq!(cfg.budgets[DocType::Spec as usize], (20_000, 40_000));
+        assert_eq!(
+            cfg.budgets[DocType::Requirements as usize],
+            (20_000, 40_000)
+        );
         let mut r = plan.rows[0].clone();
         edit_row(
             &mut r,
-            "type=guide status=active exclude=a/**,b.md legacy-ids=DEF-{n}",
+            "type=procedure status=active exclude=a/**,b.md legacy-ids=DEF-{n}",
         )
         .unwrap();
-        assert_eq!(r.ty, Some(DocType::Guide));
+        assert_eq!(r.ty, Some(DocType::Procedure));
         assert_eq!(r.exclude, ["a/**", "b.md"]);
         assert!(edit_row(&mut r, "colour=red").is_err());
     }
@@ -2747,7 +2752,7 @@ mod tests {
         r.status = Some("proposed".into());
         r.extra
             .push("required-sections = { decision = [\"Decisión\"] }".into());
-        edit_row(&mut r, "type=spec").unwrap();
+        edit_row(&mut r, "type=requirements").unwrap();
         assert_eq!(r.status.as_deref(), Some("active"));
         assert!(r.extra.is_empty());
         // A removed decision section stays removed with aliases.

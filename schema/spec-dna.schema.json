@@ -81,34 +81,49 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "spec": {
+        "product": {
           "$ref": "#/$defs/budget"
         },
-        "contract": {
+        "system": {
           "$ref": "#/$defs/budget"
         },
-        "guide": {
+        "terms": {
+          "$ref": "#/$defs/budget"
+        },
+        "roadmap": {
+          "$ref": "#/$defs/budget"
+        },
+        "questions": {
+          "$ref": "#/$defs/budget"
+        },
+        "rule": {
+          "$ref": "#/$defs/budget"
+        },
+        "requirements": {
+          "$ref": "#/$defs/budget"
+        },
+        "interface": {
           "$ref": "#/$defs/budget"
         },
         "decision": {
           "$ref": "#/$defs/budget"
         },
-        "change": {
-          "$ref": "#/$defs/budget"
-        },
-        "note": {
-          "$ref": "#/$defs/budget"
-        },
-        "invariant": {
-          "$ref": "#/$defs/budget"
-        },
-        "runbook": {
+        "procedure": {
           "$ref": "#/$defs/budget"
         },
         "incident": {
           "$ref": "#/$defs/budget"
         },
-        "reference": {
+        "research": {
+          "$ref": "#/$defs/budget"
+        },
+        "intent": {
+          "$ref": "#/$defs/budget"
+        },
+        "spec": {
+          "$ref": "#/$defs/budget"
+        },
+        "plan": {
           "$ref": "#/$defs/budget"
         },
         "growth": {
@@ -356,16 +371,21 @@
     },
     "type": {
       "enum": [
-        "spec",
-        "contract",
-        "guide",
+        "product",
+        "system",
+        "terms",
+        "roadmap",
+        "questions",
+        "rule",
+        "requirements",
+        "interface",
         "decision",
-        "change",
-        "note",
-        "invariant",
-        "runbook",
+        "procedure",
         "incident",
-        "reference"
+        "research",
+        "intent",
+        "spec",
+        "plan"
       ]
     },
     "pattern": {
@@ -410,7 +430,7 @@
           ]
         },
         "default-type": {
-          "description": "For mixed roots only: the type of a document that has no `type` field. Default `note`.",
+          "description": "For mixed roots only: the type of a document that has no `type` field. Default `research`.",
           "$ref": "#/$defs/type"
         },
         "status": {
@@ -467,12 +487,13 @@
               "proposed",
               "accepted",
               "rejected",
-              "done"
+              "approved",
+              "closed"
             ]
           }
         },
         "required-sections": {
-          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type. An empty list removes the requirement. The defaults are: decision `[\"Decision Outcome\", \"Decision\"]`, invariant `[\"Rules\"]`, runbook `[\"Steps\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`. For a decision, `context` serves the first required section as the summary.",
+          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type. An empty list removes the requirement. The defaults are: decision `[\"Decision Outcome\", \"Decision\"]`, rule `[\"Rules\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`, intent `[\"Intent\", \"Problem\", \"Summary\"]`, spec `[\"Delta\"]`, plan `[\"Files\"]`. For a decision, `context` serves the first required section as the summary.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"

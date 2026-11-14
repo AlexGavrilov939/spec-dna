@@ -53,7 +53,7 @@ codes! {
     KeyDuplicate = "SD204", "key-duplicate", Error, "Rename one of the requirements. The keys in a document must be unique.";
     FrontMatterSyntax = "SD301", "front-matter-syntax", Error, "Use the front matter subset: `key: value` lines, where each value is a string or a list of strings.";
     FrontMatterField = "SD302", "front-matter-field", Error, "Give the field a string or a list of strings.";
-    TypeInvalid = "SD303", "type-invalid", Error, "Use a type of the root and of the `types` list of spec-dna.toml (without the list: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference), or add the type to the list.";
+    TypeInvalid = "SD303", "type-invalid", Error, "Use a type of the root and of the `types` list of spec-dna.toml (without the list: product, system, terms, roadmap, questions, rule, requirements, interface, decision, procedure, incident, research, intent, spec, plan), or add the type to the list. The message names the new type of a type of 0.5.";
     StatusInvalid = "SD304", "status-invalid", Error, "Set a `status` that the document type allows.";
     SectionMissing = "SD305", "section-missing", Error, "Add the required section heading.";
     PlaceholderLeft = "SD306", "placeholder-left", Error, "Replace the template placeholder (`{{...}}`) with the text of the document.";
@@ -75,9 +75,9 @@ codes! {
     CitedPathRemoved = "SD606", "cited-path-removed", Warning, "Update the document: cite the new path, or change the text about the removed file.";
     CitedSymbolRemoved = "SD607", "cited-symbol-removed", Warning, "Update the document: cite the new identifier, or change the text about the removed code.";
     RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
-    IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, decisions and runbooks that the incident involves, with `[[<id>]]` or a Markdown link.";
+    IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, rules, decisions and procedures that the incident involves, with `[[<id>]]` or a Markdown link.";
     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
-    DecisionLinksChange = "SD611", "decision-links-change", Warning, "Link the decision from the change instead. A change can be deleted when it is done or rejected, but the frozen text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the change in an amendment or a live section.";
+    DecisionLinksChange = "SD611", "decision-links-change", Warning, "Link the decision from the intent instead. An intent can be deleted when it is closed, but the frozen text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent in an amendment or a live section.";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";

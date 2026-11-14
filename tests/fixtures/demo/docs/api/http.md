@@ -1,5 +1,5 @@
 ---
-type: contract
+type: interface
 status: active
 ---
 # HTTP API

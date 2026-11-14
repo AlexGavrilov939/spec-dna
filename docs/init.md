@@ -27,7 +27,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | Statuses | The status words in the front matter of each root. A word that the type does not allow gets a `status-map` entry. For example, `shipped` and `implemented` map to `active`, and `approved` maps to `accepted` for a decision. An unknown word maps to the default status of the root |
 | Heading languages and aliases | The scripts of the headings. Known translations of `Decision Outcome` and `Amendments` in decisions (for example `Entscheidung`, `Decisión`, `Nachtrag`) become `required-sections` and `amendment-sections` |
 | Exclusions | Vendored directories (`vendor`, `node_modules`, `third_party`), generated directories (`dist`, `build`, `generated`), files that say that a generator wrote them, sibling directories with a vendor prefix (`vendor-*`, `external-*`), and the files of a decision root that are not decisions (a README without an outcome, `*-implementation-plan.md`) |
-| Large reference directories | A directory with 100 Markdown files or more, or 1,000,000 characters or more, and with no typed directory in it. It becomes a `reference` root |
+| Large reference directories | A directory with 100 Markdown files or more, or 1,000,000 characters or more, and with no typed directory in it. It becomes a `research` root |
 | Required sections | If most documents of a type in a root do not have the required sections, the root removes the requirement |
 | Budgets | The documents over the hard budget, at 3 levels |
 | Stack and apps | Manifests such as `Cargo.toml`, `package.json`, `go.mod` and `pyproject.toml`, down to depth 3 |
@@ -44,15 +44,17 @@ Detection skips vendored, generated and test fixture directories (`fixtures`, `t
 The name of a directory gives the type of the root:
 
 - `adr`, `adrs` and `decisions` give `decision`.
-- `specs` gives `spec`.
-- `contracts` gives `contract`.
-- `guides` and `guidelines` give `guide`.
-- `runbooks` gives `runbook`.
+- `specs` and `requirements` give `requirements`.
+- `contracts` and `interfaces` give `interface`.
+- `guides`, `guidelines`, `runbooks` and `playbooks` give `procedure`.
 - `incidents`, `incident`, `postmortems` and `postmortem` give `incident`.
-- `rfcs`, `tasks` and `plans` give `change`.
-- `research`, `references`, `meetings` and `archive` give `reference`.
+- `invariants` and `principles` give `rule`.
+- `rfcs`, `proposals`, `changes`, `tasks`, `plans` and `enhancements` give `research`.
+- `research`, `references`, `meetings` and `archive` give `research`.
 
-This rule also applies to a top-level directory, such as `rfcs/`. The names `incident` and `postmortem` are also common names of code directories. They give a type only inside a documentation tree, or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `guide`. A root becomes mixed if the front matter of its documents names another type.
+`init` never proposes the types `intent`, `spec` and `plan`. To start a change, run `spec-dna new intent <slug>`.
+
+This rule also applies to a top-level directory, such as `rfcs/`. The names `incident` and `postmortem` are also common names of code directories. They give a type only inside a documentation tree, or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `procedure`. A root becomes mixed if the front matter of its documents names another type.
 
 ### Id patterns
 
@@ -61,21 +63,21 @@ This rule also applies to a top-level directory, such as `rfcs/`. The names `inc
   - each number of the root is unique;
   - no file of the root starts with a date;
   - no other root makes the same alias.
-- Files with a number and no prefix make a root only for decisions and changes.
+- Files with a number and no prefix make a root only for decisions.
 
 ### Types of numbered directories
 
 The files of the directory give its type. `init` examines these facts in this order:
 
-1. The prefix: `ADR` gives `decision`, `RFC` gives `change` and `INC` gives `incident`.
+1. The prefix: `ADR` gives `decision`, `RFC` gives `research` and `INC` gives `incident`.
 2. The front matter `type` of most files.
 3. The content of most files:
     - `Decision`, or `Context` and `Consequences`, gives `decision`.
     - `Root cause` as a heading or a table field, or `Timeline` and `Impact`, gives `incident`.
-    - `Steps` gives `runbook`.
-    - Requirements with a BCP 14 keyword give `spec`.
+    - `Steps` gives `procedure`.
+    - Requirements with a BCP 14 keyword give `requirements`.
 
-If the files show no type, the type is the type of the enclosing root, if that root has a type. In a mixed root, the type is `note`. A mixed documentation tree takes the type of its numbered files only if it has no other documents.
+If the files show no type, the type is the type of the enclosing root, if that root has a type. In a mixed root, the type is `research`. A mixed documentation tree takes the type of its numbered files only if it has no other documents.
 
 ## Questions
 
@@ -85,14 +87,14 @@ If the files show no type, the type is the type of the enclosing root, if that r
 | 2 | The knowledge types of the project. A shorter list writes `types` into `spec-dna.toml`. Then a document of another type is an error | Every type (no `types` key). The question shows the detected types |
 | 3 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 4 | The normative language and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected aliases |
-| 5 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it (`type=spec status=active exclude=a/**,b.md`) | Accept |
+| 5 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it (`type=requirements status=active exclude=a/**,b.md`) | Accept |
 | 6 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
 | 7 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
 | 8 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 | 9 | The agent harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean` |
 | 10 | The models: `role=model[:effort]` words, such as `reviewer=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high spec-writer=sonnet:high`. The detected values replace the main model and the advisor |
 
-A language other than `en` sets `[rules] lint = "off"`, because the requirement lint reads English only. A type that you do not choose makes its detected roots `note` roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`). In this root, `spec-dna new` puts each type into its own namespace, such as `decisions/<id>`. Thus the ids of different types cannot clash.
+A language other than `en` sets `[rules] lint = "off"`, because the requirement lint reads English only. A type that you do not choose makes its detected roots `research` roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`). In this root, `spec-dna new` puts each type into its own namespace, such as `decisions/<id>`. Thus the ids of different types cannot clash.
 
 ## Preview and files
 
@@ -108,7 +110,7 @@ Then the preview shows the full `spec-dna.toml` and each file to create or chang
 
 After the list, the preview gives the diff of each file other than `spec-dna.toml`. This includes the harness files and the files that `init` removes. A file that does not exist yet shows as a diff against `/dev/null`. A file that `init` removes shows as a diff to `/dev/null`. `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`. A new project and `--reconfigure` also give `answers` with the 10 answers. With an existing `spec-dna.toml`, `--dry-run --json` gives `files` with the same entries, and `harness`.
 
-The skill lists the types of the project (`types` of `spec-dna.toml`), or all 10 types if the project has no `types` list. If you change `types` later, run `spec-dna init` to update the skill, or `check` reports SD502.
+The skill lists the types of the project (`types` of `spec-dna.toml`), or all 15 types if the project has no `types` list. If you change `types` later, run `spec-dna init` to update the skill, or `check` reports SD502.
 
 For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file. `--json` has a `harness` object with the level, the files (path, action and note), the kept notes, the warnings and the bytes.
 
@@ -126,7 +128,7 @@ An answers file is TOML. Each key is optional. An absent key keeps its default.
 
 ```toml
 profile = "standard"
-types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]
+types = ["requirements", "decision", "rule", "procedure", "incident", "research"]
 evidence = "warning"            # "profile", "off", "warning" or "error"
 evidence-style = "both"         # "covers", "verified-by" or "both"
 language = "en"
@@ -147,7 +149,7 @@ write = true                    # false: the preview only
 [[roots]]                       # optional: these roots replace the mapping
 path = "docs"
 type = "mixed"
-default-type = "spec"
+default-type = "requirements"
 ```
 
 The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).

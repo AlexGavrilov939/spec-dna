@@ -25,7 +25,7 @@ const SKILL_DESCRIPTION: &str = "Loads and checks the specs for a task. Use it b
 /// request carries it, so each line must change what the agent does.
 const SKILL_BODY: &str = "# spec-dna
 
-1. If the task changes code or docs, run `spec-dna context <file>...` once. Give all the files that you plan to change (or a document id). Do not run it for a question without edits. The output gives the sections in priority order: invariants, the entry, the sections that cite the files, their decisions. Each section has an id.
+1. If the task changes code or docs, run `spec-dna context <file>...` once. Give all the files that you plan to change (or a document id). Do not run it for a question without edits. The output gives the sections in priority order: rules, the entry, the sections that cite the files, their decisions. Each section has an id.
 2. Read a listed section with `spec-dna show <id>#<anchor>` only if the task needs it.
 3. Before you edit a document, run `spec-dna show --conventions <type>` once for its type. Follow the project conventions that it prints. `context` serves them first when a target is a document of that type.
 4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`. Use a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. To link a test to a requirement, write `covers: <doc-id>#<key>` in the test.
@@ -373,15 +373,15 @@ mod tests {
             all,
             "all types and no list agree"
         );
-        let few = skill_file(&[DocType::Decision, DocType::Spec]);
+        let few = skill_file(&[DocType::Decision, DocType::Requirements]);
         assert!(
-            few.contains("Types of this project: spec, decision."),
+            few.contains("Types of this project: requirements, decision."),
             "{few}"
         );
-        assert!(!few.contains("runbook, incident"), "{few}");
+        assert!(!few.contains("procedure, incident"), "{few}");
         // The hash follows the text, so each list has its own valid block.
         let files = vec![(SKILL, few)];
-        assert!(check(&files, &[DocType::Decision, DocType::Spec]).is_empty());
+        assert!(check(&files, &[DocType::Decision, DocType::Requirements]).is_empty());
         let d = check(&files, &[]);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, Code::AdapterOutdated);

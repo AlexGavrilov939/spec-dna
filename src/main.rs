@@ -113,14 +113,14 @@ any type to an existing or a new document of any type. Every moved key and
 section of HEAD keeps its old id as an alias, and the companion rows of the
 moved requirements move with them. Each moved section leaves its heading
 with a one-line pointer. A decision keeps its frozen text: only its amendment
-and history sections move, into a reference document. A preservation
+and history sections move, into a research document. A preservation
 check runs first; if it fails, nothing changes.",
     ),
     (
         "history",
-        "history <doc-id> [<reference doc id or path>]",
+        "history <doc-id> [<research doc id or path>]",
         "Moves the history sections of a document (`history-sections`, and the
-amendment sections of a decision) into a reference document, with a
+amendment sections of a decision) into a research document, with a
 pointer in place of each section and a backlink.",
     ),
     (
@@ -1018,8 +1018,8 @@ fn show_conventions(repo: &Repo, a: &Args, name: &str) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let ty = model::DocType::from_name(name).ok_or_else(|| {
         Fatal::Usage(format!(
-            "--conventions: unknown type `{name}`; use {}",
-            model::DocType::names()
+            "--conventions: unknown type `{name}`; {}",
+            model::DocType::unknown_hint(name)
         ))
     })?;
     let (cfg, mut c) = load_head(repo, a)?;
@@ -1121,11 +1121,12 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     let name = &a.positional[0];
-    let ty = DocType::from_name(name).ok_or_else(|| {
-        Fatal::Usage(format!(
-            "unknown type `{name}`; use one of {}",
-            DocType::names()
-        ))
+    let ty = DocType::from_name(name).ok_or_else(|| match DocType::from_old_name(name) {
+        Some(t) => Fatal::Usage(format!("unknown type `{name}`; use `new {}`", t.name())),
+        None => Fatal::Usage(format!(
+            "unknown type `{name}`; {}",
+            DocType::unknown_hint(name)
+        )),
     })?;
     if !cfg.allows(ty) {
         return Err(Fatal::Usage(format!(
@@ -1162,7 +1163,13 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     };
     let root = &cfg.roots[root_i];
     let id = match templates::namespace(ty) {
-        Some(ns) if root.single_type.is_none() && !id.contains('/') => format!("{ns}/{id}"),
+        Some(ns) if root.single_type.is_none() && !id.contains('/') => {
+            if templates::in_intent_folder(ty) {
+                format!("{ns}/{id}/{}", ty.name())
+            } else {
+                format!("{ns}/{id}")
+            }
+        }
         _ => id.to_string(),
     };
     let id = id.as_str();
@@ -1214,8 +1221,8 @@ fn split_opts(a: &Args) -> Result<split::Opts, Fatal> {
         None => None,
         Some(name) => Some(model::DocType::from_name(name).ok_or_else(|| {
             Fatal::Usage(format!(
-                "unknown type `{name}`; use one of {}",
-                model::DocType::names()
+                "unknown type `{name}`; {}",
+                model::DocType::unknown_hint(name)
             ))
         })?),
     };
@@ -1245,7 +1252,7 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     Ok(0)
 }
 
-/// Moves the history sections of a document into a reference document.
+/// Moves the history sections of a document into a research document.
 fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 1, 2)?;
     let (cfg, c) = load_head(repo, a)?;
@@ -1286,10 +1293,10 @@ fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             let root = &cfg.roots[d.root];
             if root
                 .single_type
-                .is_some_and(|t| t != model::DocType::Reference)
+                .is_some_and(|t| t != model::DocType::Research)
             {
                 return Err(Fatal::Usage(format!(
-                    "root `{}` holds only `{}` documents; give the path of the reference document under another root, such as `<dir>/{}-history.md`",
+                    "root `{}` holds only `{}` documents; give the path of the research document under another root, such as `<dir>/{}-history.md`",
                     root.path,
                     d.ty.name(),
                     d.id.rsplit('/').next().unwrap_or(&d.id)
@@ -1314,7 +1321,7 @@ fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let mut args = tops;
     args.push(dest);
     let opts = split::Opts {
-        ty: Some(model::DocType::Reference),
+        ty: Some(model::DocType::Research),
     };
     let m = mv::run(repo, &cfg, &c, base.as_ref(), &args, &opts, false)?;
     report_move(&m, a.json);

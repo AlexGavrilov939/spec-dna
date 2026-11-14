@@ -201,8 +201,8 @@ pub struct Root {
     /// Severity overrides for this root. They replace `[rules]`.
     pub rules: Rules,
     /// For each type, the names of its history sections (iteration logs,
-    /// discussions, superseded notes). They match as amendment sections do.
-    /// `spec-dna history` moves them into a `reference` document. In a
+    /// discussions, superseded drafts). They match as amendment sections do.
+    /// `spec-dna history` moves them into a `research` document. In a
     /// decision, they are not frozen text.
     pub history_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of the sections that belong to the
@@ -214,9 +214,9 @@ pub struct Root {
     /// decision, they are not frozen text, and their text can change in
     /// place.
     pub live_sections: [Vec<String>; DocType::COUNT],
-    /// For a root of type `reference`: the namespace of its ids, a suffix of
-    /// its path that no other reference root has. Thus the ids of two
-    /// reference roots never collide.
+    /// For a root of type `research`: the namespace of its ids, a suffix of
+    /// its path that no other research root has. Thus the ids of two
+    /// research roots never collide.
     pub namespace: Option<String>,
 }
 
@@ -442,17 +442,31 @@ fn match_parts(parts: &[Part], s: &str, cap: &mut Option<String>) -> bool {
     }
 }
 
+/// The message for a type name that is not a type. For a type name of 0.5,
+/// it names the new type. `key` is the key that holds the name.
+fn unknown_type(key: &str, name: &str) -> String {
+    format!(
+        "{key}: unknown type `{name}`; {}",
+        DocType::unknown_hint(name)
+    )
+}
+
 pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
-    (10_000, 20_000), // spec
-    (10_000, 20_000), // contract
-    (14_000, 28_000), // guide
+    (8_000, 16_000),  // product
+    (8_000, 16_000),  // system
+    (10_000, 20_000), // terms
+    (8_000, 16_000),  // roadmap
+    (8_000, 16_000),  // questions
+    (3_000, 6_000),   // rule: `context` serves it first, so it stays short
+    (10_000, 20_000), // requirements
+    (10_000, 20_000), // interface
     (7_000, 14_000),  // decision
-    (10_000, 20_000), // change
-    (0, 0),           // note: no budget
-    (3_000, 6_000),   // invariant: `context` serves it first, so it stays short
-    (8_000, 16_000),  // runbook
+    (14_000, 28_000), // procedure
     (6_000, 12_000),  // incident
-    (0, 0),           // reference: cold material, no budget
+    (0, 0),           // research: cold material, no budget
+    (6_000, 12_000),  // intent
+    (10_000, 20_000), // spec
+    (6_000, 12_000),  // plan
 ];
 
 /// The default required sections of each type: a list of groups. A document
@@ -461,9 +475,11 @@ pub fn default_required_sections() -> [Vec<Vec<String>>; DocType::COUNT] {
     let mut out: [Vec<Vec<String>>; DocType::COUNT] = Default::default();
     let group = |h: &[&str]| h.iter().map(|s| s.to_string()).collect::<Vec<String>>();
     out[DocType::Decision as usize] = vec![group(&DEFAULT_DECISION_SECTIONS)];
-    out[DocType::Invariant as usize] = vec![group(&["Rules"])];
-    out[DocType::Runbook as usize] = vec![group(&["Steps"])];
+    out[DocType::Rule as usize] = vec![group(&["Rules"])];
     out[DocType::Incident as usize] = vec![group(&["Summary"]), group(&["Root cause"])];
+    out[DocType::Intent as usize] = vec![group(&["Intent", "Problem", "Summary"])];
+    out[DocType::Spec as usize] = vec![group(&["Delta"])];
+    out[DocType::Plan as usize] = vec![group(&["Files"])];
     out
 }
 
@@ -517,6 +533,11 @@ impl Config {
             let tbl = v.as_table().ok_or("`budgets` must be a table")?;
             let mut b = Fields::new(tbl, "budgets.");
             growth = b.opt_u32("growth")?.unwrap_or(growth);
+            for name in tbl.keys() {
+                if DocType::from_name(name).is_none() && DocType::from_old_name(name).is_some() {
+                    return Err(unknown_type(&format!("`budgets.{name}`"), name));
+                }
+            }
             for ty in DocType::ALL {
                 if let Some(v) = b.take(ty.name()) {
                     let tbl = v
@@ -600,9 +621,7 @@ impl Config {
         };
         let mut types = Vec::new();
         for name in t.opt_strs("types")? {
-            let ty = DocType::from_name(&name).ok_or_else(|| {
-                format!("`types`: unknown type `{name}`; use {}", DocType::names())
-            })?;
+            let ty = DocType::from_name(&name).ok_or_else(|| unknown_type("`types`", &name))?;
             if !types.contains(&ty) {
                 types.push(ty);
             }
@@ -620,12 +639,8 @@ impl Config {
         if let Some(v) = t.take("conventions") {
             let tbl = v.as_table().ok_or("`conventions` must be a table")?;
             for (name, list) in tbl {
-                let ty = DocType::from_name(name).ok_or_else(|| {
-                    format!(
-                        "`conventions.{name}`: unknown type `{name}`; use {}",
-                        DocType::names()
-                    )
-                })?;
+                let ty = DocType::from_name(name)
+                    .ok_or_else(|| unknown_type(&format!("`conventions.{name}`"), name))?;
                 let ptrs = list
                     .as_array()
                     .and_then(|a| {
@@ -791,7 +806,7 @@ impl Root {
         } else {
             Some(
                 DocType::from_name(&ty)
-                    .ok_or_else(|| format!("`{prefix}type`: unknown type `{ty}`"))?,
+                    .ok_or_else(|| unknown_type(&format!("`{prefix}type`"), &ty))?,
             )
         };
         let default_type = match f.opt_str("default-type")? {
@@ -802,9 +817,9 @@ impl Root {
                     ));
                 }
                 DocType::from_name(&d)
-                    .ok_or_else(|| format!("`{prefix}default-type`: unknown type `{d}`"))?
+                    .ok_or_else(|| unknown_type(&format!("`{prefix}default-type`"), &d))?
             }
-            None => single_type.unwrap_or(DocType::Note),
+            None => single_type.unwrap_or(DocType::Research),
         };
         let status = f.opt_str("status")?;
         if let Some(s) = &status
@@ -984,14 +999,14 @@ impl Root {
     }
 }
 
-/// Gives each root of type `reference` a namespace: the shortest suffix of
-/// its path (whole segments) that no other reference root has. A reference
+/// Gives each root of type `research` a namespace: the shortest suffix of
+/// its path (whole segments) that no other research root has. A research
 /// root at the repository root has no namespace.
 fn set_namespaces(roots: &mut [Root]) {
     let paths: Vec<Option<Vec<String>>> = roots
         .iter()
         .map(|r| {
-            (r.single_type == Some(DocType::Reference) && !r.path.is_empty())
+            (r.single_type == Some(DocType::Research) && !r.path.is_empty())
                 .then(|| r.path.split('/').map(str::to_string).collect())
         })
         .collect();
@@ -1024,9 +1039,11 @@ fn section_groups_per_type(
         .ok_or_else(|| format!("`{key}` must be a table"))?;
     for (name, list) in tbl {
         let key = format!("{key}.{name}");
-        let ty = DocType::from_name(name)
-            .filter(|t| types.contains(t))
-            .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+        let ty = match DocType::from_name(name) {
+            Some(t) if types.contains(&t) => t,
+            Some(_) => return Err(format!("`{key}`: `{name}` is not a type of this root")),
+            None => return Err(unknown_type(&format!("`{key}`"), name)),
+        };
         let items = list
             .as_array()
             .ok_or_else(|| format!("`{key}` must be an array of strings or of arrays"))?;
@@ -1069,9 +1086,11 @@ fn headings_per_type(
         .ok_or_else(|| format!("`{key}` must be a table"))?;
     for (name, list) in tbl {
         let key = format!("{key}.{name}");
-        let ty = DocType::from_name(name)
-            .filter(|t| types.contains(t))
-            .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+        let ty = match DocType::from_name(name) {
+            Some(t) if types.contains(&t) => t,
+            Some(_) => return Err(format!("`{key}`: `{name}` is not a type of this root")),
+            None => return Err(unknown_type(&format!("`{key}`"), name)),
+        };
         let headings = list
             .as_array()
             .and_then(|a| {
@@ -1168,7 +1187,7 @@ mod tests {
     #[test]
     fn convention_files_are_the_paths_outside_the_documents() {
         let c = Config::parse(
-            "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#a\", \"./CONTRIBUTING.md\", \"docs/x.md#b\", \"token\", \"../up.md\", \"/abs.md\", \"a\\\\b.md\", \"notes.txt\"]\ndecision = [\"CONTRIBUTING.md#c\"]\n[[roots]]\npath = \"docs\"\nexclude = [\"README.md\"]\n",
+            "spec-dna = \"0.1.0\"\n[conventions]\ninterface = [\"docs/README.md#a\", \"./CONTRIBUTING.md\", \"docs/x.md#b\", \"token\", \"../up.md\", \"/abs.md\", \"a\\\\b.md\", \"notes.txt\"]\ndecision = [\"CONTRIBUTING.md#c\"]\n[[roots]]\npath = \"docs\"\nexclude = [\"README.md\"]\n",
         )
         .unwrap();
         // docs/x.md is a document. An id, a non-Markdown file and a path that
@@ -1186,7 +1205,7 @@ exclude = ["**/vendor/**"]
 [[roots]]
 path = "docs"
 type = "mixed"
-default-type = "spec"
+default-type = "requirements"
 status = "draft"
 legacy-keys = ["R-{n}"]
 
@@ -1195,7 +1214,7 @@ path = "docs/adr"
 type = "decision"
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
 
-[budgets.spec]
+[budgets.requirements]
 soft = 100
 hard = 200
 
@@ -1211,9 +1230,9 @@ budget = 9000
         let c = Config::parse(FULL).unwrap();
         assert_eq!(c.pin, "0.1.0");
         assert_eq!(c.roots.len(), 2);
-        assert_eq!(c.roots[0].default_type, DocType::Spec);
+        assert_eq!(c.roots[0].default_type, DocType::Requirements);
         assert_eq!(c.roots[1].single_type, Some(DocType::Decision));
-        assert_eq!(c.budgets[DocType::Spec as usize], (100, 200));
+        assert_eq!(c.budgets[DocType::Requirements as usize], (100, 200));
         assert_eq!(c.max_words, 25);
         assert_eq!(c.context_budget, 9000);
         assert_eq!(c.root_of("docs/adr/ADR-1-x.md"), Some(1));
@@ -1243,9 +1262,11 @@ budget = 9000
     #[test]
     fn rejects_unknown_keys_and_bad_values() {
         assert!(
-            Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntyp = \"spec\"\n")
-                .unwrap_err()
-                .contains("roots[0].typ")
+            Config::parse(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntyp = \"requirements\"\n"
+            )
+            .unwrap_err()
+            .contains("roots[0].typ")
         );
         assert!(
             Config::parse("spec-dna = \"0.1.0\"\n")
@@ -1257,7 +1278,7 @@ budget = 9000
                 .unwrap_err()
                 .contains("spec-dna")
         );
-        assert!(Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"spec\"\nstatus = \"accepted\"\n").is_err());
+        assert!(Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"requirements\"\nstatus = \"accepted\"\n").is_err());
     }
 
     #[test]
@@ -1269,7 +1290,7 @@ self-urls = ["https://example.org/acme/specs/blob/*/"]
 [[roots]]
 path = "docs"
 status-map = { released = "active", wip = "draft" }
-required-sections = { decision = ["Lösung"], spec = ["Requirements", "Anforderungen"] }
+required-sections = { decision = ["Lösung"], requirements = ["Requirements", "Anforderungen"] }
 enforce-budgets = false
 [[roots]]
 path = "adr"
@@ -1291,10 +1312,10 @@ type = "decision"
             [["Lösung"]]
         );
         assert_eq!(
-            r.required_sections[DocType::Spec as usize],
+            r.required_sections[DocType::Requirements as usize],
             [["Requirements", "Anforderungen"]]
         );
-        assert!(r.required_sections[DocType::Guide as usize].is_empty());
+        assert!(r.required_sections[DocType::Procedure as usize].is_empty());
         assert!(!r.enforce_budgets);
         assert_eq!(
             c.roots[1].required_sections[DocType::Decision as usize],
@@ -1305,22 +1326,23 @@ type = "decision"
 
         let err = |extra: &str| {
             Config::parse(&format!(
-                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"spec\"\n{extra}\n"
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"requirements\"\n{extra}\n"
             ))
             .unwrap_err()
         };
         // `active` is already a spec status. `accepted` is not a spec status.
         assert!(err("status-map = { active = \"draft\" }").contains("already a status"));
         assert!(
-            err("status-map = { frozen = \"accepted\" }").contains("not a status of type `spec`")
+            err("status-map = { frozen = \"accepted\" }")
+                .contains("not a status of type `requirements`")
         );
         assert!(err("status-map = { frozen = 1 }").contains("must be a string"));
-        assert!(err("required-sections = { spec = [\" \"] }").contains("empty heading"));
+        assert!(err("required-sections = { requirements = [\" \"] }").contains("empty heading"));
         assert!(
             err("required-sections = { decision = [\"Outcome\"] }")
                 .contains("not a type of this root")
         );
-        assert!(err("required-sections = { spec = \"Requirements\" }").contains("array"));
+        assert!(err("required-sections = { requirements = \"Requirements\" }").contains("array"));
         assert!(err("enforce-budgets = \"no\"").contains("true or false"));
         // An empty list removes the required section.
         let c = Config::parse(
@@ -1339,7 +1361,7 @@ type = "decision"
             err("amendment-sections = { decision = [\"Nachtrag\"] }")
                 .contains("not a type of this root")
         );
-        assert!(err("amendment-sections = { spec = [\"\"] }").contains("empty heading"));
+        assert!(err("amendment-sections = { requirements = [\"\"] }").contains("empty heading"));
         assert!(err("lint-severity = \"warn\"").contains("\"off\", \"warning\" or \"error\""));
         assert!(err("lint-severity = false").contains("lint-severity"));
         assert!(err("drift-severity = \"fatal\"").contains("`roots[0].drift-severity` must be"));
@@ -1406,7 +1428,7 @@ path = "notes"
         assert_eq!(c.roots[0].amendment_sections[d], ["Nachtrag", "Amendments"]);
         assert_eq!(c.severity(Code::SentenceLength, Some(0)), None);
         assert_eq!(c.roots[1].amendment_sections[d], DEFAULT_AMENDMENT_SECTIONS);
-        assert!(c.roots[1].amendment_sections[DocType::Spec as usize].is_empty());
+        assert!(c.roots[1].amendment_sections[DocType::Requirements as usize].is_empty());
         assert_eq!(
             c.severity(Code::SentenceLength, Some(1)),
             Some(Severity::Error)
@@ -1489,7 +1511,7 @@ spec-dna = "0.1.0"
 tests = ["spec/**"]
 [[roots]]
 path = "ops"
-required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]], runbook = [] }
+required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]], procedure = [] }
 "#,
         )
         .unwrap();
@@ -1498,11 +1520,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             r.required_sections[DocType::Incident as usize],
             [vec!["Summary", "Zusammenfassung"], vec!["Root cause"]]
         );
-        assert!(r.required_sections[DocType::Runbook as usize].is_empty());
-        assert_eq!(
-            r.required_sections[DocType::Invariant as usize],
-            [["Rules"]]
-        );
+        assert!(r.required_sections[DocType::Procedure as usize].is_empty());
+        assert_eq!(r.required_sections[DocType::Rule as usize], [["Rules"]]);
         assert_eq!(c.evidence_tests, ["spec/**"]);
         assert!(c.is_test_file("spec/a_spec.rb"));
         assert!(!c.is_test_file("tests/a.rs"));
@@ -1513,7 +1532,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert!(c.is_test_file("lib/test_loans.py"));
         assert!(!c.is_test_file("src/loans.py"));
         let e = Config::parse(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nrequired-sections = { spec = [[]] }\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nrequired-sections = { requirements = [[]] }\n",
         )
         .unwrap_err();
         assert!(e.contains("non-empty arrays"), "{e}");

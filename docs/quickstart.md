@@ -87,7 +87,7 @@ git commit -m "build: adopt spec-dna"
 
 `init` writes these files:
 
-- `spec-dna.toml`, with the pinned version, the profile and the document roots. A new project gets one root (`docs`, or the directory of `--root <dir>`). In this root, a document without a `type` is a `spec` with the status `draft`. [docs/config.md](config.md) gives all keys.
+- `spec-dna.toml`, with the pinned version, the profile and the document roots. A new project gets one root (`docs`, or the directory of `--root <dir>`). In this root, a document without a `type` is a `requirements` document with the status `draft`. [docs/config.md](config.md) gives all keys.
 - One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` once for a task that edits code or docs. It also tells them to run `spec-dna check` before a commit. On an existing project, `init` adds only this line. The line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
@@ -121,12 +121,12 @@ To set another type, write it in the front matter. Or use `spec-dna new` to writ
 
 ```sh
 spec-dna new decision pump-choice       # docs/decisions/pump-choice.md
-spec-dna new invariant water             # docs/invariants/water.md: rules that every change in its scope keeps
-spec-dna new runbook restart-worker      # docs/runbooks/restart-worker.md
+spec-dna new rule water                  # docs/rules/water.md: rules that every change in its scope keeps
+spec-dna new procedure restart-worker    # docs/procedures/restart-worker.md
 spec-dna new incident 2026-11-flooded-bed
 ```
 
-There are 10 types: `spec`, `contract`, `guide`, `decision`, `change`, `note`, `invariant`, `runbook`, `incident` and `reference`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves a matching invariant first. It never serves a `reference` document unless a target names it.
+There are 15 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec` and `plan`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves a matching rule first. It never serves a `research` document unless a target names it.
 
 To link a test to a requirement, write a `covers:` tag in a comment of the test. This works in any language:
 
@@ -146,8 +146,8 @@ spec-dna context loans                  # a document, its dependencies and its d
 spec-dna show loans#loan-period         # one section or requirement
 spec-dna check                          # before a commit: exit 1 on a new error
 spec-dna mv loans circulation/loans     # move a document; the old id stays as an alias
-spec-dna mv loans#loan-period policy    # move a requirement into the spec `policy`
-spec-dna mv loans#holds loans#fines circulation  # split: move 2 sections into a new spec
+spec-dna mv loans#loan-period policy    # move a requirement into the document `policy`
+spec-dna mv loans#holds loans#fines circulation  # split: move 2 sections into a new document
 spec-dna show --conventions decision    # the project rules for a type: `[conventions]` in spec-dna.toml
 ```
 
@@ -162,7 +162,7 @@ To change an accepted decision, do one of these actions:
 
 For another warning code with more than 10 diagnostics, such as SD608 on a mature corpus, `check` also gives one count. `spec-dna check --json` lists each diagnostic.
 
-If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and a new or an existing spec. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
+If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
 
 Split a document only for a size error: SD702, and in the `strict` profile also SD701, SD703 and SD704. A size warning needs no split.
 

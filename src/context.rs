@@ -14,7 +14,7 @@
 //!   citing documents (depth 1)
 //! - accepted decisions linked to these documents, as summaries
 //!
-//! For a spec or contract with requirements, the assembly serves the
+//! For a requirements, interface or rule document, the assembly serves the
 //! requirement sections first, then the title section, in full. It serves a
 //! document without requirements in heading order. It lists the other sections
 //! of these documents as stubs with id, hash and size. It lists the other
@@ -46,7 +46,7 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
     Convention,
-    Invariant,
+    Rule,
     Entry,
     Cites,
     Concern,
@@ -60,7 +60,7 @@ impl Tier {
     fn name(self) -> &'static str {
         match self {
             Tier::Convention => "convention",
-            Tier::Invariant => "invariant",
+            Tier::Rule => "rule",
             Tier::Entry => "entry",
             Tier::Cites => "cites",
             Tier::Concern => "applies",
@@ -337,10 +337,10 @@ pub fn assemble(
             }
         }
     }
-    // A reference document is cold material: the plan has it only if a
+    // A research document is cold material: the plan has it only if a
     // target names it.
     let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
-        if (c.docs[d as usize].ty != DocType::Reference || entry_docs.contains(&d))
+        if (c.docs[d as usize].ty != DocType::Research || entry_docs.contains(&d))
             && seen.insert((d, ch))
         {
             plan.push((d, ch, t));
@@ -359,14 +359,14 @@ pub fn assemble(
         .collect();
     let mut rest: Vec<(u32, usize)> = Vec::new();
 
-    // 0. Invariants whose `applies-to` matches a scope. An invariant without
+    // 0. Rules whose `applies-to` matches a scope. A rule without
     // `applies-to` applies to the whole project.
-    let invariants: Vec<u32> = c
+    let rules: Vec<u32> = c
         .docs
         .iter()
         .enumerate()
         .filter(|(i, d)| {
-            d.ty == DocType::Invariant
+            d.ty == DocType::Rule
                 && !d.is_inactive()
                 && !entry_docs.contains(&(*i as u32))
                 && (d.applies_to.is_empty()
@@ -376,8 +376,8 @@ pub fn assemble(
         })
         .map(|(i, _)| i as u32)
         .collect();
-    for d in invariants {
-        normative_units(c, d, Tier::Invariant, &mut plan, &mut rest, &mut add);
+    for d in rules {
+        normative_units(c, d, Tier::Rule, &mut plan, &mut rest, &mut add);
     }
 
     // 1. Entries.
@@ -411,7 +411,7 @@ pub fn assemble(
     // 2. Sections that cite a code path by its path or by an identifier, then
     // the summary of the best citing documents. The summary has the
     // requirement sections, or the outcome of a decision, and the title. A
-    // change or a note is only listed (ADR 0001, "Document types").
+    // intent or an incident is only listed (ADR 0001, "Document types").
     let mut scope_docs = entry_docs.clone();
     let listed_only = |d: u32| c.docs[d as usize].ty.is_informative();
     let strong: Vec<&(u32, u8, Vec<usize>)> = cited
@@ -419,7 +419,7 @@ pub fn assemble(
         .filter(|x| {
             x.1 < crate::cite::BY_DIR
                 && !entry_docs.contains(&x.0)
-                && c.docs[x.0 as usize].ty != DocType::Reference
+                && c.docs[x.0 as usize].ty != DocType::Research
         })
         .collect();
     let mut served = 0;
@@ -483,7 +483,7 @@ pub fn assemble(
     for (d, class, chunks) in cited {
         if *class != crate::cite::BY_DIR
             || entry_docs.contains(d)
-            || c.docs[*d as usize].ty == DocType::Reference
+            || c.docs[*d as usize].ty == DocType::Research
         {
             continue;
         }

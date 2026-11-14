@@ -12,48 +12,63 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DocType {
-    Spec = 0,
-    Contract = 1,
-    Guide = 2,
-    Decision = 3,
-    Change = 4,
-    Note = 5,
-    Invariant = 6,
-    Runbook = 7,
-    Incident = 8,
-    Reference = 9,
+    Product = 0,
+    System = 1,
+    Terms = 2,
+    Roadmap = 3,
+    Questions = 4,
+    Rule = 5,
+    Requirements = 6,
+    Interface = 7,
+    Decision = 8,
+    Procedure = 9,
+    Incident = 10,
+    Research = 11,
+    Intent = 12,
+    Spec = 13,
+    Plan = 14,
 }
 
 impl DocType {
     /// The number of types. Per-type tables of the configuration have this
     /// length, with the index `DocType as usize`.
-    pub const COUNT: usize = 10;
+    pub const COUNT: usize = 15;
 
     pub const ALL: [DocType; DocType::COUNT] = [
-        DocType::Spec,
-        DocType::Contract,
-        DocType::Guide,
+        DocType::Product,
+        DocType::System,
+        DocType::Terms,
+        DocType::Roadmap,
+        DocType::Questions,
+        DocType::Rule,
+        DocType::Requirements,
+        DocType::Interface,
         DocType::Decision,
-        DocType::Change,
-        DocType::Note,
-        DocType::Invariant,
-        DocType::Runbook,
+        DocType::Procedure,
         DocType::Incident,
-        DocType::Reference,
+        DocType::Research,
+        DocType::Intent,
+        DocType::Spec,
+        DocType::Plan,
     ];
 
     pub fn name(self) -> &'static str {
         [
-            "spec",
-            "contract",
-            "guide",
+            "product",
+            "system",
+            "terms",
+            "roadmap",
+            "questions",
+            "rule",
+            "requirements",
+            "interface",
             "decision",
-            "change",
-            "note",
-            "invariant",
-            "runbook",
+            "procedure",
             "incident",
-            "reference",
+            "research",
+            "intent",
+            "spec",
+            "plan",
         ][self as usize]
     }
 
@@ -66,18 +81,50 @@ impl DocType {
         DocType::ALL.map(DocType::name).join(", ")
     }
 
-    /// The statuses of the type. A type without statuses (note, incident,
-    /// reference) needs no `status` and accepts any value.
+    /// The 0.6 type of a 0.5 type name, for hints only. No input accepts an
+    /// old name. The name `spec` is also a 0.6 type, so it has no entry: a
+    /// 0.5 `spec` and a 0.6 `spec` cannot be told apart by their names.
+    pub fn from_old_name(s: &str) -> Option<DocType> {
+        Some(match s {
+            "contract" => DocType::Interface,
+            "invariant" => DocType::Rule,
+            "guide" | "runbook" => DocType::Procedure,
+            "note" | "reference" => DocType::Research,
+            "change" => DocType::Intent,
+            _ => return None,
+        })
+    }
+
+    /// The text that a message adds to the name of an unknown type: the new
+    /// type if the name is a 0.5 type, and the list of types.
+    pub fn unknown_hint(s: &str) -> String {
+        match DocType::from_old_name(s) {
+            Some(t) => format!(
+                "`{}` replaces it from 0.6; use one of {}",
+                t.name(),
+                DocType::names()
+            ),
+            None => format!("use one of {}", DocType::names()),
+        }
+    }
+
+    /// The statuses of the type. A type without statuses (for example
+    /// incident or research) needs no `status` and accepts any value.
     pub fn statuses(self) -> &'static [&'static str] {
         match self {
-            DocType::Spec
-            | DocType::Contract
-            | DocType::Guide
-            | DocType::Invariant
-            | DocType::Runbook => &["draft", "active", "deprecated", "superseded", "retired"],
+            DocType::Rule | DocType::Requirements | DocType::Interface | DocType::Procedure => {
+                &["draft", "active", "deprecated", "superseded", "retired"]
+            }
             DocType::Decision => &["proposed", "accepted", "superseded", "rejected"],
-            DocType::Change => &["proposed", "accepted", "done", "rejected"],
-            DocType::Note | DocType::Incident | DocType::Reference => &[],
+            DocType::Intent => &["draft", "accepted", "closed"],
+            DocType::Spec | DocType::Plan => &["draft", "approved"],
+            DocType::Product
+            | DocType::System
+            | DocType::Terms
+            | DocType::Roadmap
+            | DocType::Questions
+            | DocType::Incident
+            | DocType::Research => &[],
         }
     }
 
@@ -86,18 +133,23 @@ impl DocType {
     }
 
     pub fn has_requirements(self) -> bool {
-        matches!(self, DocType::Spec | DocType::Contract | DocType::Invariant)
+        matches!(
+            self,
+            DocType::Requirements | DocType::Interface | DocType::Rule
+        )
     }
 
     /// Normative types: `context` serves them for a matching `applies-to`.
     pub fn is_normative(self) -> bool {
         matches!(
             self,
-            DocType::Spec
-                | DocType::Contract
-                | DocType::Guide
-                | DocType::Invariant
-                | DocType::Runbook
+            DocType::Requirements
+                | DocType::Interface
+                | DocType::Rule
+                | DocType::Procedure
+                | DocType::Product
+                | DocType::System
+                | DocType::Terms
         )
     }
 
@@ -106,7 +158,13 @@ impl DocType {
     pub fn is_informative(self) -> bool {
         matches!(
             self,
-            DocType::Change | DocType::Note | DocType::Incident | DocType::Reference
+            DocType::Intent
+                | DocType::Spec
+                | DocType::Plan
+                | DocType::Incident
+                | DocType::Research
+                | DocType::Roadmap
+                | DocType::Questions
         )
     }
 }
@@ -181,8 +239,10 @@ impl Doc {
     }
 
     pub fn is_inactive(&self) -> bool {
-        matches!(self.status_str(), "superseded" | "retired" | "rejected")
-            || self.moved_to.is_some()
+        matches!(
+            self.status_str(),
+            "superseded" | "retired" | "rejected" | "closed"
+        ) || self.moved_to.is_some()
     }
 
     /// A stub or a generated index: no budget applies.
@@ -647,7 +707,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                 code: Code::TypeInvalid,
                 line,
                 target: t.clone(),
-                message: format!("unknown type `{t}`; use one of {}", DocType::names()),
+                message: format!("unknown type `{t}`; {}", DocType::unknown_hint(&t)),
             }),
             Some(t2) => match root.single_type {
                 Some(st) if st != t2 => issues.push(Issue {
@@ -696,13 +756,21 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                 } else {
                     format!("`{s}` maps to `{canon}`, which")
                 };
-                // `draft` is the proposal state of a spec, a contract and an
-                // invariant. `proposed` is the proposal state of a decision
-                // and a change (docs/types.md).
-                let hint = if canon == "proposed" && allowed("draft") {
-                    "; use `draft` for a proposal, or map `proposed` to it with `status-map`"
-                } else {
-                    ""
+                // `draft` is the proposal state of each type but a decision.
+                // `proposed` is the proposal state of a decision
+                // (docs/types.md). `rejected` and `done` are 0.5 statuses of
+                // a change.
+                let hint = match canon.as_str() {
+                    "proposed" if allowed("draft") => {
+                        "; use `draft` for a proposal, or map `proposed` to it with `status-map`"
+                    }
+                    "rejected" if ty == DocType::Intent => {
+                        "; use `closed` for an intent that ended with no result"
+                    }
+                    "done" if ty == DocType::Intent => {
+                        "; `done` ended in 0.6: a finished change is a `research` document"
+                    }
+                    _ => "",
                 };
                 issues.push(Issue {
                     code: Code::StatusInvalid,
@@ -726,7 +794,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             line: 1,
             target: String::new(),
             message: format!(
-                "a `{}` needs a `status` ({})",
+                "type `{}` needs a `status` ({})",
                 ty.name(),
                 ty.statuses().join(", ")
             ),
@@ -867,7 +935,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                     format!("{}-section-{}", ty.name(), g + 1)
                 },
                 message: format!(
-                    "a {} needs a section headed {}",
+                    "type `{}` needs a section headed {}",
                     ty.name(),
                     names.join(" or ")
                 ),
@@ -1092,9 +1160,32 @@ mod tests {
     }
 
     #[test]
+    fn a_type_of_0_5_maps_to_its_new_type_for_hints_only() {
+        for (old, new) in [
+            ("contract", DocType::Interface),
+            ("invariant", DocType::Rule),
+            ("guide", DocType::Procedure),
+            ("runbook", DocType::Procedure),
+            ("note", DocType::Research),
+            ("reference", DocType::Research),
+            ("change", DocType::Intent),
+        ] {
+            assert_eq!(DocType::from_old_name(old), Some(new), "{old}");
+            assert_eq!(DocType::from_name(old), None, "{old}");
+        }
+        // `spec` is a type of 0.6: it has no hint.
+        assert_eq!(DocType::from_old_name("spec"), None);
+        assert_eq!(DocType::from_name("spec"), Some(DocType::Spec));
+        assert_eq!(DocType::ALL.len(), DocType::COUNT);
+        for (i, t) in DocType::ALL.into_iter().enumerate() {
+            assert_eq!(t as usize, i, "{}", t.name());
+        }
+    }
+
+    #[test]
     fn legacy_statuses_map_per_root() {
         let c = corpus_with(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\n",
             &[
                 ("docs/a.md", "---\nstatus: released\n---\n# A\n"),
                 ("docs/b.md", "---\nstatus: signed-off\n---\n# B\n"),
@@ -1110,11 +1201,11 @@ mod tests {
         };
         assert_eq!(c.docs[0].status.as_deref(), Some("active"));
         assert!(issues(0).is_empty(), "{:?}", issues(0));
-        // `signed-off` maps to `accepted`, which a spec does not allow.
+        // `signed-off` maps to `accepted`, which a requirements document does not allow.
         assert_eq!(
             issues(1),
             [
-                "`signed-off` maps to `accepted`, which is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
+                "`signed-off` maps to `accepted`, which is not a status of type `requirements` (draft, active, deprecated, superseded, retired)"
             ]
         );
         assert_eq!(c.docs[2].status.as_deref(), Some("accepted"));
@@ -1122,7 +1213,7 @@ mod tests {
         assert_eq!(
             issues(3),
             [
-                "`frozen` is not a status of type `spec` (draft, active, deprecated, superseded, retired)"
+                "`frozen` is not a status of type `requirements` (draft, active, deprecated, superseded, retired)"
             ]
         );
     }
@@ -1197,7 +1288,7 @@ mod tests {
 
     fn corpus(files: &[(&str, &str)]) -> Corpus {
         let cfg = Config::parse(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-ids = [\"ADR-{n}\"]\nlegacy-keys = [\"R-{n}\"]\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-ids = [\"ADR-{n}\"]\nlegacy-keys = [\"R-{n}\"]\n",
         )
         .unwrap();
         let mut all: Vec<String> = files.iter().map(|f| f.0.to_string()).collect();
@@ -1335,7 +1426,7 @@ mod tests {
             ),
             (
                 "docs/notes/n.md",
-                "---\ntype: note\n---\n# N\n\nSee R-1 and R-2.\n",
+                "---\ntype: research\n---\n# N\n\nSee R-1 and R-2.\n",
             ),
         ]);
         let s = &c.docs[0];
@@ -1356,7 +1447,7 @@ mod tests {
         assert!(s.issues.is_empty(), "{:?}", s.issues);
         assert!(!s.has_req_in(1) && s.has_req_in(2));
         // A spec with legacy-key tokens and no recognized requirement gets a
-        // warning. A note does not.
+        // warning. A research document does not.
         let t: Vec<(Code, u32)> = c.docs[1].issues.iter().map(|i| (i.code, i.line)).collect();
         assert_eq!(t, [(Code::RequirementsUnrecognized, 5)]);
         assert!(c.docs[1].issues[0].message.starts_with("2 tokens match"));

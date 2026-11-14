@@ -382,7 +382,7 @@ fn localized_amendments_are_not_frozen_text() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nrequired-sections = { decision = [\"Lösung\"] }\namendment-sections = { decision = [\"Nachtrag\", \"Nachträge\"] }\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nrequired-sections = { decision = [\"Lösung\"] }\namendment-sections = { decision = [\"Nachtrag\", \"Nachträge\"] }\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
     );
     let adr = "adr/d1.md";
     r.write(
@@ -464,11 +464,11 @@ fn live_sections_change_in_place_and_frozen_text_does_not() {
     // A live section of the wrong type is a configuration error.
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlive-sections = { spec = [\"Status\"] }\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlive-sections = { requirements = [\"Status\"] }\n",
     );
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{err}");
-    assert!(err.contains("live-sections.spec"), "{err}");
+    assert!(err.contains("live-sections.requirements"), "{err}");
 }
 
 #[test]
@@ -476,19 +476,19 @@ fn conventions_come_first_and_show_prints_them() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#contract-changes\"]\ndecision = [\"rules\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[conventions]\ninterface = [\"docs/README.md#contract-changes\"]\ndecision = [\"rules\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
     );
     r.write(
         "docs/README.md",
-        "---\ntype: reference\n---\n# Docs\n\n## Layout\n\nOne file per area.\n\n## Contract changes\n\nA contract change needs a dated amendment and a new `version` value.\n\n### Example\n\nSee the feed contract.\n\n## Other\n\nNot a convention.\n",
+        "---\ntype: research\n---\n# Docs\n\n## Layout\n\nOne file per area.\n\n## Contract changes\n\nA contract change needs a dated amendment and a new `version` value.\n\n### Example\n\nSee the feed contract.\n\n## Other\n\nNot a convention.\n",
     );
     r.write(
         "docs/rules.md",
-        "---\ntype: guide\nstatus: active\n---\n# Decision rules\n\nAmend, do not rewrite.\n",
+        "---\ntype: procedure\nstatus: active\n---\n# Decision rules\n\nAmend, do not rewrite.\n",
     );
     r.write(
         "docs/feed.md",
-        "---\ntype: contract\nstatus: active\n---\n# Feed\n\n- **interval**: The sensor feed SHALL send a reading every 60 seconds.\n",
+        "---\ntype: interface\nstatus: active\n---\n# Feed\n\n- **interval**: The sensor feed SHALL send a reading every 60 seconds.\n",
     );
     r.write("docs/s.md", "# S\n\n- **run**: The system SHALL run.\n");
     r.commit("docs");
@@ -503,14 +503,14 @@ fn conventions_come_first_and_show_prints_them() {
     assert!(out.contains("convention -->"), "{out}");
     assert!(!out.contains("<!-- docs#other h:"), "{out}");
     assert!(!out.contains("Amend, do not rewrite."), "{out}");
-    // A spec has no conventions.
+    // A requirements document has no conventions.
     let (_, out, _) = r.run(&["context", "s"]);
     assert!(!out.contains("convention -->"), "{out}");
     // `show --conventions <type>` prints them.
-    let (code, out, _) = r.run(&["show", "--conventions", "contract"]);
+    let (code, out, _) = r.run(&["show", "--conventions", "interface"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.starts_with("<!-- conventions of contract: docs/README.md#contract-changes -->"),
+        out.starts_with("<!-- conventions of interface: docs/README.md#contract-changes -->"),
         "{out}"
     );
     assert!(
@@ -524,11 +524,11 @@ fn conventions_come_first_and_show_prints_them() {
         out.contains("<!-- decision: amendment sections: Amendments; live sections: none -->"),
         "{out}"
     );
-    let (_, out, _) = r.run(&["show", "--conventions", "spec"]);
-    assert!(out.contains("No conventions for `spec`"), "{out}");
-    let (_, out, _) = r.run(&["show", "--conventions", "contract", "--json"]);
+    let (_, out, _) = r.run(&["show", "--conventions", "requirements"]);
+    assert!(out.contains("No conventions for `requirements`"), "{out}");
+    let (_, out, _) = r.run(&["show", "--conventions", "interface", "--json"]);
     assert!(
-        out.contains("\"type\":\"contract\"") && out.contains("\"sections\":[{"),
+        out.contains("\"type\":\"interface\"") && out.contains("\"sections\":[{"),
         "{out}"
     );
     let (code, _, err) = r.run(&["show", "--conventions", "nope"]);
@@ -542,10 +542,10 @@ fn conventions_come_first_and_show_prints_them() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("spec-dna.toml:1: error SD106 convention-unresolved: `conventions.contract` points to `docs/README.md#contract-changes`"),
+        out.contains("spec-dna.toml:1: error SD106 convention-unresolved: `conventions.interface` points to `docs/README.md#contract-changes`"),
         "{out}"
     );
-    let (_, out, _) = r.run(&["show", "--conventions", "contract"]);
+    let (_, out, _) = r.run(&["show", "--conventions", "interface"]);
     assert!(
         out.contains("names no document, file or section (SD106)"),
         "{out}"
@@ -565,7 +565,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#contract-changes\", \"./CONTRIBUTING.md#docs\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nexclude = [\"README.md\"]\n",
+        "spec-dna = \"0.1.0\"\n[conventions]\ninterface = [\"docs/README.md#contract-changes\", \"./CONTRIBUTING.md#docs\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nexclude = [\"README.md\"]\n",
     );
     // An excluded README and a file outside every root: not documents.
     r.write(
@@ -581,7 +581,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     );
     r.write(
         "docs/feed.md",
-        "---\ntype: contract\nstatus: active\n---\n# Feed\n\n- **interval**: The sensor feed SHALL send a reading every 60 seconds.\n",
+        "---\ntype: interface\nstatus: active\n---\n# Feed\n\n- **interval**: The sensor feed SHALL send a reading every 60 seconds.\n",
     );
     r.commit("docs");
     let (code, out, _) = r.run(&["check", "--all"]);
@@ -629,7 +629,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     let (_, out, _) = r.run(&["show", "CONTRIBUTING.md#docs", "--json"]);
     assert!(out.contains("\"type\":\"file\""), "{out}");
     // `show --conventions` prints the file sections.
-    let (code, out, _) = r.run(&["show", "--conventions", "contract"]);
+    let (code, out, _) = r.run(&["show", "--conventions", "interface"]);
     assert_eq!(code, 0, "{out}");
     assert!(
         out.contains("A contract change needs a dated amendment.")
@@ -642,7 +642,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
         "CONTRIBUTING.md",
         "# Contributing\n\n## Docs\n\nWrite docs in Simplified Technical English.\n",
     );
-    let (_, out, _) = r.run(&["show", "--conventions", "contract"]);
+    let (_, out, _) = r.run(&["show", "--conventions", "interface"]);
     assert!(out.contains("Simplified Technical English"), "{out}");
     // A renamed heading or a removed file is SD106.
     r.write(
@@ -652,7 +652,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("SD106 convention-unresolved: `conventions.contract` points to `./CONTRIBUTING.md#docs`, which names no document, file or section"),
+        out.contains("SD106 convention-unresolved: `conventions.interface` points to `./CONTRIBUTING.md#docs`, which names no document, file or section"),
         "{out}"
     );
     r.commit("rename");
@@ -666,7 +666,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     // A path that leaves the repository is SD106, not a git failure.
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"../outside.md\", \"/abs.md\"]\n[[roots]]\npath = \"docs\"\n",
+        "spec-dna = \"0.1.0\"\n[conventions]\ninterface = [\"../outside.md\", \"/abs.md\"]\n[[roots]]\npath = \"docs\"\n",
     );
     let (code, out, err) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}{err}");
@@ -682,7 +682,7 @@ fn a_symlinked_convention_file_is_read_again_and_stays_inside() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[conventions]\nspec = [\"link.md#rule\"]\ndecision = [\"away.md\"]\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[conventions]\nrequirements = [\"link.md#rule\"]\ndecision = [\"away.md\"]\n[[roots]]\npath = \"docs\"\ntype = \"requirements\"\nstatus = \"active\"\n",
     );
     r.write("real.md", "# Real\n\n## Rule\n\nold rule\n");
     std::os::unix::fs::symlink("real.md", r.dir.join("link.md")).unwrap();
@@ -692,14 +692,14 @@ fn a_symlinked_convention_file_is_read_again_and_stays_inside() {
     std::os::unix::fs::symlink(&outside, r.dir.join("away.md")).unwrap();
     r.write("docs/s.md", "# S\n\n- **run**: The system SHALL run.\n");
     r.commit("docs");
-    let (_, out, _) = r.run(&["show", "--conventions", "spec"]);
+    let (_, out, _) = r.run(&["show", "--conventions", "requirements"]);
     assert!(out.contains("old rule"), "{out}");
     // The target changes, the link does not: the next run reads the new text.
     r.write(
         "real.md",
         "# Real\n\n## Intro\n\nA much longer introduction paragraph.\n\n## Rule\n\nnew rule\n",
     );
-    let (_, out, _) = r.run(&["show", "--conventions", "spec"]);
+    let (_, out, _) = r.run(&["show", "--conventions", "requirements"]);
     assert!(out.contains("new rule") && !out.contains("Intro"), "{out}");
     let (_, out, _) = r.run(&["context", "docs/s.md"]);
     assert!(out.contains("new rule"), "{out}");
@@ -718,7 +718,7 @@ fn many_warnings_of_one_code_are_one_count() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"requirements\"\nstatus = \"active\"\n",
     );
     let reqs = |n: usize| -> String {
         (1..=n)
@@ -757,7 +757,7 @@ fn lint_severity_follows_the_root() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"spec\"\nstatus = \"draft\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"spec\"\nstatus = \"draft\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"draft\"\nprofile = \"strict\"\n[[roots]]\npath = \"std\"\ntype = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"old\"\ntype = \"requirements\"\nstatus = \"draft\"\nlint-severity = \"off\"\n[[roots]]\npath = \"new\"\ntype = \"requirements\"\nstatus = \"draft\"\nlint-severity = \"error\"\n[[roots]]\npath = \"docs\"\ntype = \"requirements\"\nstatus = \"draft\"\nprofile = \"strict\"\n[[roots]]\npath = \"std\"\ntype = \"requirements\"\nstatus = \"draft\"\n",
     );
     for root in ["old", "new", "docs", "std"] {
         r.write(
@@ -823,7 +823,7 @@ fn fresh_project_init_check_uninstall() {
         ),
         (
             "docs/guides/errors.md",
-            "---\ntype: guide\nstatus: active\napplies-to: [api]\n---\n# Errors\n\nReturn errors as problem details. See [orders](../api/orders.md#requirements).\n",
+            "---\ntype: procedure\nstatus: active\napplies-to: [api]\n---\n# Errors\n\nReturn errors as problem details. See [orders](../api/orders.md#requirements).\n",
         ),
     ];
     for (p, t) in docs {
@@ -973,7 +973,7 @@ fn hard_budget_is_an_error_for_new_and_growing_documents() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n[[roots]]\npath = \"lax\"\ndefault-type = \"spec\"\nstatus = \"active\"\nenforce-budgets = false\n[budgets]\ngrowth = 20\n[budgets.spec]\nsoft = 100\nhard = 200\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n[[roots]]\npath = \"lax\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nenforce-budgets = false\n[budgets]\ngrowth = 20\n[budgets.requirements]\nsoft = 100\nhard = 200\n",
     );
     let words = |n: usize| "word ".repeat(n);
     r.write("docs/big.md", &format!("# Big\n\n{}\n", words(50)));
@@ -1047,7 +1047,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\nrequired-sections = { decision = [\"Lösung\"], spec = [\"Requirements\", \"Anforderungen\"] }\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nstatus-map = { released = \"active\", signed-off = \"accepted\" }\nrequired-sections = { decision = [\"Lösung\"], requirements = [\"Requirements\", \"Anforderungen\"] }\n",
     );
     r.write(
         "docs/cache.md",
@@ -1073,8 +1073,8 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     assert_eq!(
         found,
         [
-            "docs/notes.md:1: error SD305 section-missing: a spec needs a section headed `Requirements` or `Anforderungen`",
-            "docs/old-store.md:1: error SD305 section-missing: a decision needs a section headed `Lösung`"
+            "docs/notes.md:1: error SD305 section-missing: type `requirements` needs a section headed `Requirements` or `Anforderungen`",
+            "docs/old-store.md:1: error SD305 section-missing: type `decision` needs a section headed `Lösung`"
         ],
         "{out}"
     );
@@ -1093,7 +1093,7 @@ fn self_urls_link_documents_inside_the_repository() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\nself-urls = [\"https://example.org/acme/specs/blob/*/\", \"https://example.org/acme/specs/tree/*/\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"guide\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\nself-urls = [\"https://example.org/acme/specs/blob/*/\", \"https://example.org/acme/specs/tree/*/\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"procedure\"\nstatus = \"active\"\n",
     );
     r.write(
         "docs/x/README.md",
@@ -1115,7 +1115,7 @@ fn query_ranks_matching_sections_first() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"guide\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"procedure\"\nstatus = \"active\"\n",
     );
     let filler = |w: &str| format!("{w} ").repeat(120);
     r.write(
@@ -1169,7 +1169,7 @@ fn legacy_requirements_without_a_colon_are_recognized() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
     );
     r.write(
         "docs/orders.md",
@@ -1183,7 +1183,7 @@ fn legacy_requirements_without_a_colon_are_recognized() {
     let (code, out, _) = r.run(&["check", "--all", "--json"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("{\"id\":\"orders\",\"path\":\"docs/orders.md\",\"type\":\"spec\",\"status\":\"active\",\"chars\":"),
+        out.contains("{\"id\":\"orders\",\"path\":\"docs/orders.md\",\"type\":\"requirements\",\"status\":\"active\",\"chars\":"),
         "{out}"
     );
     assert!(out.contains(",\"requirements\":2}"), "{out}");
@@ -1215,7 +1215,7 @@ fn context_lists_inactive_dependencies() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
     );
     r.write(
         "docs/app.md",
@@ -1256,7 +1256,7 @@ fn context_serves_requirement_sections_first() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
     );
     r.write(
         "docs/pumps.md",
@@ -1264,7 +1264,7 @@ fn context_serves_requirement_sections_first() {
     );
     r.write(
         "docs/guide.md",
-        "---\ntype: guide\n---\n# Guide\n\n## First\n\nA.\n\n## Second\n\nB.\n",
+        "---\ntype: procedure\n---\n# Guide\n\n## First\n\nA.\n\n## Second\n\nB.\n",
     );
     r.commit("docs");
     let (code, out, _) = r.run(&["context", "pumps"]);
@@ -1559,11 +1559,11 @@ fn code_project() -> Repo {
     );
     r.write(
         "docs/layout.md",
-        "---\ntype: guide\nstatus: active\n---\n# Layout\n\nAll library code is in src/library/.\n",
+        "---\ntype: procedure\nstatus: active\n---\n# Layout\n\nAll library code is in src/library/.\n",
     );
     r.write(
         "docs/notes/idea.md",
-        "---\ntype: note\n---\n# Idea\n\nRewrite [loans](../../src/library/loans.py).\n",
+        "---\ntype: intent\nstatus: draft\n---\n# Idea\n\n## Intent\n\nRewrite [loans](../../src/library/loans.py).\n",
     );
     r.commit("project");
     r
@@ -1595,8 +1595,8 @@ fn context_serves_the_sections_that_cite_a_code_path() {
     assert!(out.contains("<!-- loans#code h:"), "{out}");
     assert!(out.contains(" cites -->"), "{out}");
     assert!(
-        out.contains("- `notes/idea#idea`"),
-        "a note is only listed: {out}"
+        out.contains("- `notes/idea#intent`"),
+        "an intent is only listed: {out}"
     );
     assert!(out.contains("- `loans#history`"), "{out}");
     assert!(
@@ -1770,7 +1770,7 @@ fn context_keeps_applies_to_above_directory_mentions() {
     }
     r.write(
         "docs/guides/style.md",
-        "---\ntype: guide\nstatus: active\napplies-to: [src/library/**]\n---\n# Style\n\nUse type hints.\n",
+        "---\ntype: procedure\nstatus: active\napplies-to: [src/library/**]\n---\n# Style\n\nUse type hints.\n",
     );
     r.commit("more docs");
     let (_, out, _) = r.run(&["context", "src/library/loans.py"]);
@@ -1851,7 +1851,7 @@ fn split_project() -> Repo {
     );
     r.write(
         "docs/guide.md",
-        "---\ntype: guide\nstatus: active\n---\n# Desk guide\n\nCheck [the identity](loans.md#member-registration) and [the fines](loans.md#fines).\n",
+        "---\ntype: procedure\nstatus: active\n---\n# Desk guide\n\nCheck [the identity](loans.md#member-registration) and [the fines](loans.md#fines).\n",
     );
     r.commit("docs");
     r
@@ -2290,7 +2290,7 @@ fn profile_repo(profile: &str) -> Repo {
     r.write(
         "spec-dna.toml",
         &format!(
-            "spec-dna = \"0.1.0\"\n{profile}\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\n"
+            "spec-dna = \"0.1.0\"\n{profile}\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n"
         ),
     );
     r.write(
@@ -2422,7 +2422,7 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n[[roots]]\npath = \"docs/decisions\"\ntype = \"decision\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\nrequired-sections = { procedure = [\"Steps\"] }\n[[roots]]\npath = \"docs/decisions\"\ntype = \"decision\"\n",
     );
     r.write("src/dosing/dose.py", "def add_fertilizer():\n    pass\n");
     r.write(
@@ -2432,10 +2432,10 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     r.commit("start");
     // `new` writes each type into the right root, from its template.
     for (ty, id, path) in [
-        ("invariant", "rules/water", "docs/rules/water.md"),
-        ("runbook", "ops/restart", "docs/ops/restart.md"),
+        ("rule", "rules/water", "docs/rules/water.md"),
+        ("procedure", "ops/restart", "docs/ops/restart.md"),
         ("incident", "ops/flooded-bed", "docs/ops/flooded-bed.md"),
-        ("reference", "research/pumps", "docs/research/pumps.md"),
+        ("research", "research/pumps", "docs/research/pumps.md"),
         ("decision", "pump-choice", "docs/decisions/pump-choice.md"),
     ] {
         let (code, out, err) = r.run(&["new", ty, id]);
@@ -2445,15 +2445,15 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
             "{out}"
         );
     }
-    let (code, _, err) = r.run(&["new", "spec", "decisions/x"]);
+    let (code, _, err) = r.run(&["new", "requirements", "decisions/x"]);
     assert_eq!(code, 2, "{err}");
-    let (code, _, err) = r.run(&["new", "invariant", "rules/water"]);
+    let (code, _, err) = r.run(&["new", "rule", "rules/water"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("exists"), "{err}");
     let inv = r.read("docs/rules/water.md");
     assert!(
         inv.starts_with(
-            "---\ntype: invariant\nstatus: draft\napplies-to: [\"**\"]\n---\n# Water\n\n## Rules\n"
+            "---\ntype: rule\nstatus: draft\napplies-to: [\"**\"]\n---\n# Water\n\n## Rules\n"
         ),
         "{inv}"
     );
@@ -2464,11 +2464,11 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     // Fill the documents.
     r.write(
         "docs/rules/water.md",
-        "---\ntype: invariant\nstatus: active\napplies-to: [\"src/dosing/**\"]\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
+        "---\ntype: rule\nstatus: active\napplies-to: [\"src/dosing/**\"]\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
     );
     r.write(
         "docs/ops/restart.md",
-        "---\ntype: runbook\nstatus: active\n---\n# Restart\n\n## When to use\n\nThe queue stops.\n",
+        "---\ntype: procedure\nstatus: active\n---\n# Restart\n\n## When to use\n\nThe queue stops.\n",
     );
     r.write(
         "docs/ops/flooded-bed.md",
@@ -2476,7 +2476,7 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     );
     r.write(
         "docs/research/pumps.md",
-        "---\ntype: reference\n---\n# Pump research\n\nThe notes cite `src/dosing/dose.py` many times.\n",
+        "---\ntype: research\n---\n# Pump research\n\nThe notes cite `src/dosing/dose.py` many times.\n",
     );
     r.write(
         "docs/decisions/pump-choice.md",
@@ -2485,7 +2485,7 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("docs/ops/restart.md:1: error SD305 section-missing: a runbook needs a section headed `Steps`"),
+        out.contains("docs/ops/restart.md:1: error SD305 section-missing: type `procedure` needs a section headed `Steps`"),
         "{out}"
     );
     assert!(
@@ -2503,8 +2503,8 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("SD609"), "{out}");
-    // `context` serves the matching invariant first, lists the incident, and
-    // never serves the reference.
+    // `context` serves the matching rule first, lists the incident, and
+    // never serves the research document.
     let (code, out, _) = r.run(&["context", "src/dosing/dose.py"]);
     assert_eq!(code, 0, "{out}");
     let first = out.lines().filter(|l| l.starts_with("<!-- ")).nth(1);
@@ -2512,13 +2512,13 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
         first.is_some_and(|l| l.starts_with("<!-- rules/water")),
         "{out}"
     );
-    assert!(out.contains("invariant/active invariant -->"), "{out}");
+    assert!(out.contains("rule/active rule -->"), "{out}");
     assert!(!out.contains("research/pumps"), "{out}");
     let (_, out, _) = r.run(&["context", "dosing", "--path", "src/dosing/dose.py"]);
     assert!(out.contains("rules/water"), "{out}");
     let (_, out, _) = r.run(&["context", "research/pumps"]);
     assert!(out.contains("The notes cite"), "{out}");
-    // An invariant out of scope is not served.
+    // A rule out of scope is not served.
     r.write("src/panel/screen.py", "def screen():\n    pass\n");
     let (_, out, _) = r.run(&["context", "src/panel/screen.py"]);
     assert!(!out.contains("rules/water"), "{out}");
@@ -2530,7 +2530,7 @@ fn init_answers_file_on_a_new_project() {
     let answers = r.dir.join("../answers-new.toml");
     fs::write(
         &answers,
-        "profile = \"strict\"\ntypes = [\"spec\", \"decision\", \"runbook\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\nharness = \"none\"\n",
+        "profile = \"strict\"\ntypes = [\"requirements\", \"decision\", \"procedure\"]\nevidence = \"warning\"\nadapters = [\"skill\"]\nci = \"github\"\nhook = \"none\"\nbase = \"trunk\"\nharness = \"none\"\n",
     )
     .unwrap();
     let (code, out, err) = r.run(&["init", "--answers", answers.to_str().unwrap()]);
@@ -2539,9 +2539,9 @@ fn init_answers_file_on_a_new_project() {
     let cfg = r.read("spec-dna.toml");
     for want in [
         "profile = \"strict\"",
-        "types = [\"spec\", \"decision\", \"runbook\"]",
+        "types = [\"requirements\", \"decision\", \"procedure\"]",
         "[rules]  # overrides of the profile, by rule group or by code\nevidence = \"warning\"\n",
-        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     ] {
         assert!(cfg.contains(want), "{want}:\n{cfg}");
     }
@@ -2550,30 +2550,30 @@ fn init_answers_file_on_a_new_project() {
     // The skill lists the types of the project, and no other type.
     let skill = r.read(".claude/skills/spec-dna/SKILL.md");
     assert!(
-        skill.contains("Types of this project: spec, decision, runbook."),
+        skill.contains("Types of this project: requirements, decision, procedure."),
         "{skill}"
     );
-    assert!(!skill.contains("contract, guide"), "{skill}");
+    assert!(!skill.contains("interface"), "{skill}");
     let ci = r.read(".github/workflows/spec-dna.yml");
     assert!(
         ci.contains("spec-dna check --base \"origin/${GITHUB_BASE_REF:-trunk}\""),
         "{ci}"
     );
     assert!(out.contains("to commit: git add spec-dna.toml .claude/skills/spec-dna/SKILL.md .github/workflows/spec-dna.yml"), "{out}");
-    // `new` follows the types: a runbook goes into its namespace, a
-    // contract is not a type of this project.
-    let (code, out, _) = r.run(&["new", "runbook", "restart"]);
+    // `new` follows the types: a procedure goes into its namespace, an
+    // interface is not a type of this project.
+    let (code, out, _) = r.run(&["new", "procedure", "restart"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.starts_with("wrote docs/runbooks/restart.md"), "{out}");
-    let (code, _, err) = r.run(&["new", "contract", "api"]);
+    assert!(out.starts_with("wrote docs/procedures/restart.md"), "{out}");
+    let (code, _, err) = r.run(&["new", "interface", "api"]);
     assert_eq!(code, 2, "{err}");
     r.write(
         "docs/api.md",
-        "---\ntype: contract\nstatus: draft\n---\n# Api\n",
+        "---\ntype: interface\nstatus: draft\n---\n# Api\n",
     );
     let (_, out, _) = r.run(&["check"]);
     assert!(
-        out.contains("error SD303 type-invalid: type `contract` is not a type of this project"),
+        out.contains("error SD303 type-invalid: type `interface` is not a type of this project"),
         "{out}"
     );
     // The skill that `init` wrote is the skill that `check` expects.
@@ -2592,17 +2592,17 @@ fn init_detects_a_brownfield_repository() {
     assert_eq!(code, 0, "{out}{err}");
     for want in [
         "[evidence]\ntests = [\"**/tests/**\"]",
-        "path = \"docs\"\ntype = \"mixed\"\ndefault-type = \"guide\"\nstatus = \"active\"\nstatus-map = { current = \"active\" }\n",
+        "path = \"docs\"\ntype = \"mixed\"\ndefault-type = \"procedure\"\nstatus = \"active\"\nstatus-map = { current = \"active\" }\n",
         "path = \"docs/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nexclude = [\"ADR-*-notes.md\", \"README.md\"]\nlegacy-ids = [\"ADR-{n}\"]\nrequired-sections = { decision = [\"Decisión\", \"Decision Outcome\", \"Decision\"] }\n",
-        "path = \"docs/guides\"\ntype = \"guide\"\nstatus = \"active\"\nexclude = [\"vendor-*/**\"]\n",
-        "path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\n",
+        "path = \"docs/guides\"\ntype = \"procedure\"\nstatus = \"active\"\nexclude = [\"vendor-*/**\"]\n",
+        "path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\n",
         "  change AGENTS.md (one generated line)",
         "  change .pre-commit-config.yaml (a local hook at the end: `spec-dna check --staged`)",
         "dry run: nothing written",
     ] {
         assert!(out.contains(want), "{want}:\n{out}");
     }
-    assert!(!out.contains("path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\nrequired-sections"), "{out}");
+    assert!(!out.contains("path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\nrequired-sections"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());
     let (code, out, _) = r.run(&["init", "--dry-run", "--non-interactive", "--json"]);
     assert_eq!(code, 0);
@@ -2624,7 +2624,7 @@ fn init_detects_a_brownfield_repository() {
     let cfg = r.read("spec-dna.toml");
     assert!(!cfg.contains("docs/guides"), "{cfg}");
     assert!(
-        cfg.contains("[budgets.spec]\nsoft = 20000\nhard = 40000\n"),
+        cfg.contains("[budgets.requirements]\nsoft = 20000\nhard = 40000\n"),
         "{cfg}"
     );
     assert!(!r.dir.join(".github/workflows/spec-dna.yml").exists());
@@ -2678,7 +2678,7 @@ fn init_detects_a_brownfield_repository() {
     );
     assert!(cfg.contains("legacy-ids = [\"ADR-{n}\"]"), "{cfg}");
     assert!(
-        cfg.contains("[budgets.spec]\nsoft = 20000\nhard = 40000\n"),
+        cfg.contains("[budgets.requirements]\nsoft = 20000\nhard = 40000\n"),
         "{cfg}"
     );
     let (code, out, _) = r.run(&["check"]);
@@ -2690,11 +2690,11 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     // The keys of 0.3 that no question asks for: the history, companion and
     // live sections of a root, and `[conventions]`.
     let r = Repo::empty();
-    let cfg = "spec-dna = \"0.1.0\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nhistory-sections = { spec = [\"Changelog\"] }\ncompanion-sections = { spec = [\"Coverage table\"] }\n\n[[roots]]\npath = \"docs/adr\"\ntype = \"decision\"\nlive-sections = { decision = [\"Progress\"] }\n\n[conventions]\ndecision = [\"CONTRIBUTING.md#decisions\"]\nspec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]\n";
+    let cfg = "spec-dna = \"0.1.0\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nhistory-sections = { requirements = [\"Changelog\"] }\ncompanion-sections = { requirements = [\"Coverage table\"] }\n\n[[roots]]\npath = \"docs/adr\"\ntype = \"decision\"\nlive-sections = { decision = [\"Progress\"] }\n\n[conventions]\ndecision = [\"CONTRIBUTING.md#decisions\"]\nrequirements = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]\n";
     r.write("spec-dna.toml", cfg);
     r.write(
         "docs/guide.md",
-        "---\ntype: guide\nstatus: active\n---\n# Guide\n\n## Specs\n\nOne rule.\n\n## More\n\nAnother rule.\n",
+        "---\ntype: procedure\nstatus: active\n---\n# Guide\n\n## Specs\n\nOne rule.\n\n## More\n\nAnother rule.\n",
     );
     r.write(
         "CONTRIBUTING.md",
@@ -2705,12 +2705,12 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     assert_eq!(code, 0, "{out}{err}");
     let new = r.read("spec-dna.toml");
     for want in [
-        "history-sections = { spec = [\"Changelog\"] }",
-        "companion-sections = { spec = [\"Coverage table\"] }",
+        "history-sections = { requirements = [\"Changelog\"] }",
+        "companion-sections = { requirements = [\"Coverage table\"] }",
         "live-sections = { decision = [\"Progress\"] }",
         "[conventions]",
         "decision = [\"CONTRIBUTING.md#decisions\"]",
-        "spec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]",
+        "requirements = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]",
     ] {
         assert!(new.contains(want), "{want}\n{new}");
     }
@@ -2733,7 +2733,7 @@ fn reconfigure_keeps_the_sha256_table_in_the_same_form() {
     // The asset names contain dots, so the keys need quotes.
     let r = Repo::empty();
     let cfg = format!(
-        "spec-dna = \"{VERSION}\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\n\n[spec-dna-sha256]\n\"spec-dna-{VERSION}-x86_64-pc-windows-gnu.exe\" = \"{SUM_B}\"\n\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = \"{SUM_A}\"\n"
+        "spec-dna = \"{VERSION}\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n\n[spec-dna-sha256]\n\"spec-dna-{VERSION}-x86_64-pc-windows-gnu.exe\" = \"{SUM_B}\"\n\"spec-dna-{VERSION}-x86_64-unknown-linux-gnu\" = \"{SUM_A}\"\n"
     );
     r.write("spec-dna.toml", &cfg);
     r.write("docs/a.md", "# A\n");
@@ -2873,12 +2873,12 @@ fn init_detects_common_layouts() {
     assert_eq!(code, 0, "{out}{err}");
     for want in [
         "path = \"doc/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nlegacy-ids = [{ alias = \"ADR-{n}\", file = \"{n}-*\" }]\n",
-        "path = \"rfcs\"\ntype = \"change\"\nstatus = \"accepted\"\n",
-        "path = \"runbooks\"\ntype = \"runbook\"\n",
+        "path = \"rfcs\"\ntype = \"research\"\n",
+        "path = \"runbooks\"\ntype = \"procedure\"\n",
         "path = \"incidents\"\ntype = \"incident\"\n",
         "path = \"postmortems\"\ntype = \"incident\"\n",
-        "path = \"meetings\"\ntype = \"reference\"\n",
-        "path = \"research\"\ntype = \"reference\"\n",
+        "path = \"meetings\"\ntype = \"research\"\n",
+        "path = \"research\"\ntype = \"research\"\n",
         // A numbered directory in a mixed root takes the type of its files.
         "path = \"docs/records\"\ntype = \"incident\"\nlegacy-ids = [\"BUG-{n}\"]\n",
     ] {
@@ -2977,13 +2977,13 @@ fn init_asks_on_a_terminal() {
     // 1 profile, 2 types, 3 evidence, 4 language, 5 mapping (4 roots), 6
     // budgets, 7 adapters, 8 CI, hook and base, 9 harness, 10 models, then the
     // confirmation.
-    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=spec\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
+    let answers = "strict\n\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
     let (code, out) = on_terminal(&r.dir, &["init"], answers);
     assert_eq!(code, 0, "{out}");
     for want in [
         "1/10 Profile (lite, standard, strict) [standard]: ",
-        "    Types in use: spec, guide, decision, note. A shorter list makes each document of another type an error.",
-        "2/10 Knowledge types [spec, contract, guide, decision, change, note, invariant, runbook, incident, reference]: ",
+        "    Types in use: requirements, decision, procedure, research. A shorter list makes each document of another type an error.",
+        "2/10 Knowledge types [product, system, terms, roadmap, questions, rule, requirements, interface, decision, procedure, incident, research, intent, spec, plan]: ",
         "5/10 Mapping: 4 roots.",
         "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-notes.md, README.md) [accept]: ",
         "6/10 Budget level (default, relaxed, tight, off) [default]: ",
@@ -3008,11 +3008,11 @@ fn init_asks_on_a_terminal() {
     );
     assert!(!cfg.contains("path = \"docs/adr\""), "{cfg}");
     assert!(
-        cfg.contains("path = \"docs/specs\"\ntype = \"spec\""),
+        cfg.contains("path = \"docs/specs\"\ntype = \"requirements\""),
         "{cfg}"
     );
     assert!(
-        cfg.contains("path = \"docs/guides\"\ntype = \"guide\""),
+        cfg.contains("path = \"docs/guides\"\ntype = \"procedure\""),
         "{cfg}"
     );
     assert!(r.read("CLAUDE.md").contains("spec-dna check"));
@@ -3045,11 +3045,11 @@ fn review_fixes_on_the_command_line() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[evidence]\ntests = [\"/tests/**\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[evidence]\ntests = [\"/tests/**\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/rules/water.md",
-        "---\ntype: invariant\nstatus: active\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
+        "---\ntype: rule\nstatus: active\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
     );
     r.write("tests/water.py", "# covers: rules/water#metric-units\n");
     r.commit("start");
@@ -3060,7 +3060,7 @@ fn review_fixes_on_the_command_line() {
         out.contains("- rules/water#metric-units: tests/water.py:1"),
         "{out}"
     );
-    // An invariant cannot move back to draft.
+    // A rule cannot move back to draft.
     r.write(
         "docs/rules/water.md",
         &r.read("docs/rules/water.md")
@@ -3071,7 +3071,7 @@ fn review_fixes_on_the_command_line() {
     assert!(out.contains("error SD401 status-transition"), "{out}");
     git(&r.dir, &["checkout", "-q", "--", "."]);
     // A placeholder of a template that stays is an error.
-    let (code, _, _) = r.run(&["new", "spec", "loans"]);
+    let (code, _, _) = r.run(&["new", "requirements", "loans"]);
     assert_eq!(code, 0);
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
@@ -3102,13 +3102,13 @@ fn review_fixes_on_the_command_line() {
 }
 
 /// A project for the hygiene functions of 0.3.0. It has a mixed root with
-/// history and companion sections, a decision root, two reference roots and a
+/// history and companion sections, a decision root, two research roots and a
 /// list of incidents.
 fn hygiene_project() -> Repo {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\nhistory-sections = { guide = [\"Iteration log\"] }\ncompanion-sections = { spec = [\"Coverage table\"] }\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlegacy-ids = [\"ADR-{n}\"]\nhistory-sections = { decision = [\"Discussion\"] }\n[[roots]]\npath = \"refs/drafts\"\ntype = \"reference\"\n[[roots]]\npath = \"refs/minutes\"\ntype = \"reference\"\n[[roots]]\npath = \"incidents\"\ntype = \"incident\"\nlegacy-ids = [\"INC-{n}\"]\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\nhistory-sections = { procedure = [\"Iteration log\"] }\ncompanion-sections = { requirements = [\"Coverage table\"] }\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlegacy-ids = [\"ADR-{n}\"]\nhistory-sections = { decision = [\"Discussion\"] }\n[[roots]]\npath = \"refs/drafts\"\ntype = \"research\"\n[[roots]]\npath = \"refs/minutes\"\ntype = \"research\"\n[[roots]]\npath = \"incidents\"\ntype = \"incident\"\nlegacy-ids = [\"INC-{n}\"]\n",
     );
     r.write(
         "docs/watering.md",
@@ -3116,11 +3116,11 @@ fn hygiene_project() -> Repo {
     );
     r.write(
         "docs/guides/greenhouse.md",
-        "---\ntype: guide\nstatus: active\n---\n# Greenhouse guide\n\n## Opening\n\nOpen the vents at 9.\n\n## Closing\n\nClose the vents at 5. See [drainage](../watering.md#drainage).\n\n### Meter reading\n\nRead the meter.\n\n## Iteration log\n\n### Round 1\n\nWe tried 8.\n\n### Round 2\n\nWe tried 9.\n",
+        "---\ntype: procedure\nstatus: active\n---\n# Greenhouse guide\n\n## Opening\n\nOpen the vents at 9.\n\n## Closing\n\nClose the vents at 5. See [drainage](../watering.md#drainage).\n\n### Meter reading\n\nRead the meter.\n\n## Iteration log\n\n### Round 1\n\nWe tried 8.\n\n### Round 2\n\nWe tried 9.\n",
     );
     r.write(
         "docs/notes/links.md",
-        "---\ntype: note\n---\n# Links\n\nSee [the reading](../guides/greenhouse.md#meter-reading), [[guides/greenhouse#closing]] and [the stuck valve](../../incidents/README.md#inc-2-stuck-valve).\n",
+        "---\ntype: research\n---\n# Links\n\nSee [the reading](../guides/greenhouse.md#meter-reading), [[guides/greenhouse#closing]] and [the stuck valve](../../incidents/README.md#inc-2-stuck-valve).\n",
     );
     r.write(
         "adr/ADR-3-rainwater.md",
@@ -3156,20 +3156,20 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
     let r = hygiene_project();
     let (code, out, err) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{err}{out}");
-    // A guide: the sections go to a new guide, and every old section id
+    // A procedure: the sections go to a new procedure, and every old section id
     // resolves through an alias.
     let (code, out, err) = r.run(&["mv", "guides/greenhouse#closing", "guides/closing"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
         out.starts_with(
-            "moved 1 section to guides/closing (docs/guides/closing.md, guide, new document)"
+            "moved 1 section to guides/closing (docs/guides/closing.md, procedure, new document)"
         ),
         "{out}"
     );
     assert!(out.contains("2 section ids stay as aliases"), "{out}");
     let closing = r.read("docs/guides/closing.md");
     assert!(
-        closing.starts_with("---\ntype: guide\nstatus: active\naliases:\n  - guides/greenhouse#closing\n  - guides/greenhouse#meter-reading\n---\n# Closing\n"),
+        closing.starts_with("---\ntype: procedure\nstatus: active\naliases:\n  - guides/greenhouse#closing\n  - guides/greenhouse#meter-reading\n---\n# Closing\n"),
         "{closing}"
     );
     assert!(
@@ -3199,7 +3199,7 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
     let _ = fs::remove_file(r.dir.join("docs/guides/closing.md"));
     r.append(
         "spec-dna.toml",
-        "\n[budgets.guide]\nsoft = 50\nhard = 100\n",
+        "\n[budgets.procedure]\nsoft = 50\nhard = 100\n",
     );
     git(&r.dir, &["commit", "-qam", "small guides"]);
     let (code, out, err) = r.run(&["mv", "guides/greenhouse#closing", "guides/closing"]);
@@ -3212,7 +3212,7 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
         "{out}"
     );
     git(&r.dir, &["commit", "-qm", "split"]);
-    // A guide section into an existing reference document: a pointer stays.
+    // A procedure section into an existing research document: a pointer stays.
     let (code, out, err) = r.run(&["mv", "guides/greenhouse#opening", "drafts/irrigation"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(out.contains("left a one-line pointer"), "{out}");
@@ -3229,7 +3229,7 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
     let (code, _, err) = r.run(&["mv", "watering#schedules", "guides/closing"]);
     assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("requirements live in a spec, contract or invariant"),
+        err.contains("requirements live in a requirements, interface or rule document"),
         "{err}"
     );
 }
@@ -3244,7 +3244,7 @@ fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
     let (code, _, err) = r.run(&["mv", "ADR-3#amendments", "watering"]);
     assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("moves only into a `reference` document"),
+        err.contains("moves only into a `research` document"),
         "{err}"
     );
     assert_eq!(
@@ -3276,7 +3276,7 @@ fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
     );
     let history = r.read("docs/history/adr-3.md");
     assert!(
-        history.starts_with("---\ntype: reference\naliases:\n"),
+        history.starts_with("---\ntype: research\naliases:\n"),
         "{history}"
     );
     assert!(
@@ -3348,12 +3348,12 @@ fn companion_rows_move_with_their_requirements() {
 }
 
 #[test]
-fn history_moves_the_configured_sections_into_a_reference_document() {
+fn history_moves_the_configured_sections_into_a_research_document() {
     let r = hygiene_project();
     let (code, out, err) = r.run(&["history", "guides/greenhouse"]);
     assert_eq!(code, 0, "{err}{out}");
     let h = r.read("docs/guides/greenhouse-history.md");
-    assert!(h.starts_with("---\ntype: reference\naliases:\n"), "{h}");
+    assert!(h.starts_with("---\ntype: research\naliases:\n"), "{h}");
     assert!(
         h.contains("The history of [Greenhouse guide](greenhouse.md)."),
         "{h}"
@@ -3371,7 +3371,7 @@ fn history_moves_the_configured_sections_into_a_reference_document() {
     let (code, _, err) = r.run(&["history", "ADR-3"]);
     assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("give the path of the reference document"),
+        err.contains("give the path of the research document"),
         "{err}"
     );
     let (code, out, err) = r.run(&["history", "ADR-3", "docs/history/adr-3.md"]);
@@ -3494,7 +3494,7 @@ fn a_configuration_change_must_be_its_own_change() {
 }
 
 #[test]
-fn ids_of_reference_roots_have_the_root_as_namespace() {
+fn ids_of_research_roots_have_the_root_as_namespace() {
     let r = hygiene_project();
     let (code, out, _) = r.run(&["check", "--all", "--json"]);
     assert_eq!(
@@ -3537,9 +3537,9 @@ fn new_names_the_placeholder_form_that_the_templates_use() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
-    let (code, out, err) = r.run(&["new", "spec", "loans"]);
+    let (code, out, err) = r.run(&["new", "requirements", "loans"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("replace each {{...}} placeholder"), "{out}");
     assert!(!out.contains("<placeholder>"), "{out}");
@@ -3552,7 +3552,7 @@ fn a_placeholder_key_gives_sd306_and_not_sd203() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/loans.md",
@@ -3572,7 +3572,7 @@ fn how_many_is_not_a_vague_term() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\nprofile = \"strict\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\nprofile = \"strict\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/loans.md",
@@ -3647,7 +3647,7 @@ fn init_dry_run_of_the_adapters_shows_the_diff_too() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write("AGENTS.md", "# Rules\n");
     r.commit("start");
@@ -3668,7 +3668,7 @@ fn init_preview_shows_how_each_answer_was_applied() {
     let answers = answers_file(
         &r,
         "resolved",
-        "profile = \"strict\"\ntypes = [\"spec\", \"decision\"]\nbudgets = \"relaxed\"\nadapters = [\"skill\"]\nci = \"none\"\nhook = \"none\"\n",
+        "profile = \"strict\"\ntypes = [\"requirements\", \"decision\"]\nbudgets = \"relaxed\"\nadapters = [\"skill\"]\nci = \"none\"\nhook = \"none\"\n",
     );
     let (code, out, err) = r.run(&["init", "--dry-run", "--answers", answers.to_str().unwrap()]);
     assert_eq!(code, 0, "{out}{err}");
@@ -3676,10 +3676,10 @@ fn init_preview_shows_how_each_answer_was_applied() {
     for want in [
         "How the answers were applied:",
         "1/10 profile: strict (changed from standard) -> profile = \"strict\"",
-        "2/10 knowledge types: spec, decision (changed from all 10) -> types = [\"spec\", \"decision\"]",
+        "2/10 knowledge types: requirements, decision (changed from all 15) -> types = [\"requirements\", \"decision\"]",
         "3/10 evidence policy and link style: profile, both (default, writes nothing)",
         "4/10 normative language and heading aliases: en; outcome: -; amendments: - (default, writes nothing)",
-        "5/10 mapping: 1 root: docs (mixed, default spec; 0 documents; status draft) (default) -> 1 [[roots]] table(s)",
+        "5/10 mapping: 1 root: docs (mixed, default requirements; 0 documents; status draft) (default) -> 1 [[roots]] table(s)",
         "6/10 budget level: relaxed (changed from default) -> [budgets.<type>] tables",
         "7/10 agent adapters: skill (changed from agents-md, claude-md, skill) -> .claude/skills/spec-dna/SKILL.md",
         "8/10 CI step, hook and base branch: none, none, main (default, writes nothing)",
@@ -3713,11 +3713,11 @@ fn proposed_on_a_draft_type_points_to_draft() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/invariants/water.md",
-        "---\ntype: invariant\nstatus: proposed\n---\n# Water\n\n## Rules\n\n- **units**: The system SHALL store amounts in minor units.\n",
+        "---\ntype: rule\nstatus: proposed\n---\n# Water\n\n## Rules\n\n- **units**: The system SHALL store amounts in minor units.\n",
     );
     r.write(
         "docs/decisions/pump.md",
@@ -3727,11 +3727,242 @@ fn proposed_on_a_draft_type_points_to_draft() {
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("error SD304 status-invalid: `proposed` is not a status of type `invariant` (draft, active, deprecated, superseded, retired); use `draft` for a proposal, or map `proposed` to it with `status-map`"),
+        out.contains("error SD304 status-invalid: `proposed` is not a status of type `rule` (draft, active, deprecated, superseded, retired); use `draft` for a proposal, or map `proposed` to it with `status-map`"),
         "{out}"
     );
     // A decision has `proposed`, so it gets no error and no hint.
     assert_eq!(out.matches("SD304 status-invalid").count(), 1, "{out}");
+}
+
+/// The 0.5 type names and the types that replace them. `spec` is a name of
+/// 0.6 too, so it has no hint.
+const OLD_TYPES: [(&str, &str); 7] = [
+    ("contract", "interface"),
+    ("invariant", "rule"),
+    ("guide", "procedure"),
+    ("runbook", "procedure"),
+    ("change", "intent"),
+    ("note", "research"),
+    ("reference", "research"),
+];
+
+#[test]
+fn a_type_of_0_5_in_the_configuration_names_the_new_type() {
+    let r = Repo::empty();
+    let root = "[[roots]]\npath = \"docs\"\n";
+    for (old, new) in OLD_TYPES {
+        let cases = [
+            format!("types = [\"{old}\"]\n{root}"),
+            format!("[[roots]]\npath = \"docs\"\ntype = \"{old}\"\n"),
+            format!("{root}default-type = \"{old}\"\n"),
+            format!("[budgets.{old}]\nsoft = 1\nhard = 2\n{root}"),
+            format!("[conventions]\n{old} = [\"README.md\"]\n{root}"),
+            format!("{root}required-sections = {{ {old} = [\"Steps\"] }}\n"),
+            format!("{root}amendment-sections = {{ {old} = [\"Notes\"] }}\n"),
+            format!("{root}history-sections = {{ {old} = [\"Notes\"] }}\n"),
+            format!("{root}companion-sections = {{ {old} = [\"Notes\"] }}\n"),
+            format!("{root}live-sections = {{ {old} = [\"Notes\"] }}\n"),
+        ];
+        for case in cases {
+            r.write("spec-dna.toml", &format!("spec-dna = \"0.1.0\"\n{case}"));
+            let (code, _, err) = r.run(&["check", "--all"]);
+            assert_eq!(code, 3, "{case}\n{err}");
+            assert!(
+                err.contains(&format!("`{old}`")) && err.contains(&format!("`{new}` replaces it")),
+                "{case}\n{err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_type_of_0_5_in_the_front_matter_gives_sd303_with_the_new_type() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
+    );
+    for (old, _) in OLD_TYPES {
+        r.write(
+            &format!("docs/{old}.md"),
+            &format!("---\ntype: {old}\n---\n# Old\n"),
+        );
+    }
+    r.commit("start");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    for (old, new) in OLD_TYPES {
+        let want = format!(
+            "docs/{old}.md:2: error SD303 type-invalid: unknown type `{old}`; `{new}` replaces it from 0.6; use one of "
+        );
+        assert!(out.contains(&want), "{want}\n{out}");
+    }
+}
+
+#[test]
+fn a_status_of_0_5_on_an_intent_names_the_new_status() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
+    );
+    for status in ["proposed", "rejected", "done"] {
+        r.write(
+            &format!("docs/{status}.md"),
+            &format!("---\ntype: intent\nstatus: {status}\n---\n# I\n\n## Intent\n\nText.\n"),
+        );
+    }
+    r.commit("start");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    for (status, hint) in [
+        ("proposed", "use `draft` for a proposal"),
+        ("rejected", "use `closed`"),
+        ("done", "a finished change is a `research` document"),
+    ] {
+        let line = out
+            .lines()
+            .find(|l| l.starts_with(&format!("docs/{status}.md:3: error SD304")))
+            .unwrap_or_else(|| panic!("{status}: {out}"));
+        assert!(
+            line.contains("(draft, accepted, closed)") && line.contains(hint),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn new_names_the_new_type_for_a_type_of_0_5() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n",
+    );
+    let (code, _, err) = r.run(&["new", "contract", "x"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("use `new interface`"), "{err}");
+    let (code, _, err) = r.run(&["new", "change", "x"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("use `new intent`"), "{err}");
+    assert!(!r.dir.join("docs").exists());
+    // The new names work. The files of a change go into one folder.
+    for (ty, path) in [
+        ("interface", "docs/interfaces/x.md"),
+        ("intent", "docs/intent/x/intent.md"),
+        ("spec", "docs/intent/x/spec.md"),
+        ("plan", "docs/intent/x/plan.md"),
+        ("product", "docs/x.md"),
+    ] {
+        let (code, out, err) = r.run(&["new", ty, "x"]);
+        assert_eq!(code, 0, "{ty}: {out}{err}");
+        assert!(
+            out.starts_with(&format!("wrote {path} ({ty} template)")),
+            "{out}"
+        );
+        assert!(
+            r.read(path).starts_with(&format!("---\ntype: {ty}\n")),
+            "{ty}"
+        );
+    }
+}
+
+#[test]
+fn the_statuses_of_an_intent_a_spec_and_a_plan_move_forward_only() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
+    );
+    let files = [
+        (
+            "docs/intent/a/intent.md",
+            "intent",
+            "accepted",
+            "draft",
+            "## Intent",
+        ),
+        (
+            "docs/intent/b/intent.md",
+            "intent",
+            "closed",
+            "accepted",
+            "## Intent",
+        ),
+        (
+            "docs/intent/a/spec.md",
+            "spec",
+            "approved",
+            "draft",
+            "## Delta",
+        ),
+        (
+            "docs/intent/a/plan.md",
+            "plan",
+            "approved",
+            "draft",
+            "## Files",
+        ),
+    ];
+    let doc = |ty: &str, status: &str, heading: &str| {
+        format!("---\ntype: {ty}\nstatus: {status}\n---\n# T\n\n{heading}\n\nText.\n")
+    };
+    for (path, ty, base, _, heading) in files {
+        r.write(path, &doc(ty, base, heading));
+    }
+    r.commit("start");
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    for (path, ty, _, head, heading) in files {
+        r.write(path, &doc(ty, head, heading));
+    }
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        out.matches("error SD401 status-transition").count(),
+        4,
+        "{out}"
+    );
+    // A step forward is allowed.
+    git(&r.dir, &["checkout", "-q", "--", "."]);
+    r.write(
+        "docs/intent/a/intent.md",
+        &doc("intent", "closed", "## Intent"),
+    );
+    r.write("docs/intent/c/spec.md", &doc("spec", "draft", "## Delta"));
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn only_a_closed_intent_can_be_deleted() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
+    );
+    for status in ["closed", "accepted"] {
+        r.write(
+            &format!("docs/{status}.md"),
+            &format!("---\ntype: intent\nstatus: {status}\n---\n# I\n\n## Intent\n\nText.\n"),
+        );
+    }
+    r.write(
+        "docs/research.md",
+        "---\ntype: research\n---\n# R\n\nText.\n",
+    );
+    r.commit("start");
+    for f in ["closed", "accepted", "research"] {
+        fs::remove_file(r.dir.join(format!("docs/{f}.md"))).unwrap();
+    }
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}");
+    for id in ["accepted", "research"] {
+        assert!(
+            out.contains(&format!("SD202 id-removed: `{id}` was removed")),
+            "{out}"
+        );
+    }
+    assert_eq!(out.matches("error SD202").count(), 2, "{out}");
 }
 
 #[test]
@@ -3740,7 +3971,7 @@ fn a_closed_pipe_is_a_normal_exit() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/loans.md",
@@ -3784,7 +4015,7 @@ fn lint_runs_in_the_standard_profile_and_never_fails_the_gate() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/loans.md",
@@ -3824,15 +4055,15 @@ fn lint_runs_in_the_standard_profile_and_never_fails_the_gate() {
 }
 
 #[test]
-fn an_accepted_decision_that_links_a_change_gets_sd611() {
+fn an_accepted_decision_that_links_an_intent_gets_sd611() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     r.write(
         "docs/changes/rollout.md",
-        "---\ntype: change\nstatus: proposed\n---\n# Rollout\n\nMove the pump.\n",
+        "---\ntype: intent\nstatus: draft\n---\n# Rollout\n\n## Intent\n\nMove the pump.\n",
     );
     let decision = |body: &str, front: &str| {
         format!(
@@ -3847,10 +4078,10 @@ fn an_accepted_decision_that_links_a_change_gets_sd611() {
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "a warning never fails the gate: {out}");
     assert!(
-        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-change: the accepted decision links the change `changes/rollout`"),
+        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-change: the accepted decision links the intent `changes/rollout`"),
         "{out}"
     );
-    // A Markdown link to the change file counts too, and it is one finding.
+    // A Markdown link to the intent file counts too, and it is one finding.
     r.write(
         "docs/decisions/pump.md",
         &decision(
@@ -3891,13 +4122,13 @@ fn an_accepted_decision_that_links_a_change_gets_sd611() {
     );
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[rules]\nSD611 = \"off\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+        "spec-dna = \"0.1.0\"\n[rules]\nSD611 = \"off\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
     );
     let (_, out, _) = r.run(&["check", "--all"]);
     assert!(!out.contains("SD611"), "{out}");
 }
 
-const STAGED_CONFIG: &str = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n";
+const STAGED_CONFIG: &str = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n";
 
 fn staged_repo() -> Repo {
     let r = Repo::empty();
