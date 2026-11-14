@@ -932,3 +932,263 @@ fn lean_after_none_takes_the_fresh_defaults_and_none_prints_no_restart_line() {
         r.read("spec-dna.toml")
     );
 }
+
+#[test]
+fn a_dry_run_gives_the_diff_of_each_harness_file_in_text_and_json() {
+    // A new project: each harness file is a diff against `/dev/null`.
+    let r = Repo::empty();
+    let (code, out, err) = r.run3(&["init", "--dry-run", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for f in LEAN_FILES {
+        assert!(
+            out.contains(&format!("--- /dev/null\n+++ b/{f}\n")),
+            "{f}: {out}"
+        );
+    }
+    assert!(
+        out.contains("--- /dev/null\n+++ b/.claude/settings.json\n"),
+        "{out}"
+    );
+    assert!(!r.exists(".claude"));
+    let (code, json, err) = r.run3(&["init", "--dry-run", "--non-interactive", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    for f in LEAN_FILES.iter().chain(&[".claude/settings.json"]) {
+        assert!(
+            json.contains(&format!(
+                "{{\"path\":\"{f}\",\"action\":\"create\",\"note\":"
+            )) && json.contains(&format!("\"diff\":\"--- /dev/null\\n+++ b/{f}\\n")),
+            "{f}: {json}"
+        );
+    }
+    // A removal is a diff to `/dev/null`, in text and in JSON.
+    let r = lean_repo();
+    r.commit("init");
+    let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("--- a/.claude/agents/checker.md\n+++ /dev/null\n@@ -1,"),
+        "{out}"
+    );
+    assert!(out.contains("-name: checker\n"), "{out}");
+    let (code, json, err) = r.init_with(
+        "harness = \"none\"\n",
+        &["--reconfigure", "--dry-run", "--json"],
+    );
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(
+        json.contains("\"path\":\".claude/agents/checker.md\",\"action\":\"remove\",\"note\":")
+            && json.contains("\"diff\":\"--- a/.claude/agents/checker.md\\n+++ /dev/null\\n@@ -1,"),
+        "{json}"
+    );
+    assert!(
+        r.exists(".claude/agents/checker.md"),
+        "a dry run removes nothing"
+    );
+    // A change of a file: the diff has the lines of the change.
+    let (code, out, err) = r.init_with(
+        "harness-models = [\"reviewer=sonnet:medium\"]\n",
+        &["--reconfigure", "--dry-run"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("--- a/.claude/agents/checker.md\n+++ b/.claude/agents/checker.md\n@@ "),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_upgrade_dry_run_gives_the_diff_of_each_harness_file() {
+    let r = lean_repo();
+    let old = ".claude/agents/checker.md";
+    let old_text = r.read(old);
+    r.write(old, &age_marker(&old_text));
+    let (code, out, err) = r.run3(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("would change .claude/agents/checker.md ("),
+        "{out}"
+    );
+    assert!(
+        out.contains("--- a/.claude/agents/checker.md\n+++ b/.claude/agents/checker.md\n@@ "),
+        "{out}"
+    );
+    assert!(out.contains("-<!-- spec-dna harness v0.0.1 "), "{out}");
+    let (code, json, err) = r.run3(&["init", "--dry-run", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(
+        json.contains("\"dry_run\":true,\"files\":[{\"path\":\".claude/agents/checker.md\",\"action\":\"change\",\"note\":")
+            && json.contains("\"diff\":\"--- a/.claude/agents/checker.md\\n+++ b/.claude/agents/checker.md\\n@@ "),
+        "{json}"
+    );
+    assert_eq!(
+        r.read(old),
+        age_marker(&old_text),
+        "a dry run writes nothing"
+    );
+}
+
+#[test]
+fn the_preview_has_10_answers_and_question_10_writes_nothing_without_a_harness() {
+    let r = Repo::empty();
+    let (code, out, err) = r.run3(&["init", "--dry-run", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let shown = out.split("--- spec-dna.toml ---").next().unwrap();
+    for want in [
+        "  1/10 profile: ",
+        "  8/10 CI step, hook and base branch: ",
+        "  9/10 agent harness: lean (default) -> [harness] level = \"lean\", ",
+        ".claude/agents/checker.md",
+        ".claude/settings.json",
+        "  10/10 harness models: orchestrator=opus:xhigh advisor=fable ",
+        " (default) -> [harness.roles] table\n",
+    ] {
+        assert!(shown.contains(want), "{want}:\n{shown}");
+    }
+    // The adapter answer does not list the files of the harness.
+    let adapters = shown.lines().find(|l| l.contains("7/10")).unwrap();
+    assert!(!adapters.contains(".claude/agents"), "{adapters}");
+    // The level `none`: question 10 writes nothing.
+    let (code, out, err) = r.init_with("harness = \"none\"\n", &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let shown = out.split("--- spec-dna.toml ---").next().unwrap();
+    assert!(
+        shown.contains(
+            "  9/10 agent harness: none (changed from lean) -> [harness] level = \"none\"\n"
+        ),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("  10/10 harness models: - (changed from orchestrator=opus:xhigh ")
+            && shown.contains(", writes nothing)\n"),
+        "{shown}"
+    );
+    assert!(!shown.contains("/8 "), "{shown}");
+    // `--json` has the 10 answers.
+    let (code, json, err) = r.init_with("harness = \"none\"\n", &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert_eq!(json.matches("\"number\":").count(), 10, "{json}");
+    assert!(
+        json.contains("{\"number\":10,\"name\":\"harness models\",\"value\":\"-\","),
+        "{json}"
+    );
+    // A reconfigure to `none` lists the removed files in answer 9.
+    let r = lean_repo();
+    r.commit("init");
+    let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("(changed from lean) -> [harness] level = \"none\", removes ")
+            && out.contains("removes .claude/agents/checker.md"),
+        "{out}"
+    );
+}
+
+#[test]
+fn check_staged_reads_the_harness_files_of_the_index() {
+    let r = lean_repo();
+    r.commit("init");
+    let (code, out) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}");
+    let file = ".claude/agents/checker.md";
+    let by_hand = r
+        .read(file)
+        .replacen("<!-- spec-dna harness", "Mine.\n<!-- spec-dna harness", 1);
+    r.write(file, &by_hand);
+    // The edit is not staged, so the next commit does not hold it.
+    let (code, out) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD501"), "{out}");
+    // The working tree has the edit.
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD501"), "{out}");
+    // Staged, the edit is in the next commit.
+    git(&r.dir, &["add", file]);
+    let (code, out) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("checker.md") && out.contains("error SD501"),
+        "{out}"
+    );
+    // An untracked harness file does not count either: delete a staged one
+    // from the index only.
+    git(&r.dir, &["restore", "--staged", file]);
+    git(
+        &r.dir,
+        &["rm", "-q", "--cached", ".claude/agents/Explore.md"],
+    );
+    let (code, out) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("Explore.md:1: error SD504 harness-missing: the generated file is absent"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_upgrade_changes_the_hook_of_0_4_1_and_the_harness_files_together() {
+    let r = lean_repo();
+    let old = ".claude/agents/checker.md";
+    let old_text = r.read(old);
+    r.write(old, &age_marker(&old_text));
+    let hook = "repos:\n  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n      - id: other\n        name: other\n        entry: spec-dna checkout\n        language: system\n";
+    r.write(".pre-commit-config.yaml", hook);
+    let (code, out, err) = r.run3(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("would change .pre-commit-config.yaml (the hook of 0.4.1")
+            && out.contains(
+                "-        entry: spec-dna check\n+        entry: spec-dna check --staged\n"
+            )
+            && out.contains("would change .claude/agents/checker.md ("),
+        "{out}"
+    );
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("wrote .pre-commit-config.yaml\n")
+            && out.contains("wrote .claude/agents/checker.md\n"),
+        "{out}"
+    );
+    assert_eq!(r.read(old), old_text);
+    assert_eq!(
+        r.read(".pre-commit-config.yaml"),
+        hook.replace(
+            "entry: spec-dna check\n",
+            "entry: spec-dna check --staged\n"
+        )
+    );
+    // Another run has nothing to do.
+    let (code, out, _) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.starts_with("spec-dna init: everything is up to date\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_skill_lists_the_project_types_and_check_accepts_it_with_the_harness() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with(
+        "types = [\"spec\", \"decision\"]\nharness = \"lean\"\n",
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let skill = r.read(".claude/skills/spec-dna/SKILL.md");
+    assert!(
+        skill.contains("Types of this project: spec, decision."),
+        "{skill}"
+    );
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD50"), "{out}");
+    // Another `init` keeps the skill and the harness.
+    r.commit("init");
+    let (code, out, _) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.starts_with("spec-dna init: everything is up to date\n"),
+        "{out}"
+    );
+}

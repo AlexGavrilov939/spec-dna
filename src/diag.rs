@@ -77,6 +77,7 @@ codes! {
     RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, decisions and runbooks that the incident involves, with `[[<id>]]` or a Markdown link.";
     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
+    DecisionLinksChange = "SD611", "decision-links-change", Warning, "Link the decision from the change instead. A change can be deleted when it is done or rejected, but the frozen text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the change in an amendment or a live section.";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";

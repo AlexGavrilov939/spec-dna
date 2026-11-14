@@ -2245,14 +2245,14 @@ opus = "xhigh"
         // The two generated lines stay apart, in any order.
         let both = crate::adapters::upsert_line(&t);
         assert_eq!(upsert_claude(&both, &h), both);
-        assert!(crate::adapters::check(&[(CLAUDE, both.clone())]).is_empty());
+        assert!(crate::adapters::check(&[(CLAUDE, both.clone())], &[]).is_empty());
         assert_eq!(crate::adapters::remove_line(&both), t);
         assert_eq!(
             remove_claude_line(&both),
             format!("# Rules\n\n{}\n", crate::adapters::line())
         );
         let only_ours = upsert_claude("", &h);
-        assert!(crate::adapters::check(&[(CLAUDE, only_ours.clone())]).is_empty());
+        assert!(crate::adapters::check(&[(CLAUDE, only_ours.clone())], &[]).is_empty());
         // Prose that quotes the form of the marker is not the line.
         let prose = "The line ends with `<!-- spec-dna harness v<version> h:<hash> -->`.\n";
         assert!(find_line(prose).is_none());
@@ -3061,7 +3061,7 @@ opus = "xhigh"
         let adapter = crate::adapters::line();
         assert!(find_line(&adapter).is_none());
         let ours = claude_line(&lean()).unwrap();
-        assert!(crate::adapters::check(&[(CLAUDE, format!("{ours}\n"))]).is_empty());
+        assert!(crate::adapters::check(&[(CLAUDE, format!("{ours}\n"))], &[]).is_empty());
         assert!(
             crate::adapters::has_own_text(&format!("{ours}\n")),
             "adapters see a harness line as own text"

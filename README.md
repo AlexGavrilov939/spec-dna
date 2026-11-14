@@ -68,8 +68,10 @@ install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 To build from source, you need Rust 1.88 or later:
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
 ```
+
+This command needs no package name from v0.4.2 on. For v0.4.1 and earlier, add `spec-dna` at the end.
 
 You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the targets of the other platforms, the commands for Windows, and the verification of the attestations.
 

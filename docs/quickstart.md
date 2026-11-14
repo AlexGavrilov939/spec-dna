@@ -55,17 +55,17 @@ gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 
 ### Build from source
 
-On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. Keep the package name `spec-dna` at the end, because the repository has other packages.
+On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. From v0.4.2 on, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0 spec-dna
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
 ```
 
 A team can also build from a local or a private clone. Give its git URL to `--git`. A plain path does not work.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.5.0 spec-dna            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.5.0 spec-dna  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.5.0            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.5.0  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source. The CI job below also builds from it.
@@ -158,7 +158,7 @@ To change an accepted decision, do one of these actions:
 - Amend the decision if its outcome stays. Add the detail, the limit or the new code path under `## Amendments`.
 - Supersede the decision if its outcome changes. Write a new decision with `supersedes: [<old id>]`. Set the status of the old decision to `superseded`.
 
-`check` lists the errors and the drift warnings first. Then it gives the fix of each listed code. For the prose lint warnings (SD801 to SD805), it gives one count for each code. `spec-dna check --lint` lists them. The lint is on in the `strict` profile only.
+`check` lists the errors and the drift warnings first. Then it gives the fix of each listed code. For the prose lint warnings (SD801 to SD805), it gives one count for each code. `spec-dna check --lint` lists them. The lint is on in the `strict` profile only. `--lint` runs it in any profile, as a report that never fails the gate.
 
 For another warning code with more than 10 diagnostics, such as SD608 on a mature corpus, `check` also gives one count. `spec-dna check --json` lists each diagnostic.
 

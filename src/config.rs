@@ -15,6 +15,11 @@ pub const FILE_NAME: &str = "spec-dna.toml";
 pub struct Config {
     /// The pinned spec-dna version.
     pub pin: String,
+    /// True for `check --lint`: the prose lint (SD801 to SD805) runs in each
+    /// profile, as a warning, also if a rule turned it off. A rule that sets a
+    /// severity for it keeps that severity. This is a flag of one run, not a
+    /// key of the file.
+    pub force_lint: bool,
     pub exclude: Vec<String>,
     pub roots: Vec<Root>,
     /// Soft and hard budgets in characters, per document type.
@@ -642,6 +647,7 @@ impl Config {
         t.done()?;
         Ok(Config {
             pin,
+            force_lint: false,
             exclude,
             roots,
             budgets,
@@ -666,6 +672,14 @@ impl Config {
     /// rules of the root, `[rules]`, the profile of the root, the profile of
     /// the project.
     pub fn severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
+        let found = self.configured_severity(code, root);
+        if found.is_none() && self.force_lint && code.is_prose_lint() && root.is_some() {
+            return Some(Severity::Warning);
+        }
+        found
+    }
+
+    fn configured_severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
         let root = root.map(|r| &self.roots[r]);
         if let Some(s) = root.and_then(|r| rule_for(&r.rules, code)) {
             return s;

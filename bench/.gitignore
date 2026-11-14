@@ -3,3 +3,4 @@ rust/target/
 go/scan-go
 work/
 __pycache__/
+git-access/target/

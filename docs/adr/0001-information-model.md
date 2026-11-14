@@ -307,3 +307,10 @@ A replay of real changes of a corpus showed 2 gaps. The corpus updates a status 
 ### 2026-11-13: convention files outside the documents (0.3.3)
 
 On a real corpus, the rule for decisions is in the `README.md` of the decision directory, and the root excludes that file. A 0.3.2 pointer could not name it. This change applies: a pointer of `conventions` can name a Markdown file that is not a document (outside every root, or excluded). spec-dna reads such a file only to serve and check the conventions. It is not a document: no id, budget, link or other check applies to it, and `context` does not rank it. `context` serves its sections first in the convention tier, and `show` prints them by `<path>#<anchor>`. SD106 also covers a file that is absent.
+
+### 2026-11-14: staged head tree and link direction (0.4.2)
+
+A second real project showed 2 gaps.
+
+- Staged head tree. `check --staged` uses the git index as the head tree: the staged blobs and the staged `spec-dna.toml`, without untracked or working-tree files. The base rules do not change. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101). The hook that `init` writes uses `--staged`. An unmerged path in the index is an error of git access (exit 4).
+- Link direction. A change links the decisions, specs and contracts that it implements. When the frozen text or `depends-on` of an accepted decision links a change, `check` gives a warning (SD611). A done or rejected change can be deleted (SD202), and the frozen text cannot drop the link (SD405). A link in an amendment, history or live section is allowed.

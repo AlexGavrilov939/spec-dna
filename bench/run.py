@@ -26,7 +26,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BINS = {"go": os.path.join(HERE, "go", "scan-go"), "rust": os.path.join(HERE, "rust", "target", "release", "scan")}
+BINS = {"go": os.path.join(HERE, "go", "scan-go"), "rust": os.path.join(HERE, "rust", "target", "release", "examples", "scan")}
 
 
 def sh(*cmd, **kw):
@@ -35,7 +35,7 @@ def sh(*cmd, **kw):
 
 def build():
     sh("go", "build", "-trimpath", "-ldflags=-s -w", "-o", BINS["go"], ".", cwd=os.path.join(HERE, "go"))
-    sh("cargo", "build", "--release", "--quiet", cwd=os.path.join(HERE, "rust"))
+    sh("cargo", "build", "--release", "--quiet", "--example", "scan", cwd=os.path.join(HERE, "rust"))
 
 
 def once(cmd):

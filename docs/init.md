@@ -96,14 +96,19 @@ A language other than `en` sets `[rules] lint = "off"`, because the requirement 
 
 ## Preview and files
 
-The preview shows the full `spec-dna.toml` and each file to create or change:
+The preview starts with the 10 answers and how `init` applied each one. A line gives the value, whether it is the default of the question or changed from it, and what it writes. An answer that equals the default and writes no key or file says `writes nothing`. For example, the default types (all 10) write no `types` key. Answer 9 (the harness level) writes the `[harness]` table and the harness files. Answer 10 (the models) writes the `[harness.roles]` table. If the level is `none`, answer 10 shows `-` and says `writes nothing`.
+
+Then the preview shows the full `spec-dna.toml` and each file to create or change:
 
 - `spec-dna.toml`
 - the generated line in `AGENTS.md` and `CLAUDE.md`, and the skill `.claude/skills/spec-dna/SKILL.md`
 - for `github`: `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)). If the file exists, `init` does not change it.
-- a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`
-
+- a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`. The hook runs `spec-dna check --staged`, which checks the git index: a commit records the index, not the working tree. A hook that 0.4.1 wrote (`spec-dna check`) reads the working tree. `init` changes that exact line in place when it runs again (also with an existing `spec-dna.toml`), and the preview shows the diff. It does not change any other text of a hook.
 - the harness files, if the level is not `none`: `.claude/agents/*.md`, `.claude/agents/model-team.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`. The harness block of the preview shows each file with `create`, `change` or `remove` and a note. It also shows the warnings, the reasons for disabled roles and the line `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.` It shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code.
+
+After the list, the preview gives the diff of each file other than `spec-dna.toml`. This includes the harness files and the files that `init` removes. A file that does not exist yet shows as a diff against `/dev/null`. A file that `init` removes shows as a diff to `/dev/null`. `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`. A new project and `--reconfigure` also give `answers` with the 10 answers. With an existing `spec-dna.toml`, `--dry-run --json` gives `files` with the same entries, and `harness`.
+
+The skill lists the types of the project (`types` of `spec-dna.toml`), or all 10 types if the project has no `types` list. If you change `types` later, run `spec-dna init` to update the skill, or `check` reports SD502.
 
 For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file. `--json` has a `harness` object with the level, the files (path, action and note), the kept notes, the warnings and the bytes.
 
@@ -168,7 +173,9 @@ The harness has the current `[harness]` table as its defaults. A smaller level r
 
 `init` with an existing `spec-dna.toml` and no `--reconfigure` is the upgrade path:
 
+- `init` updates the adapters, the skill (with the `types` of the project) and the exact hook line that 0.4.1 wrote (`spec-dna check`, which it changes to `spec-dna check --staged`). The harness upgrade below comes after these changes.
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
 - `init` regenerates the harness files of a configuration with a `[harness]` table. It writes each generated file that you did not edit, and each file that is missing. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
 - `init` keeps a generated file that you edited, or that has text after its marker, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it and run `init` to generate it again.
 - `init` never removes a file on this path. Only `--reconfigure` removes files.
+- `init --dry-run` on this path shows the diff of each file, also of the harness files. With `--json`, `files` has a `diff` for each file.
