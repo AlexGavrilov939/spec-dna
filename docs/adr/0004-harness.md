@@ -83,6 +83,12 @@ The defaults are the setup that the owner of spec-dna uses (owner ruling, 2026-1
 - `spec-dna hook context-meter` (PostToolUse): tells an agent its context size once at each level.
 - `spec-dna hook fanout-cap` (PreToolUse on `Workflow`): asks the person before a workflow whose agent count can exceed the cap.
 
+Default values:
+
+- The context meter reports at 300,000 and 600,000 tokens: 30% and 60% of a window of 1,000,000 tokens. A subagent gets one level at 250,000 tokens, because it must return to the caller before its context grows large.
+- The fan-out cap is 10 agents. This value is below the default limit of 16 workflow agents that run at the same time in Claude Code, so one approval covers one group of agents.
+- The owner can change each value in `[harness]`.
+
 A hook reads one JSON object from stdin. It reads no configuration: the generated command contains the values. It never fails: any error gives no output and exit code 0. The generated command ends with `2>/dev/null || true`, so a teammate without spec-dna 0.5.0 or later gets no error.
 
 No hook stores prompt, command or tool text. The context meter stores only the levels that it reported, in the temporary directory. `spec-dna transcript` reads transcripts on demand and prints counts.

@@ -25,6 +25,7 @@ An optional agent harness for Claude Code: `init` installs a small team of model
 
 - A configuration of 0.4 or older has no `[harness]` table, so `init` adds no harness on upgrade. Run `spec-dna init --reconfigure` to add it.
 - The hooks need spec-dna 0.5.0 or later on the `PATH` of each teammate. Without it, the hooks do nothing.
+- Each new `init`, also with `--non-interactive`, writes the `lean` harness: Opus at `xhigh` for the main session, the Fable advisor, the agent files, a deny rule and 2 hooks. For no harness, answer `none` to question 9, or use an answers file with `harness = "none"`.
 
 ## 0.4.2 - 2026-11-14
 
