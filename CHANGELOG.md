@@ -6,6 +6,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Changed
 
+- `spec-dna init` question 7 writes the top key `language = "<tag>"` instead of `[rules] lint = "off"`. The answer `en` writes nothing, and a value that is not a BCP 47 tag is a usage error (exit code 2). Detection proposes a tag from the heading aliases and the script of the headings (`Entscheidung` gives `de`), or `en` with a note if it cannot map them. `init --reconfigure` keeps `language` and a `[change]` table, and it keeps a `[rules] lint` rule as it is. A new project gets no `[change]` table ([docs/init.md](docs/init.md)).
 - `history`, and `mv` to a new document of a type that no layer has, stop with exit code 2 and change nothing. The message names the command to run, such as `spec-dna layer add research --types research`: the small graph of a new project has no `research` layer.
 - The default of `roots.live-sections` is `{ decision = ["Status"] }`. SD405 does not report a change to the `Status` section of an accepted decision, and `show --conventions decision` lists `Status`. Set `live-sections = { decision = [] }` to keep the 0.5 behavior.
 - The document types of 0.6: 15 types. `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, `note` and `reference` are `research`, and `change` is `intent`. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The tier label `invariant` of `context` is now `rule`.

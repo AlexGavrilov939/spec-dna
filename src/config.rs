@@ -123,7 +123,7 @@ pub const DEFAULT_LANGUAGE: &str = "en";
 /// check does not look at the registry. The grandfathered tags and the
 /// private-use tags (`i-...`, `x-...`) are not valid. The schema has the same
 /// pattern.
-fn is_language_tag(s: &str) -> bool {
+pub fn is_language_tag(s: &str) -> bool {
     let mut parts = s.split('-');
     let primary = parts.next().unwrap_or("");
     (2..=3).contains(&primary.len())

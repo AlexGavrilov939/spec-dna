@@ -93,7 +93,7 @@ The numbers are the numbers of the design of 0.6.0. This version asks the questi
 | 2 | The layer graph: `small`, `default` or `custom`. The question shows the number of documents and the types that the small graph has no layer for. `custom` keeps the `[layers]` tables of the current `spec-dna.toml`, so it is only for `--reconfigure` | By the number of documents: fewer than 30 gives `small`, 30 or more gives `default`. In `--reconfigure`, `custom` |
 | 3 | The areas of `requirements/`: folder names, or `none` for one folder. The question shows the detected areas | The detected areas, at most 8. `none` if fewer than 2 are detected |
 | 6 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
-| 7 | The normative language and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected aliases |
+| 7 | The language of normative text, as a BCP 47 tag, and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected language and aliases. `en` if detection finds none |
 | 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
 | 9 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
 | 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
@@ -103,7 +103,11 @@ The numbers are the numbers of the design of 0.6.0. This version asks the questi
 
 Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the types of the project, so `init` writes no `types` key. Question 3 writes `areas = [...]`, if the answer has a name. `init` never proposes a group: add a `[groups]` table by hand.
 
-A language other than `en` sets `[rules] lint = "off"`, because the requirement lint reads English only. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) with no `default-type`. The folder of a layer gives the type of a document there, so `docs/requirements/loans.md` is a `requirements` document, and `spec-dna new <type> <id>` writes a document into the folder of its layer. A document with no type and no layer folder gives SD303.
+Question 7 writes the top key `language = "<tag>"`. The answer `en` writes nothing, because `en` is the default. A tag that is not a BCP 47 tag, such as `German`, stops `init` with exit code 2, and `init` writes no file. The word lists of the lint are English, so the checks that use them skip a root when `language` is another language ([config.md](config.md)). `init` no longer writes `[rules] lint = "off"` for this purpose. A `lint` rule in the current file stays as it is.
+
+Detection proposes the language from the heading aliases it found: `Entscheidung` gives `de`, and `Decisión` gives `es`. If it finds no alias, it uses the script that most headings have: `Greek` gives `el`. Several languages use the scripts `Cyrillic` (`ru`), `Arabic` (`ar`), `Devanagari` (`hi`) and `Han` (`zh`), so these tags are a guess, and a note says so. An alias can decide between them: `Рішення` gives `uk`. Latin headings with no alias give `en`. If a script has no tag, or the aliases belong to 2 languages, the proposal is `en` and a note in the preview says why. Enter the tag of your language to change it.
+
+A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) with no `default-type`. The folder of a layer gives the type of a document there, so `docs/requirements/loans.md` is a `requirements` document, and `spec-dna new <type> <id>` writes a document into the folder of its layer. A document with no type and no layer folder gives SD303.
 
 ## Preview and files
 
@@ -172,8 +176,9 @@ Version 0.6.0 removes the answers key `types` of 0.5. An answers file with this 
 
 `init --reconfigure` asks the questions again. The defaults are the current values: the profile, the graph (`custom`), the areas, the evidence rule and test globs, and the roots of `spec-dna.toml`. With `custom`, `init` writes the current `[layers.<name>]` tables again, in the same order. A file that has no such tables stays without them. Another answer replaces the tables, and a root of a type that the new graph has no layer for is not written. `init` does not change the keys that no question asks for:
 
-- `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[context]`, `[groups]` and `[templates]`
-- every rule of `[rules]`. An answer replaces only the rule of its group: `evidence`, `budgets`, and `lint` for a language other than English.
+- `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[change]`, `[context]`, `[groups]` and `[templates]`
+- `language`: it is the default of question 7. The answer `en` removes the key
+- every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs
 - the `[budgets.<type>]` tables, unless the budget level changes
 - `[conventions]`
