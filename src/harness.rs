@@ -396,6 +396,18 @@ impl Harness {
             }
         }
         f.done()?;
+        // `deny` must leave each generated agent at least one tool. An empty
+        // `tools:` line can mean all tools.
+        for g in generated_files(&h) {
+            if let Some(def) = AGENT_DEFS.iter().find(|d| Some(d.name) == g.agent)
+                && def.tools.iter().all(|t| h.deny.iter().any(|d| d == t))
+            {
+                return Err(format!(
+                    "`harness.deny` removes each tool of the agent `{}`; remove a tool from `deny`, or turn the agent off",
+                    def.name
+                ));
+            }
+        }
         Ok(h)
     }
 
@@ -527,8 +539,11 @@ fn parse_role(role: Role, t: &toml::Table) -> Result<RoleCfg, String> {
         (Role::Advisor, Model::Inherit) => {
             return Err(format!("{} cannot be \"inherit\"", key("claude-code")));
         }
-        (Role::Advisor, Model::Id(m)) if m == "haiku" => {
-            return Err(format!("{} cannot be \"haiku\"", key("claude-code")));
+        (Role::Advisor, Model::Id(m)) if m.contains("haiku") => {
+            return Err(format!(
+                "{} cannot be \"{m}\": the advisor model cannot be haiku",
+                key("claude-code")
+            ));
         }
         _ => {}
     }
@@ -670,20 +685,37 @@ struct FileMarker<'a> {
     hash: &'a str,
     /// The text above the marker line.
     before: &'a str,
+    /// The text after the marker line.
+    after: &'a str,
 }
 
-/// Finds the marker of a generated file: the last non-blank line, and nothing
-/// else on it.
+impl FileMarker<'_> {
+    /// Returns true if a person edited the file: the text above the marker no
+    /// longer has the recorded hash, or text follows the marker.
+    fn edited(&self) -> bool {
+        hex(&hash_normalized(self.before)) != self.hash || !self.after.trim().is_empty()
+    }
+}
+
+/// Finds the marker of a generated file: the last line that has a marker and
+/// nothing else. Text after it is a hand edit.
 fn file_marker(text: &str) -> Option<FileMarker<'_>> {
-    let trimmed = text.trim_end();
-    let start = trimmed.rfind('\n').map_or(0, |i| i + 1);
-    let (m, version, hash) = marker_at_end(&trimmed[start..])?;
-    (m == 0).then_some(FileMarker {
-        start,
-        version,
-        hash,
-        before: &text[..start],
-    })
+    let mut found = None;
+    let mut start = 0;
+    for l in text.split_inclusive('\n') {
+        let end = start + l.len();
+        if let Some((0, version, hash)) = marker_at_end(l.trim_end()) {
+            found = Some(FileMarker {
+                start,
+                version,
+                hash,
+                before: &text[..start],
+                after: &text[end..],
+            });
+        }
+        start = end;
+    }
+    found
 }
 
 /// Returns true if the text of a file is a generated harness file.
@@ -1255,12 +1287,22 @@ fn satisfied(doc: &Value, want: &Want) -> bool {
             name,
             command: Some(cmd),
             ..
-        } => doc.get("hooks").get(event).as_arr().iter().any(|g| {
-            g.get("hooks")
+        } => {
+            // Each handler of the name must have the command, as `init` sets
+            // it in each of them. One handler at least must exist.
+            let handlers: Vec<&Value> = doc
+                .get("hooks")
+                .get(event)
                 .as_arr()
                 .iter()
-                .any(|h| is_handler_of(h, name) && h.get("command").as_str() == Some(cmd))
-        }),
+                .flat_map(|g| g.get("hooks").as_arr())
+                .filter(|h| is_handler_of(h, name))
+                .collect();
+            !handlers.is_empty()
+                && handlers
+                    .iter()
+                    .all(|h| h.get("command").as_str() == Some(cmd))
+        }
         Want::Hook { command: None, .. } => true,
     }
 }
@@ -1289,6 +1331,45 @@ fn kept_keys(doc: &Value, old: &Harness, new: &Harness) -> Vec<String> {
         }
     }
     out
+}
+
+/// Returns an error for a container that spec-dna writes into and that has the
+/// wrong type. `init` would replace it and lose its data. `null` is no data.
+fn shape_error(doc: &Value, ws: &[Want]) -> Option<String> {
+    let check = |path: Vec<String>, array: bool| -> Option<String> {
+        for i in 0..path.len() {
+            let last = i + 1 == path.len();
+            let ok = match get_path(doc, &path[..=i]) {
+                Value::Null => true,
+                Value::Arr(_) => last && array,
+                Value::Obj(_) => !(last && array),
+                _ => false,
+            };
+            if !ok {
+                return Some(format!(
+                    "{SETTINGS} is not valid for the harness: `{}` must be {}",
+                    path[..=i].join("."),
+                    if last && array {
+                        "an array"
+                    } else {
+                        "an object"
+                    }
+                ));
+            }
+        }
+        None
+    };
+    let path = |keys: &[&str]| keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+    ws.iter().find_map(|w| match w {
+        Want::Set { path: p, .. } => check(p[..p.len() - 1].to_vec(), false),
+        Want::Deny(_) => check(path(&["permissions", "deny"]), true),
+        Want::Hook {
+            event,
+            command: Some(_),
+            ..
+        } => check(path(&["hooks", event]), true),
+        Want::Hook { .. } => None,
+    })
 }
 
 fn parse_settings(text: &str) -> Result<Value, String> {
@@ -1404,7 +1485,7 @@ enum State {
 fn file_state(actual: &str, expected: &str) -> State {
     match file_marker(actual) {
         None => State::NoMarker,
-        Some(m) if hex(&hash_normalized(m.before)) != m.hash => State::Edited,
+        Some(m) if m.edited() => State::Edited,
         Some(_) if actual == expected => State::Current,
         Some(_) => State::Outdated,
     }
@@ -1475,7 +1556,7 @@ pub fn plan(
                 continue;
             }
             let Some(m) = file_marker(t) else { continue };
-            if hex(&hash_normalized(m.before)) == m.hash {
+            if !m.edited() {
                 plan.changes.push(FileChange {
                     path: p.clone(),
                     action: Action::Remove,
@@ -1559,6 +1640,9 @@ fn settings_change(
     };
     let before = doc.clone();
     let ws = wants(new);
+    if let Some(e) = shape_error(&doc, &ws) {
+        return Err(e);
+    }
     for w in &ws {
         apply_want(&mut doc, w, mode == Mode::Reconfigure);
     }
@@ -1651,12 +1735,12 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
                 "file",
                 "the file has no harness marker, so spec-dna did not generate it".into(),
             )),
-            Some(m) if hex(&hash_normalized(m.before)) != m.hash => out.push(d(
+            Some(m) if m.edited() => out.push(d(
                 Code::AdapterModified,
                 &g.path,
                 line_of(text, m.start),
                 "file",
-                "the generated harness file was edited by hand".into(),
+                "the generated harness file was edited by hand; delete the file and run `spec-dna init`".into(),
             )),
             Some(m) if text != g.text => out.push(d(
                 Code::AdapterOutdated,
@@ -1704,7 +1788,7 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
                     CLAUDE,
                     line,
                     "line",
-                    "the generated model-team line was edited by hand".into(),
+                    "the generated model-team line was edited by hand; delete the line and run `spec-dna init`".into(),
                 ));
             } else if text[start..end].trim_end() != expected_line {
                 out.push(d(
@@ -1735,6 +1819,13 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
         }
         Some(text) => match parse_settings(text) {
             Err(e) => out.push(d(Code::HarnessSettingsInvalid, SETTINGS, 1, "", e)),
+            Ok(doc) if shape_error(&doc, &ws).is_some() => out.push(d(
+                Code::HarnessSettingsInvalid,
+                SETTINGS,
+                1,
+                "",
+                shape_error(&doc, &ws).unwrap_or_default(),
+            )),
             Ok(doc) => {
                 for w in ws.iter().filter(|w| !satisfied(&doc, w)) {
                     out.push(d(
@@ -1834,7 +1925,7 @@ opus = "xhigh"
 
     #[test]
     fn rejects_each_bad_value() {
-        let cases: [(&str, &str); 22] = [
+        let cases: [(&str, &str); 25] = [
             ("", "`harness.level` is required"),
             ("level = \"max\"", "must be \"none\""),
             ("level = 1", "must be a string"),
@@ -1899,11 +1990,27 @@ opus = "xhigh"
                 "level = \"lean\"\n[harness.efforts]\nsonnet = \"max\"",
                 "`harness.efforts.sonnet` must be",
             ),
+            (
+                "level = \"lean\"\n[harness.roles]\nadvisor = { claude-code = \"claude-haiku-4-5\" }",
+                "cannot be \"claude-haiku-4-5\"",
+            ),
+            (
+                "level = \"lean\"\ndeny = [\"Read\", \"Bash\"]",
+                "removes each tool of the agent `fallback-advisor`",
+            ),
+            (
+                "level = \"full\"\ndeny = [\"Read\", \"Grep\", \"Glob\", \"Bash\", \"WebFetch\", \"WebSearch\"]\n[harness.roles]\nadvisor = { agent = \"none\" }",
+                "removes each tool of the agent `Explore`",
+            ),
         ];
         for (src, want) in cases {
             let e = parse(src).unwrap_err();
             assert!(e.contains(want), "{src:?}: {e}");
         }
+        // An agent that is off needs no tool. The advisor can be haiku in its agent.
+        parse("level = \"lean\"\ndeny = [\"Read\", \"Bash\"]\n[harness.roles]\nadvisor = { agent = \"none\" }").unwrap();
+        parse("level = \"none\"\ndeny = [\"Read\", \"Bash\"]").unwrap();
+        parse("level = \"lean\"\n[harness.roles]\nadvisor = { agent = \"haiku\" }").unwrap();
         // With level none the roles are not checked against the level.
         let h = parse("level = \"none\"\n[harness.roles]\nimplementer = {}").unwrap();
         assert_eq!(h.level, Level::None);
@@ -2774,6 +2881,182 @@ opus = "xhigh"
     }
 
     #[test]
+    fn text_after_the_marker_is_a_hand_edit() {
+        let h = lean();
+        let clean = installed(&h);
+        for path in [".claude/agents/checker.md", TEAM_PAGE] {
+            let mut t = clean.clone();
+            let e = t.iter_mut().find(|x| x.0 == path).unwrap();
+            e.1.push_str("extra\n");
+            let d = check(&h, &t);
+            assert_eq!(codes(&d), ["SD501"], "{path}: {d:?}");
+            assert!(
+                d[0].message
+                    .contains("delete the file and run `spec-dna init`"),
+                "{}",
+                d[0].message
+            );
+            // `init` keeps the file, and still repairs the other drift.
+            let mut old = t.clone();
+            let c = old
+                .iter_mut()
+                .find(|x| x.0 == ".claude/agents/Explore.md")
+                .unwrap();
+            c.1 = c.1.replace("You find information", "You guess");
+            let c = old
+                .iter_mut()
+                .find(|x| x.0 == ".claude/agents/Explore.md")
+                .unwrap();
+            let m = file_marker(&c.1).unwrap();
+            let before = m.before.to_string();
+            c.1 = format!("{before}{}\n", marker_text(&before));
+            for mode in [Mode::Upgrade, Mode::Reconfigure] {
+                let p = plan(&old, Some(&h), &h, mode).unwrap();
+                assert!(
+                    p.kept
+                        .iter()
+                        .any(|k| k.starts_with(&format!("kept {path}: edited by hand"))),
+                    "{path}: {:?}",
+                    p.kept
+                );
+                assert!(!p.changes.iter().any(|c| c.path == path));
+                assert!(
+                    p.changes
+                        .iter()
+                        .any(|c| c.path == ".claude/agents/Explore.md"),
+                    "{:?}",
+                    p.changes
+                );
+            }
+        }
+        // Reconfigure to a smaller level keeps an edited file that it would remove.
+        let full = Harness::new(Level::Full);
+        let mut t = installed(&full);
+        let e = t
+            .iter_mut()
+            .find(|x| x.0 == ".claude/agents/implementer.md")
+            .unwrap();
+        e.1.push_str("extra\n");
+        let p = plan(&t, Some(&full), &h, Mode::Reconfigure).unwrap();
+        assert!(
+            p.kept
+                .iter()
+                .any(|k| k.starts_with("kept .claude/agents/implementer.md: edited by hand")),
+            "{:?}",
+            p.kept
+        );
+        assert!(
+            !p.changes
+                .iter()
+                .any(|c| c.action == Action::Remove && c.path == ".claude/agents/implementer.md")
+        );
+        // A file with text after the marker is not a conflict of names.
+        let mut t = files(&h);
+        t[1].1.push_str("extra\n");
+        assert!(name_conflicts(&t).is_empty());
+        assert!(is_installed(&t));
+    }
+
+    #[test]
+    fn the_claude_line_message_says_to_delete_the_line() {
+        let h = lean();
+        let mut t = installed(&h);
+        let e = t.iter_mut().find(|x| x.0 == CLAUDE).unwrap();
+        e.1 = e.1.replace("Model team", "Our team");
+        let d = check(&h, &t);
+        assert_eq!(codes(&d), ["SD501"]);
+        assert!(
+            d[0].message
+                .contains("delete the line and run `spec-dna init`"),
+            "{}",
+            d[0].message
+        );
+    }
+
+    #[test]
+    fn check_reports_each_handler_that_differs() {
+        let h = lean();
+        let mut t = installed(&h);
+        let e = t.iter_mut().find(|x| x.0 == SETTINGS).unwrap();
+        let mut doc = json::parse(&e.1).unwrap();
+        let extra = json::parse(
+            r#"{"matcher":"Bash","hooks":[{"type":"command","command":"spec-dna hook context-meter --levels 1"}]}"#,
+        )
+        .unwrap();
+        let Some(Value::Arr(groups)) = get_mut(entry(&mut doc, "hooks"), "PostToolUse") else {
+            panic!("no groups");
+        };
+        groups.push(extra);
+        e.1 = json::pretty(&doc);
+        let d = check(&h, &t);
+        assert_eq!(codes(&d), ["SD502"], "{d:?}");
+        assert!(d[0].target.starts_with("hooks.PostToolUse"), "{d:?}");
+        // `init` rewrites the same handler, so the two agree.
+        let p = plan(&t, Some(&h), &h, Mode::Upgrade).unwrap();
+        let s = p.changes.iter().find(|c| c.path == SETTINGS).unwrap();
+        t.retain(|x| x.0 != SETTINGS);
+        t.push((SETTINGS.into(), s.text.clone()));
+        assert!(check(&h, &t).is_empty());
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_refuses_the_plan() {
+        let mut h = lean();
+        h.deny = vec!["NotebookEdit".into()];
+        for (text, path, ty) in [
+            (
+                r#"{"permissions":{"deny":"Bash"}}"#,
+                "permissions.deny",
+                "an array",
+            ),
+            (r#"{"permissions":[]}"#, "permissions", "an object"),
+            (r#"{"hooks":[]}"#, "hooks", "an object"),
+            (
+                r#"{"hooks":{"PostToolUse":{}}}"#,
+                "hooks.PostToolUse",
+                "an array",
+            ),
+            (r#"{"env":"x"}"#, "env", "an object"),
+            (r#"{"modelSettings":[]}"#, "modelSettings", "an object"),
+            (
+                r#"{"modelSettings":{"claude-opus-5-5":1}}"#,
+                "modelSettings.claude-opus-5-5",
+                "an object",
+            ),
+        ] {
+            let e = plan(
+                &[(SETTINGS.to_string(), text.to_string())],
+                None,
+                &h,
+                Mode::Reconfigure,
+            )
+            .unwrap_err();
+            assert!(e.contains(&format!("`{path}` must be {ty}")), "{text}: {e}");
+            let d = check(&h, &[(SETTINGS.to_string(), text.to_string())]);
+            let d: Vec<&Diag> = d.iter().filter(|d| d.path == SETTINGS).collect();
+            assert_eq!(d.len(), 1, "{text}: {d:?}");
+            assert_eq!(d[0].code, Code::HarnessSettingsInvalid);
+            assert!(d[0].message.contains(&format!("`{path}` must be {ty}")));
+        }
+        // Null is no data; level none writes no such key.
+        let p = plan(
+            &[(SETTINGS.to_string(), r#"{"env":null}"#.to_string())],
+            None,
+            &h,
+            Mode::Reconfigure,
+        );
+        assert!(p.is_ok());
+        let none = Harness::new(Level::None);
+        let p = plan(
+            &[(SETTINGS.to_string(), r#"{"env":"x"}"#.to_string())],
+            Some(&h),
+            &none,
+            Mode::Reconfigure,
+        );
+        assert!(p.is_ok());
+    }
+
+    #[test]
     fn marker_finder_does_not_mix_with_the_adapter_marker() {
         let adapter = crate::adapters::line();
         assert!(find_line(&adapter).is_none());
@@ -2787,10 +3070,10 @@ opus = "xhigh"
         assert!(!has_marker(
             "# Notes\n\n<!-- spec-dna harness v<version> h:<hash> -->\n"
         ));
-        // The marker of a file must be its last line.
+        // Text after the marker is a hand edit. The file stays a generated file.
         let mut text = files(&lean())[0].1.clone();
         text.push_str("tail\n");
-        assert!(!has_marker(&text));
+        assert!(has_marker(&text));
     }
 
     #[test]

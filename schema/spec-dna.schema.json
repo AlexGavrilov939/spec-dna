@@ -178,7 +178,7 @@
           ]
         },
         "deny": {
-          "description": "Tools that spec-dna removes from the `tools` list of each generated agent, and writes to `permissions.deny` of `.claude/settings.json`. Default: none.",
+          "description": "Tools that spec-dna removes from the `tools` list of each generated agent, and writes to `permissions.deny` of `.claude/settings.json`. A list that removes each tool of a generated agent is an error. Default: none.",
           "type": "array",
           "items": {
             "type": "string",
@@ -247,7 +247,7 @@
               "properties": {
                 "claude-code": {
                   "$ref": "#/$defs/harness-model",
-                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The advisor cannot be `haiku` or `inherit`.",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The advisor cannot be `haiku`, a model id with `haiku` in it, or `inherit`.",
                   "not": {
                     "enum": [
                       "haiku",

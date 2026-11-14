@@ -1059,10 +1059,19 @@ fn apply_models(h: &mut Harness, words: &[String]) -> Result<(), String> {
         if h.level != Level::None && !h.level.includes(role) {
             return Err(format!("role `{key}` is in level full"));
         }
-        // A suffix that is not an effort is part of the model id.
+        // A suffix with a digit belongs to the model id, for example `-v1:0`.
+        // A suffix of letters only, or an empty one, is an effort.
         let (spec, effort) = match value.rsplit_once(':') {
-            Some((m, e)) if Effort::from_name(e).is_some() => (m, Effort::from_name(e)),
-            _ => (value, None),
+            Some((m, e)) => match Effort::from_name(e) {
+                Some(x) => (m, Some(x)),
+                None if e.bytes().all(|b| b.is_ascii_alphabetic()) => {
+                    return Err(format!(
+                        "`{w}`: unknown effort `{e}`; use low, medium, high, xhigh, max or inherit"
+                    ));
+                }
+                None => (value, None),
+            },
+            None => (value, None),
         };
         let (model, agent) = match spec.split_once('/') {
             Some((m, a)) if role == Role::Advisor => (m, Some(a)),
@@ -1190,7 +1199,7 @@ fn harness_defaults(repo: &Repo, existing: &[(String, String)]) -> (Harness, Vec
         if let Some(m) = pick("model") {
             h.cfg_mut(Role::Orchestrator).model = Model::Id(m);
         }
-        if let Some(m) = pick("advisorModel").filter(|m| m != "haiku") {
+        if let Some(m) = pick("advisorModel").filter(|m| !m.contains("haiku")) {
             h.cfg_mut(Role::Advisor).model = Model::Id(m);
         }
     }
@@ -1198,11 +1207,17 @@ fn harness_defaults(repo: &Repo, existing: &[(String, String)]) -> (Harness, Vec
     (h, notes)
 }
 
-/// Refuses the harness if git ignores a file that it writes. A team could not
-/// commit the file.
-fn refuse_ignored(repo: &Repo) -> Result<(), Fatal> {
-    for p in [harness::TEAM_PAGE, harness::SETTINGS] {
-        if repo.git.is_ignored(p) {
+/// Refuses the harness if git ignores a file that it writes: each generated
+/// file, `CLAUDE.md` and the settings file. A team could not commit it.
+fn refuse_ignored(repo: &Repo, h: &Harness) -> Result<(), Fatal> {
+    let mut paths: Vec<String> = harness::generated_files(h)
+        .into_iter()
+        .map(|g| g.path)
+        .collect();
+    paths.push(harness::CLAUDE.to_string());
+    paths.push(harness::SETTINGS.to_string());
+    for p in paths {
+        if repo.git.is_ignored(&p) {
             return Err(Fatal::Usage(format!(
                 "git ignores {p}, so the harness files cannot be committed; remove the ignore rule, or choose the harness level none"
             )));
@@ -1236,7 +1251,7 @@ fn plan_harness(
         return Ok(None);
     }
     if new.level != Level::None {
-        refuse_ignored(repo)?;
+        refuse_ignored(repo, new)?;
     }
     if let Some(c) = changes.iter().find(|c| c.path == harness::CLAUDE) {
         existing.retain(|e| e.0 != harness::CLAUDE);
@@ -1851,10 +1866,19 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         defaults(&facts, Some(&root))
     };
     let existing = harness_existing(repo);
-    if plan.harness_old.is_none() {
+    let was_none = plan
+        .harness_old
+        .as_ref()
+        .is_some_and(|h| h.level == Level::None);
+    if plan.harness_old.is_none() || was_none {
+        // A configuration of level `none` holds no other key, so a new level
+        // takes the fresh defaults. The level `none` stays the default.
         let (h, notes) = harness_defaults(repo, &existing);
         plan.harness = h;
         plan.harness_notes = notes;
+        if was_none {
+            plan.harness.level = Level::None;
+        }
     } else {
         // A new level can add a role whose agent name the project uses.
         let h = &mut plan.harness;
@@ -2082,7 +2106,7 @@ fn report_commit(written: &[String]) {
 fn report_harness(h: Option<&HarnessRun>, written: &[String]) {
     let Some(h) = h else { return };
     print_harness(h, false);
-    if h.plan.changes.iter().any(|c| written.contains(&c.path)) {
+    if h.level != Level::None && h.plan.changes.iter().any(|c| written.contains(&c.path)) {
         println!("{RESTART}");
     }
 }
@@ -2298,6 +2322,9 @@ mod tests {
             ("implementer=opus", "role `implementer` is in level full"),
             ("helper=haiku:high", "the role `helper` has no effort"),
             ("reviewer=", "the model is empty"),
+            ("reviewer=opus:ultra", "unknown effort `ultra`"),
+            ("reviewer=opus:", "unknown effort ``"),
+            ("advisor=opus/haiku:ultra", "unknown effort `ultra`"),
         ] {
             let e = apply_models(&mut lean(), &[word.to_string()]).unwrap_err();
             assert!(e.contains(want), "{word}: {e}");
@@ -2305,6 +2332,7 @@ mod tests {
         // The configuration rules apply to the result.
         for (word, want) in [
             ("advisor=haiku", "cannot be \"haiku\""),
+            ("advisor=claude-haiku-4-5", "cannot be \"claude-haiku-4-5\""),
             ("orchestrator=none", "cannot be \"none\""),
             ("orchestrator=opus:max", "cannot be \"max\""),
         ] {
@@ -2313,6 +2341,10 @@ mod tests {
             let e = validate_harness(&h).unwrap_err();
             assert!(e.contains(want), "{word}: {e}");
         }
+        // The fallback agent can be haiku.
+        let mut h = lean();
+        apply_models(&mut h, &["advisor=opus/haiku".to_string()]).unwrap();
+        validate_harness(&h).unwrap();
         // A suffix that is no effort belongs to the model id.
         let mut h = lean();
         apply_models(&mut h, &["reviewer=vendor.model-v1:0".to_string()]).unwrap();

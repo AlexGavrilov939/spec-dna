@@ -300,7 +300,7 @@ pub fn fanout(
     let found = bound(&script)?;
     let reason = match found.total {
         None => format!(
-            "spec-dna fan-out cap: line {} starts agents over a list that the run makes, so the number of agents has no limit. Limit the list, for example with .slice(0, {cap}). Or approve this run.",
+            "spec-dna fan-out cap: line {} can start agents without a limit: a loop over a list that the run makes, a loop without a number limit, a recursive call or a nested workflow. Limit the loop, for example with .slice(0, {cap}). Or approve this run.",
             found.line
         ),
         Some(n) if n > cap => format!(
@@ -1510,7 +1510,7 @@ mod tests {
                 .get("permissionDecisionReason")
                 .as_str(),
             Some(
-                "spec-dna fan-out cap: line 1 starts agents over a list that the run makes, so the number of agents has no limit. Limit the list, for example with .slice(0, 10). Or approve this run."
+                "spec-dna fan-out cap: line 1 can start agents without a limit: a loop over a list that the run makes, a loop without a number limit, a recursive call or a nested workflow. Limit the loop, for example with .slice(0, 10). Or approve this run."
             )
         );
     }

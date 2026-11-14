@@ -55,14 +55,14 @@ sonnet = "high"
 | Key | Meaning |
 | --- | --- |
 | `level` | `none`, `lean` or `full` |
-| `deny` | Tools that no agent of the project gets. `init` proposes `NotebookEdit` if git tracks no notebook. A deny rule removes the tool from each request, so it makes each request smaller |
+| `deny` | Tools that no agent of the project gets. A list that removes each tool of a generated agent is an error. `init` proposes `NotebookEdit` if git tracks no notebook. A deny rule removes the tool from each request, so it makes each request smaller |
 | `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` disables the meter for the main session |
 | `subagent-meter` | The context size at which a subagent gets a message. `0` disables it |
 | `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
 | `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` disables a role. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file) |
 | `[harness.efforts]` | The effort of a model when a person selects it with `/model` |
 
-A model is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model id. The advisor cannot be `haiku`. Efforts are `low`, `medium`, `high`, `xhigh`, `max` and `inherit`. The main session cannot use `max`.
+A model is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model id. The advisor model cannot be haiku. The fallback agent can. Efforts are `low`, `medium`, `high`, `xhigh`, `max` and `inherit`. The main session cannot use `max`.
 
 `init` writes an effort as `modelSettings.<model id>.effortLevel`, so it needs the model id of each alias. Each spec-dna release has a table of the aliases and their model ids. When Anthropic changes the model of an alias, a new spec-dna release updates the table. Until you install that release, `check` passes, and the effort applies to the old id only.
 
@@ -88,7 +88,7 @@ Entries in `.claude/settings.json`:
 | `hooks.PostToolUse` | `spec-dna hook context-meter ...` |
 | `hooks.PreToolUse` (matcher `Workflow`) | `spec-dna hook fanout-cap ...` |
 
-spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key by hand. spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
+spec-dna writes the settings file again with a 2-space indent, so a number form such as `1e3` becomes `1000`, and an integer above 2^53 loses precision. If a key that spec-dna writes into has a value of the wrong type, for example `permissions.deny` as a string, `init` refuses and names the JSON path, and `check` reports SD505. spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key by hand. spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
 
 A file of your own in `.claude/agents` stays. If its agent name is the name of a role file, `init` disables that role by default. `init` never replaces your file.
 
@@ -112,7 +112,7 @@ The hook keeps one empty file for each level that it reported, in the temporary 
 
 ### `spec-dna hook fanout-cap`
 
-A workflow script can start many agents, and each agent uses its own context. Before a workflow runs, the hook computes an upper limit of the agents that the script can start. It multiplies each `agent(` call by the size of each loop around it. A loop over a list that the run makes has no limit. If the limit is above the cap, or if there is no limit, Claude Code asks the person before the run.
+A workflow script can start many agents, and each agent uses its own context. Before a workflow runs, the hook computes an upper limit of the agents that the script can start. It multiplies each `agent(` call by the size of each loop around it. A loop over a list that the run makes has no limit. If the limit is above the cap, or if there is no limit, Claude Code asks the person before the run. The bound is a text scan. It does not see a regex literal with a quote or a bracket, or an alias of `agent`, so such a script runs without a question.
 
 To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<n>`.
 
@@ -123,11 +123,11 @@ To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<
 | Code | Finding |
 | --- | --- |
 | SD504 | A generated file or the `CLAUDE.md` line is missing, or a file at a role path has no marker |
-| SD501 | A generated file or line was edited by hand |
-| SD502 | A generated file, the line or a settings entry differs from what this version generates for the configuration |
-| SD505 | `.claude/settings.json` is not valid JSON |
+| SD501 | A generated file or line was edited by hand, or has text after its marker. Delete the file or the line and run `spec-dna init` |
+| SD502 | A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command |
+| SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |
 
-As for the other adapters, only findings that are new against the base fail the gate. To change the team, change `[harness]` and run `spec-dna init --reconfigure`. Do not edit the generated files.
+As for the other adapters, only findings that are new against the base fail the gate. The check of the base uses the `[harness]` table of the base. Thus a change of the table, without a change of the files, gives new findings. To change the team, change `[harness]` and run `spec-dna init --reconfigure`. Do not edit the generated files.
 
 ## Cost and requirements
 

@@ -147,7 +147,7 @@ default-type = "spec"
 
 The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).
 
-`harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` disables a role, and `inherit` writes no model.
+`harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` disables a role, and `inherit` writes no model. A suffix after `:` that has only letters, or none, must be an effort. A suffix with a digit, such as `:0` in a cloud model id, stays part of the model. The advisor model cannot be haiku.
 
 ## Reconfigure
 
@@ -170,5 +170,5 @@ The harness has the current `[harness]` table as its defaults. A smaller level r
 
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
 - `init` regenerates the harness files of a configuration with a `[harness]` table. It writes each generated file that you did not edit, and each file that is missing. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
-- `init` keeps a generated file that you edited, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it and run `init` to generate it again.
+- `init` keeps a generated file that you edited, or that has text after its marker, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it and run `init` to generate it again.
 - `init` never removes a file on this path. Only `--reconfigure` removes files.

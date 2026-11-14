@@ -533,7 +533,23 @@ fn a_git_ignore_of_the_claude_folder_refuses_the_harness() {
     r.write(".gitignore", ".claude/agents/\n");
     let (code, _, err) = r.run3(&["init", "--non-interactive"]);
     assert_eq!(code, 2, "{err}");
+    // So does the rule for one agent file, or for `CLAUDE.md`.
+    for (rule, path) in [
+        (".claude/agents/checker.md\n", ".claude/agents/checker.md"),
+        ("Explore.md\n", ".claude/agents/Explore.md"),
+        ("CLAUDE.md\n", "CLAUDE.md"),
+        ("settings.json\n", ".claude/settings.json"),
+    ] {
+        r.write(".gitignore", rule);
+        let (code, out, err) = r.run3(&["init", "--non-interactive"]);
+        assert_eq!(code, 2, "{rule}: {out}{err}");
+        assert!(
+            err.contains(&format!("git ignores {path}")),
+            "{rule}: {err}"
+        );
+    }
     // With the harness off, nothing is refused.
+    r.write(".gitignore", ".claude/agents/\n");
     let (code, out, err) = r.init_with("harness = \"none\"\nadapters = [\"agents-md\"]\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
 }
@@ -748,4 +764,171 @@ fn a_claude_file_with_an_import_gets_the_model_team_line_after_it() {
     let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(r.read("CLAUDE.md"), "@AGENTS.md\n");
+}
+
+#[test]
+fn a_change_of_the_harness_table_alone_is_new_drift() {
+    let r = lean_repo();
+    r.commit("harness");
+    let (code, out) = r.run(&["check", "--base", "HEAD"]);
+    assert_eq!(code, 0, "{out}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("reviewer = { claude-code = \"opus\""), "{cfg}");
+    r.write(
+        "spec-dna.toml",
+        &cfg.replace(
+            "reviewer = { claude-code = \"opus\"",
+            "reviewer = { claude-code = \"sonnet\"",
+        ),
+    );
+    for args in [&["check"][..], &["check", "--base", "HEAD"][..]] {
+        let (code, out) = r.run(args);
+        assert_eq!(code, 1, "{args:?}: {out}");
+        assert!(out.contains("SD502"), "{args:?}: {out}");
+    }
+    // The finding is not new when the base has the same drift.
+    r.commit("drift");
+    let (code, out) = r.run(&["check", "--base", "HEAD"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn text_after_the_marker_is_a_hand_edit_for_init_and_check() {
+    for file in [".claude/agents/checker.md", ".claude/agents/model-team.md"] {
+        let r = lean_repo();
+        r.commit("init");
+        let text = format!("{}extra\n", r.read(file));
+        r.write(file, &text);
+        // Another file is stale: `init` repairs it and keeps the edited one.
+        let other = ".claude/agents/Explore.md";
+        r.write(
+            other,
+            &r.read(other).replace("harness v", "harness v0.0.0-"),
+        );
+        let (code, out) = r.run(&["check", "--all"]);
+        assert_eq!(code, 1, "{file}: {out}");
+        assert!(
+            out.contains(&format!("{file}:"))
+                && out.contains("error SD501")
+                && out.contains("delete the file and run `spec-dna init`"),
+            "{file}: {out}"
+        );
+        assert!(!out.contains(&format!("{file}:1: error SD504")), "{out}");
+        for args in [&["init", "--dry-run"][..], &["init"][..]] {
+            let (code, out, err) = r.run3(args);
+            assert_eq!(code, 0, "{file} {args:?}: {out}{err}");
+            assert!(
+                out.contains(&format!("kept {file}: edited by hand")),
+                "{file} {args:?}: {out}"
+            );
+        }
+        assert_eq!(r.read(file), text);
+        assert!(r.read(other).contains(&format!("harness v{VERSION} ")));
+        let (_, out) = r.run(&["check", "--all"]);
+        assert!(out.contains("error SD501"), "{out}");
+    }
+}
+
+#[test]
+fn a_deny_rule_that_removes_each_tool_of_an_agent_is_refused() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("harness-deny = [\"Read\", \"Bash\"]\n", &[]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("fallback-advisor"), "{err}");
+    assert!(!r.exists("spec-dna.toml"));
+    assert!(!r.exists(".claude/agents/fallback-advisor.md"));
+}
+
+#[test]
+fn a_model_word_with_an_unknown_effort_is_refused() {
+    let r = Repo::empty();
+    for word in ["reviewer=opus:ultra", "reviewer=opus:"] {
+        let (code, out, err) = r.init_with(&format!("harness-models = [\"{word}\"]\n"), &[]);
+        assert_eq!(code, 2, "{word}: {out}{err}");
+        assert!(err.contains("unknown effort"), "{word}: {err}");
+    }
+    let (code, out, err) = r.init_with("harness-models = [\"advisor=claude-haiku-4-5\"]\n", &[]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("cannot be haiku"), "{err}");
+}
+
+#[test]
+fn a_settings_value_of_the_wrong_type_is_refused_and_reported() {
+    let r = lean_repo();
+    r.commit("init");
+    let text = "{\"permissions\":{\"deny\":\"Bash\"}}\n";
+    r.write(".claude/settings.json", text);
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error SD505") && out.contains("`permissions.deny` must be an array"),
+        "{out}"
+    );
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("`permissions.deny` must be an array"), "{err}");
+    assert_eq!(r.read(".claude/settings.json"), text);
+}
+
+#[test]
+fn a_second_handler_with_wrong_flags_is_reported_and_repaired() {
+    let r = lean_repo();
+    r.commit("init");
+    let text = r.read(".claude/settings.json").replace(
+        "\"PostToolUse\": [",
+        "\"PostToolUse\": [{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"spec-dna hook context-meter --levels 1\"}]},",
+    );
+    r.write(".claude/settings.json", &text);
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD502"), "{out}");
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.read(".claude/settings.json").contains("--levels 1\""));
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn the_help_of_init_matches_the_docs() {
+    let r = Repo::empty();
+    for args in [
+        &["init", "--help"][..],
+        &["help", "init"][..],
+        &["--help"][..],
+    ] {
+        let (code, out) = r.run(args);
+        assert_eq!(code, 0, "{args:?}");
+        assert!(out.contains("at most 10 questions"), "{args:?}: {out}");
+        assert!(!out.contains("8 questions"), "{args:?}: {out}");
+        assert!(!out.contains("adapters only"), "{args:?}: {out}");
+        assert!(out.contains("and the harness"), "{args:?}: {out}");
+    }
+}
+
+#[test]
+fn lean_after_none_takes_the_fresh_defaults_and_none_prints_no_restart_line() {
+    let r = lean_repo();
+    r.commit("init");
+    let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("removed .claude/agents/checker.md\n"), "{out}");
+    assert!(!out.contains("Restart Claude Code"), "{out}");
+    r.commit("none");
+    let (code, out, err) = r.init_with("harness = \"lean\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("deny = [\"NotebookEdit\"]\n"), "{cfg}");
+    assert!(out.contains("Restart Claude Code"), "{out}");
+    // A level that stays none keeps none.
+    let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.init_with("", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read("spec-dna.toml")
+            .contains("[harness]\nlevel = \"none\"\n"),
+        "{}",
+        r.read("spec-dna.toml")
+    );
 }

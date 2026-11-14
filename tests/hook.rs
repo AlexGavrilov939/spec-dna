@@ -197,11 +197,7 @@ fn unknown_flags_and_names_exit_with_zero() {
     let (code, out, err) = hook(&dir, &args, &ev, &[]);
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(out.contains("about 310K"), "{out}");
-    for args in [
-        &[][..],
-        &["nothing"],
-        &["fanout-cap", "--cap", "x", "--wat"],
-    ] {
+    for args in [&["nothing"][..], &["fanout-cap", "--cap", "x", "--wat"]] {
         let (code, out, err) = hook(&dir, args, &ev, &[]);
         assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""));
     }
@@ -274,7 +270,7 @@ fn fanout_asks_for_an_unbounded_list() {
         workflow_event("const xs = await load();\nfor (const x of xs) {\n  await agent(x);\n}");
     let (_, out, _) = hook(&dir, &["fanout-cap", "--cap", "5"], &ev, &[]);
     assert!(
-        out.contains("line 3 starts agents over a list that the run makes"),
+        out.contains("line 3 can start agents without a limit: a loop over a list that the run makes, a loop without a number limit, a recursive call or a nested workflow."),
         "{out}"
     );
     assert!(out.contains("for example with .slice(0, 5)"), "{out}");
@@ -315,4 +311,23 @@ fn fanout_is_silent_on_bad_input() {
         let (code, out, err) = hook(&dir, &["fanout-cap", "--cap", "1"], input, &[]);
         assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""), "{input}");
     }
+}
+
+#[test]
+fn hook_help_prints_the_help_of_the_command() {
+    let dir = Dir::new();
+    let out = Command::new(BIN).args(["help", "hook"]).output().unwrap();
+    let help = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        help.starts_with("usage: spec-dna hook context-meter"),
+        "{help}"
+    );
+    for args in [&["--help"][..], &["-h"][..], &[][..]] {
+        let (code, out, _) = hook(&dir, args, "", &[]);
+        assert_eq!(code, 0, "{args:?}");
+        assert_eq!(out, help, "{args:?}");
+    }
+    // A hook name keeps its own flags, and it is silent.
+    let (code, out, _) = hook(&dir, &["context-meter", "--help"], "", &[]);
+    assert_eq!((code, out.as_str()), (0, ""));
 }

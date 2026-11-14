@@ -45,11 +45,12 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "init",
         "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]",
-        "Detects the repository, asks at most 8 questions with the detected
+        "Detects the repository, asks at most 10 questions with the detected
 defaults, shows spec-dna.toml and the files to change, and writes them
 after a confirmation. Without a terminal, it uses the defaults. If
-spec-dna.toml exists, it updates the agent adapters only, unless
---reconfigure is set.",
+spec-dna.toml exists, it updates the agent adapters, and the harness
+files if the file has a [harness] table, unless --reconfigure is set.
+With --reconfigure, it asks the questions again.",
     ),
     (
         "check",
@@ -276,6 +277,14 @@ fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // A hook has its own flags and always exits with 0.
     if argv.first().map(String::as_str) == Some("hook") {
+        // Without a hook name, or with a help flag, print the help.
+        if matches!(
+            argv.get(1).map(String::as_str),
+            None | Some("--help" | "-h")
+        ) {
+            println!("{}", command_usage("hook").unwrap_or_default());
+            return ExitCode::SUCCESS;
+        }
         hook::run(&argv[1..]);
         return ExitCode::SUCCESS;
     }
@@ -479,6 +488,23 @@ fn harness_texts(
     Ok(out)
 }
 
+/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
+/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
+/// configuration that does not parse.
+fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+    let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
+        return Ok(None);
+    };
+    let blobs = repo
+        .git
+        .read_blobs(std::slice::from_ref(&blob))
+        .map_err(Fatal::Io)?;
+    Ok(blobs
+        .get(&blob)
+        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok())
+        .and_then(|c| c.harness))
+}
+
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let cfg = repo.load_config()?;
@@ -592,10 +618,15 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         // is new in this change, so each finding of the head is new.
         let base_hd: Vec<_> = if use_base {
             let base_files = harness_texts(repo, &base_snap, false)?;
-            if harness::is_installed(&base_files) {
-                check::apply_severity(&cfg, harness::check(h, &base_files))
-            } else {
-                Vec::new()
+            // The base findings use the configuration of the base, so a
+            // change of `[harness]` makes new drift. A base with no
+            // `[harness]`, or with a configuration that does not parse, has
+            // no findings.
+            match base_harness(repo, &base_snap)? {
+                Some(bh) if harness::is_installed(&base_files) => {
+                    check::apply_severity(&cfg, harness::check(&bh, &base_files))
+                }
+                _ => Vec::new(),
             }
         } else {
             Vec::new()

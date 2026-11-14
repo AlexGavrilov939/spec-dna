@@ -28,10 +28,10 @@ Evidence:
   - The first request of the replacement (Haiku, 3 tools, no `CLAUDE.md`) had 3,683 tokens of context. The built-in Explore on Sonnet had 18,575.
   - A subagent writes its own transcript at `<session>/subagents/agent-<id>.jsonl` beside the main transcript.
 - Measurements on an anonymized mature corpus. The project owner keeps the data. The numbers stay private:
-  - Agent runs that started more than 10 subagents caused most of the subagent cost.
+  - Agent runs with many subagents caused most of the subagent cost.
   - Requests with a large context caused most of the cost.
   - Prose rules about context size and agent counts did not change agent behavior. Hooks that run when the problem occurs did change it.
-  - A hook that copied prompt text to disk stored live secrets.
+- A general risk: an event log that stores prompt or command text can store secrets.
 
 ## Considered Options
 
@@ -104,7 +104,7 @@ No hook stores prompt, command or tool text. The context meter stores only the l
 - Option 2: it has domain text, many agents with no measured value and a large process text in every request.
 - Option 3: the files are outside the repository, so a pull request does not show them and `check` cannot read them.
 - Script hooks (Python, shell): they need a second runtime and start a process in each tool call.
-- An observer that records events: it stores secrets. `spec-dna transcript` gives the same numbers on demand.
+- An observer that records events: it can store secrets. `spec-dna transcript` gives the same numbers on demand.
 - A gate that stops work until the advisor reads the changes: no data on its outcome exists yet. If spec-dna adds such a gate later, the gate is opt-in through an environment variable at launch. It triggers on kinds of action, not on counts.
 - Generated deny rules for large interactive tools: they remove features that some owners use. `docs/harness.md` lists them, and the owner can add them to `deny`.
 - Tiers with no concrete model: the owner must be able to name the model of each role.
