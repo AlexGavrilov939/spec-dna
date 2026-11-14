@@ -824,7 +824,7 @@ fn team_page(h: &Harness) -> String {
         );
     }
     s += "\n## Precedence\n\nThis project file has priority over the user settings. The options `--model`, `--effort` and `--advisor`, and a resumed session, have priority over this project file.\n";
-    s += "\n## Reload\n\nClaude Code reloads `advisorModel`, `fallbackModel`, `env` and the `.claude/agents` directory while it runs. `model` and `modelSettings` apply at the next start.\n";
+    s += "\n## Reload\n\nClaude Code reloads `advisorModel`, `fallbackModel`, `env` and the `.claude/agents` directory while it runs. Claude Code reads `model` and `modelSettings` only when a session starts.\n";
     if h.context_hook_on() || h.fanout_hook_on() {
         s += "\n## Hooks\n\n";
         if h.context_hook_on() {
@@ -969,7 +969,7 @@ fn claude_body(h: &Harness) -> String {
     }
     s += "Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. ";
     if adv {
-        s += "If a file contradicts the advice, say so in one more consult. ";
+        s += "If a file disagrees with the advice, tell the advisor in a second consult. ";
     }
     s
 }
@@ -2207,7 +2207,7 @@ opus = "xhigh"
             "brief `fallback-advisor`. Run `checker` before you say that a task is done."
         ));
         assert!(line.contains("`Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`."));
-        assert!(line.contains("say so in one more consult. <!-- spec-dna harness v"));
+        assert!(line.contains("tell the advisor in a second consult. <!-- spec-dna harness v"));
         assert!(!line.contains("implementer"));
         assert!(claude_line(&full()).unwrap().contains("Give a code change to `implementer` and a spec change to `spec-writer`, one writer at a time. "));
         let mut h = lean();

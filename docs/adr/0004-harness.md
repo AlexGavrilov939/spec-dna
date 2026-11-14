@@ -104,7 +104,7 @@ No hook stores prompt, command or tool text. The context meter stores only the l
 - Option 2: it has domain text, many agents with no measured value and a large process text in every request.
 - Option 3: the files are outside the repository, so a pull request does not show them and `check` cannot read them.
 - Script hooks (Python, shell): they need a second runtime and start a process in each tool call.
-- An observer that records events: it can store secrets. `spec-dna transcript` gives the same numbers on demand.
+- A hook that records events to a log: it can store secrets. `spec-dna transcript` gives the same numbers on demand.
 - A gate that stops work until the advisor reads the changes: no data on its outcome exists yet. If spec-dna adds such a gate later, the gate is opt-in through an environment variable at launch. It triggers on kinds of action, not on counts.
 - Generated deny rules for large interactive tools: they remove features that some owners use. `docs/harness.md` lists them, and the owner can add them to `deny`.
 - Tiers with no concrete model: the owner must be able to name the model of each role.
