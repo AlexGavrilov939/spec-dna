@@ -275,6 +275,21 @@ fn rank(model: &str) -> Option<u8> {
     }
 }
 
+/// Returns true if a deny entry removes the whole tool: the tool name, or the
+/// name with a rule that matches every use (`Tool(*)`, `Tool(**)`).
+fn denies(deny: &[String], tool: &str) -> bool {
+    deny.iter().any(|d| {
+        d == tool
+            || d.strip_prefix(tool)
+                .is_some_and(|r| r == "(*)" || r == "(**)")
+    })
+}
+
+/// Returns true if a model id has the word `haiku`, in any case.
+pub fn is_haiku(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("haiku")
+}
+
 fn token(s: &str, key: &str, what: &str) -> Result<(), String> {
     if s.is_empty() || s.contains(char::is_whitespace) {
         return Err(format!(
@@ -400,7 +415,7 @@ impl Harness {
         // `tools:` line can mean all tools.
         for g in generated_files(&h) {
             if let Some(def) = AGENT_DEFS.iter().find(|d| Some(d.name) == g.agent)
-                && def.tools.iter().all(|t| h.deny.iter().any(|d| d == t))
+                && def.tools.iter().all(|t| denies(&h.deny, t))
             {
                 return Err(format!(
                     "`harness.deny` removes each tool of the agent `{}`; remove a tool from `deny`, or turn the agent off",
@@ -433,6 +448,21 @@ impl Harness {
             out.push(format!(
                 "the effort of the main model is not written: `{o}` has no model id for `modelSettings`; set the effort with `/effort`"
             ));
+        }
+        if let Model::Id(o) = &orch.model
+            && orch.effort != Effort::Inherit
+        {
+            let base = |m: &str| m.split('[').next().unwrap_or(m).to_string();
+            let same = |m: &str| {
+                base(m) == base(o)
+                    || matches!((model_id(m), model_id(o)), (Some(a), Some(b)) if a == b)
+            };
+            if let Some((m, _)) = self.efforts.iter().find(|(m, _)| same(m)) {
+                out.push(format!(
+                    "`[harness.efforts]` names `{m}`, the main model; the effort of the orchestrator ({}) applies, so the entry has no effect",
+                    orch.effort.name()
+                ));
+            }
         }
         out
     }
@@ -539,7 +569,7 @@ fn parse_role(role: Role, t: &toml::Table) -> Result<RoleCfg, String> {
         (Role::Advisor, Model::Inherit) => {
             return Err(format!("{} cannot be \"inherit\"", key("claude-code")));
         }
-        (Role::Advisor, Model::Id(m)) if m.contains("haiku") => {
+        (Role::Advisor, Model::Id(m)) if is_haiku(m) => {
             return Err(format!(
                 "{} cannot be \"{m}\": the advisor model cannot be haiku",
                 key("claude-code")
@@ -741,7 +771,7 @@ fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) 
         .tools
         .iter()
         .copied()
-        .filter(|t| !deny.iter().any(|d| d == t))
+        .filter(|t| !denies(deny, t))
         .collect();
     s += &format!("tools: {}\n", tools.join(", "));
     if def.omit_claude_md {
@@ -983,30 +1013,118 @@ pub fn claude_line(h: &Harness) -> Option<String> {
     Some(format!("{body}{}", marker_text(&body)))
 }
 
-/// Finds the line of `CLAUDE.md` that ends with a harness marker. Returns
-/// (start, end with the line break, version, recorded hash, text before the
-/// marker). The marker of the spec-dna line (`<!-- spec-dna v`) does not match.
-fn find_line(text: &str) -> Option<(usize, usize, &str, &str, &str)> {
-    let mut start = 0;
-    for l in text.split_inclusive('\n') {
-        let end = start + l.len();
-        let body = l.trim_end_matches(['\n', '\r']);
-        if let Some((m, version, hash)) = marker_at_end(body) {
-            return Some((start, end, version, hash, body[..m].trim_end()));
+/// A line of `CLAUDE.md` that holds a harness marker.
+struct ClaudeLine<'a> {
+    /// The offset of the line.
+    start: usize,
+    /// The offset after the line break.
+    end: usize,
+    version: &'a str,
+    hash: &'a str,
+    /// The text before the marker, without trailing white space.
+    before: &'a str,
+    /// The text after the marker on the same line.
+    tail: &'a str,
+}
+
+impl ClaudeLine<'_> {
+    /// Returns true if a person edited the line: the text before the marker
+    /// no longer has the recorded hash, or text follows the marker.
+    fn edited(&self) -> bool {
+        hex(&hash_normalized(self.before)) != self.hash || !self.tail.trim().is_empty()
+    }
+}
+
+/// Finds a valid harness marker anywhere in a line. Returns the position of
+/// the marker, its version and hash, and the text after it. Prose that quotes
+/// the form of the marker does not match.
+fn marker_in(line: &str) -> Option<(usize, &str, &str, &str)> {
+    let mut from = line.len();
+    while let Some(m) = line[..from].rfind(OPEN) {
+        let rest = &line[m + OPEN.len()..];
+        if let Some(close) = rest.find(" -->")
+            && let Some((version, hash)) = rest[..close].split_once(" h:")
+        {
+            let ok = !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-+".contains(&b))
+                && hash.len() == 16
+                && hash.bytes().all(|b| b.is_ascii_hexdigit());
+            if ok {
+                return Some((m, version, hash, &rest[close + " -->".len()..]));
+            }
         }
-        start = end;
+        from = m;
     }
     None
 }
 
+/// Finds each line of `CLAUDE.md` that holds a harness marker. The marker of
+/// the spec-dna line (`<!-- spec-dna v`) does not match.
+fn find_lines(text: &str) -> Vec<ClaudeLine<'_>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for l in text.split_inclusive('\n') {
+        let end = start + l.len();
+        let body = l.trim_end_matches(['\n', '\r']);
+        if let Some((m, version, hash, tail)) = marker_in(body) {
+            out.push(ClaudeLine {
+                start,
+                end,
+                version,
+                hash,
+                before: body[..m].trim_end(),
+                tail,
+            });
+        }
+        start = end;
+    }
+    out
+}
+
+/// Finds the first line of `CLAUDE.md` that holds a harness marker.
+fn find_line(text: &str) -> Option<ClaudeLine<'_>> {
+    find_lines(text).into_iter().next()
+}
+
+/// Returns `text` without the span, and without the blank line before it.
+fn cut_line(text: &str, start: usize, end: usize) -> String {
+    let start = if text[..start].ends_with("\n\n") {
+        start - 1
+    } else {
+        start
+    };
+    format!("{}{}", &text[..start], &text[end..])
+}
+
+/// Removes each harness line that no person edited, except the first `keep`
+/// lines. A second line is a copy of the first. An edited copy stays.
+fn drop_copies(text: &str, keep: usize) -> String {
+    let mut text = text.to_string();
+    loop {
+        let found = find_lines(&text)
+            .into_iter()
+            .skip(keep)
+            .find(|l| !l.edited())
+            .map(|l| (l.start, l.end));
+        match found {
+            Some((start, end)) => text = cut_line(&text, start, end),
+            None => return text,
+        }
+    }
+}
+
 /// Puts the model-team line into the text of `CLAUDE.md`, or removes it for
-/// level `none`. A new line goes at the end, after a blank line.
+/// level `none`. A new line goes at the end, after a blank line. Never more
+/// than one intact line stays.
 pub fn upsert_claude(text: &str, h: &Harness) -> String {
     let Some(new) = claude_line(h) else {
         return remove_claude_line(text);
     };
-    if let Some((start, end, ..)) = find_line(text) {
-        return format!("{}{new}\n{}", &text[..start], &text[end..]);
+    if let Some(l) = find_line(text) {
+        let replaced = format!("{}{new}\n{}", &text[..l.start], &text[l.end..]);
+        return drop_copies(&replaced, 1);
     }
     if text.trim().is_empty() {
         return format!("{new}\n");
@@ -1021,17 +1139,11 @@ pub fn upsert_claude(text: &str, h: &Harness) -> String {
     format!("{text}{sep}{new}\n")
 }
 
-/// Removes the model-team line and the blank line before it.
+/// Removes the model-team line and the blank line before it. Intact copies
+/// of the line go too.
 pub fn remove_claude_line(text: &str) -> String {
     match find_line(text) {
-        Some((start, end, ..)) => {
-            let start = if text[..start].ends_with("\n\n") {
-                start - 1
-            } else {
-                start
-            };
-            format!("{}{}", &text[..start], &text[end..])
-        }
+        Some(l) => drop_copies(&cut_line(text, l.start, l.end), 0),
         None => text.to_string(),
     }
 }
@@ -1586,9 +1698,9 @@ fn claude_change(plan: &mut Plan, current: Option<&str>, new: &Harness, mode: Mo
     if new.level == Level::None && mode == Mode::Upgrade {
         return;
     }
-    if let Some((start, _, _, hash, before)) = current.and_then(find_line) {
-        if hex(&hash_normalized(before)) != hash {
-            let line = line_of(current.unwrap_or(""), start);
+    if let Some(l) = current.and_then(find_line) {
+        if l.edited() {
+            let line = line_of(current.unwrap_or(""), l.start);
             plan.kept.push(format!(
                 "kept {CLAUDE}:{line}: edited by hand (SD501); delete the line and run `spec-dna init` to generate it again"
             ));
@@ -1771,7 +1883,9 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
         }
     }
     let expected_line = claude_line(h).unwrap_or_default();
-    match find(CLAUDE).and_then(find_line) {
+    let claude_text = find(CLAUDE).unwrap_or("");
+    let lines = find_lines(claude_text);
+    match lines.first() {
         None => out.push(d(
             Code::HarnessMissing,
             CLAUDE,
@@ -1779,10 +1893,9 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
             "line",
             "the model-team line is absent".into(),
         )),
-        Some((start, end, version, hash, before)) => {
-            let text = find(CLAUDE).unwrap_or("");
-            let line = line_of(text, start);
-            if hex(&hash_normalized(before)) != hash {
+        Some(l) => {
+            let line = line_of(claude_text, l.start);
+            if l.edited() {
                 out.push(d(
                     Code::AdapterModified,
                     CLAUDE,
@@ -1790,16 +1903,25 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
                     "line",
                     "the generated model-team line was edited by hand; delete the line and run `spec-dna init`".into(),
                 ));
-            } else if text[start..end].trim_end() != expected_line {
+            } else if claude_text[l.start..l.end].trim_end() != expected_line {
                 out.push(d(
                     Code::AdapterOutdated,
                     CLAUDE,
                     line,
                     "line",
-                    format!("the model-team line (v{version}) differs from what spec-dna {VERSION} generates for the configuration"),
+                    format!("the model-team line (v{}) differs from what spec-dna {VERSION} generates for the configuration", l.version),
                 ));
             }
         }
+    }
+    for l in lines.iter().skip(1) {
+        out.push(d(
+            Code::AdapterOutdated,
+            CLAUDE,
+            line_of(claude_text, l.start),
+            "line",
+            "a second model-team line; delete this line".into(),
+        ));
     }
     let ws: Vec<Want> = wants(h)
         .into_iter()
@@ -2071,6 +2193,55 @@ opus = "xhigh"
             "{w:?}"
         );
         assert!(Harness::new(Level::None).warnings().is_empty());
+    }
+
+    #[test]
+    fn warns_when_the_efforts_table_names_the_main_model() {
+        // The default table names sonnet. The main model opus is not in it.
+        assert!(lean().warnings().is_empty());
+        let mut h = lean();
+        h.cfg_mut(Role::Orchestrator).model = Model::Id("sonnet".into());
+        let w = h.warnings();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(
+            w[0].contains("[harness.efforts]") && w[0].contains("effort of the orchestrator"),
+            "{w:?}"
+        );
+        // Without an effort of its own, the orchestrator uses the table.
+        h.cfg_mut(Role::Orchestrator).effort = Effort::Inherit;
+        assert!(h.warnings().is_empty(), "{:?}", h.warnings());
+        h.cfg_mut(Role::Orchestrator).effort = Effort::High;
+        h.efforts.clear();
+        assert!(h.warnings().is_empty());
+    }
+
+    #[test]
+    fn a_deny_rule_for_a_whole_tool_is_a_deny_of_the_tool() {
+        let deny = |d: &[&str]| d.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(denies(&deny(&["Bash"]), "Bash"));
+        assert!(denies(&deny(&["Bash(*)"]), "Bash"));
+        assert!(denies(&deny(&["Bash(**)"]), "Bash"));
+        assert!(!denies(&deny(&["Bash(rm:*)"]), "Bash"));
+        assert!(!denies(&deny(&["BashX(*)"]), "Bash"));
+        assert!(is_haiku("Claude-HAIKU-4-5") && !is_haiku("opus"));
+    }
+
+    #[test]
+    fn the_claude_line_finder_reads_a_marker_anywhere_in_a_line() {
+        let line = claude_line(&lean()).unwrap();
+        let text = format!("# Rules\n\n{line} tail\n");
+        let l = find_line(&text).unwrap();
+        assert!(l.edited());
+        assert_eq!(l.tail, " tail");
+        assert!(!find_line(&format!("{line}\n")).unwrap().edited());
+        // Two lines: init keeps the first and drops an intact copy.
+        let two = format!("{line}\n\n{line}\n");
+        assert_eq!(find_lines(&two).len(), 2);
+        assert_eq!(upsert_claude(&two, &lean()), format!("{line}\n"));
+        assert!(remove_claude_line(&two).trim().is_empty());
+        // An edited copy stays.
+        let edited = format!("{line}\n{line} tail\n");
+        assert_eq!(upsert_claude(&edited, &lean()), edited);
     }
 
     #[test]

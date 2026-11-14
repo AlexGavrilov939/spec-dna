@@ -124,7 +124,7 @@ To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<
 | --- | --- |
 | SD504 | A generated file or the `CLAUDE.md` line is missing, or a file at a role path has no marker |
 | SD501 | A generated file or line was edited by hand, or has text after its marker. Delete the file or the line and run `spec-dna init` |
-| SD502 | A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command |
+| SD502 | `CLAUDE.md` has a second model-team line. Delete it. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command |
 | SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |
 
 As for the other adapters, only findings that are new against the base fail the gate. The check of the base uses the `[harness]` table of the base. Thus a change of the table, without a change of the files, gives new findings. To change the team, change `[harness]` and run `spec-dna init --reconfigure`. Do not edit the generated files.

@@ -152,7 +152,7 @@ default-type = "spec"
 
 The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).
 
-`harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` disables a role, and `inherit` writes no model. A suffix after `:` that has only letters, or none, must be an effort. A suffix with a digit, such as `:0` in a cloud model id, stays part of the model. The advisor model cannot be haiku.
+`harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` disables a role, and `inherit` writes no model. A suffix after the last `:` that has no digit, or none, must be an effort. A word such as `x-high` is an error (`unknown effort`). A suffix with a digit, such as `:0` in a cloud model id, stays part of the model. The advisor model cannot be haiku, in any letter case.
 
 ## Reconfigure
 

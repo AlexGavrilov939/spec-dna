@@ -1192,3 +1192,185 @@ fn the_skill_lists_the_project_types_and_check_accepts_it_with_the_harness() {
         "{out}"
     );
 }
+
+#[test]
+fn text_after_the_marker_of_the_claude_line_is_a_hand_edit() {
+    let r = lean_repo();
+    r.commit("init");
+    let before = r.read("CLAUDE.md");
+    let at = before.find("<!-- spec-dna harness v").unwrap();
+    let close = at + before[at..].find(" -->").unwrap() + " -->".len();
+    let edited = format!("{} tail{}", &before[..close], &before[close..]);
+    r.write("CLAUDE.md", &edited);
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error SD501") && out.contains("delete the line and run `spec-dna init`"),
+        "{out}"
+    );
+    assert!(!out.contains("SD504"), "{out}");
+    for args in [&["init", "--dry-run"][..], &["init"][..]] {
+        let (code, out, err) = r.run3(args);
+        assert_eq!(code, 0, "{args:?}: {out}{err}");
+        assert!(out.contains("kept CLAUDE.md:"), "{args:?}: {out}");
+    }
+    // The line stays as it is, and no second line appears.
+    assert_eq!(r.read("CLAUDE.md"), edited);
+}
+
+#[test]
+fn a_second_model_team_line_is_reported_and_init_keeps_one() {
+    let r = lean_repo();
+    r.commit("init");
+    let one = r.read("CLAUDE.md");
+    let line = one
+        .lines()
+        .find(|l| l.contains("<!-- spec-dna harness v"))
+        .unwrap()
+        .to_string();
+    r.write("CLAUDE.md", &format!("{one}\n{line}\n"));
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error SD502") && out.contains("delete this line"),
+        "{out}"
+    );
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("CLAUDE.md");
+    assert_eq!(text.matches("<!-- spec-dna harness v").count(), 1, "{text}");
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn the_fix_texts_of_sd501_and_sd505_say_to_delete_and_name_the_types() {
+    let r = lean_repo();
+    r.commit("init");
+    let file = ".claude/agents/checker.md";
+    r.write(file, &format!("{}extra\n", r.read(file)));
+    r.write(".claude/settings.json", "{\"model\": ");
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("SD501 fix: Run `spec-dna init` to regenerate the adapter. For a harness file or the model-team line, delete it first. Put your own text outside of the generated text.\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("SD505 fix: Make .claude/settings.json valid JSON, with the value types that the message names. spec-dna cannot check the harness settings in a file that it cannot read.\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_upgrade_from_0_4_1_is_not_a_configuration_change_with_other_files() {
+    for hook_file in [".pre-commit-config.yaml", ".husky/pre-commit"] {
+        let r = lean_repo();
+        let old_hook = if hook_file == ".husky/pre-commit" {
+            "#!/bin/sh\nspec-dna check\n"
+        } else {
+            "repos:\n  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n"
+        };
+        r.write(hook_file, old_hook);
+        // The state of 0.4.1: the old pin and the old hook line.
+        let toml = r.read("spec-dna.toml");
+        let pinned = toml.replace(&format!("spec-dna = \"{VERSION}\""), "spec-dna = \"0.4.1\"");
+        assert_ne!(toml, pinned);
+        r.write("spec-dna.toml", &pinned);
+        r.commit("0.4.1");
+        // The upgrade: set the pin, run `init`.
+        r.write("spec-dna.toml", &toml);
+        let (code, out, err) = r.run3(&["init"]);
+        assert_eq!(code, 0, "{hook_file}: {out}{err}");
+        assert!(
+            r.read(hook_file).contains("spec-dna check --staged"),
+            "{hook_file}: {}",
+            r.read(hook_file)
+        );
+        for args in [&["check"][..], &["check", "--base", "HEAD"][..]] {
+            let (code, out) = r.run(args);
+            assert!(!out.contains("SD503"), "{hook_file} {args:?}: {out}");
+            assert_eq!(code, 0, "{hook_file} {args:?}: {out}");
+        }
+        git(&r.dir, &["add", "-A"]);
+        let (code, out) = r.run(&["check", "--staged"]);
+        assert!(!out.contains("SD503"), "{hook_file}: {out}");
+        assert_eq!(code, 0, "{hook_file}: {out}");
+    }
+}
+
+#[test]
+fn an_effort_word_without_a_digit_must_be_an_effort_and_a_cloud_id_stays_a_model() {
+    let r = Repo::empty();
+    for word in [
+        "reviewer=opus:x-high",
+        "reviewer=opus:xhigh-",
+        "reviewer=opus:Ultra",
+    ] {
+        let (code, out, err) = r.init_with(&format!("harness-models = [\"{word}\"]\n"), &[]);
+        assert_eq!(code, 2, "{word}: {out}{err}");
+        assert!(err.contains("unknown effort"), "{word}: {err}");
+    }
+    let (code, out, err) = r.init_with(
+        "harness-models = [\"reviewer=anthropic.claude-opus-4-v1:0\"]\n",
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read("spec-dna.toml")
+            .contains("claude-code = \"anthropic.claude-opus-4-v1:0\""),
+        "{}",
+        r.read("spec-dna.toml")
+    );
+}
+
+#[test]
+fn the_haiku_rule_of_the_advisor_ignores_case() {
+    let r = Repo::empty();
+    for word in ["advisor=HAIKU", "advisor=Claude-Haiku-4-5"] {
+        let (code, out, err) = r.init_with(&format!("harness-models = [\"{word}\"]\n"), &[]);
+        assert_eq!(code, 2, "{word}: {out}{err}");
+        assert!(err.contains("cannot be haiku"), "{word}: {err}");
+    }
+}
+
+#[test]
+fn a_deny_rule_for_a_whole_tool_counts_as_a_deny_of_the_tool() {
+    let r = Repo::empty();
+    for deny in ["[\"Read(*)\", \"Bash(*)\"]", "[\"Read(**)\", \"Bash\"]"] {
+        let (code, out, err) = r.init_with(&format!("harness-deny = {deny}\n"), &[]);
+        assert_eq!(code, 2, "{deny}: {out}{err}");
+        assert!(err.contains("fallback-advisor"), "{deny}: {err}");
+    }
+    // A rule for a part of a tool leaves the tool.
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("harness-deny = [\"Bash(rm:*)\", \"WebFetch(x)\"]\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // A whole-tool rule is removed from the tools of an agent, like a plain deny.
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("harness-deny = [\"WebFetch(*)\"]\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(".claude/agents/Explore.md");
+    let tools = t.lines().find(|l| l.starts_with("tools:")).unwrap();
+    assert!(
+        tools.contains("WebSearch") && !tools.contains("WebFetch"),
+        "{tools}"
+    );
+}
+
+#[test]
+fn a_detected_orchestrator_model_leaves_out_its_efforts_entry() {
+    let r = Repo::empty();
+    r.write(".claude/settings.json", "{\"model\": \"sonnet\"}\n");
+    r.commit("start");
+    let (code, out, err) = r.run3(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(!cfg.contains("sonnet = \"high\""), "{cfg}");
+    assert!(
+        cfg.contains("orchestrator = { claude-code = \"sonnet\""),
+        "{cfg}"
+    );
+    let (code, out) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}

@@ -777,6 +777,11 @@ fn pre_commit_hook() -> String {
     ])
 }
 
+/// The hook files that `init` writes or upgrades. A change of `spec-dna.toml`
+/// with one of them is still a change of its own (SD503). `init` writes no
+/// file for lefthook.
+pub const HOOK_FILES: [&str; 2] = [".pre-commit-config.yaml", ".husky/pre-commit"];
+
 /// The hook that 0.4.1 wrote runs `spec-dna check`, which reads the working
 /// tree. A commit can pass while the committed tree fails. The hook of this
 /// version runs `spec-dna check --staged`, which reads the index. This
@@ -1107,11 +1112,11 @@ fn apply_models(h: &mut Harness, words: &[String]) -> Result<(), String> {
             return Err(format!("role `{key}` is in level full"));
         }
         // A suffix with a digit belongs to the model id, for example `-v1:0`.
-        // A suffix of letters only, or an empty one, is an effort.
+        // A suffix with no digit, or an empty one, must be an effort.
         let (spec, effort) = match value.rsplit_once(':') {
             Some((m, e)) => match Effort::from_name(e) {
                 Some(x) => (m, Some(x)),
-                None if e.bytes().all(|b| b.is_ascii_alphabetic()) => {
+                None if !e.bytes().any(|b| b.is_ascii_digit()) => {
                     return Err(format!(
                         "`{w}`: unknown effort `{e}`; use low, medium, high, xhigh, max or inherit"
                     ));
@@ -1244,9 +1249,14 @@ fn harness_defaults(repo: &Repo, existing: &[(String, String)]) -> (Harness, Vec
                 .map(str::to_string)
         };
         if let Some(m) = pick("model") {
+            // The effort of the orchestrator applies to its model. An entry
+            // of `[harness.efforts]` for the same model would have no effect.
+            let base = m.split('[').next().unwrap_or(&m).to_string();
+            h.efforts
+                .retain(|(k, _)| k.split('[').next().unwrap_or(k) != base);
             h.cfg_mut(Role::Orchestrator).model = Model::Id(m);
         }
-        if let Some(m) = pick("advisorModel").filter(|m| !m.contains("haiku")) {
+        if let Some(m) = pick("advisorModel").filter(|m| !harness::is_haiku(m)) {
             h.cfg_mut(Role::Advisor).model = Model::Id(m);
         }
     }
@@ -2615,7 +2625,7 @@ fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
     let mut changes = adapter_changes(repo, &chosen, &cfg.types)?;
     // A hook of 0.4.1 reads the working tree. The hook of this version reads
     // the index.
-    for path in [".pre-commit-config.yaml", ".husky/pre-commit"] {
+    for path in HOOK_FILES {
         changes.extend(hook_upgrade(repo, path));
     }
     let hrun = match &cfg.harness {

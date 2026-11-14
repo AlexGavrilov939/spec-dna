@@ -782,9 +782,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
-/// `init` writes with it (the adapters, the harness files and files named
-/// `spec-dna*`) do not
-/// count, and a new `spec-dna.toml` (the adoption) is not checked.
+/// `init` writes with it (the adapters, the harness files, the hook files
+/// that `init` writes or upgrades, and files named `spec-dna*`) do not count,
+/// and a new `spec-dna.toml` (the adoption) is not checked.
 fn config_not_alone(
     repo: &Repo,
     cfg: &config::Config,
@@ -805,6 +805,7 @@ fn config_not_alone(
             *p != config::FILE_NAME
                 && !adapters::PATHS.contains(p)
                 && !harness::is_output_path(p)
+                && !init::HOOK_FILES.contains(p)
                 && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
         })
         .collect();
