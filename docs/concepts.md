@@ -106,7 +106,7 @@ Thus a mature repository can adopt spec-dna before it fixes the old problems. `c
 - A document over its budget, or with no required section.
 - A code citation that a change made stale.
 - A link from a stable layer to a less stable layer (SD901).
-- A change of a requirement, a rule or an interface with no intent folder (SD921, with `--base` only).
+- A change of a requirement, a rule or an interface with no intent folder (SD921).
 - An artifact of a change with no approval of the stage before it (SD910).
 
 A profile (`lite`, `standard` or `strict`) gives the default severity of each code, and `[rules]` changes the severity of one code. `spec-dna.toml` pins the version of spec-dna, so each person and each CI job uses the same rules.
@@ -143,27 +143,24 @@ The unit is a section, with its id and its hash. Thus an agent can cite what it 
 
 Reference: [commands.md](commands.md#context).
 
-## Harness and evals
+## Agents and adapters
 
-`spec-dna init` writes a line into `AGENTS.md` and `CLAUDE.md`, and one skill. They tell the agent to run `spec-dna context` before it edits files, and `spec-dna check` before it finishes. Each agent that reads `AGENTS.md` can follow these steps.
+spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `spec-dna init` writes these steps into the instruction file of the agent. Codex, Cursor and many other agents read `AGENTS.md`, and Claude Code reads `CLAUDE.md`.
 
-For Claude Code, `init` can also write a harness at the level `lean` or `full`:
+An adapter adds more for one agent. The Claude Code adapter adds these parts:
 
-- Roles with their models, such as an orchestrator, an advisor, a `verifier` and a researcher.
+- A harness at the level `lean` or `full`: roles with their models, such as an orchestrator, an advisor, a `verifier` and a researcher.
 - Skills for the stages Plan, Design, Build and Deploy of a change, and `REVIEW.md` for the review of a pull request.
 - Hooks that measure the context, limit the number of agents that a workflow starts, and protect the tests during a fix.
+- Evals: `spec-dna eval run` gives tasks with checks to headless Claude Code, under a cost limit, and reports the pass rate. A new incident needs a new eval (SD918).
 
-`check` reports a generated file that a person edited (SD501), so the harness stays in agreement with the configuration.
+`check` reports a generated file that a person edited (SD501), so the files of an adapter stay in agreement with the configuration.
 
-An eval is a task with checks that tests the agent setup of a project. `spec-dna eval run` runs each eval with headless Claude Code in a temporary directory. The directory holds the fixture of the eval and the harness files of the project. A cost limit stops the runs.
-
-For a new project, `init` writes an example eval and a CI workflow. The workflow runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. A new incident needs a new eval (SD918).
-
-Reference: [harness.md](harness.md), [init.md](init.md).
+Reference: [agents.md](agents.md), [harness.md](harness.md), [evals.md](evals.md).
 
 ## What spec-dna does not do
 
-- It uses no network and no language model. The one exception is `eval run`, which starts `claude`.
+- It uses no network and no language model. The one exception is `eval run`, which starts an agent.
 - It does not write the specifications. An agent or a person writes them, and spec-dna checks them.
 - It does not know who approved a change. The branch protection of the repository decides who can merge.
 - It does not read pull request data, CI logs or an issue tracker. `stats --sdlc` marks the indicators that need them as `n/a`.

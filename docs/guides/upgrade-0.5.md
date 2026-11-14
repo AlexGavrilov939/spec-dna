@@ -8,7 +8,7 @@ Version 0.6.0 renames document types, statuses, configuration keys and harness r
 - **Changes.** Each `proposed`, `accepted` or `rejected` change moves to `intent/<slug>/intent.md`, because the type `intent` is valid only in the `intent` layer. Its status becomes `draft`, `accepted` or `closed`. A `done` change becomes a `research` document.
 - **Decisions.** The word "frozen" is now "locked". SD405 checks the same text as before.
 - **Context.** The order of `context` follows the levels of the layers, so `foundation` comes before `rules`. `context` counts incidents and research documents in one line, and does not list them.
-- **Harness.** The role `reviewer` is now `verifier`, and its file `checker.md` is now `verifier.md`. The role `spec-writer` no longer exists, and the stage skills replace it.
+- **Harness.** In the harness of the Claude Code adapter, the role `reviewer` is now `verifier`, and its file `checker.md` is now `verifier.md`. The role `spec-writer` no longer exists, and the stage skills replace it.
 - **Diagnostics.** The code names of SD405 and SD611 changed. The codes stay. A `--json` consumer must read `code`, not `name`.
 
 ## Before you start

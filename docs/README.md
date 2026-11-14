@@ -26,7 +26,9 @@ This page lists each page of the documentation. The [README](../README.md) gives
 - [Diagnostics](diagnostics.md): each diagnostic code and its fix.
 - [Profiles](profiles.md): the severity of each code in each profile.
 - [init](init.md): what `init` detects and asks.
-- [Agent harness](harness.md): the roles, skills, hooks and `REVIEW.md` that `init` writes for Claude Code.
+- [Agents](agents.md): how spec-dna works with each coding agent, and what each adapter adds.
+- [Claude Code harness](harness.md): the roles, skills, hooks and `REVIEW.md` of the Claude Code adapter.
+- [Evals](evals.md): the eval files, `eval run`, its cost limits and the CI job.
 - [Transcripts](transcript.md): the token and read counts of agent sessions.
 
 ## Project

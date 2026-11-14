@@ -80,6 +80,17 @@ The user documentation is in `docs/`. [docs/README.md](docs/README.md) is its ma
 - Give an image a light file and a dark file with the same geometry. Show it with `picture`.
 - Keep an animation slow and quiet: no motion that blinks or loops faster than 10 seconds. Stop it for `prefers-reduced-motion`.
 
+Each page follows this form:
+
+1. The H1 names the subject, for example "Commands" or "Adopt spec-dna in an existing repository".
+2. The first paragraph says what the page gives and who needs it, in 3 sentences or fewer.
+3. The sections go from the frequent task to the rare detail.
+4. A reference page gives keys, options, codes and statuses in tables.
+5. Each code block has a language tag: `sh`, `console`, `toml`, `md`, `json` or `text`. A `console` block shows real output of the current version.
+6. The page ends with its last section. It has no summary and no "see also" list, because the map links all pages.
+
+spec-dna works with any coding agent. Write "the agent" or "an agent" for the core behavior. Name a specific agent, such as Claude Code or Codex, only in the text of its adapter: [docs/agents.md](docs/agents.md), [docs/harness.md](docs/harness.md), the evals and the transcript adapters. In other pages, link to that text.
+
 ## Branches
 
 - `master` is the default branch. Merge changes into `master` only through pull requests. The `no-commit-to-branch` hook stops local commits to `master`.
