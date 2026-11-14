@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn clean_ears_requirement() {
-        assert!(codes("When a token expires, the gateway SHALL reject the request.").is_empty());
+        assert!(codes("When a tray overflows, the controller SHALL close the valve.").is_empty());
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
         );
         assert_eq!(
             codes(
-                "The gateway SHALL log the request id, the user id, the route, the status and the time."
+                "The controller SHALL log the valve id, the bed id, the row, the state and the time."
             ),
             vec![Code::SentenceLength]
         );

@@ -27,7 +27,7 @@ Assessment (H good, L poor; the judgment of this project, not measurements):
 | 2 Submodule | M | H | M | L: recursive clones, CI credentials, detached HEAD | H after clone | M | L | M | M |
 | 3 Subtree or vendored text | M | H | H | M: large noisy diffs | H | L: merges against local edits | M | L: copies drift | M |
 | 4 Release binary, pinned | H: one command | H: version and checksums committed | H: static binaries per OS | H: CI installs the pin | H: no network in normal use | H: change the pin, revert the commit | H | H | H: checksums in the repository, build provenance |
-| 5 Package managers only | H | M: floating versions by default | M: one manager per OS | M | H after install | M | H | M | M |
+| 5 Package managers only | H | M: versions float by default | M: one manager per OS | M | H after install | M | H | M | M |
 | 6 Container image | M | H | M: needs a container runtime | H | M | H | L: start-up cost in agent hooks | H | H |
 
 ## Decision Outcome

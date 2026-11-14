@@ -497,10 +497,10 @@ mod tests {
 
     #[test]
     fn relative_paths() {
-        assert_eq!(relative("docs/auth", "docs/auth/x.md"), "x.md");
+        assert_eq!(relative("docs/irrigation", "docs/irrigation/x.md"), "x.md");
         assert_eq!(
-            relative("docs/auth", "docs/billing/x.md"),
-            "../billing/x.md"
+            relative("docs/irrigation", "docs/harvest/x.md"),
+            "../harvest/x.md"
         );
         assert_eq!(relative("", "src/a.rs"), "src/a.rs");
         assert_eq!(relative("docs/a/b", "README.md"), "../../../README.md");

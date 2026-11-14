@@ -3,7 +3,7 @@ type: note
 ---
 # Research notes
 
-The gateway entry point is [gateway.rs](../../src/gateway.rs). The old design is in [design](../../design/old.md).
+The controller entry point is [controller.rs](../../src/controller.rs). The old design is in [design](../../design/old.md).
 
 ![diagram](images/flow.png)
 

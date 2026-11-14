@@ -37,7 +37,7 @@ A reference document holds research, data, transcripts or other material that ag
 
 ## Templates
 
-`spec-dna new <type> <id>` writes the template of a type. In a mixed root, an id without a namespace gets the namespace of its type. For example, `spec-dna new decision psp-choice` writes `<root>/decisions/psp-choice.md`. A spec has no namespace. `spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root.
+`spec-dna new <type> <id>` writes the template of a type. In a mixed root, an id without a namespace gets the namespace of its type. For example, `spec-dna new decision pump-choice` writes `<root>/decisions/pump-choice.md`. A spec has no namespace. `spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root.
 
 A placeholder of a template has the form `{{text}}`, such as `{{key}}` or `{{The cause.}}`. `check` reports each placeholder that remains in a document (SD306, an error). Thus a template cannot pass the gate before an author replaces each placeholder. `${{ ... }}` and `{{ ... }}` with spaces inside the braces (GitHub Actions and Jinja syntax) are not placeholders.
 
@@ -49,7 +49,7 @@ type: invariant
 status: draft
 applies-to: ["**"]
 ---
-# Money
+# Water
 
 ## Rules
 

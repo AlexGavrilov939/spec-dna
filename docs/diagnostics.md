@@ -15,7 +15,7 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 | SD103 | evidence-missing | error | A `verified-by` path (in the front matter, or in the inline `<!-- verified-by: ... -->` marker of a requirement) is not in the git tree. |
 | SD104 | ambiguous-reference | error | A reference names an alias that more than one document has. |
 | SD105 | covers-unresolved | error | A `covers:` tag in a test file names no requirement. The document, the key or the requirement does not exist, or the id names a section. |
-| SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names no document and no Markdown file of the git tree, or no section of the document or file. |
+| SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names a document or a Markdown file that is not in the git tree. Or it names a section that the document or file does not have. |
 | SD201 | duplicate-id | error | Two documents have the same id or alias. |
 | SD202 | id-removed | error | The head tree does not have an id of the base tree, and no document keeps it as an alias. You can delete a change with the status `done` or `rejected`, and you can delete a note. |
 | SD203 | key-format | error | A requirement key in a sentence with a BCP 14 keyword is not a slug and not a legacy key. |
@@ -43,18 +43,18 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 | SD607 | cited-symbol-removed | warning | A document cites an identifier in an inline code span. The change removed the identifier from a file, and no other file that is not Markdown has it. If the file has exactly one new identifier, the message names it as a possible new name. |
 | SD608 | requirement-unverified | warning | A requirement of an active spec, contract or invariant has no evidence: no `verified-by` and no `covers:` tag. |
 | SD609 | incident-unlinked | warning | An incident links no requirement, decision or runbook. |
-| SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries: an entry document was added, removed or renamed, or its title or status changed, or the rows have a manual edit. |
+| SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries. A change added, removed or renamed an entry document, or changed its title or status, or edited the rows manually. |
 | SD701 | budget-soft | warning | A document is over its soft budget. |
-| SD702 | budget-hard | error | A document is over its hard budget, and against the base it is new, it was under the hard budget, or it grew by more than `[budgets] growth` characters (default 4,000). |
+| SD702 | budget-hard | error | A document is over its hard budget. Against the base, it is new, it was under the hard budget, or it grew by more than `[budgets] growth` characters (default 4,000). |
 | SD703 | budget-grew | warning | A document over its soft budget grew against the base. It is under its hard budget, or over it by at most `[budgets] growth` characters. |
-| SD704 | budget-hard-kept | warning | A document is over its hard budget, but it was over it in the base and did not grow, or it is a new document that a split moved out of a document over its hard budget (its section aliases name that document). In a root with `enforce-budgets = false`, every document over its hard budget gives SD704. |
+| SD704 | budget-hard-kept | warning | A document is over its hard budget, but it was over it in the base and did not grow. Or a split moved it out of a document over its hard budget (its section aliases name that document). In a root with `enforce-budgets = false`, every document over its hard budget gives SD704. |
 | SD801 | requirement-keyword | warning | A requirement has no uppercase BCP 14 keyword. |
 | SD802 | ears-pattern | warning | An `If` requirement has no `then`. |
 | SD803 | sentence-length | warning | A requirement sentence is longer than `lint.max-words`. |
 | SD804 | vague-term | warning | A requirement uses a term from the vague-term list. |
 | SD805 | passive-voice | warning | A requirement uses a passive construction (heuristic). |
-| SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or some requirements are recognized, but a list item or a table row starts with a `legacy-keys` token that is not the key of a recognized requirement. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
-| SD807 | requirement-colon-missing | warning | In a spec or contract, a list item starts with a bold slug key and has a BCP 14 keyword, but no colon follows the key (`- **key** [1.1]: sentence`). Thus the item is not a requirement. |
+| SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or spec-dna recognizes some requirements, but a list item or a table row starts with a `legacy-keys` token. This token is not the key of one of them. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
+| SD807 | requirement-colon-missing | warning | In a spec or contract, a list item starts with a bold slug key and has a BCP 14 keyword. But no colon follows the key (`- **key** [1.1]: sentence`). Thus the item is not a requirement. |
 
 The requirement lint (SD801 to SD805) is off in the `lite` and `standard` profiles. It is a warning in `strict`. The rule `lint` changes this.
 
@@ -66,7 +66,12 @@ SD606 and SD607 use the code citations of a document ([ADR 0001](adr/0001-inform
 
 - A link to a file that is not a document. The text of the link is not a second citation.
 - A path in an inline code span or in prose, with an optional location: `src/loans.py`, `src/loans.py:42`, `src/loans.py#L3-L9`. A path is relative to the repository root or to the document. A file name or a path tail that only one file has also resolves, for example `loans.py`.
-- A distinctive identifier in an inline code span: a name with an inner `_` (`max_loans`), a name with a lowercase letter before an uppercase letter (`loanBook`), or a called name with 4 characters or more (`renew()`). Words such as `status` or `HTTP` are not identifier citations. spec-dna also excludes a short list of common call names (`read()`, `main()`) and product names (`GitHub`, `macOS`).
+- A distinctive identifier in an inline code span:
+  - a name with an inner `_` (`max_loans`);
+  - a name with a lowercase letter before an uppercase letter (`loanBook`);
+  - a called name with 4 characters or more (`renew()`).
+
+  Words such as `status` or `HTTP` are not identifier citations. spec-dna also excludes a short list of common call names (`read()`, `main()`) and product names (`GitHub`, `macOS`).
 
 An identifier matches a file if it occurs in the file as a whole word, even in a comment or a string. A citation that still resolves after the change, such as a file name after a move, gives no SD606.
 

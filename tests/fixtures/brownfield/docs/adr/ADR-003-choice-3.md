@@ -1,9 +1,9 @@
 # Decision 3
 
-## Контекст
+## Contexto
 
 Why.
 
-## Решение
+## Decisión
 
 The choice 3.

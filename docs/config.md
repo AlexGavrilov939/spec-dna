@@ -30,9 +30,9 @@ legacy-keys = ["R-{n}"]
 status-map = { released = "active", wip = "draft" }            # legacy status words
 required-sections = { decision = ["Decision Outcome", "Decision"], incident = [["Summary"], ["Root cause"]] }
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
-history-sections = { guide = ["Iteration log"], decision = ["Review rounds"] }  # history headings
-companion-sections = { spec = ["Acceptance map"] }  # sections with a row per requirement
-live-sections = { decision = ["Implementation status"] }  # sections that change in place
+history-sections = { guide = ["Iteration log"], decision = ["Discussion"] }  # history headings
+companion-sections = { spec = ["Coverage table"] }  # sections with a row per requirement
+live-sections = { decision = ["Progress"] }  # sections that change in place
 enforce-budgets = true          # false: the hard budget gives warnings only
 profile = "lite"                # the profile of this root
 rules = { lint = "off" }        # severity overrides for this root
@@ -82,16 +82,16 @@ decision = ["docs/adr/README.md#how-to-amend"]
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the type of the root (in a mixed root, a status of any type). |
 | `roots.required-sections` | table | see [docs/types.md](types.md) | For each type, its required sections, in any language. See [Required sections](#required-sections). |
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. See [Amendment sections](#amendment-sections). |
-| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Review rounds` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `reference` document. In a decision, a history section is not frozen text. |
-| `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as an acceptance map or an evidence map. A table row or a list item of such a section belongs to the requirement keys in its first cell (or the lead of the item). When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. If a row has a key that moves and a key that stays, `mv` stops and changes nothing. |
-| `roots.live-sections` | table | `{}` | For each type, the names of its live sections, such as `Implementation status`, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
+| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `reference` document. In a decision, a history section is not frozen text. |
+| `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as a coverage table or an evidence table. A table row of such a section belongs to the requirement keys in its first cell. A list item belongs to the keys in its lead. When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. If a row has a key that moves and a key that stays, `mv` stops and changes nothing. |
+| `roots.live-sections` | table | `{}` | For each type, the names of its live sections, such as `Progress`, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They have priority over `[rules]` and over every profile. |
 | `roots.lint-severity` | string | none | The key of 0.1 for the rule `lint` of this root (SD801 to SD805). `roots.rules` has priority over it. |
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` has priority over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
-| `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default is about one amendment or a few registry rows. |
+| `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default is about one amendment or a few table rows. |
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
@@ -142,7 +142,7 @@ After a decision is accepted, the text outside its amendment sections is frozen 
 
 ### Conventions
 
-The value of a type is a list of pointers. Each pointer names a section of a project document that states the conventions for documents of that type. An example of a convention is "a contract change needs a dated amendment and a `verified_against` update".
+The value of a type is a list of pointers. Each pointer names a section of a project document that states the conventions for documents of that type. An example of a convention is "a contract change needs a dated amendment and a new `version` value".
 
 - A pointer is a document id or a path, with an optional `#<anchor>`. Without an anchor, it names the whole document.
 - A path can also name a Markdown file that is not a document. Examples are a file outside every root, and a file that an `exclude` glob removes, such as a `README.md`. No check, budget or id applies to such a file. spec-dna reads it only for the conventions.
@@ -208,7 +208,7 @@ An accepted decision has 3 kinds of section:
 | --- | --- | --- | --- | --- |
 | Frozen text | (all other sections) | Cannot change (SD405). Supersede the decision to change its outcome. | The title and the outcome are the summary. | Stays in place. |
 | Amendment section | `amendment-sections` (default `Amendments`) | Can change and grow. New text that states a requirement, a BCP 14 keyword or a status word gives SD605. | Served with the outcome. | Moves into a `reference` document. |
-| Live section | `live-sections` (no default) | Can change in place, with no SD605. Use it for a current state, such as an implementation status. | Served as a section of the document. | Stays in place. |
+| Live section | `live-sections` (no default) | Can change in place, with no SD605. Use it for a current state, such as a progress section. | Served as a section of the document. | Stays in place. |
 
 A history section (`history-sections`) is not frozen text either, and `history` moves it. If you change the name in a heading, the kind of its section can change. A renamed live heading is frozen text again.
 

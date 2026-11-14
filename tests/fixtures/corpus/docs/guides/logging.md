@@ -1,8 +1,8 @@
 ---
 type: guide
 status: active
-applies-to: [auth, "src/**"]
+applies-to: [irrigation, "src/**"]
 ---
 # Logging
 
-Log every rejected request with its request id and the reason.
+Log every valve command with its valve id and the reason.

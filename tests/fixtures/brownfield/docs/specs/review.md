@@ -1,6 +1,6 @@
 ---
 type: note
 ---
-# Review of checkout
+# Review of watering
 
 The review cites R-1.

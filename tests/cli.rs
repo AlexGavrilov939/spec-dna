@@ -186,12 +186,17 @@ fn check_all_matches_golden() {
 #[test]
 fn context_and_show_match_golden() {
     let r = Repo::fixture("corpus");
-    let (code, out, err) = r.run(&["context", "auth/session", "--path", "src/gateway.rs"]);
+    let (code, out, err) = r.run(&[
+        "context",
+        "irrigation/valves",
+        "--path",
+        "src/controller.rs",
+    ]);
     assert_eq!(code, 0, "{err}");
-    golden("context-session.txt", &out);
+    golden("context-valves.txt", &out);
     let (code, out, _) = r.run(&[
         "context",
-        "auth/session#requirements",
+        "irrigation/valves#requirements",
         "--budget",
         "900",
         "--json",
@@ -201,7 +206,7 @@ fn context_and_show_match_golden() {
     let (code, out, _) = r.run(&["show", "ADR-1"]);
     assert_eq!(code, 0);
     golden("show-adr.txt", &out);
-    let (code, out, _) = r.run(&["show", "auth/session#expiry", "--json"]);
+    let (code, out, _) = r.run(&["show", "irrigation/valves#shutoff", "--json"]);
     assert_eq!(code, 0);
     golden("show-requirement.json", &out);
 }
@@ -229,19 +234,19 @@ fn full_warm_and_incremental_runs_agree() {
     }
     // Incremental run: change documents after spec-dna wrote the index.
     r.append(
-        "docs/auth/tokens.md",
-        "- **rotation**: The issuer SHALL rotate keys every 90 days.\n",
+        "docs/irrigation/sensors.md",
+        "- **cleaning**: The installer SHALL clean each sensor every 90 days.\n",
     );
-    r.append("docs/guides/logging.md", "\nSee [[auth/nothing]].\n");
-    fs::remove_file(r.dir.join("docs/billing/invoice.md")).unwrap();
+    r.append("docs/guides/logging.md", "\nSee [[irrigation/nothing]].\n");
+    fs::remove_file(r.dir.join("docs/harvest/records.md")).unwrap();
     r.write(
-        "docs/billing/refunds.md",
-        "# Refunds\n\n- **window**: The service SHALL accept refunds for 30 days.\n",
+        "docs/harvest/storage.md",
+        "# Storage\n\n- **window**: The store SHALL keep a harvest for 30 days.\n",
     );
     for args in [
         &["check", "--all", "--json"][..],
         &["check", "--json"][..],
-        &["context", "auth/session", "--json"][..],
+        &["context", "irrigation/valves", "--json"][..],
     ] {
         let incremental = without_counters(&r.run(args).1);
         assert_eq!(incremental, full(&r, args), "{args:?}");
@@ -250,7 +255,7 @@ fn full_warm_and_incremental_runs_agree() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1);
     assert!(
-        out.contains("SD101 unresolved-reference: `auth/nothing`"),
+        out.contains("SD101 unresolved-reference: `irrigation/nothing`"),
         "{out}"
     );
     assert!(out.contains("SD202 id-removed"), "{out}");
@@ -270,7 +275,7 @@ fn gating_is_relative_to_the_base() {
     );
     git(&r.dir, &["checkout", "-q", "-b", "feature"]);
     r.append(
-        "docs/auth/session.md",
+        "docs/irrigation/valves.md",
         "\nAlso see [the old flow](old-flow.md).\n",
     );
     r.commit("feature");
@@ -279,7 +284,7 @@ fn gating_is_relative_to_the_base() {
     let new: Vec<&str> = out.lines().filter(|l| l.contains(" SD")).collect();
     assert_eq!(new.len(), 1, "{out}");
     assert!(
-        new[0].starts_with("docs/auth/session.md:21: error SD102 unresolved-link"),
+        new[0].starts_with("docs/irrigation/valves.md:21: error SD102 unresolved-link"),
         "{out}"
     );
     let (code, _, err) = r.run(&["check", "--base", "no-such-branch"]);
@@ -289,34 +294,34 @@ fn gating_is_relative_to_the_base() {
 #[test]
 fn moves_keep_ids_resolving() {
     let r = Repo::fixture("corpus");
-    let (code, out, err) = r.run(&["mv", "auth/session#expiry", "auth/tokens"]);
+    let (code, out, err) = r.run(&["mv", "irrigation/valves#shutoff", "irrigation/sensors"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("auth/session#expiry -> auth/tokens#expiry"));
+    assert!(out.contains("irrigation/valves#shutoff -> irrigation/sensors#shutoff"));
     assert!(
-        r.read("docs/auth/tokens.md")
-            .contains("401. <!-- aliases: auth/session#expiry -->")
+        r.read("docs/irrigation/sensors.md")
+            .contains("tray. <!-- aliases: irrigation/valves#shutoff -->")
     );
-    assert!(!r.read("docs/auth/session.md").contains("**expiry**"));
-    let (code, out, err) = r.run(&["mv", "auth/tokens", "docs/security/credentials.md"]);
+    assert!(!r.read("docs/irrigation/valves.md").contains("**shutoff**"));
+    let (code, out, err) = r.run(&["mv", "irrigation/sensors", "docs/climate/probes.md"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("auth/tokens -> security/credentials"), "{out}");
     assert!(
-        r.read("docs/security/credentials.md")
-            .contains("aliases:\n  - auth/tokens\n")
+        out.contains("irrigation/sensors -> climate/probes"),
+        "{out}"
+    );
+    assert!(
+        r.read("docs/climate/probes.md")
+            .contains("aliases:\n  - irrigation/sensors\n")
     );
     // `mv` updates the relative links to the moved file.
     assert!(
-        r.read("docs/auth/session.md")
-            .contains("[the token rules](../security/credentials.md#requirements)")
+        r.read("docs/irrigation/valves.md")
+            .contains("[the sensor rules](../climate/probes.md#requirements)")
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "a move adds no error: {out}");
     // The old forms of the id resolve to the moved requirement.
-    let (_, out, _) = r.run(&["show", "auth/session#expiry"]);
-    assert!(
-        out.starts_with("<!-- security/credentials#expiry h:"),
-        "{out}"
-    );
+    let (_, out, _) = r.run(&["show", "irrigation/valves#shutoff"]);
+    assert!(out.starts_with("<!-- climate/probes#shutoff h:"), "{out}");
     // A removal without an alias is an error.
     fs::remove_file(r.dir.join("docs/guides/logging.md")).unwrap();
     let (code, out, _) = r.run(&["check"]);
@@ -330,11 +335,13 @@ fn moves_keep_ids_resolving() {
 #[test]
 fn lifecycle_rules_compare_base_and_head() {
     let r = Repo::fixture("corpus");
-    let adr = "docs/decisions/ADR-1-session-store.md";
+    let adr = "docs/decisions/ADR-1-valve-controller.md";
     r.write(
         adr,
-        &r.read(adr)
-            .replace("Where do sessions live?", "Where should sessions live?"),
+        &r.read(adr).replace(
+            "Which device opens the valves?",
+            "Which device should open the valves?",
+        ),
     );
     r.write(
         "docs/guides/logging.md",
@@ -349,7 +356,7 @@ fn lifecycle_rules_compare_base_and_head() {
         "{out}"
     );
     git(&r.dir, &["checkout", "-q", "--", "."]);
-    r.append(adr, "\n## Amendments\n\n### Cookie scope\n\nThe gateway MUST set the cookie on the parent domain.\n\n### Typo\n\nFixed a typo.\n");
+    r.append(adr, "\n## Amendments\n\n### Valve timeout\n\nThe controller MUST close a valve after 30 minutes.\n\n### Typo\n\nFixed a typo.\n");
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     let warnings: Vec<&str> = out.lines().filter(|l| l.contains(" SD605")).collect();
@@ -370,14 +377,14 @@ fn localized_amendments_are_not_frozen_text() {
     let adr = "adr/d1.md";
     r.write(
         adr,
-        "---\nstatus: accepted\n---\n# Session store\n\n## Kontext\n\nWhere do sessions live?\n\n## Lösung\n\nUse the key-value store.\n\n## Folgen\n\nOne more service.\n",
+        "---\nstatus: accepted\n---\n# Water source\n\n## Kontext\n\nWhere does the water come from?\n\n## Lösung\n\nUse the rain tank.\n\n## Folgen\n\nOne more pump.\n",
     );
-    r.write("docs/s.md", "# Sessions\n\nSee [[d1]].\n");
+    r.write("docs/s.md", "# Tanks\n\nSee [[d1]].\n");
     r.commit("docs");
     // A new amendment section in the middle and one at the end: no SD405.
     let text = r.read(adr).replace(
         "## Folgen",
-        "## Nachtrag 2026-01-02: TTL\n\nThe gateway MUST expire a session after 30 min.\n\n## Folgen",
+        "## Nachtrag 2026-01-02: TTL\n\nThe controller MUST close the tank after 30 min.\n\n## Folgen",
     );
     r.write(
         adr,
@@ -402,8 +409,7 @@ fn localized_amendments_are_not_frozen_text() {
     // An edit of other text is still an edit of the accepted decision.
     r.write(
         adr,
-        &r.read(adr)
-            .replace("One more service.", "Two more services."),
+        &r.read(adr).replace("One more pump.", "Two more pumps."),
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
@@ -420,12 +426,12 @@ fn live_sections_change_in_place_and_frozen_text_does_not() {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nrequired-sections = { decision = [\"Решение\"] }\namendment-sections = { decision = [\"Поправки\"] }\nlive-sections = { decision = [\"Статус реализации\"] }\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nrequired-sections = { decision = [\"Decisión\"] }\namendment-sections = { decision = [\"Enmiendas\"] }\nlive-sections = { decision = [\"Estado de advance\"] }\n",
     );
     let adr = "adr/d1.md";
     r.write(
         adr,
-        "---\nstatus: accepted\n---\n# Histogram\n\n## Решение\n\nShip the histogram in 2 steps.\n\n## Статус реализации\n\n- step 1: done\n- step 2: open\n\n## Поправки\n\nNone yet.\n",
+        "---\nstatus: accepted\n---\n# Histogram\n\n## Decisión\n\nShip the histogram in 2 steps.\n\n## Estado de advance\n\n- step 1: done\n- step 2: open\n\n## Enmiendas\n\nNone yet.\n",
     );
     r.commit("docs");
     // A live section changes in place: no SD405, no SD605.
@@ -433,7 +439,7 @@ fn live_sections_change_in_place_and_frozen_text_does_not() {
         adr,
         &r.read(adr).replace(
             "- step 2: open",
-            "- step 2: done (the gateway SHALL record it)",
+            "- step 2: done (the controller SHALL record it)",
         ),
     );
     let (code, out, _) = r.run(&["check"]);
@@ -464,25 +470,25 @@ fn conventions_come_first_and_show_prints_them() {
     );
     r.write(
         "docs/README.md",
-        "---\ntype: reference\n---\n# Docs\n\n## Layout\n\nOne file per area.\n\n## Contract changes\n\nA contract change needs a dated amendment and a `verified_against` update.\n\n### Example\n\nSee the token contract.\n\n## Other\n\nNot a convention.\n",
+        "---\ntype: reference\n---\n# Docs\n\n## Layout\n\nOne file per area.\n\n## Contract changes\n\nA contract change needs a dated amendment and a new `version` value.\n\n### Example\n\nSee the feed contract.\n\n## Other\n\nNot a convention.\n",
     );
     r.write(
         "docs/rules.md",
         "---\ntype: guide\nstatus: active\n---\n# Decision rules\n\nAmend, do not rewrite.\n",
     );
     r.write(
-        "docs/token.md",
-        "---\ntype: contract\nstatus: active\n---\n# Token\n\n- **ttl**: The gateway SHALL expire a token after 30 min.\n",
+        "docs/feed.md",
+        "---\ntype: contract\nstatus: active\n---\n# Feed\n\n- **interval**: The sensor feed SHALL send a reading every 60 seconds.\n",
     );
     r.write("docs/s.md", "# S\n\n- **run**: The system SHALL run.\n");
     r.commit("docs");
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
     // `context` serves the conventions of the target type first.
-    let (_, out, _) = r.run(&["context", "docs/token.md"]);
+    let (_, out, _) = r.run(&["context", "docs/feed.md"]);
     let conv = out.find("<!-- docs#contract-changes h:").expect(&out);
     let example = out.find("<!-- docs#example h:").expect(&out);
-    let entry = out.find("<!-- token#token h:").expect(&out);
+    let entry = out.find("<!-- feed#feed h:").expect(&out);
     assert!(conv < example && example < entry, "{out}");
     assert!(out.contains("convention -->"), "{out}");
     assert!(!out.contains("<!-- docs#other h:"), "{out}");
@@ -498,7 +504,7 @@ fn conventions_come_first_and_show_prints_them() {
         "{out}"
     );
     assert!(
-        out.contains("verified_against") && out.contains("See the token contract."),
+        out.contains("new `version` value") && out.contains("See the feed contract."),
         "{out}"
     );
     assert!(!out.contains("Not a convention."), "{out}");
@@ -555,7 +561,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     r.write(
         "docs/README.md",
         &format!(
-            "# Docs\n\n## Contract changes\n\nA contract change needs a dated amendment.\n\n{}\n\n### Example\n\nSee the token contract.\n\n## Other\n\nNot a convention.\n",
+            "# Docs\n\n## Contract changes\n\nA contract change needs a dated amendment.\n\n{}\n\n### Example\n\nSee the feed contract.\n\n## Other\n\nNot a convention.\n",
             "Each amendment names its date and its reason. ".repeat(12)
         ),
     );
@@ -564,8 +570,8 @@ fn conventions_can_name_a_file_outside_the_documents() {
         "# Contributing\n\n## Docs\n\nWrite docs in plain English.\n\n## Code\n\nNot a docs rule.\n",
     );
     r.write(
-        "docs/token.md",
-        "---\ntype: contract\nstatus: active\n---\n# Token\n\n- **ttl**: The gateway SHALL expire a token after 30 min.\n",
+        "docs/feed.md",
+        "---\ntype: contract\nstatus: active\n---\n# Feed\n\n- **interval**: The sensor feed SHALL send a reading every 60 seconds.\n",
     );
     r.commit("docs");
     let (code, out, _) = r.run(&["check", "--all"]);
@@ -575,14 +581,14 @@ fn conventions_can_name_a_file_outside_the_documents() {
     let (_, out, _) = r.run(&["check", "--all", "--json"]);
     assert!(!out.contains("\"path\":\"docs/README.md\""), "{out}");
     // `context` serves the file sections first, in the convention tier.
-    let (code, out, _) = r.run(&["context", "docs/token.md"]);
+    let (code, out, _) = r.run(&["context", "docs/feed.md"]);
     assert_eq!(code, 0, "{out}");
     let readme = out
         .find("<!-- docs/README.md#contract-changes h:")
         .expect(&out);
     let example = out.find("<!-- docs/README.md#example h:").expect(&out);
     let contributing = out.find("<!-- CONTRIBUTING.md#docs h:").expect(&out);
-    let entry = out.find("<!-- token#token h:").expect(&out);
+    let entry = out.find("<!-- feed#feed h:").expect(&out);
     assert!(
         readme < example && example < entry && contributing < entry,
         "{out}"
@@ -593,13 +599,13 @@ fn conventions_can_name_a_file_outside_the_documents() {
         !out.contains("Not a convention.") && !out.contains("Not a docs rule."),
         "{out}"
     );
-    let (_, out, _) = r.run(&["context", "docs/token.md", "--json"]);
+    let (_, out, _) = r.run(&["context", "docs/feed.md", "--json"]);
     assert!(
         out.contains("\"type\":\"file\"") && out.contains("\"tier\":\"convention\""),
         "{out}"
     );
     // A small budget lists a file section. `show` reads it by its id.
-    let (_, out, _) = r.run(&["context", "docs/token.md", "--budget", "400"]);
+    let (_, out, _) = r.run(&["context", "docs/feed.md", "--budget", "400"]);
     assert!(
         out.contains("- `docs/README.md#contract-changes` h:"),
         "{out}"
@@ -607,7 +613,7 @@ fn conventions_can_name_a_file_outside_the_documents() {
     let (code, out, _) = r.run(&["show", "docs/README.md#contract-changes"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("file docs/README.md -->") && out.contains("See the token contract."),
+        out.contains("file docs/README.md -->") && out.contains("See the feed contract."),
         "{out}"
     );
     let (_, out, _) = r.run(&["show", "CONTRIBUTING.md#docs", "--json"]);
@@ -1035,7 +1041,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     );
     r.write(
         "docs/cache-store.md",
-        "---\ntype: decision\nstatus: signed-off\n---\n# Cache store\n\n## Kontext\n\nEin gemeinsamer Cache für [[cache]].\n\n## Lösung\n\nRedis.\n",
+        "---\ntype: decision\nstatus: signed-off\n---\n# Cache store\n\n## Kontext\n\nEin gemeinsamer Speicher für [[cache]].\n\n## Lösung\n\nEine locale Datei.\n",
     );
     r.write("docs/notes.md", "# Notes\n\nNo requirements here.\n");
     r.write(
@@ -1063,7 +1069,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     let (code, out, _) = r.run(&["context", "cache"]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("decision/accepted decision -->\n## Lösung\n\nRedis."),
+        out.contains("decision/accepted decision -->\n## Lösung\n\nEine locale Datei."),
         "{out}"
     );
 }
@@ -1239,24 +1245,28 @@ fn context_serves_requirement_sections_first() {
         "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\n",
     );
     r.write(
-        "docs/pay.md",
-        "# Payments\n\nIntro.\n\n## Background\n\n- **Note**: a label, not a requirement.\n\n## Rules\n\n- **R-1** The service SHALL retry a failed payment once.\n\n## History\n\nOld text.\n\n## Limits\n\n- **R-2** The service SHALL refuse amounts over 10,000.\n",
+        "docs/pumps.md",
+        "# Pumps\n\nIntro.\n\n## Background\n\n- **Note**: a label, not a requirement.\n\n## Rules\n\n- **R-1** The controller SHALL restart a failed pump once.\n\n## History\n\nOld text.\n\n## Limits\n\n- **R-2** The controller SHALL refuse flows over 10,000 liters.\n",
     );
     r.write(
         "docs/guide.md",
         "---\ntype: guide\n---\n# Guide\n\n## First\n\nA.\n\n## Second\n\nB.\n",
     );
     r.commit("docs");
-    let (code, out, _) = r.run(&["context", "pay"]);
+    let (code, out, _) = r.run(&["context", "pumps"]);
     assert_eq!(code, 0);
     let order: Vec<&str> = out
         .lines()
-        .filter(|l| l.starts_with("<!-- pay"))
+        .filter(|l| l.starts_with("<!-- pumps"))
         .map(|l| l.split(' ').nth(1).unwrap())
         .collect();
-    assert_eq!(order, ["pay#rules", "pay#limits", "pay#payments"], "{out}");
-    assert!(out.contains("- `pay#background` h:"), "{out}");
-    assert!(out.contains("- `pay#history` h:"), "{out}");
+    assert_eq!(
+        order,
+        ["pumps#rules", "pumps#limits", "pumps#pumps"],
+        "{out}"
+    );
+    assert!(out.contains("- `pumps#background` h:"), "{out}");
+    assert!(out.contains("- `pumps#history` h:"), "{out}");
     // A document without requirements keeps the heading order.
     let (_, out, _) = r.run(&["context", "guide"]);
     let order: Vec<&str> = out
@@ -1298,7 +1308,7 @@ fn transcript_reports_counts_and_ids_only() {
         "transcript",
         dir,
         "--expect",
-        "auth/tokens",
+        "irrigation/sensors",
         "--expect",
         "ADR-1",
     ]);
@@ -1310,16 +1320,16 @@ fn transcript_reports_counts_and_ids_only() {
         // counts once. A `<synthetic>` message is not a request.
         "  10 requests; tokens: input 26, cache creation 1700, cache read 10930, output 185\n",
         "  11 tool calls (Read 5, Bash 4, Edit 1, Grep 1); 1 error; 1 search\n",
-        "    ADR-1-session-store: 1 read, full, via read\n",
+        "    ADR-1-valve-controller: 1 read, full, via read\n",
         // A read with a line range gives sections. spec-dna output gives the
         // sections that it served, and only ids that are documents.
-        "    auth/session: 2 reads, auth/session#requirements, via read+spec-dna\n",
+        "    irrigation/valves: 2 reads, irrigation/valves#requirements, via read+spec-dna\n",
         // One of the 2 reads covers the front matter only.
-        "    auth/tokens: 2 reads, full, via read+shell\n",
+        "    irrigation/sensors: 2 reads, full, via read+shell\n",
         // A shell path relative to the working directory of the agent.
-        "    billing/invoice: 1 read, full, via shell\n",
+        "    harvest/records: 1 read, full, via shell\n",
         "    guides/logging: 1 read, guides/logging#logging, via spec-dna\n",
-        "    document edits: auth/session 1\n",
+        "    document edits: irrigation/valves 1\n",
         "  expected: {\"read\":2,\"of\":2,\"first_relevant_ms\":4000}\n",
         // A compaction summary does not start an episode.
         "  episode 1 (main, human), 60 s:\n",
@@ -1342,7 +1352,7 @@ fn transcript_reports_counts_and_ids_only() {
         dir,
         &file,
         "--expect",
-        "auth/tokens",
+        "irrigation/sensors",
         "--expect",
         "ADR-1",
     ]);
@@ -1979,29 +1989,29 @@ fn mv_keeps_the_text_after_a_list_apart_from_the_moved_items() {
     let r = Repo::empty();
     r.run(&["init"]);
     r.write(
-        "docs/web.md",
-        "# Web\n\n## Requirements\n\n- **web-home**: The web app SHALL list the events.\n- **web-locale**: The web app SHALL serve two locales.\n\nThe locale rules are in one place.\n\n## Sign-in\n\nText.\n",
+        "docs/panel.md",
+        "# Panel\n\n## Requirements\n\n- **panel-home**: The control panel SHALL list the beds.\n- **panel-units**: The control panel SHALL show two units.\n\nThe unit rules are in one place.\n\n## Display\n\nText.\n",
     );
     r.write(
-        "docs/i18n.md",
-        "# Languages\n\n## Requirements\n\n- **locales**: The system SHALL support two locales.\n\nThe web app has the same rule.\n\n## Notes\n\nText.\n",
+        "docs/units.md",
+        "# Units\n\n## Requirements\n\n- **units**: The system SHALL support two units.\n\nThe control panel has the same rule.\n\n## Notes\n\nText.\n",
     );
     r.commit("docs");
-    let (code, out, err) = r.run(&["mv", "web#web-locale", "i18n"]);
+    let (code, out, err) = r.run(&["mv", "panel#panel-units", "units"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        r.read("docs/i18n.md").contains(
-            "- **locales**: The system SHALL support two locales.\n- **web-locale**: The web app SHALL serve two locales. <!-- aliases: web#web-locale -->\n\nThe web app has the same rule.\n"
+        r.read("docs/units.md").contains(
+            "- **units**: The system SHALL support two units.\n- **panel-units**: The control panel SHALL show two units. <!-- aliases: panel#panel-units -->\n\nThe control panel has the same rule.\n"
         ),
         "{}",
-        r.read("docs/i18n.md")
+        r.read("docs/units.md")
     );
     assert!(
-        r.read("docs/web.md").contains(
-            "- **web-home**: The web app SHALL list the events.\n\nThe locale rules are in one place.\n"
+        r.read("docs/panel.md").contains(
+            "- **panel-home**: The control panel SHALL list the beds.\n\nThe unit rules are in one place.\n"
         ),
         "{}",
-        r.read("docs/web.md")
+        r.read("docs/panel.md")
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
@@ -2194,7 +2204,7 @@ fn check_lists_errors_and_drift_before_the_prose_lint() {
     let mut rules = String::from("# Imported\n\n");
     for i in 1..=12 {
         rules.push_str(&format!(
-            "- **rule-{i}**: The refund of ticket {i} SHALL be approved by the desk.\n"
+            "- **rule-{i}**: The valve of bed {i} SHALL be closed by the controller.\n"
         ));
     }
     rules.push_str("\nSee [the terms](terms.md).\n");
@@ -2400,19 +2410,19 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
         "spec-dna.toml",
         "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n[[roots]]\npath = \"docs/decisions\"\ntype = \"decision\"\n",
     );
-    r.write("src/pay/charge.py", "def charge_card():\n    pass\n");
+    r.write("src/dosing/dose.py", "def add_fertilizer():\n    pass\n");
     r.write(
-        "docs/pay.md",
-        "# Pay\n\n## Requirements\n\n- **charge**: The service SHALL charge the card once. See `src/pay/charge.py`.\n",
+        "docs/dosing.md",
+        "# Dosing\n\n## Requirements\n\n- **dose**: The controller SHALL add fertilizer once a day. See `src/dosing/dose.py`.\n",
     );
     r.commit("start");
     // `new` writes each type into the right root, from its template.
     for (ty, id, path) in [
-        ("invariant", "rules/money", "docs/rules/money.md"),
+        ("invariant", "rules/water", "docs/rules/water.md"),
         ("runbook", "ops/restart", "docs/ops/restart.md"),
-        ("incident", "ops/double-charge", "docs/ops/double-charge.md"),
-        ("reference", "research/psp", "docs/research/psp.md"),
-        ("decision", "psp-choice", "docs/decisions/psp-choice.md"),
+        ("incident", "ops/flooded-bed", "docs/ops/flooded-bed.md"),
+        ("reference", "research/pumps", "docs/research/pumps.md"),
+        ("decision", "pump-choice", "docs/decisions/pump-choice.md"),
     ] {
         let (code, out, err) = r.run(&["new", ty, id]);
         assert_eq!(code, 0, "{out}{err}");
@@ -2423,40 +2433,40 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     }
     let (code, _, err) = r.run(&["new", "spec", "decisions/x"]);
     assert_eq!(code, 2, "{err}");
-    let (code, _, err) = r.run(&["new", "invariant", "rules/money"]);
+    let (code, _, err) = r.run(&["new", "invariant", "rules/water"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("exists"), "{err}");
-    let inv = r.read("docs/rules/money.md");
+    let inv = r.read("docs/rules/water.md");
     assert!(
         inv.starts_with(
-            "---\ntype: invariant\nstatus: draft\napplies-to: [\"**\"]\n---\n# Money\n\n## Rules\n"
+            "---\ntype: invariant\nstatus: draft\napplies-to: [\"**\"]\n---\n# Water\n\n## Rules\n"
         ),
         "{inv}"
     );
     // The placeholders of a template stay errors until an author fills them.
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("docs/ops/double-charge.md"), "{out}");
+    assert!(out.contains("docs/ops/flooded-bed.md"), "{out}");
     // Fill the documents.
     r.write(
-        "docs/rules/money.md",
-        "---\ntype: invariant\nstatus: active\napplies-to: [\"src/pay/**\"]\n---\n# Money\n\n## Rules\n\n- **minor-units**: The system SHALL store amounts in minor units.\n",
+        "docs/rules/water.md",
+        "---\ntype: invariant\nstatus: active\napplies-to: [\"src/dosing/**\"]\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
     );
     r.write(
         "docs/ops/restart.md",
         "---\ntype: runbook\nstatus: active\n---\n# Restart\n\n## When to use\n\nThe queue stops.\n",
     );
     r.write(
-        "docs/ops/double-charge.md",
-        "---\ntype: incident\n---\n# Double charge\n\n## Summary\n\nTwo charges for one order.\n\n## Root cause\n\nA retry without a key.\n",
+        "docs/ops/flooded-bed.md",
+        "---\ntype: incident\n---\n# Flooded bed\n\n## Summary\n\nWater ran over one bed.\n\n## Root cause\n\nA valve without a timeout.\n",
     );
     r.write(
-        "docs/research/psp.md",
-        "---\ntype: reference\n---\n# PSP research\n\nThe notes cite `src/pay/charge.py` many times.\n",
+        "docs/research/pumps.md",
+        "---\ntype: reference\n---\n# Pump research\n\nThe notes cite `src/dosing/dose.py` many times.\n",
     );
     r.write(
-        "docs/decisions/psp-choice.md",
-        "---\nstatus: accepted\n---\n# PSP choice\n\n## Decision Outcome\n\nOne PSP.\n",
+        "docs/decisions/pump-choice.md",
+        "---\nstatus: accepted\n---\n# Pump choice\n\n## Decision Outcome\n\nOne pump.\n",
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
@@ -2465,7 +2475,7 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
         "{out}"
     );
     assert!(
-        out.contains("docs/ops/double-charge.md:1: warning SD609 incident-unlinked"),
+        out.contains("docs/ops/flooded-bed.md:1: warning SD609 incident-unlinked"),
         "{out}"
     );
     r.append(
@@ -2473,31 +2483,31 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
         "\n## Steps\n\n1. Restart the worker.\n",
     );
     r.append(
-        "docs/ops/double-charge.md",
-        "\n## Links\n\n- [[pay#charge]], [[psp-choice]], [[ops/restart]]\n",
+        "docs/ops/flooded-bed.md",
+        "\n## Links\n\n- [[dosing#dose]], [[pump-choice]], [[ops/restart]]\n",
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("SD609"), "{out}");
     // `context` serves the matching invariant first, lists the incident, and
     // never serves the reference.
-    let (code, out, _) = r.run(&["context", "src/pay/charge.py"]);
+    let (code, out, _) = r.run(&["context", "src/dosing/dose.py"]);
     assert_eq!(code, 0, "{out}");
     let first = out.lines().filter(|l| l.starts_with("<!-- ")).nth(1);
     assert!(
-        first.is_some_and(|l| l.starts_with("<!-- rules/money")),
+        first.is_some_and(|l| l.starts_with("<!-- rules/water")),
         "{out}"
     );
     assert!(out.contains("invariant/active invariant -->"), "{out}");
-    assert!(!out.contains("research/psp"), "{out}");
-    let (_, out, _) = r.run(&["context", "pay", "--path", "src/pay/charge.py"]);
-    assert!(out.contains("rules/money"), "{out}");
-    let (_, out, _) = r.run(&["context", "research/psp"]);
+    assert!(!out.contains("research/pumps"), "{out}");
+    let (_, out, _) = r.run(&["context", "dosing", "--path", "src/dosing/dose.py"]);
+    assert!(out.contains("rules/water"), "{out}");
+    let (_, out, _) = r.run(&["context", "research/pumps"]);
     assert!(out.contains("The notes cite"), "{out}");
     // An invariant out of scope is not served.
-    r.write("src/web/page.py", "def page():\n    pass\n");
-    let (_, out, _) = r.run(&["context", "src/web/page.py"]);
-    assert!(!out.contains("rules/money"), "{out}");
+    r.write("src/panel/screen.py", "def screen():\n    pass\n");
+    let (_, out, _) = r.run(&["context", "src/panel/screen.py"]);
+    assert!(!out.contains("rules/water"), "{out}");
 }
 
 #[test]
@@ -2560,8 +2570,8 @@ fn init_detects_a_brownfield_repository() {
     for want in [
         "[evidence]\ntests = [\"**/tests/**\"]",
         "path = \"docs\"\ntype = \"mixed\"\ndefault-type = \"guide\"\nstatus = \"active\"\nstatus-map = { current = \"active\" }\n",
-        "path = \"docs/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nexclude = [\"ADR-*-implementation-plan.md\", \"README.md\"]\nlegacy-ids = [\"ADR-{n}\"]\nrequired-sections = { decision = [\"Решение\", \"Decision Outcome\", \"Decision\"] }\n",
-        "path = \"docs/guides\"\ntype = \"guide\"\nstatus = \"active\"\nexclude = [\"ext-*/**\"]\n",
+        "path = \"docs/adr\"\ntype = \"decision\"\nstatus = \"proposed\"\nexclude = [\"ADR-*-notes.md\", \"README.md\"]\nlegacy-ids = [\"ADR-{n}\"]\nrequired-sections = { decision = [\"Decisión\", \"Decision Outcome\", \"Decision\"] }\n",
+        "path = \"docs/guides\"\ntype = \"guide\"\nstatus = \"active\"\nexclude = [\"vendor-*/**\"]\n",
         "path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\n",
         "  change AGENTS.md (one generated line)",
         "  change .pre-commit-config.yaml (a local hook at the end: `spec-dna check`)",
@@ -2657,7 +2667,7 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     // The keys of 0.3 that no question asks for: the history, companion and
     // live sections of a root, and `[conventions]`.
     let r = Repo::empty();
-    let cfg = "spec-dna = \"0.1.0\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nhistory-sections = { spec = [\"Changelog\"] }\ncompanion-sections = { spec = [\"Acceptance map\"] }\n\n[[roots]]\npath = \"docs/adr\"\ntype = \"decision\"\nlive-sections = { decision = [\"Implementation status\"] }\n\n[conventions]\ndecision = [\"CONTRIBUTING.md#decisions\"]\nspec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]\n";
+    let cfg = "spec-dna = \"0.1.0\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nhistory-sections = { spec = [\"Changelog\"] }\ncompanion-sections = { spec = [\"Coverage table\"] }\n\n[[roots]]\npath = \"docs/adr\"\ntype = \"decision\"\nlive-sections = { decision = [\"Progress\"] }\n\n[conventions]\ndecision = [\"CONTRIBUTING.md#decisions\"]\nspec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]\n";
     r.write("spec-dna.toml", cfg);
     r.write(
         "docs/guide.md",
@@ -2673,8 +2683,8 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     let new = r.read("spec-dna.toml");
     for want in [
         "history-sections = { spec = [\"Changelog\"] }",
-        "companion-sections = { spec = [\"Acceptance map\"] }",
-        "live-sections = { decision = [\"Implementation status\"] }",
+        "companion-sections = { spec = [\"Coverage table\"] }",
+        "live-sections = { decision = [\"Progress\"] }",
         "[conventions]",
         "decision = [\"CONTRIBUTING.md#decisions\"]",
         "spec = [\"docs/guide.md#specs\", \"docs/guide.md#more\"]",
@@ -2683,7 +2693,7 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     }
     let (_, out, _) = r.run(&["show", "--conventions", "decision"]);
     assert!(
-        out.contains("<!-- decision: amendment sections: Amendments; live sections: Implementation status -->")
+        out.contains("<!-- decision: amendment sections: Amendments; live sections: Progress -->")
             && out.contains("Amend."),
         "{out}"
     );
@@ -2844,7 +2854,7 @@ fn init_detects_common_layouts() {
         "path = \"runbooks\"\ntype = \"runbook\"\n",
         "path = \"incidents\"\ntype = \"incident\"\n",
         "path = \"postmortems\"\ntype = \"incident\"\n",
-        "path = \"validation\"\ntype = \"reference\"\n",
+        "path = \"meetings\"\ntype = \"reference\"\n",
         "path = \"research\"\ntype = \"reference\"\n",
         // A numbered directory in a mixed root takes the type of its files.
         "path = \"docs/records\"\ntype = \"incident\"\nlegacy-ids = [\"BUG-{n}\"]\n",
@@ -2951,7 +2961,7 @@ fn init_asks_on_a_terminal() {
         "    Types in use: spec, guide, decision, note. A shorter list makes each document of another type an error.",
         "2/8 Knowledge types [spec, contract, guide, decision, change, note, invariant, runbook, incident, reference]: ",
         "5/8 Mapping: 4 roots.",
-        "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-implementation-plan.md, README.md) [accept]: ",
+        "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-notes.md, README.md) [accept]: ",
         "6/8 Budget level (default, relaxed, tight, off) [default]: ",
         "8/8 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
         "--- spec-dna.toml ---",
@@ -2995,22 +3005,22 @@ fn review_fixes_on_the_command_line() {
         "spec-dna = \"0.1.0\"\n[evidence]\ntests = [\"/tests/**\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
     );
     r.write(
-        "docs/rules/money.md",
-        "---\ntype: invariant\nstatus: active\n---\n# Money\n\n## Rules\n\n- **minor-units**: The system SHALL store amounts in minor units.\n",
+        "docs/rules/water.md",
+        "---\ntype: invariant\nstatus: active\n---\n# Water\n\n## Rules\n\n- **metric-units**: The system SHALL store volumes in liters.\n",
     );
-    r.write("tests/money.py", "# covers: rules/money#minor-units\n");
+    r.write("tests/water.py", "# covers: rules/water#metric-units\n");
     r.commit("start");
     // A test glob with a leading slash works (git rejects it as a pathspec).
-    let (code, out, err) = r.run(&["show", "rules/money"]);
+    let (code, out, err) = r.run(&["show", "rules/water"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("- rules/money#minor-units: tests/money.py:1"),
+        out.contains("- rules/water#metric-units: tests/water.py:1"),
         "{out}"
     );
     // An invariant cannot move back to draft.
     r.write(
-        "docs/rules/money.md",
-        &r.read("docs/rules/money.md")
+        "docs/rules/water.md",
+        &r.read("docs/rules/water.md")
             .replace("status: active", "status: draft"),
     );
     let (code, out, _) = r.run(&["check"]);
@@ -3050,46 +3060,49 @@ fn review_fixes_on_the_command_line() {
 
 /// A project for the hygiene functions of 0.3.0. It has a mixed root with
 /// history and companion sections, a decision root, two reference roots and a
-/// registry of incidents.
+/// list of incidents.
 fn hygiene_project() -> Repo {
     let r = Repo::empty();
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\nhistory-sections = { guide = [\"Iteration log\"] }\ncompanion-sections = { spec = [\"Acceptance map\"] }\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlegacy-ids = [\"ADR-{n}\"]\nhistory-sections = { decision = [\"Review rounds\"] }\n[[roots]]\npath = \"refs/plans\"\ntype = \"reference\"\n[[roots]]\npath = \"refs/briefs\"\ntype = \"reference\"\n[[roots]]\npath = \"registry\"\ntype = \"incident\"\nlegacy-ids = [\"INC-{n}\"]\n",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}\"]\nhistory-sections = { guide = [\"Iteration log\"] }\ncompanion-sections = { spec = [\"Coverage table\"] }\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\nlegacy-ids = [\"ADR-{n}\"]\nhistory-sections = { decision = [\"Discussion\"] }\n[[roots]]\npath = \"refs/drafts\"\ntype = \"reference\"\n[[roots]]\npath = \"refs/minutes\"\ntype = \"reference\"\n[[roots]]\npath = \"incidents\"\ntype = \"incident\"\nlegacy-ids = [\"INC-{n}\"]\n",
     );
     r.write(
-        "docs/billing.md",
-        "# Billing\n\n## Charges\n\n- **R-1**: The desk SHALL charge 3 percent.\n- **R-2**: The desk SHALL send a receipt.\n\n## Refunds\n\n- **R-3**: The desk SHALL refund a payment within 5 days.\n\n## 4. Acceptance map\n\n| Key | Test |\n| --- | --- |\n| R-1 | test_charge |\n| R-2 | test_receipt |\n| R-3 | test_refund |\n",
+        "docs/watering.md",
+        "# Watering\n\n## Schedules\n\n- **R-1**: The controller SHALL water at 6.\n- **R-2**: The controller SHALL send a report.\n\n## Drainage\n\n- **R-3**: The controller SHALL drain a tray within 5 minutes.\n\n## 4. Coverage table\n\n| Key | Test |\n| --- | --- |\n| R-1 | test_schedule |\n| R-2 | test_report |\n| R-3 | test_drain |\n",
     );
     r.write(
-        "docs/guides/desk.md",
-        "---\ntype: guide\nstatus: active\n---\n# Desk guide\n\n## Opening\n\nOpen the desk at 9.\n\n## Closing\n\nClose the desk at 5. See [refunds](../billing.md#refunds).\n\n### Cash count\n\nCount the cash.\n\n## Iteration log\n\n### Round 1\n\nWe tried 8.\n\n### Round 2\n\nWe tried 9.\n",
+        "docs/guides/greenhouse.md",
+        "---\ntype: guide\nstatus: active\n---\n# Greenhouse guide\n\n## Opening\n\nOpen the vents at 9.\n\n## Closing\n\nClose the vents at 5. See [drainage](../watering.md#drainage).\n\n### Meter reading\n\nRead the meter.\n\n## Iteration log\n\n### Round 1\n\nWe tried 8.\n\n### Round 2\n\nWe tried 9.\n",
     );
     r.write(
         "docs/notes/links.md",
-        "---\ntype: note\n---\n# Links\n\nSee [the count](../guides/desk.md#cash-count), [[guides/desk#closing]] and [the slow queue](../../registry/README.md#inc-2-slow-queue).\n",
+        "---\ntype: note\n---\n# Links\n\nSee [the reading](../guides/greenhouse.md#meter-reading), [[guides/greenhouse#closing]] and [the stuck valve](../../incidents/README.md#inc-2-stuck-valve).\n",
     );
     r.write(
-        "adr/ADR-3-cash.md",
-        "---\nstatus: accepted\n---\n# Cash only\n\n## Decision Outcome\n\nThe desk takes cash only.\n\n## Review rounds\n\nRound 1 asked for cards.\n\n## Amendments\n\n### Amendment 1: coins\n\nThe desk SHALL accept coins too.\n\n### Amendment 2: wording\n\nA typo fix.\n",
+        "adr/ADR-3-rainwater.md",
+        "---\nstatus: accepted\n---\n# Rainwater only\n\n## Decision Outcome\n\nThe greenhouse takes rainwater only.\n\n## Discussion\n\nRound 1 asked for tap water.\n\n## Amendments\n\n### Amendment 1: well water\n\nThe greenhouse SHALL accept well water too.\n\n### Amendment 2: wording\n\nA typo fix.\n",
     );
-    r.write("refs/plans/rollout.md", "# Rollout plan\n\nA plan.\n");
-    r.write("refs/plans/launch.md", "# Launch plan\n\nA plan.\n");
     r.write(
-        "refs/briefs/rollout/README.md",
-        "# Rollout brief\n\nA brief.\n",
+        "refs/drafts/irrigation.md",
+        "# Irrigation draft\n\nA draft.\n",
     );
-    for (n, title) in [(1, "Outage"), (2, "Slow queue")] {
+    r.write("refs/drafts/harvest.md", "# Harvest draft\n\nA draft.\n");
+    r.write(
+        "refs/minutes/irrigation/README.md",
+        "# Irrigation minutes\n\nMinutes.\n",
+    );
+    for (n, title) in [(1, "Outage"), (2, "Stuck valve")] {
         r.write(
-            &format!("registry/INC-{n}.md"),
+            &format!("incidents/INC-{n}.md"),
             &format!(
                 "# {title}\n\n## Summary\n\nIt broke. See [[ADR-3]].\n\n## Root cause\n\nA bug.\n"
             ),
         );
     }
     r.write(
-        "registry/README.md",
-        "# Incidents\n\nThe register.\n\n## INC-1 Outage\n\nA long story.\n\n## INC-2 Slow queue\n\nAnother long story. See [[ADR-3]].\n\n## Summary\n\nTwo incidents.\n\n## Root cause\n\nMany.\n",
+        "incidents/README.md",
+        "# Incidents\n\nThe list.\n\n## INC-1 Outage\n\nA long story.\n\n## INC-2 Stuck valve\n\nAnother long story. See [[ADR-3]].\n\n## Summary\n\nTwo incidents.\n\n## Root cause\n\nMany.\n",
     );
     r.commit("hygiene");
     r
@@ -3102,7 +3115,7 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
     assert_eq!(code, 0, "{err}{out}");
     // A guide: the sections go to a new guide, and every old section id
     // resolves through an alias.
-    let (code, out, err) = r.run(&["mv", "guides/desk#closing", "guides/closing"]);
+    let (code, out, err) = r.run(&["mv", "guides/greenhouse#closing", "guides/closing"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
         out.starts_with(
@@ -3113,27 +3126,28 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
     assert!(out.contains("2 section ids stay as aliases"), "{out}");
     let closing = r.read("docs/guides/closing.md");
     assert!(
-        closing.starts_with("---\ntype: guide\nstatus: active\naliases:\n  - guides/desk#closing\n  - guides/desk#cash-count\n---\n# Closing\n"),
+        closing.starts_with("---\ntype: guide\nstatus: active\naliases:\n  - guides/greenhouse#closing\n  - guides/greenhouse#meter-reading\n---\n# Closing\n"),
         "{closing}"
     );
     assert!(
-        closing.contains("See [refunds](../billing.md#refunds)."),
+        closing.contains("See [drainage](../watering.md#drainage)."),
         "{closing}"
     );
-    let desk = r.read("docs/guides/desk.md");
-    assert!(!desk.contains("Cash count"), "{desk}");
+    let guide = r.read("docs/guides/greenhouse.md");
+    assert!(!guide.contains("Meter reading"), "{guide}");
     assert!(
-        desk.contains("## Closing\n\nThis section moved to [Closing](closing.md#closing).\n"),
-        "the heading stays with a pointer: {desk}"
+        guide.contains("## Closing\n\nThis section moved to [Closing](closing.md#closing).\n"),
+        "the heading stays with a pointer: {guide}"
     );
     assert!(
-        r.read("docs/notes/links.md")
-            .contains("[the count](../guides/closing.md#cash-count), [[guides/desk#closing]]"),
+        r.read("docs/notes/links.md").contains(
+            "[the reading](../guides/closing.md#meter-reading), [[guides/greenhouse#closing]]"
+        ),
         "a link follows the section; an id reference resolves by the alias"
     );
-    let (code, out, _) = r.run(&["show", "guides/desk#cash-count"]);
+    let (code, out, _) = r.run(&["show", "guides/greenhouse#meter-reading"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("Count the cash."), "{out}");
+    assert!(out.contains("Read the meter."), "{out}");
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     // A document split out of a document over its hard budget holds no new
@@ -3145,31 +3159,31 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
         "\n[budgets.guide]\nsoft = 50\nhard = 100\n",
     );
     git(&r.dir, &["commit", "-qam", "small guides"]);
-    let (code, out, err) = r.run(&["mv", "guides/desk#closing", "guides/closing"]);
+    let (code, out, err) = r.run(&["mv", "guides/greenhouse#closing", "guides/closing"]);
     assert_eq!(code, 0, "{err}{out}");
     git(&r.dir, &["add", "-A"]);
     let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("docs/guides/closing.md:1: warning SD704 budget-hard-kept: 115 characters, over the hard budget of 100 (split out of `guides/desk`, which was over the hard budget in the base)"),
+        out.contains("docs/guides/closing.md:1: warning SD704 budget-hard-kept: 122 characters, over the hard budget of 100 (split out of `guides/greenhouse`, which was over the hard budget in the base)"),
         "{out}"
     );
     git(&r.dir, &["commit", "-qm", "split"]);
     // A guide section into an existing reference document: a pointer stays.
-    let (code, out, err) = r.run(&["mv", "guides/desk#opening", "plans/rollout"]);
+    let (code, out, err) = r.run(&["mv", "guides/greenhouse#opening", "drafts/irrigation"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(out.contains("left a one-line pointer"), "{out}");
     assert!(
-        r.read("docs/guides/desk.md").contains(
-            "## Opening\n\nThis section moved to [Rollout](../../refs/plans/rollout.md#opening).\n"
+        r.read("docs/guides/greenhouse.md").contains(
+            "## Opening\n\nThis section moved to [Irrigation](../../refs/drafts/irrigation.md#opening).\n"
         ),
         "{}",
-        r.read("docs/guides/desk.md")
+        r.read("docs/guides/greenhouse.md")
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     // Requirements do not go into a document without requirements.
-    let (code, _, err) = r.run(&["mv", "billing#charges", "guides/closing"]);
+    let (code, _, err) = r.run(&["mv", "watering#schedules", "guides/closing"]);
     assert_eq!(code, 2, "{err}");
     assert!(
         err.contains("requirements live in a spec, contract or invariant"),
@@ -3180,35 +3194,35 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
 #[test]
 fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
     let r = hygiene_project();
-    let before = r.read("adr/ADR-3-cash.md");
+    let before = r.read("adr/ADR-3-rainwater.md");
     let (code, _, err) = r.run(&["mv", "ADR-3#decision-outcome", "docs/history/adr-3.md"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("is frozen text of the decision"), "{err}");
-    let (code, _, err) = r.run(&["mv", "ADR-3#amendments", "billing"]);
+    let (code, _, err) = r.run(&["mv", "ADR-3#amendments", "watering"]);
     assert_eq!(code, 2, "{err}");
     assert!(
         err.contains("moves only into a `reference` document"),
         "{err}"
     );
     assert_eq!(
-        r.read("adr/ADR-3-cash.md"),
+        r.read("adr/ADR-3-rainwater.md"),
         before,
         "a refusal changes nothing"
     );
     let (code, out, err) = r.run(&[
         "mv",
         "ADR-3#amendments",
-        "ADR-3#review-rounds",
+        "ADR-3#discussion",
         "docs/history/adr-3.md",
     ]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        out.contains("candidates for a superseding decision (the moved amendments state a requirement, a BCP 14 keyword or a status word; spec-dna writes no decision): ADR-3-cash#amendment-1-coins"),
+        out.contains("candidates for a superseding decision (the moved amendments state a requirement, a BCP 14 keyword or a status word; spec-dna writes no decision): ADR-3-rainwater#amendment-1-well-water"),
         "{out}"
     );
-    let adr = r.read("adr/ADR-3-cash.md");
+    let adr = r.read("adr/ADR-3-rainwater.md");
     assert!(
-        adr.contains("## Decision Outcome\n\nThe desk takes cash only.\n"),
+        adr.contains("## Decision Outcome\n\nThe greenhouse takes rainwater only.\n"),
         "{adr}"
     );
     assert!(
@@ -3223,39 +3237,40 @@ fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
         "{history}"
     );
     assert!(
-        history.contains("The history of [Cash only](../../adr/ADR-3-cash.md)."),
+        history.contains("The history of [Rainwater only](../../adr/ADR-3-rainwater.md)."),
         "{history}"
     );
     assert!(
-        history.contains("### Amendment 1: coins\n\nThe desk SHALL accept coins too."),
+        history
+            .contains("### Amendment 1: well water\n\nThe greenhouse SHALL accept well water too."),
         "{history}"
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "the frozen text did not change: {out}");
     assert!(!out.contains("SD405"), "{out}");
-    let (code, out, _) = r.run(&["show", "ADR-3-cash#amendment-2-wording"]);
+    let (code, out, _) = r.run(&["show", "ADR-3-rainwater#amendment-2-wording"]);
     assert_eq!(code, 0, "{out}");
 }
 
 #[test]
 fn companion_rows_move_with_their_requirements() {
     let r = hygiene_project();
-    let (code, out, err) = r.run(&["mv", "billing#charges", "payments"]);
+    let (code, out, err) = r.run(&["mv", "watering#schedules", "schedules"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
         out.contains("moved 2 companion rows with the requirements"),
         "{out}"
     );
-    let payments = r.read("docs/payments.md");
+    let schedules = r.read("docs/schedules.md");
     assert!(
-        payments.contains("## 4. Acceptance map\n\n| Key | Test |\n| --- | --- |\n| R-1 | test_charge |\n| R-2 | test_receipt |\n"),
-        "{payments}"
+        schedules.contains("## 4. Coverage table\n\n| Key | Test |\n| --- | --- |\n| R-1 | test_schedule |\n| R-2 | test_report |\n"),
+        "{schedules}"
     );
-    let billing = r.read("docs/billing.md");
+    let watering = r.read("docs/watering.md");
     assert!(
-        billing.contains("| Key | Test |\n| --- | --- |\n| R-3 | test_refund |\n")
-            && !billing.contains("R-1"),
-        "{billing}"
+        watering.contains("| Key | Test |\n| --- | --- |\n| R-3 | test_drain |\n")
+            && !watering.contains("R-1"),
+        "{watering}"
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
@@ -3263,48 +3278,51 @@ fn companion_rows_move_with_their_requirements() {
     git(&r.dir, &["commit", "-q", "-m", "split"]);
     // A row of a key that moves and a key that stays cannot move.
     r.write(
-        "docs/billing.md",
-        &billing.replace("| R-3 | test_refund |", "| R-3, R-9 | test_refund |"),
+        "docs/watering.md",
+        &watering.replace("| R-3 | test_drain |", "| R-3, R-9 | test_drain |"),
     );
     r.append(
-        "docs/billing.md",
-        "\n## Extra\n\n- **R-9**: The desk SHALL close at 5.\n",
+        "docs/watering.md",
+        "\n## Extra\n\n- **R-9**: The controller SHALL stop at 5.\n",
     );
-    let (code, _, err) = r.run(&["mv", "billing#refunds", "refunds"]);
+    let (code, _, err) = r.run(&["mv", "watering#drainage", "drainage"]);
     assert_eq!(code, 1, "{err}");
     assert!(
         err.contains("names keys that move (R-3) and keys that stay (R-9)"),
         "{err}"
     );
-    assert!(!r.dir.join("docs/refunds.md").exists());
+    assert!(!r.dir.join("docs/drainage.md").exists());
     // The rows join the table of an existing companion section.
     git(&r.dir, &["checkout", "-q", "--", "."]);
-    let (code, out, err) = r.run(&["mv", "billing#refunds", "payments"]);
+    let (code, out, err) = r.run(&["mv", "watering#drainage", "schedules"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        r.read("docs/payments.md")
-            .contains("| R-2 | test_receipt |\n| R-3 | test_refund |\n"),
+        r.read("docs/schedules.md")
+            .contains("| R-2 | test_report |\n| R-3 | test_drain |\n"),
         "{}",
-        r.read("docs/payments.md")
+        r.read("docs/schedules.md")
     );
 }
 
 #[test]
 fn history_moves_the_configured_sections_into_a_reference_document() {
     let r = hygiene_project();
-    let (code, out, err) = r.run(&["history", "guides/desk"]);
+    let (code, out, err) = r.run(&["history", "guides/greenhouse"]);
     assert_eq!(code, 0, "{err}{out}");
-    let h = r.read("docs/guides/desk-history.md");
+    let h = r.read("docs/guides/greenhouse-history.md");
     assert!(h.starts_with("---\ntype: reference\naliases:\n"), "{h}");
-    assert!(h.contains("The history of [Desk guide](desk.md)."), "{h}");
+    assert!(
+        h.contains("The history of [Greenhouse guide](greenhouse.md)."),
+        "{h}"
+    );
     assert!(
         h.contains("## Iteration log\n\n### Round 1\n\nWe tried 8."),
         "{h}"
     );
-    let desk = r.read("docs/guides/desk.md");
+    let guide = r.read("docs/guides/greenhouse.md");
     assert!(
-        desk.ends_with("## Iteration log\n\nThis section moved to [Desk history](desk-history.md#iteration-log).\n"),
-        "{desk}"
+        guide.ends_with("## Iteration log\n\nThis section moved to [Greenhouse history](greenhouse-history.md#iteration-log).\n"),
+        "{guide}"
     );
     // A decision root holds decisions only: name the destination.
     let (code, _, err) = r.run(&["history", "ADR-3"]);
@@ -3318,51 +3336,52 @@ fn history_moves_the_configured_sections_into_a_reference_document() {
     assert!(out.starts_with("moved 2 sections"), "{out}");
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
-    let (code, _, err) = r.run(&["history", "billing"]);
+    let (code, _, err) = r.run(&["history", "watering"]);
     assert_eq!(code, 5, "{err}");
 }
 
 #[test]
-fn a_generated_index_replaces_a_hand_kept_registry() {
+fn a_generated_index_replaces_a_hand_kept_list() {
     let r = hygiene_project();
-    let (code, _, err) = r.run(&["index", "registry"]);
+    let (code, _, err) = r.run(&["index", "incidents"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("pass --replace"), "{err}");
-    let (code, out, err) = r.run(&["index", "registry", "--replace"]);
+    let (code, out, err) = r.run(&["index", "incidents", "--replace"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(out.contains("a generated index of 2 entries; links to its old sections now go to the entries in 1 documents"), "{out}");
-    let index = r.read("registry/README.md");
+    let index = r.read("incidents/README.md");
     assert!(index.contains("generated: spec-dna index h:"), "{index}");
     assert!(
-        index
-            .contains("| [INC-1](INC-1.md) | Outage |  |\n| [INC-2](INC-2.md) | Slow queue |  |\n"),
+        index.contains(
+            "| [INC-1](INC-1.md) | Outage |  |\n| [INC-2](INC-2.md) | Stuck valve |  |\n"
+        ),
         "{index}"
     );
     assert!(
         r.read("docs/notes/links.md")
-            .contains("[the slow queue](../../registry/INC-2.md)")
+            .contains("[the stuck valve](../../incidents/INC-2.md)")
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("SD610"), "{out}");
     // A new entry makes the index stale.
     r.write(
-        "registry/INC-10.md",
-        "# Lost keys\n\n## Summary\n\nX. See [[ADR-3]].\n\n## Root cause\n\nY.\n",
+        "incidents/INC-10.md",
+        "# Dry tank\n\n## Summary\n\nX. See [[ADR-3]].\n\n## Root cause\n\nY.\n",
     );
     let (_, out, _) = r.run(&["check"]);
     assert!(out.contains("warning SD610 index-stale"), "{out}");
-    let (code, out, err) = r.run(&["index", "registry"]);
+    let (code, out, err) = r.run(&["index", "incidents"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(r.read("registry/README.md").contains(
-        "| [INC-2](INC-2.md) | Slow queue |  |\n| [INC-10](INC-10.md) | Lost keys |  |\n"
+    assert!(r.read("incidents/README.md").contains(
+        "| [INC-2](INC-2.md) | Stuck valve |  |\n| [INC-10](INC-10.md) | Dry tank |  |\n"
     ));
     let (_, out, _) = r.run(&["check"]);
     assert!(!out.contains("SD610"), "{out}");
     // A hand edit of the rows makes it stale too.
     r.write(
-        "registry/README.md",
-        &r.read("registry/README.md")
+        "incidents/README.md",
+        &r.read("incidents/README.md")
             .replace("| [INC-1](INC-1.md) | Outage |  |\n", ""),
     );
     let (_, out, _) = r.run(&["check"]);
@@ -3372,16 +3391,24 @@ fn a_generated_index_replaces_a_hand_kept_registry() {
 #[test]
 fn mv_leaves_a_stub_for_tools_that_read_by_path() {
     let r = hygiene_project();
-    let (code, out, err) = r.run(&["mv", "guides/desk", "guides/front-desk", "--stub"]);
+    let (code, out, err) = r.run(&[
+        "mv",
+        "guides/greenhouse",
+        "guides/main-greenhouse",
+        "--stub",
+    ]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("left a stub at docs/guides/desk.md"), "{out}");
+    assert!(
+        out.contains("left a stub at docs/guides/greenhouse.md"),
+        "{out}"
+    );
     assert_eq!(
-        r.read("docs/guides/desk.md"),
-        "---\nmoved-to: guides/front-desk\n---\n# Desk guide\n\nThis document moved to [Desk guide](front-desk.md).\n"
+        r.read("docs/guides/greenhouse.md"),
+        "---\nmoved-to: guides/main-greenhouse\n---\n# Greenhouse guide\n\nThis document moved to [Greenhouse guide](main-greenhouse.md).\n"
     );
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "no duplicate id, no type rule for a stub: {out}");
-    let (code, out, _) = r.run(&["show", "guides/desk#cash-count"]);
+    let (code, out, _) = r.run(&["show", "guides/greenhouse#meter-reading"]);
     assert_eq!(code, 0, "the old id names the moved document: {out}");
     r.write(
         "docs/guides/gone.md",
@@ -3393,7 +3420,7 @@ fn mv_leaves_a_stub_for_tools_that_read_by_path() {
         out.contains("error SD101 unresolved-reference: `guides/nowhere` names no document"),
         "{out}"
     );
-    let (code, _, err) = r.run(&["mv", "billing#charges", "x", "--stub"]);
+    let (code, _, err) = r.run(&["mv", "watering#schedules", "x", "--stub"]);
     assert_eq!(code, 2, "{err}");
 }
 
@@ -3403,14 +3430,14 @@ fn a_configuration_change_must_be_its_own_change() {
     r.append("spec-dna.toml", "\n[context]\nbudget = 9000\n");
     let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
     assert_eq!(code, 0, "the configuration alone: {out}");
-    r.append("docs/billing.md", "\nMore text.\n");
+    r.append("docs/watering.md", "\nMore text.\n");
     let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("spec-dna.toml:1: error SD503 config-not-alone: the change edits spec-dna.toml and 1 other file (first: `docs/billing.md`)"),
+        out.contains("spec-dna.toml:1: error SD503 config-not-alone: the change edits spec-dna.toml and 1 other file (first: `docs/watering.md`)"),
         "{out}"
     );
-    git(&r.dir, &["checkout", "-q", "--", "docs/billing.md"]);
+    git(&r.dir, &["checkout", "-q", "--", "docs/watering.md"]);
     r.write("src/new.py", "x = 1\n");
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 1, "an untracked file counts without --base: {out}");
@@ -3432,28 +3459,29 @@ fn ids_of_reference_roots_have_the_root_as_namespace() {
         "no SD201 for the same slug in 2 reference roots: {out}"
     );
     assert!(
-        out.contains("\"id\":\"plans/rollout\"") && out.contains("\"id\":\"briefs/rollout\""),
+        out.contains("\"id\":\"drafts/irrigation\"")
+            && out.contains("\"id\":\"minutes/irrigation\""),
         "{out}"
     );
-    let (code, out, _) = r.run(&["show", "plans/launch"]);
+    let (code, out, _) = r.run(&["show", "drafts/harvest"]);
     assert_eq!(code, 0, "{out}");
     // The id of 0.2 stays a fallback name if it names one document.
-    let (code, out, _) = r.run(&["show", "launch"]);
+    let (code, out, _) = r.run(&["show", "harvest"]);
     assert_eq!(code, 0, "{out}");
-    let (code, _, _) = r.run(&["show", "rollout"]);
-    assert_eq!(code, 5, "two documents had the id `rollout`");
+    let (code, _, _) = r.run(&["show", "irrigation"]);
+    assert_eq!(code, 5, "two documents had the id `irrigation`");
 }
 
 #[test]
 fn a_diagnostic_that_moves_with_a_section_is_not_new() {
     let r = hygiene_project();
     r.write(
-        "docs/guides/desk.md",
-        &r.read("docs/guides/desk.md")
-            .replace("Count the cash.", "Count the cash. See [[nowhere/doc]]."),
+        "docs/guides/greenhouse.md",
+        &r.read("docs/guides/greenhouse.md")
+            .replace("Read the meter.", "Read the meter. See [[nowhere/doc]]."),
     );
     r.commit("an old broken reference");
-    let (code, out, err) = r.run(&["mv", "guides/desk#closing", "guides/closing"]);
+    let (code, out, err) = r.run(&["mv", "guides/greenhouse#closing", "guides/closing"]);
     assert_eq!(code, 0, "{err}{out}");
     git(&r.dir, &["add", "-A"]);
     let (code, out, _) = r.run(&["check", "--base", "HEAD"]);

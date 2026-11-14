@@ -1426,30 +1426,30 @@ mod tests {
             &[
                 (
                     "docs/a.md",
-                    "# A\n\n- **fee**: The desk SHALL charge 3 percent of [the amount](b.md#amount).\n- **cap**: The fee SHALL NOT exceed 5 euros.\n",
+                    "# A\n\n- **dose**: The dosing pump SHALL add 3 percent of [the volume](b.md#volume).\n- **cap**: The dose SHALL NOT exceed 5 liters.\n",
                 ),
                 (
                     "docs/b.md",
-                    "# B\n\n- **amount**: The amount SHALL be the paid price.\n",
+                    "# B\n\n- **volume**: The volume SHALL be the measured flow.\n",
                 ),
             ],
         );
         // A rewritten link destination keeps the hash.
         let moved = HashMap::from([(
             "docs/a.md".to_string(),
-            "# A\n\n- **fee**: The desk SHALL charge 3 percent of [the amount](./b.md#amount).\n- **cap**: The fee SHALL NOT exceed 5 euros.\n".to_string(),
+            "# A\n\n- **dose**: The dosing pump SHALL add 3 percent of [the volume](./b.md#volume).\n- **cap**: The dose SHALL NOT exceed 5 liters.\n".to_string(),
         )]);
         assert!(preserve(&cfg, &c, &moved, None, "c", &HashSet::new(), &[]).is_ok());
         // The error names a changed sentence and a lost requirement.
         let broken = HashMap::from([(
             "docs/a.md".to_string(),
-            "# A\n\n- **fee**: The desk SHALL charge 4 percent of [the amount](b.md#amount).\n"
+            "# A\n\n- **dose**: The dosing pump SHALL add 4 percent of [the volume](b.md#volume).\n"
                 .to_string(),
         )]);
         let e = preserve(&cfg, &c, &broken, None, "c", &HashSet::new(), &[]).unwrap_err();
         assert_eq!(
             e,
-            "the text of 2 requirements would change: `a#cap`: the requirement would be lost; `a#fee`: the text \"…e desk SHALL charge 3 percent of [the amount](b.md…\" would become \"…e desk SHALL charge 4 percent of [the amount](b.md…\""
+            "the text of 2 requirements would change: `a#cap`: the requirement would be lost; `a#dose`: the text \"…sing pump SHALL add 3 percent of [the volume](b.md…\" would become \"…sing pump SHALL add 4 percent of [the volume](b.md…\""
         );
     }
 

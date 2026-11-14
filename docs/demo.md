@@ -24,7 +24,7 @@ The agent stages have no script, because they need a model and a budget. Each st
 
 | Stage | Task | What it shows |
 | --- | --- | --- |
-| a | A small requirement change that starts from a failing test (a second renewal) | `context <code path>` finds the requirement. The agent updates it |
+| a | A small requirement change that starts from a test that fails (a second renewal) | `context <code path>` finds the requirement. The agent updates it |
 | b | A new capability (book holds) with an HTTP contract and a decision | New documents of the right types, linked to the code |
 | c | A change of policy (capped fines): update the spec and supersede the old decision | `supersedes`, the frozen decision, SD605 |
 | d | A large policy text that puts the loans spec over its hard budget | SD702, then a split with `spec-dna mv` that keeps the old ids as aliases |

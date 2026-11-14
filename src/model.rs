@@ -875,7 +875,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
     let amendments = amendment_chunks(&parsed.chunks, &root.amendment_sections[ty as usize]);
     let history = amendment_chunks(&parsed.chunks, &root.history_sections[ty as usize]);
     let companions = amendment_chunks(&parsed.chunks, &root.companion_sections[ty as usize]);
-    // The live sections (such as an implementation status) record a current
+    // The live sections (such as a progress section) record a current
     // state, so their text can change in place.
     let live = amendment_chunks(&parsed.chunks, &root.live_sections[ty as usize]);
     let mut frozen = Vec::new();
@@ -920,7 +920,7 @@ pub fn same_heading(a: &str, b: &str) -> bool {
 /// Returns true if a heading is an amendment name. It also returns true if the
 /// heading starts with the name and a character that is not a letter or a
 /// digit (`Amendment 3: TTL`). The comparison ignores case and a leading
-/// section number (`12. Acceptance map`, `§4.2 Amendments`).
+/// section number (`12. Coverage table`, `§4.2 Amendments`).
 fn amendment_heading(heading: &str, name: &str) -> bool {
     let h = without_number(heading.trim()).to_lowercase();
     let n = name.trim().to_lowercase();
@@ -1201,8 +1201,8 @@ mod tests {
 
     #[test]
     fn ids_from_paths() {
-        assert_eq!(doc_id("auth/session.md"), "auth/session");
-        assert_eq!(doc_id("auth/README.md"), "auth");
+        assert_eq!(doc_id("irrigation/valves.md"), "irrigation/valves");
+        assert_eq!(doc_id("irrigation/README.md"), "irrigation");
         assert_eq!(doc_id("README.md"), "README");
         let cfg = Config::parse(
             "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"a/agents\"\n[[roots]]\npath = \".\"\n",
@@ -1212,46 +1212,49 @@ mod tests {
         assert_eq!(root_doc_id(&cfg.roots[0], "a/agents/x/README.md"), "x");
         assert_eq!(root_doc_id(&cfg.roots[1], "README.md"), "README");
         assert_eq!(canonical("ADR-012"), "ADR-12");
-        assert_eq!(canonical("auth/session"), "auth/session");
+        assert_eq!(canonical("irrigation/valves"), "irrigation/valves");
     }
 
     #[test]
     fn resolves_ids_aliases_and_fragments() {
         let c = corpus(&[
             (
-                "docs/auth/session.md",
-                "---\naliases: [auth/old]\n---\n# S\n\n## Limits\n\n- **ttl**: The gateway SHALL expire tokens. <!-- aliases: auth/legacy#expiry -->\n- **R-7**: The client MUST retry.\n",
+                "docs/irrigation/valves.md",
+                "---\naliases: [irrigation/old]\n---\n# S\n\n## Limits\n\n- **ttl**: The controller SHALL close idle valves. <!-- aliases: irrigation/legacy#shutoff -->\n- **R-7**: The client MUST retry.\n",
             ),
             (
                 "docs/decisions/ADR-012-cache.md",
                 "---\ntype: decision\nstatus: accepted\n---\n# Cache\n\n## Decision Outcome\n\nX.\n",
             ),
         ]);
-        assert_eq!(c.resolve("auth/session"), Res::Found(0, None, true));
+        assert_eq!(c.resolve("irrigation/valves"), Res::Found(0, None, true));
         assert_eq!(
-            c.resolve("auth/old#ttl@3f2a9c1b"),
+            c.resolve("irrigation/old#ttl@3f2a9c1b"),
             Res::Found(0, Some("ttl".into()), true)
         );
         assert_eq!(
-            c.resolve("auth/session#limits"),
+            c.resolve("irrigation/valves#limits"),
             Res::Found(0, Some("limits".into()), true)
         );
         assert_eq!(
-            c.resolve("auth/session#R-7"),
+            c.resolve("irrigation/valves#R-7"),
             Res::Found(0, Some("R-7".into()), true)
         );
         assert_eq!(
-            c.resolve("auth/session#nope"),
+            c.resolve("irrigation/valves#nope"),
             Res::Found(0, Some("nope".into()), false)
         );
         assert_eq!(
-            c.resolve("auth/legacy#expiry"),
+            c.resolve("irrigation/legacy#shutoff"),
             Res::Found(0, Some("ttl".into()), true)
         );
         assert_eq!(c.resolve("ADR-12"), Res::Found(1, None, true));
         assert_eq!(c.resolve("ADR-0012"), Res::Found(1, None, true));
         assert_eq!(c.resolve("nope/x"), Res::Missing);
-        assert_eq!(c.resolve("other:auth/x"), Res::CrossRepo("other".into()));
+        assert_eq!(
+            c.resolve("other:irrigation/x"),
+            Res::CrossRepo("other".into())
+        );
     }
 
     #[test]
@@ -1389,12 +1392,12 @@ mod tests {
         assert_eq!(headings, ["Nachtrag 2: scope", "Nachtrag 1: TTL", "Detail"]);
         // A leading section number does not count.
         assert!(amendment_heading(
-            "12. Acceptance map (requirement -> test)",
-            "Acceptance map"
+            "12. Coverage table (requirement -> test)",
+            "Coverage table"
         ));
         assert!(amendment_heading("§4.2 Amendments", "amendments"));
         assert!(amendment_heading("7) Amendments", "Amendments"));
-        assert!(!amendment_heading("12.Acceptance map", "Acceptance map"));
+        assert!(!amendment_heading("12.Coverage table", "Coverage table"));
         // The default name is `Amendments`.
         assert!(c.docs[1].amendments.is_empty());
         let frozen = |text: &str| corpus_with(cfg, &[("docs/d.md", text)]).docs[0].frozen_hash;
@@ -1410,8 +1413,8 @@ mod tests {
 
     #[test]
     fn live_sections_are_not_frozen() {
-        let base = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Решение\n\nUse X.\n\n## Статус реализации\n\n- step 1: done\n- step 2: open\n\n### Детали\n\nZ.\n\n## Последствия\n\nW.\n\n## Поправки\n\nA.\n";
-        let cfg = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nrequired-sections = { decision = [\"Решение\"] }\namendment-sections = { decision = [\"Поправки\"] }\nlive-sections = { decision = [\"Статус реализации\"] }\n";
+        let base = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Decisión\n\nUse X.\n\n## Estado de advance\n\n- step 1: done\n- step 2: open\n\n### Detalles\n\nZ.\n\n## Consecuencias\n\nW.\n\n## Enmiendas\n\nA.\n";
+        let cfg = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nrequired-sections = { decision = [\"Decisión\"] }\namendment-sections = { decision = [\"Enmiendas\"] }\nlive-sections = { decision = [\"Estado de advance\"] }\n";
         let c = corpus_with(cfg, &[("docs/d.md", base)]);
         let names = &Config::parse(cfg).unwrap().roots[0].live_sections[DocType::Decision as usize];
         let live = amendment_chunks(&c.docs[0].parsed.chunks, names);
@@ -1419,7 +1422,7 @@ mod tests {
             .iter()
             .map(|&i| c.docs[0].parsed.chunks[i].heading.as_str())
             .collect();
-        assert_eq!(headings, ["Статус реализации", "Детали"]);
+        assert_eq!(headings, ["Estado de advance", "Detalles"]);
         let frozen = |text: &str| corpus_with(cfg, &[("docs/d.md", text)]).docs[0].frozen_hash;
         // Live text can change in place and grow.
         assert_eq!(
@@ -1433,7 +1436,7 @@ mod tests {
         // A renamed live heading is frozen text again.
         assert_ne!(
             frozen(base),
-            frozen(&base.replace("## Статус реализации", "## Статус"))
+            frozen(&base.replace("## Estado de advance", "## Estado"))
         );
     }
 

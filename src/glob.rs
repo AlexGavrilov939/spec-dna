@@ -104,10 +104,10 @@ mod tests {
 
     #[test]
     fn scopes() {
-        assert!(matches_scope("auth", "auth/session"));
-        assert!(matches_scope("auth", "auth"));
-        assert!(!matches_scope("auth", "authz/session"));
-        assert!(matches_scope("auth/*", "auth/session"));
+        assert!(matches_scope("water", "water/valves"));
+        assert!(matches_scope("water", "water"));
+        assert!(!matches_scope("water", "waterworks/valves"));
+        assert!(matches_scope("water/*", "water/valves"));
         assert!(matches_scope("", "anything"));
     }
 }

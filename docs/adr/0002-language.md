@@ -88,7 +88,7 @@ The raw results are in `bench/results/*.json`. The results for corpus A stay wit
 | YAML front matter | `go-yaml` archived 2025-04-01, continued as `yaml/go-yaml` v4 | `serde_yaml` deprecated; successors yaml-rust2, saphyr |
 | TOML configuration | BurntSushi/toml | toml |
 | Git trees for base-relative checks | `git` CLI plumbing or go-git | `git` CLI plumbing or gix |
-| Release tooling | GoReleaser; simple cross-compilation | cargo-dist; cross-compilation needs per-target linkers or native runners |
+| Release tools | GoReleaser; simple cross-compilation | cargo-dist; cross-compilation needs per-target linkers or native runners |
 
 [ADR 0001](0001-information-model.md) limits front matter to a small YAML subset, so a small custom parser is an option in either language.
 

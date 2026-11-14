@@ -37,23 +37,23 @@ gitc init -q
 gitc config user.name smoke
 gitc config user.email smoke@example.invalid
 mkdir docs src
-cat >docs/session.md <<'EOF'
+cat >docs/valves.md <<'EOF'
 ---
 type: spec
 status: active
 ---
-# Session
+# Valves
 
 ## Requirements
 
-- **expiry**: The gateway SHALL reject a session after 15 minutes. The check is in `src/gateway.rs`.
+- **shutoff**: The controller SHALL close a valve after 15 minutes. The check is in `src/valves.rs`.
 EOF
-echo 'fn main() {}' >src/gateway.rs
+echo 'fn main() {}' >src/valves.rs
 gitc add -A
 gitc commit -q -m seed
 
 "$bin" init --non-interactive
 "$bin" check --all
-"$bin" show session#expiry | grep -q 'SHALL reject' || die "show did not print the requirement"
-"$bin" context src/gateway.rs | grep -q 'SHALL reject' || die "context did not serve the citing section"
+"$bin" show valves#shutoff | grep -q 'SHALL close' || die "show did not print the requirement"
+"$bin" context src/valves.rs | grep -q 'SHALL close' || die "context did not serve the citing section"
 echo "smoke: ok"

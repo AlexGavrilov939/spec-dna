@@ -83,12 +83,12 @@ The id of a document is its path under its root without the extension: `<namespa
 
 An explicit reference is a front-matter id field, a Markdown link target, or the inline form `[[namespace/slug]]` or `[[namespace/slug#key]]`. Explicit references MUST resolve. Resolution uses the git tree (tracked files only, exact case, Unicode NFC) and not the file system. Thus a result does not depend on the machine.
 
-In prose, a bare token that matches an id pattern or an alias pattern (`ADR-12`, `auth/session`) is only a candidate reference. An unresolved candidate reference is a warning, because the same text can be a route or a ticket number.
+In prose, a bare token that matches an id pattern or an alias pattern (`ADR-12`, `irrigation/valves`) is only a candidate reference. An unresolved candidate reference is a warning, because the same text can be a route or a ticket number.
 
 A requirement is a list item that starts with a bold key, inside a `spec` or `contract`:
 
 ```md
-- **token-expiry**: When a session token expires, the gateway SHALL reject the request with status 401.
+- **sensor-timeout**: When a moisture sensor times out, the controller SHALL close the valve of its bed.
 ```
 
 The key is unique in the document, and it is never a counter. Its global form is `<doc-id>#<key>`. The sentence uses BCP 14 keywords in uppercase and an EARS pattern. spec-dna checks conformance to the pattern and reports a deviation as a warning.
@@ -97,7 +97,7 @@ The key is unique in the document, and it is never a counter. Its global form is
 - A requirement can move to another document, for example after a split or a merge of a document. `spec-dna mv <doc-id>#<key> <doc-id>` moves the list item. It also records the old global form as an alias of the requirement, inline on one line of the item:
 
   ```md
-  - **token-expiry**: When a session token expires, the gateway SHALL reject the request with status 401. <!-- aliases: auth/session#token-expiry -->
+  - **sensor-timeout**: When a moisture sensor times out, the controller SHALL close the valve of its bed. <!-- aliases: irrigation/valves#sensor-timeout -->
   ```
 
   The marker is an HTML comment, so rendered views do not show it. It lists one or more earlier global forms, separated by commas. A reference to an alias resolves to the requirement. spec-dna checks uniqueness over global forms and their aliases together. A document alias also applies to the keys of the document: after a document moves, `<old-id>#<key>` continues to resolve.
@@ -128,7 +128,7 @@ The impact report does not block. The break that must block is a removed `<doc-i
 
 Hashes exist from the first release, so suspect links will need no format change later. The index stores a normalized hash for every requirement and every section. `context` and `show` print the hash next to the id. Normalization applies Unicode NFC and LF line ends. It changes each run of whitespace to one space, and it removes the whitespace at the start and at the end of the text.
 
-The hash of a requirement covers its sentence without the key and without the alias marker. Thus a move or a key rename does not change the hash. The hash is the first 16 hexadecimal digits of SHA-256 over the normalized UTF-8 text. A reference MAY end with `@<hash>` (`[[auth/session#token-expiry@3f2a9c1b7e0d4a11]]`). spec-dna parses that suffix and ignores it until a later version adds suspect links.
+The hash of a requirement covers its sentence without the key and without the alias marker. Thus a move or a key rename does not change the hash. The hash is the first 16 hexadecimal digits of SHA-256 over the normalized UTF-8 text. A reference MAY end with `@<hash>` (`[[irrigation/valves#sensor-timeout@3f2a9c1b7e0d4a11]]`). spec-dna parses that suffix and ignores it until a later version adds suspect links.
 
 ### Knowledge boundaries
 
@@ -280,25 +280,25 @@ The owner gave these rulings for 0.2.0. Their goal is that a corpus that gets la
 
 ### 2026-11-11: hygiene functions (0.3.0)
 
-A real corpus of about 2,300 documents showed that most large documents are guides, decisions and registries, and that their size comes from history: amendments, iteration logs and review rounds. The batch split of 0.1.1 moved sections only out of specs and contracts. These rulings extend it. The decision outcome stays.
+A real corpus of about 2,300 documents showed that most large documents are guides, decisions and long lists, and that their size comes from history: amendments, logs and discussions. The batch split of 0.1.1 moved sections only out of specs and contracts. These rulings extend it. The decision outcome stays.
 
 - Split for every type. `mv` moves sections out of a document of any type, into a new or an existing document of any type, including `reference`. Requirements move only into a spec, a contract or an invariant. Each moved section keeps its old id as an alias: the destination lists `<old-id>#<anchor>` in its `aliases`. A reference `<old-id>#<anchor>` resolves to the old document while it has that anchor. Otherwise, it resolves to the alias. The preservation check also requires that every moved section of the base resolves.
 - Decisions. The frozen text of a decision stays in place. Only its amendment sections and its history sections (`history-sections`) move, and only into a `reference` document. A history section of a decision is not frozen text. Each moved section leaves its heading with a one-line pointer (0.3.1; in 0.3.0, only a move into a reference document did). `mv` reports the moved amendments that state a requirement, a BCP 14 keyword or a status word as candidates for a superseding decision. It never writes a decision.
-- Companion sections. A root can name the sections that belong to the requirements of a type (`companion-sections`), such as an acceptance map. Their rows move with the moved requirements. If a row names a key that moves and a key that stays, `mv` stops with that reason.
+- Companion sections. A root can name the sections that belong to the requirements of a type (`companion-sections`), such as a coverage table. Their rows move with the moved requirements. If a row names a key that moves and a key that stays, `mv` stops with that reason.
 - History extraction. `spec-dna history <id>` moves the history sections of a document (and the amendment sections of a decision) into a reference document, with a pointer for each section and a backlink.
-- Generated index. `spec-dna index <dir>` writes an index of the documents of a directory, marked by the front matter field `generated`. It can replace a hand-kept registry file. `check` reports a stale or hand-edited index (SD610). A generated index has no budget and no required sections.
+- Generated index. `spec-dna index <dir>` writes an index of the documents of a directory, marked by the front matter field `generated`. It can replace a hand-kept list. `check` reports a stale or hand-edited index (SD610). A generated index has no budget and no required sections.
 - Stubs. `mv --stub` leaves a stub at the old path (front matter `moved-to`) for tools that read a file by its path. A stub has no id and no budget.
 - Configuration changes. A change that edits `spec-dna.toml` together with documents or code is an error (SD503). A configuration change is a change of its own, by the owner. The skill tells agents not to edit the configuration.
 - Reference namespaces. The id of a document in a root of type `reference` starts with a namespace from the root path, so two reference roots never give the same id (defect D11-1). The id without the namespace stays a fallback name when it is unique.
 - Growth allowance. A document that was over its hard budget in the base can grow by at most `[budgets] growth` characters (default 4,000) in one change with the warning SD703. More growth is still an error (SD702). A new document that a split moved out of a document over its hard budget gives SD704, because it holds no new text.
-  - Reason: on the real corpus, every code task that kept the documents true (an amendment, a registry row) grew an oversized document by 0.1 to 3.6 thousand characters. The error made agents split or shorten documents in the task. That added cost without a gain in correctness.
+  - Reason: on the real corpus, every code task that kept the documents true (an amendment, a table row) grew an oversized document by 0.1 to 3.6 thousand characters. The error made agents split or shorten documents in the task. That added cost without a gain in correctness.
   - Splits are a hygiene step of the owner (`history`, `mv`), not a part of a code task.
 
 ### 2026-11-13: live sections and project conventions (0.3.2)
 
-A replay of real changes of a corpus showed 2 gaps. The corpus updates the implementation status of an accepted decision in place, and its rules allow it, but spec-dna froze that text, so agents left the status stale. The corpus also has a convention for contract changes (a dated amendment and a `verified_against` update) that only its own documents state, so agents did not see it. The owner gave these rulings. These changes apply.
+A replay of real changes of a corpus showed 2 gaps. The corpus updates a status section of an accepted decision in place, and its rules allow it, but spec-dna froze that text, so agents left the status stale. The corpus also has a convention for contract changes that only its own documents state, so agents did not see it. The owner gave these rulings. These changes apply.
 
-- Live sections. A root can name the live sections of each type, in any language (`live-sections`). They match as amendment sections do. A live section records a current state, such as an implementation status. In an accepted decision, it is not frozen text, so it can change in place without SD405, and new text in it gives no SD605. The frozen text and the amendment sections keep their rules. Thus a decision has 3 kinds of section:
+- Live sections. A root can name the live sections of each type, in any language (`live-sections`). They match as amendment sections do. A live section records a current state, such as a progress section. In an accepted decision, it is not frozen text, so it can change in place without SD405, and new text in it gives no SD605. The frozen text and the amendment sections keep their rules. Thus a decision has 3 kinds of section:
   - frozen text (cannot change)
   - amendment sections (can change and grow; an outcome in new text gives SD605; context serves them with the outcome; `history` moves them)
   - live sections (change in place; they stay in place)

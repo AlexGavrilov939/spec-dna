@@ -54,20 +54,17 @@ const TYPE_DIRS: &[(&str, DocType)] = &[
     ("principles", DocType::Invariant),
     ("notes", DocType::Note),
     ("research", DocType::Reference),
-    ("validation", DocType::Reference),
-    ("validations", DocType::Reference),
     ("references", DocType::Reference),
     ("reference", DocType::Reference),
-    ("briefs", DocType::Reference),
     ("archive", DocType::Reference),
     ("meetings", DocType::Reference),
     ("meeting-notes", DocType::Reference),
 ];
 
 /// Type words that are also common names of code directories
-/// (`src/validation`). They give a type only inside a documentation tree or
+/// (`src/incident`). They give a type only inside a documentation tree or
 /// to a directory that is mostly Markdown.
-const CODE_WORDS: &[&str] = &["incident", "postmortem", "validation", "validations"];
+const CODE_WORDS: &[&str] = &["incident", "postmortem"];
 
 /// Directory names of documentation trees.
 const DOC_DIRS: &[&str] = &["docs", "doc", "documentation", "wiki", "handbook"];
@@ -119,9 +116,8 @@ const FIXTURES: &[&str] = &[
     "golden",
 ];
 
-/// Name prefixes of vendored sibling directories, such as `ext-<name>`.
+/// Name prefixes of vendored sibling directories, such as `vendor-<name>`.
 const VENDOR_PREFIXES: &[&str] = &[
-    "ext-",
     "vendor-",
     "vendored-",
     "third-party-",
@@ -1426,15 +1422,15 @@ mod tests {
                 "# Plan\n\n## Steps\n".into(),
             ),
             (
-                "docs/specs/login.md".into(),
-                "---\nstatus: shipped\n---\n# Login\n\n- **R-1** The app SHALL log in.\n- **R-2** x\n- **R-2a** y\n".into(),
+                "docs/specs/pumps.md".into(),
+                "---\nstatus: shipped\n---\n# Pumps\n\n- **R-1** The controller SHALL start the pump.\n- **R-2** x\n- **R-2a** y\n".into(),
             ),
             (
                 "docs/specs/review.md".into(),
                 "---\ntype: note\n---\n# Review\n".into(),
             ),
-            ("docs/guides/ext-a/one.md".into(), "# One\n".into()),
-            ("docs/guides/ext-b/two.md".into(), "# Two\n".into()),
+            ("docs/guides/vendor-a/one.md".into(), "# One\n".into()),
+            ("docs/guides/vendor-b/two.md".into(), "# Two\n".into()),
             ("docs/guides/style.md".into(), "# Style\n".into()),
             ("docs/defects/DEF-1-a.md".into(), "# A\n".into()),
             ("docs/defects/DEF-2-b.md".into(), "# B\n".into()),
@@ -1443,11 +1439,12 @@ mod tests {
         for i in 1..=3 {
             files.push((
                 format!("docs/adr/ADR-{i}-x.md"),
-                "# X\n\n## Решение\n\nYes.\n\n## Поправки\n\nMore.\n".into(),
+                "# X\n\n## Decisión\n\nYes.\n\n## Enmiendas\n\nMore.\n\n## Σημειώσεις\n\nText.\n"
+                    .into(),
             ));
         }
         for i in 0..LARGE_FILES {
-            files.push((format!("docs/market/m{i}.md"), "# M\n".into()));
+            files.push((format!("docs/datasheets/m{i}.md"), "# M\n".into()));
         }
         let refs: Vec<(&str, &str)> = files
             .iter()
@@ -1479,7 +1476,7 @@ mod tests {
             specs.status_map,
             [("shipped".to_string(), "active".to_string())]
         );
-        assert_eq!(row("docs/guides").exclude, ["ext-*/**"]);
+        assert_eq!(row("docs/guides").exclude, ["vendor-*/**"]);
         // A numbered directory takes its type from its own files. These files
         // show no type, so the type is `note`, not the type of `docs`.
         let def = row("docs/defects");
@@ -1487,15 +1484,15 @@ mod tests {
             (def.ty, def.legacy_ids.clone()),
             (Some(DocType::Note), vec!["DEF-{n}".to_string()])
         );
-        assert_eq!(row("docs/market").ty, Some(DocType::Reference));
-        assert_eq!(f.outcome_aliases, ["Решение"]);
-        assert_eq!(f.amendment_aliases, ["Поправки"]);
+        assert_eq!(row("docs/datasheets").ty, Some(DocType::Reference));
+        assert_eq!(f.outcome_aliases, ["Decisión"]);
+        assert_eq!(f.amendment_aliases, ["Enmiendas"]);
         assert_eq!(f.stack, ["Rust"]);
         assert_eq!(f.tests, [("**/tests/**".to_string(), 1)]);
         assert_eq!(f.ci, ["GitHub Actions"]);
         assert_eq!(f.hooks, ["pre-commit"]);
         assert!(f.brownfield);
-        assert!(f.scripts.iter().any(|s| s.0 == "Cyrillic"));
+        assert!(f.scripts.iter().any(|s| s.0 == "Greek"));
     }
 
     fn rows_of(files: &[(String, String)]) -> Vec<(String, Option<DocType>, Vec<String>)> {
@@ -1555,7 +1552,7 @@ mod tests {
                 "# O\n\n## Summary\n\nS.\n\n## Root cause\n\nR.\n".into(),
             ));
         }
-        for d in ["postmortems", "validation", "research"] {
+        for d in ["postmortems", "meetings", "research"] {
             for i in 1..=2 {
                 files.push((format!("{d}/item-{i}.md"), "# I\n\nText.\n".into()));
             }
@@ -1564,11 +1561,11 @@ mod tests {
         let want = [
             ("adrs", DocType::Decision, vec!["ADR-{n}"]),
             ("incidents", DocType::Incident, vec![]),
+            ("meetings", DocType::Reference, vec![]),
             ("postmortems", DocType::Incident, vec![]),
             ("research", DocType::Reference, vec![]),
             ("rfcs", DocType::Change, vec![]),
             ("runbooks", DocType::Runbook, vec![]),
-            ("validation", DocType::Reference, vec![]),
         ];
         let want: Vec<(String, Option<DocType>, Vec<String>)> = want
             .into_iter()
@@ -1589,12 +1586,12 @@ mod tests {
             ("docs/index.md".into(), "# Docs\n".into()),
             ("docs/guide.md".into(), "# Guide\n".into()),
             (
-                "docs/specs/login.md".into(),
-                "# Login\n\n- **sign-in**: The app SHALL sign in.\n".into(),
+                "docs/specs/vents.md".into(),
+                "# Vents\n\n- **open-vent**: The controller SHALL open the vent.\n".into(),
             ),
             (
-                "docs/specs/logout.md".into(),
-                "# Logout\n\n- **sign-out**: The app SHALL sign out.\n".into(),
+                "docs/specs/shades.md".into(),
+                "# Shades\n\n- **close-shade**: The controller SHALL close the shade.\n".into(),
             ),
         ];
         for i in 1..=3 {
@@ -1659,7 +1656,7 @@ mod tests {
                 "# S\n\n## Steps\n\n1. Do.\n".into(),
             ));
         }
-        files.push(("docs/api/users.md".into(), "# Users\n".into()));
+        files.push(("docs/api/sensors.md".into(), "# Sensors\n".into()));
         files.push(("docs/api/orders.md".into(), "# Orders\n".into()));
         assert_eq!(row(&files, "docs").map(|r| r.1), Some(None));
         // Numbered files without a type in a typed root keep its type.

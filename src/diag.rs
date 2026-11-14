@@ -61,7 +61,7 @@ codes! {
     SupersededWithoutSuccessor = "SD402", "superseded-without-successor", Error, "Name this id in the `supersedes` field of an active (or accepted) successor.";
     SupersedeCycle = "SD403", "supersede-cycle", Error, "Remove one `supersedes` entry, so that the chain ends.";
     DependsOnInactive = "SD404", "depends-on-inactive", Error, "Depend on the successor instead of a superseded or retired document.";
-    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, such as an implementation status) can change in place. As an alternative, write a decision that supersedes this one.";
+    DecisionFrozen = "SD405", "decision-frozen", Error, "Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, such as a progress section) can change in place. As an alternative, write a decision that supersedes this one.";
     AdapterModified = "SD501", "adapter-modified", Error, "Run `spec-dna init` to regenerate the adapter. Put your own text outside of the generated block.";
     AdapterOutdated = "SD502", "adapter-outdated", Error, "Run `spec-dna init` to regenerate the adapter for this version.";
     ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";
@@ -83,7 +83,7 @@ codes! {
     EarsPattern = "SD802", "ears-pattern", Warning, "Use an EARS pattern. Put `then` after an `If` condition.";
     SentenceLength = "SD803", "sentence-length", Warning, "Split the requirement. Write one requirement in one sentence.";
     VagueTerm = "SD804", "vague-term", Warning, "Replace the vague term with a testable value or condition.";
-    PassiveVoice = "SD805", "passive-voice", Warning, "Name the actor as the subject (`the gateway SHALL reject`, not `SHALL be rejected`).";
+    PassiveVoice = "SD805", "passive-voice", Warning, "Name the actor as the subject (`the controller SHALL close`, not `SHALL be closed`).";
     RequirementsUnrecognized = "SD806", "requirements-unrecognized", Warning, "Write each requirement as a list item that starts with its bold key: `- **R-12**: sentence` or `- **R-12** sentence`. A key in a table, a heading or a paragraph is not a requirement.";
     RequirementColonMissing = "SD807", "requirement-colon-missing", Warning, "Write the requirement as `- **key**: sentence`, with the colon right after the bold key. Put a note, such as a rule number, after the colon.";
 }
