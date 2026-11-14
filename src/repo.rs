@@ -312,11 +312,14 @@ impl Snapshot {
                 "the git index has unmerged paths (first: `{p}`); resolve them first"
             )));
         }
+        // A path that `git add -N` marked is not in the next commit.
+        let ita = repo.git.intent_to_add().map_err(Fatal::Io)?;
         let mut files: Vec<Entry> = repo
             .git
             .ls_files()
             .map_err(Fatal::Io)?
             .into_iter()
+            .filter(|(path, ..)| !ita.contains(path))
             .map(|(path, oid, _)| Entry {
                 path,
                 blob: Some(oid),

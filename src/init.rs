@@ -1571,7 +1571,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     changes.extend(ci);
 
     let preview = o.dry_run || interactive || !write;
-    let resolved = resolved_answers(&plan, &before, &text, &changes);
+    let resolved = resolved_answers(&plan, &before, &text, &changes, &manual);
     if o.json {
         let files = changes.iter().map(|c| {
             Obj::new()
@@ -1740,7 +1740,13 @@ impl Resolved {
 /// How `init` applied each of the 8 answers. `before` is the plan that the
 /// questions offered, so its values are the defaults. `text` is the new
 /// configuration, and `changes` are the files to write.
-fn resolved_answers(plan: &Plan, before: &Plan, text: &str, changes: &[Change]) -> Vec<Resolved> {
+fn resolved_answers(
+    plan: &Plan,
+    before: &Plan,
+    text: &str,
+    changes: &[Change],
+    manual: &[String],
+) -> Vec<Resolved> {
     let types = |p: &Plan| {
         if p.types.len() == DocType::COUNT {
             format!("all {}", DocType::COUNT)
@@ -1748,19 +1754,16 @@ fn resolved_answers(plan: &Plan, before: &Plan, text: &str, changes: &[Change]) 
             list(&type_names(&p.types))
         }
     };
+    // The value has the full line of each root, so a change of a root shows in
+    // the line.
     let mapping = |p: &Plan| {
         format!(
             "{} root{}: {}",
             p.rows.len(),
             if p.rows.len() == 1 { "" } else { "s" },
-            p.rows
-                .iter()
-                .map(|r| r.path.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            p.rows.iter().map(row_line).collect::<Vec<_>>().join("; ")
         )
     };
-    let row_lines = |p: &Plan| p.rows.iter().map(row_line).collect::<Vec<_>>();
     let ci = |p: &Plan| format!("{}, {}, {}", p.ci, p.hook, p.base);
     let adapter_files: Vec<&str> = changes
         .iter()
@@ -1796,7 +1799,7 @@ fn resolved_answers(plan: &Plan, before: &Plan, text: &str, changes: &[Change]) 
         _ => "[budgets.<type>] tables".to_string(),
     };
     let mut ci_writes = ci_files.join(", ");
-    if ci_writes.is_empty() && plan.ci == "gitlab" {
+    if ci_writes.is_empty() && !manual.is_empty() {
         ci_writes = "text to add by hand".into();
     }
     let rows = [
@@ -1860,10 +1863,7 @@ fn resolved_answers(plan: &Plan, before: &Plan, text: &str, changes: &[Change]) 
     rows.into_iter()
         .enumerate()
         .map(|(i, (name, value, offered, writes))| {
-            let mut default = value == offered;
-            if i == 4 {
-                default = row_lines(plan) == row_lines(before);
-            }
+            let default = value == offered;
             Resolved {
                 number: i + 1,
                 name,
@@ -1946,8 +1946,10 @@ fn unified_diff(path: &str, old: Option<&str>, new: &str) -> String {
     if old == Some(new) {
         return String::new();
     }
-    let old_lines: Vec<&str> = old.unwrap_or("").lines().collect();
-    let new_lines: Vec<&str> = new.lines().collect();
+    // A line keeps its line ending, so a change of CRLF to LF, or of the final
+    // newline, is a change of the diff.
+    let old_lines: Vec<&str> = old.unwrap_or("").split_inclusive('\n').collect();
+    let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
     let ops = edit_script(&old_lines, &new_lines);
     // The position of each op in the old and the new text (1-based).
     let mut at = Vec::with_capacity(ops.len());
@@ -2004,10 +2006,16 @@ fn unified_diff(path: &str, old: Option<&str>, new: &str) -> String {
             if new_n == 0 { n - 1 } else { n }
         ));
         for op in &ops[start..end] {
-            match op {
-                Op::Keep(l) => out.push_str(&format!(" {l}\n")),
-                Op::Del(l) => out.push_str(&format!("-{l}\n")),
-                Op::Add(l) => out.push_str(&format!("+{l}\n")),
+            let (mark, l) = match op {
+                Op::Keep(l) => (' ', l),
+                Op::Del(l) => ('-', l),
+                Op::Add(l) => ('+', l),
+            };
+            out.push(mark);
+            out.push_str(l.strip_suffix('\n').unwrap_or(l));
+            out.push('\n');
+            if !l.ends_with('\n') {
+                out.push_str("\\ No newline at end of file\n");
             }
         }
         k += 1;

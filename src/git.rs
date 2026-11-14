@@ -45,6 +45,18 @@ impl Git {
         }
     }
 
+    /// Returns the paths that the index has as intent-to-add (`git add -N`).
+    /// The index lists them with the empty blob, but a commit leaves them out.
+    pub fn intent_to_add(&self) -> Result<HashSet<String>, String> {
+        let out = self.run(&["diff-files", "--name-status", "--diff-filter=A", "-z"])?;
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        let mut paths = HashSet::new();
+        while let (Some(_status), Some(path)) = (recs.next(), recs.next()) {
+            paths.insert(String::from_utf8_lossy(path).into_owned());
+        }
+        Ok(paths)
+    }
+
     /// Returns the first path that has an unmerged entry in the git index, or
     /// `None`.
     pub fn first_unmerged(&self) -> Result<Option<String>, String> {

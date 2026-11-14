@@ -3645,7 +3645,7 @@ fn init_preview_shows_how_each_answer_was_applied() {
         "2/8 knowledge types: spec, decision (changed from all 10) -> types = [\"spec\", \"decision\"]",
         "3/8 evidence policy and link style: profile, both (default, writes nothing)",
         "4/8 normative language and heading aliases: en; outcome: -; amendments: - (default, writes nothing)",
-        "5/8 mapping: 1 root: docs (default) -> 1 [[roots]] table(s)",
+        "5/8 mapping: 1 root: docs (mixed, default spec; 0 documents; status draft) (default) -> 1 [[roots]] table(s)",
         "6/8 budget level: relaxed (changed from default) -> [budgets.<type>] tables",
         "7/8 agent adapters: skill (changed from agents-md, claude-md, skill) -> .claude/skills/spec-dna/SKILL.md",
         "8/8 CI step, hook and base branch: none, none, main (default, writes nothing)",
@@ -4080,4 +4080,80 @@ fn init_upgrades_the_hook_that_0_4_1_wrote() {
     );
     let (_, out, _) = r.run(&["init", "--dry-run"]);
     assert!(!out.contains("pre-commit-config"), "{out}");
+}
+
+#[test]
+fn staged_leaves_out_a_path_that_is_marked_with_intent_to_add() {
+    let r = staged_repo();
+    r.write("docs/n.md", "# N\n");
+    git(&r.dir, &["add", "-N", "docs/n.md"]);
+    r.write("docs/m.md", "# M\n\nSee [[n]].\n");
+    git(&r.dir, &["add", "docs/m.md"]);
+    // A commit would leave `n.md` out, so `m.md` links a missing document.
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("SD101"), "{out}");
+    // An empty file that is staged is part of the commit.
+    r.write("docs/e.md", "");
+    git(&r.dir, &["add", "docs/e.md"]);
+    r.write("docs/m.md", "# M\n\nSee [[e]].\n");
+    git(&r.dir, &["add", "docs/m.md"]);
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn the_dry_run_diff_shows_line_endings_and_the_final_newline() {
+    let r = Repo::empty();
+    r.write("spec-dna.toml", STAGED_CONFIG);
+    r.commit("start");
+    // An old file with CRLF and no final newline: the generated line differs
+    // from it in more than the text.
+    fs::write(r.dir.join("AGENTS.md"), "# Rules\r\nOwn text.").unwrap();
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("-Own text.\n\\ No newline at end of file\n"),
+        "{out}"
+    );
+    // A skill that differs only in its line endings gives a diff with lines.
+    let (code, _, _) = r.run(&["init"]);
+    assert_eq!(code, 0);
+    let skill = r.read(".claude/skills/spec-dna/SKILL.md");
+    fs::write(
+        r.dir.join(".claude/skills/spec-dna/SKILL.md"),
+        skill.replace('\n', "\r\n"),
+    )
+    .unwrap();
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    assert!(
+        out.contains("would change .claude/skills/spec-dna/SKILL.md"),
+        "{out}"
+    );
+    assert!(out.contains("@@ -"), "a header alone is not a diff: {out}");
+}
+
+#[test]
+fn the_answers_say_when_a_root_changed_and_when_text_is_left_to_the_user() {
+    let r = Repo::empty();
+    r.write("docs/loans.md", "# Loans\n");
+    r.commit("start");
+    let answers = answers_file(
+        &r,
+        "manual",
+        "hook = \"lefthook\"\nci = \"none\"\nadapters = [\"skill\"]\n",
+    );
+    let (code, out, err) = r.run(&["init", "--dry-run", "--answers", answers.to_str().unwrap()]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let shown = out.split("--- spec-dna.toml ---").next().unwrap();
+    assert!(
+        shown.contains("8/8 CI step, hook and base branch: none, lefthook, ")
+            && shown.contains("-> text to add by hand"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("lefthook, main (changed from none, none, main, writes nothing)"),
+        "{shown}"
+    );
 }

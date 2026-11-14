@@ -15,8 +15,9 @@ pub struct Config {
     /// The pinned spec-dna version.
     pub pin: String,
     /// True for `check --lint`: the prose lint (SD801 to SD805) runs in each
-    /// profile, as a warning, if the configuration does not set a severity
-    /// for it. This is a flag of one run, not a key of the file.
+    /// profile, as a warning, also if a rule turned it off. A rule that sets a
+    /// severity for it keeps that severity. This is a flag of one run, not a
+    /// key of the file.
     pub force_lint: bool,
     pub exclude: Vec<String>,
     pub roots: Vec<Root>,

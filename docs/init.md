@@ -102,7 +102,7 @@ Then the preview shows the full `spec-dna.toml` and each file to create or chang
 - for `github`: `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)). If the file exists, `init` does not change it.
 - a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`. The hook runs `spec-dna check --staged`, which checks the git index: a commit records the index, not the working tree. A hook that 0.4.1 wrote (`spec-dna check`) reads the working tree. `init` changes that exact line in place when it runs again (also with an existing `spec-dna.toml`), and the preview shows the diff. It does not change any other text of a hook.
 
-After the list, the preview gives the diff of each file other than `spec-dna.toml`. A file that does not exist yet shows as a diff against `/dev/null`. `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`, and `answers` has the 8 answers.
+After the list, the preview gives the diff of each file other than `spec-dna.toml`. A file that does not exist yet shows as a diff against `/dev/null`. `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). For a project without `spec-dna.toml`, `--json` gives a `diff` for each entry of `files`, and `answers` has the 8 answers.
 
 The skill lists the types of the project (`types` of `spec-dna.toml`), or all 10 types if the project has no `types` list. If you change `types` later, run `spec-dna init` to update the skill, or `check` reports SD502.
 
