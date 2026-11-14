@@ -49,7 +49,7 @@ required-sections = { decision = ["Decision Outcome", "Decision"], incident = [[
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
 history-sections = { procedure = ["Iteration log"], decision = ["Discussion"] }  # history headings
 companion-sections = { requirements = ["Coverage table"] }  # sections with a row per requirement
-live-sections = { decision = ["Progress"] }  # sections that change in place
+live-sections = { decision = ["Status", "Progress"] }  # sections that change in place; the default is Status
 enforce-budgets = true          # false: the hard budget gives warnings only
 profile = "lite"                # the profile of this root
 rules = { lint = "off" }        # severity overrides for this root
@@ -133,7 +133,7 @@ sonnet = "high"
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. See [Amendment sections](#amendment-sections). |
 | `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `research` document. In a decision, a history section is not frozen text. |
 | `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as a coverage table or an evidence table. A table row of such a section belongs to the requirement keys in its first cell. A list item belongs to the keys in its lead. When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. If a row has a key that moves and a key that stays, `mv` stops and changes nothing. |
-| `roots.live-sections` | table | `{}` | For each type, the names of its live sections, such as `Progress`, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
+| `roots.live-sections` | table | `{ decision = ["Status"] }` | For each type, the names of its live sections, such as `Status` or `Progress`, in any language. A list for a type replaces the default of that type, so `{ decision = [] }` turns it off. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They have priority over `[rules]` and over every profile. |
@@ -144,6 +144,7 @@ sonnet = "high"
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
+| `templates.dir` | string | `.spec-dna/templates` | The folder of the project templates, relative to the repository root. A file `<name>.md` in it is a template for `spec-dna new --template <name>`. See [The table `templates`](#the-table-templates). The folder is never part of a root. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
 | `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them. |
@@ -227,6 +228,19 @@ The layers also give the place of a document: its type, if the front matter has 
 The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
 
 A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types, and it drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+
+## The table `templates`
+
+```toml
+[templates]
+dir = ".spec-dna/templates"
+```
+
+`spec-dna new <type> <id> --template <name>` reads `<dir>/<name>.md` first, and then the embedded template of that name. Without `--template`, `new` uses the default template of the type: `<dir>/<default>.md` if the file exists, and the embedded template if not. A file `madr.md` in the folder replaces the embedded template of a decision. [docs/types.md](types.md#templates) lists the embedded templates.
+
+- A project template names its `type` in its front matter. `new` stops with exit code 2 for a template with no `type`, a template of another type and an unknown template name.
+- `dir` is a path relative to the repository root. An absolute path, a `..` segment, a `\` and a `:` are errors (exit code 3).
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, and no `exclude` is needed. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
 
 ## The table `harness`
 
@@ -321,7 +335,7 @@ An accepted decision has 3 kinds of section:
 | --- | --- | --- | --- | --- |
 | Frozen text | (all other sections) | Cannot change (SD405). Supersede the decision to change its outcome. | The title and the outcome are the summary. | Stays in place. |
 | Amendment section | `amendment-sections` (default `Amendments`) | Can change and grow. New text that states a requirement, a BCP 14 keyword or a status word gives SD605. | Served with the outcome. | Moves into a `research` document. |
-| Live section | `live-sections` (no default) | Can change in place, with no SD605. Use it for a current state, such as a progress section. | Served as a section of the document. | Stays in place. |
+| Live section | `live-sections` (default `Status`) | Can change in place, with no SD605. Use it for a current state, such as a status or a progress section. | Served as a section of the document. | Stays in place. |
 
 A history section (`history-sections`) is not frozen text either, and `history` moves it. If you change the name in a heading, the kind of its section can change. A renamed live heading is frozen text again.
 

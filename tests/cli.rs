@@ -521,7 +521,7 @@ fn conventions_come_first_and_show_prints_them() {
     let (_, out, _) = r.run(&["show", "--conventions", "decision"]);
     assert!(out.contains("Amend, do not rewrite."), "{out}");
     assert!(
-        out.contains("<!-- decision: amendment sections: Amendments; live sections: none -->"),
+        out.contains("<!-- decision: amendment sections: Amendments; live sections: Status -->"),
         "{out}"
     );
     let (_, out, _) = r.run(&["show", "--conventions", "requirements"]);
@@ -2714,8 +2714,9 @@ fn reconfigure_keeps_the_section_keys_and_the_conventions() {
     }
     let (_, out, _) = r.run(&["show", "--conventions", "decision"]);
     assert!(
-        out.contains("<!-- decision: amendment sections: Amendments; live sections: Progress -->")
-            && out.contains("Amend."),
+        out.contains(
+            "<!-- decision: amendment sections: Amendments; live sections: Status, Progress -->"
+        ) && out.contains("Amend."),
         "{out}"
     );
     r.commit("reconfigure");

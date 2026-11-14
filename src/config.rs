@@ -69,7 +69,14 @@ pub struct Config {
     /// `[groups]`: a name and its areas, in the order of the name.
     #[allow(dead_code)]
     pub groups: Vec<(String, Vec<String>)>,
+    /// `[templates] dir`: the folder of the project templates, relative to the
+    /// repository root, with no `./` and no final `/`. It is never part of a
+    /// root: `is_excluded` is true for each path in it.
+    pub templates_dir: String,
 }
+
+/// The default folder of the project templates.
+pub const DEFAULT_TEMPLATES_DIR: &str = ".spec-dna/templates";
 
 /// The default growth allowance: about one amendment or a few registry rows.
 pub const DEFAULT_GROWTH: u32 = 4_000;
@@ -339,6 +346,10 @@ pub const DEFAULT_DECISION_SECTIONS: [&str; 2] = ["Decision Outcome", "Decision"
 
 /// The default amendment section of a decision.
 pub const DEFAULT_AMENDMENT_SECTIONS: [&str; 1] = ["Amendments"];
+
+/// The live sections of a decision by default (design 0.6.0, "Templates").
+/// Its text can change in place after the decision is accepted.
+pub const DEFAULT_LIVE_SECTIONS: [&str; 1] = ["Status"];
 
 #[derive(Clone, Debug)]
 pub struct LegacyId {
@@ -687,6 +698,19 @@ impl Config {
             Some(v) => groups_table(v, &areas)?,
             None => Vec::new(),
         };
+        let templates_dir = match t.take("templates") {
+            Some(v) => {
+                let tbl = v.as_table().ok_or("`templates` must be a table")?;
+                let mut f = Fields::new(tbl, "templates.");
+                let dir = f.opt_str("dir")?;
+                f.done()?;
+                match dir {
+                    Some(d) => templates_dir_value(&d)?,
+                    None => DEFAULT_TEMPLATES_DIR.to_string(),
+                }
+            }
+            None => DEFAULT_TEMPLATES_DIR.to_string(),
+        };
         t.done()?;
         Ok(Config {
             pin,
@@ -711,6 +735,7 @@ impl Config {
             layers_declared,
             areas,
             groups,
+            templates_dir,
         })
     }
 
@@ -771,9 +796,16 @@ impl Config {
         best.map(|(i, _)| i)
     }
 
+    /// Returns true if a path is in `[templates] dir`.
+    pub fn in_templates_dir(&self, path: &str) -> bool {
+        path.strip_prefix(&self.templates_dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+
     pub fn is_excluded(&self, root: usize, path: &str) -> bool {
         let rel = self.roots[root].rel(path);
-        self.exclude.iter().any(|g| crate::glob::matches(g, path))
+        self.in_templates_dir(path)
+            || self.exclude.iter().any(|g| crate::glob::matches(g, path))
             || self.roots[root]
                 .exclude
                 .iter()
@@ -977,6 +1009,8 @@ impl Root {
             )?;
         }
         let mut live_sections: [Vec<String>; DocType::COUNT] = Default::default();
+        live_sections[DocType::Decision as usize] =
+            DEFAULT_LIVE_SECTIONS.map(str::to_string).to_vec();
         if let Some(v) = f.take("live-sections") {
             headings_per_type(
                 v,
@@ -1040,6 +1074,34 @@ impl Root {
             &path[self.path.len() + 1..]
         }
     }
+}
+
+/// Checks the value of `[templates] dir` and returns it in the form that the
+/// code compares: no `./` at the start, no `/` at the end.
+fn templates_dir_value(d: &str) -> Result<String, String> {
+    let bad = |why: &str| {
+        Err(format!(
+            "`templates.dir`: `{d}` {why}; write a folder inside the repository, such as `.spec-dna/templates`"
+        ))
+    };
+    let mut dir = d.trim();
+    while let Some(rest) = dir.strip_prefix("./") {
+        dir = rest;
+    }
+    let dir = dir.trim_end_matches('/');
+    if dir.is_empty() || dir == "." {
+        return bad("is empty or is the repository root");
+    }
+    if dir.starts_with('/') || dir.contains('\\') || dir.contains(':') {
+        return bad("is not a relative path with `/` separators");
+    }
+    if dir
+        .split('/')
+        .any(|s| s.is_empty() || s == "." || s == "..")
+    {
+        return bad("has an empty, `.` or `..` segment");
+    }
+    Ok(dir.to_string())
 }
 
 /// Gives each root of type `research` a namespace: the shortest suffix of
@@ -1891,7 +1953,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
         // The top level.
         let top = keys(&schema);
-        for k in ["areas", "groups", "layers"] {
+        for k in ["areas", "groups", "layers", "templates"] {
             assert!(top.iter().any(|t| t == k), "the schema lacks `{k}`");
         }
         for k in &top {

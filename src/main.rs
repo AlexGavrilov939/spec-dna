@@ -102,11 +102,14 @@ spec-dna.toml).",
     ),
     (
         "new",
-        "new <type> [<id>] [--root <dir>]",
-        "Writes a new document from the template of its type, at the place of its
-layer. A top file such as terms takes no id. intent <slug> writes
-intent/<slug>/intent.md, and spec and plan need that folder. Where the place
-gives the type, the file has no type: line.",
+        "new <type> [<id>] [--root <dir>] [--template <name>]",
+        "Writes a new document from a template, at the place of its layer. Without
+--template, it uses the default template of the type. --template names a file
+<name>.md in the folder [templates] dir, or an embedded template of the type,
+such as prd or rfc for intent, and runbook for procedure. A top file such as
+terms takes no id. intent <slug> writes intent/<slug>/intent.md, and spec and
+plan need that folder. Where the place gives the type, the file has no type:
+line.",
     ),
     (
         "layer",
@@ -233,6 +236,7 @@ struct Args {
     stub: bool,
     replace: bool,
     conventions: Option<String>,
+    template: Option<String>,
     layer: LayerFlags,
 }
 
@@ -299,6 +303,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         stub: false,
         replace: false,
         conventions: None,
+        template: None,
         layer: LayerFlags::default(),
     };
     let mut it = raw.into_iter();
@@ -329,6 +334,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
             "--conventions" => a.conventions = Some(value("--conventions")?),
+            "--template" => a.template = Some(value("--template")?),
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
@@ -1228,6 +1234,15 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "type `{name}` is not a type of this project (`types` in spec-dna.toml)"
         )));
     }
+    let (template_name, template_text) =
+        templates::resolve(&repo.root, &cfg.templates_dir, ty, a.template.as_deref())
+            .map_err(Fatal::Usage)?;
+    // The message names the type for a default template.
+    let template_name = if a.template.is_some() {
+        template_name
+    } else {
+        ty.name().to_string()
+    };
     let id = match a.positional.get(1) {
         None => None,
         Some(id) => {
@@ -1362,7 +1377,7 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
     }
     let place_gives_type = root.single_type == Some(ty) || cfg.layers.place_type(&rel) == Some(ty);
-    let text = templates::strip_was_type(&templates::render(ty, &title, !place_gives_type));
+    let text = templates::instantiate(&template_text, ty, &title, !place_gives_type);
     mv::write(&file, &text)?;
     if a.json {
         println!(
@@ -1374,10 +1389,7 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .end()
         );
     } else {
-        println!(
-            "wrote {path} ({} template); replace each {{{{...}}}} placeholder",
-            ty.name()
-        );
+        println!("wrote {path} ({template_name} template); replace each {{{{...}}}} placeholder");
     }
     Ok(0)
 }

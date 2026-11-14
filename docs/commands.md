@@ -133,16 +133,20 @@ spec-dna show --conventions <type>
 ## new
 
 ```text
-spec-dna new <type> [<id>] [--root <dir>]
+spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 ```
 
-`new` writes a new document from the template of its type ([types.md](types.md)). The place follows the layer of the type ([Place gives the type](types.md#place-gives-the-type)):
+`new` writes a new document from a template ([types.md](types.md#templates)). Without `--template`, it uses the default template of the type. The place follows the layer of the type ([Place gives the type](types.md#place-gives-the-type)):
 
 - A top file type (`product`, `system`, `terms`, `roadmap`, `questions`) takes no id. `new terms` writes `<root>/terms.md`. An id gives exit code 2.
 - `new intent <slug>` writes `<root>/intent/<slug>/intent.md`. `new spec <slug>` and `new plan <slug>` write `spec.md` and `plan.md` into that folder. Without the folder, they stop with exit code 5 and write nothing.
 - Another type writes `<root>/<dir>/<id>.md` in a mixed root. `<dir>` is the folder of the layer of the type, and the id is relative to it. For example, `new requirements valves/closing` writes `<root>/requirements/valves/closing.md`.
 - In a root of one type, the file is `<root>/<id>.md`.
 - A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
+
+`--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)), and then the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, also for the default: a file `madr.md` replaces the default template of `decision`. `new` stops with exit code 2 and writes nothing for an unknown name, for a template of another type, for a project template with no `type` in its front matter and for a name with a path in it.
+
+`new` copies the template and makes 4 changes. It writes the H1 from the id, it sets the first status of the type, it removes `was-type` from the copy, and it removes `type:` where the place gives the type.
 
 `new` writes no `type:` line where the place gives the type. It uses `--root <dir>`, or the first root of that single type, or the first mixed root. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
 

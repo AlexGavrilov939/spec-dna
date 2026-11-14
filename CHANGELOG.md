@@ -6,6 +6,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Changed
 
+- The default of `roots.live-sections` is `{ decision = ["Status"] }`. SD405 does not report a change to the `Status` section of an accepted decision, and `show --conventions decision` lists `Status`. Set `live-sections = { decision = [] }` to keep the 0.5 behavior.
 - The document types of 0.6: 15 types. `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, `note` and `reference` are `research`, and `change` is `intent`. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The tier label `invariant` of `context` is now `rule`.
 - The statuses of an `intent` are `draft`, `accepted` and `closed`. SD304 names the new status for `proposed`, `rejected` and `done`.
 - A `research` document has the behavior of `reference`: no budget, `context` never serves it, and SD202 reports its deletion. A `procedure` has the budget of a guide and no default required section.
@@ -21,6 +22,8 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Added
 
+- The embedded templates `prd`, `rfc`, `madr`, `post-mortem` and `runbook`, and `spec-dna new <type> <id> --template <name>` ([docs/types.md](docs/types.md#templates), [docs/commands.md](docs/commands.md#new)). `madr` is the default template of a `decision`, and `post-mortem` is the default of an `incident`. A decision has the sections Considered Options, Status and Amendments, and an incident has the sections Timeline, Links, Follow-ups (a task list) and Eval.
+- The table `[templates]` with the key `dir` (default `.spec-dna/templates`) holds the project templates. A file `<name>.md` there, with a `type` in its front matter, replaces the embedded template of that name. `new` stops with exit code 2 for an unknown template and for a template of another type. The folder is never part of a root, also for a root `.`, so it needs no `exclude` ([docs/config.md](docs/config.md#the-table-templates)).
 - `spec-dna layer add <name>` writes a layer into `spec-dna.toml`, and `spec-dna layer list` shows each layer, its level, its edges, its limits and the number of documents that each rule put in it. `--moved-from` adds the new layer to the `moves-to` list of the named layers and keeps each comment of the file. `layer add` refuses a cycle, a name that exists, a type of another layer, an unknown layer in an edge and a bad value, with exit code 2 and no change to the file. It first writes the default graph if the file has no `[layers]` table ([docs/commands.md](docs/commands.md#layer)). `layer list --json` gives the rule that put each document in its layer.
 - The front matter field `was-type` (`note` or `change`). A value of another kind gives SD302. `check` does not use it yet.
 - The types `product`, `system`, `terms`, `roadmap`, `questions`, `spec` and `plan`, with their statuses, required sections, budgets and templates ([docs/types.md](docs/types.md)).

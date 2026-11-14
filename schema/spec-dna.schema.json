@@ -59,6 +59,19 @@
         "$ref": "#/$defs/layer"
       }
     },
+    "templates": {
+      "description": "The project templates for `spec-dna new --template`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "description": "The folder of the project templates, relative to the repository root. Each file `<name>.md` has a `type` in its front matter. A file with the name of an embedded template replaces it. The folder is never part of a root. Default: `.spec-dna/templates`.",
+          "type": "string",
+          "pattern": "^[^/\\\\:][^\\\\:]*$",
+          "default": ".spec-dna/templates"
+        }
+      }
+    },
     "evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -665,7 +678,7 @@
           }
         },
         "live-sections": {
-          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605.",
+          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605. Default: `{ decision = [\"Status\"] }`.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"

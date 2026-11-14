@@ -4,77 +4,94 @@
 //! (`{{text}}`) that stays in a document (SD306).
 
 use crate::model::DocType;
+use std::path::Path;
 
-/// Returns the body of the default template of a type, after the front
-/// matter.
-fn body(ty: DocType) -> &'static str {
-    match ty {
-        DocType::Product => {
-            "## Purpose
+/// The embedded templates: the name, the type and the body, after the front
+/// matter and the title (design 0.6.0, "Templates"). The default template of a
+/// type has a name from `default_name`.
+const EMBEDDED: [(&str, DocType, &str); 18] = [
+    (
+        "product",
+        DocType::Product,
+        "## Purpose
 
 {{What the product does, and for whom.}}
 
 ## Scope
 
 {{What the product covers, and what it leaves out.}}
-"
-        }
-        DocType::System => {
-            "## Overview
+",
+    ),
+    (
+        "system",
+        DocType::System,
+        "## Overview
 
 {{The parts of the system and how they work together.}}
 
 ## Constraints
 
 - {{A constraint that every part keeps.}}
-"
-        }
-        DocType::Terms => {
-            "## Terms
+",
+    ),
+    (
+        "terms",
+        DocType::Terms,
+        "## Terms
 
 | Term | Meaning | Forbidden synonyms |
 | --- | --- | --- |
 | {{term}} | {{meaning}} | {{synonyms}} |
-"
-        }
-        DocType::Roadmap => {
-            "## Next
+",
+    ),
+    (
+        "roadmap",
+        DocType::Roadmap,
+        "## Next
 
 - {{Planned work.}}
 
 ## Later
 
 - {{Work with no date.}}
-"
-        }
-        DocType::Questions => {
-            "## Open
+",
+    ),
+    (
+        "questions",
+        DocType::Questions,
+        "## Open
 
 - {{A question that has no answer yet, and who can answer it.}}
-"
-        }
-        DocType::Requirements => {
-            "## Requirements
+",
+    ),
+    (
+        "requirements",
+        DocType::Requirements,
+        "## Requirements
 
 - **{{key}}**: When {{trigger}}, the {{system}} SHALL {{response}}.
 
 ## Notes
 
 {{Notes. Cite the code of the requirements in inline code spans.}}
-"
-        }
-        DocType::Interface => {
-            "## Interface
+",
+    ),
+    (
+        "interface",
+        DocType::Interface,
+        "## Interface
 
 {{The operations, or a link to the OpenAPI, AsyncAPI or schema file.}}
 
 ## Requirements
 
 - **{{key}}**: The {{service}} SHALL {{behavior of the interface}}.
-"
-        }
-        DocType::Procedure => {
-            "## Purpose
+",
+    ),
+    (
+        "procedure",
+        DocType::Procedure,
+        "## Purpose
 
 {{When to use this procedure, and what it gives.}}
 
@@ -82,12 +99,39 @@ fn body(ty: DocType) -> &'static str {
 
 1. {{Command or action.}}
 2. {{Check.}}
-"
-        }
-        DocType::Decision => {
-            "## Context and Problem Statement
+",
+    ),
+    (
+        "runbook",
+        DocType::Procedure,
+        "## When to use
+
+{{The alert or the event that starts this runbook.}}
+
+## Steps
+
+1. {{Command or action.}}
+
+## Verify
+
+{{How to see that the steps worked.}}
+
+## Rollback
+
+1. {{How to undo the steps.}}
+",
+    ),
+    (
+        "madr",
+        DocType::Decision,
+        "## Context and Problem Statement
 
 {{The problem in 2 or 3 sentences.}}
+
+## Considered Options
+
+- {{Option.}}
+- {{Option.}}
 
 ## Decision Outcome
 
@@ -97,10 +141,18 @@ Chosen option: {{option}}, because {{reason}}.
 
 - Good: {{effect}}.
 - Bad: {{effect}}.
-"
-        }
-        DocType::Intent => {
-            "## Intent
+
+## Status
+
+{{The state of the work that the decision starts. This section can change in place.}}
+
+## Amendments
+",
+    ),
+    (
+        "intent",
+        DocType::Intent,
+        "## Intent
 
 {{What this change gives, and for whom.}}
 
@@ -111,10 +163,64 @@ Chosen option: {{option}}, because {{reason}}.
 ## Out of scope
 
 - {{What this change does not do.}}
-"
-        }
-        DocType::Spec => {
-            "## Delta
+",
+    ),
+    (
+        "prd",
+        DocType::Intent,
+        "## Problem
+
+{{The problem, and who has it.}}
+
+## Users
+
+{{Who needs this change.}}
+
+## Goals
+
+- {{A goal that the change reaches.}}
+
+## Non-goals
+
+- {{What this change does not do.}}
+
+## Success measures
+
+- {{A measure, and its target.}}
+
+## Open questions
+
+- {{A question that has no answer yet.}}
+",
+    ),
+    (
+        "rfc",
+        DocType::Intent,
+        "## Summary
+
+{{The proposal in 2 or 3 sentences.}}
+
+## Motivation
+
+{{Why the change is needed now.}}
+
+## Proposal
+
+{{The design of the change.}}
+
+## Alternatives
+
+- {{An option that the change does not take, and why.}}
+
+## Unresolved
+
+- {{A question that has no answer yet.}}
+",
+    ),
+    (
+        "spec",
+        DocType::Spec,
+        "## Delta
 
 {{The requirements that this change adds, changes or removes.}}
 
@@ -129,10 +235,12 @@ Chosen option: {{option}}, because {{reason}}.
 ## Concerns
 
 - {{An open concern.}}
-"
-        }
-        DocType::Plan => {
-            "## Files
+",
+    ),
+    (
+        "plan",
+        DocType::Plan,
+        "## Files
 
 - {{A path that this change touches.}}
 
@@ -147,20 +255,24 @@ Chosen option: {{option}}, because {{reason}}.
 ## Proof
 
 {{How to see that the change works.}}
-"
-        }
-        DocType::Rule => {
-            "## Rules
+",
+    ),
+    (
+        "rule",
+        DocType::Rule,
+        "## Rules
 
 - **{{key}}**: The {{system}} SHALL {{rule that every change in the scope keeps}}.
 
 ## Rationale
 
 {{Why the rule exists. Link the decision.}}
-"
-        }
-        DocType::Incident => {
-            "## Summary
+",
+    ),
+    (
+        "post-mortem",
+        DocType::Incident,
+        "## Summary
 
 {{What happened, when, and the impact, in 2 or 3 sentences.}}
 
@@ -174,19 +286,36 @@ Chosen option: {{option}}, because {{reason}}.
 
 ## Links
 
-- Requirements: {{links to the requirements, such as [[doc-id#key]]}}
-- Decisions: {{links to the decisions}}
-- Procedures: {{links to the procedures}}
+- {{Links to the requirements, rules, decisions or procedures, such as [[doc-id#key]]}}
 
 ## Follow-ups
 
-- {{Action.}}
-"
-        }
-        DocType::Research => {
-            "{{Research, data or other cold material. spec-dna context does not serve this document unless a target names it.}}\n"
-        }
+- [ ] {{Action.}}
+
+## Eval
+
+{{The eval file in the evals folder that covers this incident.}}
+",
+    ),
+    (
+        "research",
+        DocType::Research,
+        "{{Research, data or other cold material. spec-dna context does not serve this document unless a target names it.}}\n",
+    ),
+];
+
+/// Returns the name of the default embedded template of a type.
+pub fn default_name(ty: DocType) -> &'static str {
+    match ty {
+        DocType::Decision => "madr",
+        DocType::Incident => "post-mortem",
+        t => t.name(),
     }
+}
+
+/// Returns the name of each embedded template, with its type.
+pub fn embedded_names() -> impl Iterator<Item = (&'static str, DocType)> {
+    EMBEDDED.iter().map(|(n, t, _)| (*n, *t))
 }
 
 /// Returns the first status of a new document of a type.
@@ -198,14 +327,12 @@ pub fn first_status(ty: DocType) -> Option<&'static str> {
     }
 }
 
-/// Returns a new document of a type with a title. `with_type` is false where
-/// the place of the document gives its type: the file then has no `type:`
-/// line (design, "Place gives the type").
-pub fn render(ty: DocType, title: &str, with_type: bool) -> String {
-    let mut fm = String::new();
-    if with_type {
-        fm.push_str(&format!("type: {}\n", ty.name()));
-    }
+/// Returns the type and the text of an embedded template: the front matter
+/// with the type and the first status, the title and the body.
+pub fn embedded(name: &str) -> Option<(DocType, String)> {
+    let (_, ty, body) = EMBEDDED.iter().find(|(n, _, _)| *n == name)?;
+    let ty = *ty;
+    let mut fm = format!("type: {}\n", ty.name());
     if let Some(s) = first_status(ty) {
         fm.push_str(&format!("status: {s}\n"));
     }
@@ -214,31 +341,160 @@ pub fn render(ty: DocType, title: &str, with_type: bool) -> String {
         // project: narrow it.
         fm.push_str("applies-to: [\"**\"]\n");
     }
-    let fm = if fm.is_empty() {
-        String::new()
-    } else {
-        format!("---\n{fm}---\n")
-    };
-    format!("{fm}# {title}\n\n{}", body(ty))
+    Some((ty, format!("---\n{fm}---\n# Title\n\n{body}")))
 }
 
-/// Removes the front matter field `was-type` from the text of a template.
-/// `upgrade` writes the field. A copy of a document that has it would give
-/// a new document the exemption of SD202.
-pub fn strip_was_type(text: &str) -> String {
-    let mut out = String::new();
-    let mut in_fm = false;
-    for (i, line) in text.split_inclusive('\n').enumerate() {
-        let t = line.trim_end();
-        if i == 0 && t == "---" {
-            in_fm = true;
-        } else if in_fm && t == "---" {
-            in_fm = false;
-        } else if in_fm && t.trim_start().starts_with("was-type:") {
-            continue;
+/// Returns the text of a template of a type, from the project folder or from
+/// the embedded templates, and the name that selected it. `name` is the value
+/// of `--template`. Without it, the template is the default of the type. The
+/// file `<dir>/<name>.md` of the project has priority over the embedded
+/// template of that name. The error is a message for exit code 2.
+pub fn resolve(
+    repo_root: &Path,
+    dir: &str,
+    ty: DocType,
+    name: Option<&str>,
+) -> Result<(String, String), String> {
+    let chosen = match name {
+        Some(n) => {
+            let n = n.trim();
+            let n = n.strip_suffix(".md").unwrap_or(n);
+            if n.is_empty() || n.starts_with('.') || n.contains(['/', '\\', ':']) {
+                return Err(format!(
+                    "`{n}` is not a template name: write one name, with no path"
+                ));
+            }
+            n
         }
-        out.push_str(line);
+        None => default_name(ty),
+    };
+    let file = repo_root.join(dir).join(format!("{chosen}.md"));
+    if file.is_file() {
+        let text = std::fs::read_to_string(&file)
+            .map_err(|e| format!("cannot read the template `{dir}/{chosen}.md`: {e}"))?;
+        return match front_matter_type(&text) {
+            None => Err(format!(
+                "the template `{dir}/{chosen}.md` has no `type` in its front matter; write `type: {}`",
+                ty.name()
+            )),
+            Some(t) if t == ty.name() => Ok((chosen.to_string(), text)),
+            Some(t) => Err(format!(
+                "the template `{dir}/{chosen}.md` is a template of type `{t}`, not `{}`",
+                ty.name()
+            )),
+        };
     }
+    match embedded(chosen) {
+        Some((t, text)) if t == ty => Ok((chosen.to_string(), text)),
+        Some((t, _)) => Err(format!(
+            "the template `{chosen}` is a template of type `{}`, not `{}`",
+            t.name(),
+            ty.name()
+        )),
+        None => {
+            let names: Vec<&str> = embedded_names()
+                .filter(|(_, t)| *t == ty)
+                .map(|(n, _)| n)
+                .collect();
+            Err(format!(
+                "unknown template `{chosen}` for `{}`; embedded: {}; a project template is `{dir}/{chosen}.md`",
+                ty.name(),
+                names.join(", ")
+            ))
+        }
+    }
+}
+
+/// Returns the lines of the front matter of a text, if it has one.
+fn front_matter_lines(text: &str) -> Option<Vec<&str>> {
+    let mut lines = text.lines();
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    let mut out = Vec::new();
+    for l in lines {
+        if l.trim_end() == "---" {
+            return Some(out);
+        }
+        out.push(l);
+    }
+    None
+}
+
+/// Returns the value of the front matter field `type` of a template, with no
+/// quotes.
+fn front_matter_type(text: &str) -> Option<String> {
+    front_matter_lines(text)?.into_iter().find_map(|l| {
+        let v = l.strip_prefix("type:")?.trim();
+        let v = v.trim_matches(['"', '\'']).trim();
+        (!v.is_empty()).then(|| v.to_string())
+    })
+}
+
+/// Makes a new document from the text of a template: it writes the H1 from
+/// `title`, sets the first status of the type, removes `was-type` (`upgrade`
+/// writes it, and a copy of it would give a new document the exemption of
+/// SD202), and removes `type` where the place of the document gives its type
+/// (`with_type` is false). The text of a template that has no front matter gets
+/// the front matter that its type needs.
+pub fn instantiate(text: &str, ty: DocType, title: &str, with_type: bool) -> String {
+    let (fm, body) = match front_matter_lines(text) {
+        Some(lines) => {
+            let n = lines.len() + 2;
+            let rest: String = text.split_inclusive('\n').skip(n).collect();
+            (lines, rest)
+        }
+        None => (Vec::new(), text.to_string()),
+    };
+    let key = |l: &str| l.split(':').next().unwrap_or("").trim().to_string();
+    let mut lines: Vec<String> = Vec::new();
+    let mut status_done = false;
+    for l in fm {
+        match key(l).as_str() {
+            "was-type" => {}
+            "type" if !with_type => {}
+            "status" if first_status(ty).is_some() => {
+                lines.push(format!("status: {}", first_status(ty).unwrap_or("")));
+                status_done = true;
+            }
+            _ => lines.push(l.trim_end().to_string()),
+        }
+    }
+    if let Some(s) = first_status(ty).filter(|_| !status_done) {
+        lines.push(format!("status: {s}"));
+    }
+    if with_type && !lines.iter().any(|l| key(l) == "type") {
+        lines.insert(0, format!("type: {}", ty.name()));
+    }
+    let mut out = String::new();
+    if !lines.is_empty() {
+        out.push_str("---\n");
+        for l in &lines {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out.push_str("---\n");
+    }
+    // The first H1 outside a code fence gets the title.
+    let mut fence = false;
+    let mut titled = false;
+    let mut rest = String::new();
+    for l in body.split_inclusive('\n') {
+        let t = l.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = !fence;
+        }
+        if !fence && !titled && l.starts_with("# ") {
+            rest.push_str(&format!("# {title}\n"));
+            titled = true;
+        } else {
+            rest.push_str(l);
+        }
+    }
+    if !titled {
+        out.push_str(&format!("# {title}\n\n"));
+    }
+    out.push_str(&rest);
     out
 }
 
@@ -269,68 +525,75 @@ mod tests {
         )
     }
 
-    /// The place of a file of a type in a mixed root.
+    /// The place of a file of a type in the default graph.
     fn place_of(ty: DocType) -> String {
-        if ty.is_intent_type() {
-            format!("docs/intent/x/{}.md", ty.name())
-        } else {
-            format!("docs/{}.md", ty.name())
+        match ty {
+            t if t.is_intent_type() => format!("docs/intent/x/{}.md", t.name()),
+            DocType::Rule => "docs/rules/x.md".into(),
+            DocType::Requirements => "docs/requirements/x.md".into(),
+            DocType::Interface => "docs/interfaces/x.md".into(),
+            DocType::Decision => "docs/decisions/x.md".into(),
+            DocType::Procedure => "docs/procedures/x.md".into(),
+            DocType::Incident => "docs/incidents/x.md".into(),
+            DocType::Research => "docs/research/x.md".into(),
+            t => format!("docs/{}.md", t.name()),
         }
     }
 
     #[test]
-    fn every_template_parses_as_its_type_with_its_required_sections() {
+    fn every_embedded_template_parses_as_its_type_with_its_required_sections() {
         let cfg = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n").unwrap();
-        for ty in DocType::ALL {
-            let text = render(ty, "Example", true);
-            let c = corpus_of(&cfg, &place_of(ty), &text);
-            let d = &c.docs[0];
-            assert_eq!(d.ty, ty, "{text}");
-            let codes: Vec<&str> = d.issues.iter().map(|i| i.code.code()).collect();
-            assert!(!codes.contains(&"SD303"), "{}: {codes:?}", ty.name());
-            assert!(!codes.contains(&"SD305"), "{}: {codes:?}", ty.name());
-            assert!(!codes.contains(&"SD304"), "{}: {codes:?}", ty.name());
-            assert!(!d.parsed.placeholders.is_empty(), "{}", ty.name());
-            assert!(text.len() < 700, "{}: {} bytes", ty.name(), text.len());
+        for (name, ty) in embedded_names() {
+            for with_type in [true, false] {
+                let (_, raw) = embedded(name).unwrap();
+                let text = instantiate(&raw, ty, "Example", with_type);
+                assert_eq!(text.contains("type:"), with_type, "{name}: {text}");
+                let c = corpus_of(&cfg, &place_of(ty), &text);
+                let d = &c.docs[0];
+                assert_eq!(d.ty, ty, "{name}: {text}");
+                let codes: Vec<&str> = d.issues.iter().map(|i| i.code.code()).collect();
+                assert!(codes.is_empty(), "{name}: {codes:?}");
+                assert!(!d.parsed.placeholders.is_empty(), "{name}");
+                assert!(text.len() < 700, "{name}: {} bytes", text.len());
+            }
         }
         assert_eq!(title_of("ops/cache-policy"), "Cache policy");
     }
 
     #[test]
-    fn a_template_without_type_gets_its_type_from_the_place() {
-        // The place of a type in the implied graph: a top file, or the folder
-        // of the layer.
-        let cfg = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n").unwrap();
+    fn each_type_has_a_default_template_of_its_type() {
         for ty in DocType::ALL {
-            let text = render(ty, "Example", false);
-            assert!(!text.contains("type:"), "{text}");
-            let path = match ty {
-                t if t.is_intent_type() => place_of(t),
-                DocType::Rule => "docs/rules/x.md".into(),
-                DocType::Requirements => "docs/requirements/x.md".into(),
-                DocType::Interface => "docs/interfaces/x.md".into(),
-                DocType::Decision => "docs/decisions/x.md".into(),
-                DocType::Procedure => "docs/procedures/x.md".into(),
-                DocType::Incident => "docs/incidents/x.md".into(),
-                DocType::Research => "docs/research/x.md".into(),
-                t => place_of(t),
-            };
-            let c = corpus_of(&cfg, &path, &text);
-            let d = &c.docs[0];
-            assert_eq!(d.ty, ty, "{path}: {text}");
-            let codes: Vec<&str> = d.issues.iter().map(|i| i.code.code()).collect();
-            assert!(codes.is_empty(), "{path}: {codes:?}");
+            let (t, _) = embedded(default_name(ty)).unwrap_or_else(|| panic!("{}", ty.name()));
+            assert_eq!(t, ty);
         }
     }
 
     #[test]
-    fn was_type_leaves_the_copy_of_a_template() {
-        let text = "---\ntype: research\nwas-type: note\n---\n# T\n\nwas-type: note\n";
+    fn instantiate_sets_the_title_the_status_and_drops_was_type() {
+        let text =
+            "---\ntype: research\nwas-type: note\nstatus: active\n---\n# Old\n\nwas-type: note\n";
         assert_eq!(
-            strip_was_type(text),
-            "---\ntype: research\n---\n# T\n\nwas-type: note\n"
+            instantiate(text, DocType::Procedure, "New", true),
+            "---\ntype: research\nstatus: draft\n---\n# New\n\nwas-type: note\n"
         );
-        let plain = render(DocType::Rule, "Water", true);
-        assert_eq!(strip_was_type(&plain), plain);
+        // No status for a type that has none, no type where the place gives it.
+        assert_eq!(
+            instantiate(text, DocType::Research, "New", false),
+            "---\nstatus: active\n---\n# New\n\nwas-type: note\n"
+        );
+        // A `#` line in a code fence is not the title.
+        let fenced = "---\ntype: plan\n---\n```\n# Code\n```\n";
+        assert_eq!(
+            instantiate(fenced, DocType::Plan, "New", true),
+            "---\ntype: plan\nstatus: draft\n---\n# New\n\n```\n# Code\n```\n"
+        );
+    }
+
+    #[test]
+    fn the_status_section_comes_before_amendments() {
+        let (_, text) = embedded("madr").unwrap();
+        let status = text.find("## Status").unwrap();
+        let amendments = text.find("## Amendments").unwrap();
+        assert!(status < amendments);
     }
 }

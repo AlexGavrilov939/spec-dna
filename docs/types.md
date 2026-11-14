@@ -1,6 +1,6 @@
 # Document types
 
-spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a template: `spec-dna new <type> [<id>]` writes a document from it.
+spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a default template: `spec-dna new <type> [<id>]` writes a document from it. [Templates](#templates) lists them all.
 
 | Type | Purpose | Statuses | Required sections | Budget (soft, hard) | In `context` |
 | --- | --- | --- | --- | --- | --- |
@@ -114,6 +114,28 @@ A research document holds research, data, transcripts or other material that age
 An intent holds the request for one change. A spec holds the delta that the change makes to the requirements, and a plan holds the files and the order of the work. An intent has the statuses draft, accepted and closed. A spec and a plan have the statuses draft and approved. These documents describe work that is not done. Thus they give no drift warning (a plan names files that do not exist yet), and `context` only lists them.
 
 ## Templates
+
+`spec-dna new <type> [<id>] [--template <name>]` writes a template at the place of its type. spec-dna embeds the templates below. A project can add its own in `[templates] dir` ([config.md](config.md#the-table-templates)). A file there with the name of an embedded template replaces it.
+
+| Template | Type | Written by | Sections |
+| --- | --- | --- | --- |
+| `prd` | `intent` | `new intent <slug> --template prd` | Problem, Users, Goals, Non-goals, Success measures, Open questions |
+| `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
+| `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope |
+| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns |
+| `plan` (default) | `plan` | `new plan <slug>` | Files, Order, Risks, Proof |
+| `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |
+| `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |
+| `runbook` | `procedure` | `new procedure <slug> --template runbook` | When to use, Steps, Verify, Rollback |
+| `procedure` (default) | `procedure` | `new procedure <slug>` | Purpose, Steps |
+| `product`, `system`, `terms`, `roadmap`, `questions` (default) | by name | `new <type>` | Writes `<root>/<type>.md`. `terms` has the table term, meaning and forbidden synonyms |
+| `requirements`, `rule`, `interface`, `research` (default) | by name | `new <type> <id>` | One form for each type |
+
+The `prd` and `rfc` templates satisfy the required section of an `intent`, because each has a `Problem` or a `Summary` heading. Each embedded template is under 700 bytes, and a test checks it.
+
+The `Status` section of a decision is a live section: its text can change after the decision is accepted (`live-sections`, [config.md](config.md#sections-of-a-decision)). It comes before `Amendments`, because an amendment goes at the end of the file and must not be inside the live section. The `Amendments` section of the template is empty.
+
+A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template, writes the H1 from the id, sets the first status of the type, and removes `was-type` and, where the place gives the type, `type`. `check` reads no file of the folder as a document.
 
 `spec-dna new <type> [<id>]` writes the template of a type at its place:
 
