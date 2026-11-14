@@ -80,7 +80,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Config key | `src/config.rs`, `docs/config.md` and `schema/spec-dna.schema.json`; `src/detect.rs` if `init` proposes the key; `CHANGELOG.md` | ARC | COR, and the agent of the feature | INI, TST | DOC, REL |
 | Command, option, help text or exit code | `src/main.rs`; the section of the command and the exit codes in `docs/commands.md`; the doc page of the command; the tests in `tests/cli.rs`; `CHANGELOG.md` | ARC | COR, and the agent of the command | TST, DOC | INI, REL |
 | `--json` shape | The module of the command; `src/json.rs`; the tests, and the golden file if the command has one; the doc page | ARC | The agent of the command | COR, TST | REL |
-| Document type or template | `DocType` in `src/model.rs`; `src/config.rs`; `src/templates.rs` and `docs/types.md`; `src/detect.rs` for the detection of the type | ARC | COR | INI, DIA, HYG | DOC, REL |
+| Document type or template | `DocType` in `src/model.rs`; `src/config.rs`; `src/layer.rs`; `src/templates.rs` and `docs/types.md`; `src/detect.rs` for the detection of the type | ARC | COR | INI, DIA, HYG | DOC, REL |
 | Adapter or skill text | `src/adapters.rs`; `docs/init.md` and `docs/quickstart.md`; `scripts/demo-replay.sh`; the `init` tests in `tests/cli.rs` | ARC | INI | CTX, DIA, DOC, TST | REL |
 | Context plan or rank | `src/context.rs` and `src/rank.rs`; the `context` section of `docs/commands.md`; `bench/results/retrieval-*.json` | ARC | CTX | DIA, TST | INI, REL |
 | Move, split or generated index | `src/mv.rs`, `src/split.rs` and `src/registry.rs`; the `mv`, `history` and `index` sections of `docs/commands.md` | ARC | HYG | COR, DIA, TST | REL |
@@ -150,6 +150,7 @@ src/frontmatter.rs, src/hash.rs      COR
 src/glob.rs, src/repo.rs             COR
 src/git.rs, src/index.rs             COR
 src/templates.rs                     COR
+src/layer.rs                         COR: the layer graph, its levels, the file order and `layer add`/`layer list`
 src/json.rs                          COR: the writer. TRN: the transcript reader
 src/check.rs, src/diag.rs            DIA
 src/drift.rs, src/cite.rs            DIA. CTX is C for src/cite.rs
@@ -173,6 +174,10 @@ docs/evidence.md                     ARC (OWN)
 docs/adr/                            ARC (OWN)
 docs/research/                       ARC
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
+tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
+tests/sd202.rs                       DIA
+tests/init_graph.rs                  INI
+tests/context_layers.rs              CTX
 tests/golden/                        The agent of the command
 tests/fixtures/corpus/               TST
 tests/fixtures/brownfield/           INI

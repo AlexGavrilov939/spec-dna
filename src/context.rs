@@ -23,7 +23,7 @@
 //!
 //! The order of the layers is the order of the graph: by level from 0 up, and
 //! the order of the configuration inside one level (`Graph::context_order`).
-//! It orders the first tier, and the citing documents of one citation class.
+//! It orders the first tier, and the documents that cite, in one citation class.
 //! It does not change the order of the tiers.
 //!
 //! A layer with `context = "on-request"` has its documents in the plan only
@@ -120,7 +120,7 @@ pub struct Assembly {
     pub used: u32,
     /// The query terms that the ranking used.
     pub query: Option<Vec<String>>,
-    /// The documents that the request reaches and that the plan holds back,
+    /// The documents that the request reaches and that the plan does not serve,
     /// because their layer has `context = "on-request"`. For each layer, the
     /// name and the number of documents, in the order of `context`.
     pub held: Vec<(String, usize)>,
@@ -679,7 +679,7 @@ pub fn assemble(
                 break;
             }
             let n = c.docs[d as usize].parsed.chunks.len();
-            // A held document takes no place of the 20.
+            // A document that the plan only counts takes no place of the 20.
             if n > 0 && !hold(d) && !plan.iter().any(|p| p.0 == d) {
                 // Under a query, every section is a candidate. Without a query,
                 // only the title is a candidate.
@@ -822,8 +822,9 @@ pub fn assemble(
     }
 }
 
-/// Counts the held documents for each layer, in the order of the layers. A
-/// document with no layer counts under the name of its type.
+/// Counts the documents that the plan does not serve, for each layer, in the
+/// order of the layers. A document with no layer counts under the name of its
+/// type.
 fn count_held(c: &Corpus, places: &Places, held: &BTreeSet<u32>) -> Vec<(String, usize)> {
     let mut counts: Vec<(usize, String, usize)> = Vec::new();
     for &d in held {

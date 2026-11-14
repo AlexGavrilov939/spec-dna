@@ -48,8 +48,8 @@ pub fn line() -> String {
 }
 
 /// The document types of a project for the skill: the types that a layer of
-/// the graph has, narrowed by the `types` list of the file (empty: no
-/// narrowing). `init` and `check` both use it, so they agree on the text.
+/// the graph has. If the `types` list of the file is not empty, only the
+/// types of that list. `init` and `check` both use it, so they agree on the text.
 pub fn project_types(graph: &Graph, types: &[DocType]) -> Vec<DocType> {
     DocType::ALL
         .into_iter()

@@ -116,11 +116,11 @@ A layer with `context = "on-request"` is held back. `context` serves its documen
 <!-- on-request, not served: research 1, intent 1, incidents 2; name a document as target to serve it -->
 ```
 
-The layers are in the order of `context`. The line is not in the output if the request reaches no such document. In the default graph, `research`, `intent`, `incidents` and `pending` are `on-request`. A layer with `context = "always"` can fill the plan without a named target. A `research` document is held back in each layer. The `--json` output has no count.
+The layers are in the order of `context`. The line is not in the output if the request reaches no such document. In the default graph, `research`, `intent`, `incidents` and `pending` are `on-request`. A layer with `context = "always"` can fill the plan without a named target. `context` serves no `research` document in any layer, unless a target names it. The `--json` output has no count.
 
 `context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file.
 
-In a layer with `context = "always"`, `context` lists an intent, an incident or a roadmap that cites the file, but it does not serve that document.
+In a layer with `context = "always"`, `context` lists an intent, an incident or a roadmap that cites the file. It does not serve that document.
 
 In a document with requirements, the requirement sections come first, then the title section. `context` lists the other sections of that document.
 
@@ -158,9 +158,19 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 - In a root of one type, the file is `<root>/<id>.md`.
 - A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
 
-`--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)), and then the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, also for the default: a file `madr.md` replaces the default template of `decision`. `new` stops with exit code 2 and writes nothing for an unknown name, for a template of another type, for a project template with no `type` in its front matter and for a name with a path in it.
+`--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, also for the default: a file `madr.md` replaces the default template of `decision`. `new` stops with exit code 2 and writes nothing in these cases:
 
-`new` copies the template and makes 4 changes. It writes the H1 from the id, it sets the first status of the type, it removes `was-type` from the copy, and it removes `type:` where the place gives the type.
+- an unknown name
+- a template of another type
+- a project template with no `type` in its front matter
+- a name with a path in it
+
+`new` copies the template and makes 4 changes:
+
+- It writes the H1 from the id.
+- It sets the first status of the type.
+- It removes `was-type` from the copy.
+- It removes `type:` where the place gives the type.
 
 `new` writes no `type:` line where the place gives the type. It uses `--root <dir>`, or the first root of that single type, or the first mixed root. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
 
@@ -183,10 +193,10 @@ A layer is a named set of documents ([The table `layers`](config.md#the-table-la
 `--moved-from a,b` adds the new layer to the `moves-to` list of the layers `a` and `b`. The command edits that list in place. It inserts the new name and changes no other byte of the file, so each comment stays.
 
 - A layer that has a `moves-to` key gets the name at the end of the list. This works for a table and for dotted keys.
-- A layer that has no `moves-to` key and is written as a table (`[layers.a]`) gets a new `moves-to` line below its header.
-- A layer that has no `moves-to` key and is written as dotted keys or as an inline table gives exit code 2. Add `moves-to` to it by hand.
+- A layer with no `moves-to` key that has a table form (`[layers.a]`) gets a new `moves-to` line below its header.
+- A layer with no `moves-to` key that has dotted keys or an inline table gives exit code 2. Add `moves-to` to it by hand.
 
-If `spec-dna.toml` has no `[layers]` table, the project uses the default graph ([config.md](config.md#the-table-layers)). In this case, `layer add` first writes the tables of that graph, with the effect of `types` (the layers that hold none of the types drop, with the edges to them). It then adds the new layer.
+If `spec-dna.toml` has no `[layers]` table, the project uses the default graph ([config.md](config.md#the-table-layers)). In this case, `layer add` first writes the tables of that graph. It applies `types`: it drops the layers that hold none of the types, and the edges to them. It then adds the new layer.
 
 The command refuses these cases with exit code 2. It writes nothing, and the file keeps its bytes:
 
@@ -194,7 +204,7 @@ The command refuses these cases with exit code 2. It writes nothing, and the fil
 - A name that a layer already has.
 - A type that another layer has.
 - A layer in an edge (`--moves-to`, `--linked-from`, `--moved-from`) that the graph does not have.
-- A value that is not valid: a name with other characters than letters, digits, `-` and `_`, an unknown type, a number that is not a number, a `--keep` or `--context` value that is not in the list, a `--dir` that leaves the root, `--files` with `--dir`, or a folder that another layer has.
+- A value that is not valid. Examples are a name with a character other than a letter, a digit, `-` or `_`, and an unknown type. Others are a number that is not a number, a `--keep` or `--context` value that is not in the list, and a `--dir` that leaves the root. `--files` with `--dir` and a folder that another layer has are also not valid.
 - A file layout where the new table has no place, for example `layers = { ... }` as an inline table of the root.
 
 The command reads its own result before it writes it. The result must give the layers that the command expects.

@@ -348,7 +348,7 @@ pub const DEFAULT_DECISION_SECTIONS: [&str; 2] = ["Decision Outcome", "Decision"
 pub const DEFAULT_AMENDMENT_SECTIONS: [&str; 1] = ["Amendments"];
 
 /// The live sections of a decision by default (design 0.6.0, "Templates").
-/// Its text can change in place after the decision is accepted.
+/// Its text can change in place after the decision has the status `accepted`.
 pub const DEFAULT_LIVE_SECTIONS: [&str; 1] = ["Status"];
 
 #[derive(Clone, Debug)]

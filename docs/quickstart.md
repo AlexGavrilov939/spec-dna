@@ -113,7 +113,7 @@ A layer is a named set of documents. It has a folder (`requirements/`, `decision
 
 A document of a type that no layer has gives SD303. To add a layer later, run `spec-dna layer add <name> --types <type>`. Then run `spec-dna init`, so that the skill lists the types of the new layers. Commit `spec-dna.toml` and the skill as a change of their own (SD503). `spec-dna layer list` shows the layers.
 
-Question 3 chooses the areas: the folders of `requirements/`. `init` proposes them from the top folders of the existing specs and from the app folders, at most 8, and only if it finds 2 or more. The answer `none` gives one folder. `init` never proposes a group.
+Question 3 chooses the areas: the folders of `requirements/`. `init` proposes at most 8 areas, and only if it finds 2 or more. It takes them from the top folders of the specs and from the app folders. The answer `none` gives one folder. `init` never proposes a group.
 
 ## Write documents
 
@@ -177,7 +177,7 @@ To change an accepted decision, do one of these actions:
 
 For another warning code with more than 10 diagnostics, such as SD608 on a mature corpus, `check` also gives one count. `spec-dna check --json` lists each diagnostic.
 
-If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
+If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and name a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
 
 Split a document only for a size error: SD702, and in the `strict` profile also SD701, SD703 and SD704. A size warning needs no split.
 

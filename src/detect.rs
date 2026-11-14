@@ -212,7 +212,7 @@ pub struct Row {
     pub default_type: DocType,
     /// True for a mixed root that has no `default-type`: the place of a
     /// document gives its type, and a document with no place and no type gives
-    /// SD303. `default_type` has no meaning then.
+    /// SD303. `default_type` is not used then.
     pub no_default_type: bool,
     pub status: Option<String>,
     pub legacy_ids: Vec<String>,
@@ -305,7 +305,7 @@ pub struct Facts {
     pub hooks: Vec<String>,
     pub base: String,
     /// The proposed areas of `requirements/`: at most 8 names of one folder
-    /// each, or none if fewer than 2 are found.
+    /// each, or none if `init` finds fewer than 2.
     pub areas: Vec<String>,
 }
 
@@ -753,7 +753,7 @@ pub fn detect(
     // 3. Directories of numbered files (`PREFIX-<n>-*.md`, or `<n>-*.md` as
     // adr-tools writes them): legacy ids. The type of such a directory comes
     // from its own files. If the files show no type, it is the type of the
-    // enclosing root, if that root has a type. In a mixed root, it is `research`.
+    // root that contains it, if that root has a type. In a mixed root, it is `research`.
     let mut plain_aliases: Vec<(String, &str)> = Vec::new();
     let mut numbered: Vec<(&String, &Vec<usize>)> = md_direct.iter().collect();
     numbered.sort();

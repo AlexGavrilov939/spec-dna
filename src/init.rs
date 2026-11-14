@@ -113,7 +113,7 @@ const SMALL_LIMIT: usize = 30;
 
 /// The questions of `init` with their numbers in the design
 /// (docs/design/0.6.0.md, "Init questions"), and the name that the preview
-/// shows. The questions 4, 5 and 14 come with later steps of 0.6.0.
+/// shows. Later steps of 0.6.0 add the questions 4, 5 and 14.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Question {
     Profile,
@@ -2342,7 +2342,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         ask(&mut plan, &facts, &mut io).map_err(Fatal::Usage)?;
     }
     // The answers can change the graph, so the roots follow it now. The
-    // defaults are shown with the same rule.
+    // preview shows the defaults with the same rule.
     settle(&mut plan);
     let mut offered = before.clone();
     settle(&mut offered);

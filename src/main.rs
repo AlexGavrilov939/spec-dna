@@ -105,9 +105,9 @@ spec-dna.toml).",
         "new <type> [<id>] [--root <dir>] [--template <name>]",
         "Writes a new document from a template, at the place of its layer. Without
 --template, it uses the default template of the type. --template names a file
-<name>.md in the folder [templates] dir, or an embedded template of the type,
-such as prd or rfc for intent, and runbook for procedure. A top file such as
-terms takes no id. intent <slug> writes intent/<slug>/intent.md, and spec and
+<name>.md in the folder [templates] dir, or an embedded template of the type.
+Examples are prd or rfc for intent, and runbook for procedure. A top file such
+as terms takes no id. intent <slug> writes intent/<slug>/intent.md, and spec and
 plan need that folder. Where the place gives the type, the file has no type:
 line.",
     ),
@@ -116,11 +116,12 @@ line.",
         "layer add <name> [--types <t,..>] [--paths <glob,..>] [--files <f,..>] [--dir <d>] [--moves-to <l,..>] [--moved-from <l,..>] [--linked-from <l,..>] [--keep <k>] [--context <c>] [--max-docs <n>] [--max-chars <n>] [--max-started <n>] [--stale-days <n>]\nlayer list",
         "`add` writes the table [layers.<name>] at the end of spec-dna.toml. --keep is
 forever or until-finished, and --context is always or on-request. With
---moved-from, the new layer joins the moves-to list of each named layer; the
-file keeps every comment. It refuses a cycle, a name that exists, a type that
-another layer has, a layer that the graph does not have and a bad value, with
-exit code 2 and no change to the file. If the file has no [layers] table, it
-writes the default graph first. Commit spec-dna.toml as a change of its own.
+--moved-from, the new layer joins the moves-to list of each named layer, and
+the file keeps every comment. It stops with exit code 2 and does not change
+the file for a cycle, a name that exists, a type that another layer has, a
+layer that the graph does not have, and a bad value. If the file has no
+[layers] table, it writes the default graph first. Commit spec-dna.toml as a
+change of its own.
 `list` prints each layer: its level, its selection, its edges, its limits and
 the number of documents that each rule put in it. With --json, it also lists
 the rule of each document.",

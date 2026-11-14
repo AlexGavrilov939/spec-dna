@@ -56,7 +56,7 @@ The name of a directory gives the type of the root:
 
 `init` never proposes the types `intent`, `spec` and `plan`, because they are valid only as `intent/<slug>/intent.md`. A flat folder of proposals or changes (`rfcs`, `proposals`, `changes`, `tasks`, `plans`, `enhancements`) and the prefixes `RFC`, `RFD`, `KEP` and `PEP` give `research`. The preview then says: to start an open proposal, run `spec-dna new intent <slug>`.
 
-`init` writes no root for a type that no layer of the chosen graph has. The `small` graph has no layer for `interface`, `procedure` and `research`. The preview gives a note for each such root. A mixed root whose detected default type has no layer loses its `default-type`. If no root is left, the project gets the root of a new project. Choose `default` at question 2 to keep these roots.
+`init` writes no root for a type that no layer of the chosen graph has. The `small` graph has no layer for `interface`, `procedure` and `research`. The preview gives a note for each such root. A mixed root whose detected default type has no layer loses its `default-type`. If `init` writes no root, the project gets the root of a new project. Choose `default` at question 2 to keep these roots.
 
 This rule also applies to a top-level directory, such as `rfcs/`. The names `incident` and `postmortem` are also common names of code directories. They give a type only inside a documentation tree, or to a directory that is mostly Markdown. Agent directories (`.claude/skills`, `.claude/agents`, `.cursor/rules`) give `procedure`. A root becomes mixed if the front matter of its documents names another type.
 
@@ -81,11 +81,11 @@ The files of the directory give its type. `init` examines these facts in this or
     - `Steps` gives `procedure`.
     - Requirements with a BCP 14 keyword give `requirements`.
 
-If the files show no type, the type is the type of the enclosing root, if that root has a type. In a mixed root, the type is `research`. A mixed documentation tree takes the type of its numbered files only if it has no other documents.
+If the files show no type, the type is the type of the root that contains the folder, if that root has a type. In a mixed root, the type is `research`. A mixed documentation tree takes the type of its numbered files only if it has no other documents.
 
 ## Questions
 
-The numbers are the numbers of the design of 0.6.0. This version asks the questions 1 to 3 and 6 to 13. The questions 4, 5 and 14 come with later versions.
+The numbers are the numbers of the design of 0.6.0. This version asks the questions 1 to 3 and 6 to 13. Later versions add the questions 4, 5 and 14.
 
 | # | Question | Default |
 | --- | --- | --- |
@@ -94,7 +94,7 @@ The numbers are the numbers of the design of 0.6.0. This version asks the questi
 | 3 | The areas of `requirements/`: folder names, or `none` for one folder. The question shows the detected areas | The detected areas, at most 8. `none` if fewer than 2 are detected |
 | 6 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 7 | The normative language and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected aliases |
-| 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it (`type=requirements status=active exclude=a/**,b.md`) | Accept |
+| 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
 | 9 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
 | 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
 | 11 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
@@ -107,7 +107,7 @@ A language other than `en` sets `[rules] lint = "off"`, because the requirement 
 
 ## Preview and files
 
-The preview starts with the 11 answers and how `init` applied each one. A line gives the number of the question, the value, whether it is the default of the question or changed from it, and what it writes. An answer that equals the default and writes no key or file says `writes nothing`. For example, answer 3 (`none`) writes no `areas` key. Answer 2 writes the `[layers.<name>]` tables. Answer 12 (the harness level) writes the `[harness]` table and the harness files. Answer 13 (the models) writes the `[harness.roles]` table. If the level is `none`, answer 13 shows `-` and says `writes nothing`. A `note:` line follows the answers for each root that `init` did not write, and for a folder of proposals.
+The preview starts with the 11 answers and how `init` applied each one. A line gives the number of the question, the value, and what it writes. It also says if the value is the default of the question or a change. An answer that equals the default and writes no key or file says `writes nothing`. For example, answer 3 (`none`) writes no `areas` key. Answer 2 writes the `[layers.<name>]` tables. Answer 12 (the harness level) writes the `[harness]` table and the harness files. Answer 13 (the models) writes the `[harness.roles]` table. If the level is `none`, answer 13 shows `-` and says `writes nothing`. A `note:` line follows the answers for each root that `init` did not write, and for a folder of proposals.
 
 Then the preview shows the full `spec-dna.toml` and each file to create or change:
 
@@ -117,9 +117,9 @@ Then the preview shows the full `spec-dna.toml` and each file to create or chang
 - a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`. The hook runs `spec-dna check --staged`, which checks the git index: a commit records the index, not the working tree. A hook that 0.4.1 wrote (`spec-dna check`) reads the working tree. `init` changes that exact line in place when it runs again (also with an existing `spec-dna.toml`), and the preview shows the diff. It does not change any other text of a hook.
 - the harness files, if the level is not `none`: `.claude/agents/*.md`, `.claude/agents/model-team.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`. The harness block of the preview shows each file with `create`, `change` or `remove` and a note. It also shows the warnings, the reasons for disabled roles and the line `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.` It shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code.
 
-After the list, the preview gives the diff of each file other than `spec-dna.toml`. This includes the harness files and the files that `init` removes. A file that does not exist yet shows as a diff against `/dev/null`. A file that `init` removes shows as a diff to `/dev/null`. `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`. A new project and `--reconfigure` also give `answers` with the 11 answers (the field `number` is the number of the question) and `notes`. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With an existing `spec-dna.toml`, `--dry-run --json` gives `files` with the same entries, and `harness`.
+After the list, the preview gives the diff of each file other than `spec-dna.toml`. This includes the harness files and the files that `init` removes. A new file shows as a diff against `/dev/null`. A file that `init` removes shows as a diff to `/dev/null`. `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`. A new project and `--reconfigure` also give `answers` with the 11 answers (the field `number` is the number of the question) and `notes`. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With an existing `spec-dna.toml`, `--dry-run --json` gives `files` with the same entries, and `harness`.
 
-The skill lists the types of the project: the types that a layer has, narrowed by the key `types` of `spec-dna.toml` if the file has one. If you change the layers later (for example with `spec-dna layer add`), run `spec-dna init` to update the skill, or `check` reports SD502.
+The skill lists the types of the project: the types that a layer has. If `spec-dna.toml` has the key `types`, the skill lists only the types of that key. If you change the layers later (for example with `spec-dna layer add`), run `spec-dna init` to update the skill, or `check` reports SD502.
 
 For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file. `--json` has a `harness` object with the level, the files (path, action and note), the kept notes, the warnings and the bytes.
 
@@ -164,7 +164,7 @@ default-type = "requirements"
 
 The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).
 
-The answers key `types` of 0.5 ended. An answers file with this key gives an error that names `graph`. (The key `types` of `spec-dna.toml` stays: it narrows the types of the layers.) `graph = "custom"` is only for `--reconfigure`: a new project has no layers to keep.
+Version 0.6.0 removes the answers key `types` of 0.5. An answers file with this key gives an error that names `graph`. The key `types` of `spec-dna.toml` stays: it narrows the types of the layers. `graph = "custom"` is only for `--reconfigure`, because a new project has no layers to keep.
 
 `harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` disables a role, and `inherit` writes no model. A suffix after the last `:` that has no digit, or none, must be an effort. A word such as `x-high` is an error (`unknown effort`). A suffix with a digit, such as `:0` in a cloud model id, stays part of the model. The advisor model cannot be haiku, in any letter case.
 
@@ -187,7 +187,7 @@ The harness has the current `[harness]` table as its defaults. A smaller level r
 
 `init` with an existing `spec-dna.toml` and no `--reconfigure` is the upgrade path:
 
-- `init` updates the adapters, the skill (with the types of the layers of the project) and the exact hook line that 0.4.1 wrote (`spec-dna check`, which it changes to `spec-dna check --staged`). The harness upgrade below comes after these changes.
+- `init` updates the adapters and the skill. The skill lists the types of the layers of the project. `init` also changes the exact hook line that 0.4.1 wrote, `spec-dna check`, to `spec-dna check --staged`. The harness upgrade below comes after these changes.
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
 - `init` regenerates the harness files of a configuration with a `[harness]` table. It writes each generated file that you did not edit, and each file that is missing. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
 - `init` keeps a generated file that you edited, or that has text after its marker, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it and run `init` to generate it again.

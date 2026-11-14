@@ -123,7 +123,7 @@ sonnet = "high"
 | `roots` | list of tables | required | The document roots. A path belongs to the deepest root that contains it. |
 | `roots.path` | string | required | The directory, relative to the repository root. `.` means the whole repository. |
 | `roots.type` | string | `mixed` | The type of every document in the root, or `mixed`. The value is a type of [docs/types.md](types.md), but not `intent`, `spec` or `plan`. These 3 types are valid only in the `intent` layer, so a root of one of them is an error (exit code 3). In a mixed root, the front matter and the place of a document give its type ([Place gives the type](types.md#place-gives-the-type)). |
-| `roots.default-type` | string | none | For a mixed root: the type of a document that has no `type` field and a place that gives no type. The value is a type of a root (not `intent`, `spec` or `plan`). Without it, such a document gives SD303. |
+| `roots.default-type` | string | none | For a mixed root: the type of a document that has no `type` field and a place that gives no type. The value is a type of a root, but not `intent`, `spec` or `plan`. Without it, such a document gives SD303. |
 | `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type, so the root needs a `default-type` or one type. |
 | `roots.exclude` | list of globs | `[]` | Paths, relative to the root, that are not documents. |
 | `roots.legacy-ids` | list | `[]` | Patterns that make aliases from the names of files. A string `ADR-{n}` makes the alias `ADR-{n}` from a slug that starts with it. In a table, `file` sets the slug pattern. |
@@ -227,7 +227,7 @@ The layers also give the place of a document: its type, if the front matter has 
 
 The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
 
-A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types, and it drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
 
 ## The table `templates`
 
@@ -240,7 +240,7 @@ dir = ".spec-dna/templates"
 
 - A project template names its `type` in its front matter. `new` stops with exit code 2 for a template with no `type`, a template of another type and an unknown template name.
 - `dir` is a path relative to the repository root. An absolute path, a `..` segment, a `\` and a `:` are errors (exit code 3).
-- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, and no `exclude` is needed. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
 
 ## The table `harness`
 

@@ -388,9 +388,10 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
 }
 
 /// SD611: an accepted decision links a document of the type `intent` in its
-/// frozen text, or in `depends-on`. An intent can be deleted when it is finished
-/// (SD202 allows it: its layer is `until-finished`), and the frozen text cannot drop the link. A link
-/// in an amendment, history or live section can change, so it is allowed.
+/// frozen text, or in `depends-on`. You can delete a finished intent (SD202
+/// allows it: its layer is `until-finished`), but you cannot remove the link from
+/// the frozen text. A link in an amendment, history or live section can change,
+/// so it is allowed.
 fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) {
     let p = &d.parsed;
     let live = crate::model::amendment_chunks(

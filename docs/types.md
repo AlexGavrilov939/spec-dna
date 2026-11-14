@@ -7,7 +7,7 @@ spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) define
 | `product` | What the product is, and for whom | none | none | 8,000, 16,000 | first, for its `applies-to` |
 | `system` | The parts of the system and how they work together | none | none | 8,000, 16,000 | first, for its `applies-to` |
 | `terms` | The terms of the project: term, meaning and forbidden synonyms | none | none | 10,000, 20,000 | first, for its `applies-to` |
-| `roadmap` | Work that is planned and not done | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
+| `roadmap` | Work that the project plans and does not do yet | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
 | `questions` | Open questions | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
 | `rule` | Project-wide rules with stable ids and an `applies-to` scope | draft, active, deprecated, superseded, retired (status moves forward only) | `Rules` | 3,000, 6,000 | first, for a matching scope |
 | `requirements` | The behavior and constraints of one capability | as `rule` | none | 10,000, 20,000 | yes |
@@ -34,7 +34,7 @@ Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as inp
 | `contract` | `interface` | |
 | `invariant` | `rule` | The tier label of `context` is `rule` |
 | `guide`, `runbook` | `procedure` | A runbook had the required section `Steps`. Set `required-sections = { procedure = ["Steps"] }` to keep it |
-| `note`, `reference` | `research` | The behavior of `reference` stays: no budget, `context` never serves it, and SD202 reports its deletion, unless the document has `was-type: note` |
+| `note`, `reference` | `research` | The behavior of `reference` stays: it has no budget, and `context` never serves it. SD202 reports its deletion, unless the document has `was-type: note` |
 | `change` | `intent` | The statuses are draft, accepted and closed. Use `draft` for `proposed`, and `closed` for `rejected`. A finished change (`done`) is a `research` document |
 
 ## Place gives the type
@@ -51,7 +51,7 @@ If no rule gives a type, the document gives SD303. A mixed root has no `default-
 
 The layer of a document is the first layer in the file whose `paths` match it. If no layer matches, it is the layer that has the type of the document. A `paths` match does not give a type.
 
-The types `intent`, `spec` and `plan` are valid only as `<dir>/<slug>/<type>.md`, where `<dir>` is the folder of the layer that has the type (`intent` by default). A document of one of these types at another place gives SD303. For a `spec`, the message says that the 0.5 type `spec` is the 0.6 type `requirements`, and the document probably needs `type: requirements`. These 3 types are also not valid as `type` or `default-type` of a root: that is an error (exit code 3).
+The types `intent`, `spec` and `plan` are valid only as `<dir>/<slug>/<type>.md`, where `<dir>` is the folder of the layer that has the type (`intent` by default). A document of one of these types at another place gives SD303. For a `spec`, the message says that the 0.5 type `spec` is the 0.6 type `requirements`. The document probably needs `type: requirements`. These 3 types are also not valid as `type` or `default-type` of a root: that is an error (exit code 3).
 
 A document of a type that no layer has gives SD303. The message says to run `spec-dna layer add`. A project with no `[layers]` table has the [default graph](design/0.6.0.md#default-graph), so each type has a layer.
 
@@ -73,7 +73,7 @@ The default graph gives these places. The folder is the name of the layer, unles
 
 `draft` is the state of a document that waits for approval. The types `rule`, `requirements`, `interface`, `procedure` and `intent` have no `proposed` status. `proposed` belongs to a decision, which a person accepts or rejects. When a document of another type has the status `proposed`, `check` gives SD304 and names `draft`. A root that uses `proposed` for its requirements can map it: `status-map = { proposed = "draft" }`.
 
-An `intent` ends with the status `closed`, and then it can be deleted (SD202 allows it).
+An `intent` ends with the status `closed`, and then you can delete it (SD202 allows it).
 
 ## Links between types
 
@@ -81,13 +81,13 @@ In a new corpus, link the documents in these directions. A link of another direc
 
 | From | To | Why |
 | --- | --- | --- |
-| `intent` | the `requirements`, `interface`, `rule` or `decision` that it changes | An intent is a request. It links the lasting documents. |
+| `intent` | the `requirements`, `interface`, `rule` or `decision` that it changes | An intent is a request. It links the permanent documents. |
 | `decision` | `requirements`, `interface`, `rule`, `research`, and another `decision` (`supersedes`) | A decision gives the reason for a requirement. |
-| `requirements`, `interface`, `rule`, `procedure` | `decision` (the reason), `requirements`, `interface` | A lasting document names the reason for its rules. |
+| `requirements`, `interface`, `rule`, `procedure` | `decision` (the reason), `requirements`, `interface` | A permanent document names the reason for its rules. |
 | `incident` | `requirements`, `rule`, `decision`, `procedure` | An incident without such a link gives SD609. |
 | `research` | any type | These documents give information only. |
 
-A lasting document does not link an intent. An intent ends with the status `closed`, and then it can be deleted (SD202 allows it). A link to a deleted intent breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is frozen (SD405).
+A permanent document does not link an intent. An intent ends with the status `closed`, and then you can delete it (SD202 allows it). A link to a deleted intent breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is frozen (SD405).
 
 Thus an accepted decision that links an intent in its frozen text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it.
 
@@ -95,15 +95,15 @@ Thus an accepted decision that links an intent in its frozen text or in `depends
 
 A rule states what every change in its scope keeps, such as "the system stores amounts in minor units". Its rules are requirements: list items with a bold slug key. Their ids (`<doc-id>#<key>`) are stable, and tests can cover them.
 
-`applies-to` sets the scope: path globs or namespaces. A rule without `applies-to` applies to the whole repository. `context` serves the requirement sections of each matching rule first, before the entry documents. Keep each rule document short, because its budget is small.
+`applies-to` sets the scope: path globs or namespaces. A rule without `applies-to` applies to the whole repository. `context` serves the requirement sections of each rule with a matching scope first, before the entry documents. Keep each rule document short, because its budget is small.
 
 ## Procedure
 
-A procedure tells how to do a task: when to use it, the steps, how to verify the result, and how to roll back. It is normative. `context` serves it for a matching `applies-to` and when it cites the code of the request. The template `procedure` has the sections `Purpose` and `Steps`. A root can require `Steps` with `required-sections = { procedure = ["Steps"] }`.
+A procedure tells how to do a task: when to use it, the steps, how to verify the result, and how to undo it. It is normative. `context` serves it when its `applies-to` matches, and when it cites the code of the request. The template `procedure` has the sections `Purpose` and `Steps`. A root can require `Steps` with `required-sections = { procedure = ["Steps"] }`.
 
 ## Incident
 
-An incident records an event: a summary, a timeline, the root cause, links, and follow-up actions. It must link the requirements, rules, decisions or procedures that it involves, with `[[<id>]]` or a Markdown link. An incident without such a link gives SD609 (a warning). An incident describes the past. Thus it gives no drift warning, and `context` only counts it, unless a target names it.
+An incident records an event: a summary, a timeline, the root cause, links, and follow-up actions. It must link the requirements, rules, decisions or procedures that it involves, with `[[<id>]]` or a Markdown link. An incident without such a link gives SD609, a warning. An incident describes the past. Thus it gives no drift warning, and `context` only counts it, unless a target names it.
 
 ## Research
 
@@ -133,9 +133,9 @@ An intent holds the request for one change. A spec holds the delta that the chan
 
 The `prd` and `rfc` templates satisfy the required section of an `intent`, because each has a `Problem` or a `Summary` heading. Each embedded template is under 700 bytes, and a test checks it.
 
-The `Status` section of a decision is a live section: its text can change after the decision is accepted (`live-sections`, [config.md](config.md#sections-of-a-decision)). It comes before `Amendments`, because an amendment goes at the end of the file and must not be inside the live section. The `Amendments` section of the template is empty.
+The `Status` section of a decision is a live section: its text can change after the decision has the status `accepted` (`live-sections`, [config.md](config.md#sections-of-a-decision)). It comes before `Amendments`, because an amendment goes at the end of the file and must not be inside the live section. The `Amendments` section of the template is empty.
 
-A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template, writes the H1 from the id, sets the first status of the type, and removes `was-type` and, where the place gives the type, `type`. `check` reads no file of the folder as a document.
+A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template and writes the H1 from the id. It sets the first status of the type. It removes `was-type`, and it removes `type` where the place gives the type. `check` reads no file of the folder as a document.
 
 `spec-dna new <type> [<id>]` writes the template of a type at its place:
 

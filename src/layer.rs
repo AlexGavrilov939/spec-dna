@@ -19,7 +19,7 @@ use toml::de::DeTable;
 pub enum Keep {
     /// A document stays. SD202 reports a deletion.
     Forever,
-    /// A finished document is deleted. SD202 stays silent.
+    /// A person can delete a finished document. SD202 stays silent.
     UntilFinished,
 }
 
@@ -866,8 +866,8 @@ fn edge_splice(text: &str, name: &str, target: &str) -> Result<Splice, String> {
 /// tables of the implied graph. The new table comes last. For each name in
 /// `moved_from`, the new layer joins the `moves-to` list of that layer.
 ///
-/// Each error is a refusal: the caller writes nothing. The new text is read
-/// again, and the graph that it gives must be the graph that this function
+/// Each error is a refusal: the caller writes nothing. The function reads the
+/// new text again, and the graph that it gives must be the graph that this function
 /// expects.
 pub fn add_layer(
     text: &str,
@@ -1350,7 +1350,7 @@ mod tests {
             let text = render_graph(&g);
             assert_eq!(graph(&text).unwrap(), g, "{text}");
         }
-        // A name with a quote or a backslash is escaped.
+        // The writer escapes a name with a quote or a backslash.
         let mut l = Layer::new("a");
         l.paths = vec!["x\"y\\z/**".to_string()];
         let g = Graph::new(vec![l]).unwrap();
