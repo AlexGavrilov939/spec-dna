@@ -19,4 +19,4 @@ able to explain the rule in one sentence.
 
 Chosen option: 1, a flat fine of 25 cents for each late day, without a cap.
 `fine_for()` in `library/loans.py` computes it. The requirement is
-[daily-fine](../loans.md#daily-fine).
+[daily-fine](../requirements/loans.md#daily-fine).

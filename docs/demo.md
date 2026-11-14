@@ -1,6 +1,6 @@
 # Demo: a new project
 
-The demo shows spec-dna on a small project that starts without it: a book-loan HTTP API in Python with its tests. The seed is in `tests/fixtures/demo/`: the application (`app/`) and the documents that a user writes on adoption (`docs/`).
+The demo shows spec-dna on a small project that starts without it: a book-loan HTTP API in Python with its tests. The seed is in `tests/fixtures/demo/`: the application (`app/`) and the documents that a user writes on adoption (`docs/`). The documents are in the folders of their layers: `requirements/loans.md`, `decisions/` and `interfaces/http.md`.
 
 ## Replay without an agent
 
@@ -14,7 +14,7 @@ The script does these steps:
 
 1. It builds the current version and the next patch version as an unreleased `-dev` version, for example `0.1.2-dev` for `0.1.1`.
 2. It makes a git repository from the application and runs the "Start" block of [the quickstart](quickstart.md) as it is written. It checks that `init` added 2 lines to `CLAUDE.md`: the spec-dna line and the model-team line of the lean harness. It also checks that `init` wrote the agent files, no import and no `AGENTS.md`, and that the prompt prefix of the adapters is 300 bytes or less.
-3. It adds the documents and uses `context`, `show`, `mv` and `check`. A change that removes a cited identifier must give SD607 in `check --base`, as in CI.
+3. The small graph of `init` has no `interfaces` layer, and the seed has an interface document. The script runs `spec-dna layer add interfaces --types interface --moved-from intent` and `spec-dna init` (the skill lists the types of the layers). It runs `check` and commits `spec-dna.toml` and the skill, as a change of their own (SD503). Then it adds the documents and uses `context`, `show`, `mv` and `check`. The ids have the folder of the layer, for example `requirements/loans#loan-period`. A change that removes a cited identifier must give SD607 in `check --base`, as in CI.
 4. It runs the upgrade of the quickstart to the `-dev` version. The pin mismatch gives exit code 3. `init` writes the adapters and the harness files of the new version. Then the script rolls back to the current version with `git revert`.
 5. It disables the harness with `init --reconfigure`. Then it runs the "Uninstall" block of the quickstart. The documents must not change. The uninstall must remove only the files of spec-dna. `.claude/settings.json` stays, because it can hold keys of the project.
 
@@ -25,9 +25,9 @@ The agent stages have no script, because they need a model and a budget. Each st
 | Stage | Task | What it shows |
 | --- | --- | --- |
 | a | A small requirement change that starts from a test that fails (a second renewal) | `context <code path>` finds the requirement. The agent updates it |
-| b | A new capability (book holds) with an HTTP contract and a decision | New documents of the right types, linked to the code |
-| c | A change of policy (capped fines): update the spec and supersede the old decision | `supersedes`, the frozen decision, SD605 |
-| d | A large policy text that puts the loans spec over its hard budget | SD702, then a split with `spec-dna mv` that keeps the old ids as aliases |
+| b | A new capability (book holds) with an HTTP interface and a decision | New documents of the right types, linked to the code |
+| c | A change of policy (capped fines): update the requirements and supersede the old decision | `supersedes`, the frozen decision, SD605 |
+| d | A large policy text that puts the loans requirements over their hard budget | SD702, then a split with `spec-dna mv` that keeps the old ids as aliases |
 
 For each stage, a control session runs the same task on a copy of the same commit. The copy has no `spec-dna.toml`, no adapters and no `spec-dna` on `PATH`. The ratio of total input tokens (treatment over control) is the fixed overhead of spec-dna on a small project.
 

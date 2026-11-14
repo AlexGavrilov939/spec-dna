@@ -23,13 +23,21 @@ use crate::repo::{Fatal, Repo, Snapshot};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Returns true if drift in this document is a problem. A superseded, retired
-/// or rejected document, a completed change, a note, an incident and a
-/// reference describe the past or give information only. Thus they can cite
-/// code that does not exist.
+/// or closed document, an incident and a research document describe the past
+/// or give information only. A roadmap, a list of questions, a spec and a plan
+/// describe work that is not done. Thus they can cite code that does not
+/// exist.
 fn current(d: &Doc) -> bool {
     !d.is_inactive()
-        && !matches!(d.ty, DocType::Note | DocType::Incident | DocType::Reference)
-        && !(d.ty == DocType::Change && d.status_str() == "done")
+        && !matches!(
+            d.ty,
+            DocType::Research
+                | DocType::Incident
+                | DocType::Roadmap
+                | DocType::Questions
+                | DocType::Spec
+                | DocType::Plan
+        )
 }
 
 /// The last path segment of a cited path, without a location suffix.

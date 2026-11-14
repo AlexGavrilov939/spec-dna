@@ -21,12 +21,12 @@ Read first: `.claude/agents/ownership.md`, the function `assemble` in `src/conte
 
 - Each served section has its id and hash. If a section does not fit the budget, `context` lists it with its id, hash and size.
 - The plan has this order: conventions, invariants, entries, the sections that cite a code path, `applies-to` matches, dependencies, decisions, and then the rest.
-- The plan has a `reference` document only if a target names it.
+- The plan has a `research` document only if a target names it.
 - The plan serves at most 8 citing documents and 5 summaries.
 - `context` only lists a superseded, retired or rejected document, with its status and successor. A target that names the document, or `--include-inactive`, makes it serve the document.
 - The rank is deterministic. It uses no network, no model and no stored index.
 - A change to the plan or the rank needs a run of `bench/retrieval/`. Report recall, precision and size before and after the change.
-- The module comment of `src/context.rs` does not state the conventions, the invariants and the `reference` rule. Correct it when you next change the plan.
+- The module comment of `src/context.rs` does not state the conventions, the invariants and the `research` rule. Correct it when you next change the plan.
 
 ## Never
 

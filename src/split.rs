@@ -1,7 +1,7 @@
 //! `spec-dna mv <source>... <dest>` for requirements and sections: a split
 //! (ADR 0001, amendment "batch split"). One command moves several
-//! requirements, or whole sections, into a new spec or contract, or into a
-//! spec or contract that exists. A source is `<doc-id>#<key>` (a requirement)
+//! requirements, or whole sections, into a new requirements, interface or rule
+//! document, or into one that exists. A source is `<doc-id>#<key>` (a requirement)
 //! or `<doc-id>#<anchor>` (a section with its subsections). A new destination
 //! gets front matter and a title. Links to a moved key or section follow it.
 //!
@@ -75,7 +75,7 @@ pub struct Split {
 #[derive(Default)]
 pub struct Opts {
     /// The type of a new destination. Default: the type of its root, or
-    /// `reference` for the history of a decision, or the type of the source.
+    /// `research` for the history of a decision, or the type of the source.
     pub ty: Option<DocType>,
 }
 
@@ -123,10 +123,10 @@ pub fn run(
     let first_doc = parts[0].doc();
     let (dest_doc, to_path, to_id, to_type) = destination(repo, config, c, first_doc, dest, opts)?;
     let created = dest_doc.is_none();
-    let pointer = to_type == DocType::Reference;
+    let pointer = to_type == DocType::Research;
 
     // The history of a decision: only amendment and history sections move,
-    // and only into a reference document. The frozen text stays.
+    // and only into a research document. The frozen text stays.
     for p in &parts {
         let d = &c.docs[p.doc() as usize];
         if d.ty != DocType::Decision {
@@ -143,7 +143,7 @@ pub fn run(
         }
         if !pointer {
             return Err(Fatal::Usage(format!(
-                "the history of the decision `{}` moves only into a `reference` document; `{to_id}` is a {}",
+                "the history of the decision `{}` moves only into a `research` document; `{to_id}` has the type `{}`",
                 d.id,
                 to_type.name()
             )));
@@ -217,7 +217,7 @@ pub fn run(
     }
     if !keys.is_empty() && !to_type.has_requirements() {
         return Err(Fatal::Usage(format!(
-            "`{to_id}` is a {}; requirements live in a spec, contract or invariant, so the move would lose {} requirements",
+            "`{to_id}` has the type `{}`; requirements live in a requirements, interface or rule document, so the move would lose {} requirements",
             to_type.name(),
             keys.len()
         )));
@@ -380,7 +380,11 @@ pub fn run(
             let src = &c.docs[first_doc as usize];
             let root = &config.roots[dest_root];
             let mut fm = String::new();
-            if root.single_type.is_none() && to_type != root.default_type {
+            let placed = config
+                .layers
+                .place_type(root.rel(&to_path))
+                .or(root.default_type);
+            if root.single_type.is_none() && Some(to_type) != placed {
                 fm.push_str(&format!("type: {}\n", to_type.name()));
             }
             if to_type.has_status() {
@@ -806,7 +810,7 @@ fn parse_sources(c: &Corpus, sources: &[String]) -> Result<Vec<Part>, Fatal> {
 /// Returns the destination: a document that exists (of any type), or the path,
 /// id and type of a new document. A new document goes into the root of the
 /// first source, unless `dest` is a path. Its type is `opts.ty`, or the type
-/// of a single-type root, or `reference` for the history of a decision, or the
+/// of a single-type root, or `research` for the history of a decision, or the
 /// type of the source.
 fn destination(
     repo: &Repo,
@@ -824,7 +828,7 @@ fn destination(
             let d = &c.docs[t as usize];
             if let Some(ty) = opts.ty.filter(|&ty| ty != d.ty) {
                 return Err(Fatal::Usage(format!(
-                    "`{}` exists and is a {}, not a {}",
+                    "`{}` exists with the type `{}`, not `{}`",
                     d.id,
                     d.ty.name(),
                     ty.name()
@@ -877,12 +881,18 @@ fn destination(
                 }
                 (Some(t), _) => t,
                 (None, Some(want)) => want,
-                (None, None) if src.ty == DocType::Decision => DocType::Reference,
+                (None, None) if src.ty == DocType::Decision => DocType::Research,
                 (None, None) => src.ty,
             };
             if !config.allows(ty) {
                 return Err(Fatal::Usage(format!(
                     "type `{}` is not a type of this project (`types` in spec-dna.toml)",
+                    ty.name()
+                )));
+            }
+            if config.layers.layer_of_type(ty).is_none() {
+                return Err(Fatal::Usage(format!(
+                    "no layer of spec-dna.toml has type `{0}`, so the move would give the new document SD303; nothing changed. Run `spec-dna layer add {0} --types {0}`, then run this command again",
                     ty.name()
                 )));
             }
@@ -1418,7 +1428,7 @@ mod tests {
     #[test]
     fn a_refusal_names_each_changed_requirement() {
         let cfg = Config::parse(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"spec\"\nstatus = \"active\"\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"requirements\"\nstatus = \"active\"\n",
         )
         .unwrap();
         let c = corpus(

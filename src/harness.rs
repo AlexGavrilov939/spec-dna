@@ -681,7 +681,7 @@ Report: the files that you changed, the commands that you ran with their result,
 
 1. Run `spec-dna context <files>` for the files of the change. Read a listed section with `spec-dna show <id>#<anchor>` only when you need it.
 2. Run `spec-dna show --conventions <type>` before you edit a document of that type.
-3. For a new document, run `spec-dna new <type> <id>`. Then replace each placeholder.
+3. For a new document, run `spec-dna new <type> <id>`. The folder of a layer gives the type, so write no `type:` line there. A top file has no id (`spec-dna new terms`), and a change has a folder (`spec-dna new intent <slug>`). Then replace each placeholder.
 4. Change an accepted decision only in its amendment section, or write a new decision that supersedes it.
 5. Run `spec-dna check`. Fix each error.
 

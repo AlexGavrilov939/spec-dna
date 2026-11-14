@@ -1,0 +1,203 @@
+{
+  "what": "The size of the context output with the level order of the default graph, and the check time, before and after slice S7 of 0.6.0",
+  "before": "the binary of commit 83e4abc (the type order of 0.5)",
+  "after": "the binary of the S7 working tree (the order by level, on-request layers counted in one line)",
+  "load_avg_1m": 95.45,
+  "limits": [
+    "The fixture project and the irrigation project use neutral domains. The synthetic corpora come from bench/gen/gen.py with the model spec-dna.",
+    "The synthetic tasks name entry documents only. The corpora have no rule, no top file and no code path, so the retrieval rows see only the effect of the on-request rule. The retrieval harness never passes --path, so no row sees the change of the citation order. The test documents_that_cite_a_file_follow_the_order_of_the_layers in tests/context_layers.rs covers that order: the binary before S7 serves a procedure before a decision, and the binary after S7 serves the decision first.",
+    "The layer key is now strict before the points of a citation: a rule comes before a requirements document that cites more, and a decision comes before a procedure."
+  ],
+  "context_bytes": [
+    {
+      "project": "fixture corpus",
+      "command": "spec-dna context irrigation/valves --path src/controller.rs",
+      "bytes_before": 1788,
+      "bytes_after": 1871,
+      "delta": 83
+    },
+    {
+      "project": "fixture corpus",
+      "command": "spec-dna context irrigation/valves#requirements --budget 900",
+      "bytes_before": 1110,
+      "bytes_after": 1110,
+      "delta": 0
+    },
+    {
+      "project": "fixture corpus",
+      "command": "spec-dna context irrigation/valves",
+      "bytes_before": 1769,
+      "bytes_after": 1769,
+      "delta": 0
+    },
+    {
+      "project": "fixture corpus",
+      "command": "spec-dna context src/controller.rs",
+      "bytes_before": 280,
+      "bytes_after": 364,
+      "delta": 84
+    },
+    {
+      "project": "fixture corpus",
+      "command": "spec-dna context ADR-1",
+      "bytes_before": 755,
+      "bytes_after": 755,
+      "delta": 0
+    },
+    {
+      "project": "fixture corpus",
+      "command": "spec-dna context guides/logging",
+      "bytes_before": 275,
+      "bytes_after": 275,
+      "delta": 0
+    },
+    {
+      "project": "irrigation project (default graph, one document in each on-request layer)",
+      "command": "spec-dna context src/irrigation/valve.py",
+      "bytes_before": 1075,
+      "bytes_after": 973,
+      "delta": -102
+    }
+  ],
+  "retrieval_synthetic": {
+    "medium": {
+      "before": [
+        {
+          "budget": 4000,
+          "tasks": 40,
+          "recall_full_mean": 0.719,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.732,
+          "chars_median": 3811.0,
+          "tokens_est_median": 1000.5,
+          "two_step_chars_median": 5238.0
+        },
+        {
+          "budget": 8000,
+          "tasks": 40,
+          "recall_full_mean": 0.998,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.759,
+          "chars_median": 5271.0,
+          "tokens_est_median": 1366.5,
+          "two_step_chars_median": 5271.0
+        },
+        {
+          "budget": 12000,
+          "tasks": 40,
+          "recall_full_mean": 1.0,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.755,
+          "chars_median": 5271.0,
+          "tokens_est_median": 1366.5,
+          "two_step_chars_median": 5271.0
+        }
+      ],
+      "after": [
+        {
+          "budget": 4000,
+          "tasks": 40,
+          "recall_full_mean": 0.719,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.732,
+          "chars_median": 3811.0,
+          "tokens_est_median": 1000.5,
+          "two_step_chars_median": 5238.0
+        },
+        {
+          "budget": 8000,
+          "tasks": 40,
+          "recall_full_mean": 0.998,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.759,
+          "chars_median": 5271.0,
+          "tokens_est_median": 1366.5,
+          "two_step_chars_median": 5271.0
+        },
+        {
+          "budget": 12000,
+          "tasks": 40,
+          "recall_full_mean": 1.0,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.755,
+          "chars_median": 5271.0,
+          "tokens_est_median": 1366.5,
+          "two_step_chars_median": 5271.0
+        }
+      ]
+    },
+    "large": {
+      "before": [
+        {
+          "budget": 4000,
+          "tasks": 40,
+          "recall_full_mean": 0.763,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.754,
+          "chars_median": 3808.5,
+          "tokens_est_median": 1000.0,
+          "two_step_chars_median": 4498.5
+        },
+        {
+          "budget": 8000,
+          "tasks": 40,
+          "recall_full_mean": 0.992,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.785,
+          "chars_median": 4576.5,
+          "tokens_est_median": 1193.0,
+          "two_step_chars_median": 4576.5
+        },
+        {
+          "budget": 12000,
+          "tasks": 40,
+          "recall_full_mean": 1.0,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.781,
+          "chars_median": 4576.5,
+          "tokens_est_median": 1193.5,
+          "two_step_chars_median": 4576.5
+        }
+      ],
+      "after": [
+        {
+          "budget": 4000,
+          "tasks": 40,
+          "recall_full_mean": 0.763,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.754,
+          "chars_median": 3808.5,
+          "tokens_est_median": 1000.0,
+          "two_step_chars_median": 4498.5
+        },
+        {
+          "budget": 8000,
+          "tasks": 40,
+          "recall_full_mean": 0.992,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.785,
+          "chars_median": 4576.5,
+          "tokens_est_median": 1193.0,
+          "two_step_chars_median": 4576.5
+        },
+        {
+          "budget": 12000,
+          "tasks": 40,
+          "recall_full_mean": 1.0,
+          "recall_listed_mean": 1.0,
+          "precision_mean": 0.781,
+          "chars_median": 4576.5,
+          "tokens_est_median": 1193.5,
+          "two_step_chars_median": 4576.5
+        }
+      ]
+    }
+  },
+  "check_large_synthetic_ms_median_no_cache": {
+    "before": 318.3,
+    "after": 319.3,
+    "files": 11820,
+    "runs": 7,
+    "limit": "at most 10 percent slower"
+  }
+}

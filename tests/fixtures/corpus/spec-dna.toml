@@ -8,7 +8,7 @@ lint = "warning"
 [[roots]]
 path = "docs"
 type = "mixed"
-default-type = "spec"
+default-type = "requirements"
 status = "active"
 legacy-keys = ["R-{n}"]
 
@@ -17,7 +17,7 @@ path = "docs/decisions"
 type = "decision"
 legacy-ids = ["ADR-{n}"]
 
-[budgets.note]
+[budgets.research]
 soft = 300
 hard = 600
 

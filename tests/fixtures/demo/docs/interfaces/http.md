@@ -1,5 +1,5 @@
 ---
-type: contract
+type: interface
 status: active
 ---
 # HTTP API
@@ -23,4 +23,4 @@ request to a status and a body. An error has the body
 - **not-found**: If a member, a book or a loan does not exist, then the service SHALL return status 404 with the error `unknown_member`, `unknown_book` or `unknown_loan`.
 - **conflict**: If a loan rule refuses a request, then the service SHALL return status 409 with the error code of the rule (`ERROR_STATUS`).
 
-The rules are in the [loans](../loans.md) spec.
+The rules are in the [loans](../requirements/loans.md) spec.

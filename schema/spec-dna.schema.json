@@ -30,6 +30,48 @@
       },
       "uniqueItems": true
     },
+    "areas": {
+      "description": "The areas of the project: the names of the folders of `requirements/`. Each name is one folder name.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[^/\\\\]+$"
+      },
+      "uniqueItems": true
+    },
+    "groups": {
+      "description": "Named sets of areas. Each area of a group must be in `areas`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "layers": {
+      "description": "The layer graph: one table for each layer. A project with no `[layers]` table gets the default graph for its types. The `moves-to` edges must have no cycle, and a type is in one layer at most.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/layer"
+      }
+    },
+    "templates": {
+      "description": "The project templates for `spec-dna new --template`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "description": "The folder of the project templates, relative to the repository root. Each file `<name>.md` has a `type` in its front matter. A file with the name of an embedded template replaces it. The folder is never part of a root. Default: `.spec-dna/templates`.",
+          "type": "string",
+          "pattern": "^[^/\\\\:][^\\\\:]*$",
+          "default": ".spec-dna/templates"
+        }
+      }
+    },
     "evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -81,34 +123,49 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "spec": {
+        "product": {
           "$ref": "#/$defs/budget"
         },
-        "contract": {
+        "system": {
           "$ref": "#/$defs/budget"
         },
-        "guide": {
+        "terms": {
+          "$ref": "#/$defs/budget"
+        },
+        "roadmap": {
+          "$ref": "#/$defs/budget"
+        },
+        "questions": {
+          "$ref": "#/$defs/budget"
+        },
+        "rule": {
+          "$ref": "#/$defs/budget"
+        },
+        "requirements": {
+          "$ref": "#/$defs/budget"
+        },
+        "interface": {
           "$ref": "#/$defs/budget"
         },
         "decision": {
           "$ref": "#/$defs/budget"
         },
-        "change": {
-          "$ref": "#/$defs/budget"
-        },
-        "note": {
-          "$ref": "#/$defs/budget"
-        },
-        "invariant": {
-          "$ref": "#/$defs/budget"
-        },
-        "runbook": {
+        "procedure": {
           "$ref": "#/$defs/budget"
         },
         "incident": {
           "$ref": "#/$defs/budget"
         },
-        "reference": {
+        "research": {
+          "$ref": "#/$defs/budget"
+        },
+        "intent": {
+          "$ref": "#/$defs/budget"
+        },
+        "spec": {
+          "$ref": "#/$defs/budget"
+        },
+        "plan": {
           "$ref": "#/$defs/budget"
         },
         "growth": {
@@ -356,17 +413,122 @@
     },
     "type": {
       "enum": [
-        "spec",
-        "contract",
-        "guide",
+        "product",
+        "system",
+        "terms",
+        "roadmap",
+        "questions",
+        "rule",
+        "requirements",
+        "interface",
         "decision",
-        "change",
-        "note",
-        "invariant",
-        "runbook",
+        "procedure",
         "incident",
-        "reference"
+        "research",
+        "intent",
+        "spec",
+        "plan"
       ]
+    },
+    "rootType": {
+      "description": "A type of a root or of `default-type`. The types `intent`, `spec` and `plan` are valid only in the `intent` layer, as `<dir>/<slug>/<type>.md`.",
+      "enum": [
+        "product",
+        "system",
+        "terms",
+        "roadmap",
+        "questions",
+        "rule",
+        "requirements",
+        "interface",
+        "decision",
+        "procedure",
+        "incident",
+        "research"
+      ]
+    },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "types": {
+          "description": "The document types of the layer. A type is in at most one layer.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/type"
+          },
+          "uniqueItems": true
+        },
+        "dir": {
+          "description": "The folder of the layer, relative to the root. Default: the name of the layer. A layer with `files` has no `dir`, and no 2 layers have the same folder.",
+          "type": "string",
+          "minLength": 1
+        },
+        "files": {
+          "description": "Top files of the layer, relative to the root. An entry has no `..`, no leading `/`, no `\\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "paths": {
+          "description": "Globs, relative to the root. A document that matches belongs to this layer. The first layer in the file that matches wins.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "moves-to": {
+          "description": "The layers that the text of this layer matures into. Each name is a layer of `[layers]`, and the edges have no cycle.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "linked-from": {
+          "description": "Layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keep": {
+          "description": "`forever` (default) or `until-finished`.",
+          "enum": [
+            "forever",
+            "until-finished"
+          ]
+        },
+        "context": {
+          "description": "`always` (default) or `on-request`.",
+          "enum": [
+            "always",
+            "on-request"
+          ]
+        },
+        "max-docs": {
+          "description": "The most documents in the layer. Default: no limit.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "max-chars": {
+          "description": "The most body characters in the layer. Default: no limit.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "max-started": {
+          "description": "The most started changes. Default: no limit.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale-days": {
+          "description": "The days without a commit before a change is stale. Default: no limit.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     },
     "pattern": {
       "description": "Literal text with exactly one `{n}` (one or more digits). `*` matches any text.",
@@ -399,10 +561,10 @@
           "type": "string"
         },
         "type": {
-          "description": "The type of every document in the root. With `mixed` (the default), the front matter of each document gives the type.",
+          "description": "The type of every document in the root. With `mixed` (the default), the front matter, then the place of each document gives the type.",
           "anyOf": [
             {
-              "$ref": "#/$defs/type"
+              "$ref": "#/$defs/rootType"
             },
             {
               "const": "mixed"
@@ -410,8 +572,8 @@
           ]
         },
         "default-type": {
-          "description": "For mixed roots only: the type of a document that has no `type` field. Default `note`.",
-          "$ref": "#/$defs/type"
+          "description": "For mixed roots only: the type of a document that has no `type` field and a place that gives no type. No default: such a document gives SD303.",
+          "$ref": "#/$defs/rootType"
         },
         "status": {
           "description": "The status of a document that has the default type of the root and no `status` field.",
@@ -467,12 +629,13 @@
               "proposed",
               "accepted",
               "rejected",
-              "done"
+              "approved",
+              "closed"
             ]
           }
         },
         "required-sections": {
-          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type. An empty list removes the requirement. The defaults are: decision `[\"Decision Outcome\", \"Decision\"]`, invariant `[\"Rules\"]`, runbook `[\"Steps\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`. For a decision, `context` serves the first required section as the summary.",
+          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type. An empty list removes the requirement. The defaults are: decision `[\"Decision Outcome\", \"Decision\"]`, rule `[\"Rules\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`, intent `[\"Intent\", \"Problem\", \"Summary\"]`, spec `[\"Delta\"]`, plan `[\"Files\"]`. For a decision, `context` serves the first required section as the summary.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -515,7 +678,7 @@
           }
         },
         "live-sections": {
-          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605.",
+          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605. Default: `{ decision = [\"Status\"] }`.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"

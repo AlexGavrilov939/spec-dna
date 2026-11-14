@@ -34,7 +34,7 @@ An agent changed the outcome of an accepted decision. `check` stops the change:
 ```console
 $ spec-dna check
 docs/decisions/water-source.md:1: error SD405 decision-frozen: the text outside the amendment and live sections changed after the decision was accepted
-SD405 fix: Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, such as a progress section) can change in place. As an alternative, write a decision that supersedes this one.
+SD405 fix: Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, default `Status`) can change in place. As an alternative, write a decision that supersedes this one.
 spec-dna check: 2 documents; 1 new error and 0 new warnings against 3bd199ae40b9 (1 error and 1 warning in total)
 ```
 
@@ -42,14 +42,14 @@ Before an agent edits `src/valves.rs`, `context` gives it the requirement that c
 
 ```console
 $ spec-dna context src/valves.rs
-<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 275 of 8000 characters; about 69 tokens (estimated) -->
+<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 291 of 8000 characters; about 73 tokens (estimated) -->
 
-<!-- valves#requirements h:e27a5916071223ee spec/active cites -->
+<!-- valves#requirements h:e27a5916071223ee requirements/active cites -->
 ## Requirements
 
 - **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray. The check is in `src/valves.rs`.
 
-<!-- valves#valves h:678c75294fdea71f spec/active cites -->
+<!-- valves#valves h:678c75294fdea71f requirements/active cites -->
 # Valves
 ```
 
@@ -77,7 +77,7 @@ You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the ta
 
 ## Use it in a project
 
-1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 10 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml` and the agent adapters. By default, it also writes a small agent harness for Claude Code: a main model, an advisor, a reviewer and a search agent. It does not change your documents.
+1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 14 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml` and the agent adapters. By default, it also writes a small agent harness for Claude Code: a main model, an advisor, a reviewer and a search agent. It does not change your documents.
 2. Run `spec-dna check --all`. It shows each problem in the documents once. You do not have to fix the old problems: the gate reports only new ones.
 3. Commit `spec-dna.toml` and the adapters.
 4. Add the gate to CI with `spec-dna check --base origin/<main branch>`, or as a git hook. `init` can write a GitHub Actions job or a pre-commit hook for you.
@@ -85,7 +85,7 @@ You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the ta
 
     ```md
     ---
-    type: spec
+    type: requirements
     status: active
     ---
     # Valves

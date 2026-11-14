@@ -5,6 +5,7 @@
 use crate::adapters::VERSION;
 use crate::diag::{Code, Severity};
 use crate::harness::Harness;
+use crate::layer::{self, Graph};
 use crate::model::DocType;
 use crate::release;
 use toml::{Table, Value};
@@ -56,7 +57,26 @@ pub struct Config {
     pub conventions: [Vec<String>; DocType::COUNT],
     /// The agent harness (`[harness]`, ADR 0004). `None`: no table.
     pub harness: Option<Harness>,
+    /// The layer graph: the table `[layers]`, or the default graph for the
+    /// types of the project if the file has no such table (`layers_declared`
+    /// is false). The commands read it from the place rule on.
+    pub layers: Graph,
+    /// True if the file has the table `[layers]`.
+    pub layers_declared: bool,
+    /// The areas of the project: the folders of `requirements/`.
+    #[allow(dead_code)]
+    pub areas: Vec<String>,
+    /// `[groups]`: a name and its areas, in the order of the name.
+    #[allow(dead_code)]
+    pub groups: Vec<(String, Vec<String>)>,
+    /// `[templates] dir`: the folder of the project templates, relative to the
+    /// repository root, with no `./` and no final `/`. It is never part of a
+    /// root: `is_excluded` is true for each path in it.
+    pub templates_dir: String,
 }
+
+/// The default folder of the project templates.
+pub const DEFAULT_TEMPLATES_DIR: &str = ".spec-dna/templates";
 
 /// The default growth allowance: about one amendment or a few registry rows.
 pub const DEFAULT_GROWTH: u32 = 4_000;
@@ -178,7 +198,10 @@ pub struct Root {
     pub path: String,
     /// `None` for a mixed root.
     pub single_type: Option<DocType>,
-    pub default_type: DocType,
+    /// The type of a document that its front matter and its place give no
+    /// type. A root of one type has it. A mixed root has it only if the file
+    /// sets `default-type`: with none, such a document gives SD303.
+    pub default_type: Option<DocType>,
     pub status: Option<String>,
     pub exclude: Vec<String>,
     pub legacy_ids: Vec<LegacyId>,
@@ -201,8 +224,8 @@ pub struct Root {
     /// Severity overrides for this root. They replace `[rules]`.
     pub rules: Rules,
     /// For each type, the names of its history sections (iteration logs,
-    /// discussions, superseded notes). They match as amendment sections do.
-    /// `spec-dna history` moves them into a `reference` document. In a
+    /// discussions, superseded drafts). They match as amendment sections do.
+    /// `spec-dna history` moves them into a `research` document. In a
     /// decision, they are not frozen text.
     pub history_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of the sections that belong to the
@@ -214,9 +237,9 @@ pub struct Root {
     /// decision, they are not frozen text, and their text can change in
     /// place.
     pub live_sections: [Vec<String>; DocType::COUNT],
-    /// For a root of type `reference`: the namespace of its ids, a suffix of
-    /// its path that no other reference root has. Thus the ids of two
-    /// reference roots never collide.
+    /// For a root of type `research`: the namespace of its ids, a suffix of
+    /// its path that no other research root has. Thus the ids of two
+    /// research roots never collide.
     pub namespace: Option<String>,
 }
 
@@ -323,6 +346,10 @@ pub const DEFAULT_DECISION_SECTIONS: [&str; 2] = ["Decision Outcome", "Decision"
 
 /// The default amendment section of a decision.
 pub const DEFAULT_AMENDMENT_SECTIONS: [&str; 1] = ["Amendments"];
+
+/// The live sections of a decision by default (design 0.6.0, "Templates").
+/// Its text can change in place after the decision has the status `accepted`.
+pub const DEFAULT_LIVE_SECTIONS: [&str; 1] = ["Status"];
 
 #[derive(Clone, Debug)]
 pub struct LegacyId {
@@ -442,17 +469,31 @@ fn match_parts(parts: &[Part], s: &str, cap: &mut Option<String>) -> bool {
     }
 }
 
+/// The message for a type name that is not a type. For a type name of 0.5,
+/// it names the new type. `key` is the key that holds the name.
+pub(crate) fn unknown_type(key: &str, name: &str) -> String {
+    format!(
+        "{key}: unknown type `{name}`; {}",
+        DocType::unknown_hint(name)
+    )
+}
+
 pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
-    (10_000, 20_000), // spec
-    (10_000, 20_000), // contract
-    (14_000, 28_000), // guide
+    (8_000, 16_000),  // product
+    (8_000, 16_000),  // system
+    (10_000, 20_000), // terms
+    (8_000, 16_000),  // roadmap
+    (8_000, 16_000),  // questions
+    (3_000, 6_000),   // rule: `context` serves it first, so it stays short
+    (10_000, 20_000), // requirements
+    (10_000, 20_000), // interface
     (7_000, 14_000),  // decision
-    (10_000, 20_000), // change
-    (0, 0),           // note: no budget
-    (3_000, 6_000),   // invariant: `context` serves it first, so it stays short
-    (8_000, 16_000),  // runbook
+    (14_000, 28_000), // procedure
     (6_000, 12_000),  // incident
-    (0, 0),           // reference: cold material, no budget
+    (0, 0),           // research: cold material, no budget
+    (6_000, 12_000),  // intent
+    (10_000, 20_000), // spec
+    (6_000, 12_000),  // plan
 ];
 
 /// The default required sections of each type: a list of groups. A document
@@ -461,9 +502,11 @@ pub fn default_required_sections() -> [Vec<Vec<String>>; DocType::COUNT] {
     let mut out: [Vec<Vec<String>>; DocType::COUNT] = Default::default();
     let group = |h: &[&str]| h.iter().map(|s| s.to_string()).collect::<Vec<String>>();
     out[DocType::Decision as usize] = vec![group(&DEFAULT_DECISION_SECTIONS)];
-    out[DocType::Invariant as usize] = vec![group(&["Rules"])];
-    out[DocType::Runbook as usize] = vec![group(&["Steps"])];
+    out[DocType::Rule as usize] = vec![group(&["Rules"])];
     out[DocType::Incident as usize] = vec![group(&["Summary"]), group(&["Root cause"])];
+    out[DocType::Intent as usize] = vec![group(&["Intent", "Problem", "Summary"])];
+    out[DocType::Spec as usize] = vec![group(&["Delta"])];
+    out[DocType::Plan as usize] = vec![group(&["Files"])];
     out
 }
 
@@ -517,6 +560,11 @@ impl Config {
             let tbl = v.as_table().ok_or("`budgets` must be a table")?;
             let mut b = Fields::new(tbl, "budgets.");
             growth = b.opt_u32("growth")?.unwrap_or(growth);
+            for name in tbl.keys() {
+                if DocType::from_name(name).is_none() && DocType::from_old_name(name).is_some() {
+                    return Err(unknown_type(&format!("`budgets.{name}`"), name));
+                }
+            }
             for ty in DocType::ALL {
                 if let Some(v) = b.take(ty.name()) {
                     let tbl = v
@@ -600,9 +648,7 @@ impl Config {
         };
         let mut types = Vec::new();
         for name in t.opt_strs("types")? {
-            let ty = DocType::from_name(&name).ok_or_else(|| {
-                format!("`types`: unknown type `{name}`; use {}", DocType::names())
-            })?;
+            let ty = DocType::from_name(&name).ok_or_else(|| unknown_type("`types`", &name))?;
             if !types.contains(&ty) {
                 types.push(ty);
             }
@@ -620,12 +666,8 @@ impl Config {
         if let Some(v) = t.take("conventions") {
             let tbl = v.as_table().ok_or("`conventions` must be a table")?;
             for (name, list) in tbl {
-                let ty = DocType::from_name(name).ok_or_else(|| {
-                    format!(
-                        "`conventions.{name}`: unknown type `{name}`; use {}",
-                        DocType::names()
-                    )
-                })?;
+                let ty = DocType::from_name(name)
+                    .ok_or_else(|| unknown_type(&format!("`conventions.{name}`"), name))?;
                 let ptrs = list
                     .as_array()
                     .and_then(|a| {
@@ -643,6 +685,31 @@ impl Config {
         let harness = match t.take("harness") {
             Some(v) => Some(Harness::parse(v)?),
             None => None,
+        };
+        let (layers, layers_declared) = match t.take("layers") {
+            Some(v) => {
+                let tbl = v.as_table().ok_or("`layers` must be a table")?;
+                (layer::parse_table(tbl, text)?, true)
+            }
+            None => (Graph::implied(&types), false),
+        };
+        let areas = areas_list(&t.opt_strs("areas")?)?;
+        let groups = match t.take("groups") {
+            Some(v) => groups_table(v, &areas)?,
+            None => Vec::new(),
+        };
+        let templates_dir = match t.take("templates") {
+            Some(v) => {
+                let tbl = v.as_table().ok_or("`templates` must be a table")?;
+                let mut f = Fields::new(tbl, "templates.");
+                let dir = f.opt_str("dir")?;
+                f.done()?;
+                match dir {
+                    Some(d) => templates_dir_value(&d)?,
+                    None => DEFAULT_TEMPLATES_DIR.to_string(),
+                }
+            }
+            None => DEFAULT_TEMPLATES_DIR.to_string(),
         };
         t.done()?;
         Ok(Config {
@@ -664,6 +731,11 @@ impl Config {
             growth,
             conventions,
             harness,
+            layers,
+            layers_declared,
+            areas,
+            groups,
+            templates_dir,
         })
     }
 
@@ -724,9 +796,16 @@ impl Config {
         best.map(|(i, _)| i)
     }
 
+    /// Returns true if a path is in `[templates] dir`.
+    pub fn in_templates_dir(&self, path: &str) -> bool {
+        path.strip_prefix(&self.templates_dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+
     pub fn is_excluded(&self, root: usize, path: &str) -> bool {
         let rel = self.roots[root].rel(path);
-        self.exclude.iter().any(|g| crate::glob::matches(g, path))
+        self.in_templates_dir(path)
+            || self.exclude.iter().any(|g| crate::glob::matches(g, path))
             || self.roots[root]
                 .exclude
                 .iter()
@@ -789,10 +868,12 @@ impl Root {
         let single_type = if ty == "mixed" {
             None
         } else {
-            Some(
-                DocType::from_name(&ty)
-                    .ok_or_else(|| format!("`{prefix}type`: unknown type `{ty}`"))?,
-            )
+            let t = DocType::from_name(&ty)
+                .ok_or_else(|| unknown_type(&format!("`{prefix}type`"), &ty))?;
+            if t.is_intent_type() {
+                return Err(format!("`{prefix}type`: {}", t.intent_only_hint()));
+            }
+            Some(t)
         };
         let default_type = match f.opt_str("default-type")? {
             Some(d) => {
@@ -801,19 +882,28 @@ impl Root {
                         "`{prefix}default-type` is only for `type = \"mixed\"`"
                     ));
                 }
-                DocType::from_name(&d)
-                    .ok_or_else(|| format!("`{prefix}default-type`: unknown type `{d}`"))?
+                let t = DocType::from_name(&d)
+                    .ok_or_else(|| unknown_type(&format!("`{prefix}default-type`"), &d))?;
+                if t.is_intent_type() {
+                    return Err(format!("`{prefix}default-type`: {}", t.intent_only_hint()));
+                }
+                Some(t)
             }
-            None => single_type.unwrap_or(DocType::Note),
+            None => single_type,
         };
         let status = f.opt_str("status")?;
-        if let Some(s) = &status
-            && !default_type.statuses().contains(&s.as_str())
-        {
-            return Err(format!(
-                "`{prefix}status`: `{s}` is not a status of type `{}`",
-                default_type.name()
-            ));
+        if let Some(s) = &status {
+            let Some(dt) = default_type else {
+                return Err(format!(
+                    "`{prefix}status` needs `{prefix}default-type`: the status is for the documents of that type"
+                ));
+            };
+            if !dt.statuses().contains(&s.as_str()) {
+                return Err(format!(
+                    "`{prefix}status`: `{s}` is not a status of type `{}`",
+                    dt.name()
+                ));
+            }
         }
         let exclude = f.opt_strs("exclude")?;
         let mut legacy_ids = Vec::new();
@@ -919,6 +1009,8 @@ impl Root {
             )?;
         }
         let mut live_sections: [Vec<String>; DocType::COUNT] = Default::default();
+        live_sections[DocType::Decision as usize] =
+            DEFAULT_LIVE_SECTIONS.map(str::to_string).to_vec();
         if let Some(v) = f.take("live-sections") {
             headings_per_type(
                 v,
@@ -984,14 +1076,42 @@ impl Root {
     }
 }
 
-/// Gives each root of type `reference` a namespace: the shortest suffix of
-/// its path (whole segments) that no other reference root has. A reference
+/// Checks the value of `[templates] dir` and returns it in the form that the
+/// code compares: no `./` at the start, no `/` at the end.
+fn templates_dir_value(d: &str) -> Result<String, String> {
+    let bad = |why: &str| {
+        Err(format!(
+            "`templates.dir`: `{d}` {why}; write a folder inside the repository, such as `.spec-dna/templates`"
+        ))
+    };
+    let mut dir = d.trim();
+    while let Some(rest) = dir.strip_prefix("./") {
+        dir = rest;
+    }
+    let dir = dir.trim_end_matches('/');
+    if dir.is_empty() || dir == "." {
+        return bad("is empty or is the repository root");
+    }
+    if dir.starts_with('/') || dir.contains('\\') || dir.contains(':') {
+        return bad("is not a relative path with `/` separators");
+    }
+    if dir
+        .split('/')
+        .any(|s| s.is_empty() || s == "." || s == "..")
+    {
+        return bad("has an empty, `.` or `..` segment");
+    }
+    Ok(dir.to_string())
+}
+
+/// Gives each root of type `research` a namespace: the shortest suffix of
+/// its path (whole segments) that no other research root has. A research
 /// root at the repository root has no namespace.
 fn set_namespaces(roots: &mut [Root]) {
     let paths: Vec<Option<Vec<String>>> = roots
         .iter()
         .map(|r| {
-            (r.single_type == Some(DocType::Reference) && !r.path.is_empty())
+            (r.single_type == Some(DocType::Research) && !r.path.is_empty())
                 .then(|| r.path.split('/').map(str::to_string).collect())
         })
         .collect();
@@ -1009,6 +1129,56 @@ fn set_namespaces(roots: &mut [Root]) {
     }
 }
 
+/// Checks `areas`: each area is one plain folder name, once.
+fn areas_list(areas: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for a in areas {
+        if a.is_empty() || a == "." || a == ".." || a.contains(['/', '\\']) || a.trim() != a {
+            return Err(format!(
+                "`areas`: `{a}` must be the name of one folder of `requirements/`"
+            ));
+        }
+        if out.contains(a) {
+            return Err(format!("`areas`: `{a}` is listed twice"));
+        }
+        out.push(a.clone());
+    }
+    Ok(out)
+}
+
+/// Reads `[groups]`: each key is a group, and its value is a list of areas
+/// that `areas` has.
+fn groups_table(v: &Value, areas: &[String]) -> Result<Vec<(String, Vec<String>)>, String> {
+    let tbl = v.as_table().ok_or("`groups` must be a table")?;
+    let mut out = Vec::new();
+    for (name, list) in tbl {
+        let key = format!("groups.{name}");
+        let items = list
+            .as_array()
+            .and_then(|a| {
+                a.iter()
+                    .map(|p| p.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .ok_or_else(|| format!("`{key}` must be an array of strings"))?;
+        for a in &items {
+            if !areas.contains(a) {
+                return Err(format!(
+                    "`{key}`: `{a}` is not in `areas`; a group names only areas of `areas`"
+                ));
+            }
+        }
+        let mut uniq: Vec<String> = Vec::new();
+        for a in items {
+            if !uniq.contains(&a) {
+                uniq.push(a);
+            }
+        }
+        out.push((name.clone(), uniq));
+    }
+    Ok(out)
+}
+
 /// Reads `required-sections` into `out`. For each type, the value is a list
 /// of headings (one required section, with alternative headings) or a list of
 /// such lists (several required sections). A value replaces the default of
@@ -1024,9 +1194,11 @@ fn section_groups_per_type(
         .ok_or_else(|| format!("`{key}` must be a table"))?;
     for (name, list) in tbl {
         let key = format!("{key}.{name}");
-        let ty = DocType::from_name(name)
-            .filter(|t| types.contains(t))
-            .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+        let ty = match DocType::from_name(name) {
+            Some(t) if types.contains(&t) => t,
+            Some(_) => return Err(format!("`{key}`: `{name}` is not a type of this root")),
+            None => return Err(unknown_type(&format!("`{key}`"), name)),
+        };
         let items = list
             .as_array()
             .ok_or_else(|| format!("`{key}` must be an array of strings or of arrays"))?;
@@ -1069,9 +1241,11 @@ fn headings_per_type(
         .ok_or_else(|| format!("`{key}` must be a table"))?;
     for (name, list) in tbl {
         let key = format!("{key}.{name}");
-        let ty = DocType::from_name(name)
-            .filter(|t| types.contains(t))
-            .ok_or_else(|| format!("`{key}`: `{name}` is not a type of this root"))?;
+        let ty = match DocType::from_name(name) {
+            Some(t) if types.contains(&t) => t,
+            Some(_) => return Err(format!("`{key}`: `{name}` is not a type of this root")),
+            None => return Err(unknown_type(&format!("`{key}`"), name)),
+        };
         let headings = list
             .as_array()
             .and_then(|a| {
@@ -1168,7 +1342,7 @@ mod tests {
     #[test]
     fn convention_files_are_the_paths_outside_the_documents() {
         let c = Config::parse(
-            "spec-dna = \"0.1.0\"\n[conventions]\ncontract = [\"docs/README.md#a\", \"./CONTRIBUTING.md\", \"docs/x.md#b\", \"token\", \"../up.md\", \"/abs.md\", \"a\\\\b.md\", \"notes.txt\"]\ndecision = [\"CONTRIBUTING.md#c\"]\n[[roots]]\npath = \"docs\"\nexclude = [\"README.md\"]\n",
+            "spec-dna = \"0.1.0\"\n[conventions]\ninterface = [\"docs/README.md#a\", \"./CONTRIBUTING.md\", \"docs/x.md#b\", \"token\", \"../up.md\", \"/abs.md\", \"a\\\\b.md\", \"notes.txt\"]\ndecision = [\"CONTRIBUTING.md#c\"]\n[[roots]]\npath = \"docs\"\nexclude = [\"README.md\"]\n",
         )
         .unwrap();
         // docs/x.md is a document. An id, a non-Markdown file and a path that
@@ -1186,7 +1360,7 @@ exclude = ["**/vendor/**"]
 [[roots]]
 path = "docs"
 type = "mixed"
-default-type = "spec"
+default-type = "requirements"
 status = "draft"
 legacy-keys = ["R-{n}"]
 
@@ -1195,7 +1369,7 @@ path = "docs/adr"
 type = "decision"
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
 
-[budgets.spec]
+[budgets.requirements]
 soft = 100
 hard = 200
 
@@ -1211,9 +1385,9 @@ budget = 9000
         let c = Config::parse(FULL).unwrap();
         assert_eq!(c.pin, "0.1.0");
         assert_eq!(c.roots.len(), 2);
-        assert_eq!(c.roots[0].default_type, DocType::Spec);
+        assert_eq!(c.roots[0].default_type, Some(DocType::Requirements));
         assert_eq!(c.roots[1].single_type, Some(DocType::Decision));
-        assert_eq!(c.budgets[DocType::Spec as usize], (100, 200));
+        assert_eq!(c.budgets[DocType::Requirements as usize], (100, 200));
         assert_eq!(c.max_words, 25);
         assert_eq!(c.context_budget, 9000);
         assert_eq!(c.root_of("docs/adr/ADR-1-x.md"), Some(1));
@@ -1243,9 +1417,11 @@ budget = 9000
     #[test]
     fn rejects_unknown_keys_and_bad_values() {
         assert!(
-            Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntyp = \"spec\"\n")
-                .unwrap_err()
-                .contains("roots[0].typ")
+            Config::parse(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntyp = \"requirements\"\n"
+            )
+            .unwrap_err()
+            .contains("roots[0].typ")
         );
         assert!(
             Config::parse("spec-dna = \"0.1.0\"\n")
@@ -1257,7 +1433,7 @@ budget = 9000
                 .unwrap_err()
                 .contains("spec-dna")
         );
-        assert!(Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"spec\"\nstatus = \"accepted\"\n").is_err());
+        assert!(Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"requirements\"\nstatus = \"accepted\"\n").is_err());
     }
 
     #[test]
@@ -1269,7 +1445,7 @@ self-urls = ["https://example.org/acme/specs/blob/*/"]
 [[roots]]
 path = "docs"
 status-map = { released = "active", wip = "draft" }
-required-sections = { decision = ["Lösung"], spec = ["Requirements", "Anforderungen"] }
+required-sections = { decision = ["Lösung"], requirements = ["Requirements", "Anforderungen"] }
 enforce-budgets = false
 [[roots]]
 path = "adr"
@@ -1291,10 +1467,10 @@ type = "decision"
             [["Lösung"]]
         );
         assert_eq!(
-            r.required_sections[DocType::Spec as usize],
+            r.required_sections[DocType::Requirements as usize],
             [["Requirements", "Anforderungen"]]
         );
-        assert!(r.required_sections[DocType::Guide as usize].is_empty());
+        assert!(r.required_sections[DocType::Procedure as usize].is_empty());
         assert!(!r.enforce_budgets);
         assert_eq!(
             c.roots[1].required_sections[DocType::Decision as usize],
@@ -1305,22 +1481,23 @@ type = "decision"
 
         let err = |extra: &str| {
             Config::parse(&format!(
-                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"spec\"\n{extra}\n"
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\ntype = \"requirements\"\n{extra}\n"
             ))
             .unwrap_err()
         };
         // `active` is already a spec status. `accepted` is not a spec status.
         assert!(err("status-map = { active = \"draft\" }").contains("already a status"));
         assert!(
-            err("status-map = { frozen = \"accepted\" }").contains("not a status of type `spec`")
+            err("status-map = { frozen = \"accepted\" }")
+                .contains("not a status of type `requirements`")
         );
         assert!(err("status-map = { frozen = 1 }").contains("must be a string"));
-        assert!(err("required-sections = { spec = [\" \"] }").contains("empty heading"));
+        assert!(err("required-sections = { requirements = [\" \"] }").contains("empty heading"));
         assert!(
             err("required-sections = { decision = [\"Outcome\"] }")
                 .contains("not a type of this root")
         );
-        assert!(err("required-sections = { spec = \"Requirements\" }").contains("array"));
+        assert!(err("required-sections = { requirements = \"Requirements\" }").contains("array"));
         assert!(err("enforce-budgets = \"no\"").contains("true or false"));
         // An empty list removes the required section.
         let c = Config::parse(
@@ -1339,7 +1516,7 @@ type = "decision"
             err("amendment-sections = { decision = [\"Nachtrag\"] }")
                 .contains("not a type of this root")
         );
-        assert!(err("amendment-sections = { spec = [\"\"] }").contains("empty heading"));
+        assert!(err("amendment-sections = { requirements = [\"\"] }").contains("empty heading"));
         assert!(err("lint-severity = \"warn\"").contains("\"off\", \"warning\" or \"error\""));
         assert!(err("lint-severity = false").contains("lint-severity"));
         assert!(err("drift-severity = \"fatal\"").contains("`roots[0].drift-severity` must be"));
@@ -1406,7 +1583,7 @@ path = "notes"
         assert_eq!(c.roots[0].amendment_sections[d], ["Nachtrag", "Amendments"]);
         assert_eq!(c.severity(Code::SentenceLength, Some(0)), None);
         assert_eq!(c.roots[1].amendment_sections[d], DEFAULT_AMENDMENT_SECTIONS);
-        assert!(c.roots[1].amendment_sections[DocType::Spec as usize].is_empty());
+        assert!(c.roots[1].amendment_sections[DocType::Requirements as usize].is_empty());
         assert_eq!(
             c.severity(Code::SentenceLength, Some(1)),
             Some(Severity::Error)
@@ -1489,7 +1666,7 @@ spec-dna = "0.1.0"
 tests = ["spec/**"]
 [[roots]]
 path = "ops"
-required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]], runbook = [] }
+required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]], procedure = [] }
 "#,
         )
         .unwrap();
@@ -1498,11 +1675,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             r.required_sections[DocType::Incident as usize],
             [vec!["Summary", "Zusammenfassung"], vec!["Root cause"]]
         );
-        assert!(r.required_sections[DocType::Runbook as usize].is_empty());
-        assert_eq!(
-            r.required_sections[DocType::Invariant as usize],
-            [["Rules"]]
-        );
+        assert!(r.required_sections[DocType::Procedure as usize].is_empty());
+        assert_eq!(r.required_sections[DocType::Rule as usize], [["Rules"]]);
         assert_eq!(c.evidence_tests, ["spec/**"]);
         assert!(c.is_test_file("spec/a_spec.rb"));
         assert!(!c.is_test_file("tests/a.rs"));
@@ -1513,7 +1687,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert!(c.is_test_file("lib/test_loans.py"));
         assert!(!c.is_test_file("src/loans.py"));
         let e = Config::parse(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nrequired-sections = { spec = [[]] }\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\nrequired-sections = { requirements = [[]] }\n",
         )
         .unwrap_err();
         assert!(e.contains("non-empty arrays"), "{e}");
@@ -1652,6 +1826,186 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
             )),
             "{m}"
+        );
+    }
+
+    const BASE: &str = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n";
+
+    /// A configuration with the top-level lines `head` before the roots, and
+    /// the tables `tail` after them.
+    fn with(head: &str, tail: &str) -> Result<Config, String> {
+        Config::parse(&format!(
+            "spec-dna = \"0.1.0\"\n{head}\n[[roots]]\npath = \"docs\"\n{tail}"
+        ))
+    }
+
+    #[test]
+    fn no_layers_table_gives_the_implied_graph() {
+        let c = Config::parse(BASE).unwrap();
+        assert!(!c.layers_declared);
+        assert_eq!(c.layers, Graph::default_graph());
+        assert!(c.areas.is_empty() && c.groups.is_empty());
+        // A `types` list keeps the layers that hold one of its types.
+        let c = with("types = [\"requirements\", \"decision\"]", "").unwrap();
+        let names: Vec<&str> = c.layers.layers().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["requirements", "decisions"]);
+        // An explicit table wins, and `types` does not filter it.
+        let c = with(
+            "types = [\"decision\"]",
+            "[layers.mine]\ntypes = [\"rule\"]\n[layers.other]\n",
+        )
+        .unwrap();
+        assert!(c.layers_declared);
+        let names: Vec<&str> = c.layers.layers().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["mine", "other"]);
+    }
+
+    #[test]
+    fn layers_keep_the_order_of_the_file() {
+        let c = Config::parse(&format!(
+            "{BASE}[layers.zeta]\ntypes = [\"rule\"]\n[layers.alpha]\ntypes = [\"decision\"]\nmoves-to = [\"zeta\"]\nkeep = \"until-finished\"\ncontext = \"on-request\"\nmax-docs = 3\nmax-chars = 900\nmax-started = 2\nstale-days = 7\n"
+        ))
+        .unwrap();
+        let l = c.layers.layers();
+        assert_eq!((l[0].name.as_str(), l[1].name.as_str()), ("zeta", "alpha"));
+        assert_eq!(c.layers.level(1), 1);
+        assert_eq!(l[1].keep, layer::Keep::UntilFinished);
+        assert_eq!(l[1].context, layer::ContextMode::OnRequest);
+        assert_eq!(
+            (
+                l[1].max_docs,
+                l[1].max_chars,
+                l[1].max_started,
+                l[1].stale_days
+            ),
+            (Some(3), Some(900), Some(2), Some(7))
+        );
+        assert_eq!(l[0].keep, layer::Keep::Forever);
+        assert_eq!(l[0].dir(), Some("zeta"));
+    }
+
+    #[test]
+    fn areas_and_groups() {
+        let c = with(
+            "areas = [\"valves\", \"sensors\", \"reports\"]",
+            "[groups]\noperations = [\"valves\", \"sensors\"]\nreporting = [\"reports\"]\n",
+        )
+        .unwrap();
+        assert_eq!(c.areas, ["valves", "sensors", "reports"]);
+        assert_eq!(c.groups.len(), 2);
+        assert_eq!(
+            c.groups[0],
+            ("operations".into(), vec!["valves".into(), "sensors".into()])
+        );
+        // An area is in 2 groups: allowed.
+        assert!(
+            with(
+                "areas = [\"a\", \"b\"]",
+                "[groups]\nx = [\"a\"]\ny = [\"a\", \"b\"]\n"
+            )
+            .is_ok()
+        );
+        let e = with("areas = [\"a\"]", "[groups]\nx = [\"b\"]\n").unwrap_err();
+        assert!(
+            e.contains("groups.x") && e.contains("`b`") && e.contains("areas"),
+            "{e}"
+        );
+        let e = with("", "[groups]\nx = [\"b\"]\n").unwrap_err();
+        assert!(e.contains("groups.x"), "{e}");
+        let e = with("", "[groups]\nx = \"a\"\n").unwrap_err();
+        assert!(e.contains("groups.x") && e.contains("array"), "{e}");
+        for bad in ["\"a/b\"", "\"\"", "\"..\"", "\"a\", \"a\""] {
+            let e = with(&format!("areas = [{bad}]"), "").unwrap_err();
+            assert!(e.contains("`areas`"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_later_step_key_is_still_unknown() {
+        for head in [
+            "language = \"en\"\n",
+            "[change]\npolicy = \"none\"\n",
+            "[evals]\ndir = \"e\"\n",
+        ] {
+            let e = Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n{head}"
+            ));
+            let e = e.unwrap_err();
+            assert!(e.contains("unknown key"), "{head}: {e}");
+        }
+    }
+
+    const SCHEMA: &str = include_str!("../schema/spec-dna.schema.json");
+
+    /// The schema and the parser accept the same keys. For each key of the
+    /// schema, the parser must not call the key unknown, and an invented key
+    /// must be unknown.
+    #[test]
+    fn the_schema_and_the_parser_accept_the_same_keys() {
+        let schema = crate::json::parse(SCHEMA).unwrap();
+        let keys = |v: &crate::json::Value| -> Vec<String> {
+            match v.get("properties") {
+                crate::json::Value::Obj(f) => f.iter().map(|(k, _)| k.clone()).collect(),
+                _ => Vec::new(),
+            }
+        };
+        let is_unknown = |e: &str| e.contains("unknown key");
+
+        // The top level.
+        let top = keys(&schema);
+        for k in ["areas", "groups", "layers", "templates"] {
+            assert!(top.iter().any(|t| t == k), "the schema lacks `{k}`");
+        }
+        for k in &top {
+            // `with` writes these 2 keys.
+            if k == "spec-dna" || k == "roots" {
+                continue;
+            }
+            // A value of the wrong type is an error that is not "unknown key".
+            // A key can also accept the value `true`.
+            if let Err(e) = with(&format!("{k} = true"), "") {
+                assert!(!is_unknown(&e), "the parser does not know `{k}`: {e}");
+            }
+        }
+        let e = Config::parse("invented = true\nspec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n")
+            .unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+
+        // The keys of a layer: exactly the 12 keys of the design.
+        let layer = &schema.get("$defs").get("layer");
+        let mut lkeys = keys(layer);
+        lkeys.sort();
+        let mut want = [
+            "types",
+            "dir",
+            "files",
+            "paths",
+            "moves-to",
+            "linked-from",
+            "keep",
+            "context",
+            "max-docs",
+            "max-chars",
+            "max-started",
+            "stale-days",
+        ]
+        .map(String::from)
+        .to_vec();
+        want.sort();
+        assert_eq!(lkeys, want);
+        for k in &lkeys {
+            let e = with("", &format!("[layers.a]\n{k} = true\n")).unwrap_err();
+            assert!(
+                !is_unknown(&e),
+                "the parser does not know `layers.a.{k}`: {e}"
+            );
+        }
+        let e = with("", "[layers.a]\ninvented = true\n").unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+        // The schema forbids other keys of a layer, as the parser does.
+        assert_eq!(
+            layer.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
         );
     }
 }

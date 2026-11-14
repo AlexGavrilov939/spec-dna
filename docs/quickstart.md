@@ -81,13 +81,13 @@ git add spec-dna.toml CLAUDE.md .claude   # `init` prints the full `git add` com
 git commit -m "build: adopt spec-dna"
 ```
 
-`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 10 questions, for example the profile, the knowledge types and the agent harness. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
+`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph and the agent harness. This version asks 11. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
 
 `init` never edits a document. Without a terminal, or with `--non-interactive`, it uses the detected defaults. `--dry-run` shows the preview only.
 
 `init` writes these files:
 
-- `spec-dna.toml`, with the pinned version, the profile and the document roots. A new project gets one root (`docs`, or the directory of `--root <dir>`). In this root, a document without a `type` is a `spec` with the status `draft`. [docs/config.md](config.md) gives all keys.
+- `spec-dna.toml`, with the pinned version, the profile, the layer graph and the document roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) and no `default-type`. The folder of a layer gives the type of a document, so `docs/requirements/loans.md` is a `requirements` document. [docs/config.md](config.md) gives all keys.
 - One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` once for a task that edits code or docs. It also tells them to run `spec-dna check` before a commit. On an existing project, `init` adds only this line. The line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
@@ -103,9 +103,21 @@ The profile sets which diagnostics fail `check`. The profiles are `lite` (only w
 
 With the sums, the CI job below downloads the release binary and verifies it. The message of a version mismatch gives the URL and the sum of the pinned binary. `check` validates the table. Each key must be an asset of the pinned version. Each sum must have 64 lowercase hexadecimal characters.
 
+## Layers and areas
+
+A layer is a named set of documents. It has a folder (`requirements/`, `decisions/`) and the types of the documents in it. Question 2 of `init` chooses the layers:
+
+- `small`: for fewer than 30 documents, also in a new project. It has the layers `foundation`, `pending`, `rules`, `requirements`, `decisions`, `intent` and `incidents`.
+- `default`: for 30 documents or more. It adds the layers `interfaces`, `procedures` and `research`.
+- `custom`: with `--reconfigure`, it keeps the `[layers]` tables of the current `spec-dna.toml`.
+
+A document of a type that no layer has gives SD303. To add a layer later, run `spec-dna layer add <name> --types <type>`. Then run `spec-dna init`, so that the skill lists the types of the new layers. Commit `spec-dna.toml` and the skill as a change of their own (SD503). `spec-dna layer list` shows the layers.
+
+Question 3 chooses the areas: the folders of `requirements/`. `init` proposes at most 8 areas, and only if it finds 2 or more. It takes them from the top folders of the specs and from the app folders. The answer `none` gives one folder. `init` never proposes a group.
+
 ## Write documents
 
-The id of a document is its path under the root, without `.md`. For example, `docs/loans.md` has the id `loans`. Write a requirement as a list item with a bold key. Cite the code in an inline code span:
+The id of a document is its path under the root, without `.md`. For example, `docs/requirements/loans.md` has the id `requirements/loans`. Write a requirement as a list item with a bold key. Cite the code in an inline code span:
 
 ```md
 # Loans
@@ -117,37 +129,40 @@ The id of a document is its path under the root, without `.md`. For example, `do
 The code is in `src/library/loans.py` (`checkout_book()`).
 ```
 
-To set another type, write it in the front matter. Or use `spec-dna new` to write the document from the template of its type:
+A document needs no `type:` line in the folder of its layer. To set another type, write it in the front matter. Or use `spec-dna new` to write the document from the template of its type, in the folder of its layer:
 
 ```sh
-spec-dna new decision pump-choice       # docs/decisions/pump-choice.md
-spec-dna new invariant water             # docs/invariants/water.md: rules that every change in its scope keeps
-spec-dna new runbook restart-worker      # docs/runbooks/restart-worker.md
+spec-dna new requirements loans          # docs/requirements/loans.md
+spec-dna new decision pump-choice        # docs/decisions/pump-choice.md
+spec-dna new rule water                  # docs/rules/water.md: rules that every change in its scope keeps
+spec-dna new procedure restart-worker    # docs/procedures/restart-worker.md (the layer `procedures` is in the default graph)
 spec-dna new incident 2026-11-flooded-bed
+spec-dna new terms                       # docs/terms.md: a top file has no id
+spec-dna new intent add-drip-lines       # docs/intent/add-drip-lines/intent.md: one change
 ```
 
-There are 10 types: `spec`, `contract`, `guide`, `decision`, `change`, `note`, `invariant`, `runbook`, `incident` and `reference`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves a matching invariant first. It never serves a `reference` document unless a target names it.
+There are 15 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec` and `plan`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves the layers in the order of the graph, from the most stable layer. It never serves a `research` document unless a target names it.
 
 To link a test to a requirement, write a `covers:` tag in a comment of the test. This works in any language:
 
 ```python
-# covers: loans#loan-period
+# covers: requirements/loans#loan-period
 def test_due_date_is_14_days_later():
     ...
 ```
 
-`check` resolves each tag. In the `standard` profile, an active requirement without a test gives a warning (SD608). `show loans` lists the evidence of each requirement.
+`check` resolves each tag. In the `standard` profile, an active requirement without a test gives a warning (SD608). `show requirements/loans` lists the evidence of each requirement.
 
 ## Daily use
 
 ```sh
 spec-dna context src/library/loans.py   # before you change a file: the sections that cite it
-spec-dna context loans                  # a document, its dependencies and its decisions
-spec-dna show loans#loan-period         # one section or requirement
+spec-dna context requirements/loans     # a document, its dependencies and its decisions
+spec-dna show requirements/loans#loan-period   # one section or requirement
 spec-dna check                          # before a commit: exit 1 on a new error
-spec-dna mv loans circulation/loans     # move a document; the old id stays as an alias
-spec-dna mv loans#loan-period policy    # move a requirement into the spec `policy`
-spec-dna mv loans#holds loans#fines circulation  # split: move 2 sections into a new spec
+spec-dna mv requirements/loans requirements/circulation/loans  # move a document; the old id stays as an alias
+spec-dna mv requirements/loans#loan-period requirements/policy # move a requirement into the document `requirements/policy`
+spec-dna mv requirements/loans#holds requirements/loans#fines requirements/circulation  # split: move 2 sections into a new document
 spec-dna show --conventions decision    # the project rules for a type: `[conventions]` in spec-dna.toml
 ```
 
@@ -162,7 +177,7 @@ To change an accepted decision, do one of these actions:
 
 For another warning code with more than 10 diagnostics, such as SD608 on a mature corpus, `check` also gives one count. `spec-dna check --json` lists each diagnostic.
 
-If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and a new or an existing spec. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
+If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and name a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
 
 Split a document only for a size error: SD702, and in the `strict` profile also SD701, SD703 and SD704. A size warning needs no split.
 

@@ -261,7 +261,7 @@ def spec_dna_corpus(a):
         body += ["## Rationale", "", prose(rng.randint(3, 12)), "", "## Examples", "", "```text", rng.choice(pool), "```", ""]
         write(sp["id"], "\n".join(fm + body))
     for g in guides:
-        fm = ["---", "type: guide", f"status: {g['status']}", f"applies-to: [\"{g['applies']}\"]", "---", ""]
+        fm = ["---", "type: procedure", f"status: {g['status']}", f"applies-to: [\"{g['applies']}\"]", "---", ""]
         body = [f"# Rule {g['id'].split('-')[1]}", "", prose(1), "", "## Procedure", "", prose(rng.randint(1, 3)), ""]
         write(g["id"], "\n".join(fm + body))
     for d in decisions:
@@ -275,14 +275,14 @@ def spec_dna_corpus(a):
         write(d["id"], "\n".join(fm + body))
     for i in range(n_chg):
         t = rng.choice(specs)["id"]
-        write(f"changes/chg-{i:05d}", "\n".join(["---", "type: change", "status: proposed", "---", "", f"# Change {i}", "",
+        write(f"intent/chg-{i:05d}/intent", "\n".join(["---", "type: intent", "status: draft", "---", "", f"# Change {i}", "", "## Intent", "",
                                                     f"Changes [[{t}]]. " + prose(rng.randint(1, 3)), ""]))
     for i in range(n_note):
         t = rng.choice(specs)["id"]
-        write(f"notes/note-{i:05d}", "\n".join(["---", "type: note", "---", "", f"# Note {i}", "", f"About [[{t}]]. " + prose(rng.randint(2, 8)), ""]))
+        write(f"notes/note-{i:05d}", "\n".join(["---", "type: research", "---", "", f"# Note {i}", "", f"About [[{t}]]. " + prose(rng.randint(2, 8)), ""]))
 
     with open(os.path.join(a.out, "spec-dna.toml"), "w") as fh:
-        fh.write('spec-dna = "0.1.0"\n\n[[roots]]\npath = "docs"\ntype = "mixed"\ndefault-type = "spec"\nstatus = "active"\n')
+        fh.write('spec-dna = "0.1.0"\n\n[[roots]]\npath = "docs"\ntype = "mixed"\ndefault-type = "requirements"\nstatus = "active"\n')
 
     # Make the tasks with their ground truth.
     linked = {}

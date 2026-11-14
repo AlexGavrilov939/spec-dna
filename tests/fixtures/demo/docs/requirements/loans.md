@@ -23,4 +23,4 @@ rules are in `library/loans.py`.
 - **return**: When a member returns a book, the library SHALL record the return date and the fine of the loan.
 - **daily-fine**: When a member returns a book after the due date, the library SHALL charge `DAILY_FINE_CENTS` (25 cents) for each late day.
 
-The [flat daily fine](decisions/flat-daily-fine.md) decision gives the reason for this fine.
+The [flat daily fine](../decisions/flat-daily-fine.md) decision gives the reason for this fine.

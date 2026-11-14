@@ -5,9 +5,11 @@ This page gives each command of spec-dna, its options and the exit codes. [quick
 ## Summary
 
 ```sh
-spec-dna init                       # detection, 10 questions, a preview, then spec-dna.toml, the adapters and the harness
+spec-dna init                       # detection, up to 14 questions, a preview, then spec-dna.toml, the adapters and the harness
 spec-dna init --dry-run             # the preview only (also --non-interactive, --answers <file>, --reconfigure)
 spec-dna new decision pump-choice   # a new document from the template of its type
+spec-dna layer add interfaces --types interface --moved-from intent   # a new layer in spec-dna.toml
+spec-dna layer list                 # each layer, its level and its documents
 spec-dna context src/valves.rs      # the sections that cite a code file
 spec-dna check                      # new diagnostics against HEAD; exit 1 on a new error
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
@@ -22,7 +24,7 @@ spec-dna mv irrigation/valves#sensor-timeout irrigation/sensors
 spec-dna mv irrigation/valves#flush irrigation/valves#sensor-timeout irrigation/sensors   # several keys
 spec-dna mv irrigation/valves#drip irrigation/drip-lines  # a whole section into a new spec
 spec-dna mv guides/deploy#rollback runbooks/rollback --type runbook   # a section of a guide into a new runbook
-spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a reference document
+spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a research document
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
 spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
@@ -49,7 +51,7 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 - the vendored, generated and large reference directories;
 - the budgets, the stack, the tests, the agent files, CI, the hooks and the default branch.
 
-Then `init` asks at most 10 questions, with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+Then `init` asks at most 14 questions, with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
 
 `init` writes these adapters:
 
@@ -97,14 +99,28 @@ spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <tex
 
 `context` prints the sections that an agent needs, in this order:
 
-1. The entry documents or sections.
-2. For a code path: the sections that cite the file by its path, or by an identifier that is in the file ([diagnostics.md](diagnostics.md#code-citations)). A code path is a target or a `--path`, and it can be an untracked file. The documents do not need `applies-to`.
-3. The requirement sections and the summary of the best documents that cite the file.
-4. The documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path.
-5. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
-6. The other sections.
+1. The sections that `[conventions]` names for the type of each target ([show](#show)).
+2. The first tier: each rule whose `applies-to` matches an entry or a path, and each rule with no `applies-to` (it applies to the whole project). Also each top file (`product`, `system` or `terms`) whose `applies-to` matches. A top file with no `applies-to` is not in a task context, but a target can name it.
+3. The entry documents or sections.
+4. For a code path: the sections that cite the file by its path, or by an identifier that is in the file ([diagnostics.md](diagnostics.md#code-citations)). A code path is a target or a `--path`, and it can be an untracked file. The documents do not need `applies-to`.
+5. The requirement sections and the summary of the best documents that cite the file.
+6. The other normative documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path.
+7. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
+8. The other sections.
 
-`context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file. It lists a change or a note that cites the file, but it does not serve that document.
+The order of the layers orders the first tier. It also orders the documents of one citation class (cite the file, cite an identifier, or cite a directory). The layers come by level, from 0 up. The layers of one level keep the order of the `[layers.*]` tables in `spec-dna.toml`, or the order of the default graph. In the default graph, `foundation` comes before `rules`. `spec-dna layer list` shows the level of each layer ([Layer graph](design/0.6.0.md#layer-graph)).
+
+A layer with `context = "on-request"` is held back. `context` serves its documents only if a target names them. `show` always reads them. `context` counts the documents of these layers that the request reaches, in one line after the listed sections, and lists no file:
+
+```text
+<!-- on-request, not served: research 1, intent 1, incidents 2; name a document as target to serve it -->
+```
+
+The layers are in the order of `context`. The line is not in the output if the request reaches no such document. In the default graph, `research`, `intent`, `incidents` and `pending` are `on-request`. A layer with `context = "always"` can fill the plan without a named target. `context` serves no `research` document in any layer, unless a target names it. The `--json` output has no count.
+
+`context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file.
+
+In a layer with `context = "always"`, `context` lists an intent, an incident or a roadmap that cites the file. It does not serve that document.
 
 In a document with requirements, the requirement sections come first, then the title section. `context` lists the other sections of that document.
 
@@ -121,7 +137,7 @@ spec-dna show <id>[#<anchor>]
 spec-dna show --conventions <type>
 ```
 
-`show <id>` prints a document, a section with its subsections, or one requirement, with ids and hashes. For a spec or a contract, it also prints these items:
+`show <id>` prints a document, a section with its subsections, or one requirement, with ids and hashes. For a requirements, interface or rule document, it also prints these items:
 
 - the number of recognized requirements (`--json`: their keys);
 - the evidence of each requirement: its `verified-by` paths and the `covers:` tags of the tests.
@@ -131,10 +147,90 @@ spec-dna show --conventions <type>
 ## new
 
 ```text
-spec-dna new <type> <id> [--root <dir>]
+spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 ```
 
-`new` writes a new document from the template of its type ([types.md](types.md)). In a mixed root, an id without a namespace gets the namespace of its type, such as `decisions/<id>`.
+`new` writes a new document from a template ([types.md](types.md#templates)). Without `--template`, it uses the default template of the type. The place follows the layer of the type ([Place gives the type](types.md#place-gives-the-type)):
+
+- A top file type (`product`, `system`, `terms`, `roadmap`, `questions`) takes no id. `new terms` writes `<root>/terms.md`. An id gives exit code 2.
+- `new intent <slug>` writes `<root>/intent/<slug>/intent.md`. `new spec <slug>` and `new plan <slug>` write `spec.md` and `plan.md` into that folder. Without the folder, they stop with exit code 5 and write nothing.
+- Another type writes `<root>/<dir>/<id>.md` in a mixed root. `<dir>` is the folder of the layer of the type, and the id is relative to it. For example, `new requirements valves/closing` writes `<root>/requirements/valves/closing.md`.
+- In a root of one type, the file is `<root>/<id>.md`.
+- A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
+
+`--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, also for the default: a file `madr.md` replaces the default template of `decision`. `new` stops with exit code 2 and writes nothing in these cases:
+
+- an unknown name
+- a template of another type
+- a project template with no `type` in its front matter
+- a name with a path in it
+
+`new` copies the template and makes 4 changes:
+
+- It writes the H1 from the id.
+- It sets the first status of the type.
+- It removes `was-type` from the copy.
+- It removes `type:` where the place gives the type.
+
+`new` writes no `type:` line where the place gives the type. It uses `--root <dir>`, or the first root of that single type, or the first mixed root. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`.
+
+## layer
+
+```text
+spec-dna layer add <name> [--types t1,t2] [--paths g1,g2] [--files f1,f2] [--dir d]
+  [--moves-to a,b] [--moved-from a,b] [--linked-from a,b]
+  [--keep forever|until-finished] [--context always|on-request]
+  [--max-docs n] [--max-chars n] [--max-started n] [--stale-days n]
+spec-dna layer list
+```
+
+A layer is a named set of documents ([The table `layers`](config.md#the-table-layers)). `layer add` adds one to `spec-dna.toml`. `layer list` shows the layers.
+
+### layer add
+
+`layer add` writes `[layers.<name>]` at the end of `spec-dna.toml`, so the new layer is last in the file order. The options give the keys of the table ([config.md](config.md#the-table-layers)): `--types`, `--paths`, `--files`, `--dir`, `--moves-to`, `--linked-from`, `--keep`, `--context`, `--max-docs`, `--max-chars`, `--max-started` and `--stale-days`. A list option takes names or globs that a comma separates. The table has only the keys that the command line gives.
+
+`layer add` writes the line ending of the file: a file with CRLF line endings keeps them. An entry of `--files` follows the same rule as the key `files`: a relative path inside the root, which no other layer has.
+
+`--moved-from a,b` adds the new layer to the `moves-to` list of the layers `a` and `b`. The command edits that list in place. It inserts the new name and changes no other byte of the file, so each comment stays.
+
+- A layer that has a `moves-to` key gets the name at the end of the list. This works for a table and for dotted keys.
+- A layer with no `moves-to` key that has a table form (`[layers.a]`) gets a new `moves-to` line below its header.
+- A layer with no `moves-to` key that has dotted keys or an inline table gives exit code 2. Add `moves-to` to it by hand.
+
+If `spec-dna.toml` has no `[layers]` table, the project uses the default graph ([config.md](config.md#the-table-layers)). In this case, `layer add` first writes the tables of that graph. It applies `types`: it drops the layers that hold none of the types, and the edges to them. It then adds the new layer.
+
+The command refuses these cases with exit code 2. It writes nothing, and the file keeps its bytes:
+
+- A cycle in the `moves-to` edges.
+- A name that a layer already has.
+- A type that another layer has.
+- A layer in an edge (`--moves-to`, `--linked-from`, `--moved-from`) that the graph does not have.
+- A value that is not valid. Examples are a name with a character other than a letter, a digit, `-` or `_`, and an unknown type. Others are a number that is not a number, a `--keep` or `--context` value that is not in the list, and a `--dir` that leaves the root. `--files` with `--dir` and a folder that another layer has are also not valid.
+- A file layout where the new table has no place, for example `layers = { ... }` as an inline table of the root.
+
+The command reads its own result before it writes it. The result must give the layers that the command expects.
+
+The change goes into `spec-dna.toml` only. Commit it as a change of its own: `check` gives SD503 for a change of `spec-dna.toml` that comes with other files ([diagnostics.md](diagnostics.md)). With `--json`, the output is one object:
+
+```json
+{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"]}
+```
+
+### layer list
+
+`layer list` prints one line for each layer, in the order of the file:
+
+- The name and the level. Level 0 is the most stable layer.
+- The selection: `types`, `files` and `paths`, if the layer has them. It also gives `dir` if the file sets it.
+- The edges: `moves-to` and `linked-from`.
+- `keep` and `context`.
+- The limits that the layer sets: `max-docs`, `max-chars`, `max-started` and `stale-days`.
+- `docs`: the number of documents of the layer, and the number that each rule put there. The rules are the type of the layer (`type`), a glob of `paths` (`paths`) and a top file of the layer (`files`). A glob of `paths` comes first: a document that matches belongs to that layer, also when its type is in another layer.
+
+A document of a type that no layer has is in no layer. A document with no type (SD303) is also in no layer. A last line gives their number. `layer list` reads the same documents as `check`. If the file has no `[layers]` table, the first line says so, and the list is the default graph.
+
+With `--json`, the output is one object with the keys `declared`, `layers`, `documents` and `unplaced`. Each entry of `documents` has `path`, `id`, `type`, `layer` and `rule`. `layer` and `rule` are `null` for a document that is in no layer.
 
 ## mv
 
@@ -148,17 +244,17 @@ The first form moves a document with `git mv`. It adds the old id to the `aliase
 The second form splits a document of any type. It moves requirements, or whole sections with their subsections, into one of these documents:
 
 - an existing document of any type;
-- a new document. `mv` writes its front matter and its title. Its type is the type of its root, `--type`, `reference` for the history of a decision, or the type of the source.
+- a new document. `mv` writes its front matter and its title. Its type is the type of its root, `--type`, `research` for the history of a decision, or the type of the source.
 
 These rules apply to a split:
 
-- Requirements move only into a spec, a contract or an invariant.
+- Requirements move only into a requirements, interface or rule document.
 - Each moved section of `HEAD` keeps its old id as an alias: `<old-id>#<anchor>` in the `aliases` of the destination.
 - Each moved requirement whose id is in `HEAD` gets an inline marker `<!-- aliases: ... -->` with that id. A key that is new in the uncommitted change gets no alias.
 - The rows of `companion-sections`, such as a coverage table, move with their requirements. If a row names a key that moves and a key that stays, `mv` refuses the move.
 - Each moved section leaves its heading in the source, with a one-line pointer to its new place.
 - Links to a moved key or section follow it. This rule also applies in accepted decisions, because a link destination is not frozen text.
-- A decision keeps its frozen text. Only its amendment and history sections move, into a reference document. `mv` lists the moved amendments that can change the outcome. These amendments are candidates for a new decision that supersedes the old one.
+- A decision keeps its frozen text. Only its amendment and history sections move, into a research document. `mv` lists the moved amendments that can change the outcome. These amendments are candidates for a new decision that supersedes the old one.
 
 Before `mv` changes a file, a preservation check compares the result with the current tree:
 
@@ -175,7 +271,7 @@ If a check fails, `mv` changes nothing. It names each requirement whose text wou
 spec-dna history <doc-id> [<to>]
 ```
 
-`history` moves the history sections of a document into a reference document. The history sections are the `history-sections`, and the amendment sections of a decision. `history` leaves a pointer for each section, and it adds a backlink. The default destination is `<name>-history.md` next to the document, in a mixed root.
+`history` moves the history sections of a document into a research document. The history sections are the `history-sections`, and the amendment sections of a decision. `history` leaves a pointer for each section, and it adds a backlink. The default destination is `<name>-history.md` next to the document, in a mixed root. If no layer has the type `research`, `history` stops with exit code 2 and changes nothing. The message gives the command to run: `spec-dna layer add research --types research`. A new project of the small graph has no `research` layer. `mv` does the same for any type of a new document that no layer has.
 
 ## index
 
@@ -232,7 +328,7 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), or the preservation check of `mv`, `history` or `index` refused the change |
-| 2 | Usage error |
+| 2 | Usage error. Also a refusal of `layer add`: it changes nothing |
 | 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository |
 | 4 | Git or file system error |
 | 5 | A target names no document, section or requirement |

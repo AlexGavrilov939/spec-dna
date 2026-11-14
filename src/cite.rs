@@ -10,7 +10,7 @@
 //! uses them to find the sections that cite a file. `check` uses them to find
 //! drift.
 
-use crate::model::{Corpus, DocType, LinkRes, join};
+use crate::model::{Corpus, LinkRes, join};
 use crate::parse::RefKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -376,7 +376,8 @@ pub const BY_DIR: u8 = 2;
 /// file. The order of the documents is:
 ///
 /// - documents that cite a file, then an identifier, then a directory
-/// - specs and contracts, guides, decisions, changes, notes
+/// - the layer of the document, in the order of `context` (`layer_rank`: the
+///   position of the layer of each document, by index of the document)
 /// - the higher total score
 /// - the document id
 pub fn citing(
@@ -384,6 +385,7 @@ pub fn citing(
     cits: &Citations,
     root: &Path,
     paths: &[String],
+    layer_rank: &[usize],
 ) -> Vec<(u32, u8, Vec<usize>)> {
     #[derive(Default)]
     struct Score {
@@ -437,13 +439,6 @@ pub fn citing(
             .or_default()
             .push((*ch, class(s), points(s)));
     }
-    let type_rank = |t: DocType| match t {
-        DocType::Invariant | DocType::Spec | DocType::Contract => 0,
-        DocType::Guide | DocType::Runbook => 1,
-        DocType::Decision => 2,
-        DocType::Change | DocType::Incident => 3,
-        DocType::Note | DocType::Reference => 4,
-    };
     let mut docs: Vec<(u32, u8, u32, Vec<usize>)> = by_doc
         .into_iter()
         .map(|(d, mut v)| {
@@ -455,7 +450,7 @@ pub fn citing(
         .collect();
     docs.sort_by(|a, b| {
         a.1.cmp(&b.1)
-            .then(type_rank(c.docs[a.0 as usize].ty).cmp(&type_rank(c.docs[b.0 as usize].ty)))
+            .then(layer_rank[a.0 as usize].cmp(&layer_rank[b.0 as usize]))
             .then(b.2.cmp(&a.2))
             .then(c.docs[a.0 as usize].id.cmp(&c.docs[b.0 as usize].id))
     });

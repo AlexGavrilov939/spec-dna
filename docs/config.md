@@ -5,10 +5,27 @@
 ```toml
 spec-dna = "0.5.0"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
-types = ["spec", "decision", "invariant", "runbook", "incident", "reference"]  # default: all 10
+types = ["requirements", "decision", "rule", "procedure", "incident", "research"]  # default: all 15
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
+areas = ["valves", "sensors", "reports"]  # the folders of requirements/
+
+[layers.intent]                 # one table for each layer (see "The table `layers`")
+types = ["intent", "spec", "plan"]
+moves-to = ["requirements", "decisions"]
+keep = "until-finished"
+context = "on-request"
+max-started = 3
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.decisions]
+types = ["decision"]
+
+[groups]                        # named sets of areas
+operations = ["valves", "sensors"]
 
 [spec-dna-sha256]               # optional: the release assets of the pin, and their SHA-256 sums
 "spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
@@ -21,8 +38,8 @@ tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
 
 [[roots]]                       # required: one table per document root
 path = "docs"
-type = "mixed"                  # one of the 10 types, or "mixed" (default)
-default-type = "spec"           # mixed root: the type of a document with no `type` in the front matter (default "note")
+type = "mixed"                  # one type of a root (not intent, spec or plan), or "mixed" (default)
+default-type = "requirements"   # mixed root: the type of a document with no `type` and no type from its place (no default)
 status = "draft"                # the status of a default-type document with no `status`
 exclude = ["drafts/**"]         # globs relative to the root
 legacy-ids = ["ADR-{n}", { alias = "KEP-{n}", file = "{n}-*" }]
@@ -30,9 +47,9 @@ legacy-keys = ["R-{n}"]
 status-map = { released = "active", wip = "draft" }            # legacy status words
 required-sections = { decision = ["Decision Outcome", "Decision"], incident = [["Summary"], ["Root cause"]] }
 amendment-sections = { decision = ["Amendments", "Nachtrag"] }  # amendment headings
-history-sections = { guide = ["Iteration log"], decision = ["Discussion"] }  # history headings
-companion-sections = { spec = ["Coverage table"] }  # sections with a row per requirement
-live-sections = { decision = ["Progress"] }  # sections that change in place
+history-sections = { procedure = ["Iteration log"], decision = ["Discussion"] }  # history headings
+companion-sections = { requirements = ["Coverage table"] }  # sections with a row per requirement
+live-sections = { decision = ["Status", "Progress"] }  # sections that change in place; the default is Status
 enforce-budgets = true          # false: the hard budget gives warnings only
 profile = "lite"                # the profile of this root
 rules = { lint = "off" }        # severity overrides for this root
@@ -40,7 +57,7 @@ rules = { lint = "off" }        # severity overrides for this root
 [budgets]
 growth = 4000                   # characters that a document over its hard budget can grow in one change
 
-[budgets.spec]                  # characters of body text, per type
+[budgets.requirements]          # characters of body text, per type
 soft = 10000
 hard = 20000
 
@@ -54,7 +71,7 @@ budget = 8000                   # default character budget of `spec-dna context`
 platform = "https://example.org/platform.git"   # alias for `platform:<namespace>/<slug>`
 
 [conventions]                   # sections that state the project conventions, per type
-contract = ["docs/README.md#contract-changes"]
+interface = ["docs/README.md#interface-changes"]
 decision = ["docs/adr/README.md#how-to-amend"]
 
 [harness]                       # the agent harness (docs/harness.md)
@@ -84,24 +101,39 @@ sonnet = "high"
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
 | `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
+| `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
+| `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
+| `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). See [The table `layers`](#the-table-layers). |
+| `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
+| `layers.<name>.dir` | string | the name of the layer | The folder of the layer, relative to the root. No 2 layers have the same folder. |
+| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no leading `/`, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
+| `layers.<name>.paths` | list of globs | `[]` | Globs, relative to the root. A document that matches belongs to this layer, also when its type is in another layer. The first layer in the file that matches wins. |
+| `layers.<name>.moves-to` | list of strings | `[]` | The layers that the text of this layer matures into. Each name is a layer of `[layers]`. The edges have no cycle. |
+| `layers.<name>.linked-from` | list of strings | `[]` | The layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`. |
+| `layers.<name>.keep` | string | `"forever"` | `"forever"` or `"until-finished"`. In an `until-finished` layer, a deleted document gives no SD202. |
+| `layers.<name>.context` | string | `"always"` | `"always"` or `"on-request"`. |
+| `layers.<name>.max-docs` | integer | none | The most documents in the layer. |
+| `layers.<name>.max-chars` | integer | none | The most body characters in the layer. |
+| `layers.<name>.max-started` | integer | none | The most started changes. |
+| `layers.<name>.stale-days` | integer | none | The days without a commit before a change is stale. |
 | `evidence.tests` | list of globs | the usual test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list turns the tags off. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`. The value is a URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
 | `roots` | list of tables | required | The document roots. A path belongs to the deepest root that contains it. |
 | `roots.path` | string | required | The directory, relative to the repository root. `.` means the whole repository. |
-| `roots.type` | string | `mixed` | The type of every document in the root (one of the 10 types of [docs/types.md](types.md)), or `mixed`. |
-| `roots.default-type` | string | `note` | For a mixed root: the type of a document that has no `type` field. |
-| `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type. |
+| `roots.type` | string | `mixed` | The type of every document in the root, or `mixed`. The value is a type of [docs/types.md](types.md), but not `intent`, `spec` or `plan`. These 3 types are valid only in the `intent` layer, so a root of one of them is an error (exit code 3). In a mixed root, the front matter and the place of a document give its type ([Place gives the type](types.md#place-gives-the-type)). |
+| `roots.default-type` | string | none | For a mixed root: the type of a document that has no `type` field and a place that gives no type. The value is a type of a root, but not `intent`, `spec` or `plan`. Without it, such a document gives SD303. |
+| `roots.status` | string | none | The status of a default-type document that has no `status` field. The value must be a status of that type, so the root needs a `default-type` or one type. |
 | `roots.exclude` | list of globs | `[]` | Paths, relative to the root, that are not documents. |
 | `roots.legacy-ids` | list | `[]` | Patterns that make aliases from the names of files. A string `ADR-{n}` makes the alias `ADR-{n}` from a slug that starts with it. In a table, `file` sets the slug pattern. |
 | `roots.legacy-keys` | list | `[]` | Patterns of requirement keys that spec-dna keeps as they are, such as `R-{n}`. For a legacy key, the colon after the bold key is optional. See [Legacy keys](#legacy-keys). |
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the type of the root (in a mixed root, a status of any type). |
 | `roots.required-sections` | table | see [docs/types.md](types.md) | For each type, its required sections, in any language. See [Required sections](#required-sections). |
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. See [Amendment sections](#amendment-sections). |
-| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `reference` document. In a decision, a history section is not frozen text. |
+| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `research` document. In a decision, a history section is not frozen text. |
 | `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as a coverage table or an evidence table. A table row of such a section belongs to the requirement keys in its first cell. A list item belongs to the keys in its lead. When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. If a row has a key that moves and a key that stays, `mv` stops and changes nothing. |
-| `roots.live-sections` | table | `{}` | For each type, the names of its live sections, such as `Progress`, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
+| `roots.live-sections` | table | `{ decision = ["Status"] }` | For each type, the names of its live sections, such as `Status` or `Progress`, in any language. A list for a type replaces the default of that type, so `{ decision = [] }` turns it off. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They have priority over `[rules]` and over every profile. |
@@ -112,6 +144,7 @@ sonnet = "high"
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
+| `templates.dir` | string | `.spec-dna/templates` | The folder of the project templates, relative to the repository root. A file `<name>.md` in it is a template for `spec-dna new --template <name>`. See [The table `templates`](#the-table-templates). The folder is never part of a root. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
 | `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them. |
@@ -133,7 +166,7 @@ For a legacy key, the colon after the bold key is optional. These 4 forms are re
 - `- **R-12:** sentence`
 - `- **R-12.** sentence`
 
-A spec or contract gets SD806 in either of these cases:
+A `requirements`, `interface` or `rule` document gets SD806 in either of these cases:
 
 - It has tokens that match a pattern, but no recognized requirement.
 - A list item or a table row starts with a token that matches a pattern, and no recognized requirement of the document has that key.
@@ -150,9 +183,11 @@ A document of that type needs one heading of each list (SD305). The comparison i
 The defaults are:
 
 - decision: `["Decision Outcome", "Decision"]`
-- invariant: `["Rules"]`
-- runbook: `["Steps"]`
+- rule: `["Rules"]`
 - incident: `[["Summary"], ["Root cause"]]`
+- intent: `["Intent", "Problem", "Summary"]`
+- spec: `["Delta"]`
+- plan: `["Files"]`
 
 ### Amendment sections
 
@@ -167,13 +202,46 @@ After a decision is accepted, the text outside its amendment sections is frozen 
 
 ### Conventions
 
-The value of a type is a list of pointers. Each pointer names a section of a project document that states the conventions for documents of that type. An example of a convention is "a contract change needs a dated amendment and a new `version` value".
+The value of a type is a list of pointers. Each pointer names a section of a project document that states the conventions for documents of that type. An example of a convention is "an interface change needs a dated amendment and a new `version` value".
 
 - A pointer is a document id or a path, with an optional `#<anchor>`. Without an anchor, it names the whole document.
 - A path can also name a Markdown file that is not a document. Examples are a file outside every root, and a file that an `exclude` glob removes, such as a `README.md`. No check, budget or id applies to such a file. spec-dna reads it only for the conventions.
 - A pointer gives SD106 if it names no document, no file of the git tree or no section. A file that git ignores is not in the tree. With `--base`, a file that git does not track is not in the tree. spec-dna does not read a symlink whose target is outside the repository.
 
 When a target of `context` is a document of that type, `context` serves these sections first. The sections of files that are not documents come before the sections of documents (`"type": "file"` in `--json`). `show --conventions <type>` prints the sections. `show <path>#<anchor>` prints one section of such a file.
+
+## The table `layers`
+
+A layer is a named set of documents. The table `[layers.<name>]` gives its keys. The name has only letters, digits, `-` and `_`. The file order of the tables is the order of the layers. Write each layer as a table (`[layers.intent]`), as dotted keys (`layers.intent.keep = "forever"`) or as an inline table. The order is the same in each form. `spec-dna layer add` adds a layer to the file, and `spec-dna layer list` shows the layers ([commands.md](commands.md#layer)).
+
+The graph has these rules. A break of a rule is a configuration error (exit code 3), and the message names the key:
+
+- The `moves-to` edges have no cycle.
+- A type is in one layer at most.
+- Each name in `moves-to` and in `linked-from` is a layer of `[layers]`.
+- A layer has `files` or `dir`, not both.
+- An entry of `files` is a relative path inside the root, and no 2 layers have the same file.
+- No 2 layers have the same folder. A layer with no `dir` has the folder of its name.
+- A layer has only the keys of the table above.
+
+The layers also give the place of a document: its type, if the front matter has no `type`. [Place gives the type](types.md#place-gives-the-type) has the rule. A mixed root with `[layers]` needs a layer for each type that its documents have. A document of a type that no layer has gives SD303, and the message says to run `spec-dna layer add`.
+
+The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
+
+A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+
+## The table `templates`
+
+```toml
+[templates]
+dir = ".spec-dna/templates"
+```
+
+`spec-dna new <type> <id> --template <name>` reads `<dir>/<name>.md` first, and then the embedded template of that name. Without `--template`, `new` uses the default template of the type: `<dir>/<default>.md` if the file exists, and the embedded template if not. A file `madr.md` in the folder replaces the embedded template of a decision. [docs/types.md](types.md#templates) lists the embedded templates.
+
+- A project template names its `type` in its front matter. `new` stops with exit code 2 for a template with no `type`, a template of another type and an unknown template name.
+- `dir` is a path relative to the repository root. An absolute path, a `..` segment, a `\` and a `:` are errors (exit code 3).
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
 
 ## The table `harness`
 
@@ -241,13 +309,13 @@ Sometimes `spec-dna.toml` does not parse, and its key `spec-dna` is a different 
 
 The default budgets are (soft and hard, in characters):
 
-- `spec`, `contract` and `change`: 10,000 and 20,000
-- `guide`: 14,000 and 28,000
+- `product`, `system`, `roadmap` and `questions`: 8,000 and 16,000
+- `terms`, `requirements`, `interface` and `spec`: 10,000 and 20,000
+- `procedure`: 14,000 and 28,000
 - `decision`: 7,000 and 14,000
-- `invariant`: 3,000 and 6,000
-- `runbook`: 8,000 and 16,000
-- `incident`: 6,000 and 12,000
-- `note` and `reference`: none
+- `rule`: 3,000 and 6,000
+- `incident`, `intent` and `plan`: 6,000 and 12,000
+- `research`: none
 
 A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 
@@ -267,8 +335,8 @@ An accepted decision has 3 kinds of section:
 | Kind | Key | After acceptance | `context` | `mv`, `history` |
 | --- | --- | --- | --- | --- |
 | Frozen text | (all other sections) | Cannot change (SD405). Supersede the decision to change its outcome. | The title and the outcome are the summary. | Stays in place. |
-| Amendment section | `amendment-sections` (default `Amendments`) | Can change and grow. New text that states a requirement, a BCP 14 keyword or a status word gives SD605. | Served with the outcome. | Moves into a `reference` document. |
-| Live section | `live-sections` (no default) | Can change in place, with no SD605. Use it for a current state, such as a progress section. | Served as a section of the document. | Stays in place. |
+| Amendment section | `amendment-sections` (default `Amendments`) | Can change and grow. New text that states a requirement, a BCP 14 keyword or a status word gives SD605. | Served with the outcome. | Moves into a `research` document. |
+| Live section | `live-sections` (default `Status`) | Can change in place, with no SD605. Use it for a current state, such as a status or a progress section. | Served as a section of the document. | Stays in place. |
 
 A history section (`history-sections`) is not frozen text either, and `history` moves it. If you change the name in a heading, the kind of its section can change. A renamed live heading is frozen text again.
 
@@ -282,7 +350,7 @@ A requirement has evidence if a test or a verification record links to it. `chec
 
 The tag is plain text, so it works in a comment of any language. Examples: `// covers: loans#renew` and `# covers: loans#renew, loans#fines`. The ids follow the tag, separated by commas or spaces. The first word that is not an id ends the tag.
 
-A `verified-by` path that is not in the git tree gives SD103. A tag that names no requirement gives SD105. An active requirement (of a `spec`, `contract` or `invariant` with the status `active`) without evidence gives SD608. The profile sets the severities.
+A `verified-by` path that is not in the git tree gives SD103. A tag that names no requirement gives SD105. An active requirement (of a `requirements`, `interface` or `rule` document with the status `active`) without evidence gives SD608. The profile sets the severities.
 
 `show` lists the evidence of each requirement. A moved requirement keeps its tags, because its old id is an alias. spec-dna does not run the tests.
 
@@ -299,6 +367,6 @@ A link with a scheme (`https:`) or a `//` prefix is external, unless it starts w
 
 A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does. An untracked document is not part of that gate until you run `git add`. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory.
 
-In a root of type `reference`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other reference root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of two reference roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
+In a root of type `research`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other research root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of two research roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
 
 A section that `mv` moved keeps its old id as an alias: the destination lists `<old-id>#<anchor>` in its `aliases`. A stub (front matter `moved-to: <id>`) has no id of its own. A generated index has the front matter field `generated: spec-dna index h:<hash>`. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.

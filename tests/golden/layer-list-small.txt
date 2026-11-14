@@ -1,0 +1,8 @@
+foundation  level 0  types product,system,terms  files product.md,system.md,terms.md  keep forever  context always  max-chars 30000  docs 1 (files 1)
+pending  level 2  types roadmap,questions  files roadmap.md,questions.md  moves-to intent  linked-from intent  keep forever  context on-request  max-docs 2  docs 0
+rules  level 0  types rule  keep forever  context always  max-docs 30  docs 2 (type 2)
+requirements  level 0  types requirements  keep forever  context always  docs 1 (type 1)
+decisions  level 0  types decision  keep forever  context always  docs 1 (type 1)
+intent  level 1  types intent,spec,plan  moves-to rules,requirements,decisions  keep until-finished  context on-request  max-docs 30  max-started 3  stale-days 14  docs 1 (type 1)
+incidents  level 2  types incident  moves-to intent  linked-from rules,decisions,requirements,intent  keep forever  context on-request  docs 0
+1 document has no layer (no layer has its type)

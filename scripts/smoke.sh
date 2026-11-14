@@ -39,7 +39,7 @@ gitc config user.email smoke@example.invalid
 mkdir docs src
 cat >docs/valves.md <<'EOF'
 ---
-type: spec
+type: requirements
 status: active
 ---
 # Valves

@@ -20,45 +20,45 @@ const TYPE_DIRS: &[(&str, DocType)] = &[
     ("decisions", DocType::Decision),
     ("decision-records", DocType::Decision),
     ("architecture-decisions", DocType::Decision),
-    ("specs", DocType::Spec),
-    ("spec", DocType::Spec),
-    ("specifications", DocType::Spec),
-    ("requirements", DocType::Spec),
-    ("prd", DocType::Spec),
-    ("prds", DocType::Spec),
-    ("contracts", DocType::Contract),
-    ("interfaces", DocType::Contract),
-    ("guides", DocType::Guide),
-    ("guidelines", DocType::Guide),
-    ("conventions", DocType::Guide),
-    ("how-to", DocType::Guide),
-    ("howto", DocType::Guide),
-    ("runbooks", DocType::Runbook),
-    ("runbook", DocType::Runbook),
-    ("playbooks", DocType::Runbook),
-    ("oncall", DocType::Runbook),
-    ("on-call", DocType::Runbook),
+    ("specs", DocType::Requirements),
+    ("spec", DocType::Requirements),
+    ("specifications", DocType::Requirements),
+    ("requirements", DocType::Requirements),
+    ("prd", DocType::Requirements),
+    ("prds", DocType::Requirements),
+    ("contracts", DocType::Interface),
+    ("interfaces", DocType::Interface),
+    ("guides", DocType::Procedure),
+    ("guidelines", DocType::Procedure),
+    ("conventions", DocType::Procedure),
+    ("how-to", DocType::Procedure),
+    ("howto", DocType::Procedure),
+    ("runbooks", DocType::Procedure),
+    ("runbook", DocType::Procedure),
+    ("playbooks", DocType::Procedure),
+    ("oncall", DocType::Procedure),
+    ("on-call", DocType::Procedure),
     ("incidents", DocType::Incident),
     ("incident", DocType::Incident),
     ("postmortems", DocType::Incident),
     ("postmortem", DocType::Incident),
     ("post-mortems", DocType::Incident),
-    ("rfcs", DocType::Change),
-    ("rfc", DocType::Change),
-    ("proposals", DocType::Change),
-    ("changes", DocType::Change),
-    ("tasks", DocType::Change),
-    ("plans", DocType::Change),
-    ("enhancements", DocType::Change),
-    ("invariants", DocType::Invariant),
-    ("principles", DocType::Invariant),
-    ("notes", DocType::Note),
-    ("research", DocType::Reference),
-    ("references", DocType::Reference),
-    ("reference", DocType::Reference),
-    ("archive", DocType::Reference),
-    ("meetings", DocType::Reference),
-    ("meeting-notes", DocType::Reference),
+    ("rfcs", DocType::Research),
+    ("rfc", DocType::Research),
+    ("proposals", DocType::Research),
+    ("changes", DocType::Research),
+    ("tasks", DocType::Research),
+    ("plans", DocType::Research),
+    ("enhancements", DocType::Research),
+    ("invariants", DocType::Rule),
+    ("principles", DocType::Rule),
+    ("notes", DocType::Research),
+    ("research", DocType::Research),
+    ("references", DocType::Research),
+    ("reference", DocType::Research),
+    ("archive", DocType::Research),
+    ("meetings", DocType::Research),
+    ("meeting-notes", DocType::Research),
 ];
 
 /// Type words that are also common names of code directories
@@ -69,7 +69,7 @@ const CODE_WORDS: &[&str] = &["incident", "postmortem"];
 /// Directory names of documentation trees.
 const DOC_DIRS: &[&str] = &["docs", "doc", "documentation", "wiki", "handbook"];
 
-/// Directories of agent instructions. Their Markdown files are guides.
+/// Directories of agent instructions. Their Markdown files are procedures.
 const AGENT_DIRS: &[&str] = &[
     ".claude/skills",
     ".claude/agents",
@@ -210,6 +210,10 @@ pub struct Row {
     /// `None` for a mixed root.
     pub ty: Option<DocType>,
     pub default_type: DocType,
+    /// True for a mixed root that has no `default-type`: the place of a
+    /// document gives its type, and a document with no place and no type gives
+    /// SD303. `default_type` is not used then.
+    pub no_default_type: bool,
     pub status: Option<String>,
     pub legacy_ids: Vec<String>,
     pub legacy_keys: Vec<String>,
@@ -236,6 +240,7 @@ impl Row {
             path: path.to_string(),
             ty,
             default_type,
+            no_default_type: false,
             status: first_status(default_type),
             legacy_ids: Vec::new(),
             legacy_keys: Vec::new(),
@@ -265,7 +270,7 @@ impl Row {
 fn first_status(ty: DocType) -> Option<String> {
     match ty {
         DocType::Decision => Some("proposed".into()),
-        DocType::Change => Some("accepted".into()),
+        DocType::Intent => Some("accepted".into()),
         t if t.has_status() => Some("active".into()),
         _ => None,
     }
@@ -299,6 +304,9 @@ pub struct Facts {
     pub ci: Vec<String>,
     pub hooks: Vec<String>,
     pub base: String,
+    /// The proposed areas of `requirements/`: at most 8 names of one folder
+    /// each, or none if `init` finds fewer than 2.
+    pub areas: Vec<String>,
 }
 
 /// One Markdown file.
@@ -420,11 +428,11 @@ fn plain_numbered(stems: &[&str], min_share: f64) -> bool {
 fn prefix_type(prefix: &str) -> Option<DocType> {
     Some(match prefix {
         "ADR" | "MADR" | "AD" | "DR" | "DEC" => DocType::Decision,
-        "RFC" | "RFD" | "KEP" | "PEP" | "CR" | "EP" => DocType::Change,
+        "RFC" | "RFD" | "KEP" | "PEP" | "CR" | "EP" => DocType::Research,
         "INC" | "INCIDENT" | "PM" | "PIR" | "RCA" => DocType::Incident,
-        "RB" | "RUNBOOK" => DocType::Runbook,
-        "REQ" | "SPEC" | "PRD" | "SRS" => DocType::Spec,
-        "INV" => DocType::Invariant,
+        "RB" | "RUNBOOK" => DocType::Procedure,
+        "REQ" | "SPEC" | "PRD" | "SRS" => DocType::Requirements,
+        "INV" => DocType::Rule,
         _ => return None,
     })
 }
@@ -453,8 +461,8 @@ fn content_type(m: &Md) -> Option<DocType> {
     let hits: Vec<DocType> = [
         (decision, DocType::Decision),
         (incident, DocType::Incident),
-        (runbook, DocType::Runbook),
-        (spec, DocType::Spec),
+        (runbook, DocType::Procedure),
+        (spec, DocType::Requirements),
     ]
     .into_iter()
     .filter(|x| x.0)
@@ -480,10 +488,7 @@ fn own_type(docs: &[&Md], prefixed: Option<&str>) -> Option<(DocType, String)> {
         let (t, n) = counts.into_iter().max_by_key(|x| x.1)?;
         (n as f64 >= 0.6 * docs.len() as f64).then_some(t)
     };
-    let fm = docs
-        .iter()
-        .filter_map(|m| fm_str(&m.parsed, "type").and_then(|t| DocType::from_name(&t)))
-        .collect();
+    let fm = docs.iter().filter_map(|m| fm_type(&m.parsed)).collect();
     if let Some(t) = majority(fm) {
         return Some((t, format!("most files have `type: {}`", t.name())));
     }
@@ -552,12 +557,17 @@ fn map_status(word: &str, ty: DocType) -> Option<&'static str> {
             "declined" | "abandoned" | "withdrawn" | "cancelled" | "canceled" => "rejected",
             _ => return None,
         }),
-        DocType::Change => Some(match w {
-            "draft" | "open" | "new" | "todo" | "planned" | "pending" | "backlog" => "proposed",
+        DocType::Intent => Some(match w {
+            "draft" | "open" | "new" | "todo" | "planned" | "pending" | "backlog" => "draft",
             "approved" | "in-progress" | "wip" | "active" | "doing" | "started" => "accepted",
             "complete" | "completed" | "shipped" | "merged" | "closed" | "implemented"
-            | "released" | "finished" => "done",
-            "declined" | "abandoned" | "cancelled" | "canceled" | "wontfix" => "rejected",
+            | "released" | "finished" | "declined" | "abandoned" | "cancelled" | "canceled"
+            | "wontfix" => "closed",
+            _ => return None,
+        }),
+        DocType::Spec | DocType::Plan => Some(match w {
+            "draft" | "open" | "new" | "todo" | "planned" | "pending" | "wip" => "draft",
+            "approved" | "accepted" | "active" => "approved",
             _ => return None,
         }),
         t if t.has_status() => Some(match w {
@@ -705,7 +715,7 @@ pub fn detect(
             None => Row::new(
                 if d.is_empty() { "." } else { d },
                 None,
-                DocType::Guide,
+                DocType::Procedure,
                 format!("{} Markdown files, mostly documentation", md_in(d)),
             ),
         });
@@ -720,8 +730,8 @@ pub fn detect(
         if AGENT_DIRS.contains(&d) {
             let mut r = Row::new(
                 d,
-                Some(DocType::Guide),
-                DocType::Guide,
+                Some(DocType::Procedure),
+                DocType::Procedure,
                 "agent instructions".into(),
             );
             r.why = format!("agent instructions, {} Markdown files", md_in(d));
@@ -743,7 +753,7 @@ pub fn detect(
     // 3. Directories of numbered files (`PREFIX-<n>-*.md`, or `<n>-*.md` as
     // adr-tools writes them): legacy ids. The type of such a directory comes
     // from its own files. If the files show no type, it is the type of the
-    // enclosing root, if that root has a type. In a mixed root, it is `note`.
+    // root that contains it, if that root has a type. In a mixed root, it is `research`.
     let mut plain_aliases: Vec<(String, &str)> = Vec::new();
     let mut numbered: Vec<(&String, &Vec<usize>)> = md_direct.iter().collect();
     numbered.sort();
@@ -758,7 +768,7 @@ pub fn detect(
         let own = own_type(&docs, prefixed.as_deref());
         // Files without a prefix make a root only for the layouts of
         // decision and change records (adr-tools, RFC directories).
-        if prefixed.is_none() && !matches!(own, Some((DocType::Decision | DocType::Change, _))) {
+        if prefixed.is_none() && !matches!(own, Some((DocType::Decision, _))) {
             continue;
         }
         let row = match rows.iter().position(|r| r.path == *d) {
@@ -782,7 +792,7 @@ pub fn detect(
                         pt,
                         format!("the type of the enclosing root `{}`", pt.name()),
                     ),
-                    (None, Some(None)) => (DocType::Note, "no type in the files".into()),
+                    (None, Some(None)) => (DocType::Research, "no type in the files".into()),
                     (None, None) => continue,
                 };
                 let shape = prefixed.clone().unwrap_or_else(|| "{n}-*".into());
@@ -826,8 +836,8 @@ pub fn detect(
         );
         rows.push(Row::new(
             &d,
-            Some(DocType::Reference),
-            DocType::Reference,
+            Some(DocType::Research),
+            DocType::Research,
             why,
         ));
     }
@@ -967,11 +977,9 @@ pub fn detect(
             .collect();
         // A typed root whose documents name another type becomes mixed.
         if let Some(t) = r.ty
-            && docs.iter().any(|m| {
-                fm_str(&m.parsed, "type")
-                    .and_then(|x| DocType::from_name(&x))
-                    .is_some_and(|x| x != t)
-            })
+            && docs
+                .iter()
+                .any(|m| fm_type(&m.parsed).is_some_and(|x| x != t))
         {
             r.ty = None;
             r.default_type = t;
@@ -980,8 +988,7 @@ pub fn detect(
         let types: Vec<DocType> = docs
             .iter()
             .map(|m| {
-                fm_str(&m.parsed, "type")
-                    .and_then(|t| DocType::from_name(&t))
+                fm_type(&m.parsed)
                     .filter(|t| r.ty.is_none_or(|rt| rt == *t))
                     .unwrap_or(r.default_type)
             })
@@ -1296,6 +1303,7 @@ pub fn detect(
     apps.sort();
     facts.stack = stack;
     facts.apps = apps;
+    facts.areas = areas_of(&facts.rows, &mds, &facts.apps);
 
     // Tests.
     for g in DEFAULT_TEST_GLOBS {
@@ -1356,6 +1364,92 @@ pub fn detect(
 }
 
 /// The deepest row that contains a path, as an index.
+/// The most areas that `init` proposes.
+const MAX_AREAS: usize = 8;
+
+/// Folder names that are no area of requirements: they hold other kinds of
+/// files, or old text.
+const NOT_AREAS: &[&str] = &[
+    "archive",
+    "archived",
+    "assets",
+    "attachments",
+    "drafts",
+    "images",
+    "img",
+    "templates",
+];
+
+/// Folder names of an app directory that name a part of an app, not an app.
+const NOT_APPS: &[&str] = &[
+    "bench", "benches", "doc", "docs", "example", "examples", "lib", "script", "scripts", "src",
+    "test", "tests", "tools",
+];
+
+/// Returns true if a folder name can be an area: one visible folder name.
+fn is_area_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['.', '_'])
+        && name.trim() == name
+        && !name.contains(['/', '\\'])
+        && !NOT_AREAS.contains(&name.to_ascii_lowercase().as_str())
+        && !VENDORED.contains(&name)
+        && !GENERATED.contains(&name)
+        && !FIXTURES.contains(&name)
+}
+
+/// The areas of `requirements/`. The first source is the top folders of the
+/// roots that hold requirements: the folders with the most documents come
+/// first. If they give fewer than 2 areas, the second source is the folders of
+/// the apps (the directories of the manifests of the stack). The result has at
+/// most 8 names, in the order of the names. A result of fewer than 2 names is
+/// empty: one area is the same as no area.
+fn areas_of(rows: &[Row], mds: &[Md], apps: &[String]) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if r.path == "." || r.ty.unwrap_or(r.default_type) != DocType::Requirements {
+            continue;
+        }
+        let base = format!("{}/", r.path);
+        for m in mds {
+            if owner(rows, &m.path) != Some(i) {
+                continue;
+            }
+            let rel = &m.path[base.len()..];
+            if r.exclude.iter().any(|g| crate::glob::matches(g, rel)) {
+                continue;
+            }
+            if let Some((folder, _)) = rel.split_once('/')
+                && is_area_name(folder)
+            {
+                *counts.entry(folder.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let mut named: Vec<(String, usize)> = counts.into_iter().collect();
+    // The most documents first, then the name.
+    named.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let mut names: Vec<String> = named.into_iter().map(|n| n.0).collect();
+    if names.len() < 2 {
+        names = Vec::new();
+        for a in apps {
+            let name = a.rsplit('/').next().unwrap_or(a);
+            if is_area_name(name)
+                && !NOT_APPS.contains(&name.to_ascii_lowercase().as_str())
+                && !names.iter().any(|n| n == name)
+            {
+                names.push(name.to_string());
+            }
+        }
+    }
+    if names.len() < 2 {
+        return Vec::new();
+    }
+    names.truncate(MAX_AREAS);
+    names.sort();
+    names
+}
+
 fn owner(rows: &[Row], path: &str) -> Option<usize> {
     rows.iter()
         .enumerate()
@@ -1369,6 +1463,19 @@ fn enclosing(rows: &[Row], dir: &str) -> Option<usize> {
     // `owner` takes the roots whose path is a prefix of `dir` and a `/`, so
     // the root of `dir` itself is not a candidate.
     owner(rows, dir)
+}
+
+/// The type that the front matter of a document names. A document that
+/// `init` finds can be a document of 0.5. Thus a type name of 0.5 gives its
+/// new type, and `spec` gives `requirements`. `init` never proposes `intent`,
+/// `spec` or `plan`: they are valid only in an intent folder.
+fn fm_type(p: &ParsedDoc) -> Option<DocType> {
+    let name = fm_str(p, "type")?;
+    let t = match name.as_str() {
+        "spec" => DocType::Requirements,
+        n => DocType::from_old_name(n).or_else(|| DocType::from_name(n))?,
+    };
+    (!matches!(t, DocType::Intent | DocType::Spec | DocType::Plan)).then_some(t)
 }
 
 fn fm_str(p: &ParsedDoc, key: &str) -> Option<String> {
@@ -1434,7 +1541,7 @@ mod tests {
             ),
             (
                 "docs/specs/review.md".into(),
-                "---\ntype: note\n---\n# Review\n".into(),
+                "---\ntype: research\n---\n# Review\n".into(),
             ),
             ("docs/guides/vendor-a/one.md".into(), "# One\n".into()),
             ("docs/guides/vendor-b/two.md".into(), "# Two\n".into()),
@@ -1465,7 +1572,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{p}: {:?}", f.rows))
         };
         assert_eq!(row("docs").ty, None);
-        assert_eq!(row("docs").default_type, DocType::Guide);
+        assert_eq!(row("docs").default_type, DocType::Procedure);
         assert_eq!(
             row("docs").status_map,
             [("current".to_string(), "active".to_string())]
@@ -1477,7 +1584,10 @@ mod tests {
         assert_eq!(adr.docs, 3);
         assert!(adr.required_off.is_empty());
         let specs = row("docs/specs");
-        assert_eq!((specs.ty, specs.default_type), (None, DocType::Spec));
+        assert_eq!(
+            (specs.ty, specs.default_type),
+            (None, DocType::Requirements)
+        );
         assert_eq!(specs.legacy_keys, ["R-{n}*"]);
         assert_eq!(
             specs.status_map,
@@ -1485,13 +1595,13 @@ mod tests {
         );
         assert_eq!(row("docs/guides").exclude, ["vendor-*/**"]);
         // A numbered directory takes its type from its own files. These files
-        // show no type, so the type is `note`, not the type of `docs`.
+        // show no type, so the type is `research`, not the type of `docs`.
         let def = row("docs/defects");
         assert_eq!(
             (def.ty, def.legacy_ids.clone()),
-            (Some(DocType::Note), vec!["DEF-{n}".to_string()])
+            (Some(DocType::Research), vec!["DEF-{n}".to_string()])
         );
-        assert_eq!(row("docs/datasheets").ty, Some(DocType::Reference));
+        assert_eq!(row("docs/datasheets").ty, Some(DocType::Research));
         assert_eq!(f.outcome_aliases, ["Decisión"]);
         assert_eq!(f.amendment_aliases, ["Enmiendas"]);
         assert_eq!(f.stack, ["Rust"]);
@@ -1568,11 +1678,11 @@ mod tests {
         let want = [
             ("adrs", DocType::Decision, vec!["ADR-{n}"]),
             ("incidents", DocType::Incident, vec![]),
-            ("meetings", DocType::Reference, vec![]),
+            ("meetings", DocType::Research, vec![]),
             ("postmortems", DocType::Incident, vec![]),
-            ("research", DocType::Reference, vec![]),
-            ("rfcs", DocType::Change, vec![]),
-            ("runbooks", DocType::Runbook, vec![]),
+            ("research", DocType::Research, vec![]),
+            ("rfcs", DocType::Research, vec![]),
+            ("runbooks", DocType::Procedure, vec![]),
         ];
         let want: Vec<(String, Option<DocType>, Vec<String>)> = want
             .into_iter()
@@ -1627,8 +1737,14 @@ mod tests {
             get("docs/records").map(|r| r.1),
             Some(Some(DocType::Incident))
         );
-        assert_eq!(get("docs/reviews").map(|r| r.1), Some(Some(DocType::Note)));
-        assert_eq!(get("docs/specs").map(|r| r.1), Some(Some(DocType::Spec)));
+        assert_eq!(
+            get("docs/reviews").map(|r| r.1),
+            Some(Some(DocType::Research))
+        );
+        assert_eq!(
+            get("docs/specs").map(|r| r.1),
+            Some(Some(DocType::Requirements))
+        );
         assert!(!plain_numbered(
             &["2026-01-05-outage", "2026-02-01-x", "2026-03-01-y"],
             0.6
@@ -1676,7 +1792,7 @@ mod tests {
         }
         assert_eq!(
             row(&files, "docs/specs/features").map(|r| r.1),
-            Some(Some(DocType::Spec))
+            Some(Some(DocType::Requirements))
         );
         // A code directory with a type word is not a root.
         let files: Vec<(String, String)> = vec![
@@ -1714,10 +1830,11 @@ mod tests {
 
     #[test]
     fn maps_status_words() {
-        assert_eq!(map_status("Shipped", DocType::Spec), Some("active"));
+        assert_eq!(map_status("Shipped", DocType::Requirements), Some("active"));
         assert_eq!(map_status("approved", DocType::Decision), Some("accepted"));
-        assert_eq!(map_status("closed", DocType::Change), Some("done"));
-        assert_eq!(map_status("reference", DocType::Guide), None);
+        assert_eq!(map_status("closed", DocType::Intent), Some("closed"));
+        assert_eq!(map_status("open", DocType::Intent), Some("draft"));
+        assert_eq!(map_status("reference", DocType::Procedure), None);
         assert_eq!(number_prefix("ADR-012-cache"), Some("ADR"));
         assert_eq!(number_prefix("ADR-x"), None);
         assert_eq!(number_prefix("adr-1"), None);

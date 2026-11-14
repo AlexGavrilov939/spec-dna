@@ -1,5 +1,6 @@
 //! `spec-dna init` (docs/init.md). It detects the facts of the repository
-//! (`detect.rs`). It asks at most 10 questions with the detected defaults. It
+//! (`detect.rs`). It asks at most 14 questions with the detected defaults (this
+//! version asks 11: see `QUESTIONS`). It
 //! shows a preview (the full `spec-dna.toml` and the files to create or
 //! change), and it writes only after a confirmation. It never edits a
 //! document. It changes an instruction file (`AGENTS.md`, `CLAUDE.md`) only by
@@ -24,6 +25,7 @@ use crate::detect::{self, Facts, GitInfo, Row};
 use crate::diag::Severity;
 use crate::harness::{self, Effort, Harness, Level, Model, Role};
 use crate::json::{self, Obj};
+use crate::layer::{self, Graph};
 use crate::model::DocType;
 use crate::repo::{Fatal, Repo, Snapshot};
 use std::io::{BufRead, IsTerminal, Write};
@@ -66,12 +68,125 @@ const ADAPTERS: [(Adapter, &str); 3] = [
     (Adapter::Skill, "skill"),
 ];
 
-/// The answers of the 10 questions, with the detected defaults.
+/// The answer to question 2: the layer graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphChoice {
+    /// The graph for a project of fewer than 30 documents.
+    Small,
+    /// The graph for a project of 30 documents or more.
+    Default,
+    /// The `[layers]` tables of the current `spec-dna.toml`.
+    Custom,
+}
+
+impl GraphChoice {
+    fn name(self) -> &'static str {
+        match self {
+            GraphChoice::Small => "small",
+            GraphChoice::Default => "default",
+            GraphChoice::Custom => "custom",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<GraphChoice> {
+        [
+            GraphChoice::Small,
+            GraphChoice::Default,
+            GraphChoice::Custom,
+        ]
+        .into_iter()
+        .find(|g| g.name() == s)
+    }
+
+    /// The choice that the size of a project gives.
+    fn of_size(documents: usize) -> GraphChoice {
+        if documents < SMALL_LIMIT {
+            GraphChoice::Small
+        } else {
+            GraphChoice::Default
+        }
+    }
+}
+
+/// A project of fewer documents than this gets the small graph.
+const SMALL_LIMIT: usize = 30;
+
+/// The questions of `init` with their numbers in the design
+/// (docs/design/0.6.0.md, "Init questions"), and the name that the preview
+/// shows. Later steps of 0.6.0 add the questions 4, 5 and 14.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Question {
+    Profile,
+    Graph,
+    Areas,
+    Evidence,
+    Language,
+    Mapping,
+    Budgets,
+    Adapters,
+    Ci,
+    Harness,
+    Models,
+}
+
+/// The questions in the order that `init` asks them: the number of the design
+/// and the name in the preview.
+const QUESTIONS: [(Question, usize, &str); 11] = [
+    (Question::Profile, 1, "profile"),
+    (Question::Graph, 2, "layer graph"),
+    (Question::Areas, 3, "areas of requirements"),
+    (Question::Evidence, 6, "evidence policy and link style"),
+    (
+        Question::Language,
+        7,
+        "normative language and heading aliases",
+    ),
+    (Question::Mapping, 8, "mapping"),
+    (Question::Budgets, 9, "budget level"),
+    (Question::Adapters, 10, "agent adapters"),
+    (Question::Ci, 11, "CI step, hook and base branch"),
+    (Question::Harness, 12, "agent harness"),
+    (Question::Models, 13, "harness models"),
+];
+
+impl Question {
+    fn entry(self) -> (Question, usize, &'static str) {
+        *QUESTIONS
+            .iter()
+            .find(|q| q.0 == self)
+            .expect("each question is in the table")
+    }
+
+    fn number(self) -> usize {
+        self.entry().1
+    }
+
+    /// The start of a prompt: the number, a point and the text.
+    fn prompt(self, text: &str) -> String {
+        format!("{}. {text}", self.number())
+    }
+}
+
+/// The answers of the questions, with the detected defaults.
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub kind: &'static str,
     pub profile: Profile,
-    pub types: Vec<DocType>,
+    pub graph: GraphChoice,
+    /// For `custom`: the graph of the current file, and true if the file has
+    /// the tables `[layers]`. `None` if there is no current file.
+    pub custom: Option<(Graph, bool)>,
+    /// The areas of `requirements/`. Empty: one folder.
+    pub areas: Vec<String>,
+    /// The documents that detection found in the roots.
+    pub documents: usize,
+    /// The root of a new project (`docs`, or the directory of `--root`).
+    pub root: String,
+    /// The reasons why `init` did not write a root or a default type.
+    pub notes: Vec<String>,
+    /// For `--reconfigure`: the key `types` of the current file. The file
+    /// keeps it, and it narrows the types of the skill.
+    pub kept_types: Vec<DocType>,
     /// `None`: the profile decides. `Some(s)`: the rule `evidence`.
     pub evidence: Option<Option<Severity>>,
     pub style: Style,
@@ -104,13 +219,44 @@ pub struct Plan {
     pub harness_notes: Vec<String>,
 }
 
-/// The roots of a new project: one mixed root. `spec-dna new` puts each type
-/// into its own namespace there (`decisions/<id>`), so that the ids of
-/// different types cannot clash.
+impl Plan {
+    /// The layer graph that the answer to question 2 gives.
+    fn layers(&self) -> Graph {
+        match self.graph {
+            // The caller checked that there is a current file.
+            GraphChoice::Custom => self
+                .custom
+                .as_ref()
+                .map_or_else(|| Graph::implied(&[]), |c| c.0.clone()),
+            size => Graph::of_size(size.name()).expect("a size has a graph"),
+        }
+    }
+
+    /// True if the new file has the tables `[layers.*]`. `custom` keeps what
+    /// the current file has: a file with no such tables stays without them.
+    fn writes_layers(&self) -> bool {
+        match self.graph {
+            GraphChoice::Custom => self.custom.as_ref().is_some_and(|c| c.1),
+            _ => true,
+        }
+    }
+}
+
+/// The types that a graph has, in the order of `DocType::ALL`.
+fn graph_types(g: &Graph) -> Vec<DocType> {
+    DocType::ALL
+        .into_iter()
+        .filter(|t| g.layer_of_type(*t).is_some())
+        .collect()
+}
+
+/// The roots of a new project: one mixed root with no `default-type`. The
+/// folder of a layer gives the type of a document (`requirements/` gives
+/// `requirements`), so a new document needs no `type:` line.
 fn layout_rows(root: &str) -> Vec<Row> {
-    let mut main = blank_row(root, None, DocType::Spec);
-    main.status = Some("draft".into());
-    main.why = "new documents: specs by default; `spec-dna new <type> <id>` uses one namespace for each type".into();
+    let mut main = blank_row(root, None, DocType::Research);
+    main.no_default_type = true;
+    main.why = "new documents: the folder of a layer gives the type; `spec-dna new <type> <id>` writes a document there".into();
     vec![main]
 }
 
@@ -119,6 +265,7 @@ fn blank_row(path: &str, ty: Option<DocType>, default_type: DocType) -> Row {
         path: path.to_string(),
         ty,
         default_type,
+        no_default_type: false,
         status: None,
         legacy_ids: Vec::new(),
         legacy_keys: Vec::new(),
@@ -152,9 +299,9 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
     let layout = rows.is_empty();
     let docs_root = root.unwrap_or("docs").trim_matches('/');
     let docs_root = if docs_root.is_empty() { "." } else { docs_root };
-    // Every type by default. A list that omits a type makes each document of
-    // that type an error, so a narrower list is the choice of the user.
-    let types: Vec<DocType> = DocType::ALL.to_vec();
+    // The size of the project gives the graph: the documents of the detected
+    // roots. A new project has none, so it gets the small graph.
+    let documents: usize = rows.iter().map(|r| r.docs).sum();
     let mut adapters_default = vec![Adapter::Skill];
     let agents = facts.agent_files.iter().any(|f| f == "AGENTS.md");
     let claude = facts.agent_files.iter().any(|f| f == "CLAUDE.md");
@@ -169,7 +316,13 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
             "greenfield"
         },
         profile: Profile::Standard,
-        types: types.clone(),
+        graph: GraphChoice::of_size(documents),
+        custom: None,
+        areas: facts.areas.clone(),
+        documents,
+        root: docs_root.to_string(),
+        notes: Vec::new(),
+        kept_types: Vec::new(),
         evidence: None,
         style: Style::Both,
         tests: facts.tests.iter().map(|t| t.0.clone()).collect(),
@@ -214,6 +367,11 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     p.kind = "reconfigure";
     p.profile = cfg.profile;
     p.layout = false;
+    // The current layers are the default of question 2.
+    p.graph = GraphChoice::Custom;
+    p.custom = Some((cfg.layers.clone(), cfg.layers_declared));
+    p.areas = cfg.areas.clone();
+    p.kept_types = cfg.types.clone();
     p.exclude = cfg.exclude.clone();
     p.evidence = cfg.rules.iter().find(|r| r.0 == "evidence").map(|r| r.1);
     // Every current rule stays. The answers for evidence, budgets and the
@@ -232,22 +390,25 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         p.harness = h.clone();
         p.harness_old = Some(h.clone());
     }
-    p.types = if cfg.types.is_empty() {
-        DocType::ALL.to_vec()
-    } else {
-        cfg.types.clone()
-    };
     // The outcome and amendment aliases are in the rows already.
     p.outcome = Vec::new();
     p.amendments = Vec::new();
     // Keep the keys that no question asks for, as written.
     let table: toml::Table = text.parse().unwrap_or_default();
-    for key in ["install-source", "self-urls"] {
+    for key in ["install-source", "self-urls", "types"] {
         if let Some(v) = table.get(key) {
             p.kept.push(format!("{key} = {}", toml_value(v)));
         }
     }
-    for key in ["lint", "context", "repos", "conventions", "spec-dna-sha256"] {
+    for key in [
+        "lint",
+        "context",
+        "repos",
+        "conventions",
+        "groups",
+        "templates",
+        "spec-dna-sha256",
+    ] {
         if let Some(toml::Value::Table(t)) = table.get(key) {
             p.kept.push(format!("\n[{key}]"));
             for (k, v) in t {
@@ -276,8 +437,10 @@ fn row_of_root(r: &config::Root) -> Row {
     let mut row = blank_row(
         if r.path.is_empty() { "." } else { &r.path },
         r.single_type,
-        r.default_type,
+        r.default_type.unwrap_or(DocType::Research),
     );
+    // A mixed root with no `default-type` stays so.
+    row.no_default_type = r.single_type.is_none() && r.default_type.is_none();
     row.status = r.status.clone();
     row.exclude = r.exclude.clone();
     row.legacy_ids = r
@@ -332,10 +495,20 @@ fn row_of_root(r: &config::Root) -> Row {
         ("companion-sections", &r.companion_sections),
         ("live-sections", &r.live_sections),
     ] {
+        // A list that differs from the default stays. The default of a
+        // decision is the live section `Status`, so `decision = []` is a
+        // choice of the file, and `decision = ["Status"]` is not.
+        let default = |t: DocType| -> Vec<String> {
+            if key == "live-sections" && t == DocType::Decision {
+                config::DEFAULT_LIVE_SECTIONS.map(str::to_string).to_vec()
+            } else {
+                Vec::new()
+            }
+        };
         let v: Vec<String> = row
             .types()
             .into_iter()
-            .filter(|&t| !lists[t as usize].is_empty())
+            .filter(|&t| lists[t as usize] != default(t))
             .map(|t| format!("{} = {}", t.name(), toml_list(&lists[t as usize])))
             .collect();
         if !v.is_empty() {
@@ -430,14 +603,14 @@ pub fn render(plan: &Plan) -> String {
         "profile = {}  # lite, standard or strict (docs/profiles.md)\n",
         toml_str(plan.profile.name())
     ));
-    if plan.types.len() < DocType::COUNT {
-        out.push_str(&format!(
-            "types = {}  # the document types of this project\n",
-            toml_list(&type_names(&plan.types))
-        ));
-    }
     if !plan.exclude.is_empty() {
         out.push_str(&format!("exclude = {}\n", toml_list(&plan.exclude)));
+    }
+    if !plan.areas.is_empty() {
+        out.push_str(&format!(
+            "areas = {}  # the folders of requirements/\n",
+            toml_list(&plan.areas)
+        ));
     }
     if plan.kept.iter().all(|k| !k.starts_with("install-source")) {
         out.push_str(&format!(
@@ -513,7 +686,7 @@ pub fn render(plan: &Plan) -> String {
         _ => None,
     };
     if let Some(f) = factor {
-        for t in &plan.types {
+        for t in &graph_types(&plan.layers()) {
             let (soft, hard) = DEFAULT_BUDGETS[*t as usize];
             if hard > 0 {
                 out.push_str(&format!(
@@ -535,6 +708,10 @@ pub fn render(plan: &Plan) -> String {
     }
     out.push('\n');
     out.push_str(&plan.harness.toml_section());
+    if plan.writes_layers() {
+        out.push_str("\n# The layer graph (docs/config.md). `spec-dna layer add` adds a layer.\n");
+        out.push_str(&layer::render_graph(&plan.layers()));
+    }
     for r in &plan.rows {
         out.push('\n');
         if !r.why.is_empty() {
@@ -551,10 +728,12 @@ fn render_row(plan: &Plan, r: &Row) -> String {
         Some(t) => out.push_str(&format!("type = {}\n", toml_str(t.name()))),
         None => {
             out.push_str("type = \"mixed\"\n");
-            out.push_str(&format!(
-                "default-type = {}\n",
-                toml_str(r.default_type.name())
-            ));
+            if !r.no_default_type {
+                out.push_str(&format!(
+                    "default-type = {}\n",
+                    toml_str(r.default_type.name())
+                ));
+            }
         }
     }
     if let Some(s) = &r.status {
@@ -588,7 +767,7 @@ fn render_row(plan: &Plan, r: &Row) -> String {
     // The headings of other languages go to the roots that hold decisions, or
     // that can hold new ones (a new project).
     let decisions = r.ty == Some(DocType::Decision)
-        || r.default_type == DocType::Decision
+        || (r.default_type == DocType::Decision && !r.no_default_type)
         || (r.ty.is_none() && (r.decisions > 0 || plan.layout));
     let mut required: Vec<String> = Vec::new();
     if decisions && !plan.outcome.is_empty() && !r.required_off.contains(&DocType::Decision) {
@@ -981,20 +1160,52 @@ fn words(s: &str) -> Vec<String> {
         .collect()
 }
 
-fn type_names(types: &[DocType]) -> Vec<String> {
-    types.iter().map(|t| t.name().to_string()).collect()
+/// Reads the answer to question 2. `custom` needs the layers of a current
+/// `spec-dna.toml`.
+fn parse_graph(w: &str, plan: &Plan) -> Result<GraphChoice, String> {
+    let g = GraphChoice::from_name(w)
+        .ok_or_else(|| format!("graph `{w}`: use small, default or custom"))?;
+    if g == GraphChoice::Custom && plan.custom.is_none() {
+        return Err(
+            "graph `custom` keeps the layers of the current spec-dna.toml, and there is none: use small or default (or `init --reconfigure` on an existing file)".into(),
+        );
+    }
+    Ok(g)
 }
 
-fn parse_types(v: &[String]) -> Result<Vec<DocType>, String> {
-    let mut out = Vec::new();
-    for w in v {
-        let t = DocType::from_name(w)
-            .ok_or_else(|| format!("unknown type `{w}`; use {}", DocType::names()))?;
-        if !out.contains(&t) {
-            out.push(t);
+/// Reads the answer to question 3: the names of the folders of
+/// `requirements/`, or `none`.
+fn parse_areas(v: &[String]) -> Result<Vec<String>, String> {
+    if v.len() == 1 && v[0] == "none" {
+        return Ok(Vec::new());
+    }
+    let mut out: Vec<String> = Vec::new();
+    for a in v {
+        if a.is_empty()
+            || a == "none"
+            || a == "."
+            || a == ".."
+            || a.contains(['/', '\\'])
+            || a.trim() != a
+        {
+            return Err(format!(
+                "area `{a}`: write the name of one folder of requirements/, or `none`"
+            ));
         }
+        if out.contains(a) {
+            return Err(format!("area `{a}` is listed twice"));
+        }
+        out.push(a.clone());
     }
     Ok(out)
+}
+
+fn areas_value(areas: &[String]) -> String {
+    if areas.is_empty() {
+        "none".into()
+    } else {
+        list(areas)
+    }
 }
 
 fn parse_evidence(w: &str) -> Result<Option<Option<Severity>>, String> {
@@ -1070,7 +1281,7 @@ fn parse_level(w: &str) -> Result<Level, String> {
     Level::from_name(w).ok_or_else(|| format!("harness level `{w}`: use none, lean or full"))
 }
 
-/// The line of question 10: one `role=model[:effort]` word for each role of
+/// The line of question 13: one `role=model[:effort]` word for each role of
 /// the level. The advisor word has the model of `fallback-advisor` after a
 /// slash, if it is not the default.
 fn models_line(h: &Harness) -> String {
@@ -1413,30 +1624,101 @@ fn harness_json(h: Option<&HarnessRun>, level: Level) -> String {
 
 const RESTART: &str = "Restart Claude Code. Then check: the header shows the main model, /advisor shows the advisor, and @ lists the agents.";
 
-/// The types of a plan change the roots of a new project. They also change the
-/// type of a detected root whose type is not chosen (it becomes a note).
-fn apply_types(plan: &mut Plan, root: &str) {
-    if plan.layout {
-        plan.rows = layout_rows(root);
+/// Makes the roots fit the layer graph. A root that holds one type is not
+/// written if no layer has that type. A mixed root keeps its place, but loses
+/// its `default-type` and its status if no layer has the default type. In
+/// both cases a note says why. `custom` changes no root: the roots of the
+/// current file are the choice of the file. The call is idempotent.
+fn settle(plan: &mut Plan) {
+    if plan.layout || plan.graph == GraphChoice::Custom {
         return;
     }
-    for r in &mut plan.rows {
-        let t = r.ty.unwrap_or(r.default_type);
-        if !plan.types.contains(&t) && t != DocType::Note {
-            r.why = format!("{} (type `{}` not chosen: note)", r.why, t.name());
-            if r.ty.is_some() {
-                r.ty = Some(DocType::Note);
-            }
-            r.default_type = DocType::Note;
-            r.status = None;
-            r.status_map.clear();
-            r.required_off.clear();
-            r.legacy_keys.clear();
-            r.extra.retain(|e| {
-                !e.starts_with("required-sections") && !e.starts_with("amendment-sections")
-            });
-        }
+    let graph = plan.layers();
+    let has = |t: DocType| graph.layer_of_type(t).is_some();
+    let choice = plan.graph.name();
+    let mut notes = Vec::new();
+    // The note comes from the roots that detection found, also if the graph
+    // has no layer for them.
+    if has_proposals(&plan.rows) && !plan.notes.iter().any(|n| n == PROPOSALS_NOTE) {
+        notes.push(PROPOSALS_NOTE.to_string());
     }
+    plan.rows.retain_mut(|r| {
+        match r.ty {
+            Some(t) if !has(t) => {
+                notes.push(format!(
+                    "root `{}` of type `{}` is not written: the {choice} graph has no layer with that type. Choose `default` at question 2, or add a layer with `spec-dna layer add` and a root by hand",
+                    r.path,
+                    t.name()
+                ));
+                return false;
+            }
+            None if !r.no_default_type && !has(r.default_type) => {
+                notes.push(format!(
+                    "root `{}` has no `default-type`: the {choice} graph has no layer with its detected default type `{}`. A document with no type and no layer folder gives SD303",
+                    r.path,
+                    r.default_type.name()
+                ));
+                r.no_default_type = true;
+                r.status = None;
+            }
+            _ => {}
+        }
+        true
+    });
+    plan.notes.extend(notes);
+    // A configuration needs a root. If the graph left none, the project gets
+    // the root of a new project.
+    if plan.rows.is_empty() {
+        plan.rows = layout_rows(&plan.root);
+        plan.layout = true;
+        plan.notes.push(format!(
+            "no detected root fits the {choice} graph: `init` writes the root `{}` of a new project",
+            plan.root
+        ));
+    }
+}
+
+/// The note for a folder of proposals or changes. A flat folder of them
+/// (`rfcs`, `proposals`) and the prefixes `RFC` and `KEP` give `research`,
+/// because the type `intent` is valid only as `intent/<slug>/intent.md`.
+const PROPOSALS_NOTE: &str = "a folder of proposals or changes is a `research` root: an intent is valid only as `intent/<slug>/intent.md`. To start an open proposal, run `spec-dna new intent <slug>`";
+
+/// True if a root holds proposals or changes.
+fn has_proposals(rows: &[Row]) -> bool {
+    const FLAT: [&str; 6] = [
+        "rfcs",
+        "proposals",
+        "changes",
+        "tasks",
+        "plans",
+        "enhancements",
+    ];
+    const PREFIXES: [&str; 4] = ["RFC", "RFD", "KEP", "PEP"];
+    rows.iter().any(|r| {
+        let name = r.path.rsplit('/').next().unwrap_or(&r.path);
+        r.ty == Some(DocType::Research)
+            && (FLAT.contains(&name.to_ascii_lowercase().as_str())
+                || PREFIXES.iter().any(|p| has_prefix(r, p)))
+    })
+}
+
+/// The notes of the preview: why `init` left a root out, and how to start a
+/// proposal.
+fn notes(plan: &Plan) -> Vec<String> {
+    let mut out = plan.notes.clone();
+    if has_proposals(&plan.rows) && !out.iter().any(|n| n == PROPOSALS_NOTE) {
+        out.push(PROPOSALS_NOTE.into());
+    }
+    out
+}
+
+/// True if a legacy id of a root starts with the prefix (`RFC-{n}`).
+fn has_prefix(r: &Row, prefix: &str) -> bool {
+    r.legacy_ids.iter().any(|l| {
+        l.split_once('|')
+            .map_or(l.as_str(), |(a, _)| a)
+            .starts_with(&format!("{prefix}-"))
+    })
 }
 
 /// Edits a row with `key=value` words: `path`, `type` (a type or `mixed`),
@@ -1457,17 +1739,27 @@ fn edit_row(r: &mut Row, edits: &str) -> Result<(), String> {
             "path" => r.path = v.trim_matches('/').to_string(),
             "type" if v == "mixed" => r.ty = None,
             "type" => {
-                let t = DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?;
+                let t = DocType::from_name(v)
+                    .ok_or_else(|| format!("unknown type `{v}`; {}", DocType::unknown_hint(v)))?;
                 r.ty = Some(t);
                 r.default_type = t;
                 retype(r);
             }
             "default-type" => {
-                r.default_type =
-                    DocType::from_name(v).ok_or_else(|| format!("unknown type `{v}`"))?;
+                r.default_type = DocType::from_name(v)
+                    .ok_or_else(|| format!("unknown type `{v}`; {}", DocType::unknown_hint(v)))?;
+                r.no_default_type = false;
                 retype(r);
             }
-            "status" => r.status = (!v.is_empty() && v != "none").then(|| v.to_string()),
+            "status" => {
+                if r.ty.is_none() && r.no_default_type && !v.is_empty() && v != "none" {
+                    return Err(
+                        "a mixed root with no default type has no status: set `default-type` first"
+                            .into(),
+                    );
+                }
+                r.status = (!v.is_empty() && v != "none").then(|| v.to_string());
+            }
             "exclude" => r.exclude = items(),
             "legacy-ids" => r.legacy_ids = items(),
             "legacy-keys" => r.legacy_keys = items(),
@@ -1487,7 +1779,8 @@ fn retype(r: &mut Row) {
         .is_some_and(|s| !r.default_type.statuses().contains(&s))
     {
         r.status = match r.default_type {
-            DocType::Decision | DocType::Change => Some("proposed".into()),
+            DocType::Decision => Some("proposed".into()),
+            DocType::Intent | DocType::Spec | DocType::Plan => Some("draft".into()),
             t if t.has_status() => Some("active".into()),
             _ => None,
         };
@@ -1506,6 +1799,7 @@ fn retype(r: &mut Row) {
 fn row_line(r: &Row) -> String {
     let ty = match r.ty {
         Some(t) => t.name().to_string(),
+        None if r.no_default_type => "mixed, no default type".to_string(),
         None => format!("mixed, default {}", r.default_type.name()),
     };
     let mut extra = Vec::new();
@@ -1579,28 +1873,52 @@ fn budgets_value(b: Budgets) -> &'static str {
 }
 
 /// Asks the questions on a terminal.
-fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), String> {
+fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     io.say(&format!(
         "spec-dna init: {} repository with {} files and {} Markdown documents. Press Enter to keep a default.",
         plan.kind, facts.files, facts.markdown
     ));
     io.say("lite: warnings only. standard: broken references and budget growth are errors. strict: drift, evidence and budgets are errors, and lint gives warnings.");
-    let p = io.line("1/10 Profile (lite, standard, strict)", plan.profile.name());
+    let p = io.line(
+        &Question::Profile.prompt("Profile (lite, standard, strict)"),
+        plan.profile.name(),
+    );
     plan.profile =
         Profile::from_name(&p).ok_or(format!("profile `{p}`: use lite, standard or strict"))?;
 
-    let found: Vec<String> = type_names(&facts.types);
     io.say(&format!(
-        "    Types in use: {}. A shorter list makes each document of another type an error.",
-        if found.is_empty() {
-            "none yet".to_string()
-        } else {
-            list(&found)
-        }
+        "    Documents found: {}. small: foundation, pending, rules, requirements, decisions, intent and incidents (fewer than {SMALL_LIMIT} documents). default: also interfaces, procedures and research. custom: the layers of the current spec-dna.toml.",
+        plan.documents
     ));
-    let t = io.line("2/10 Knowledge types", &list(&type_names(&plan.types)));
-    plan.types = parse_types(&words(&t))?;
-    apply_types(plan, root);
+    let small = Graph::small();
+    let outside: Vec<String> = facts
+        .types
+        .iter()
+        .filter(|t| small.layer_of_type(**t).is_none())
+        .map(|t| t.name().to_string())
+        .collect();
+    if !outside.is_empty() && plan.graph != GraphChoice::Custom {
+        io.say(&format!(
+            "    Found types that the small graph has no layer for: {}. A root of such a type is not written with the small graph.",
+            list(&outside)
+        ));
+    }
+    let g = io.line(
+        &Question::Graph.prompt("Layer graph (small, default, custom)"),
+        plan.graph.name(),
+    );
+    plan.graph = parse_graph(&g, plan)?;
+    settle(plan);
+
+    io.say(&format!(
+        "    Areas found: {}. An area is a folder of requirements/.",
+        areas_value(&facts.areas)
+    ));
+    let a = io.line(
+        &Question::Areas.prompt("Areas of requirements/ (names, or none)"),
+        &areas_value(&plan.areas),
+    );
+    plan.areas = parse_areas(&words(&a))?;
 
     let found: Vec<String> = facts
         .tests
@@ -1625,7 +1943,9 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         Style::Both => "both",
     };
     let a = io.line(
-        "3/10 Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both)",
+        &Question::Evidence.prompt(
+            "Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both)",
+        ),
         &format!("{ev}, {st}"),
     );
     let w = words(&a);
@@ -1660,7 +1980,10 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
             list(&plan.amendments)
         }
     );
-    let a = io.line("4/10 Normative language and heading aliases", &default);
+    let a = io.line(
+        &Question::Language.prompt("Normative language and heading aliases"),
+        &default,
+    );
     let mut parts = a.split(';');
     plan.language = parts.next().unwrap_or("en").trim().to_string();
     for part in parts {
@@ -1679,7 +2002,8 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
     }
 
     io.say(&format!(
-        "5/10 Mapping: {} roots. For each root, press Enter to accept it, enter `drop` to remove it, or enter `key=value ...` to edit it (path, type, default-type, status, exclude, legacy-ids, legacy-keys).",
+        "{}. Mapping: {} roots. For each root, press Enter to accept it, enter `drop` to remove it, or enter `key=value ...` to edit it (path, type, default-type, status, exclude, legacy-ids, legacy-keys).",
+        Question::Mapping.number(),
         plan.rows.len()
     ));
     let mut rows = Vec::new();
@@ -1703,6 +2027,8 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         }
     }
     plan.rows = rows;
+    // An edited root can have a type that the graph has no layer for.
+    settle(plan);
 
     io.say(&format!(
         "    Documents over the hard budget: default {}, relaxed (x2) {}, tight (x0.5) {}.",
@@ -1711,7 +2037,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         detect::over_budget(facts, 0.5)
     ));
     let b = io.line(
-        "6/10 Budget level (default, relaxed, tight, off)",
+        &Question::Budgets.prompt("Budget level (default, relaxed, tight, off)"),
         match plan.budgets {
             Budgets::Default => "default",
             Budgets::Relaxed => "relaxed",
@@ -1730,7 +2056,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         }
     ));
     let a = io.line(
-        "7/10 Agent adapters (agents-md, claude-md, skill, none)",
+        &Question::Adapters.prompt("Agent adapters (agents-md, claude-md, skill, none)"),
         &list(&adapter_names(&plan.adapters)),
     );
     plan.adapters = parse_adapters(&words(&a))?;
@@ -1749,7 +2075,9 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         }
     ));
     let a = io.line(
-        "8/10 CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch",
+        &Question::Ci.prompt(
+            "CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch",
+        ),
         &format!("{}, {}, {}", plan.ci, plan.hook, plan.base),
     );
     let w = words(&a);
@@ -1769,7 +2097,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         io.say(&format!("    {n}"));
     }
     let a = io.line(
-        "9/10 Agent harness (none, lean, full)",
+        &Question::Harness.prompt("Agent harness (none, lean, full)"),
         plan.harness.level.name(),
     );
     plan.harness.level = parse_level(&a)?;
@@ -1779,7 +2107,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
         io.say("    `checker` and `Explore` run only when the main session uses them.");
         io.say("    `none` turns a role off. Write advisor=<model>/<model of fallback-advisor> to set both.");
         let a = io.line(
-            "10/10 Models (role=model[:effort] ...)",
+            &Question::Models.prompt("Models (role=model[:effort] ...)"),
             &models_line(&plan.harness),
         );
         apply_models(&mut plan.harness, &words(&a))?;
@@ -1790,7 +2118,7 @@ fn ask(plan: &mut Plan, facts: &Facts, root: &str, io: &mut Ask) -> Result<(), S
 
 /// Applies an answers file (TOML) to the plan. A key that is not in the file
 /// keeps its default.
-fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String> {
+fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
     let t: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let s = |k: &str| -> Result<Option<String>, String> {
         match t.get(k) {
@@ -1811,9 +2139,10 @@ fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String
             Some(_) => Err(format!("answers: `{k}` must be an array of strings")),
         }
     };
-    const KEYS: [&str; 19] = [
+    const KEYS: [&str; 20] = [
         "profile",
-        "types",
+        "graph",
+        "areas",
         "evidence",
         "evidence-style",
         "language",
@@ -1832,6 +2161,11 @@ fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String
         "harness-deny",
         "write",
     ];
+    if t.contains_key("types") {
+        return Err(
+            "answers: the key `types` ended in 0.6; use the key `graph` (\"small\", \"default\" or \"custom\"): the layers give the types".into(),
+        );
+    }
     if let Some(k) = t.keys().find(|k| !KEYS.contains(&k.as_str())) {
         return Err(format!(
             "answers: unknown key `{k}`; use {}",
@@ -1841,9 +2175,17 @@ fn apply_answers(plan: &mut Plan, text: &str, root: &str) -> Result<bool, String
     if let Some(p) = s("profile")? {
         plan.profile = Profile::from_name(&p).ok_or(format!("answers: profile `{p}`"))?;
     }
-    if let Some(v) = l("types")? {
-        plan.types = parse_types(&v)?;
-        apply_types(plan, root);
+    if let Some(g) = s("graph")? {
+        plan.graph = parse_graph(&g, plan).map_err(|e| format!("answers: {e}"))?;
+    }
+    // `areas = []` and `areas = "none"` give one folder.
+    let areas = match t.get("areas") {
+        None => None,
+        Some(toml::Value::String(v)) => Some(vec![v.clone()]),
+        Some(_) => l("areas")?,
+    };
+    if let Some(v) = areas {
+        plan.areas = parse_areas(&v).map_err(|e| format!("answers: {e}"))?;
     }
     if let Some(e) = s("evidence")? {
         plan.evidence = parse_evidence(&e)?;
@@ -1988,7 +2330,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     if let Some(path) = &o.answers {
         let text = std::fs::read_to_string(path)
             .map_err(|e| Fatal::Usage(format!("--answers {path}: {e}")))?;
-        write = apply_answers(&mut plan, &text, &root).map_err(Fatal::Usage)?;
+        write = apply_answers(&mut plan, &text).map_err(Fatal::Usage)?;
     } else if interactive {
         let stdin = std::io::stdin();
         let mut input = stdin.lock();
@@ -1997,8 +2339,13 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             input: &mut input,
             out: &mut out,
         };
-        ask(&mut plan, &facts, &root, &mut io).map_err(Fatal::Usage)?;
+        ask(&mut plan, &facts, &mut io).map_err(Fatal::Usage)?;
     }
+    // The answers can change the graph, so the roots follow it now. The
+    // preview shows the defaults with the same rule.
+    settle(&mut plan);
+    let mut offered = before.clone();
+    settle(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
     Config::parse(&text)
@@ -2018,7 +2365,8 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             },
         });
     }
-    changes.extend(adapter_changes(repo, &plan.adapters, &plan.types)?);
+    let types = adapters::project_types(&plan.layers(), &plan.kept_types);
+    changes.extend(adapter_changes(repo, &plan.adapters, &types)?);
     let (ci, manual) = ci_changes(repo, &plan);
     changes.extend(ci);
     // A new configuration and `--reconfigure` both replace the harness.
@@ -2032,7 +2380,8 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     )?;
 
     let preview = o.dry_run || interactive || !write;
-    let resolved = resolved_answers(&plan, &before, &text, &changes, &manual, hrun.as_ref());
+    let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
+    let notes = notes(&plan);
     if o.json {
         let answers = resolved.iter().map(|r| {
             Obj::new()
@@ -2048,7 +2397,14 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             Obj::new()
                 .str("path", &r.path)
                 .str("type", r.ty.map_or("mixed", DocType::name))
-                .str("default_type", r.default_type.name())
+                .raw(
+                    "default_type",
+                    &if r.no_default_type {
+                        "null".to_string()
+                    } else {
+                        format!("\"{}\"", r.default_type.name())
+                    },
+                )
                 .num("documents", r.docs)
                 .str("why", &r.why)
                 .end()
@@ -2081,6 +2437,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .str("config", &text)
                 .raw("files", &files_json(repo, &changes))
                 .strs("manual", &manual)
+                .strs("notes", &notes)
                 .raw("harness", &harness_json(hrun.as_ref(), plan.harness.level))
                 .strs("written", &written)
                 .end()
@@ -2091,6 +2448,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         println!("\nHow the answers were applied:");
         for r in &resolved {
             println!("{}", r.line());
+        }
+        for n in &notes {
+            println!("note: {n}");
         }
         println!("\n--- spec-dna.toml ---\n{}---", text);
         println!("Files to create or change:");
@@ -2140,6 +2500,11 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     }
     let written = apply(repo, &changes)?;
     report(&written, &plan.adapters, &changes);
+    if !preview {
+        for n in &notes {
+            println!("note: {n}");
+        }
+    }
     for m in &manual {
         println!("{m}");
     }
@@ -2171,7 +2536,8 @@ fn apply(repo: &Repo, changes: &[Change]) -> Result<Vec<String>, Fatal> {
     Ok(written)
 }
 
-/// One answer of the 10 questions, as the preview shows it.
+/// One answer, as the preview shows it. `number` is the number of the
+/// question in the design.
 struct Resolved {
     number: usize,
     name: &'static str,
@@ -2193,20 +2559,20 @@ impl Resolved {
         };
         if self.writes.is_empty() {
             format!(
-                "  {}/10 {}: {} ({state}, writes nothing)",
+                "  {}. {}: {} ({state}, writes nothing)",
                 self.number, self.name, self.value
             )
         } else {
             format!(
-                "  {}/10 {}: {} ({state}) -> {}",
+                "  {}. {}: {} ({state}) -> {}",
                 self.number, self.name, self.value, self.writes
             )
         }
     }
 }
 
-/// How `init` applied each of the 10 answers. `before` is the plan that the
-/// questions offered, so its values are the defaults. `text` is the new
+/// How `init` applied each answer. `before` is the plan that the questions
+/// offered, so its values are the defaults. `text` is the new
 /// configuration, and `changes` are the files to write. `hrun` is the harness
 /// plan.
 fn resolved_answers(
@@ -2217,13 +2583,7 @@ fn resolved_answers(
     manual: &[String],
     hrun: Option<&HarnessRun>,
 ) -> Vec<Resolved> {
-    let types = |p: &Plan| {
-        if p.types.len() == DocType::COUNT {
-            format!("all {}", DocType::COUNT)
-        } else {
-            list(&type_names(&p.types))
-        }
-    };
+    let graph = |p: &Plan| p.graph.name().to_string();
     // The value has the full line of each root, so a change of a root shows in
     // the line.
     let mapping = |p: &Plan| {
@@ -2239,7 +2599,7 @@ fn resolved_answers(
         .iter()
         .map(|c| c.path.as_str())
         .filter(|p| adapters::PATHS.contains(p))
-        // The harness writes `CLAUDE.md` too, and question 9 lists it.
+        // The harness writes `CLAUDE.md` too, and question 12 lists it.
         .filter(|p| *p != harness::CLAUDE || plan.adapters.contains(&Adapter::ClaudeMd))
         .collect();
     let ci_files: Vec<&str> = changes
@@ -2300,35 +2660,45 @@ fn resolved_answers(
     }
     let rows = [
         (
-            "profile",
+            Question::Profile,
             plan.profile.name().to_string(),
             before.profile.name().to_string(),
             format!("profile = \"{}\"", plan.profile.name()),
         ),
         (
-            "knowledge types",
-            types(plan),
-            types(before),
-            if plan.types.len() < DocType::COUNT {
-                format!("types = {}", toml_list(&type_names(&plan.types)))
+            Question::Graph,
+            graph(plan),
+            graph(before),
+            if plan.writes_layers() {
+                format!("{} [layers.*] tables", plan.layers().layers().len())
             } else {
                 String::new()
             },
         ),
         (
-            "evidence policy and link style",
+            Question::Areas,
+            areas_value(&plan.areas),
+            areas_value(&before.areas),
+            if plan.areas.is_empty() {
+                String::new()
+            } else {
+                format!("areas = {}", toml_list(&plan.areas))
+            },
+        ),
+        (
+            Question::Evidence,
             evidence_value(plan),
             evidence_value(before),
             evidence.join(", "),
         ),
         (
-            "normative language and heading aliases",
+            Question::Language,
             language_value(plan),
             language_value(before),
             language.join(", "),
         ),
         (
-            "mapping",
+            Question::Mapping,
             mapping(plan),
             mapping(before),
             if plan.rows.is_empty() {
@@ -2338,31 +2708,26 @@ fn resolved_answers(
             },
         ),
         (
-            "budget level",
+            Question::Budgets,
             budgets_value(plan.budgets).to_string(),
             budgets_value(before.budgets).to_string(),
             budgets,
         ),
         (
-            "agent adapters",
+            Question::Adapters,
             list(&adapter_names(&plan.adapters)),
             list(&adapter_names(&before.adapters)),
             adapter_files.join(", "),
         ),
+        (Question::Ci, ci(plan), ci(before), ci_writes),
         (
-            "CI step, hook and base branch",
-            ci(plan),
-            ci(before),
-            ci_writes,
-        ),
-        (
-            "agent harness",
+            Question::Harness,
             plan.harness.level.name().to_string(),
             before.harness.level.name().to_string(),
             harness_writes,
         ),
         (
-            "harness models",
+            Question::Models,
             models(plan),
             models(before),
             if plan.harness.level == Level::None {
@@ -2372,13 +2737,15 @@ fn resolved_answers(
             },
         ),
     ];
+    // The rows are in the order of the table of the questions.
+    let mut rows: Vec<_> = rows.into_iter().collect();
+    rows.sort_by_key(|r| r.0.number());
     rows.into_iter()
-        .enumerate()
-        .map(|(i, (name, value, offered, writes))| {
+        .map(|(q, value, offered, writes)| {
             let default = value == offered;
             Resolved {
-                number: i + 1,
-                name,
+                number: q.number(),
+                name: q.entry().2,
                 value,
                 offered,
                 default,
@@ -2622,7 +2989,8 @@ fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
     if exists(adapters::AGENTS) || !exists(adapters::CLAUDE) {
         chosen.insert(0, Adapter::AgentsMd);
     }
-    let mut changes = adapter_changes(repo, &chosen, &cfg.types)?;
+    let types = adapters::project_types(&cfg.layers, &cfg.types);
+    let mut changes = adapter_changes(repo, &chosen, &types)?;
     // A hook of 0.4.1 reads the working tree. The hook of this version reads
     // the index.
     for path in HOOK_FILES {
@@ -2715,7 +3083,7 @@ mod tests {
         assert_eq!(cfg.roots.len(), 1);
         assert_eq!(cfg.roots[0].path, "docs");
         assert!(cfg.types.is_empty(), "every type by default");
-        assert!(cfg.allows(DocType::Contract));
+        assert!(cfg.allows(DocType::Interface));
         assert_eq!(
             cfg.roots[0].required_sections[DocType::Decision as usize],
             [["Decisión", "Decision Outcome", "Decision"]]
@@ -2728,14 +3096,17 @@ mod tests {
             cfg.severity(crate::diag::Code::RequirementKeyword, Some(0)),
             None
         );
-        assert_eq!(cfg.budgets[DocType::Spec as usize], (20_000, 40_000));
+        assert_eq!(
+            cfg.budgets[DocType::Requirements as usize],
+            (20_000, 40_000)
+        );
         let mut r = plan.rows[0].clone();
         edit_row(
             &mut r,
-            "type=guide status=active exclude=a/**,b.md legacy-ids=DEF-{n}",
+            "type=procedure status=active exclude=a/**,b.md legacy-ids=DEF-{n}",
         )
         .unwrap();
-        assert_eq!(r.ty, Some(DocType::Guide));
+        assert_eq!(r.ty, Some(DocType::Procedure));
         assert_eq!(r.exclude, ["a/**", "b.md"]);
         assert!(edit_row(&mut r, "colour=red").is_err());
     }
@@ -2747,7 +3118,7 @@ mod tests {
         r.status = Some("proposed".into());
         r.extra
             .push("required-sections = { decision = [\"Decisión\"] }".into());
-        edit_row(&mut r, "type=spec").unwrap();
+        edit_row(&mut r, "type=requirements").unwrap();
         assert_eq!(r.status.as_deref(), Some("active"));
         assert!(r.extra.is_empty());
         // A removed decision section stays removed with aliases.

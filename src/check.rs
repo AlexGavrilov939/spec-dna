@@ -5,6 +5,7 @@
 use crate::config::Config;
 use crate::diag::{Code, Diag};
 use crate::evidence::{Evidence, needs_evidence};
+use crate::layer::Keep;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
 use std::collections::{HashMap, HashSet};
@@ -278,7 +279,7 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
             1,
             Code::IncidentUnlinked,
             "",
-            "the incident links no requirement, decision or runbook",
+            "the incident links no requirement, rule, decision or procedure",
         ));
     }
     if d.ty == DocType::Decision && d.status_str() == "accepted" && d.generated.is_none() {
@@ -372,11 +373,11 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
 }
 
 /// Returns true if a document links a requirement (or a document with
-/// requirements), a decision or a runbook.
+/// requirements), a decision or a procedure.
 fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
     let useful = |t: u32| {
         let ty = c.docs[t as usize].ty;
-        ty.has_requirements() || matches!(ty, DocType::Decision | DocType::Runbook)
+        ty.has_requirements() || matches!(ty, DocType::Decision | DocType::Procedure)
     };
     d.parsed.refs.iter().any(|r| match r.kind {
         RefKind::Wiki => matches!(c.resolve(&r.target), Res::Found(t, _, true) if useful(t)),
@@ -386,10 +387,11 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
     })
 }
 
-/// SD611: an accepted decision links a document of the type `change` in its
-/// frozen text, or in `depends-on`. A change can be deleted when it is done or
-/// rejected (SD202 allows it), and the frozen text cannot drop the link. A link
-/// in an amendment, history or live section can change, so it is allowed.
+/// SD611: an accepted decision links a document of the type `intent` in its
+/// frozen text, or in `depends-on`. You can delete a finished intent (SD202
+/// allows it: its layer is `until-finished`), but you cannot remove the link from
+/// the frozen text. A link in an amendment, history or live section can change,
+/// so it is allowed.
 fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) {
     let p = &d.parsed;
     let live = crate::model::amendment_chunks(
@@ -407,7 +409,7 @@ fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Dia
     let mut seen: Vec<u32> = Vec::new();
     let mut hit = |t: u32, line: u32| {
         let target = &c.docs[t as usize];
-        if target.ty == DocType::Change && !seen.contains(&t) {
+        if target.ty == DocType::Intent && !seen.contains(&t) {
             seen.push(t);
             out.push(diag(
                 d,
@@ -415,7 +417,7 @@ fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Dia
                 Code::DecisionLinksChange,
                 target.id.clone(),
                 format!(
-                    "the accepted decision links the change `{}`; a change can be deleted, and the frozen text of the decision cannot drop the link",
+                    "the accepted decision links the intent `{}`; an intent can be deleted, and the frozen text of the decision cannot drop the link",
                     target.id
                 ),
             ));
@@ -492,6 +494,26 @@ fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {
     }
 }
 
+/// True if SD202 allows the deletion of a base document. The layer of the
+/// document in the base tree decides: a layer with `keep = "until-finished"`
+/// allows it. In a `forever` layer, only the field `was-type` (`note` or
+/// `change`, written by `upgrade`) allows it. The status gives no exemption.
+fn deletion_allowed(config: &Config, b: &Doc) -> bool {
+    if matches!(b.was_type.as_deref(), Some("note" | "change")) {
+        return true;
+    }
+    // The head configuration gives the root. A root that moved gives the full path.
+    let rel = config
+        .roots
+        .get(b.root)
+        .filter(|r| b.path.starts_with(&format!("{}/", r.path)) || r.path.is_empty())
+        .map_or(b.path.as_str(), |r| r.rel(&b.path));
+    config
+        .layers
+        .layer_of(rel, b.ty)
+        .is_some_and(|i| config.layers.layers()[i].keep == Keep::UntilFinished)
+}
+
 /// Returns the diagnostics that compare the base tree with the head tree. All
 /// of them are new by definition.
 pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
@@ -502,10 +524,7 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
             Some([i]) => Some(&head.docs[*i as usize]),
             Some(_) => None,
             None => {
-                let deletable = matches!(
-                    (b.ty, b.status_str()),
-                    (DocType::Change, "done" | "rejected") | (DocType::Note, _)
-                );
+                let deletable = deletion_allowed(config, b);
                 if !deletable && !head.files.contains(&b.path) {
                     out.push(Diag {
                         path: b.path.clone(),
@@ -739,11 +758,11 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
     if from == to {
         return true;
     }
-    // An invariant and a runbook have the states of a spec (ADR 0001,
-    // amendment of 0.2.0).
+    // A rule, an interface and a procedure have the states of a requirements
+    // document (ADR 0001, amendment of 0.2.0).
     let spec_like = matches!(
         ty,
-        DocType::Spec | DocType::Contract | DocType::Guide | DocType::Invariant | DocType::Runbook
+        DocType::Requirements | DocType::Interface | DocType::Procedure | DocType::Rule
     );
     let rank = |s: &str| -> Option<u8> {
         Some(match (ty, s) {
@@ -751,14 +770,15 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
             (_, "active") if spec_like => 1,
             (_, "deprecated") if spec_like => 2,
             (_, "superseded" | "retired") if spec_like => 3,
-            (DocType::Decision | DocType::Change, "proposed") => 0,
-            (DocType::Decision | DocType::Change, "accepted") => 1,
-            (DocType::Decision, "superseded" | "rejected") => 2,
-            (DocType::Change, "done" | "rejected") => 2,
+            (DocType::Decision, "proposed")
+            | (DocType::Intent | DocType::Spec | DocType::Plan, "draft") => 0,
+            (DocType::Decision | DocType::Intent, "accepted")
+            | (DocType::Spec | DocType::Plan, "approved") => 1,
+            (DocType::Decision, "superseded" | "rejected") | (DocType::Intent, "closed") => 2,
             _ => return None,
         })
     };
-    let terminal = |s: &str| matches!(s, "superseded" | "retired" | "rejected" | "done");
+    let terminal = |s: &str| matches!(s, "superseded" | "retired" | "rejected" | "closed");
     if ty == DocType::Decision && from == "accepted" && to == "rejected" {
         return false;
     }
@@ -851,17 +871,23 @@ mod tests {
 
     #[test]
     fn transitions_move_forward_only() {
-        assert!(transition_ok(DocType::Spec, "draft", "active"));
-        assert!(transition_ok(DocType::Spec, "active", "retired"));
-        assert!(!transition_ok(DocType::Spec, "active", "draft"));
-        assert!(!transition_ok(DocType::Spec, "retired", "superseded"));
+        assert!(transition_ok(DocType::Requirements, "draft", "active"));
+        assert!(transition_ok(DocType::Requirements, "active", "retired"));
+        assert!(!transition_ok(DocType::Requirements, "active", "draft"));
+        assert!(!transition_ok(
+            DocType::Requirements,
+            "retired",
+            "superseded"
+        ));
         assert!(transition_ok(DocType::Decision, "proposed", "accepted"));
         assert!(!transition_ok(DocType::Decision, "accepted", "rejected"));
         assert!(!transition_ok(DocType::Decision, "accepted", "proposed"));
-        assert!(transition_ok(DocType::Change, "accepted", "done"));
-        assert!(!transition_ok(DocType::Change, "done", "accepted"));
-        assert!(!transition_ok(DocType::Invariant, "active", "draft"));
-        assert!(!transition_ok(DocType::Runbook, "retired", "active"));
-        assert!(transition_ok(DocType::Runbook, "draft", "active"));
+        assert!(transition_ok(DocType::Intent, "accepted", "closed"));
+        assert!(!transition_ok(DocType::Intent, "closed", "accepted"));
+        assert!(transition_ok(DocType::Spec, "draft", "approved"));
+        assert!(!transition_ok(DocType::Plan, "approved", "draft"));
+        assert!(!transition_ok(DocType::Rule, "active", "draft"));
+        assert!(!transition_ok(DocType::Procedure, "retired", "active"));
+        assert!(transition_ok(DocType::Procedure, "draft", "active"));
     }
 }

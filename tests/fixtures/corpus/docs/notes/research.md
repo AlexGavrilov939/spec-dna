@@ -1,5 +1,5 @@
 ---
-type: note
+type: research
 ---
 # Research notes
 

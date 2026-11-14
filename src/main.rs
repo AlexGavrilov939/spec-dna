@@ -34,6 +34,7 @@ mod hook;
 mod index;
 mod init;
 mod json;
+mod layer;
 mod lint;
 mod model;
 mod mv;
@@ -60,7 +61,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "init",
         "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]",
-        "Detects the repository, asks at most 10 questions with the detected
+        "Detects the repository, asks at most 14 questions with the detected
 defaults, shows spec-dna.toml and the files to change, and writes them
 after a confirmation. Without a terminal, it uses the defaults. If
 spec-dna.toml exists, it updates the agent adapters, and the harness
@@ -101,8 +102,29 @@ spec-dna.toml).",
     ),
     (
         "new",
-        "new <type> <id> [--root <dir>]",
-        "Writes a new document from the template of its type.",
+        "new <type> [<id>] [--root <dir>] [--template <name>]",
+        "Writes a new document from a template, at the place of its layer. Without
+--template, it uses the default template of the type. --template names a file
+<name>.md in the folder [templates] dir, or an embedded template of the type.
+Examples are prd or rfc for intent, and runbook for procedure. A top file such
+as terms takes no id. intent <slug> writes intent/<slug>/intent.md, and spec and
+plan need that folder. Where the place gives the type, the file has no type:
+line.",
+    ),
+    (
+        "layer",
+        "layer add <name> [--types <t,..>] [--paths <glob,..>] [--files <f,..>] [--dir <d>] [--moves-to <l,..>] [--moved-from <l,..>] [--linked-from <l,..>] [--keep <k>] [--context <c>] [--max-docs <n>] [--max-chars <n>] [--max-started <n>] [--stale-days <n>]\nlayer list",
+        "`add` writes the table [layers.<name>] at the end of spec-dna.toml. --keep is
+forever or until-finished, and --context is always or on-request. With
+--moved-from, the new layer joins the moves-to list of each named layer, and
+the file keeps every comment. It stops with exit code 2 and does not change
+the file for a cycle, a name that exists, a type that another layer has, a
+layer that the graph does not have, and a bad value. If the file has no
+[layers] table, it writes the default graph first. Commit spec-dna.toml as a
+change of its own.
+`list` prints each layer: its level, its selection, its edges, its limits and
+the number of documents that each rule put in it. With --json, it also lists
+the rule of each document.",
     ),
     (
         "mv",
@@ -113,14 +135,14 @@ any type to an existing or a new document of any type. Every moved key and
 section of HEAD keeps its old id as an alias, and the companion rows of the
 moved requirements move with them. Each moved section leaves its heading
 with a one-line pointer. A decision keeps its frozen text: only its amendment
-and history sections move, into a reference document. A preservation
+and history sections move, into a research document. A preservation
 check runs first; if it fails, nothing changes.",
     ),
     (
         "history",
-        "history <doc-id> [<reference doc id or path>]",
+        "history <doc-id> [<research doc id or path>]",
         "Moves the history sections of a document (`history-sections`, and the
-amendment sections of a decision) into a reference document, with a
+amendment sections of a decision) into a research document, with a
 pointer in place of each section and a backlink.",
     ),
     (
@@ -215,6 +237,45 @@ struct Args {
     stub: bool,
     replace: bool,
     conventions: Option<String>,
+    template: Option<String>,
+    layer: LayerFlags,
+}
+
+/// The options of `layer add`.
+#[derive(Default)]
+struct LayerFlags {
+    /// True if the command line has at least one of these options.
+    given: bool,
+    types: Vec<String>,
+    paths: Vec<String>,
+    files: Vec<String>,
+    moves_to: Vec<String>,
+    moved_from: Vec<String>,
+    linked_from: Vec<String>,
+    keep: Option<String>,
+    context: Option<String>,
+    dir: Option<String>,
+    max_docs: Option<u32>,
+    max_chars: Option<u32>,
+    max_started: Option<u32>,
+    stale_days: Option<u32>,
+}
+
+/// Splits the value of a list option at the commas. An empty entry is an
+/// error.
+fn list_value(name: &str, v: &str) -> Result<Vec<String>, Fatal> {
+    let items: Vec<String> = v.split(',').map(|s| s.trim().to_string()).collect();
+    if items.iter().any(String::is_empty) {
+        return Err(Fatal::Usage(format!(
+            "{name}: `{v}` has an empty entry; write a comma-separated list"
+        )));
+    }
+    Ok(items)
+}
+
+fn number_value(name: &str, v: &str) -> Result<u32, Fatal> {
+    v.parse()
+        .map_err(|_| Fatal::Usage(format!("{name}: `{v}` is not a number")))
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
@@ -243,6 +304,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         stub: false,
         replace: false,
         conventions: None,
+        template: None,
+        layer: LayerFlags::default(),
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -272,6 +335,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
             "--conventions" => a.conventions = Some(value("--conventions")?),
+            "--template" => a.template = Some(value("--template")?),
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--path" => a.paths.push(value("--path")?),
@@ -279,6 +343,40 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--query" => a.query = Some(value("--query")?),
             "--expect" => a.expect.push(value("--expect")?),
             "--format" => a.format = Some(value("--format")?),
+            "--types" | "--paths" | "--files" | "--moves-to" | "--moved-from" | "--linked-from" => {
+                let v = list_value(&flag, &value(&flag)?)?;
+                let l = &mut a.layer;
+                l.given = true;
+                match flag.as_str() {
+                    "--types" => l.types.extend(v),
+                    "--paths" => l.paths.extend(v),
+                    "--files" => l.files.extend(v),
+                    "--moves-to" => l.moves_to.extend(v),
+                    "--moved-from" => l.moved_from.extend(v),
+                    _ => l.linked_from.extend(v),
+                }
+            }
+            "--keep" | "--context" | "--dir" => {
+                let v = value(&flag)?;
+                let l = &mut a.layer;
+                l.given = true;
+                match flag.as_str() {
+                    "--keep" => l.keep = Some(v),
+                    "--context" => l.context = Some(v),
+                    _ => l.dir = Some(v),
+                }
+            }
+            "--max-docs" | "--max-chars" | "--max-started" | "--stale-days" => {
+                let n = Some(number_value(&flag, &value(&flag)?)?);
+                let l = &mut a.layer;
+                l.given = true;
+                match flag.as_str() {
+                    "--max-docs" => l.max_docs = n,
+                    "--max-chars" => l.max_chars = n,
+                    "--max-started" => l.max_started = n,
+                    _ => l.stale_days = n,
+                }
+            }
             "--budget" => {
                 let v = value("--budget")?;
                 a.budget = Some(
@@ -363,6 +461,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
         "new" => new_doc(&Repo::discover(&cwd)?, &a),
+        "layer" => layer_cmd(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
@@ -644,12 +743,18 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     }
     let head_ad = check::apply_severity(
         &cfg,
-        adapters::check(&adapter_texts(repo, &head_snap)?, &cfg.types),
+        adapters::check(
+            &adapter_texts(repo, &head_snap)?,
+            &adapters::project_types(&cfg.layers, &cfg.types),
+        ),
     );
     let base_ad: Vec<_> = if use_base {
         check::apply_severity(
             &cfg,
-            adapters::check(&adapter_texts(repo, &base_snap)?, &cfg.types),
+            adapters::check(
+                &adapter_texts(repo, &base_snap)?,
+                &adapters::project_types(&cfg.layers, &cfg.types),
+            ),
         )
     } else {
         Vec::new()
@@ -966,10 +1071,17 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .iter()
         .map(|p| p.trim_start_matches("./").to_string())
         .collect();
+    let places = context::Places::new(&c, &cfg);
     let cited = if paths.is_empty() {
         Vec::new()
     } else {
-        cite::citing(&c, &cite::Citations::build(&c), &repo.root, &paths)
+        cite::citing(
+            &c,
+            &cite::Citations::build(&c),
+            &repo.root,
+            &paths,
+            places.ranks(),
+        )
     };
     let asm = context::assemble(
         &c,
@@ -980,6 +1092,7 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         query.as_ref(),
         a.include_inactive,
         &cfg.conventions,
+        &places,
     );
     print!("{}", context::render(&c, &repo.root, &asm, a.json));
     Ok(0)
@@ -1018,8 +1131,8 @@ fn show_conventions(repo: &Repo, a: &Args, name: &str) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let ty = model::DocType::from_name(name).ok_or_else(|| {
         Fatal::Usage(format!(
-            "--conventions: unknown type `{name}`; use {}",
-            model::DocType::names()
+            "--conventions: unknown type `{name}`; {}",
+            model::DocType::unknown_hint(name)
         ))
     })?;
     let (cfg, mut c) = load_head(repo, a)?;
@@ -1113,32 +1226,51 @@ fn section_names(cfg: &config::Config, ty: model::DocType) {
 
 /// Writes a new document from the template of its type. The root is
 /// `--root`, or the first root of that single type, or the first mixed root.
-/// In a mixed root, an id without a namespace gets the namespace of its type,
-/// such as `decisions/<id>`.
+/// The place follows the layer of the type (docs/types.md): a top file such as
+/// `terms.md` takes no id, `intent` writes `<dir>/<slug>/intent.md`, `spec`
+/// and `plan` need that folder, and another type writes `<dir>/<id>.md`. In a
+/// root of one type, the file is `<id>.md`. The file has no `type:` line where
+/// its place gives the type.
 fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     use model::DocType;
-    expect_args(a, 2, 2)?;
+    expect_args(a, 1, 2)?;
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     let name = &a.positional[0];
-    let ty = DocType::from_name(name).ok_or_else(|| {
-        Fatal::Usage(format!(
-            "unknown type `{name}`; use one of {}",
-            DocType::names()
-        ))
+    let ty = DocType::from_name(name).ok_or_else(|| match DocType::from_old_name(name) {
+        Some(t) => Fatal::Usage(format!("unknown type `{name}`; use `new {}`", t.name())),
+        None => Fatal::Usage(format!(
+            "unknown type `{name}`; {}",
+            DocType::unknown_hint(name)
+        )),
     })?;
     if !cfg.allows(ty) {
         return Err(Fatal::Usage(format!(
             "type `{name}` is not a type of this project (`types` in spec-dna.toml)"
         )));
     }
-    let id = a.positional[1].trim_matches('/');
-    let id = id.strip_suffix(".md").unwrap_or(id);
-    if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
-        return Err(Fatal::Usage(format!(
-            "`{id}` is not a document id (`<namespace>/<slug>`)"
-        )));
-    }
+    let (template_name, template_text) =
+        templates::resolve(&repo.root, &cfg.templates_dir, ty, a.template.as_deref())
+            .map_err(Fatal::Usage)?;
+    // The message names the type for a default template.
+    let template_name = if a.template.is_some() {
+        template_name
+    } else {
+        ty.name().to_string()
+    };
+    let id = match a.positional.get(1) {
+        None => None,
+        Some(id) => {
+            let id = id.trim_matches('/');
+            let id = id.strip_suffix(".md").unwrap_or(id);
+            if id.is_empty() || id.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
+                return Err(Fatal::Usage(format!(
+                    "`{id}` is not a document id (`<slug>`, or `<area>/<slug>`)"
+                )));
+            }
+            Some(id)
+        }
+    };
     let root_i = match &a.root {
         Some(r) => {
             let r = r.trim_matches('/');
@@ -1161,11 +1293,6 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             })?,
     };
     let root = &cfg.roots[root_i];
-    let id = match templates::namespace(ty) {
-        Some(ns) if root.single_type.is_none() && !id.contains('/') => format!("{ns}/{id}"),
-        _ => id.to_string(),
-    };
-    let id = id.as_str();
     if let Some(t) = root.single_type.filter(|&t| t != ty) {
         return Err(Fatal::Usage(format!(
             "root `{}` holds only `{}` documents",
@@ -1173,10 +1300,84 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             t.name()
         )));
     }
-    let path = if root.path.is_empty() {
-        format!("{id}.md")
+    let need_id = || {
+        id.ok_or_else(|| {
+            Fatal::Usage(format!(
+                "`new {}` needs an id: `new {} <id>`",
+                ty.name(),
+                ty.name()
+            ))
+        })
+    };
+    // `rel` is the path inside the root, `title` is the H1 of the document.
+    let (rel, title) = if root.single_type.is_some() {
+        let id = need_id()?;
+        (format!("{id}.md"), templates::title_of(id))
     } else {
-        format!("{}/{id}.md", root.path)
+        let layer = cfg
+            .layers
+            .layer_of_type(ty)
+            .map(|i| &cfg.layers.layers()[i])
+            .ok_or_else(|| {
+                Fatal::Usage(format!(
+                    "no layer of spec-dna.toml has type `{0}`; run `spec-dna layer add <name> --types {0}` to add one",
+                    ty.name()
+                ))
+            })?;
+        match layer.dir() {
+            // A layer with top files: the type is a file of the root.
+            None => {
+                if let Some(id) = id {
+                    return Err(Fatal::Usage(format!(
+                        "`new {0}` takes no id: it writes the top file `{0}.md`; got `{id}`",
+                        ty.name()
+                    )));
+                }
+                let file = format!("{}.md", ty.name());
+                if !layer
+                    .files
+                    .iter()
+                    .any(|f| f.trim_start_matches("./") == file)
+                {
+                    return Err(Fatal::Usage(format!(
+                        "layer `{}` has no top file `{file}` in `files`; add it, or use another layer",
+                        layer.name
+                    )));
+                }
+                (file, templates::title_of(ty.name()))
+            }
+            Some(dir) if ty.is_intent_type() => {
+                let slug = need_id()?;
+                if slug.contains('/') {
+                    return Err(Fatal::Usage(format!(
+                        "`{slug}` is not a slug: the folder of a change has one name"
+                    )));
+                }
+                let folder = repo.root.join(&root.path).join(dir).join(slug);
+                if ty != DocType::Intent && !folder.is_dir() {
+                    return Err(Fatal::NotFound(format!(
+                        "the folder `{}` does not exist; run `spec-dna new intent {slug}` first",
+                        folder
+                            .strip_prefix(&repo.root)
+                            .unwrap_or(&folder)
+                            .to_string_lossy()
+                    )));
+                }
+                (
+                    format!("{dir}/{slug}/{}.md", ty.name()),
+                    templates::title_of(slug),
+                )
+            }
+            Some(dir) => {
+                let id = need_id()?;
+                (format!("{dir}/{id}.md"), templates::title_of(id))
+            }
+        }
+    };
+    let path = if root.path.is_empty() {
+        rel.clone()
+    } else {
+        format!("{}/{rel}", root.path)
     };
     if cfg.root_of(&path) != Some(root_i) || cfg.is_excluded(root_i, &path) {
         return Err(Fatal::Usage(format!(
@@ -1190,7 +1391,9 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
     }
-    mv::write(&file, &templates::render(ty, &templates::title_of(id)))?;
+    let place_gives_type = root.single_type == Some(ty) || cfg.layers.place_type(&rel) == Some(ty);
+    let text = templates::instantiate(&template_text, ty, &title, !place_gives_type);
+    mv::write(&file, &text)?;
     if a.json {
         println!(
             "{}",
@@ -1201,10 +1404,274 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .end()
         );
     } else {
+        println!("wrote {path} ({template_name} template); replace each {{{{...}}}} placeholder");
+    }
+    Ok(0)
+}
+
+fn layer_cmd(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    match a.positional.first().map(String::as_str) {
+        Some("add") => layer_add(repo, a),
+        Some("list") => layer_list(repo, a),
+        Some(other) => Err(Fatal::Usage(format!(
+            "unknown `layer` command `{other}`; use `layer add <name>` or `layer list`"
+        ))),
+        None => Err(Fatal::Usage(
+            "`layer` needs a command: `layer add <name>` or `layer list`".into(),
+        )),
+    }
+}
+
+fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    use layer::{ContextMode, Keep, Layer};
+    use model::DocType;
+    expect_args(a, 2, 2)?;
+    let f = &a.layer;
+    let name = &a.positional[1];
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(Fatal::Usage(format!(
+            "`{name}` is not a layer name: use only letters, digits, `-` and `_`"
+        )));
+    }
+    let mut new = Layer::new(name);
+    for t in &f.types {
+        let ty = DocType::from_name(t)
+            .ok_or_else(|| Fatal::Usage(config::unknown_type("`--types`", t)))?;
+        if !new.types.contains(&ty) {
+            new.types.push(ty);
+        }
+    }
+    if let Some(d) = &f.dir {
+        new.dir_key =
+            Some(layer::check_dir(d).map_err(|e| Fatal::Usage(format!("--dir: `{d}` {e}")))?);
+    }
+    for file in &f.files {
+        layer::check_file(file).map_err(|e| Fatal::Usage(format!("--files {e}")))?;
+    }
+    new.files = f.files.clone();
+    new.paths = f.paths.clone();
+    let dedup = |v: &[String]| {
+        let mut out: Vec<String> = Vec::new();
+        for s in v {
+            if !out.contains(s) {
+                out.push(s.clone());
+            }
+        }
+        out
+    };
+    new.moves_to = dedup(&f.moves_to);
+    new.linked_from = dedup(&f.linked_from);
+    if let Some(k) = &f.keep {
+        new.keep = Keep::from_name(k).ok_or_else(|| {
+            Fatal::Usage(format!(
+                "--keep: `{k}` is not `forever` or `until-finished`"
+            ))
+        })?;
+    }
+    if let Some(c) = &f.context {
+        new.context = ContextMode::from_name(c).ok_or_else(|| {
+            Fatal::Usage(format!("--context: `{c}` is not `always` or `on-request`"))
+        })?;
+    }
+    new.max_docs = f.max_docs;
+    new.max_chars = f.max_chars;
+    new.max_started = f.max_started;
+    new.stale_days = f.stale_days;
+    let moved_from = dedup(&f.moved_from);
+
+    let path = repo.config_path();
+    let text = std::fs::read_to_string(&path).map_err(|_| {
+        Fatal::Config(format!(
+            "no {} at {}; run `spec-dna init`",
+            config::FILE_NAME,
+            repo::shown(&repo.root)
+        ))
+    })?;
+    let cfg = Repo::parse_config(&text)?;
+    warn_pin(&cfg);
+    let out = layer::add_layer(&text, &cfg.layers, cfg.layers_declared, new, &moved_from)
+        .map_err(Fatal::Usage)?;
+    // `add_layer` read the new text: this cannot fail.
+    let read = Repo::parse_config(&out)?;
+    let level = read.layers.index(name).map_or(0, |i| read.layers.level(i));
+    mv::write(&path, &out)?;
+    if a.json {
         println!(
-            "wrote {path} ({} template); replace each {{{{...}}}} placeholder",
-            ty.name()
+            "{}",
+            Obj::new()
+                .str("layer", name)
+                .num("level", level)
+                .str("path", config::FILE_NAME)
+                .bool("wrote_implied_graph", !cfg.layers_declared)
+                .strs("moved_from", &moved_from)
+                .end()
         );
+    } else {
+        println!(
+            "added layer `{name}` (level {level}) to {}",
+            config::FILE_NAME
+        );
+        if !cfg.layers_declared {
+            println!(
+                "{} had no [layers] table: it now has the tables of the default graph, then `{name}`",
+                config::FILE_NAME
+            );
+        }
+        for from in &moved_from {
+            println!("`{from}` now moves to `{name}`");
+        }
+        println!(
+            "Commit {} as a change of its own: `check` reports a configuration change with other files (SD503).",
+            config::FILE_NAME
+        );
+    }
+    Ok(0)
+}
+
+fn layer_list(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    if a.layer.given {
+        return Err(Fatal::Usage(
+            "`layer list` takes no layer option; the options are for `layer add`".into(),
+        ));
+    }
+    let (cfg, c) = load_head(repo, a)?;
+    let g = &cfg.layers;
+    let rules = [layer::Rule::Type, layer::Rule::Paths, layer::Rule::Files];
+    let mut counts = vec![[0usize; 3]; g.layers().len()];
+    let mut unplaced = 0usize;
+    let mut placed = Vec::new();
+    for d in &c.docs {
+        let rel = cfg.roots[d.root].rel(&d.path);
+        let p = if d.untyped {
+            None
+        } else {
+            g.placement(rel, d.ty)
+        };
+        match p {
+            Some((i, r)) => counts[i][rules.iter().position(|&x| x == r).unwrap_or(0)] += 1,
+            None => unplaced += 1,
+        }
+        placed.push((d, p));
+    }
+    if a.json {
+        let layers = g.layers().iter().enumerate().map(|(i, l)| {
+            let types: Vec<String> = l.types.iter().map(|t| t.name().to_string()).collect();
+            let mut o = Obj::new()
+                .str("name", &l.name)
+                .num("level", g.level(i))
+                .strs("types", &types)
+                .opt_str("dir", l.dir())
+                .strs("files", &l.files)
+                .strs("paths", &l.paths)
+                .strs("moves_to", &l.moves_to)
+                .strs("linked_from", &l.linked_from)
+                .str("keep", l.keep.name())
+                .str("context", l.context.name());
+            for (key, n) in [
+                ("max_docs", l.max_docs),
+                ("max_chars", l.max_chars),
+                ("max_started", l.max_started),
+                ("stale_days", l.stale_days),
+            ] {
+                o = match n {
+                    Some(n) => o.num(key, n),
+                    None => o.raw(key, "null"),
+                };
+            }
+            let mut by = Obj::new();
+            for (k, r) in rules.iter().enumerate() {
+                by = by.num(r.name(), counts[i][k]);
+            }
+            o.num("documents", counts[i].iter().sum::<usize>())
+                .raw("by_rule", &by.end())
+                .end()
+        });
+        let docs = placed.iter().map(|(d, p)| {
+            Obj::new()
+                .str("path", &d.path)
+                .str("id", &d.id)
+                .str("type", d.ty.name())
+                .opt_str("layer", p.map(|(i, _)| g.layers()[i].name.as_str()))
+                .opt_str("rule", p.map(|(_, r)| r.name()))
+                .end()
+        });
+        println!(
+            "{}",
+            Obj::new()
+                .bool("declared", cfg.layers_declared)
+                .raw("layers", &json::array(layers))
+                .raw("documents", &json::array(docs))
+                .num("unplaced", unplaced)
+                .end()
+        );
+        return Ok(0);
+    }
+    if !cfg.layers_declared {
+        println!(
+            "{} has no [layers] table: these layers are the default graph (`layer add` writes it)",
+            config::FILE_NAME
+        );
+    }
+    for (i, l) in g.layers().iter().enumerate() {
+        let mut parts = vec![l.name.clone(), format!("level {}", g.level(i))];
+        let types: Vec<&str> = l.types.iter().map(|t| t.name()).collect();
+        for (key, list) in [
+            ("types", types),
+            ("files", l.files.iter().map(String::as_str).collect()),
+            ("paths", l.paths.iter().map(String::as_str).collect()),
+            ("moves-to", l.moves_to.iter().map(String::as_str).collect()),
+            (
+                "linked-from",
+                l.linked_from.iter().map(String::as_str).collect(),
+            ),
+        ] {
+            if !list.is_empty() {
+                parts.push(format!("{key} {}", list.join(",")));
+            }
+        }
+        if l.dir_key.is_some()
+            && let Some(d) = l.dir()
+        {
+            parts.push(format!("dir {d}"));
+        }
+        parts.push(format!("keep {}", l.keep.name()));
+        parts.push(format!("context {}", l.context.name()));
+        for (key, n) in [
+            ("max-docs", l.max_docs),
+            ("max-chars", l.max_chars),
+            ("max-started", l.max_started),
+            ("stale-days", l.stale_days),
+        ] {
+            if let Some(n) = n {
+                parts.push(format!("{key} {n}"));
+            }
+        }
+        let total: usize = counts[i].iter().sum();
+        let by: Vec<String> = rules
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| counts[i][*k] > 0)
+            .map(|(k, r)| format!("{} {}", r.name(), counts[i][k]))
+            .collect();
+        parts.push(if by.is_empty() {
+            format!("docs {total}")
+        } else {
+            format!("docs {total} ({})", by.join(", "))
+        });
+        println!("{}", parts.join("  "));
+    }
+    if unplaced > 0 {
+        let (noun, verb) = if unplaced == 1 {
+            ("document has", "its")
+        } else {
+            ("documents have", "their")
+        };
+        println!("{unplaced} {noun} no layer (no layer has {verb} type)");
     }
     Ok(0)
 }
@@ -1214,8 +1681,8 @@ fn split_opts(a: &Args) -> Result<split::Opts, Fatal> {
         None => None,
         Some(name) => Some(model::DocType::from_name(name).ok_or_else(|| {
             Fatal::Usage(format!(
-                "unknown type `{name}`; use one of {}",
-                model::DocType::names()
+                "unknown type `{name}`; {}",
+                model::DocType::unknown_hint(name)
             ))
         })?),
     };
@@ -1245,7 +1712,7 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     Ok(0)
 }
 
-/// Moves the history sections of a document into a reference document.
+/// Moves the history sections of a document into a research document.
 fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 1, 2)?;
     let (cfg, c) = load_head(repo, a)?;
@@ -1286,10 +1753,10 @@ fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             let root = &cfg.roots[d.root];
             if root
                 .single_type
-                .is_some_and(|t| t != model::DocType::Reference)
+                .is_some_and(|t| t != model::DocType::Research)
             {
                 return Err(Fatal::Usage(format!(
-                    "root `{}` holds only `{}` documents; give the path of the reference document under another root, such as `<dir>/{}-history.md`",
+                    "root `{}` holds only `{}` documents; give the path of the research document under another root, such as `<dir>/{}-history.md`",
                     root.path,
                     d.ty.name(),
                     d.id.rsplit('/').next().unwrap_or(&d.id)
@@ -1314,7 +1781,7 @@ fn history(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let mut args = tops;
     args.push(dest);
     let opts = split::Opts {
-        ty: Some(model::DocType::Reference),
+        ty: Some(model::DocType::Research),
     };
     let m = mv::run(repo, &cfg, &c, base.as_ref(), &args, &opts, false)?;
     report_move(&m, a.json);
