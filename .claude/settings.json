@@ -1,0 +1,13 @@
+{
+  "model": "sonnet",
+  "modelSettings": {
+    "claude-sonnet-5-5": {
+      "effortLevel": "high"
+    }
+  },
+  "advisorModel": "fable",
+  "fallbackModel": ["opus", "sonnet"],
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+  }
+}
