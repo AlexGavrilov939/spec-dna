@@ -89,6 +89,11 @@ codes! {
     PassiveVoice = "SD805", "passive-voice", Warning, "Name the actor as the subject (`the controller SHALL close`, not `SHALL be closed`).";
     RequirementsUnrecognized = "SD806", "requirements-unrecognized", Warning, "Write each requirement as a list item that starts with its bold key: `- **R-12**: sentence` or `- **R-12** sentence`. A key in a table, a heading or a paragraph is not a requirement.";
     RequirementColonMissing = "SD807", "requirement-colon-missing", Warning, "Write the requirement as `- **key**: sentence`, with the colon right after the bold key. Put a note, such as a rule number, after the colon.";
+    LinkDirection = "SD901", "link-direction", Warning, "Remove the link, or move the text to a more stable layer. As an alternative, add the layer of the document to `linked-from` of the target layer in spec-dna.toml.";
+    LayerLimit = "SD902", "layer-limit", Warning, "Move or merge documents of the layer, or change `max-docs` or `max-chars` of the layer in a change of its own.";
+    HistoryInRequirements = "SD903", "history-in-requirements", Warning, "Remove the date, the round or the history phrase from the requirement. Write the current rule only. The history belongs in the log of git.";
+    TermForbidden = "SD904", "term-forbidden", Warning, "Use the term of `terms.md` instead of the forbidden synonym.";
+    TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder in the same pull request. As an alternative, change the text in a change of its own that has an intent.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -5,7 +5,7 @@
 //! a partial one.
 
 use crate::frontmatter::{FrontMatter, Value};
-use crate::parse::{Chunk, PARSER_VERSION, ParsedDoc, Ref, RefKind, Req, Token};
+use crate::parse::{Chunk, PARSER_VERSION, ParsedDoc, Ref, RefKind, Req, TermRow, Token};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -217,6 +217,12 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         }
     }
     w.u32(d.body_chars);
+    w.u32(d.terms.len() as u32);
+    for t in &d.terms {
+        w.str(&t.term);
+        w.strs(&t.forbidden);
+        w.u32(t.line);
+    }
 }
 
 fn read_doc(r: &mut R) -> Option<ParsedDoc> {
@@ -307,6 +313,13 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
         }
     }
     d.body_chars = r.u32()?;
+    for _ in 0..r.u32()? {
+        d.terms.push(TermRow {
+            term: r.str()?,
+            forbidden: r.strs()?,
+            line: r.u32()?,
+        });
+    }
     Some(d)
 }
 
@@ -316,13 +329,14 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1 `src/a.rs:12` `loadUser()` see src/b.rs.\n\n## Amendments\n";
+        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1 `src/a.rs:12` `loadUser()` see src/b.rs.\n\n| Meaning | Forbidden synonyms | Term |\n| --- | --- | --- |\n| A valve. | gate, shutter; door | Valve |\n\n## Amendments\n";
         let mut m = HashMap::new();
         m.insert("abc".to_string(), Arc::new(crate::parse::parse(text)));
         m.insert(
             "bad".to_string(),
             Arc::new(crate::parse::parse("---\n: x\n---\n")),
         );
+        assert_eq!(m["abc"].terms.len(), 1);
         let back = decode(&encode(&m)).unwrap();
         assert_eq!(back.len(), 2);
         assert_eq!(*back["abc"], *m["abc"]);

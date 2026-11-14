@@ -10,6 +10,7 @@ exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
 areas = ["valves", "sensors", "reports"]  # the folders of requirements/
+language = "en"                 # the language of the normative text: a BCP 47 tag (default "en")
 
 [layers.intent]                 # one table for each layer (see "The table `layers`")
 types = ["intent", "spec", "plan"]
@@ -32,6 +33,9 @@ operations = ["valves", "sensors"]
 
 [rules]                         # severity overrides (docs/profiles.md)
 drift = "error"                 # a rule group, or a code such as SD704
+
+[change]                        # optional: without it the policy is "none"
+policy = "three-class"          # "three-class", "two-class" or "none"
 
 [evidence]
 tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
@@ -63,6 +67,7 @@ hard = 20000
 
 [lint]
 max-words = 30                  # the word limit of a requirement sentence, before a warning
+history-terms = ["formerly", "vormals"]  # the phrases of SD903; they replace the default phrases
 
 [context]
 budget = 8000                   # default character budget of `spec-dna context`
@@ -99,7 +104,10 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD921. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not look at the registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag turns off the checks that read English word lists (SD801 to SD805 and SD904). |
+| `change` | table | none | The change process. See [The table `change`](#the-table-change). |
+| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, SD921 is off, and no rule can turn it on. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
@@ -141,6 +149,7 @@ sonnet = "high"
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` has priority over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
 | `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default is about one amendment or a few table rows. |
+| `lint.history-terms` | list of strings | the default phrases | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates and `round <n>`. A phrase is not blank, and no phrase is listed twice. |
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
@@ -229,6 +238,17 @@ The layers also give the place of a document: its type, if the front matter has 
 The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
 
 A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+
+## The table `change`
+
+```toml
+[change]
+policy = "three-class"
+```
+
+Step 2 of 0.6.0 reads only the key `policy`. The key is required in the table. Any other key is an error (exit code 3), and the message says that the key comes in a later step. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. `two-class` has the same trigger as `three-class` for SD921.
+
+SD921 (a requirement of a `forever` layer changed with no intent folder) is off when the policy is `none`. spec-dna turns it off before it reads `[rules]`, so a rule of the file cannot turn it on. In `lite` it is off by default, so a project that sets a policy and runs `lite` can turn it on with `[rules] changes = "warning"`.
 
 ## The table `templates`
 
