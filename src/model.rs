@@ -696,12 +696,20 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                 } else {
                     format!("`{s}` maps to `{canon}`, which")
                 };
+                // `draft` is the proposal state of a spec, a contract and an
+                // invariant. `proposed` is the proposal state of a decision
+                // and a change (docs/types.md).
+                let hint = if canon == "proposed" && allowed("draft") {
+                    "; use `draft` for a proposal, or map `proposed` to it with `status-map`"
+                } else {
+                    ""
+                };
                 issues.push(Issue {
                     code: Code::StatusInvalid,
                     line,
                     target: s.clone(),
                     message: format!(
-                        "{what} is not a status of type `{}` ({})",
+                        "{what} is not a status of type `{}` ({}){hint}",
                         ty.name(),
                         ty.statuses().join(", ")
                     ),
@@ -756,7 +764,9 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             }
             let valid = legacy || is_slug(&r.key);
             if !valid {
-                if crate::parse::has_bcp14(&r.text) {
+                // A key that is a template placeholder gives SD306 only. The
+                // author has not chosen the key yet.
+                if crate::parse::has_bcp14(&r.text) && !crate::parse::has_placeholder(&r.key) {
                     issues.push(Issue {
                         code: Code::KeyFormat,
                         line: r.line,

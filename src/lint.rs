@@ -100,7 +100,7 @@ pub fn lint(text: &str, max_words: u32) -> Vec<(Code, String, String)> {
     }
     let joined = format!(" {} ", words.join(" "));
     for term in VAGUE {
-        if joined.contains(&format!(" {term} ")) {
+        if mentions(&joined, term) {
             out.push((
                 Code::VagueTerm,
                 (*term).to_string(),
@@ -120,6 +120,24 @@ pub fn lint(text: &str, max_words: u32) -> Vec<(Code, String, String)> {
         }
     }
     out
+}
+
+/// True if `joined` (words with one space between them, and a space at each
+/// end) has the vague `term`. The word "many" after "how" asks for a number
+/// ("how many"). It is not vague.
+fn mentions(joined: &str, term: &str) -> bool {
+    let needle = format!(" {term} ");
+    let mut from = 0;
+    while let Some(i) = joined[from..].find(&needle) {
+        let at = from + i;
+        if !(term == "many" && joined[..at].ends_with(" how")) {
+            return true;
+        }
+        // Step over the space at the start of the match, so that a term at
+        // the end of one match can start the next.
+        from = at + 1;
+    }
+    false
 }
 
 fn is_participle(w: &str) -> bool {
@@ -163,5 +181,18 @@ mod tests {
             vec![Code::SentenceLength]
         );
         assert!(codes("The port SHALL stay open.").is_empty());
+    }
+
+    #[test]
+    fn many_after_how_is_not_vague() {
+        assert!(codes("The log SHALL record how many rows the job read.").is_empty());
+        assert_eq!(
+            codes("The log SHALL record how many rows and many files."),
+            vec![Code::VagueTerm]
+        );
+        assert_eq!(
+            codes("The job SHALL read many rows."),
+            vec![Code::VagueTerm]
+        );
     }
 }

@@ -2533,7 +2533,13 @@ fn init_answers_file_on_a_new_project() {
     }
     assert!(!r.dir.join("AGENTS.md").exists());
     assert!(!r.dir.join("CLAUDE.md").exists());
-    assert!(r.dir.join(".claude/skills/spec-dna/SKILL.md").exists());
+    // The skill lists the types of the project, and no other type.
+    let skill = r.read(".claude/skills/spec-dna/SKILL.md");
+    assert!(
+        skill.contains("Types of this project: spec, decision, runbook."),
+        "{skill}"
+    );
+    assert!(!skill.contains("contract, guide"), "{skill}");
     let ci = r.read(".github/workflows/spec-dna.yml");
     assert!(
         ci.contains("spec-dna check --base \"origin/${GITHUB_BASE_REF:-trunk}\""),
@@ -2556,10 +2562,13 @@ fn init_answers_file_on_a_new_project() {
         out.contains("error SD303 type-invalid: type `contract` is not a type of this project"),
         "{out}"
     );
-    // A second `init` updates the adapters only.
+    // The skill that `init` wrote is the skill that `check` expects.
+    assert!(!out.contains("SD50"), "{out}");
+    // A second `init` updates the adapters only, and the skill stays.
     let (code, out, _) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("spec-dna.toml"), "{out}");
+    assert!(!out.contains("SKILL.md"), "the skill is unchanged: {out}");
 }
 
 #[test]
@@ -2574,7 +2583,7 @@ fn init_detects_a_brownfield_repository() {
         "path = \"docs/guides\"\ntype = \"guide\"\nstatus = \"active\"\nexclude = [\"vendor-*/**\"]\n",
         "path = \"docs/specs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"active\"\nlegacy-keys = [\"R-{n}*\"]\nstatus-map = { shipped = \"active\" }\n",
         "  change AGENTS.md (one generated line)",
-        "  change .pre-commit-config.yaml (a local hook at the end: `spec-dna check`)",
+        "  change .pre-commit-config.yaml (a local hook at the end: `spec-dna check --staged`)",
         "dry run: nothing written",
     ] {
         assert!(out.contains(want), "{want}:\n{out}");
@@ -2607,7 +2616,7 @@ fn init_detects_a_brownfield_repository() {
     assert!(!r.dir.join(".github/workflows/spec-dna.yml").exists());
     assert!(
         r.read(".pre-commit-config.yaml")
-            .ends_with("  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n")
+            .ends_with("  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check --staged\n        language: system\n        pass_filenames: false\n        always_run: true\n")
     );
     assert!(
         r.read("AGENTS.md")
@@ -3487,4 +3496,588 @@ fn a_diagnostic_that_moves_with_a_section_is_not_new() {
     let (code, out, _) = r.run(&["check", "--base", "HEAD"]);
     assert_eq!(code, 0, "the error was in the base: {out}");
     assert!(out.contains("0 new errors"), "{out}");
+}
+
+#[test]
+fn new_names_the_placeholder_form_that_the_templates_use() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    let (code, out, err) = r.run(&["new", "spec", "loans"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("replace each {{...}} placeholder"), "{out}");
+    assert!(!out.contains("<placeholder>"), "{out}");
+    // The text of the message is true: the template has `{{...}}` placeholders.
+    assert!(r.read("docs/loans.md").contains("{{"));
+}
+
+#[test]
+fn a_placeholder_key_gives_sd306_and_not_sd203() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **{{key}}**: The {{system}} SHALL lend a book for 14 days.\n- **BadKey**: The service SHALL renew a loan once.\n",
+    );
+    r.commit("start");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("SD306 placeholder-left"), "{out}");
+    // A key that is not a placeholder still gives SD203.
+    assert!(out.contains("SD203 key-format"), "{out}");
+    assert!(!out.contains("requirement key `{{key}}`"), "{out}");
+}
+
+#[test]
+fn how_many_is_not_a_vague_term() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\nprofile = \"strict\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **count**: The log SHALL record how many loans the reader holds.\n- **bulk**: The service SHALL lend many books.\n",
+    );
+    r.commit("start");
+    let (_, out, _) = r.run(&["check", "--all", "--lint"]);
+    assert!(out.contains("SD804") && out.contains("many"), "{out}");
+    assert_eq!(out.matches("warning SD804").count(), 1, "{out}");
+    assert!(out.contains("`bulk`: vague term `many`"), "{out}");
+}
+
+fn answers_file(r: &Repo, name: &str, text: &str) -> PathBuf {
+    let p = r.dir.join(format!("../answers-{name}.toml"));
+    fs::write(&p, text).unwrap();
+    p
+}
+
+#[test]
+fn init_dry_run_shows_the_diff_that_the_real_run_writes() {
+    let r = Repo::empty();
+    r.write("AGENTS.md", "# Rules\n\nOwn text.\n");
+    r.write(
+        ".pre-commit-config.yaml",
+        "repos:\n  - repo: https://example.org/hooks\n    rev: v1\n    hooks:\n      - id: x\n",
+    );
+    r.commit("start");
+    let answers = answers_file(
+        &r,
+        "dry-diff",
+        "adapters = [\"agents-md\", \"skill\"]\nci = \"none\"\nhook = \"pre-commit\"\n",
+    );
+    let a = answers.to_str().unwrap();
+    let (code, dry, err) = r.run(&["init", "--dry-run", "--answers", a]);
+    assert_eq!(code, 0, "{dry}{err}");
+    assert!(dry.contains("dry run: nothing written"), "{dry}");
+    for want in [
+        "--- a/AGENTS.md\n+++ b/AGENTS.md\n",
+        "--- a/.pre-commit-config.yaml\n+++ b/.pre-commit-config.yaml\n",
+        "--- /dev/null\n+++ b/.claude/skills/spec-dna/SKILL.md\n",
+        "+      - id: spec-dna\n",
+        "+        entry: spec-dna check --staged\n",
+        "+<!-- spec-dna:begin skill ",
+    ] {
+        assert!(dry.contains(want), "{want}:\n{dry}");
+    }
+    // The dry run wrote nothing.
+    assert_eq!(r.read("AGENTS.md"), "# Rules\n\nOwn text.\n");
+    assert!(!r.dir.join("spec-dna.toml").exists());
+    assert!(!r.dir.join(".claude").exists());
+    // Each added line of the diff is in the file that the real run writes.
+    let (code, out, err) = r.run(&["init", "--answers", a]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    let mut path = String::new();
+    let mut checked = 0;
+    for line in dry.lines() {
+        if let Some(p) = line.strip_prefix("+++ b/") {
+            path = p.to_string();
+        } else if let Some(added) = line.strip_prefix('+')
+            && !path.is_empty()
+        {
+            assert!(r.read(&path).contains(added), "{path}: {added}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 10, "{checked}");
+}
+
+#[test]
+fn init_dry_run_of_the_adapters_shows_the_diff_too() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write("AGENTS.md", "# Rules\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("would change AGENTS.md"), "{out}");
+    assert!(out.contains("--- a/AGENTS.md\n+++ b/AGENTS.md\n"), "{out}");
+    assert!(
+        out.contains("+++ b/.claude/skills/spec-dna/SKILL.md"),
+        "{out}"
+    );
+    assert!(!r.dir.join(".claude").exists());
+}
+
+#[test]
+fn init_preview_shows_how_each_answer_was_applied() {
+    let r = Repo::empty();
+    let answers = answers_file(
+        &r,
+        "resolved",
+        "profile = \"strict\"\ntypes = [\"spec\", \"decision\"]\nbudgets = \"relaxed\"\nadapters = [\"skill\"]\nci = \"none\"\nhook = \"none\"\n",
+    );
+    let (code, out, err) = r.run(&["init", "--dry-run", "--answers", answers.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    let shown = out.split("--- spec-dna.toml ---").next().unwrap();
+    for want in [
+        "How the answers were applied:",
+        "1/8 profile: strict (changed from standard) -> profile = \"strict\"",
+        "2/8 knowledge types: spec, decision (changed from all 10) -> types = [\"spec\", \"decision\"]",
+        "3/8 evidence policy and link style: profile, both (default, writes nothing)",
+        "4/8 normative language and heading aliases: en; outcome: -; amendments: - (default, writes nothing)",
+        "5/8 mapping: 1 root: docs (default) -> 1 [[roots]] table(s)",
+        "6/8 budget level: relaxed (changed from default) -> [budgets.<type>] tables",
+        "7/8 agent adapters: skill (changed from agents-md, claude-md, skill) -> .claude/skills/spec-dna/SKILL.md",
+        "8/8 CI step, hook and base branch: none, none, main (default, writes nothing)",
+    ] {
+        assert!(shown.contains(want), "{want}:\n{shown}");
+    }
+    // The block comes before the configuration.
+    assert!(out.find("How the answers").unwrap() < out.find("--- spec-dna.toml ---").unwrap());
+    // `--json` has the same answers and the diffs.
+    let (code, json, err) = r.run(&[
+        "init",
+        "--dry-run",
+        "--json",
+        "--answers",
+        answers.to_str().unwrap(),
+    ]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(
+        json.contains("\"answers\":[{\"number\":1,\"name\":\"profile\""),
+        "{json}"
+    );
+    assert!(json.contains("\"is_default\":true"), "{json}");
+    assert!(json.contains("\"diff\":\"--- /dev/null"), "{json}");
+}
+
+#[test]
+fn proposed_on_a_draft_type_points_to_draft() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/invariants/water.md",
+        "---\ntype: invariant\nstatus: proposed\n---\n# Water\n\n## Rules\n\n- **units**: The system SHALL store amounts in minor units.\n",
+    );
+    r.write(
+        "docs/decisions/pump.md",
+        "---\ntype: decision\nstatus: proposed\n---\n# Pump\n\n## Decision Outcome\n\nUse the small pump.\n",
+    );
+    r.commit("start");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error SD304 status-invalid: `proposed` is not a status of type `invariant` (draft, active, deprecated, superseded, retired); use `draft` for a proposal, or map `proposed` to it with `status-map`"),
+        "{out}"
+    );
+    // A decision has `proposed`, so it gets no error and no hint.
+    assert_eq!(out.matches("SD304 status-invalid").count(), 1, "{out}");
+}
+
+#[test]
+fn a_closed_pipe_is_a_normal_exit() {
+    use std::process::Stdio;
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **term**: The library SHALL lend a book for 14 days.\n",
+    );
+    r.commit("start");
+    for (args, want) in [
+        (vec!["check", "--all", "--json"], 0),
+        (vec!["check", "--all"], 0),
+        (vec!["--help"], 0),
+    ] {
+        // The reader of stdout is gone before the command starts.
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let out = Command::new(BIN)
+            .args(&args)
+            .current_dir(&r.dir)
+            .stdout(Stdio::from(writer))
+            .output()
+            .expect("binary runs");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(want), "{args:?}: {err}");
+        assert!(err.is_empty(), "{args:?}: {err}");
+    }
+    // The gate keeps its own result: an error still gives exit 1.
+    r.write("docs/loans.md", "# Loans\n\nSee [[nowhere/doc]].\n");
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = Command::new(BIN)
+        .args(["check", "--all", "--json"])
+        .current_dir(&r.dir)
+        .stdout(Stdio::from(writer))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty());
+}
+
+#[test]
+fn lint_runs_in_the_standard_profile_and_never_fails_the_gate() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **bulk**: The service SHALL lend many books.\n",
+    );
+    r.commit("start");
+    // Without `--lint`, the standard profile prints no lint finding.
+    let (code, plain, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{plain}");
+    assert!(!plain.contains("SD804"), "{plain}");
+    // With `--lint`, the lint runs and lists the finding. The gate is the same.
+    let (code, out, _) = r.run(&["check", "--all", "--lint"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("docs/loans.md:5: warning SD804 vague-term: `bulk`: vague term `many`"),
+        "{out}"
+    );
+    let (code, json, _) = r.run(&["check", "--all", "--lint", "--json"]);
+    assert_eq!(code, 0, "{json}");
+    assert!(json.contains("\"ok\":true"), "{json}");
+    assert!(json.contains("\"code\":\"SD804\""), "{json}");
+    // A finding that is in the base is not new.
+    let (code, out, _) = r.run(&["check", "--lint"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD804"), "{out}");
+    // A new finding is listed, and it still does not fail the gate.
+    r.append(
+        "docs/loans.md",
+        "- **fast**: The service SHALL answer fast.\n",
+    );
+    let (code, out, _) = r.run(&["check", "--lint"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("SD804") && out.contains("`fast`"), "{out}");
+    // The output without `--lint` is the same as before.
+    let (_, again, _) = r.run(&["check", "--all"]);
+    assert_eq!(plain, again);
+}
+
+#[test]
+fn an_accepted_decision_that_links_a_change_gets_sd611() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/changes/rollout.md",
+        "---\ntype: change\nstatus: proposed\n---\n# Rollout\n\nMove the pump.\n",
+    );
+    let decision = |body: &str, front: &str| {
+        format!(
+            "---\ntype: decision\nstatus: accepted\n{front}---\n# Pump\n\n## Decision Outcome\n\nUse the small pump.{body}\n"
+        )
+    };
+    r.write(
+        "docs/decisions/pump.md",
+        &decision(" See [[changes/rollout]].", ""),
+    );
+    r.commit("start");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "a warning never fails the gate: {out}");
+    assert!(
+        out.contains("docs/decisions/pump.md:9: warning SD611 decision-links-change: the accepted decision links the change `changes/rollout`"),
+        "{out}"
+    );
+    // A Markdown link to the change file counts too, and it is one finding.
+    r.write(
+        "docs/decisions/pump.md",
+        &decision(
+            " See [[changes/rollout]] and [the plan](../changes/rollout.md).",
+            "",
+        ),
+    );
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(out.matches("warning SD611").count(), 1, "{out}");
+    // `depends-on` counts.
+    r.write(
+        "docs/decisions/pump.md",
+        &decision("", "depends-on: [changes/rollout]\n"),
+    );
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(out.contains("warning SD611"), "{out}");
+    // A link in an amendment section can change, so it is allowed.
+    r.write(
+        "docs/decisions/pump.md",
+        &decision(
+            "\n\n## Amendments\n\nThe plan is in [[changes/rollout]].",
+            "",
+        ),
+    );
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD611"), "{out}");
+    // A proposed decision may link a change.
+    r.write(
+        "docs/decisions/pump.md",
+        &decision(" See [[changes/rollout]].", "").replace("status: accepted", "status: proposed"),
+    );
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD611"), "{out}");
+    // A decision that links a spec is fine, and `[rules] SD611 = "off"` works.
+    r.write(
+        "docs/decisions/pump.md",
+        &decision(" See [[changes/rollout]].", ""),
+    );
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[rules]\nSD611 = \"off\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n",
+    );
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD611"), "{out}");
+}
+
+const STAGED_CONFIG: &str = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nstatus = \"draft\"\n";
+
+fn staged_repo() -> Repo {
+    let r = Repo::empty();
+    r.write("spec-dna.toml", STAGED_CONFIG);
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **term**: The library SHALL lend a book for 14 days.\n",
+    );
+    r.commit("start");
+    r
+}
+
+#[test]
+fn staged_checks_the_index_and_not_the_working_tree() {
+    let r = staged_repo();
+    // A staged document links a document that is not staged.
+    r.write("docs/a.md", "# A\n\nSee [[b]].\n");
+    r.write("docs/b.md", "# B\n");
+    git(&r.dir, &["add", "docs/a.md"]);
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "the working tree is fine: {out}");
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("docs/a.md:3: error SD101 unresolved-reference: `b` names no document"),
+        "{out}"
+    );
+    git(&r.dir, &["add", "docs/b.md"]);
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}");
+    // An edit that is not staged does not count.
+    git(&r.dir, &["commit", "-q", "-m", "a and b"]);
+    r.write("docs/a.md", "# A\n\nSee [[nowhere]].\n");
+    let (code, _, _) = r.run(&["check"]);
+    assert_eq!(code, 1);
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}");
+    // An untracked document does not count, and `--all` and `--json` work.
+    r.write("docs/c.md", "# C\n\nSee [[nowhere]].\n");
+    let (code, out, _) = r.run(&["check", "--staged", "--all", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("\"documents\":[") && !out.contains("docs/c.md"),
+        "{out}"
+    );
+}
+
+#[test]
+fn staged_reads_the_configuration_of_the_index() {
+    let r = staged_repo();
+    // The configuration on disk is broken, and the index has a good one.
+    r.write("spec-dna.toml", "this is not toml [");
+    let (code, _, _) = r.run(&["check"]);
+    assert_eq!(code, 3);
+    let (code, out, err) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // No configuration in the index is a configuration error.
+    git(&r.dir, &["rm", "-q", "--cached", "spec-dna.toml"]);
+    let (code, _, err) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("no spec-dna.toml in the git index"), "{err}");
+}
+
+#[test]
+fn staged_stops_on_unmerged_paths() {
+    let r = staged_repo();
+    let oid = |text: &str| {
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(&r.dir)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+        String::from_utf8(child.wait_with_output().unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    let (one, two) = (oid("# One\n"), oid("# Two\n"));
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&r.dir)
+        .args(["update-index", "--index-info"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let input = format!("100644 {one} 2\tdocs/x.md\n100644 {two} 3\tdocs/x.md\n");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+    }
+    assert!(child.wait().unwrap().success());
+    let (code, _, err) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("unmerged paths (first: `docs/x.md`)"), "{err}");
+}
+
+#[test]
+fn staged_gives_the_drift_of_the_index() {
+    let r = Repo::empty();
+    r.write("spec-dna.toml", STAGED_CONFIG);
+    r.write("src/old.py", "def old():\n    pass\n");
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **term**: The library SHALL lend a book for 14 days. See `src/old.py`.\n",
+    );
+    r.commit("start");
+    // The file is deleted in the working tree only: the index still has it.
+    fs::remove_file(r.dir.join("src/old.py")).unwrap();
+    let (_, out, _) = r.run(&["check", "--staged"]);
+    assert!(!out.contains("SD606"), "{out}");
+    let (_, out, _) = r.run(&["check"]);
+    assert!(out.contains("SD606"), "{out}");
+    // The deletion is staged: the committed tree would cite a removed file.
+    git(&r.dir, &["add", "-A"]);
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD606"), "{out}");
+}
+
+#[test]
+fn the_hook_of_init_blocks_a_commit_that_the_committed_tree_fails() {
+    let r = staged_repo();
+    let hook = r.dir.join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, format!("#!/bin/sh\nexec \"{BIN}\" check --staged\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    r.write("docs/a.md", "# A\n\nSee [[b]].\n");
+    r.write("docs/b.md", "# B\n");
+    git_status(&r, &["add", "docs/a.md"]);
+    // The working tree passes, and the commit would fail SD101.
+    let (code, _, _) = r.run(&["check"]);
+    assert_eq!(code, 0);
+    assert!(!git_status(&r, &["commit", "-q", "-m", "a"]));
+    // `git commit <path>` and `git commit -a` check what they record.
+    assert!(!git_status(&r, &["commit", "-q", "-m", "a", "docs/a.md"]));
+    git(&r.dir, &["add", "docs/b.md"]);
+    assert!(git_status(&r, &["commit", "-q", "-m", "a and b"]));
+    r.write("docs/a.md", "# A\n\nSee [[nowhere]].\n");
+    assert!(!git_status(&r, &["commit", "-q", "-a", "-m", "break"]));
+}
+
+/// Runs git with the hooks on, and returns true if it succeeds.
+fn git_status(r: &Repo, args: &[&str]) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(&r.dir)
+        .args(["-c", "commit.gpgsign=false", "-c", "user.name=Test"])
+        .args(["-c", "user.email=test@example.org"])
+        .args(args)
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+#[test]
+fn init_upgrades_the_hook_that_0_4_1_wrote() {
+    let r = Repo::empty();
+    r.write("spec-dna.toml", STAGED_CONFIG);
+    r.write(
+        ".pre-commit-config.yaml",
+        "repos:\n  - repo: https://example.org/hooks\n    rev: v1\n    hooks:\n      - id: x\n  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n",
+    );
+    r.write(".husky/pre-commit", "npm test\nspec-dna check\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("-        entry: spec-dna check\n+        entry: spec-dna check --staged\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("-spec-dna check\n+spec-dna check --staged\n"),
+        "{out}"
+    );
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let pc = r.read(".pre-commit-config.yaml");
+    assert!(
+        pc.contains("        entry: spec-dna check --staged\n"),
+        "{pc}"
+    );
+    assert!(pc.contains("      - id: x\n"), "{pc}");
+    assert_eq!(
+        r.read(".husky/pre-commit"),
+        "npm test\nspec-dna check --staged\n"
+    );
+    // A second run changes nothing, and a hook with other text stays.
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    assert!(!out.contains("pre-commit"), "{out}");
+    r.write(
+        ".pre-commit-config.yaml",
+        &pc.replace(
+            "entry: spec-dna check --staged",
+            "entry: spec-dna check --base main",
+        ),
+    );
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    assert!(!out.contains("pre-commit-config"), "{out}");
 }

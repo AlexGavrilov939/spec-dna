@@ -18,12 +18,12 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 | SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names a document or a Markdown file that is not in the git tree. Or it names a section that the document or file does not have. |
 | SD201 | duplicate-id | error | Two documents have the same id or alias. |
 | SD202 | id-removed | error | The head tree does not have an id of the base tree, and no document keeps it as an alias. You can delete a change with the status `done` or `rejected`, and you can delete a note. |
-| SD203 | key-format | error | A requirement key in a sentence with a BCP 14 keyword is not a slug and not a legacy key. |
+| SD203 | key-format | error | A requirement key in a sentence with a BCP 14 keyword is not a slug and not a legacy key. A key that is a template placeholder (`{{key}}`) gives SD306 only. |
 | SD204 | key-duplicate | error | A requirement key occurs two times in one document. |
 | SD301 | front-matter-syntax | error | The front matter is not in the supported YAML subset. |
 | SD302 | front-matter-field | error | A known field has a value of the wrong kind. |
 | SD303 | type-invalid | error | The `type` is unknown, it does not match a single-type root, or it is not in the `types` list of the project. |
-| SD304 | status-invalid | error | After the `status-map` of the root applies, the status is absent, or the type does not allow it. |
+| SD304 | status-invalid | error | After the `status-map` of the root applies, the status is absent, or the type does not allow it. A spec, a contract and an invariant use `draft` for a proposal. `proposed` is for a decision and a change. |
 | SD305 | section-missing | error | A document has no section with a heading from one group of `required-sections` of the root for its type. The defaults are: decision `Decision Outcome` or `Decision`; invariant `Rules`; runbook `Steps`; incident `Summary` and `Root cause`. |
 | SD306 | placeholder-left | error | A template placeholder (`{{text}}`, from `spec-dna new`) is still in the document. |
 | SD401 | status-transition | error | A status moved back, or it left a final state. |
@@ -44,6 +44,7 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 | SD608 | requirement-unverified | warning | A requirement of an active spec, contract or invariant has no evidence: no `verified-by` and no `covers:` tag. |
 | SD609 | incident-unlinked | warning | An incident links no requirement, decision or runbook. |
 | SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries. A change added, removed or renamed an entry document, or changed its title or status, or edited the rows manually. |
+| SD611 | decision-links-change | warning | An accepted decision links a change document in its frozen text, or in `depends-on`. A change can be deleted when it is done or rejected, and the frozen text cannot drop the link (SD405). A link in an amendment, history or live section is allowed. [types.md](types.md#links-between-types) gives the link directions. |
 | SD701 | budget-soft | warning | A document is over its soft budget. |
 | SD702 | budget-hard | error | A document is over its hard budget. Against the base, it is new, it was under the hard budget, or it grew by more than `[budgets] growth` characters (default 4,000). |
 | SD703 | budget-grew | warning | A document over its soft budget grew against the base. It is under its hard budget, or over it by at most `[budgets] growth` characters. |
@@ -51,7 +52,7 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 | SD801 | requirement-keyword | warning | A requirement has no uppercase BCP 14 keyword. |
 | SD802 | ears-pattern | warning | An `If` requirement has no `then`. |
 | SD803 | sentence-length | warning | A requirement sentence is longer than `lint.max-words`. |
-| SD804 | vague-term | warning | A requirement uses a term from the vague-term list. |
+| SD804 | vague-term | warning | A requirement uses a term from the vague-term list. The word "many" after "how" ("how many") is a question about a number, so it is not vague. |
 | SD805 | passive-voice | warning | A requirement uses a passive construction (heuristic). |
 | SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or spec-dna recognizes some requirements, but a list item or a table row starts with a `legacy-keys` token. This token is not the key of one of them. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
 | SD807 | requirement-colon-missing | warning | In a spec or contract, a list item starts with a bold slug key and has a BCP 14 keyword. But no colon follows the key (`- **key** [1.1]: sentence`). Thus the item is not a requirement. |

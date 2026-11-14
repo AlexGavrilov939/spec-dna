@@ -45,6 +45,7 @@ impl Fatal {
     }
 }
 
+#[derive(Clone)]
 pub struct Repo {
     pub root: PathBuf,
     pub git_dir: PathBuf,
@@ -108,6 +109,16 @@ impl Repo {
         self.root.join(config::FILE_NAME)
     }
 
+    /// The same repository, with the git index as the head tree
+    /// (`check --staged`).
+    pub fn staged(&self) -> Repo {
+        Repo {
+            root: self.root.clone(),
+            git_dir: self.git_dir.clone(),
+            git: self.git.staged(),
+        }
+    }
+
     pub fn load_config(&self) -> Result<Config, Fatal> {
         let p = self.config_path();
         let text = std::fs::read_to_string(&p).map_err(|_| {
@@ -117,6 +128,37 @@ impl Repo {
                 shown(&self.root)
             ))
         })?;
+        Self::parse_config(&text)
+    }
+
+    /// Reads `spec-dna.toml` as the git index has it.
+    pub fn load_staged_config(&self) -> Result<Config, Fatal> {
+        let blob = self
+            .git
+            .ls_files()
+            .map_err(Fatal::Io)?
+            .into_iter()
+            .find(|e| e.0 == config::FILE_NAME)
+            .map(|e| e.1)
+            .ok_or_else(|| {
+                Fatal::Config(format!(
+                    "no {} in the git index; run `git add {}`",
+                    config::FILE_NAME,
+                    config::FILE_NAME
+                ))
+            })?;
+        let blobs = self
+            .git
+            .read_blobs(std::slice::from_ref(&blob))
+            .map_err(Fatal::Io)?;
+        let bytes = blobs
+            .get(&blob)
+            .ok_or_else(|| Fatal::Io(format!("blob {blob} is missing")))?;
+        Self::parse_config(&String::from_utf8_lossy(bytes))
+    }
+
+    fn parse_config(text: &str) -> Result<Config, Fatal> {
+        let text = text.to_string();
         Config::parse(&text).map_err(|e| {
             // The pin comes first: a configuration of another version can
             // have keys that this binary does not know.
@@ -258,6 +300,33 @@ impl Snapshot {
         Ok(Snapshot {
             worktree: true,
             files: out,
+        })
+    }
+
+    /// Returns the git index: the tree that the next commit records. A path
+    /// with an unmerged entry is an error, because the index has no tree
+    /// before the merge ends.
+    pub fn index(repo: &Repo) -> Result<Snapshot, Fatal> {
+        if let Some(p) = repo.git.first_unmerged().map_err(Fatal::Io)? {
+            return Err(Fatal::Io(format!(
+                "the git index has unmerged paths (first: `{p}`); resolve them first"
+            )));
+        }
+        let mut files: Vec<Entry> = repo
+            .git
+            .ls_files()
+            .map_err(Fatal::Io)?
+            .into_iter()
+            .map(|(path, oid, _)| Entry {
+                path,
+                blob: Some(oid),
+            })
+            .collect();
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        files.dedup_by(|a, b| a.path == b.path);
+        Ok(Snapshot {
+            worktree: false,
+            files,
         })
     }
 

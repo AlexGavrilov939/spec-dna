@@ -7,6 +7,7 @@
 
 use crate::diag::{Code, Diag};
 use crate::hash::{hash_normalized, hex};
+use crate::model::DocType;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const AGENTS: &str = "AGENTS.md";
@@ -28,7 +29,7 @@ const SKILL_BODY: &str = "# spec-dna
 2. Read a listed section with `spec-dna show <id>#<anchor>` only if the task needs it.
 3. Before you edit a document, run `spec-dna show --conventions <type>` once for its type. Follow the project conventions that it prints. `context` serves them first when a target is a document of that type.
 4. Keep the documents true in the same change. Write a requirement as `- **<key>**: <sentence>`. Use a lowercase slug key, an EARS pattern and an uppercase BCP 14 keyword. Cite it as `<doc-id>#<key>`. To link a test to a requirement, write `covers: <doc-id>#<key>` in the test.
-5. For a new document, run `spec-dna new <type> <id>`. Then replace each placeholder. Types: spec, contract, guide, decision, change, note, invariant, runbook, incident, reference.
+5. For a new document, run `spec-dna new <type> <id>`. Then replace each placeholder. Types of this project: {types}.
 6. Do not change the text of an accepted decision outside its amendment and live sections (`show --conventions decision` names them. The default is `## Amendments`).
     - Update a live section, such as a progress section, in place when your change makes it stale.
     - Amend the decision if its outcome stays. Add the detail, the limit, the fix after an incident or the new code path under `## Amendments` of the same file. A task that says \"amend the decision\" means this.
@@ -45,18 +46,31 @@ pub fn line() -> String {
     )
 }
 
+/// The text of the skill body for a project. `types` is the `types` list of
+/// the project. An empty list allows every type.
+fn skill_body(types: &[DocType]) -> String {
+    let names: Vec<&str> = DocType::ALL
+        .into_iter()
+        .filter(|t| types.is_empty() || types.contains(t))
+        .map(DocType::name)
+        .collect();
+    SKILL_BODY.replace("{types}", &names.join(", "))
+}
+
 /// The skill block, between begin and end markers.
-pub fn block(name: &str) -> String {
+pub fn block(name: &str, types: &[DocType]) -> String {
+    let body = skill_body(types);
     format!(
-        "<!-- spec-dna:begin {name} v{VERSION} h:{} -->\n{SKILL_BODY}\n<!-- spec-dna:end {name} -->\n",
-        hex(&hash_normalized(SKILL_BODY))
+        "<!-- spec-dna:begin {name} v{VERSION} h:{} -->\n{body}\n<!-- spec-dna:end {name} -->\n",
+        hex(&hash_normalized(&body))
     )
 }
 
-pub fn skill_file() -> String {
+/// The skill file of a project with the document types `types`.
+pub fn skill_file(types: &[DocType]) -> String {
     format!(
         "---\nname: spec-dna\ndescription: {SKILL_DESCRIPTION}\n---\n\n{}",
-        block("skill")
+        block("skill", types)
     )
 }
 
@@ -160,7 +174,7 @@ fn remove_old_blocks(text: &str) -> String {
 }
 
 /// Checks the adapters that are in a tree. `files` contains (path, text).
-pub fn check(files: &[(&str, String)]) -> Vec<Diag> {
+pub fn check(files: &[(&str, String)], types: &[DocType]) -> Vec<Diag> {
     let mut out = Vec::new();
     for (path, text) in files {
         let at = |pos: usize| text[..pos].matches('\n').count() as u32 + 1;
@@ -184,7 +198,7 @@ pub fn check(files: &[(&str, String)]) -> Vec<Diag> {
                     "skill",
                     "the generated `skill` block was edited by hand".into(),
                 ));
-            } else if text.as_str() != skill_file() {
+            } else if text.as_str() != skill_file(types) {
                 out.push(d(Code::AdapterOutdated, at(start), "skill", format!("the `skill` adapter (v{version}) differs from what spec-dna {VERSION} generates")));
             }
             continue;
@@ -260,18 +274,18 @@ mod tests {
         let files = vec![
             (AGENTS, agents.clone()),
             (CLAUDE, upsert_line("")),
-            (SKILL, skill_file()),
+            (SKILL, skill_file(&[])),
         ];
-        assert!(check(&files).is_empty());
+        assert!(check(&files, &[]).is_empty());
 
         let edited = agents.replace("Before a commit", "Before a push");
-        let d = check(&[(AGENTS, edited)]);
+        let d = check(&[(AGENTS, edited)], &[]);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, Code::AdapterModified);
         assert_eq!(d[0].line, 5);
 
         let old = agents.replace(&format!("v{VERSION} "), "v0.0.1 ");
-        let d = check(&[(AGENTS, old)]);
+        let d = check(&[(AGENTS, old)], &[]);
         assert_eq!(d[0].code, Code::AdapterOutdated);
     }
 
@@ -281,7 +295,7 @@ mod tests {
             "# Rules\n\n<!-- spec-dna:begin agents v0.0.9 h:{h} -->\n## Specifications\n\nOld text.\n<!-- spec-dna:end agents -->\n",
             h = hex(&hash_normalized("## Specifications\n\nOld text.\n"))
         );
-        let d = check(&[(AGENTS, old_agents.clone())]);
+        let d = check(&[(AGENTS, old_agents.clone())], &[]);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].code, Code::AdapterOutdated);
         assert_eq!(upsert_line(&old_agents), format!("# Rules\n\n{}\n", line()));
@@ -299,7 +313,7 @@ mod tests {
     fn prose_that_quotes_the_marker_is_not_the_line() {
         let prose = "# Notes\n\nThe line ends with `<!-- spec-dna v<version> h:<hash> -->`.\n";
         assert!(find_line(prose).is_none());
-        assert!(check(&[(AGENTS, prose.to_string())]).is_empty());
+        assert!(check(&[(AGENTS, prose.to_string())], &[]).is_empty());
         let both = upsert_line(prose);
         assert!(both.starts_with(prose), "{both}");
         assert_eq!(remove_line(&both), prose);
@@ -316,7 +330,7 @@ mod tests {
     fn the_skill_says_when_to_amend_and_when_to_supersede() {
         // An agent read "amend the decision" as a supersede (defect D2 of
         // 0.1.1), and it learned the amendment section only from SD405.
-        let skill = skill_file();
+        let skill = skill_file(&[]);
         assert!(
             skill.contains("Amend the decision if its outcome stays"),
             "{skill}"
@@ -337,7 +351,7 @@ mod tests {
 
     #[test]
     fn the_skill_names_live_sections_and_conventions() {
-        let skill = skill_file();
+        let skill = skill_file(&[]);
         assert!(
             skill.contains("Update a live section, such as a progress section, in place"),
             "{skill}"
@@ -346,6 +360,31 @@ mod tests {
             skill.contains("run `spec-dna show --conventions <type>` once for its type"),
             "{skill}"
         );
+    }
+
+    #[test]
+    fn the_skill_lists_the_types_of_the_project() {
+        let all = skill_file(&[]);
+        for t in DocType::ALL {
+            assert!(all.contains(t.name()), "{}", t.name());
+        }
+        assert_eq!(
+            skill_file(&DocType::ALL),
+            all,
+            "all types and no list agree"
+        );
+        let few = skill_file(&[DocType::Decision, DocType::Spec]);
+        assert!(
+            few.contains("Types of this project: spec, decision."),
+            "{few}"
+        );
+        assert!(!few.contains("runbook, incident"), "{few}");
+        // The hash follows the text, so each list has its own valid block.
+        let files = vec![(SKILL, few)];
+        assert!(check(&files, &[DocType::Decision, DocType::Spec]).is_empty());
+        let d = check(&files, &[]);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].code, Code::AdapterOutdated);
     }
 
     #[test]

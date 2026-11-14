@@ -147,6 +147,27 @@ fn find(
         .git
         .read_small_blobs(&blob_ids, MAX_SOURCE)
         .map_err(Fatal::Io)?;
+    // For `check --staged`, the head text of a file is its blob in the index.
+    let head_blob_of = |path: &str| -> Option<String> {
+        if head_snap.worktree {
+            return None;
+        }
+        head_snap.blob_of(path).and_then(|e| e.blob.clone())
+    };
+    let head_ids: Vec<String> = changed
+        .iter()
+        .filter_map(|(path, _)| {
+            let now = renamed.get(path).copied().unwrap_or(path);
+            head_files
+                .contains(now)
+                .then(|| head_blob_of(now))
+                .flatten()
+        })
+        .collect();
+    let head_blobs = repo
+        .git
+        .read_small_blobs(&head_ids, MAX_SOURCE)
+        .map_err(Fatal::Io)?;
     // For each removed identifier: the file, and the only new distinctive
     // identifier of that file, if there is exactly one (a rename candidate).
     let mut removed: HashMap<String, (String, Option<String>)> = HashMap::new();
@@ -156,7 +177,12 @@ fn find(
         };
         let now = renamed.get(path).copied().unwrap_or(path);
         let new = if head_files.contains(now) {
-            read_source(&repo.root, now).unwrap_or_default()
+            if head_snap.worktree {
+                read_source(&repo.root, now)
+            } else {
+                head_blob_of(now).and_then(|b| head_blobs.get(&b).and_then(|t| source_text(t)))
+            }
+            .unwrap_or_default()
         } else {
             String::new()
         };

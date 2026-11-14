@@ -611,7 +611,11 @@ pub struct Change {
 }
 
 /// The adapter files for a set of adapters.
-fn adapter_changes(repo: &Repo, chosen: &[Adapter]) -> Result<Vec<Change>, Fatal> {
+fn adapter_changes(
+    repo: &Repo,
+    chosen: &[Adapter],
+    types: &[DocType],
+) -> Result<Vec<Change>, Fatal> {
     let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).unwrap_or_default();
     let exists = |p: &str| repo.root.join(p).exists();
     let mut out = Vec::new();
@@ -661,11 +665,11 @@ fn adapter_changes(repo: &Repo, chosen: &[Adapter]) -> Result<Vec<Change>, Fatal
                 adapters::SKILL
             )));
         }
-        if skill != adapters::skill_file() {
+        if skill != adapters::skill_file(types) {
             out.push(Change {
                 path: adapters::SKILL.into(),
                 created: skill.is_empty(),
-                text: adapters::skill_file(),
+                text: adapters::skill_file(types),
                 note: "the skill".into(),
             });
         }
@@ -732,11 +736,50 @@ fn pre_commit_hook() -> String {
         "  hooks:",
         "    - id: spec-dna",
         "      name: spec-dna check",
-        "      entry: spec-dna check",
+        "      entry: spec-dna check --staged",
         "      language: system",
         "      pass_filenames: false",
         "      always_run: true",
     ])
+}
+
+/// The hook that 0.4.1 wrote runs `spec-dna check`, which reads the working
+/// tree. A commit can pass while the committed tree fails. The hook of this
+/// version runs `spec-dna check --staged`, which reads the index. This
+/// function changes the old line of a hook file in place. It changes only the
+/// exact line that 0.4.1 wrote. Any other text stays the same.
+fn hook_upgrade(repo: &Repo, path: &str) -> Option<Change> {
+    let old = std::fs::read_to_string(repo.root.join(path)).ok()?;
+    let (is_old, new_line): (fn(&str) -> bool, &str) = if path == ".husky/pre-commit" {
+        (|l| l == "spec-dna check", "spec-dna check --staged")
+    } else {
+        (
+            |l| l == "entry: spec-dna check",
+            "entry: spec-dna check --staged",
+        )
+    };
+    let mut changed = false;
+    let text: String = old
+        .split_inclusive('\n')
+        .map(|l| {
+            let body = l.trim_end_matches(['\n', '\r']);
+            let t = body.trim_start();
+            if is_old(t.trim_end()) {
+                changed = true;
+                let pad = &body[..body.len() - t.len()];
+                format!("{pad}{new_line}{}", &l[body.len()..])
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    changed.then(|| Change {
+        path: path.to_string(),
+        created: false,
+        text,
+        note: "the hook of 0.4.1 reads the working tree; it now runs `spec-dna check --staged`"
+            .into(),
+    })
 }
 
 /// Appends the local hook to `.pre-commit-config.yaml`, if `repos:` is its
@@ -794,7 +837,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
             }
         }
         "gitlab" => manual.push(format!(
-            "Add this job to .gitlab-ci.yml:\nspec-dna:\n  stage: test\n  script:\n    - cargo install --locked --git {} --tag v{VERSION} spec-dna\n    - git fetch origin \"${{CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-{}}}\"\n    - spec-dna check --base \"origin/${{CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-{}}}\"\n  rules:\n    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\"",
+            "Add this job to .gitlab-ci.yml:\nspec-dna:\n  stage: test\n  script:\n    - cargo install --locked --git {} --tag v{VERSION}\n    - git fetch origin \"${{CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-{}}}\"\n    - spec-dna check --base \"origin/${{CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-{}}}\"\n  rules:\n    - if: $CI_PIPELINE_SOURCE == \"merge_request_event\"",
             config::DEFAULT_INSTALL_SOURCE,
             plan.base,
             plan.base
@@ -806,19 +849,20 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
             let path = ".pre-commit-config.yaml";
             let old = read(path).unwrap_or_default();
             if old.contains("entry: spec-dna check") {
+                out.extend(hook_upgrade(repo, path));
             } else if old.is_empty() {
                 out.push(Change {
                     path: path.into(),
                     created: true,
                     text: format!("repos:\n{}", indent2(&pre_commit_hook())),
-                    note: "a local hook: `spec-dna check`".into(),
+                    note: "a local hook: `spec-dna check --staged`".into(),
                 });
             } else if let Some(text) = pre_commit_append(&old) {
                 out.push(Change {
                     path: path.into(),
                     created: false,
                     text,
-                    note: "a local hook at the end: `spec-dna check`".into(),
+                    note: "a local hook at the end: `spec-dna check --staged`".into(),
                 });
             } else {
                 manual.push(format!(
@@ -830,22 +874,24 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
         "husky" => {
             let path = ".husky/pre-commit";
             let old = read(path).unwrap_or_default();
-            if !old.lines().any(|l| l.trim() == "spec-dna check") {
+            if old.lines().any(|l| l.trim() == "spec-dna check") {
+                out.extend(hook_upgrade(repo, path));
+            } else if !old.lines().any(|l| l.trim() == "spec-dna check --staged") {
                 let mut t = old.clone();
                 if !t.is_empty() && !t.ends_with('\n') {
                     t.push('\n');
                 }
-                t.push_str("spec-dna check\n");
+                t.push_str("spec-dna check --staged\n");
                 out.push(Change {
                     path: path.into(),
                     created: old.is_empty(),
                     text: t,
-                    note: "one line: `spec-dna check`".into(),
+                    note: "one line: `spec-dna check --staged`".into(),
                 });
             }
         }
         "lefthook" => manual.push(
-            "Add this command to lefthook.yml:\npre-commit:\n  commands:\n    spec-dna:\n      run: spec-dna check".into(),
+            "Add this command to lefthook.yml:\npre-commit:\n  commands:\n    spec-dna:\n      run: spec-dna check --staged".into(),
         ),
         _ => {}
     }
@@ -1099,6 +1145,46 @@ fn row_line(r: &Row) -> String {
         if extra.is_empty() { "" } else { "; " },
         extra.join("; ")
     )
+}
+
+/// The value of the evidence answer, as the question shows it.
+fn evidence_value(plan: &Plan) -> String {
+    let ev = match plan.evidence {
+        None => "profile",
+        Some(s) => severity_name(s),
+    };
+    let st = match plan.style {
+        Style::Covers => "covers",
+        Style::VerifiedBy => "verified-by",
+        Style::Both => "both",
+    };
+    format!("{ev}, {st}")
+}
+
+/// The value of the language answer, as the question shows it.
+fn language_value(plan: &Plan) -> String {
+    let aliases = |v: &[String]| {
+        if v.is_empty() {
+            "-".to_string()
+        } else {
+            list(v)
+        }
+    };
+    format!(
+        "{}; outcome: {}; amendments: {}",
+        plan.language,
+        aliases(&plan.outcome),
+        aliases(&plan.amendments)
+    )
+}
+
+fn budgets_value(b: Budgets) -> &'static str {
+    match b {
+        Budgets::Default => "default",
+        Budgets::Relaxed => "relaxed",
+        Budgets::Tight => "tight",
+        Budgets::Off => "off",
+    }
 }
 
 /// Asks the 8 questions on a terminal.
@@ -1444,6 +1530,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     } else {
         defaults(&facts, Some(&root))
     };
+    let before = plan.clone();
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let interactive = !o.non_interactive && o.answers.is_none() && terminal;
     let mut write = true;
@@ -1479,17 +1566,29 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             },
         });
     }
-    changes.extend(adapter_changes(repo, &plan.adapters)?);
+    changes.extend(adapter_changes(repo, &plan.adapters, &plan.types)?);
     let (ci, manual) = ci_changes(repo, &plan);
     changes.extend(ci);
 
     let preview = o.dry_run || interactive || !write;
+    let resolved = resolved_answers(&plan, &before, &text, &changes);
     if o.json {
         let files = changes.iter().map(|c| {
             Obj::new()
                 .str("path", &c.path)
                 .str("action", if c.created { "create" } else { "change" })
                 .str("note", &c.note)
+                .str("diff", &change_diff(repo, c))
+                .end()
+        });
+        let answers = resolved.iter().map(|r| {
+            Obj::new()
+                .num("number", r.number)
+                .str("name", r.name)
+                .str("value", &r.value)
+                .str("default", &r.offered)
+                .bool("is_default", r.default)
+                .str("writes", &r.writes)
                 .end()
         });
         let rows = plan.rows.iter().map(|r| {
@@ -1525,6 +1624,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .str("version", VERSION)
                 .bool("dry_run", o.dry_run || !write)
                 .raw("detected", &detected)
+                .raw("answers", &crate::json::array(answers))
                 .str("config", &text)
                 .raw("files", &crate::json::array(files))
                 .strs("manual", &manual)
@@ -1534,6 +1634,10 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         return Ok(0);
     }
     if preview {
+        println!("\nHow the answers were applied:");
+        for r in &resolved {
+            println!("{}", r.line());
+        }
         println!("\n--- spec-dna.toml ---\n{}---", text);
         println!("Files to create or change:");
         if changes.is_empty() {
@@ -1546,6 +1650,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 c.path,
                 c.note
             );
+        }
+        for c in changes.iter().filter(|c| c.path != config::FILE_NAME) {
+            print!("\n{}", change_diff(repo, c));
         }
         for m in &manual {
             println!("{m}");
@@ -1596,6 +1703,324 @@ fn apply(repo: &Repo, changes: &[Change]) -> Result<Vec<String>, Fatal> {
     Ok(written)
 }
 
+/// One answer of the 8 questions, as the preview shows it.
+struct Resolved {
+    number: usize,
+    name: &'static str,
+    value: String,
+    /// The default of the question.
+    offered: String,
+    /// True if the value equals the default of the question.
+    default: bool,
+    /// What the answer writes. Empty if it writes nothing.
+    writes: String,
+}
+
+impl Resolved {
+    fn line(&self) -> String {
+        let state = if self.default {
+            "default".to_string()
+        } else {
+            format!("changed from {}", self.offered)
+        };
+        if self.writes.is_empty() {
+            format!(
+                "  {}/8 {}: {} ({state}, writes nothing)",
+                self.number, self.name, self.value
+            )
+        } else {
+            format!(
+                "  {}/8 {}: {} ({state}) -> {}",
+                self.number, self.name, self.value, self.writes
+            )
+        }
+    }
+}
+
+/// How `init` applied each of the 8 answers. `before` is the plan that the
+/// questions offered, so its values are the defaults. `text` is the new
+/// configuration, and `changes` are the files to write.
+fn resolved_answers(plan: &Plan, before: &Plan, text: &str, changes: &[Change]) -> Vec<Resolved> {
+    let types = |p: &Plan| {
+        if p.types.len() == DocType::COUNT {
+            format!("all {}", DocType::COUNT)
+        } else {
+            list(&type_names(&p.types))
+        }
+    };
+    let mapping = |p: &Plan| {
+        format!(
+            "{} root{}: {}",
+            p.rows.len(),
+            if p.rows.len() == 1 { "" } else { "s" },
+            p.rows
+                .iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let row_lines = |p: &Plan| p.rows.iter().map(row_line).collect::<Vec<_>>();
+    let ci = |p: &Plan| format!("{}, {}, {}", p.ci, p.hook, p.base);
+    let adapter_files: Vec<&str> = changes
+        .iter()
+        .map(|c| c.path.as_str())
+        .filter(|p| adapters::PATHS.contains(p))
+        .collect();
+    let ci_files: Vec<&str> = changes
+        .iter()
+        .map(|c| c.path.as_str())
+        .filter(|p| *p != config::FILE_NAME && !adapters::PATHS.contains(p))
+        .collect();
+    let has = |needle: &str| text.contains(needle);
+    let mut evidence = Vec::new();
+    if plan.evidence.is_some() {
+        evidence.push("[rules] evidence");
+    }
+    if has("\n[evidence]\n") {
+        evidence.push("[evidence] tests");
+    }
+    let mut language = Vec::new();
+    if plan.language != "en" {
+        language.push("[rules] lint = \"off\"");
+    }
+    if !plan.outcome.is_empty() && has("required-sections = { decision =") {
+        language.push("required-sections");
+    }
+    if !plan.amendments.is_empty() && has("amendment-sections = { decision =") {
+        language.push("amendment-sections");
+    }
+    let budgets = match plan.budgets {
+        Budgets::Default => String::new(),
+        Budgets::Off => "[rules] budgets = \"off\"".to_string(),
+        _ => "[budgets.<type>] tables".to_string(),
+    };
+    let mut ci_writes = ci_files.join(", ");
+    if ci_writes.is_empty() && plan.ci == "gitlab" {
+        ci_writes = "text to add by hand".into();
+    }
+    let rows = [
+        (
+            "profile",
+            plan.profile.name().to_string(),
+            before.profile.name().to_string(),
+            format!("profile = \"{}\"", plan.profile.name()),
+        ),
+        (
+            "knowledge types",
+            types(plan),
+            types(before),
+            if plan.types.len() < DocType::COUNT {
+                format!("types = {}", toml_list(&type_names(&plan.types)))
+            } else {
+                String::new()
+            },
+        ),
+        (
+            "evidence policy and link style",
+            evidence_value(plan),
+            evidence_value(before),
+            evidence.join(", "),
+        ),
+        (
+            "normative language and heading aliases",
+            language_value(plan),
+            language_value(before),
+            language.join(", "),
+        ),
+        (
+            "mapping",
+            mapping(plan),
+            mapping(before),
+            if plan.rows.is_empty() {
+                String::new()
+            } else {
+                format!("{} [[roots]] table(s)", plan.rows.len())
+            },
+        ),
+        (
+            "budget level",
+            budgets_value(plan.budgets).to_string(),
+            budgets_value(before.budgets).to_string(),
+            budgets,
+        ),
+        (
+            "agent adapters",
+            list(&adapter_names(&plan.adapters)),
+            list(&adapter_names(&before.adapters)),
+            adapter_files.join(", "),
+        ),
+        (
+            "CI step, hook and base branch",
+            ci(plan),
+            ci(before),
+            ci_writes,
+        ),
+    ];
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, (name, value, offered, writes))| {
+            let mut default = value == offered;
+            if i == 4 {
+                default = row_lines(plan) == row_lines(before);
+            }
+            Resolved {
+                number: i + 1,
+                name,
+                value,
+                offered,
+                default,
+                writes,
+            }
+        })
+        .collect()
+}
+
+/// One edit of a line diff.
+enum Op<'a> {
+    Keep(&'a str),
+    Del(&'a str),
+    Add(&'a str),
+}
+
+/// The largest table (old lines times new lines) that the diff builds. A
+/// larger change is a block of removed lines and a block of added lines.
+const DIFF_LIMIT: usize = 4_000_000;
+
+fn edit_script<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<Op<'a>> {
+    let mut head = 0;
+    while head < old.len() && head < new.len() && old[head] == new[head] {
+        head += 1;
+    }
+    let mut tail = 0;
+    while tail < old.len() - head
+        && tail < new.len() - head
+        && old[old.len() - 1 - tail] == new[new.len() - 1 - tail]
+    {
+        tail += 1;
+    }
+    let (a, b) = (&old[head..old.len() - tail], &new[head..new.len() - tail]);
+    let mut ops: Vec<Op> = old[..head].iter().map(|l| Op::Keep(l)).collect();
+    if a.len() * b.len() > DIFF_LIMIT {
+        ops.extend(a.iter().map(|l| Op::Del(l)));
+        ops.extend(b.iter().map(|l| Op::Add(l)));
+    } else {
+        // lcs[i][j] is the length of the longest common subsequence of a[i..] and
+        // b[j..].
+        let w = b.len() + 1;
+        let mut lcs = vec![0u32; (a.len() + 1) * w];
+        for i in (0..a.len()).rev() {
+            for j in (0..b.len()).rev() {
+                lcs[i * w + j] = if a[i] == b[j] {
+                    lcs[(i + 1) * w + j + 1] + 1
+                } else {
+                    lcs[(i + 1) * w + j].max(lcs[i * w + j + 1])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < a.len() || j < b.len() {
+            if i < a.len() && j < b.len() && a[i] == b[j] {
+                ops.push(Op::Keep(a[i]));
+                i += 1;
+                j += 1;
+            } else if j == b.len() || (i < a.len() && lcs[(i + 1) * w + j] >= lcs[i * w + j + 1]) {
+                ops.push(Op::Del(a[i]));
+                i += 1;
+            } else {
+                ops.push(Op::Add(b[j]));
+                j += 1;
+            }
+        }
+    }
+    ops.extend(old[old.len() - tail..].iter().map(|l| Op::Keep(l)));
+    ops
+}
+
+/// The lines of context around a change in a diff.
+const DIFF_CONTEXT: usize = 2;
+
+/// A unified diff of two texts, or an empty string if they are equal. `old`
+/// is `None` for a file that does not exist yet.
+fn unified_diff(path: &str, old: Option<&str>, new: &str) -> String {
+    if old == Some(new) {
+        return String::new();
+    }
+    let old_lines: Vec<&str> = old.unwrap_or("").lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let ops = edit_script(&old_lines, &new_lines);
+    // The position of each op in the old and the new text (1-based).
+    let mut at = Vec::with_capacity(ops.len());
+    let (mut o, mut n) = (1usize, 1usize);
+    for op in &ops {
+        at.push((o, n));
+        match op {
+            Op::Keep(_) => {
+                o += 1;
+                n += 1;
+            }
+            Op::Del(_) => o += 1,
+            Op::Add(_) => n += 1,
+        }
+    }
+    let changed: Vec<usize> = ops
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| !matches!(op, Op::Keep(_)))
+        .map(|(i, _)| i)
+        .collect();
+    let mut out = format!(
+        "--- {}\n+++ b/{path}\n",
+        if old.is_some() {
+            format!("a/{path}")
+        } else {
+            "/dev/null".to_string()
+        }
+    );
+    let mut k = 0;
+    while k < changed.len() {
+        let start = changed[k].saturating_sub(DIFF_CONTEXT);
+        let mut end = changed[k];
+        while k + 1 < changed.len() && changed[k + 1] <= end + 2 * DIFF_CONTEXT + 1 {
+            k += 1;
+            end = changed[k];
+        }
+        let end = (end + DIFF_CONTEXT + 1).min(ops.len());
+        let count = |keep: bool, del: bool, add: bool| {
+            ops[start..end]
+                .iter()
+                .filter(|op| match op {
+                    Op::Keep(_) => keep,
+                    Op::Del(_) => del,
+                    Op::Add(_) => add,
+                })
+                .count()
+        };
+        let (old_n, new_n) = (count(true, true, false), count(true, false, true));
+        let (o, n) = at[start];
+        out.push_str(&format!(
+            "@@ -{},{old_n} +{},{new_n} @@\n",
+            if old_n == 0 { o - 1 } else { o },
+            if new_n == 0 { n - 1 } else { n }
+        ));
+        for op in &ops[start..end] {
+            match op {
+                Op::Keep(l) => out.push_str(&format!(" {l}\n")),
+                Op::Del(l) => out.push_str(&format!("-{l}\n")),
+                Op::Add(l) => out.push_str(&format!("+{l}\n")),
+            }
+        }
+        k += 1;
+    }
+    out
+}
+
+/// The diff of one change against the file on disk.
+fn change_diff(repo: &Repo, c: &Change) -> String {
+    let old = std::fs::read_to_string(repo.root.join(&c.path)).ok();
+    unified_diff(&c.path, old.as_deref(), &c.text)
+}
+
 /// The bytes that spec-dna adds to the prompt prefix of each request.
 /// Claude Code reads one copy of the line (in CLAUDE.md, or in AGENTS.md
 /// through an import) and the skill descriptions. Other agents read
@@ -1639,7 +2064,12 @@ fn adapters_only(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     if exists(adapters::AGENTS) || !exists(adapters::CLAUDE) {
         chosen.insert(0, Adapter::AgentsMd);
     }
-    let changes = adapter_changes(repo, &chosen)?;
+    let mut changes = adapter_changes(repo, &chosen, &repo.load_config()?.types)?;
+    // A hook of 0.4.1 reads the working tree. The hook of this version reads
+    // the index.
+    for path in [".pre-commit-config.yaml", ".husky/pre-commit"] {
+        changes.extend(hook_upgrade(repo, path));
+    }
     if o.dry_run {
         for c in &changes {
             println!(
@@ -1648,6 +2078,7 @@ fn adapters_only(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 c.path,
                 c.note
             );
+            print!("{}", change_diff(repo, c));
         }
         println!("dry run: nothing written");
         return Ok(0);
@@ -1684,7 +2115,7 @@ mod tests {
         let t =
             "repos:\n  - repo: https://example.org/hooks\n    rev: v1\n    hooks:\n      - id: x\n";
         let out = pre_commit_append(t).unwrap();
-        assert!(out.ends_with("  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n"), "{out}");
+        assert!(out.ends_with("  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check --staged\n        language: system\n        pass_filenames: false\n        always_run: true\n"), "{out}");
         assert!(pre_commit_append("repos:\n  - repo: a\nci:\n  skip: []\n").is_none());
         assert!(pre_commit_append("default_stages: [commit]\n").is_none());
     }

@@ -7,8 +7,13 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[derive(Clone)]
 pub struct Git {
     root: PathBuf,
+    /// True for `check --staged`: the head tree is the git index, not the
+    /// working tree. The readers of the head tree then use `--cached` and
+    /// never read untracked files.
+    staged: bool,
 }
 
 /// A tree entry: path, object id, and whether it is a submodule.
@@ -28,7 +33,30 @@ impl Git {
     pub fn new(root: &Path) -> Git {
         Git {
             root: root.to_path_buf(),
+            staged: false,
         }
+    }
+
+    /// The same repository, with the git index as its head tree.
+    pub fn staged(&self) -> Git {
+        Git {
+            root: self.root.clone(),
+            staged: true,
+        }
+    }
+
+    /// Returns the first path that has an unmerged entry in the git index, or
+    /// `None`.
+    pub fn first_unmerged(&self) -> Result<Option<String>, String> {
+        let out = self.run(&["ls-files", "-u", "-z"])?;
+        Ok(out
+            .split(|b| *b == 0)
+            .find(|r| !r.is_empty())
+            .and_then(|rec| {
+                String::from_utf8_lossy(rec)
+                    .split_once('\t')
+                    .map(|(_, p)| p.to_string())
+            }))
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
@@ -61,15 +89,20 @@ impl Git {
     /// `untracked`, it also returns the untracked files that git does not
     /// ignore, as new paths.
     pub fn changed_since(&self, rev: &str, untracked: bool) -> Result<Vec<(String, bool)>, String> {
-        let out = self.run(&[
-            "diff",
+        let untracked = untracked && !self.staged;
+        let mut args = vec!["diff"];
+        if self.staged {
+            args.push("--cached");
+        }
+        args.extend([
             "--name-status",
             "-z",
             "--no-renames",
             "--ignore-submodules=all",
             rev,
             "--",
-        ])?;
+        ]);
+        let out = self.run(&args)?;
         let mut v = Vec::new();
         let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
         while let (Some(status), Some(path)) = (recs.next(), recs.next()) {
@@ -321,7 +354,9 @@ impl Git {
             "--no-line-number",
             "--no-column",
         ];
-        if untracked {
+        if self.staged {
+            args.push("--cached");
+        } else if untracked {
             args.push("--untracked");
         }
         for w in words {
@@ -379,7 +414,9 @@ impl Git {
             "-e",
             text,
         ];
-        if untracked && rev.is_none() {
+        if self.staged && rev.is_none() {
+            args.push("--cached");
+        } else if untracked && rev.is_none() {
             args.push("--untracked");
         }
         if let Some(r) = rev {

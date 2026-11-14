@@ -42,11 +42,11 @@ python3 gen/gen.py --size medium --out work/ga/src/medium
 python3 git-access/run.py prepare --source work/ga/src/medium --rev - --out work/ga/medium
 
 T=work/target-git-access
-cargo build --release --manifest-path git-access/Cargo.toml --target-dir $T
+cargo build --release --manifest-path git-access/Cargo.toml --target-dir $T --example git-access
 mkdir -p work/ga/bin && rm -f work/ga/bin/git-access-*
-cp $T/release/git-access work/ga/bin/git-access-cli
-cargo build --release --manifest-path git-access/Cargo.toml --target-dir $T --no-default-features --features gix
-cp $T/release/git-access work/ga/bin/git-access-gix
+cp $T/release/examples/git-access work/ga/bin/git-access-cli
+cargo build --release --manifest-path git-access/Cargo.toml --target-dir $T --example git-access --no-default-features --features gix
+cp $T/release/examples/git-access work/ga/bin/git-access-gix
 
 python3 git-access/run.py measure --repo work/ga/medium --label medium \
   --cli work/ga/bin/git-access-cli --gix work/ga/bin/git-access-gix \
