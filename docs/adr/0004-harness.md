@@ -6,9 +6,9 @@ status: accepted
 
 ## Context and Problem Statement
 
-A coding agent can use more than one model. A strong model can build, a stronger model can advise, and a small model can search. Each project that wants this setup must write the same agent files, settings and rules by hand. The files drift, and nobody checks them.
+A coding agent can use more than one model. A strong model can build, a stronger model can advise, and a small model can search. Each project that wants this setup must write the same agent files, settings and rules by hand. The files change over time, and nobody checks them.
 
-spec-dna already writes agent adapters and checks them ([ADR 0003](0003-distribution.md), amendment of 2026-11-08). Can `init` also install a multi-model agent harness, so that every project gets the same tested setup, and `check` reports its drift?
+spec-dna already writes agent adapters and checks them ([ADR 0003](0003-distribution.md), amendment of 2026-11-08). Can `init` also install a multi-model agent harness, so that every project gets the same tested setup, and `check` reports a generated file that differs from the configuration?
 
 Constraints:
 
@@ -28,9 +28,9 @@ Evidence:
   - The first request of the replacement (Haiku, 3 tools, no `CLAUDE.md`) had 3,683 tokens of context. The built-in Explore on Sonnet had 18,575.
   - A subagent writes its own transcript at `<session>/subagents/agent-<id>.jsonl` beside the main transcript.
 - Measurements on an anonymized mature corpus. The project owner keeps the data. The numbers stay private:
-  - Agent runs that started more than 10 subagents held most of the subagent cost.
-  - Requests with a large context held most of the cost.
-  - Prose rules about context size and agent counts did not change agent behavior. Hooks at the point of failure did.
+  - Agent runs that started more than 10 subagents caused most of the subagent cost.
+  - Requests with a large context caused most of the cost.
+  - Prose rules about context size and agent counts did not change agent behavior. Hooks that run when the problem occurs did change it.
   - A hook that copied prompt text to disk stored live secrets.
 
 ## Considered Options
@@ -69,21 +69,21 @@ The defaults are the setup that the owner of spec-dna uses (owner ruling, 2026-1
 
 ### Configuration
 
-`[harness]` in `spec-dna.toml` holds the level (`none`, `lean`, `full`), the denied tools, the hook values and `[harness.roles]`. Each role has a per-adapter model key (`claude-code = "opus"`) and an effort. A later adapter adds its own key, for example `codex`. `docs/harness.md` gives the keys.
+`[harness]` in `spec-dna.toml` has the level (`none`, `lean`, `full`), the denied tools, the hook values and `[harness.roles]`. Each role has a per-adapter model key (`claude-code = "opus"`) and an effort. A later adapter adds its own key, for example `codex`. `docs/harness.md` gives the keys.
 
 ### Generated files
 
-- Each agent file is generated as a whole. Its last line is a marker with the spec-dna version and a hash of the other text: `<!-- spec-dna harness v<version> h:<hash> -->`.
+- spec-dna generates each agent file as a whole. Its last line is a marker with the spec-dna version and a hash of the other text: `<!-- spec-dna harness v<version> h:<hash> -->`.
 - `.claude/agents/model-team.md` describes the team for people. It has the same marker.
 - `CLAUDE.md` gets a second generated line: the model-team rule, with the same marker form. This rule amends the "one line" rule of the ADR 0003 amendment of 2026-11-08 for a project with a harness.
-- `.claude/settings.json` is a merge. spec-dna sets its keys and leaves all other keys. It never deletes a key or a deny entry of the owner. It finds its hook handlers by the command prefix `spec-dna hook <name>`, and it changes or removes only these handlers. `check` compares each expected entry with the file.
+- `.claude/settings.json` is a merge. spec-dna sets its keys and keeps all other keys. It never deletes a key or a deny entry of the owner. It finds its hook handlers by the command prefix `spec-dna hook <name>`, and it changes or removes only these handlers. `check` compares each expected entry with the file.
 
 ### Hooks
 
 - `spec-dna hook context-meter` (PostToolUse): tells an agent its context size once at each level.
-- `spec-dna hook fanout-cap` (PreToolUse on `Workflow`): asks the person before a workflow whose agent count can go above the cap.
+- `spec-dna hook fanout-cap` (PreToolUse on `Workflow`): asks the person before a workflow whose agent count can exceed the cap.
 
-A hook reads one JSON object from stdin. It reads no configuration: the generated command carries the values. It never fails: any error gives no output and exit code 0. The generated command ends with `2>/dev/null || true`, so a teammate without spec-dna 0.5.0 or later gets no error.
+A hook reads one JSON object from stdin. It reads no configuration: the generated command contains the values. It never fails: any error gives no output and exit code 0. The generated command ends with `2>/dev/null || true`, so a teammate without spec-dna 0.5.0 or later gets no error.
 
 No hook stores prompt, command or tool text. The context meter stores only the levels that it reported, in the temporary directory. `spec-dna transcript` reads transcripts on demand and prints counts.
 
@@ -91,18 +91,23 @@ No hook stores prompt, command or tool text. The context meter stores only the l
 
 - `init` asks for the level and the models. Default level: `lean` (owner ruling: every project). A configuration without `[harness]` (an upgrade from 0.4) stays `none` until `init --reconfigure`.
 - A role whose agent name exists in a file that spec-dna did not generate defaults to `none`. spec-dna never replaces such a file.
-- `init` with an existing configuration (the upgrade path) regenerates only unmodified generated files and the settings entries that differ. Removals happen only in `--reconfigure`, after the preview.
-- `check` reports a missing generated file or line (SD504), a hand edit (SD501), an old or different generated text or settings entry (SD502), and a settings file that is not valid JSON (SD505). These rules start as errors: they apply only to `[harness]`, which no older configuration has.
+- `init` with a configuration that exists (the upgrade path) regenerates only unmodified generated files and the settings entries that differ. `init` removes files only with `--reconfigure`, after the preview.
+- `check` reports these findings:
+  - A missing generated file or line (SD504).
+  - A hand edit (SD501).
+  - An old or different generated text or settings entry (SD502).
+  - A settings file that is not valid JSON (SD505).
+- These rules are errors from the start, because they apply only to `[harness]`, which no older configuration has.
 
 ### Rejected
 
-- Option 2: domain text, many agents with no measured value, and a large process text in every request.
+- Option 2: it has domain text, many agents with no measured value and a large process text in every request.
 - Option 3: the files are outside the repository, so a pull request does not show them and `check` cannot read them.
-- Script hooks (Python, shell): a second runtime and a process start in each tool call.
-- An observer that records events: it stores secrets. On-demand reading gives the same numbers.
-- A gate that stops work until the advisor has read the changes: no outcome data yet. If it comes later, it is opt-in by an environment variable at launch, and it triggers on kinds of action, not on counts.
+- Script hooks (Python, shell): they need a second runtime and start a process in each tool call.
+- An observer that records events: it stores secrets. `spec-dna transcript` gives the same numbers on demand.
+- A gate that stops work until the advisor reads the changes: no data on its outcome exists yet. If spec-dna adds such a gate later, the gate is opt-in through an environment variable at launch. It triggers on kinds of action, not on counts.
 - Generated deny rules for large interactive tools: they remove features that some owners use. `docs/harness.md` lists them, and the owner can add them to `deny`.
-- Tiers only, with no concrete model: the owner must be able to name the model of each role.
+- Tiers with no concrete model: the owner must be able to name the model of each role.
 
 ### Consequences
 
@@ -111,6 +116,6 @@ No hook stores prompt, command or tool text. The context meter stores only the l
 - Bad: the default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, Fable access and, on some plans, a consent to bill usage credits. Each consult sends the whole context at the advisor price. Without access, Claude Code shows a notice, and `fallback-advisor` gives the advice.
 - Bad: the default main model (Opus at `xhigh`) costs more than Sonnet. The owner can change it at `init`.
 - Bad: the hooks need spec-dna 0.5.0 or later on the PATH of each teammate. Without it, the hooks do nothing.
-- Bad: the model id table (alias to id, for `modelSettings`) belongs to a release. When an alias moves, `check` reports SD502 until `init` runs with a new spec-dna.
+- Bad: the model id table (alias to id, for `modelSettings`) belongs to a release. When Anthropic changes the model of an alias, `check` of the new spec-dna reports SD502 until `init` writes the new id.
 
 ## Amendments

@@ -10,9 +10,13 @@ An optional agent harness for Claude Code: `init` installs a small team of model
 
 - `[harness]` in `spec-dna.toml`: the level (`none`, `lean`, `full`), the model and the effort of each generic role (orchestrator, advisor, reviewer, researcher, implementer, spec-writer, helper), the denied tools and the hook values.
 - `init` asks 2 more questions: the harness level and the models of the roles. The answers file has the keys `harness`, `harness-models` and `harness-deny`. A new configuration gets `lean`.
-- Generated Claude Code files: `.claude/agents/checker.md`, `Explore.md` (it replaces the built-in Explore), `fallback-advisor.md`, and for `full` also `implementer.md` and `spec-writer.md`; the page `.claude/agents/model-team.md`; a model-team line in `CLAUDE.md`; and entries in `.claude/settings.json` (`model`, `modelSettings`, `fallbackModel`, `advisorModel`, `env.CLAUDE_CODE_SUBAGENT_MODEL`, `permissions.deny`, 2 hooks). spec-dna keeps all other keys of the settings file.
+- Generated Claude Code files:
+  - Agent files `.claude/agents/checker.md`, `Explore.md` (it replaces the built-in Explore) and `fallback-advisor.md`. The level `full` also has `implementer.md` and `spec-writer.md`.
+  - The page `.claude/agents/model-team.md`.
+  - A model-team line in `CLAUDE.md`.
+  - Entries in `.claude/settings.json`: `model`, `modelSettings`, `fallbackModel`, `advisorModel`, `env.CLAUDE_CODE_SUBAGENT_MODEL`, `permissions.deny` and 2 hooks. spec-dna keeps all other keys of the settings file.
 - `spec-dna hook context-meter`: tells an agent its context size once at each level.
-- `spec-dna hook fanout-cap`: asks the person before a workflow whose agent count can go above the cap.
+- `spec-dna hook fanout-cap`: asks the person before a workflow whose agent count can exceed the cap.
 - SD504 `harness-missing` and SD505 `harness-settings-invalid`. SD501 and SD502 also apply to the harness files.
 
 ### Upgrade notes

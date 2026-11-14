@@ -71,7 +71,7 @@ reviewer = { claude-code = "opus", effort = "high" }
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
-[harness.efforts]               # the effort for each model, after a /model switch
+[harness.efforts]               # the effort for each model, after a /model selection
 sonnet = "high"
 ```
 
@@ -116,11 +116,11 @@ sonnet = "high"
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
 | `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them. |
 | `harness.deny` | list of strings | `[]` | Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. |
-| `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are above 0 and ascend. `[]` turns the main-session meter off. |
-| `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` turns it off. |
-| `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` turns the hook off. |
+| `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
+| `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
+| `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
-| `harness.efforts` | table | `{ sonnet = "high" }` | The effort for each model alias or model id. Claude Code uses it when the person switches model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. |
+| `harness.efforts` | table | `{ sonnet = "high" }` | The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. |
 
 ## Details of keys
 
@@ -183,7 +183,7 @@ When a target of `context` is a document of that type, `context` serves these se
 
 | Key | Roles | Meaning |
 | --- | --- | --- |
-| `claude-code` | all | The model for Claude Code: an alias (`opus`, `sonnet`, `haiku`, `fable`), a model id, `inherit` or `none`. `none` turns the role off. `inherit` gives the agent file `model: inherit`; for the orchestrator and the helper it writes no key. A later adapter adds its own key, for example `codex`. |
+| `claude-code` | all | The model for Claude Code: an alias (`opus`, `sonnet`, `haiku`, `fable`), a model id, `inherit` or `none`. `none` disables the role. `inherit` gives the agent file `model: inherit`; for the orchestrator and the helper it writes no key. A later adapter adds its own key, for example `codex`. |
 | `effort` | all but `helper` | `low`, `medium`, `high`, `xhigh`, `max` or `inherit` (no effort is written). For the advisor, it is the effort of the `fallback-advisor` agent. |
 | `agent` | `advisor` | The model of the `fallback-advisor` agent: a model or `none` (no agent file). Default `opus`. |
 | `fallback` | `orchestrator` | The models of `fallbackModel` in `.claude/settings.json`, in order. Default `["opus", "sonnet"]`. `[]` writes no `fallbackModel`. |
@@ -200,15 +200,15 @@ The defaults:
 | `spec-writer` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
-A role that the level does not include is an error: `harness.roles.implementer`: the role is in level full. Rules for the values:
+A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in level full. These rules apply to the values:
 
 - A model is a string that is not empty and has no spaces.
 - The orchestrator cannot be `none`, and its effort cannot be `max`. The advisor model cannot be `haiku` or `inherit`.
 - A value in `[harness.efforts]` cannot be `max`.
-- For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` says so.
-- The advisor must not be a weaker model than the orchestrator. If it is, the configuration is valid, and `init` prints a warning. The known aliases rank `fable`, `opus`, `sonnet`, `haiku` from strong to weak.
+- For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` reports it.
+- The advisor should not be a weaker model than the orchestrator. If it is weaker, the configuration is still valid, and `init` prints a warning. spec-dna ranks the known aliases from strong to weak: `fable`, `opus`, `sonnet`, `haiku`.
 
-The keys of `[harness]` are checked as the rest of the file is: an unknown key is an error. `spec-dna init` writes the table, and `spec-dna check` compares the generated files with it (SD501, SD502, SD504 and SD505).
+An unknown key in `[harness]` is an error, as in the rest of the file. `spec-dna init` writes the table, and `spec-dna check` compares the generated files with it (SD501, SD502, SD504 and SD505).
 
 ## The table `spec-dna-sha256`
 

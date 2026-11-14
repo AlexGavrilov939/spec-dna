@@ -1,8 +1,8 @@
 # Agent harness
 
-The agent harness is a small team of models for a coding agent. One model builds, a stronger model advises, a reviewer checks finished work, and a small model searches. `spec-dna init` writes the files of the team for Claude Code, and `spec-dna check` reports when they drift. The decision is [ADR 0004](adr/0004-harness.md).
+The agent harness is a small team of models for a coding agent. One model builds. A stronger model advises. A reviewer checks finished work. A small model searches. `spec-dna init` writes the files of the team for Claude Code. `spec-dna check` reports a generated file that differs from the configuration. The decision is [ADR 0004](adr/0004-harness.md).
 
-The harness is optional. `init` asks for a level:
+The harness is optional. `init` asks for a level.
 
 | Level | What `init` writes |
 | --- | --- |
@@ -29,7 +29,7 @@ Notes:
 
 - `Explore.md` replaces the built-in Explore subagent of Claude Code. The built-in Explore uses the model of the main session. The replacement uses `haiku`, has 6 tools and does not load `CLAUDE.md`, so its first request is small.
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
-- The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or judges, because the `helper` default is `haiku`.
+- The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or judges.
 
 ## Configuration
 
@@ -56,15 +56,15 @@ sonnet = "high"
 | --- | --- |
 | `level` | `none`, `lean` or `full` |
 | `deny` | Tools that no agent of the project gets. `init` proposes `NotebookEdit` if git tracks no notebook. A deny rule removes the tool from each request, so it makes each request smaller |
-| `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` turns the meter off for the main session |
-| `subagent-meter` | The context size at which a subagent gets a message. `0` turns it off |
-| `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` turns the cap off |
-| `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` turns a role off. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file) |
-| `[harness.efforts]` | The effort of a model when a person switches to it with `/model` |
+| `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` disables the meter for the main session |
+| `subagent-meter` | The context size at which a subagent gets a message. `0` disables it |
+| `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
+| `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` disables a role. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file) |
+| `[harness.efforts]` | The effort of a model when a person selects it with `/model` |
 
 A model is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model id. The advisor cannot be `haiku`. Efforts are `low`, `medium`, `high`, `xhigh`, `max` and `inherit`. The main session cannot use `max`.
 
-`init` writes an effort as `modelSettings.<model id>.effortLevel`, so it needs the model id of each alias. spec-dna has the table of its release. When Anthropic moves an alias to a new model, a new spec-dna release changes the table. Until then, `check` passes and the effort applies to the old id only.
+`init` writes an effort as `modelSettings.<model id>.effortLevel`, so it needs the model id of each alias. Each spec-dna release has a table of the aliases and their model ids. When Anthropic changes the model of an alias, a new spec-dna release updates the table. Until you install that release, `check` passes, and the effort applies to the old id only.
 
 ## Generated files
 
@@ -88,19 +88,19 @@ Entries in `.claude/settings.json`:
 | `hooks.PostToolUse` | `spec-dna hook context-meter ...` |
 | `hooks.PreToolUse` (matcher `Workflow`) | `spec-dna hook fanout-cap ...` |
 
-spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` says so, and you remove the key by hand. spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
+spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key by hand. spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
 
-A file of your own in `.claude/agents` stays. If its agent name is the name of a role file, `init` turns that role off by default and never writes over your file.
+A file of your own in `.claude/agents` stays. If its agent name is the name of a role file, `init` disables that role by default. `init` never replaces your file.
 
 ## Hooks
 
-Each hook is a subcommand of the spec-dna binary. A hook reads the event of Claude Code from stdin. It does not read `spec-dna.toml`, so the generated command carries the values. It never fails: an error gives no output and exit code 0. The command ends with `2>/dev/null || true`, so a teammate with an older spec-dna, or without spec-dna, gets no error and no hook.
+Each hook is a subcommand of the spec-dna binary. A hook reads the event of Claude Code from stdin. It does not read `spec-dna.toml`, so the generated command contains the values. It never fails: an error gives no output and exit code 0. The command ends with `2>/dev/null || true`, so a teammate with an older spec-dna, or without spec-dna, gets no error and no hook.
 
 Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
 
 ### `spec-dna hook context-meter`
 
-An agent cannot see the size of its context, and each request sends the whole context again. After each tool call, the hook reads the last token count of the transcript. When the context passes a level for the first time, the hook adds a message to the context of the agent:
+An agent cannot see the size of its context, and each request sends the whole context again. After each tool call, the hook reads the last token count of the transcript. When the context reaches a level for the first time, the hook adds a message to the context of the agent:
 
 - The first level: delegate long searches and long reads to a subagent.
 - A higher level: save the state of the task in a file, and tell the user that a new session can continue from it.
@@ -112,13 +112,13 @@ The hook keeps one empty file for each level that it reported, in the temporary 
 
 ### `spec-dna hook fanout-cap`
 
-A workflow script can start many agents, and each agent pays for its own context. Before a workflow runs, the hook computes an upper limit of the agents that the script can start. It counts each `agent(` call, times the size of each loop around it. A loop over a list that the run makes has no limit. If the limit is above the cap, or if there is no limit, Claude Code asks the person before the run.
+A workflow script can start many agents, and each agent uses its own context. Before a workflow runs, the hook computes an upper limit of the agents that the script can start. It multiplies each `agent(` call by the size of each loop around it. A loop over a list that the run makes has no limit. If the limit is above the cap, or if there is no limit, Claude Code asks the person before the run.
 
 To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<n>`.
 
 ## Check
 
-`spec-dna check` reads the generated files when `[harness] level` is not `none`:
+`spec-dna check` reads the generated files when `[harness] level` is not `none`. It reports these findings:
 
 | Code | Finding |
 | --- | --- |
@@ -132,11 +132,11 @@ As for the other adapters, only findings that are new against the base fail the 
 ## Cost and requirements
 
 - The main model sets the cost of each request. `opus` at `xhigh` costs more than `sonnet` at `high`.
-- The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, Fable access and, on some plans, a one-time approval of billing to usage credits. To give it, run `/model fable` and approve. Then go back with `/model opus`. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
+- The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
 - `checker`, `Explore`, `implementer` and `spec-writer` cost nothing until the main session uses them. Their descriptions are part of each request.
 - The `CLAUDE.md` line is part of each request (about 200 tokens).
 
-Other options that make each request smaller. `init` does not write them, because they remove features that some teams use:
+These options make each request smaller. `init` does not write them, because they remove features that some teams use:
 
 - Add large tools that the team does not use to `deny`, for example `Artifact`, `Workflow`, `SendFeedback` or `ScheduleWakeup`.
 - Set `skillListingMaxDescChars` in `.claude/settings.json` to a small value, such as 400, if the team has many skills.
@@ -144,11 +144,11 @@ Other options that make each request smaller. `init` does not write them, becaus
 ## Check the team after a restart
 
 1. Start a new session. Do not resume an old session: it keeps the model of its transcript.
-2. The header shows the main model.
+2. Read the header. It shows the main model.
 3. Run `/advisor`. It shows the advisor model.
 4. Type `@`. The list shows `checker`, `Explore` and `fallback-advisor`.
 5. While a subagent runs, run `/tasks`. Its row shows its model.
-6. When Claude consults the advisor, an `Advising` line shows. `Ctrl+O` shows the advice. `/usage` shows the cost.
+6. When Claude consults the advisor, an `Advising` line shows. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
 
 ## Change, upgrade and removal
 

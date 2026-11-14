@@ -58,7 +58,7 @@ Then `init` asks at most 10 questions, with the found values as defaults. It sho
 
 The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the blocks of many lines that earlier versions wrote.
 
-With the questions 9 and 10, `init` also writes the [agent harness](harness.md) for Claude Code (agent files, a model-team line in `CLAUDE.md`, and a merge into `.claude/settings.json`). The default level is `lean`.
+The questions 9 and 10 set the [agent harness](harness.md). `init` writes it for Claude Code: agent files, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`.
 
 If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version.
 
@@ -200,15 +200,25 @@ spec-dna hook context-meter [--levels <a,b,...>] [--subagent <n>]
 spec-dna hook fanout-cap [--cap <n>]
 ```
 
-`hook` runs inside a coding agent. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it. A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads one more file at most. Unknown flags and bad values are ignored. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
+A coding agent runs `hook`. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it. A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. A hook ignores unknown flags and bad values. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
 
-`context-meter` runs after a tool call (the `PostToolUse` event of Claude Code). It finds the size of the context in the transcript of the agent: the input, cache-creation and cache-read tokens of the last assistant message. The file is read from its end, 256 KiB at a time, up to 4 MiB. When the size reaches a level of `--levels`, the hook tells the agent once, with `additionalContext`. In a subagent, the transcript is `<directory of transcript_path>/<session_id>/subagents/agent-<agent_id>.jsonl`, and `--subagent` gives the only level. A level of 0 or an empty list turns the meter off. The `session_id` and the `agent_id` must have 1 to 64 characters of `A-Za-z0-9_-`.
+`context-meter` runs after a tool call (the `PostToolUse` event of Claude Code). It finds the size of the context in the transcript of the agent: the input, cache-creation and cache-read tokens of the last assistant message. The hook reads the file from its end, 256 KiB at a time, up to 4 MiB. When the size reaches a level of `--levels`, the hook tells the agent once, with `additionalContext`.
 
-The hook keeps one empty file for each crossing in `<temporary directory>/spec-dna-meter/`. When the size falls under 2/3 of the first level (the agent compacted its context), the hook removes the files of the session, and the next crossing speaks again. It removes files that are older than 3 days.
+In a subagent, the transcript is `<directory of transcript_path>/<session_id>/subagents/agent-<agent_id>.jsonl`, and `--subagent` gives the only level. A level of 0 or an empty list disables the meter. The `session_id` and the `agent_id` must have 1 to 64 characters of `A-Za-z0-9_-`.
 
-`fanout-cap` runs before a `Workflow` tool call (the `PreToolUse` event). It reads the script of the workflow (`tool_input.script`, else the file `tool_input.scriptPath` in the `cwd`, else `.claude/workflows/<name>.js` or `.mjs` in `$CLAUDE_PROJECT_DIR`). It finds an upper limit of the `agent(` calls: the call sites, multiplied by the sizes of the loops around them. The hook knows the loops `map`, `filter`, `forEach` and the other array methods, `for`, `while`, `do`, `pipeline` and `Array.from`. It knows a list that is a literal, a variable with a literal, `.slice` with numbers, and `Array.from({ length: N })`. Any other list has no limit. A named function counts once for each mention of its name. A call of itself and a `workflow(` call have no limit. A script that the hook cannot read (for example, its brackets do not match) is allowed.
+The hook keeps one empty file for each level that the context reached, in `<temporary directory>/spec-dna-meter/`. When the size falls below 2/3 of the first level (the agent compacted its context), the hook removes the files of the session. Then the hook can report the levels again. The hook also removes files that are older than 3 days.
 
-When the limit is above the cap, or has no limit, the hook answers `permissionDecision: "ask"`, and the user decides. The cap is `SPEC_DNA_FANOUT_CAP` if it is set, else `--cap`, else 10. A cap of 0 turns the hook off.
+`fanout-cap` runs before a `Workflow` tool call (the `PreToolUse` event). It reads the script of the workflow from the first of these sources that exists:
+
+1. `tool_input.script`.
+2. The file `tool_input.scriptPath`, in the `cwd`.
+3. `.claude/workflows/<name>.js` or `.mjs`, in `$CLAUDE_PROJECT_DIR`.
+
+The hook finds an upper limit of the `agent(` calls: the call sites, multiplied by the sizes of the loops around them. The hook recognizes the loops `map`, `filter`, `forEach` and the other array methods, `for`, `while`, `do`, `pipeline` and `Array.from`. It recognizes a list that is a literal, a variable with a literal, `.slice` with numbers, and `Array.from({ length: N })`. Any other list has no limit.
+
+A named function counts once for each mention of its name. A call of itself and a `workflow(` call have no limit. The hook allows a script that it cannot read (for example, when its brackets do not match).
+
+When the limit is above the cap, or if there is no limit, the hook answers `permissionDecision: "ask"`, and the user decides. The cap is `SPEC_DNA_FANOUT_CAP` if it is set. Otherwise the cap is `--cap`, and its default is 10. A cap of 0 disables the hook.
 
 ## Exit codes
 

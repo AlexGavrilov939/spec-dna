@@ -16,7 +16,7 @@ The script does these steps:
 2. It makes a git repository from the application and runs the "Start" block of [the quickstart](quickstart.md) as it is written. It checks that `init` added 2 lines to `CLAUDE.md`: the spec-dna line and the model-team line of the lean harness. It also checks that `init` wrote the agent files, no import and no `AGENTS.md`, and that the prompt prefix of the adapters is 300 bytes or less.
 3. It adds the documents and uses `context`, `show`, `mv` and `check`. A change that removes a cited identifier must give SD607 in `check --base`, as in CI.
 4. It runs the upgrade of the quickstart to the `-dev` version. The pin mismatch gives exit code 3. `init` writes the adapters and the harness files of the new version. Then the script rolls back to the current version with `git revert`.
-5. It turns the harness off with `init --reconfigure`, and then runs the "Uninstall" block of the quickstart. The documents must not change. The uninstall must remove only the files of spec-dna. `.claude/settings.json` stays, because it can hold keys of the project.
+5. It disables the harness with `init --reconfigure`. Then it runs the "Uninstall" block of the quickstart. The documents must not change. The uninstall must remove only the files of spec-dna. `.claude/settings.json` stays, because it can hold keys of the project.
 
 ## Agent stages
 

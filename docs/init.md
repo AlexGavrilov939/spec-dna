@@ -35,7 +35,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | Agent files | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/skills`, `.cursor/rules` and other agent files |
 | CI and hooks | `.github/workflows`, `.gitlab-ci.yml` and other CI files; pre-commit, husky and lefthook |
 | Default branch | `origin/HEAD`. If it is absent, a local `main` or `master`. If both are absent, the current branch |
-| Harness defaults | The `model` and the `advisorModel` of an existing `.claude/settings.json` become the main model and the advisor. `NotebookEdit` goes into `deny` if git tracks no `*.ipynb` file. A file in `.claude/agents` that is not generated and has the name of a role file makes that role `none`. The name is the `name` of the front matter, or the file name |
+| Harness defaults | The `model` and the `advisorModel` of an existing `.claude/settings.json` become the main model and the advisor. `init` adds `NotebookEdit` to `deny` if git tracks no `*.ipynb` file. A file in `.claude/agents` that is not generated and has the name of a role file makes that role `none`. The name is the `name` of the front matter, or the file name |
 
 Detection skips vendored, generated and test fixture directories (`fixtures`, `testdata`, `__snapshots__`, `golden`). In a root `.`, it excludes the root files of the repository (`README.md`, `AGENTS.md`, `CLAUDE.md`, `CHANGELOG.md` and similar files). In a root that holds `.claude/skills`, it excludes the generated skill `spec-dna/`. Detection only reads files. It does not use the network.
 
@@ -90,7 +90,7 @@ If the files show no type, the type is the type of the enclosing root, if that r
 | 7 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
 | 8 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 | 9 | The agent harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean` |
-| 10 | The models: `role=model[:effort]` words, such as `reviewer=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` turns a role off. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high spec-writer=sonnet:high`. The detected values replace the main model and the advisor |
+| 10 | The models: `role=model[:effort]` words, such as `reviewer=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high spec-writer=sonnet:high`. The detected values replace the main model and the advisor |
 
 A language other than `en` sets `[rules] lint = "off"`, because the requirement lint reads English only. A type that you do not choose makes its detected roots `note` roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`). In this root, `spec-dna new` puts each type into its own namespace, such as `decisions/<id>`. Thus the ids of different types cannot clash.
 
@@ -103,7 +103,7 @@ The preview shows the full `spec-dna.toml` and each file to create or change:
 - for `github`: `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)). If the file exists, `init` does not change it.
 - a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`
 
-- the harness files, if the level is not `none`: `.claude/agents/*.md`, `.claude/agents/model-team.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`. The harness block of the preview shows each file with `create`, `change` or `remove` and a note. It also shows the warnings, the reasons for roles that are off, the bytes that the harness adds to each request of the main session, and the line `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.` After a write, `init` tells you to restart Claude Code.
+- the harness files, if the level is not `none`: `.claude/agents/*.md`, `.claude/agents/model-team.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`. The harness block of the preview shows each file with `create`, `change` or `remove` and a note. It also shows the warnings, the reasons for disabled roles and the line `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.` It shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code.
 
 For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file. `--json` has a `harness` object with the level, the files (path, action and note), the kept notes, the warnings and the bytes.
 
@@ -111,7 +111,7 @@ For GitLab CI and lefthook, the preview gives the text to add manually. `init` c
 
 `init` refuses the harness and exits with code 2 in these cases:
 
-- git ignores `.claude/agents` or `.claude/settings.json`. A team could not commit the files.
+- git ignores `.claude/agents` or `.claude/settings.json`. A team cannot commit the files.
 - An answer sets a role to a model, and a file that `init` did not generate has the agent name of that role. Set the role to `none`, or rename the agent.
 - `.claude/settings.json` is not valid JSON.
 
@@ -147,7 +147,7 @@ default-type = "spec"
 
 The `[[roots]]` tables use the keys of `spec-dna.toml` ([config.md](config.md)).
 
-`harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` turns a role off, and `inherit` writes no model.
+`harness-models` has one `role=model[:effort]` word for each role that you change. A role that is not in the list keeps its default. A role that the level does not include is an error. The model `none` disables a role, and `inherit` writes no model.
 
 ## Reconfigure
 
@@ -169,6 +169,6 @@ The harness has the current `[harness]` table as its defaults. A smaller level r
 `init` with an existing `spec-dna.toml` and no `--reconfigure` is the upgrade path:
 
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
-- A configuration with a `[harness]` table gets its harness files regenerated. `init` writes each generated file that you did not edit, and each file that is missing. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
+- `init` regenerates the harness files of a configuration with a `[harness]` table. It writes each generated file that you did not edit, and each file that is missing. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
 - `init` keeps a generated file that you edited, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it and run `init` to generate it again.
 - `init` never removes a file on this path. Only `--reconfigure` removes files.
