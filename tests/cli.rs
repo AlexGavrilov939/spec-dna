@@ -1041,7 +1041,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     );
     r.write(
         "docs/cache-store.md",
-        "---\ntype: decision\nstatus: signed-off\n---\n# Cache store\n\n## Kontext\n\nEin gemeinsamer Speicher für [[cache]].\n\n## Lösung\n\nEine locale Datei.\n",
+        "---\ntype: decision\nstatus: signed-off\n---\n# Cache store\n\n## Kontext\n\nEin gemeinsamer Speicher für [[cache]].\n\n## Lösung\n\nEine einfache Datei.\n",
     );
     r.write("docs/notes.md", "# Notes\n\nNo requirements here.\n");
     r.write(
@@ -1069,7 +1069,7 @@ fn legacy_statuses_and_required_sections_follow_the_root() {
     let (code, out, _) = r.run(&["context", "cache"]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("decision/accepted decision -->\n## Lösung\n\nEine locale Datei."),
+        out.contains("decision/accepted decision -->\n## Lösung\n\nEine einfache Datei."),
         "{out}"
     );
 }

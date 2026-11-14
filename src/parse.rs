@@ -817,7 +817,7 @@ mod tests {
     #[test]
     fn legacy_requirements_without_a_colon() {
         let d = parse(
-            "# S\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2** — The server SHALL log.\n- **R-3:** The cache MAY drop entries.\n- **R-4**\n- See **R-5** in the text.\n- **R-6.** The proxy MUST strip the header.\n\n## Notes\n\n- **Note** prose with a bold label.\n",
+            "# S\n\n## Rules\n\n- **R-1** The client MUST retry.\n- **R-2** — The server SHALL log.\n- **R-3:** The cache MAY drop entries.\n- **R-4**\n- See **R-5** in the text.\n- **R-6.** The valve MUST close after the cycle.\n\n## Notes\n\n- **Note** prose with a bold label.\n",
         );
         let reqs: Vec<(&str, bool, &str)> = d
             .reqs
@@ -831,7 +831,7 @@ mod tests {
                 ("R-2", false, "The server SHALL log."),
                 ("R-3", true, "The cache MAY drop entries."),
                 ("R-4", false, ""),
-                ("R-6", false, "The proxy MUST strip the header."),
+                ("R-6", false, "The valve MUST close after the cycle."),
                 ("Note", false, "prose with a bold label."),
             ]
         );
