@@ -79,21 +79,13 @@ The default graph gives these places. The folder is the name of the layer, unles
 
 `draft` is the state of a document that waits for approval. The types `rule`, `requirements`, `interface`, `procedure` and `intent` have no `proposed` status. `proposed` belongs to a decision, which a person accepts or rejects. When a document of another type has the status `proposed`, `check` gives SD304 and names `draft`. A root that uses `proposed` for its requirements can map it: `status-map = { proposed = "draft" }`.
 
-An `intent` ends with the status `closed`, and then you can delete it (SD202 allows it).
+A change ends with `finish`, which deletes its intent folder: an accepted change after its work, and a closed change at once. A folder that a pull request deletes with an unapplied delta gives SD915.
 
 ## Links between types
 
-In a new corpus, link the documents in these directions. A link of another direction is not an error, except the case that SD611 reports.
+The layer graph gives the direction of each link. A document must not link a document of a less stable layer, unless that layer lists it in `linked-from` (SD901). [config.md](config.md#default-graph) gives the default graph. An incident links the requirement, the rule, the decision or the procedure that it involves (SD609).
 
-| From | To | Why |
-| --- | --- | --- |
-| `intent` | the `requirements`, `interface`, `rule` or `decision` that it changes | An intent is a request. It links the permanent documents. |
-| `decision` | `requirements`, `interface`, `rule`, `research`, and another `decision` (`supersedes`) | A decision gives the reason for a requirement. |
-| `requirements`, `interface`, `rule`, `procedure` | `decision` (the reason), `requirements`, `interface` | A permanent document names the reason for its rules. |
-| `incident` | `requirements`, `rule`, `decision`, `procedure` | An incident without such a link gives SD609. |
-| `research` | any type | These documents give information only. |
-
-A permanent document does not link an intent. An intent ends with the status `closed`, and then you can delete it (SD202 allows it). A link to a deleted intent breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is locked (SD405).
+A permanent document does not link an intent. `finish` deletes the intent folder, so a link to it breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is locked (SD405).
 
 Thus an accepted decision that links an intent in its locked text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it. In such a section, name the intent as plain text, not as a link. A link there gives SD901, and `finish` stops on it.
 

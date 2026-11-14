@@ -156,7 +156,7 @@ def test_due_date_is_14_days_later():
 
 ## Work with an agent
 
-The instruction line and the skill that `init` wrote tell an agent what to do. The agent can be any coding agent. The steps are the same:
+The instruction line that `init` wrote tells an agent what to do. The agent can be any coding agent. The steps are the same:
 
 1. Before the agent edits a file, it runs `spec-dna context <path>`. The command gives the sections that cite the file, with their dependencies and decisions.
 2. The agent edits the code and the documents of the change.
@@ -252,8 +252,8 @@ For the evals skeleton, `init` writes a second workflow, `.github/workflows/agen
 ## Upgrade
 
 1. Download `spec-dna-pin.toml` of the new release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
-2. In `spec-dna.toml`, replace the key `spec-dna` and the table `[spec-dna-sha256]` with the content of that file.
-3. Install the new binary. Verify it against the new sum in `spec-dna.toml`.
+2. Install the new binary. Verify it against its sum in `spec-dna-pin.toml`.
+3. Run `spec-dna upgrade --pin-file spec-dna-pin.toml`. It moves the pin and the sums in `spec-dna.toml` to the new version.
 4. Run `spec-dna init`. It writes the adapters and the harness files of the new version. It keeps a harness file that you edited.
 5. Run `spec-dna check`. Commit the result.
 

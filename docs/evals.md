@@ -13,7 +13,7 @@ For a new project, question 14 of `init` proposes `skeleton`. `skeleton` writes 
 | `[evals]` in `spec-dna.toml` | The table that enables `eval run`, SD506 and SD918 |
 | `evals/check.sh` | The shell functions that the checks call. `init` writes it once and never again |
 | An example eval and `evals/fixtures/example/` | A task that edits one text file, and one check. It needs no build tool |
-| `.github/workflows/agent-evals.yml` | The CI job. `init` does not write it when the CI answer is `gitlab` |
+| `.github/workflows/agent-evals.yml` | The CI job. `init` does not write it when the CI answer is `gitlab` or `none` |
 
 The CI job runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. An upgraded project has no evals. To add them, run `spec-dna init --reconfigure`. Choose `skeleton`.
 

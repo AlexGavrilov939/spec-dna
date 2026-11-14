@@ -50,6 +50,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | pass rate | The share of evals that pass | | [evals](evals.md) |
 | pending | The layer of the top files `roadmap.md` and `questions.md` | | [concepts](concepts.md#layers-and-the-graph) |
 | pin | The version of spec-dna in `spec-dna.toml` (`spec-dna = "<version>"`), with the sums of its binaries as an option | | [config](config.md#the-pin-comes-first) |
+| playbook | The [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook), the source of the stage names and of the indicators of `stats --sdlc` | | [commands](commands.md#stats) |
 | plan | `plan.md`: the approved plan of one change, with its files, order, risks and proof | | [change guide](guides/change.md) |
 | procedure | A guide or a runbook, in `procedures/` | types `guide`, `runbook` | [types](types.md) |
 | profile | A set of default severities of the diagnostic codes: `lite`, `standard` or `strict` | | [profiles](profiles.md) |

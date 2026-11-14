@@ -13,13 +13,13 @@ For a change of the requirements, the agent also follows the change lifecycle: `
 
 ## Instruction files
 
-`init` writes these steps as one line into the instruction file of the agent. Question 10 of `init` chooses the files: `agents-md`, `claude-md` and `skill`. By default, `init` chooses the instruction files that exist in the repository, and the skill.
+`init` writes these steps as one line into the instruction file of the agent. Question 10 of `init` chooses the files: `agents-md`, `claude-md` and `skill`. By default, `init` chooses `claude-md` and `skill`. It adds `agents-md` when `AGENTS.md` exists, or when `CLAUDE.md` does not exist. If `CLAUDE.md` imports `AGENTS.md`, `CLAUDE.md` gets no second copy of the line.
 
 | Agent | Instruction file | Note |
 | --- | --- | --- |
 | Codex | `AGENTS.md` | Codex reads `AGENTS.md` from the repository root to the current folder |
 | Cursor | `AGENTS.md` | Cursor also reads `.cursor/rules` |
-| Gemini CLI | `GEMINI.md` | Set `context.fileName` to `AGENTS.md`, or copy the line into `GEMINI.md` |
+| Gemini CLI | `GEMINI.md` | Copy the line from `AGENTS.md` into `GEMINI.md` |
 | Claude Code | `CLAUDE.md` | The Claude Code adapter writes this line |
 | Another agent | The file that the agent reads | Copy the line from `AGENTS.md` into that file |
 

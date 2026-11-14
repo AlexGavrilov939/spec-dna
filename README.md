@@ -6,7 +6,7 @@
 
 **Engineering specifications that stay small, linked and checked, for AI coding agents.**
 
-spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives a coding agent only the parts of the documents that its task needs. It works in any repository, with any language and with any agent that can run a shell command. It uses no network and no language model.
+spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives a coding agent only the parts of the documents that its task needs. It works in any repository, with any language and with any agent that can run a shell command. spec-dna itself makes no network call and uses no language model.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
@@ -122,7 +122,7 @@ Commit the files that `init` wrote. Then add `spec-dna check --base origin/<main
 
 ## Daily use
 
-An agent runs `context` and `check` itself, because the skill tells it to. People use the same commands:
+An agent runs `context` and `check` itself, because its instruction file tells it to. People use the same commands:
 
 | When | Command | Result |
 | --- | --- | --- |

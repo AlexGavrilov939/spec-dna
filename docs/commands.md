@@ -54,7 +54,7 @@ spec-dna mv procedures/deploy#rollback procedures/rollback --type procedure   # 
 spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a research document
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
 spec-dna mv procedures/old procedures/new --stub    # a stub at the old path for tools that read by path
-spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
+spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves   # a Claude Code session
 spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
 spec-dna hook fanout-cap --cap 10   # a hook of a coding agent
 spec-dna hook protect-tests         # a hook of a coding agent: ask before an edit of a test file
@@ -63,7 +63,7 @@ spec-dna --help                     # commands and options (-h); --version (-V) 
 spec-dna mv --help                  # the help of one command
 ```
 
-Each command accepts `--json`. spec-dna does not use the network. It reads the documents with local `git` commands.
+Each command accepts `--json`. spec-dna itself makes no network call. `eval run` starts an agent, which uses the network. It reads the documents with local `git` commands.
 
 A target is a document id, an alias such as `ADR-12`, `<id>#<anchor or key>`, or a repository path.
 
@@ -88,7 +88,7 @@ Then `init` asks at most 14 questions, with the found values as defaults. It sho
 
 - one line in `AGENTS.md`, if the file exists or if neither file exists;
 - one line in `CLAUDE.md`, unless `CLAUDE.md` imports such an `AGENTS.md`;
-- the skill `.claude/skills/spec-dna/SKILL.md`.
+- the skill `.claude/skills/spec-dna/SKILL.md` of the Claude Code adapter.
 
 The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the multi-line blocks that earlier versions wrote.
 
@@ -249,7 +249,7 @@ For an intent with the status `closed`, `finish` checks only that status (step 2
 | 1 | A check failed |
 | 3 | A configuration error |
 
-Without `--base`, `finish` uses the merge base with the default branch that `origin/HEAD` names. If git cannot name it, `finish` prints a note that it cannot decide SD910 locally.
+`finish` uses the merge base with the default branch that `origin/HEAD` names. If git cannot name it, `finish` prints a note that it cannot decide SD910 locally.
 
 ## status
 
@@ -289,7 +289,7 @@ spec-dna log [--since <rev>]
 spec-dna stats --sdlc [--group <name>]
 ```
 
-`stats --sdlc` prints the leading and lagging indicators of the playbook, under its names. It reads git and the files only. It prints `n/a` for an indicator that git cannot give, and the output says why. `--group <name>` reads one group.
+`stats --sdlc` prints the leading and lagging indicators of the [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook), under its names. It reads git and the files only. It prints `n/a` for an indicator that git cannot give, and the output says why. `--group <name>` reads one group.
 
 | Stage | Indicator | From git |
 | --- | --- | --- |

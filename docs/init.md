@@ -102,7 +102,7 @@ If the files show no type, the type is the type of the root that contains the fo
 | 7 | The language of normative text, as a BCP 47 tag, and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected language and aliases. `en` if detection finds none |
 | 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
 | 9 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
-| 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none`. `agents-md` writes the line into `AGENTS.md`, which most coding agents read. `claude-md` writes it into `CLAUDE.md`, which Claude Code reads. `skill` writes the skill for Claude Code | The instruction files that exist, and the skill |
+| 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none`. `agents-md` writes the line into `AGENTS.md`, which Codex, Cursor and many other agents read. `claude-md` writes it into `CLAUDE.md`, which Claude Code reads. `skill` writes the skill for Claude Code | `claude-md` and `skill`, and `agents-md` when `AGENTS.md` exists or `CLAUDE.md` does not exist |
 | 11 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 | 12 | The Claude Code harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean` |
 | 13 | The models: `role=model[:effort]` words, such as `verifier=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high code-simplifier=sonnet:high`. The detected values replace the main model and the advisor |
@@ -120,14 +120,14 @@ Question 14 writes the files below when the answer is `skeleton`. It starts no r
 
 | File | Purpose |
 | --- | --- |
-| `[evals]` in `spec-dna.toml` | Enables `spec-dna eval run` and SD506 |
+| `[evals]` in `spec-dna.toml` | Enables `spec-dna eval run`, SD506 and SD918 |
 | `evals/check.sh` | The shell functions that the checks of an eval call. `init` writes it once and never again |
 | `evals/` | An example eval with a fixture of one text file. It needs no build tool |
-| `.github/workflows/agent-evals.yml` | The CI run of the evals. `init` does not write it if the CI answer of question 11 is `gitlab`. CI runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS` |
+| `.github/workflows/agent-evals.yml` | The CI run of the evals. `init` does not write it if the CI answer of question 11 is `gitlab` or `none`. CI runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS` |
 
 The folder is `[evals] dir`, which is `evals` by default. For a root `.`, `init` writes an `exclude` for it, because a later fixture can hold Markdown files. After the write, `init` prints the 2 commands that enable the CI runs. [evals.md](evals.md) gives the form of an eval and the workflow.
 
-Question 7 writes the top key `language = "<tag>"`. The answer `en` writes nothing, because `en` is the default. A tag that is not a BCP 47 tag, such as `German`, stops `init` with exit code 2, and `init` writes no file. The word lists of the lint are English ([config.md](config.md)). The checks that use them skip a root with another language.
+Question 7 writes the top key `language = "<tag>"`. The answer `en` writes nothing, because `en` is the default. A tag that is not a BCP 47 tag, such as `German`, stops `init` with exit code 2, and `init` writes no file. The word lists of the lint are English ([config.md](config.md)). When `language` is not English, the checks that use them are off for the whole project (SD801 to SD805 and SD904).
 
 Version 0.5 wrote `[rules] lint = "off"` for this purpose, but `init` does not write it now. A `lint` rule in the current file stays as it is.
 

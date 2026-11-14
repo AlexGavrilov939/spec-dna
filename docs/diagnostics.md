@@ -23,7 +23,7 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 
 The codes SD401 to SD405, SD202, SD605, SD606, SD607, SD702, SD703 and SD921 compare the base tree with the head tree. Thus these diagnostics are always new. SD704 is new only if the root does not enforce budgets and the document is new or grew.
 
-Without `--base`, the lifecycle codes SD910 to SD920 use the merge base with the default branch that `origin/HEAD` names. If git cannot name it, `check` prints a note that it cannot decide SD910 locally.
+Without `--base`, the change codes SD905 and SD910 to SD921 use the merge base with the default branch that `origin/HEAD` names. If git cannot name it, `check` prints a note that it cannot decide SD910 locally.
 
 ## Code ranges
 
@@ -166,11 +166,11 @@ These codes apply only to a project with a `[change]` table whose `policy` is no
 | SD918 | incident-eval-missing | warning | A change adds an incident and no file in `[evals] dir`. It applies only when `[evals]` is in the configuration. Add an eval with the incident. |
 | SD919 | concern-open | error | A spec is `approved` with an open concern (`- [ ]` in its `Concerns` section). Resolve each open concern (`- [x]`) before the spec gets `approved`. |
 | SD920 | decision-needed-unaccepted | error | A decision that the spec needs is absent, or is not `accepted` when `finish` runs. Accept the decision first. |
-| SD921 | truth-changed-without-change | warning | A requirement of a `rule`, `requirements` or `interface` document of a `forever` layer changed, was added or was removed, and no file under the folder of the `intent` layer changed. It runs only with `--base`. Write the change as an intent folder in the same pull request. |
+| SD921 | truth-changed-without-change | warning | A requirement of a `rule`, `requirements` or `interface` document of a `forever` layer changed, was added or was removed, and no file under the folder of the `intent` layer changed. Write the change as an intent folder in the same pull request. |
 
 ## Checks of the layers and of the requirement text
 
-The codes SD901 to SD904 and SD921 are new in 0.6.0. They are warnings in `standard` ([profiles.md](profiles.md)). The rule groups are `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD921).
+The codes SD506, SD901 to SD905 and SD910 to SD921 are new in 0.6.0. They are warnings in `standard` ([profiles.md](profiles.md)). The rule groups are `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD921).
 
 - SD901. The graph of the layers gives the direction. A document can link a layer that its own layer moves into. It can also link a layer that lists its own layer in `linked-from`.
 - A rule that links an intent gives SD901, because an intent moves into a rule, and a finished intent is deleted. An accepted decision that links an intent in its locked text gives SD611, not SD901. In an amendment section, a link to an intent gives SD901. Name the intent as plain text there.

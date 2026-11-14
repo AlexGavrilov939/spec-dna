@@ -223,7 +223,7 @@ These options make each request smaller. `init` does not write them, because the
 ## Change, upgrade and removal
 
 - Change: edit `[harness]`, or run `spec-dna init --reconfigure`. The preview shows each file before `init` writes it. `init --reconfigure` also offers the parts that a project does not have yet.
-- Upgrade: install the new version. Set the pin. Run `spec-dna init`. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
+- Upgrade: install the new version. Run `spec-dna upgrade` to move the pin. Run `spec-dna init`. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
 - Removal: run `spec-dna init --reconfigure`. Choose `none`. `init` removes the generated agent files and skills that you did not edit, `REVIEW.md`, the `CLAUDE.md` line and the hook handlers. It keeps the other settings keys and tells you which ones it no longer sets.
 
 ### Upgrade from 0.5

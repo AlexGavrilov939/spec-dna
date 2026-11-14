@@ -176,7 +176,7 @@ sonnet = "high"
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` has priority over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
 | `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default of 4,000 characters is about the size of one amendment. |
-| `lint.history-terms` | list of strings | `"previously"`, `"formerly"`, `"no longer"`, `"used to"`, `"was changed"`, `"before this change"`, `"after this change"` | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates and `round <n>`. A phrase is not blank, and no phrase is listed twice. |
+| `lint.history-terms` | list of strings | `"previously"`, `"formerly"`, `"no longer"`, `"used to"`, `"was changed"`, `"before this change"`, `"after this change"` | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates, `round <n>` and `iteration <n>`. A phrase is not blank, and no phrase is listed twice. |
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
@@ -187,12 +187,12 @@ sonnet = "high"
 | `harness.skills` | list of strings | set by `init` | The stage skills that spec-dna writes: `intent`, `spec`, `plan` and `review`. `[]` writes none. |
 | `harness.review-md` | boolean | set by `init` | `true` writes `REVIEW.md` in the repository root. |
 | `harness.protect-tests` | string | set by `init` | `"fix-branches"`, `"always"` or `"off"`. It selects when the hook `protect-tests` asks before an edit of a test file. |
-| `harness.deny` | list of strings | `[]` | Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
+| `harness.deny` | list of strings | `[]` | Claude Code adapter. Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
 | `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
-| `harness.efforts` | table | `{ sonnet = "high" }` | The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
+| `harness.efforts` | table | `{ sonnet = "high" }` | Claude Code adapter. The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 
 ## Details of keys
 
