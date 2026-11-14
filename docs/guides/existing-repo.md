@@ -14,9 +14,9 @@ This guide adds spec-dna to a repository that already has documents. spec-dna do
 spec-dna init
 ```
 
-`init` detects the document folders, their types, the tests, the agent files, CI and the hooks. Then it asks its questions with the detected answers as defaults. For an existing repository, these answers are important:
+`init` detects the document folders, their types, the tests, the agent files, CI and the hooks. Then it asks its questions with the detected answers as defaults. These answers have the largest effect on an existing repository:
 
-- **Profile.** `lite` gives only warnings. Use it for the first weeks, and move to `standard` later.
+- **Profile.** `lite` gives only warnings. Use it for the first weeks. Move to `standard` later.
 - **Layer graph.** `init` proposes `small` for fewer than 30 documents and `default` for more.
 - **Change policy.** Answer `none` to start with no change process. The layers and their checks still work.
 - **Roots.** `init` shows each detected folder and its type. Accept it, drop it or edit it, for example `type=requirements status=active`. A root of one type gives that type to each document in it, so no document needs a `type:` field.
@@ -64,7 +64,7 @@ spec-dna mv valves docs/requirements/valves/closing.md
 
 ## Turn on the change process
 
-When the team is ready, run `spec-dna init --reconfigure` and choose the policy `three-class` or `two-class`. From then on, a change of a requirement needs an intent folder (SD921). [The change guide](change.md) gives the steps.
+When the team is ready, run `spec-dna init --reconfigure`. Choose the policy `three-class` or `two-class`. From then on, a change of a requirement needs an intent folder (SD921). [The change guide](change.md) gives the steps.
 
 The intent folder must be in a root of the type `mixed`. If each root of your repository has one type, `spec-dna new intent` stops with exit code 2. Add a mixed root for the changes to `spec-dna.toml`:
 

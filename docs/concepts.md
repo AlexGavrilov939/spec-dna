@@ -18,7 +18,7 @@ When AI agents write a large part of the code, the specifications are the main i
 3. Documents grow. Each task adds text, and nobody removes it. An agent reads whole long files to find one rule, and each task costs more tokens.
 4. Proposals and plans stay in the tree after the work. An agent cannot tell them from the current truth.
 
-spec-dna treats the specifications as code. Each document has a type and a stable id. Each requirement has a key and a hash. A check compares each change with its base, as a linter does for code. A change has its own folder, and the folder goes away when the change is complete.
+spec-dna treats the specifications as code. Each document has a type and a stable id. Each requirement has a key and a hash. A check compares each change with its base, as a linter does for code. A change has its own folder, and `finish` deletes the folder when the change is complete.
 
 ## Documents and types
 
@@ -39,7 +39,7 @@ Each document has 1 of 15 types. The place of a file gives its type: a file unde
 | `research` | Material that agents read only on request | `docs/research/` |
 | `intent`, `spec`, `plan` | The documents of one change | `docs/intent/<slug>/` |
 
-A `status` field gives the lifecycle of a document, for example `draft`, `active` and `retired`. A status moves forward only. After a decision is `accepted`, its text is locked. A new fact goes into an amendment section, or into a new decision that supersedes the old one. Only a live section, such as `Status`, can change in place.
+A `status` field gives the lifecycle of a document, for example `draft`, `active` and `retired`. A status moves forward only. After a decision is `accepted`, its text is locked. A new fact goes into an amendment section, or into a new decision that supersedes the old one. Only a live section, such as `Status`, can change without an amendment.
 
 A mature repository keeps its folders. A root in `spec-dna.toml` maps a folder to a type, so no file has to move.
 
@@ -64,7 +64,7 @@ Reference: [commands.md](commands.md#show) (`show`, `mv`), [config.md](config.md
 
 ## Layers and the graph
 
-A layer is a named set of document types, in one folder. The layers form a graph. An edge `moves-to` says that the text of one layer matures into another layer. For example, an intent moves into requirements and decisions, and an incident moves into a new intent.
+A layer is a named set of document types, in one folder. The layers form a graph. An edge `moves-to` means that the text of one layer matures into another layer. For example, an intent moves into requirements and decisions, and an incident moves into a new intent.
 
 The level of a layer is the length of its longest `moves-to` path. Level 0 is the most stable. The layers of level 0 hold the current truth of the project. This is the default graph:
 
@@ -88,7 +88,7 @@ These rules follow from the graph:
 - A layer can limit its size with `max-docs` and `max-chars` (SD902).
 - The documents of an `on-request` layer go to an agent only when the agent names them.
 
-A project with fewer than 30 documents gets a small graph of 7 layers. `spec-dna layer add` adds a layer later, and `spec-dna layer list` shows the layers and their levels.
+`init` proposes a small graph of 7 layers for a project with fewer than 30 documents. `spec-dna layer add` adds a layer later, and `spec-dna layer list` shows the layers and their levels.
 
 Reference: [config.md](config.md#the-table-layers), [commands.md](commands.md#layer).
 
@@ -98,7 +98,7 @@ Reference: [config.md](config.md#the-table-layers), [commands.md](commands.md#la
 
 Thus a mature repository can adopt spec-dna before it fixes the old problems. `check --all` shows each problem once. The gate fails only on a new error.
 
-`check` finds these problems, among others:
+`check` finds, for example, these problems:
 
 - A link, an id or an anchor that does not resolve, and an id that a change removed with no alias.
 - An edit of the locked text of an accepted decision (SD405).
@@ -114,7 +114,7 @@ Reference: [commands.md](commands.md#check), [diagnostics.md](diagnostics.md), [
 
 ## The change lifecycle
 
-A change is a folder `docs/intent/<slug>/`. It holds `intent.md` (what the originator wants and why), `spec.md` (the delta of the requirements) and `plan.md` (the files, the order, the risks and the proof). The folder stays on the default branch while the work goes on. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished changes.
+A change is a folder `docs/intent/<slug>/`. It holds `intent.md` (what the originator wants and why), `spec.md` (the delta of the requirements) and `plan.md` (the files, the order, the risks and the proof). The folder stays on the default branch while the work continues. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished changes.
 
 A change has a class. The class sets the documents that the change needs:
 
@@ -128,19 +128,19 @@ A change that touches a layer or a path of `[change] high-risk-layers` or `high-
 
 To approve a document is to set its status (`accepted` or `approved`) in a commit that a pull request merges. spec-dna reads the approval from the base tree, and the branch protection of the repository decides who can merge. Each document of a change needs the approval of the document before it (SD910). `[change] gate` makes this rule an error (`block`), a warning (`warn`) or nothing (`off`).
 
-A change has no stage field. spec-dna derives the stage (Plan, Design, Build, Test, Deploy or Maintain) from the files, their statuses and git. `spec-dna status` shows each change and its stage, and `spec-dna next <slug>` prints the checklist to the next gate. `spec-dna stats --sdlc` prints the indicators of each stage that git can give.
+A change has no stage field. spec-dna derives the stage (Plan, Design, Build, Test, Deploy or Maintain) from the files, their statuses and git. `spec-dna status` shows each change and its stage. `spec-dna next <slug>` prints the checklist to the next gate. `spec-dna stats --sdlc` prints the indicators of each stage that git can give.
 
-`[change] policy` sets the classes that a project uses: `three-class`, `two-class` or `none`. A new project gets `three-class`. An upgraded project gets `none`, so it gets the layers and their checks, but no change process.
+`[change] policy` sets the classes that a project uses: `three-class`, `two-class` or `none`. A new project has `three-class`. An upgraded project has `none`: it has the layers and their checks, but no change process.
 
 Reference: [guides/change.md](guides/change.md), [config.md](config.md#the-table-change), [commands.md](commands.md).
 
 ## Context
 
-`spec-dna context <file>` gives an agent the sections that apply to the files that it will change. Examples are the requirements that cite the file, the rules whose `applies-to` matches the path, and the summaries of the linked decisions. The layers come by level, so the current truth comes first.
+`spec-dna context <file>` gives an agent the sections that apply to the files that it will change. Examples are the requirements that cite the file, the rules whose `applies-to` matches the path, and the summaries of the linked decisions. `context` gives the layers by level, so it gives the current truth first.
 
-The unit is a section, with its id and its hash. Thus an agent can cite what it read, and a later check can find a change of that text. A budget limits the size of the output. A section that does not fit is listed with its id, hash and size. The documents of `on-request` layers are counted in one line and not served.
+The unit is a section, with its id and its hash. Thus an agent can cite what it read, and a later check can find a change of that text. A budget limits the size of the output. `context` lists a section that does not fit with its id, hash and size. It counts the documents of `on-request` layers in one line and does not give them.
 
-`spec-dna show <id>` gives one whole document, also from an `on-request` layer.
+`spec-dna show <id>` gives one whole document. It also works for a document of an `on-request` layer.
 
 Reference: [commands.md](commands.md#context).
 
@@ -166,4 +166,4 @@ Reference: [harness.md](harness.md), [init.md](init.md).
 - It does not write the specifications. An agent or a person writes them, and spec-dna checks them.
 - It does not know who approved a change. The branch protection of the repository decides who can merge.
 - It does not read pull request data, CI logs or an issue tracker. `stats --sdlc` marks the indicators that need them as `n/a`.
-- It never changes a requirement to agree with the code. `finish` is the only command that deletes documents, and it deletes only the folder of a change.
+- It never changes a requirement to agree with the code. `finish` is the only command that deletes documents. It deletes only the folder of a change.

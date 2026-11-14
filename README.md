@@ -39,7 +39,7 @@ $ spec-dna context src/valves.rs
 # Valves
 ```
 
-A change of the requirements has its own folder. Each document of the change needs an approval before the next one:
+A change of the requirements has its own folder. Each document of the change needs the approval of the document before it:
 
 ```sh
 spec-dna new intent sensor-timeout   # docs/intent/sensor-timeout/intent.md: what and why
@@ -63,9 +63,9 @@ When AI agents write a large part of the code, the specifications are the main i
 ## How it works
 
 - Your documents stay plain Markdown. spec-dna reads their front matter, headings, links, code spans and requirement list items.
-- The place of a file gives its type: a file under `rules/` is a rule, and a file under `decisions/` is a decision. The folders form a graph of layers, from the current truth to the work in progress.
+- The place of a file gives its type: a file under `rules/` is a rule, and a file under `decisions/` is a decision. The folders form a graph of layers, from the current truth to the work that is not complete.
 - A requirement is a list item with a bold key, such as `- **shutoff**: ... SHALL ...`. Its id is `<document id>#<key>`. Tests and other documents refer to it by this id.
-- A change lives in `docs/intent/<slug>/` with its intent, spec and plan. `finish` applies its delta to the requirements and deletes the folder. Git keeps the history.
+- A change has its folder `docs/intent/<slug>/`, with its intent, spec and plan. `finish` applies its delta to the requirements and deletes the folder. Git keeps the history.
 - `check` compares a change with its base and reports only the new problems. A mature repository can adopt spec-dna before it fixes the old problems.
 - `context` gives an agent the sections that apply to the files of its task, with the current truth first.
 - `init` writes one line into `AGENTS.md` and `CLAUDE.md`, and a skill. They tell the agent to run `context` before an edit and `check` before it finishes. For Claude Code, `init` can also write a harness of agent roles, stage skills, hooks and evals.
@@ -98,7 +98,7 @@ You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the ta
 
 ## Quick start
 
-In the root of your repository:
+Run these commands in the root of your repository:
 
 ```sh
 spec-dna init         # detect, ask, show a preview, then write spec-dna.toml and the agent files
@@ -143,7 +143,7 @@ In agent experiments, 2 blind graders checked each run. Agents with the gate kep
 
 ## Contributing
 
-spec-dna is written in Rust. It has 4 direct dependencies, has no network code, and runs `git` to read the repository. [CONTRIBUTING.md](CONTRIBUTING.md) gives the setup, the rules for commits and pull requests, the dependencies and the release steps. To report a vulnerability, follow [SECURITY.md](SECURITY.md).
+spec-dna is written in Rust. It has 4 direct dependencies and no network code. It runs `git` to read the repository. [CONTRIBUTING.md](CONTRIBUTING.md) gives the setup, the rules for commits and pull requests, the dependencies and the release steps. To report a vulnerability, follow [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -35,6 +35,6 @@ CI runs the same hooks (`.github/workflows/ci.yml`). A change is complete only w
 - Work on a branch. Do not commit to `master` directly.
 - GitHub Actions: pin each `uses:` to a full commit SHA, with the version tag in a trailing comment. Set `permissions: {}` at the workflow level, and give each job only the permissions that it needs.
 - Do not commit secrets or local agent state: `.env*`, `.claude/settings.local.json`, `CLAUDE.local.md`.
-- Docs: follow `CONTRIBUTING.md`, section "Docs layout". Each page has one kind, each detail lives in one reference page, and each new page goes into `docs/README.md`.
+- Docs: follow `CONTRIBUTING.md`, section "Docs layout". Give each page one kind. Write each detail in one reference page. Add each new page to `docs/README.md`.
 - Claude Code: `.claude/settings.json` and `.claude/agents/` set a team of models and agents, and `CLAUDE.md` gives its rule. `.claude/agents/README.md` describes the team. `.claude/agents/ownership.md` gives the responsible agent of each task and each path.
 - If you change a convention, update `CONTRIBUTING.md` and this file in the same pull request.

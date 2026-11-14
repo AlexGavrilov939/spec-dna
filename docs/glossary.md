@@ -37,8 +37,8 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | intent | `intent.md`: the request of one change, in the words of its originator | type `change` | [change guide](guides/change.md) |
 | interface | An API, an event or a tool schema, in `interfaces/` | type `contract` | [types](types.md) |
 | layer | A named set of document types with a place in the graph of stability | | [concepts](concepts.md#layers-and-the-graph) |
-| level | The longest `moves-to` path from a layer to a layer with no edge out. Level 0 is the most stable | | [concepts](concepts.md#layers-and-the-graph) |
-| live section | A section of an accepted decision that can change in place. The default is `Status` | | [config](config.md) |
+| level | The longest `moves-to` path from a layer to a layer with no outgoing edge. Level 0 is the most stable | | [concepts](concepts.md#layers-and-the-graph) |
+| live section | A section of an accepted decision that can change without an amendment. The default is `Status` | | [config](config.md) |
 | locked | The state of the text of an accepted decision outside its amendment, history and live sections. SD405 checks it | frozen | [diagnostics](diagnostics.md) |
 | `moves-to` | An edge of the layer graph: the text of the source layer matures into the target layer | | [concepts](concepts.md#layers-and-the-graph) |
 | pass rate | The share of evals that pass | | [concepts](concepts.md#harness-and-evals) |

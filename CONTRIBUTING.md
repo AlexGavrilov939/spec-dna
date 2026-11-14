@@ -77,7 +77,7 @@ The user documentation is in `docs/`. [docs/README.md](docs/README.md) is its ma
 - Use the terms of [docs/glossary.md](docs/glossary.md). Add a new term to the glossary in the same pull request.
 - Add each new page to the map in the same pull request.
 - Keep the path of a reference page. The code, the schema and the tests name these paths.
-- Give an image a light and a dark file with the same geometry, and show it with `picture`.
+- Give an image a light file and a dark file with the same geometry. Show it with `picture`.
 
 ## Branches
 
