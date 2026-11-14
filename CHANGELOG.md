@@ -2,6 +2,33 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.4.2 - 2026-11-14
+
+Fixes from the use of 0.4.1 in a second real project.
+
+### Added
+
+- `check --staged` checks the git index, the tree that the next commit records. Untracked files and edits that are not staged do not count. An unmerged path gives exit code 4, and a missing `spec-dna.toml` in the index gives exit code 3. The hook that `init` writes (pre-commit, husky, lefthook) now runs `spec-dna check --staged`. Before this change, a commit could pass while the committed tree failed with SD101. ADR 0001 has an amendment.
+- SD611 `decision-links-change` (warning): an accepted decision links a change document in its frozen text or in `depends-on`. A link in an amendment, history or live section is allowed. [docs/types.md](docs/types.md#links-between-types) gives the link direction of each type.
+- `init` and `init --dry-run` print the 8 answers before the preview. Each line says whether the answer is the default and what it writes (`writes nothing` for an answer that writes no key or file). With `--json`, `answers` has the same data.
+- The preview of `init`, and `init --dry-run` for a project that has a `spec-dna.toml`, show the diff of each file: `AGENTS.md`, `CLAUDE.md`, the skill and the hook. With `--json`, each entry of `files` has a `diff`.
+
+### Changed
+
+- `cargo install --locked --git <url> --tag v0.4.2` works without a package name. The benchmark packages and the brownfield fixture have no binary now (they use examples and a library), so the repository has one package with a binary. The command for v0.4.1 and earlier still needs `spec-dna` at the end. The README and the quickstart give both forms.
+- The skill that `init` writes lists the `types` of the project, not all 10 types. `check` compares the skill with the types of the project. After you change `types`, run `spec-dna init` to update the skill.
+- `check --lint` runs the prose lint (SD801 to SD805) in every profile, even when `lint` is off. The findings are warnings, so they never fail the gate. Without `--lint`, nothing changes.
+- A requirement key that is a template placeholder (`{{key}}`) gives SD306 only. It no longer gives SD203 too.
+- SD804 does not report "many" after "how" ("how many").
+- SD304 for `proposed` on a spec, a contract or an invariant names `draft`. `draft` is the proposal state of these types, and `proposed` is for a decision and a change. The namespace `reference/` stays singular. [docs/types.md](docs/types.md#statuses-and-namespaces) gives the reason and the namespace of each type.
+- `spec-dna new` says "replace each {{...}} placeholder". The templates use that form.
+- A command that writes to a closed pipe (`spec-dna check --json | head -1`) ends with its own exit code, with no panic. A non-interactive `init` with a closed stdout now writes its files.
+
+### Upgrade notes
+
+- A project on 0.4.1 must change the pin to 0.4.2 and its `[spec-dna-sha256]` table (see [docs/quickstart.md](docs/quickstart.md#upgrade)), install the new binary and run `spec-dna init`. That run updates the skill. It also updates the hook that 0.4.1 wrote (`entry: spec-dna check`, or the line `spec-dna check` of `.husky/pre-commit`) to `--staged`. `init` changes only that exact line. For lefthook, change `run: spec-dna check` by hand.
+- SD502 reports the old skill until `init` runs.
+
 ## 0.4.1 - 2026-11-14
 
 One example domain, greenhouse irrigation, for the tests, the fixtures, the documentation and the texts for agents.

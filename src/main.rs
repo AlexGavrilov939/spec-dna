@@ -2,6 +2,20 @@
 //! machine-checked. It gives AI coding agents the minimum sufficient context.
 //! See README.md for commands, exit codes and diagnostics.
 
+// These macros replace `print!`, `println!` and `eprintln!` in all
+// modules that follow. They ignore a closed pipe (`src/out.rs`).
+macro_rules! print {
+    ($($arg:tt)*) => { $crate::out::stdout(format_args!($($arg)*)) };
+}
+macro_rules! println {
+    () => { $crate::out::stdout(format_args!("\n")) };
+    ($($arg:tt)*) => { $crate::out::stdout(format_args!("{}\n", format_args!($($arg)*))) };
+}
+macro_rules! eprintln {
+    () => { $crate::out::stderr(format_args!("\n")) };
+    ($($arg:tt)*) => { $crate::out::stderr(format_args!("{}\n", format_args!($($arg)*))) };
+}
+
 mod adapters;
 mod check;
 mod cite;
@@ -21,6 +35,7 @@ mod json;
 mod lint;
 mod model;
 mod mv;
+mod out;
 mod parse;
 mod rank;
 mod registry;
@@ -51,14 +66,19 @@ spec-dna.toml exists, it updates the agent adapters only, unless
     ),
     (
         "check",
-        "check [--base <rev>] [--all] [--lint]",
+        "check [--base <rev>] [--all] [--lint] [--staged]",
         "Reports the diagnostics that are new against the merge base of <rev>
 and HEAD (default: HEAD). With --all, it reports every diagnostic. With
 --base, it reads tracked files only, as CI does. It prints the errors
 first, then the drift warnings, then the other warnings. The prose lint
 warnings (SD801-SD805) are one count for each code; --lint lists each of
 them. Another warning code with more than 10 diagnostics, for example
-SD608 on a mature corpus, is one count too. --json lists all diagnostics.",
+SD608 on a mature corpus, is one count too. --lint also runs the prose lint
+in a profile that has it off, as a report: its warnings never fail the
+gate. Without --all, --lint lists the new findings only. --staged checks the
+git index (the tree that the next commit records) in place of the working
+tree. Untracked and unstaged files do not count. The hook that `init`
+writes uses it. --json lists all diagnostics.",
     ),
     (
         "context",
@@ -176,6 +196,7 @@ struct Args {
     expect: Vec<String>,
     format: Option<String>,
     lint: bool,
+    staged: bool,
     non_interactive: bool,
     answers: Option<String>,
     reconfigure: bool,
@@ -203,6 +224,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         expect: Vec::new(),
         format: None,
         lint: false,
+        staged: false,
         non_interactive: false,
         answers: None,
         reconfigure: false,
@@ -230,6 +252,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--json" => a.json = true,
             "--all" => a.all = true,
             "--lint" => a.lint = true,
+            "--staged" => a.staged = true,
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
             "--non-interactive" => a.non_interactive = true,
@@ -408,7 +431,24 @@ fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, Stri
 
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
-    let cfg = repo.load_config()?;
+    // With `--staged`, the head tree is the git index. Each read of the head
+    // tree then goes to the index, and no read lists untracked files.
+    let staged_repo;
+    let repo = if a.staged {
+        staged_repo = repo.staged();
+        &staged_repo
+    } else {
+        repo
+    };
+    let untracked = a.base.is_none() && !a.staged;
+    let mut cfg = if a.staged {
+        repo.load_staged_config()?
+    } else {
+        repo.load_config()?
+    };
+    // `--lint` runs the prose lint in every profile. The lint gives warnings,
+    // so it never fails the gate.
+    cfg.force_lint = a.lint;
     if cfg.pin != VERSION {
         return Err(pin_mismatch(&cfg));
     }
@@ -440,7 +480,11 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         });
         // A gate against `--base` reads tracked files only, as CI does
         // (ADR 0001, amendments).
-        let head = Snapshot::worktree(repo, &roots, a.base.is_none());
+        let head = if a.staged {
+            Snapshot::index(repo)
+        } else {
+            Snapshot::worktree(repo, &roots, untracked)
+        };
         (
             head,
             base.join()
@@ -467,7 +511,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 Some(c) => evidence::load(repo, &cfg, Some(c), false).map(Some),
                 None => Ok(None),
             });
-            let head = evidence::load(repo, &cfg, None, a.base.is_none());
+            let head = evidence::load(repo, &cfg, None, untracked);
             (
                 head,
                 base.join()
@@ -491,15 +535,21 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             &cfg,
             (base, &base_snap),
             (head, &head_snap),
-            a.base.is_none(),
+            untracked,
         )?;
         outcome.new.extend(std::iter::repeat_n(true, drift.len()));
         outcome.head.extend(drift);
         repo::trace("drift", &mut t);
     }
-    let head_ad = check::apply_severity(&cfg, adapters::check(&adapter_texts(repo, &head_snap)?));
+    let head_ad = check::apply_severity(
+        &cfg,
+        adapters::check(&adapter_texts(repo, &head_snap)?, &cfg.types),
+    );
     let base_ad: Vec<_> = if use_base {
-        check::apply_severity(&cfg, adapters::check(&adapter_texts(repo, &base_snap)?))
+        check::apply_severity(
+            &cfg,
+            adapters::check(&adapter_texts(repo, &base_snap)?, &cfg.types),
+        )
     } else {
         Vec::new()
     };
@@ -509,7 +559,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.new.push(is_new);
     }
     if let Some(c) = &base_commit
-        && let Some(d) = config_not_alone(repo, &cfg, c, a.base.is_none())?
+        && let Some(d) = config_not_alone(repo, &cfg, c, untracked)?
     {
         outcome.head.push(d);
         outcome.new.push(true);
@@ -1018,7 +1068,7 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         );
     } else {
         println!(
-            "wrote {path} ({} template); replace each <placeholder>",
+            "wrote {path} ({} template); replace each {{{{...}}}} placeholder",
             ty.name()
         );
     }

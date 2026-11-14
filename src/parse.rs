@@ -569,6 +569,13 @@ fn scan_placeholders(text: &str, line: u32, out: &mut Vec<Token>) {
     }
 }
 
+/// True if `text` has a template placeholder (`{{text}}`).
+pub fn has_placeholder(text: &str) -> bool {
+    let mut found = Vec::new();
+    scan_placeholders(text, 0, &mut found);
+    !found.is_empty()
+}
+
 /// Collects `PREFIX-NUMBER` tokens: an uppercase ASCII prefix, a hyphen and
 /// digits, at word boundaries.
 fn scan_tokens(text: &str, line: u32, out: &mut Vec<Token>) {

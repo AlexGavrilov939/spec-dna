@@ -17,6 +17,43 @@ spec-dna has 10 document types. [ADR 0001](adr/0001-information-model.md) define
 
 A root can change the required sections (`required-sections`) and the budgets (`[budgets.<type>]`). [config.md](config.md) gives the keys.
 
+## Statuses and namespaces
+
+Each type has its own first status and its own namespace in a mixed root.
+
+| Type | First status | Namespace of `spec-dna new` |
+| --- | --- | --- |
+| `spec` | draft | none |
+| `contract` | draft | `contracts/` |
+| `guide` | draft | `guides/` |
+| `decision` | proposed | `decisions/` |
+| `change` | proposed | `changes/` |
+| `note` | none | `notes/` |
+| `invariant` | draft | `invariants/` |
+| `runbook` | draft | `runbooks/` |
+| `incident` | none | `incidents/` |
+| `reference` | none | `reference/` |
+
+`draft` is the state of a spec, a contract or an invariant that waits for approval. These types have no `proposed` status. `proposed` belongs to a decision and a change, which a person accepts or rejects. When a document of these types has the status `proposed`, `check` gives SD304 and names `draft`. A root that uses `proposed` for its specs can map it: `status-map = { proposed = "draft" }`.
+
+The namespace `reference/` is singular, and the other namespaces are plural. This is deliberate. A rename would move the path and the id of each reference document that `spec-dna new` wrote in 0.4.1 and earlier. An old path as an alias would need a second rule in `new` and in the id model, which is a change of ADR 0001. A new root can choose its own directory name: `init` detects both `reference` and `references`, and `--root` sets the root of `new`. A reference root adds its own namespace to each id ([config.md](config.md)), so the singular name has no effect on a link.
+
+## Links between types
+
+In a new corpus, link the documents in these directions. A link of another direction is not an error, except the case that SD611 reports.
+
+| From | To | Why |
+| --- | --- | --- |
+| `change` | the `spec`, `contract`, `invariant` or `decision` that it implements | A change is a task. It links the lasting documents. |
+| `decision` | `spec`, `contract`, `invariant`, `reference`, and another `decision` (`supersedes`) | A decision gives the reason for a requirement. |
+| `spec`, `contract`, `invariant`, `guide`, `runbook` | `decision` (the reason), `spec`, `contract` | A lasting document names the reason for its rules. |
+| `incident` | `spec`, `decision`, `runbook` | An incident without such a link gives SD609. |
+| `note`, `reference` | any type | These documents give information only. |
+
+A lasting document does not link a change. A change ends with the status `done` or `rejected`, and then it can be deleted (SD202 allows it). A link to a deleted change breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is frozen (SD405).
+
+Thus an accepted decision that links a change in its frozen text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the change instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it.
+
 ## Invariant
 
 An invariant states rules that every change in its scope keeps, such as "the system stores amounts in minor units". Its rules are requirements: list items with a bold slug key. Their ids (`<doc-id>#<key>`) are stable, and tests can cover them.

@@ -281,6 +281,9 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, ev: &Evidence) -> Vec<Diag> {
             "the incident links no requirement, decision or runbook",
         ));
     }
+    if d.ty == DocType::Decision && d.status_str() == "accepted" && d.generated.is_none() {
+        decision_links_change(config, c, d, &mut out);
+    }
     for t in &p.tokens {
         let Some((prefix, _)) = t.text.split_once('-') else {
             continue;
@@ -381,6 +384,66 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
             matches!(c.resolve_link(&d.path, &r.target), LinkRes::File(_, Some(t), _) if useful(t))
         }
     })
+}
+
+/// SD611: an accepted decision links a document of the type `change` in its
+/// frozen text, or in `depends-on`. A change can be deleted when it is done or
+/// rejected (SD202 allows it), and the frozen text cannot drop the link. A link
+/// in an amendment, history or live section can change, so it is allowed.
+fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) {
+    let p = &d.parsed;
+    let live = crate::model::amendment_chunks(
+        &p.chunks,
+        &config.roots[d.root].live_sections[d.ty as usize],
+    );
+    let editable = |line: u32| {
+        p.chunks
+            .iter()
+            .rposition(|ch| ch.line <= line)
+            .is_some_and(|i| {
+                d.amendments.contains(&i) || d.history.contains(&i) || live.contains(&i)
+            })
+    };
+    let mut seen: Vec<u32> = Vec::new();
+    let mut hit = |t: u32, line: u32| {
+        let target = &c.docs[t as usize];
+        if target.ty == DocType::Change && !seen.contains(&t) {
+            seen.push(t);
+            out.push(diag(
+                d,
+                line,
+                Code::DecisionLinksChange,
+                target.id.clone(),
+                format!(
+                    "the accepted decision links the change `{}`; a change can be deleted, and the frozen text of the decision cannot drop the link",
+                    target.id
+                ),
+            ));
+        }
+    };
+    for r in &p.refs {
+        if editable(r.line) {
+            continue;
+        }
+        match r.kind {
+            RefKind::Wiki => {
+                if let Res::Found(t, _, _) = c.resolve(&r.target) {
+                    hit(t, r.line);
+                }
+            }
+            RefKind::Link => {
+                if let LinkRes::File(_, Some(t), _) = c.resolve_link(&d.path, &r.target) {
+                    hit(t, r.line);
+                }
+            }
+            RefKind::Image => {}
+        }
+    }
+    for (t, line) in &d.depends_on {
+        if let Some(i) = found(c.resolve(t)) {
+            hit(i, *line);
+        }
+    }
 }
 
 fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) {

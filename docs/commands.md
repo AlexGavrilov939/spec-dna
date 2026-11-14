@@ -12,7 +12,8 @@ spec-dna context src/valves.rs      # the sections that cite a code file
 spec-dna check                      # new diagnostics against HEAD; exit 1 on a new error
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
 spec-dna check --all                # every diagnostic
-spec-dna check --lint               # also list each prose lint warning
+spec-dna check --lint               # also list each prose lint warning (any profile)
+spec-dna check --staged             # check the git index, as a pre-commit hook does
 spec-dna context irrigation/valves --path src/valves.rs
 spec-dna context irrigation/valves --query "close a valve after a sensor timeout"
 spec-dna show irrigation/valves#sensor-timeout
@@ -46,7 +47,7 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 - the vendored, generated and large reference directories;
 - the budgets, the stack, the tests, the agent files, CI, the hooks and the default branch.
 
-Then `init` asks at most 8 questions, with the found values as defaults. It shows the full `spec-dna.toml` and the files that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+Then `init` asks at most 8 questions, with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
 
 `init` writes these adapters:
 
@@ -63,19 +64,24 @@ At the end, `init` prints the bytes that the adapters add to the prompt prefix o
 ## check
 
 ```text
-spec-dna check [--base <rev>] [--all] [--lint]
+spec-dna check [--base <rev>] [--all] [--lint] [--staged]
 ```
 
-`check` runs the controls of ADR 0001 on the working tree. With `--base`, the base is the merge base of `<rev>` and `HEAD`. Without `--base`, the base is `HEAD`.
+`check` runs the controls of ADR 0001 on the working tree, or with `--staged` on the git index. With `--base`, the base is the merge base of `<rev>` and `HEAD`. Without `--base`, the base is `HEAD`.
 
 - Without `--all`, `check` reports only the diagnostics that are new against the base.
 - With `--all`, it uses the same base, but it reports each diagnostic and fails on any error.
 - Without `--base`, `check` also reads the untracked documents that git does not ignore.
 - With `--base`, it reads only tracked files, as CI does.
+- With `--staged`, the head tree is the git index: the tree that the next commit records. `check` reads `spec-dna.toml`, the documents, the test files and the code from the index. Untracked files and edits that are not staged do not count. `--staged` works with `--base` and `--all`, and the base does not change. `check` stops with exit code 4 for an unmerged path in the index, and with exit code 3 if `spec-dna.toml` is not in the index.
+
+The hook that `init` writes runs `spec-dna check --staged`. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101).
 
 A change can remove or rename a path or an identifier that a document cites. Then `check` gives a warning that names the document (SD606, SD607). In an accepted decision, an amendment section that cites the new path or identifier clears these warnings.
 
-The text output gives the errors first, then SD606 and SD607, then the other warnings. Each prose lint code (SD801 to SD805) gets one line with a count. `--lint` lists each of these warnings. Another warning code with more than 10 diagnostics also gets one line with a count. At the end, the output gives the fix of each listed code once.
+The text output gives the errors first, then SD606 and SD607, then the other warnings. Each prose lint code (SD801 to SD805) gets one line with a count. Another warning code with more than 10 diagnostics also gets one line with a count. At the end, the output gives the fix of each listed code once.
+
+`--lint` lists each prose lint warning. It also runs the lint in a profile that has it off (`lite`, `standard`), and it overrides a `lint = "off"` rule. The findings are warnings, so they never fail the gate. Without `--all`, `--lint` lists the new findings only.
 
 The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 
@@ -199,6 +205,8 @@ It prints counts and ids only. It never prints the text of a prompt, a command o
 | 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository |
 | 4 | Git or file system error |
 | 5 | A target names no document, section or requirement |
+
+A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.
 
 ## Cache
 

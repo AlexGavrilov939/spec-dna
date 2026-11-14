@@ -3,6 +3,12 @@ name = "scan"
 version = "0.1.0"
 edition = "2024"
 publish = false
+autobins = false
+
+# The helper builds as an example, not as a binary. Then `cargo install --git` of this repository finds one package with a binary only.
+[[example]]
+name = "scan"
+path = "src/main.rs"
 
 [dependencies]
 
