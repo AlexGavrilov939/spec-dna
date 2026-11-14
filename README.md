@@ -6,7 +6,7 @@
 
 **Engineering specs that stay small, linked and checked, for AI coding agents.**
 
-spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives an AI coding agent only the parts of the documents that its task needs. It works in any repository, with any language and any agent. It uses no network and no language model. The one exception is `spec-dna eval run`, which starts Claude Code to test the agent setup.
+spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives a coding agent only the parts of the documents that its task needs. It works in any repository, with any language and with any agent that can run a shell command. It uses no network and no language model.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
@@ -15,38 +15,43 @@ spec-dna is a command-line tool for the specifications that a team keeps as Mark
 
 ## See it in action
 
-An agent changed the outcome of an accepted decision. `check` stops the change:
+One task, from the request to the merge. The agent runs spec-dna itself, because `init` wrote the steps into the instruction file of the agent.
+
+```text
+You:    When a moisture sensor times out, close the valve of its bed.
+
+Agent:  $ spec-dna context src/valves.rs
+        requirements/valves/closing#requirements   cites src/valves.rs
+        rules/safety#rules                         applies to src/**
+        The task adds a requirement, so I start a routine change.
+        $ spec-dna new intent sensor-timeout
+        wrote docs/intent/sensor-timeout/intent.md
+
+You:    Accepted and merged.
+
+Agent:  $ spec-dna new plan sensor-timeout
+        wrote docs/intent/sensor-timeout/plan.md
+        I approved the plan in its pull request.
+
+You:    Merged.
+
+Agent:  I wrote the code and the new requirement.
+        $ spec-dna finish sensor-timeout
+        error SD916: requirements/valves/closing#sensor-timeout has no evidence
+        I added a test with "covers: requirements/valves/closing#sensor-timeout".
+        $ spec-dna finish sensor-timeout
+        evidence: 1 of 1 changed requirements; deleted docs/intent/sensor-timeout/
+        $ spec-dna check --base origin/main
+        0 new errors
+```
+
+When an agent edits an accepted decision, `check` stops the change:
 
 ```console
 $ spec-dna check
 docs/decisions/water-source.md:1: error SD405 decision-locked: the text outside the amendment and live sections changed after the decision was accepted
 SD405 fix: Restore the accepted text and write the change in a new amendment section (`amendment-sections`, default `## Amendments`). Only a live section (`live-sections`, default `Status`) can change in place. As an alternative, write a decision that supersedes this one.
 spec-dna check: 2 documents; 1 new error and 0 new warnings against 3bd199ae40b9 (1 error and 1 warning in total)
-```
-
-Before an agent edits `src/valves.rs`, `context` gives it the requirement that cites the file, and not the whole document:
-
-```console
-$ spec-dna context src/valves.rs
-<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 291 of 8000 characters; about 73 tokens (estimated) -->
-
-<!-- valves#requirements h:e27a5916071223ee requirements/active cites -->
-## Requirements
-
-- **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray. The check is in `src/valves.rs`.
-
-<!-- valves#valves h:678c75294fdea71f requirements/active cites -->
-# Valves
-```
-
-A change of the requirements has its own folder. Each document of the change needs the approval of the document before it:
-
-```sh
-spec-dna new intent sensor-timeout   # docs/intent/sensor-timeout/intent.md: what and why
-spec-dna new spec sensor-timeout     # the delta: ADD, CHANGE and REMOVE lines of requirements
-spec-dna new plan sensor-timeout     # the files, the order, the risks and the proof
-spec-dna next sensor-timeout         # the checklist to the next gate
-spec-dna finish sensor-timeout       # apply the delta, check the evidence, delete the folder
 ```
 
 ## Why
@@ -68,13 +73,19 @@ When AI agents write a large part of the code, the specifications are the main i
 - A change has its folder `docs/intent/<slug>/`, with its intent, spec and plan. `finish` applies its delta to the requirements and deletes the folder. Git keeps the history.
 - `check` compares a change with its base and reports only the new problems. A mature repository can adopt spec-dna before it fixes the old problems.
 - `context` gives an agent the sections that apply to the files of its task, with the stable layers first.
-- `init` writes one line into `AGENTS.md` and `CLAUDE.md`, and a skill. They tell the agent to run `context` before an edit and `check` before it finishes. For Claude Code, `init` can also write a harness of agent roles, stage skills and hooks, and an example eval.
+- `init` writes the steps for the agent into its instruction file: run `context` before an edit, and `check` before the work is complete.
 
 [docs/concepts.md](docs/concepts.md) explains the model.
 
 ## Where it fits
 
 Spec frameworks such as [OpenSpec](https://github.com/Fission-AI/OpenSpec), [Spec Kit](https://github.com/github/spec-kit) and [BMAD](https://github.com/bmad-code-org/BMAD-METHOD) give an agent a process to write specifications. spec-dna checks the specifications and the code that follows from them, with no model. It can work next to such a framework. The change folder of a framework maps to an intent folder, and a constitution maps to `rule` documents. [docs/types.md](docs/types.md#standard-documents) maps the standard documents, such as an ADR, an RFC or a PRD.
+
+## Works with any agent
+
+spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `init` writes these steps into `AGENTS.md`, which Codex, Cursor and many other agents read, and into `CLAUDE.md` for Claude Code.
+
+An adapter adds more for one agent. The Claude Code adapter adds agent roles with their models, a skill for each stage of a change, hooks and evals. [docs/agents.md](docs/agents.md) lists each agent and what it gets.
 
 ## Install
 
@@ -138,7 +149,7 @@ In agent experiments, 2 blind graders checked each run. With the gate, 15 of 15 
 - Start: [Quickstart](docs/quickstart.md), [Demo](docs/demo.md)
 - Concepts: [Concepts](docs/concepts.md), [Glossary](docs/glossary.md)
 - Guides: [One change](docs/guides/change.md), [Existing repository](docs/guides/existing-repo.md), [Upgrade from 0.5](docs/guides/upgrade-0.5.md)
-- Reference: [Commands](docs/commands.md), [Configuration](docs/config.md), [Types](docs/types.md), [Diagnostics](docs/diagnostics.md), [Profiles](docs/profiles.md), [init](docs/init.md), [Harness](docs/harness.md), [Transcripts](docs/transcript.md)
+- Reference: [Commands](docs/commands.md), [Configuration](docs/config.md), [Types](docs/types.md), [Diagnostics](docs/diagnostics.md), [Profiles](docs/profiles.md), [init](docs/init.md), [Agents](docs/agents.md), [Harness](docs/harness.md), [Evals](docs/evals.md), [Transcripts](docs/transcript.md)
 - Project: [Evidence](docs/evidence.md), [Decisions](docs/adr/), [Changelog](CHANGELOG.md)
 
 ## Contributing
