@@ -5,7 +5,9 @@
 //! a partial one.
 
 use crate::frontmatter::{FrontMatter, Value};
-use crate::parse::{Chunk, PARSER_VERSION, ParsedDoc, Ref, RefKind, Req, TermRow, Token};
+use crate::parse::{
+    Chunk, ItemSection, ListItem, PARSER_VERSION, ParsedDoc, Ref, RefKind, Req, TermRow, Token,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -208,6 +210,8 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.strs(&r.aliases);
         w.strs(&r.verified_by);
         w.str(&r.text);
+        w.u32(r.sentence.start);
+        w.u32(r.sentence.end);
     }
     for list in [&d.leads, &d.code_spans, &d.path_words, &d.placeholders] {
         w.u32(list.len() as u32);
@@ -222,6 +226,27 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.str(&t.term);
         w.strs(&t.forbidden);
         w.u32(t.line);
+    }
+    w.u32(d.items.len() as u32);
+    for i in &d.items {
+        w.u8(i.section as u8);
+        w.u8(match i.task {
+            None => 0,
+            Some(false) => 1,
+            Some(true) => 2,
+        });
+        w.u8(i.nested as u8);
+        w.str(&i.text);
+        match &i.code {
+            None => w.u8(0),
+            Some(c) => {
+                w.u8(1);
+                w.str(c);
+            }
+        }
+        w.u32(i.line);
+        w.u32(i.range.start);
+        w.u32(i.range.end);
     }
 }
 
@@ -297,6 +322,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             aliases: r.strs()?,
             verified_by: r.strs()?,
             text: r.str()?,
+            sentence: r.u32()?..r.u32()?,
         });
     }
     for list in [
@@ -320,6 +346,29 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             line: r.u32()?,
         });
     }
+    for _ in 0..r.u32()? {
+        let section = *ItemSection::ALL.get(r.u8()? as usize)?;
+        let task = match r.u8()? {
+            0 => None,
+            1 => Some(false),
+            _ => Some(true),
+        };
+        let nested = r.u8()? == 1;
+        let text = r.str()?;
+        let code = match r.u8()? {
+            0 => None,
+            _ => Some(r.str()?),
+        };
+        d.items.push(ListItem {
+            section,
+            task,
+            text,
+            code,
+            nested,
+            line: r.u32()?,
+            range: r.u32()?..r.u32()?,
+        });
+    }
     Some(d)
 }
 
@@ -329,7 +378,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1 `src/a.rs:12` `loadUser()` see src/b.rs.\n\n| Meaning | Forbidden synonyms | Term |\n| --- | --- | --- |\n| A valve. | gate, shutter; door | Valve |\n\n## Amendments\n";
+        let text = "---\nstatus: active\nx: {a: 1}\n---\n# T\n\n- **k**: The system SHALL run. <!-- aliases: a#b -->\n- **R-1** The client MUST retry.\n\n| R-2 | x |\n| --- | --- |\n| R-3 | y |\n\n[l](x.md) [[a/b]] ADR-1 `src/a.rs:12` `loadUser()` see src/b.rs.\n\n| Meaning | Forbidden synonyms | Term |\n| --- | --- | --- |\n| A valve. | gate, shutter; door | Valve |\n\n## Delta\n\n- ADD a#b: Wörter.\n  more\n- [ ] CHANGE `x` a#c@0123456789abcdef: t\n  - nested\n\n## Concerns\n\n- [x] done\n\n## Files\n\n1. `src/a.rs` and `b`\n\n## Amendments\n";
         let mut m = HashMap::new();
         m.insert("abc".to_string(), Arc::new(crate::parse::parse(text)));
         m.insert(
@@ -337,6 +386,18 @@ mod tests {
             Arc::new(crate::parse::parse("---\n: x\n---\n")),
         );
         assert_eq!(m["abc"].terms.len(), 1);
+        // The new fields are in the data that the round trip must keep.
+        let items = &m["abc"].items;
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[1].task, Some(false));
+        assert!(items[1].nested);
+        assert_eq!(items[3].code.as_deref(), Some("src/a.rs"));
+        assert!(
+            m["abc"]
+                .reqs
+                .iter()
+                .all(|r| r.sentence.end > r.sentence.start)
+        );
         let back = decode(&encode(&m)).unwrap();
         assert_eq!(back.len(), 2);
         assert_eq!(*back["abc"], *m["abc"]);

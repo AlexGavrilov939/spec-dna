@@ -188,6 +188,34 @@ impl DocType {
     }
 }
 
+/// The class of a change: the `class` field of an `intent` (design 0.6.0,
+/// "Change classes"). A `small-fix` has no intent, so it is not a class of an
+/// intent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Class {
+    #[default]
+    Routine,
+    HigherRisk,
+}
+
+impl Class {
+    #[allow(dead_code)] // reader: S7
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Routine => "routine",
+            Class::HigherRisk => "higher-risk",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Class> {
+        match s {
+            "routine" => Some(Class::Routine),
+            "higher-risk" => Some(Class::HigherRisk),
+            _ => None,
+        }
+    }
+}
+
 /// A problem that spec-dna finds when it reads the metadata of a document.
 #[derive(Clone, Debug)]
 pub struct Issue {
@@ -217,6 +245,16 @@ pub struct Doc {
     /// The 0.5 type of a document that `upgrade` changed (`note` or
     /// `change`). Only the SD202 exemption reads it.
     pub was_type: Option<String>,
+    /// The `class` of an `intent`. A missing value is `routine`. A value that
+    /// is not a class gives SD302 and is `routine` too. Any other document
+    /// has `routine` and no meaning for it.
+    pub class: Class,
+    /// The `areas` of an `intent`: the names of the areas that the change
+    /// touches. Any other document has none.
+    pub areas: Vec<String>,
+    /// The `from` of an `intent`: the id of the incident that the change
+    /// answers, with the line of the field. Any other document has none.
+    pub from: Option<(String, u32)>,
     pub issues: Vec<Issue>,
     /// Indices into `parsed.reqs` of the valid requirements.
     pub reqs: Vec<usize>,
@@ -759,6 +797,9 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             verified_by: Vec::new(),
             owner,
             was_type: None,
+            class: Class::Routine,
+            areas: Vec::new(),
+            from: None,
             issues,
             reqs: Vec::new(),
             outcome: Vec::new(),
@@ -878,6 +919,36 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             });
         }
         None => {}
+    }
+    let mut class = Class::Routine;
+    let mut areas: Vec<String> = Vec::new();
+    let mut from = None;
+    if ty == DocType::Intent && !type_failed {
+        if let Some((v, line)) = scalar("class", &mut issues).filter(|(v, _)| !v.is_empty()) {
+            match Class::from_name(&v) {
+                Some(c) => class = c,
+                None => {
+                    let hint = if v == "small-fix" {
+                        "; a small fix has no intent, so delete the intent or use `routine`"
+                    } else {
+                        ""
+                    };
+                    issues.push(Issue {
+                        code: Code::FrontMatterField,
+                        line,
+                        target: "class".to_string(),
+                        message: format!(
+                            "`class` must be `routine` or `higher-risk`, not `{v}`{hint}"
+                        ),
+                    });
+                }
+            }
+        }
+        areas = list("areas", &mut issues)
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
+        from = scalar("from", &mut issues).filter(|(v, _)| !v.is_empty());
     }
     let status = match fm_status {
         Some((s, line)) => {
@@ -1120,6 +1191,9 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         verified_by,
         owner,
         was_type: was_type.map(|(s, _)| s),
+        class,
+        areas,
+        from,
         issues,
         reqs,
         outcome,
@@ -1723,5 +1797,81 @@ mod tests {
         let codes: Vec<Code> = d.issues.iter().map(|i| i.code).collect();
         assert_eq!(codes, vec![Code::KeyFormat, Code::KeyDuplicate]);
         assert_eq!(d.reqs.len(), 1);
+    }
+
+    #[test]
+    fn the_fields_of_an_intent_class_areas_and_from() {
+        let intent = |fm: &str| {
+            let text = format!("---\nstatus: draft\n{fm}---\n# I\n\n## Intent\n\nText.\n");
+            let c = corpus_with(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n",
+                &[("docs/intent/x/intent.md", &text)],
+            );
+            let d = &c.docs[0];
+            (d.class, d.areas.clone(), d.from.clone(), d.issues.clone())
+        };
+        // No field: `routine`, no area, no `from`, no problem.
+        let (class, areas, from, issues) = intent("");
+        assert_eq!((class, areas, from), (Class::Routine, vec![], None));
+        assert!(issues.is_empty());
+        for (value, want) in [
+            ("routine", Class::Routine),
+            ("higher-risk", Class::HigherRisk),
+            ("\"higher-risk\"", Class::HigherRisk),
+        ] {
+            let (class, _, _, issues) = intent(&format!("class: {value}\n"));
+            assert_eq!(class, want, "{value}");
+            assert!(issues.is_empty(), "{value}");
+        }
+        // An empty value is like no value.
+        let (class, _, _, issues) = intent("class:\n");
+        assert_eq!(class, Class::Routine);
+        assert!(issues.is_empty());
+        // A value that is not a class gives SD302. The class is `routine`.
+        for value in ["small-fix", "Routine", "high-risk", "[routine]"] {
+            let (class, _, _, issues) = intent(&format!("class: {value}\n"));
+            assert_eq!(class, Class::Routine, "{value}");
+            assert_eq!(issues.len(), 1, "{value}");
+            assert_eq!(issues[0].code, Code::FrontMatterField, "{value}");
+            assert_eq!(issues[0].line, 3, "{value}");
+            assert_eq!(issues[0].target, "class");
+        }
+        let (_, _, _, issues) = intent("class: small-fix\n");
+        assert!(issues[0].message.contains("small fix has no intent"));
+        let (_, areas, from, issues) = intent("areas: [valves, sensors]\nfrom: incidents/flood\n");
+        assert_eq!(areas, ["valves", "sensors"]);
+        assert_eq!(from, Some(("incidents/flood".to_string(), 4)));
+        assert!(issues.is_empty());
+        let (_, areas, _, _) = intent("areas: valves\n");
+        assert_eq!(areas, ["valves"]);
+        // `from` is one string. A list is a problem, as `owner` is.
+        let (_, _, from, issues) = intent("from: [a, b]\n");
+        assert_eq!(from, None);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].target, "from");
+    }
+
+    #[test]
+    fn the_fields_of_a_change_mean_nothing_in_other_documents() {
+        let doc = |path: &str, fm: &str| {
+            let text = format!("---\nstatus: draft\n{fm}---\n# D\n\n## Files\n\n- `a`\n");
+            let c = corpus_with(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n",
+                &[(path, &text)],
+            );
+            let d = &c.docs[0];
+            (d.class, d.areas.clone(), d.from.clone(), d.issues.len())
+        };
+        // A plan, and a document in a root of its own: no SD302, no value.
+        for path in ["docs/intent/x/plan.md", "docs/procedures/x.md"] {
+            let (class, areas, from, issues) =
+                doc(path, "class: small-fix\nareas: [a]\nfrom: [a, b]\n");
+            assert_eq!((class, areas, from), (Class::Routine, vec![], None));
+            assert_eq!(issues, 0, "{path}");
+        }
+        // An intent at a wrong place has no valid type, so it gives no SD302
+        // for `class`.
+        let (_, _, _, issues) = doc("docs/intent/x.md", "type: intent\nclass: small-fix\n");
+        assert_eq!(issues, 1);
     }
 }

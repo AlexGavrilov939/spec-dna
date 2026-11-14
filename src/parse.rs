@@ -6,10 +6,11 @@
 use crate::frontmatter::{self, FrontMatter};
 use crate::hash::{Hash, hash_normalized};
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 11;
+pub const PARSER_VERSION: u32 = 12;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -45,6 +46,76 @@ pub struct ParsedDoc {
     /// know the type of the document, so it stores the rows of every document.
     /// Only a `terms` document uses them (SD904).
     pub terms: Vec<TermRow>,
+    /// The top-level list items of the sections that carry a change (`Delta`,
+    /// `Interfaces`, `Decisions`, `Concerns`, `Files` and `Follow-ups`), in
+    /// the order of the file. The parser stores them for every document. Only
+    /// the documents of a change and an incident use them.
+    pub items: Vec<ListItem>,
+}
+
+/// The sections whose list items the parser keeps. The heading text must be
+/// exactly the name, without regard to case, at any heading level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemSection {
+    Delta = 0,
+    Interfaces = 1,
+    Decisions = 2,
+    Concerns = 3,
+    Files = 4,
+    FollowUps = 5,
+}
+
+impl ItemSection {
+    pub const ALL: [ItemSection; 6] = [
+        ItemSection::Delta,
+        ItemSection::Interfaces,
+        ItemSection::Decisions,
+        ItemSection::Concerns,
+        ItemSection::Files,
+        ItemSection::FollowUps,
+    ];
+
+    pub fn heading(self) -> &'static str {
+        match self {
+            ItemSection::Delta => "Delta",
+            ItemSection::Interfaces => "Interfaces",
+            ItemSection::Decisions => "Decisions",
+            ItemSection::Concerns => "Concerns",
+            ItemSection::Files => "Files",
+            ItemSection::FollowUps => "Follow-ups",
+        }
+    }
+
+    /// Returns the section that a heading names, if it names one.
+    pub fn from_heading(heading: &str) -> Option<ItemSection> {
+        let h = heading.trim();
+        ItemSection::ALL
+            .into_iter()
+            .find(|s| h.eq_ignore_ascii_case(s.heading()))
+    }
+}
+
+/// A top-level list item of one of the sections of [`ItemSection`]. A nested
+/// list belongs to its parent item: the range covers it, and `nested` is true.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListItem {
+    pub section: ItemSection,
+    /// `Some(false)` for `- [ ]`, `Some(true)` for `- [x]`, and `None` for an
+    /// item with no task box.
+    pub task: Option<bool>,
+    /// The item text as it is in the source: after the list marker and the
+    /// task box, before a nested list, with no space at the start and at the
+    /// end. Line ends and blank lines stay as they are.
+    pub text: String,
+    /// The first inline code span of the item text, without a nested list.
+    pub code: Option<String>,
+    /// True if the item has a nested list.
+    pub nested: bool,
+    pub line: u32,
+    /// Byte range in the source text: from the list marker to the end of the
+    /// last line that has text, with its nested content and its line end. It
+    /// has no blank line after the item.
+    pub range: Range<u32>,
 }
 
 /// One row of a table of terms.
@@ -189,6 +260,11 @@ pub struct Req {
     pub verified_by: Vec<String>,
     /// The sentence, whitespace-normalized, without the alias marker.
     pub text: String,
+    /// Byte range of the sentence in the source text: after the bold key and
+    /// its colon, without the space at the start, and without the markers
+    /// and the space at the end. A marker inside the sentence stays in the
+    /// range. For an empty sentence the range is empty.
+    pub sentence: Range<u32>,
 }
 
 pub fn parse(text: &str) -> ParsedDoc {
@@ -223,8 +299,10 @@ pub fn parse(text: &str) -> ParsedDoc {
     let mut items: Vec<Item> = Vec::new();
     let mut cands: Vec<Cand> = Vec::new();
     let mut table = TableState::default();
+    let mut scan = ItemScan::default();
 
     for (ev, range) in Parser::new_ext(body, opts).into_offset_iter() {
+        scan.step(&ev, &range, body, body_start, &lines, &mut doc.items);
         // Requirement detection looks at the first events of the innermost item.
         if let Some(item) = items.last_mut() {
             item.step(&ev, range.start, range.end);
@@ -400,14 +478,20 @@ pub fn parse(text: &str) -> ParsedDoc {
             .rposition(|ch| ch.start as usize <= abs_start)
             .unwrap_or(0) as u32;
         let mut raw = &body[c.sentence_start..c.sentence_end];
+        let mut raw_start = c.sentence_start;
         if !c.colon {
             // `**R-12** — text` and `**R-12**. text`: the separator is not
             // part of the sentence.
-            raw = raw.trim_start_matches(|ch: char| {
+            let trimmed = raw.trim_start_matches(|ch: char| {
                 ch.is_whitespace() || matches!(ch, ':' | '.' | '-' | '–' | '—')
             });
+            raw_start += raw.len() - trimmed.len();
+            raw = trimmed;
         }
         let (clean, aliases, verified_by) = strip_markers(raw);
+        let lead = raw.len() - raw.trim_start().len();
+        let sentence = (body_start + raw_start + lead) as u32
+            ..(body_start + raw_start + sentence_end(raw).max(lead)) as u32;
         doc.reqs.push(Req {
             key: c.key,
             colon: c.colon,
@@ -420,16 +504,139 @@ pub fn parse(text: &str) -> ParsedDoc {
             aliases,
             verified_by,
             text: crate::hash::normalize(&clean),
+            sentence,
         });
     }
 
     doc.body_chars = (body.chars().count() - code_chars) as u32;
+    doc.items.sort_by_key(|i| i.range.start);
     doc
 }
 
-/// Removes the marker of a list item (`-`, `*`, `+`, `1.` or `1)`) and a task
-/// box (`[ ]` or `[x]`).
-fn strip_list_marker(item: &str) -> &str {
+/// The state of the scan for the list items of the sections of
+/// [`ItemSection`].
+#[derive(Default)]
+struct ItemScan {
+    /// The text of the heading that the parser reads now.
+    heading: Option<String>,
+    /// The section of the last heading.
+    section: Option<ItemSection>,
+    /// The list items that are open now, outer first.
+    open: Vec<OpenItem>,
+}
+
+struct OpenItem {
+    /// The section, if this is a top-level item of a section that matters.
+    section: Option<ItemSection>,
+    task: Option<bool>,
+    code: Option<String>,
+    first_list: Option<usize>,
+}
+
+impl ItemScan {
+    fn step(
+        &mut self,
+        ev: &Event,
+        range: &Range<usize>,
+        body: &str,
+        body_start: usize,
+        lines: &LineIndex,
+        out: &mut Vec<ListItem>,
+    ) {
+        match ev {
+            Event::Start(Tag::Heading { .. }) => self.heading = Some(String::new()),
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(h) = self.heading.take() {
+                    self.section = ItemSection::from_heading(&h);
+                }
+            }
+            Event::Text(t) | Event::Code(t) if self.heading.is_some() => {
+                if let Some(h) = self.heading.as_mut() {
+                    h.push_str(t);
+                }
+            }
+            Event::Start(Tag::Item) => {
+                let top = self.open.is_empty();
+                self.open.push(OpenItem {
+                    section: self.section.filter(|_| top),
+                    task: None,
+                    code: None,
+                    first_list: None,
+                });
+            }
+            Event::TaskListMarker(done) => {
+                if let Some(item) = self.open.last_mut() {
+                    item.task = Some(*done);
+                }
+            }
+            Event::Start(Tag::List(_)) => {
+                if let Some(item) = self.open.last_mut() {
+                    item.first_list.get_or_insert(range.start);
+                }
+            }
+            Event::Code(t) => {
+                if let Some(item) = self.open.last_mut()
+                    && item.first_list.is_none()
+                    && item.code.is_none()
+                {
+                    item.code = Some(t.trim().to_string());
+                }
+            }
+            Event::End(TagEnd::Item) => {
+                let Some(item) = self.open.pop() else { return };
+                let Some(section) = item.section else { return };
+                let slice = &body[range.clone()];
+                let mut rest = strip_marker(slice);
+                if item.task.is_some() {
+                    rest = strip_task_box(rest);
+                }
+                let text_start = range.start + (slice.len() - rest.len());
+                let text_end = item.first_list.unwrap_or(range.end).max(text_start);
+                // The range ends after the last line that has text. A loose
+                // list item can also own the blank lines that follow it.
+                let kept = slice.trim_end().len();
+                let end = range.start
+                    + slice[kept..]
+                        .find('\n')
+                        .map_or(slice.len(), |i| kept + i + 1);
+                out.push(ListItem {
+                    section,
+                    task: item.task,
+                    text: body[text_start..text_end].trim().to_string(),
+                    code: item.code.filter(|c| !c.is_empty()),
+                    nested: item.first_list.is_some(),
+                    line: lines.line(body_start + range.start),
+                    range: (body_start + range.start) as u32..(body_start + end) as u32,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Returns the end of the sentence in `raw`: the end of the text without the
+/// space and the markers (`aliases` and `verified-by`) at the end.
+fn sentence_end(raw: &str) -> usize {
+    let mut end = raw.trim_end().len();
+    while raw[..end].ends_with("-->")
+        && let Some(pos) = raw[..end].rfind("<!--")
+    {
+        // `<!-->` and `<!--->` end at once: they are comments with no marker.
+        if pos + 4 > end - 3 {
+            break;
+        }
+        let inner = raw[pos + 4..end - 3].trim();
+        if !(inner.starts_with("aliases:") || inner.starts_with("verified-by:")) {
+            break;
+        }
+        end = raw[..pos].trim_end().len();
+    }
+    end
+}
+
+/// Removes the marker of a list item (`-`, `*`, `+`, `1.` or `1)`) and the
+/// space after it.
+fn strip_marker(item: &str) -> &str {
     let s = item.trim_start();
     let digits = s.bytes().take_while(u8::is_ascii_digit).count();
     let s = if s.starts_with(['-', '*', '+']) {
@@ -439,12 +646,21 @@ fn strip_list_marker(item: &str) -> &str {
     } else {
         s
     };
-    let s = s.trim_start();
+    s.trim_start()
+}
+
+/// Removes a task box (`[ ]` or `[x]`) and the space after it.
+fn strip_task_box(s: &str) -> &str {
     ["[ ]", "[x]", "[X]"]
         .iter()
         .find_map(|b| s.strip_prefix(b))
         .unwrap_or(s)
         .trim_start()
+}
+
+/// Removes the marker of a list item and a task box.
+fn strip_list_marker(item: &str) -> &str {
+    strip_task_box(strip_marker(item))
 }
 
 /// Returns the first word of a list item or table cell without emphasis
@@ -1082,6 +1298,258 @@ mod tests {
                 row("Pump", &[], 4),
                 row("Pipe", &["duct"], 8)
             ]
+        );
+    }
+
+    fn items(src: &str) -> Vec<(ItemSection, Option<bool>, String, u32, String)> {
+        parse(src)
+            .items
+            .iter()
+            .map(|i| {
+                (
+                    i.section,
+                    i.task,
+                    i.text.clone(),
+                    i.line,
+                    src[i.range.start as usize..i.range.end as usize].to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn items_under_each_of_the_6_headings() {
+        let src = "# Change\n\n## Delta\n\n- ADD a#b: Text.\n- CHANGE a#c@0123456789abcdef: Text.\n\n## Interfaces\n\n- CHANGE api/http: Text.\n\n## Decisions\n\n- [[decisions/pump]]\n\n## Concerns\n\n- [ ] open concern\n- [x] resolved concern, so the author did it\n\n## Files\n\n- `src/valve.py`\n\n## Follow-ups\n\n- [ ] action\n- [X] done action\n\n## Other\n\n- not kept\n";
+        let got = items(src);
+        let want: Vec<(ItemSection, Option<bool>, &str, u32)> = vec![
+            (ItemSection::Delta, None, "ADD a#b: Text.", 5),
+            (
+                ItemSection::Delta,
+                None,
+                "CHANGE a#c@0123456789abcdef: Text.",
+                6,
+            ),
+            (ItemSection::Interfaces, None, "CHANGE api/http: Text.", 10),
+            (ItemSection::Decisions, None, "[[decisions/pump]]", 14),
+            (ItemSection::Concerns, Some(false), "open concern", 18),
+            (
+                ItemSection::Concerns,
+                Some(true),
+                "resolved concern, so the author did it",
+                19,
+            ),
+            (ItemSection::Files, None, "`src/valve.py`", 23),
+            (ItemSection::FollowUps, Some(false), "action", 27),
+            (ItemSection::FollowUps, Some(true), "done action", 28),
+        ];
+        let got: Vec<_> = got
+            .iter()
+            .map(|(s, t, x, l, _)| (*s, *t, x.as_str(), *l))
+            .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_heading_names_a_section_by_its_exact_text_at_any_level() {
+        let src = "# Delta\n\n- a\n\n### DELTA\n\n- b\n\n#### files\n\n- c\n\n## Delta notes\n\n- not kept\n\n## Follow ups\n\n- not kept\n\n## `Files`\n\n- d\n\n## Delta\n\n- e\n\n### Details\n\n- not kept, a heading ends the section\n\n## Plan\n\n1. not kept\n";
+        let d = parse(src);
+        let texts: Vec<&str> = d.items.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, ["a", "b", "c", "d", "e"]);
+        // Items before the first heading, and items in a table, are not kept.
+        assert!(parse("- a\n\n| x |\n| - |\n| y |\n").items.is_empty());
+    }
+
+    #[test]
+    fn a_nested_list_belongs_to_its_item_and_markers_can_differ() {
+        let src = "## Concerns\n\n- [ ] first\n  - [ ] child one\n  - [x] child two\n    1. grandchild\n* [x] second\n+ third\n\n1. fourth\n2) fifth\n   continued on a line\n\n   a second paragraph\n";
+        let got = items(src);
+        let texts: Vec<(&str, Option<bool>)> = got.iter().map(|g| (g.2.as_str(), g.1)).collect();
+        assert_eq!(
+            texts,
+            [
+                ("first", Some(false)),
+                ("second", Some(true)),
+                ("third", None),
+                ("fourth", None),
+                (
+                    "fifth\n   continued on a line\n\n   a second paragraph",
+                    None
+                ),
+            ]
+        );
+        assert_eq!(
+            got[0].4,
+            "- [ ] first\n  - [ ] child one\n  - [x] child two\n    1. grandchild\n"
+        );
+        assert!(parse(src).items[0].nested && !parse(src).items[1].nested);
+        // No range has a blank line at its end, and no range overlaps the next.
+        for w in got.windows(2) {
+            assert!(!w[0].4.ends_with("\n\n"), "{:?}", w[0].4);
+        }
+    }
+
+    #[test]
+    fn the_first_code_span_of_an_item_is_kept() {
+        let src = "## Files\n\n- `a/b.rs` and `c.rs`\n- see [`d.rs`](x.md)\n- plain\n- ``\n- text, then:\n  - `nested.rs`\n- ```double `tick` ```\n\n```md\n- in a fence `e.rs`\n```\n";
+        let d = parse(src);
+        let codes: Vec<Option<&str>> = d.items.iter().map(|i| i.code.as_deref()).collect();
+        assert_eq!(
+            codes,
+            [
+                Some("a/b.rs"),
+                Some("d.rs"),
+                None,
+                None,
+                None,
+                Some("double `tick`")
+            ]
+        );
+    }
+
+    #[test]
+    fn item_ranges_are_byte_ranges_with_crlf_and_a_bom() {
+        let lf = "# C\n\n## Delta\n\n- ADD a#b: Wörter.\n  more\n- [ ] REMOVE a#c@0123456789abcdef\n  - nested\n- last, no final newline";
+        let crlf = lf.replace('\n', "\r\n");
+        let bom = format!("\u{feff}{lf}");
+        for src in [lf.to_string(), crlf, bom] {
+            let d = parse(&src);
+            assert_eq!(d.items.len(), 3, "{src:?}");
+            let slices: Vec<&str> = d
+                .items
+                .iter()
+                .map(|i| &src[i.range.start as usize..i.range.end as usize])
+                .collect();
+            let eol = if src.contains('\r') { "\r\n" } else { "\n" };
+            assert_eq!(
+                slices[0],
+                format!("- ADD a#b: Wörter.{eol}  more{eol}"),
+                "{src:?}"
+            );
+            assert_eq!(
+                slices[1],
+                format!("- [ ] REMOVE a#c@0123456789abcdef{eol}  - nested{eol}")
+            );
+            assert_eq!(slices[2], "- last, no final newline");
+            // The ranges tile the list: each starts where the previous ended.
+            assert_eq!(d.items[0].range.end, d.items[1].range.start);
+            assert_eq!(d.items[1].range.end, d.items[2].range.start);
+            assert_eq!(d.items[2].range.end as usize, src.len());
+            let lines: Vec<u32> = d.items.iter().map(|i| i.line).collect();
+            assert_eq!(lines, [5, 7, 9]);
+            // The text has no marker, no task box and no nested list.
+            assert_eq!(d.items[1].text, "REMOVE a#c@0123456789abcdef");
+            assert!(d.items[0].text.starts_with("ADD a#b: Wörter."));
+        }
+    }
+
+    #[test]
+    fn a_range_with_front_matter_is_a_range_of_the_whole_file() {
+        let src = "---\r\nstatus: draft\r\n---\r\n# S\r\n\r\n## Concerns\r\n\r\n- [ ] one\r\n- [x] two\r\n";
+        let d = parse(src);
+        let got: Vec<&str> = d
+            .items
+            .iter()
+            .map(|i| &src[i.range.start as usize..i.range.end as usize])
+            .collect();
+        assert_eq!(got, ["- [ ] one\r\n", "- [x] two\r\n"]);
+        assert_eq!(d.items[0].line, 8);
+    }
+
+    fn sentences(src: &str) -> Vec<(String, String)> {
+        parse(src)
+            .reqs
+            .iter()
+            .map(|r| {
+                (
+                    r.key.clone(),
+                    src[r.sentence.start as usize..r.sentence.end as usize].to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_sentence_span_has_no_key_no_marker_and_no_edge_space() {
+        let src = "## Requirements\n\n- **a**: The valve SHALL close.\n- **b**:   The valve SHALL open. <!-- aliases: x#y -->\n- **c**: Text. <!-- verified-by: tests/a.rs, tests/b.rs --> <!-- aliases: x#z -->  \n- **d:** Key with the colon inside.\n- **e** Legacy form.\n  - nested note\n- **f**: First line\n  second line. <!-- aliases: x#w -->\n  - nested\n- **g**:\n- **h**: <!-- aliases: x#v -->\n- **i**: Keeps <!-- other --> comment. <!-- aliases: x#u -->\n";
+        let got = sentences(src);
+        let want = [
+            ("a", "The valve SHALL close."),
+            ("b", "The valve SHALL open."),
+            ("c", "Text."),
+            ("d", "Key with the colon inside."),
+            ("e", "Legacy form."),
+            ("f", "First line\n  second line."),
+            ("g", ""),
+            ("h", ""),
+            ("i", "Keeps <!-- other --> comment."),
+        ];
+        assert_eq!(
+            got,
+            want.map(|(k, s)| (k.to_string(), s.to_string())).to_vec()
+        );
+    }
+
+    #[test]
+    fn the_sentence_span_has_the_hash_of_the_requirement() {
+        let lf = "## Requirements\n\n- **a**: The valve SHALL close. <!-- aliases: x#y -->\n- **b**: Wörter [a](../a.md#x)\n  wrap. <!-- verified-by: t.rs --> <!-- aliases: x#z -->\n  - nested\n- **c**: Plain.\n";
+        for src in [lf.to_string(), lf.replace('\n', "\r\n")] {
+            let d = parse(&src);
+            assert_eq!(d.reqs.len(), 3);
+            for r in &d.reqs {
+                let span = &src[r.sentence.start as usize..r.sentence.end as usize];
+                assert_eq!(hash_normalized(span), r.hash, "{span:?}");
+                assert_eq!(
+                    hash_normalized(&strip_link_destinations(span)),
+                    r.frozen,
+                    "{span:?}"
+                );
+                // The span is inside the item.
+                assert!(r.start <= r.sentence.start && r.sentence.end <= r.end);
+            }
+        }
+    }
+
+    #[test]
+    fn a_broken_comment_at_the_end_does_not_stop_the_parse() {
+        for tail in [
+            "<!-->",
+            "<!--->",
+            "-->",
+            " -->",
+            "<!-- aliases: a <!-- b -->",
+            "<!-- aliases: a -->  -->",
+            "<!-- aliases: a",
+            "<!-- verified-by: -->",
+            "<!----> <!-- aliases: a -->",
+            "<!-- <!-- aliases: a -->",
+        ] {
+            let src = format!("## Requirements\n\n- **k**: Text {tail}\n- **l**: Other.\n");
+            let d = parse(&src);
+            assert_eq!(d.reqs.len(), 2, "{tail}");
+            for r in &d.reqs {
+                assert!(r.sentence.start <= r.sentence.end, "{tail}");
+                assert!(
+                    r.start <= r.sentence.start && r.sentence.end <= r.end,
+                    "{tail}"
+                );
+                let _ = &src[r.sentence.start as usize..r.sentence.end as usize];
+            }
+        }
+        let d = parse("- **k**: Text <!-->\n");
+        assert_eq!(
+            &"- **k**: Text <!-->\n"
+                [d.reqs[0].sentence.start as usize..d.reqs[0].sentence.end as usize],
+            "Text <!-->"
+        );
+    }
+
+    #[test]
+    fn a_front_matter_offset_moves_the_sentence_span() {
+        let src = "---\nstatus: active\n---\n# T\n\n- **k**: Text.\n";
+        let r = &parse(src).reqs[0];
+        assert_eq!(
+            &src[r.sentence.start as usize..r.sentence.end as usize],
+            "Text."
         );
     }
 }

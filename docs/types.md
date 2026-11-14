@@ -113,6 +113,37 @@ A research document holds research, data, transcripts or other material that age
 
 An intent holds the request for one change. A spec holds the delta that the change makes to the requirements, and a plan holds the files and the order of the work. An intent has the statuses draft, accepted and closed. A spec and a plan have the statuses draft and approved. These documents describe work that is not done. Thus they give no drift warning (a plan names files that do not exist yet), and `context` only counts them, unless a target names them.
 
+### Fields of an intent
+
+An intent has these front matter fields, in addition to `status`. spec-dna reads them only in an `intent`. In another type, they have no meaning and give no diagnostic.
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `class` | `routine` or `higher-risk` | The class of the change ([Change classes](design/0.6.0.md#change-classes)). No `class`, or an empty value, is `routine`. Another value, such as `small-fix`, gives SD302 and counts as `routine`. A small fix has no intent |
+| `areas` | a list of area names | The areas that the change touches. The groups of `[groups]` use them |
+| `from` | one id | The id of the incident that the change answers |
+
+The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new intent <slug>` writes it. A project template of an intent keeps its own front matter.
+
+### Sections that carry list items
+
+The parser keeps the list items of 6 sections for each document. The heading must have exactly this text. The case does not matter, and the heading level does not matter. A section ends at the next heading of any level.
+
+| Section | Document | Items |
+| --- | --- | --- |
+| `Delta` | spec | One delta line each: `ADD <id>#<key>: <text>`, `CHANGE <id>#<key>@<hash>: <text>` or `REMOVE <id>#<key>@<hash>` |
+| `Interfaces` | spec | `CHANGE <interface id>: <text>` |
+| `Decisions` | spec | Links `[[decisions/<slug>]]` |
+| `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved |
+| `Files` | plan | The first code span of an item is a path or a glob from the repository root. A final `/` matches the folder and all files in it. An item with no code span counts for nothing |
+| `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
+
+Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range and keep the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
+
+A delta line is one list item with one paragraph and no nested list. The key is a slug. The hash is 16 hexadecimal digits, as `show` prints them. A line can wrap. Each key has one line in the delta. An item in another form is an invalid line: the parser keeps it with its reason, and a check reports it later (SD914).
+
+A requirement also has the byte range of its sentence: the text after the bold key and its colon, without the markers `aliases` and `verified-by` at its end, and without the space at its start and at its end. The hash of a requirement is the hash of this text.
+
 ## Templates
 
 `spec-dna new <type> [<id>] [--template <name>]` writes a template at the place of its type. spec-dna embeds the templates below. A project can add its own in `[templates] dir` ([config.md](config.md#the-table-templates)). A file there with the name of an embedded template replaces it.
@@ -121,7 +152,7 @@ An intent holds the request for one change. A spec holds the delta that the chan
 | --- | --- | --- | --- |
 | `prd` | `intent` | `new intent <slug> --template prd` | Problem, Users, Goals, Non-goals, Success measures, Open questions |
 | `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
-| `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope |
+| `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope. The 3 intent templates have `class: routine` |
 | `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns |
 | `plan` (default) | `plan` | `new plan <slug>` | Files, Order, Risks, Proof |
 | `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |

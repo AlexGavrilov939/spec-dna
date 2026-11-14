@@ -17,6 +17,7 @@ macro_rules! eprintln {
 }
 
 mod adapters;
+mod change;
 mod check;
 mod cite;
 mod config;

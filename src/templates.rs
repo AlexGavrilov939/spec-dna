@@ -336,6 +336,11 @@ pub fn embedded(name: &str) -> Option<(DocType, String)> {
     if let Some(s) = first_status(ty) {
         fm.push_str(&format!("status: {s}\n"));
     }
+    if ty == DocType::Intent {
+        // The author of a change chooses its class. `routine` is the usual
+        // one, and `higher-risk` adds a spec (docs/types.md).
+        fm.push_str("class: routine\n");
+    }
     if ty == DocType::Rule {
         // A rule applies to the paths of its scope. "**" is the whole
         // project: narrow it.
@@ -558,6 +563,33 @@ mod tests {
             }
         }
         assert_eq!(title_of("ops/cache-policy"), "Cache policy");
+    }
+
+    #[test]
+    fn an_intent_template_has_the_class_routine_and_no_other_template_has_one() {
+        for (name, ty) in embedded_names() {
+            let (_, raw) = embedded(name).unwrap();
+            let fm = front_matter_lines(&raw).unwrap();
+            let has = fm.contains(&"class: routine");
+            assert_eq!(has, ty == DocType::Intent, "{name}");
+            if has {
+                // The order is type, status, class. `new` keeps the line.
+                assert_eq!(
+                    &fm[..3],
+                    ["type: intent", "status: draft", "class: routine"]
+                );
+                let text = instantiate(&raw, ty, "T", false);
+                assert!(
+                    text.starts_with("---\nstatus: draft\nclass: routine\n---\n# T\n"),
+                    "{name}: {text}"
+                );
+                let cfg =
+                    Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n").unwrap();
+                let c = corpus_of(&cfg, &place_of(ty), &text);
+                assert_eq!(c.docs[0].class, crate::model::Class::Routine, "{name}");
+                assert!(c.docs[0].issues.is_empty(), "{name}");
+            }
+        }
     }
 
     #[test]
