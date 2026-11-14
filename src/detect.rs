@@ -603,6 +603,10 @@ pub fn detect(
     let md_paths: Vec<&String> = files.iter().filter(|f| candidate(f)).collect();
     let mds: Vec<Md> = crate::repo::par_map(&md_paths, |p| {
         let text = read(p).unwrap_or_default();
+        // A generated harness file (an agent file) is not project knowledge.
+        if crate::harness::has_marker(&text) {
+            return None;
+        }
         let head: String = text
             .lines()
             .take(5)
@@ -618,13 +622,16 @@ pub fn detect(
                 || l.contains("@generated")
                 || (l.contains("generated") && l.contains("do not edit"))
         });
-        Md {
+        Some(Md {
             path: p.to_string(),
             parsed: crate::parse::parse(&text),
             generated,
             labels: labels(&text),
-        }
-    });
+        })
+    })
+    .into_iter()
+    .flatten()
+    .collect();
     facts.markdown = mds.len();
 
     // Counts per directory: Markdown files and all files of the subtree.
@@ -1688,6 +1695,21 @@ mod tests {
         assert!(!f.brownfield);
         assert!(f.rows.is_empty());
         assert_eq!(over_budget(&f, 1.0), 0);
+    }
+
+    #[test]
+    fn a_generated_harness_file_is_not_a_document() {
+        let generated = "---\nname: checker\n---\n\nText.\n\n<!-- spec-dna harness v0.5.0 h:0123456789abcdef -->\n";
+        let own = "---\nname: other\n---\n\nText.\n";
+        let with = |checker: &str| {
+            facts(&[
+                (".claude/agents/checker.md", checker),
+                (".claude/agents/other.md", own),
+            ])
+            .markdown
+        };
+        assert_eq!(with(generated), 1, "the generated agent file is skipped");
+        assert_eq!(with("---\nname: checker\n---\n\nText.\n"), 2);
     }
 
     #[test]
