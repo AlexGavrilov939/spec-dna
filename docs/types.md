@@ -4,21 +4,21 @@ spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) define
 
 | Type | Purpose | Statuses | Required sections | Budget (soft, hard) | In `context` |
 | --- | --- | --- | --- | --- | --- |
-| `product` | What the product is, and for whom | none | none | 8,000, 16,000 | for its `applies-to` |
-| `system` | The parts of the system and how they work together | none | none | 8,000, 16,000 | for its `applies-to` |
-| `terms` | The terms of the project: term, meaning and forbidden synonyms | none | none | 10,000, 20,000 | for its `applies-to` |
-| `roadmap` | Work that is planned and not done | none | none | 8,000, 16,000 | listed only |
-| `questions` | Open questions | none | none | 8,000, 16,000 | listed only |
+| `product` | What the product is, and for whom | none | none | 8,000, 16,000 | first, for its `applies-to` |
+| `system` | The parts of the system and how they work together | none | none | 8,000, 16,000 | first, for its `applies-to` |
+| `terms` | The terms of the project: term, meaning and forbidden synonyms | none | none | 10,000, 20,000 | first, for its `applies-to` |
+| `roadmap` | Work that is planned and not done | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
+| `questions` | Open questions | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
 | `rule` | Project-wide rules with stable ids and an `applies-to` scope | draft, active, deprecated, superseded, retired (status moves forward only) | `Rules` | 3,000, 6,000 | first, for a matching scope |
 | `requirements` | The behavior and constraints of one capability | as `rule` | none | 10,000, 20,000 | yes |
 | `interface` | An interface, or a pointer to its schema | as `rule` | none | 10,000, 20,000 | yes |
 | `decision` | The reason for a choice (MADR minimal) | proposed, accepted, superseded, rejected | `Decision Outcome` or `Decision` | 7,000, 14,000 | summary of a linked decision |
 | `procedure` | Conventions and operational procedures | as `rule` | none | 14,000, 28,000 | for its `applies-to` |
-| `incident` | What happened, why, and the knowledge it involves | none | `Summary` and `Root cause` | 6,000, 12,000 | listed only |
-| `research` | Research, data and other material that agents seldom read | none | none | none | never, unless a target names it |
-| `intent` | The request for one change | draft, accepted, closed | `Intent`, `Problem` or `Summary` | 6,000, 12,000 | listed only |
-| `spec` | The delta that one change makes to the requirements | draft, approved | `Delta` | 10,000, 20,000 | listed only |
-| `plan` | The files and the order of one change | draft, approved | `Files` | 6,000, 12,000 | listed only |
+| `incident` | What happened, why, and the knowledge it involves | none | `Summary` and `Root cause` | 6,000, 12,000 | counted only (`on-request` layer) |
+| `research` | Research, data and other material that agents seldom read | none | none | none | counted only, unless a target names it |
+| `intent` | The request for one change | draft, accepted, closed | `Intent`, `Problem` or `Summary` | 6,000, 12,000 | counted only (`on-request` layer) |
+| `spec` | The delta that one change makes to the requirements | draft, approved | `Delta` | 10,000, 20,000 | counted only (`on-request` layer) |
+| `plan` | The files and the order of one change | draft, approved | `Files` | 6,000, 12,000 | counted only (`on-request` layer) |
 
 A root can change the required sections (`required-sections`) and the budgets (`[budgets.<type>]`). [config.md](config.md) gives the keys.
 
@@ -103,15 +103,15 @@ A procedure tells how to do a task: when to use it, the steps, how to verify the
 
 ## Incident
 
-An incident records an event: a summary, a timeline, the root cause, links, and follow-up actions. It must link the requirements, rules, decisions or procedures that it involves, with `[[<id>]]` or a Markdown link. An incident without such a link gives SD609 (a warning). An incident describes the past. Thus it gives no drift warning, and `context` only lists it.
+An incident records an event: a summary, a timeline, the root cause, links, and follow-up actions. It must link the requirements, rules, decisions or procedures that it involves, with `[[<id>]]` or a Markdown link. An incident without such a link gives SD609 (a warning). An incident describes the past. Thus it gives no drift warning, and `context` only counts it, unless a target names it.
 
 ## Research
 
-A research document holds research, data, transcripts or other material that agents seldom read. It has no budget and no status. `context` never serves it and never lists it, unless a target names it. `show` reads it. Use it for large material that agents read only on request. `spec-dna history` moves the history sections of a document into a research document.
+A research document holds research, data, transcripts or other material that agents seldom read. It has no budget and no status. `context` never serves it, unless a target names it. It counts the research documents that a request reaches, in one line. `show` reads it. Use it for large material that agents read only on request. `spec-dna history` moves the history sections of a document into a research document.
 
 ## Intent, spec and plan
 
-An intent holds the request for one change. A spec holds the delta that the change makes to the requirements, and a plan holds the files and the order of the work. An intent has the statuses draft, accepted and closed. A spec and a plan have the statuses draft and approved. These documents describe work that is not done. Thus they give no drift warning (a plan names files that do not exist yet), and `context` only lists them.
+An intent holds the request for one change. A spec holds the delta that the change makes to the requirements, and a plan holds the files and the order of the work. An intent has the statuses draft, accepted and closed. A spec and a plan have the statuses draft and approved. These documents describe work that is not done. Thus they give no drift warning (a plan names files that do not exist yet), and `context` only counts them, unless a target names them.
 
 ## Templates
 

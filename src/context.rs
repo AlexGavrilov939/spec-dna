@@ -1,18 +1,36 @@
 //! `spec-dna context` and `spec-dna show` serve sections with ids and hashes
-//! (ADR 0001, "Document types").
+//! (ADR 0001, "Document types"; ADR 0005, "Layer graph").
 //!
 //! The assembly uses this order:
 //!
+//! - the sections that the project conventions name for the type of each
+//!   entry (`[conventions]`), also from files outside the documents
+//! - the rules (type `rule`) whose `applies-to` matches a scope, or that have
+//!   no `applies-to`, and the top files (`product`, `system`, `terms`) whose
+//!   `applies-to` matches. A top file with no `applies-to` is not in this
+//!   tier. The tier has the order of the layers
 //! - the entry documents (or the requested sections)
 //! - the sections that cite a given code path by its path or by an identifier
 //!   (`cite.rs`), for the first 8 such documents, and then the requirement
 //!   sections and the summary of the first 5
-//! - the documents whose `applies-to` matches an entry or a given path
+//! - the other normative documents whose `applies-to` matches an entry or a
+//!   given path
 //! - the sections that cite only a directory of a given path, for the first 5
 //!   such documents
 //! - the `depends-on` targets of the entries and of the first 5 normative
 //!   citing documents (depth 1)
 //! - accepted decisions linked to these documents, as summaries
+//!
+//! The order of the layers is the order of the graph: by level from 0 up, and
+//! the order of the configuration inside one level (`Graph::context_order`).
+//! It orders the first tier, and the citing documents of one citation class.
+//! It does not change the order of the tiers.
+//!
+//! A layer with `context = "on-request"` has its documents in the plan only
+//! if a target names them. A `research` document is in the plan under the
+//! same rule, in each layer. The assembly counts the documents of these
+//! layers that the request reaches, and `render` prints one line with the
+//! counts. It lists no file.
 //!
 //! For a requirements, interface or rule document, the assembly serves the
 //! requirement sections first, then the title section, in full. It serves a
@@ -36,11 +54,14 @@
 //! The assembly serves a listed-only section (`more`, `linked`) in full only
 //! if it matches.
 
+use crate::config::Config;
 use crate::hash::hex;
 use crate::json::{self, Obj};
+use crate::layer::{ContextMode, Rule};
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res};
 use crate::parse::{Chunk, RefKind};
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +120,73 @@ pub struct Assembly {
     pub used: u32,
     /// The query terms that the ranking used.
     pub query: Option<Vec<String>>,
+    /// The documents that the request reaches and that the plan holds back,
+    /// because their layer has `context = "on-request"`. For each layer, the
+    /// name and the number of documents, in the order of `context`.
+    pub held: Vec<(String, usize)>,
+}
+
+/// What the plan needs to know of the layer of each document. The index of a
+/// vector is the index of the document in the corpus.
+pub struct Places {
+    /// The position of the layer in the order of `context`. A document with
+    /// no layer comes last.
+    rank: Vec<usize>,
+    /// True if the layer has `context = "on-request"`.
+    on_request: Vec<bool>,
+    /// True if the document is a top file of its layer (`files`).
+    top: Vec<bool>,
+    /// The name of the layer, for the count line.
+    layer: Vec<Option<String>>,
+}
+
+impl Places {
+    pub fn new(c: &Corpus, cfg: &Config) -> Places {
+        let g = &cfg.layers;
+        let order = g.context_order();
+        let mut pos = vec![order.len(); order.len()];
+        for (r, &i) in order.iter().enumerate() {
+            pos[i] = r;
+        }
+        let mut p = Places {
+            rank: Vec::new(),
+            on_request: Vec::new(),
+            top: Vec::new(),
+            layer: Vec::new(),
+        };
+        for d in &c.docs {
+            let rel = cfg
+                .roots
+                .get(d.root)
+                .map_or(d.path.as_str(), |r| r.rel(&d.path));
+            match g.placement(rel, d.ty) {
+                Some((i, rule)) => {
+                    p.rank.push(pos[i]);
+                    p.on_request
+                        .push(g.layers()[i].context == ContextMode::OnRequest);
+                    p.top.push(rule == Rule::Files);
+                    p.layer.push(Some(g.layers()[i].name.clone()));
+                }
+                None => {
+                    p.rank.push(order.len());
+                    p.on_request.push(false);
+                    p.top.push(false);
+                    p.layer.push(None);
+                }
+            }
+        }
+        p
+    }
+
+    /// The position of the layer of a document in the order of `context`.
+    pub fn rank(&self, d: u32) -> usize {
+        self.rank[d as usize]
+    }
+
+    /// The ranks of all documents, for `cite::citing`.
+    pub fn ranks(&self) -> &[usize] {
+        &self.rank
+    }
 }
 
 /// A query for the ranking: its terms, and the working tree that spec-dna
@@ -293,6 +381,7 @@ pub fn assemble(
     query: Option<&Query>,
     include_inactive: bool,
     conventions: &[Vec<String>; DocType::COUNT],
+    places: &Places,
 ) -> Assembly {
     let mut plan: Vec<(u32, usize, Tier)> = Vec::new();
     let mut seen: HashSet<(u32, usize)> = HashSet::new();
@@ -337,12 +426,20 @@ pub fn assemble(
             }
         }
     }
-    // A research document is cold material: the plan has it only if a
-    // target names it.
+    // A research document, and a document of a layer with `context =
+    // "on-request"`, are cold material: the plan has them only if a target
+    // names them. The assembly counts the others that the request reaches.
+    let held: RefCell<BTreeSet<u32>> = RefCell::new(BTreeSet::new());
+    let hold = |d: u32| -> bool {
+        let cold = c.docs[d as usize].ty == DocType::Research || places.on_request[d as usize];
+        let hit = cold && !entry_docs.contains(&d);
+        if hit {
+            held.borrow_mut().insert(d);
+        }
+        hit
+    };
     let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
-        if (c.docs[d as usize].ty != DocType::Research || entry_docs.contains(&d))
-            && seen.insert((d, ch))
-        {
+        if !hold(d) && seen.insert((d, ch)) {
             plan.push((d, ch, t));
         }
     };
@@ -359,25 +456,38 @@ pub fn assemble(
         .collect();
     let mut rest: Vec<(u32, usize)> = Vec::new();
 
-    // 0. Rules whose `applies-to` matches a scope. A rule without
-    // `applies-to` applies to the whole project.
-    let rules: Vec<u32> = c
+    // 0. The first tier: rules whose `applies-to` matches a scope, and top
+    // files (`product`, `system`, `terms`) whose `applies-to` matches. A rule
+    // without `applies-to` applies to the whole project. A top file without
+    // `applies-to` does not: the top files stay out of the context of each
+    // task. The order of the layers orders the tier.
+    let matches_scope = |d: &Doc| {
+        d.applies_to
+            .iter()
+            .any(|p| scopes.iter().any(|s| crate::glob::matches_scope(p, s)))
+    };
+    let is_top = |i: usize| places.top[i] && c.docs[i].ty.is_normative();
+    let mut first: Vec<u32> = c
         .docs
         .iter()
         .enumerate()
         .filter(|(i, d)| {
-            d.ty == DocType::Rule
+            let rule = d.ty == DocType::Rule && (d.applies_to.is_empty() || matches_scope(d));
+            (rule || (is_top(*i) && matches_scope(d)))
                 && !d.is_inactive()
                 && !entry_docs.contains(&(*i as u32))
-                && (d.applies_to.is_empty()
-                    || d.applies_to
-                        .iter()
-                        .any(|p| scopes.iter().any(|s| crate::glob::matches_scope(p, s))))
+                && !hold(*i as u32)
         })
         .map(|(i, _)| i as u32)
         .collect();
-    for d in rules {
-        normative_units(c, d, Tier::Rule, &mut plan, &mut rest, &mut add);
+    first.sort_by_key(|&d| places.rank(d));
+    for &d in &first {
+        let tier = if c.docs[d as usize].ty == DocType::Rule {
+            Tier::Rule
+        } else {
+            Tier::Concern
+        };
+        normative_units(c, d, tier, &mut plan, &mut rest, &mut add);
     }
 
     // 1. Entries.
@@ -416,11 +526,7 @@ pub fn assemble(
     let listed_only = |d: u32| c.docs[d as usize].ty.is_informative();
     let strong: Vec<&(u32, u8, Vec<usize>)> = cited
         .iter()
-        .filter(|x| {
-            x.1 < crate::cite::BY_DIR
-                && !entry_docs.contains(&x.0)
-                && c.docs[x.0 as usize].ty != DocType::Research
-        })
+        .filter(|x| x.1 < crate::cite::BY_DIR && !entry_docs.contains(&x.0) && !hold(x.0))
         .collect();
     let mut served = 0;
     for (d, _, chunks) in &strong {
@@ -466,9 +572,9 @@ pub fn assemble(
             d.ty.is_normative()
                 && !d.is_inactive()
                 && !entry_docs.contains(&(*i as u32))
-                && d.applies_to
-                    .iter()
-                    .any(|p| scopes.iter().any(|s| crate::glob::matches_scope(p, s)))
+                && !first.contains(&(*i as u32))
+                && matches_scope(d)
+                && !hold(*i as u32)
         })
         .map(|(i, _)| i as u32)
         .collect();
@@ -481,10 +587,7 @@ pub fn assemble(
     // so it comes after `applies-to`, without a summary.
     let mut served = 0;
     for (d, class, chunks) in cited {
-        if *class != crate::cite::BY_DIR
-            || entry_docs.contains(d)
-            || c.docs[*d as usize].ty == DocType::Research
-        {
+        if *class != crate::cite::BY_DIR || entry_docs.contains(d) || hold(*d) {
             continue;
         }
         let plan_it = !listed_only(*d) && served < CITING_SUMMARIES;
@@ -576,7 +679,8 @@ pub fn assemble(
                 break;
             }
             let n = c.docs[d as usize].parsed.chunks.len();
-            if n > 0 && !plan.iter().any(|p| p.0 == d) {
+            // A held document takes no place of the 20.
+            if n > 0 && !hold(d) && !plan.iter().any(|p| p.0 == d) {
                 // Under a query, every section is a candidate. Without a query,
                 // only the title is a candidate.
                 let take = if query.is_some() { n } else { 1 };
@@ -714,7 +818,26 @@ pub fn assemble(
         budget,
         used,
         query: terms,
+        held: count_held(c, places, &held.into_inner()),
     }
+}
+
+/// Counts the held documents for each layer, in the order of the layers. A
+/// document with no layer counts under the name of its type.
+fn count_held(c: &Corpus, places: &Places, held: &BTreeSet<u32>) -> Vec<(String, usize)> {
+    let mut counts: Vec<(usize, String, usize)> = Vec::new();
+    for &d in held {
+        let name = places.layer[d as usize]
+            .clone()
+            .unwrap_or_else(|| c.docs[d as usize].ty.name().to_string());
+        let rank = places.rank(d);
+        match counts.iter_mut().find(|x| x.0 == rank && x.1 == name) {
+            Some(x) => x.2 += 1,
+            None => counts.push((rank, name, 1)),
+        }
+    }
+    counts.sort();
+    counts.into_iter().map(|(_, n, k)| (n, k)).collect()
 }
 
 /// Returns the packing order under a query. It also returns the sections that
@@ -1070,6 +1193,13 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
         out.push_str(&format!(
             "<!-- no document cites or applies to {}; to search by words, add --query \"<the task>\" -->\n",
             a.paths.join(", ")
+        ));
+    }
+    if !a.held.is_empty() {
+        let parts: Vec<String> = a.held.iter().map(|(n, k)| format!("{n} {k}")).collect();
+        out.push_str(&format!(
+            "<!-- on-request, not served: {}; name a document as target to serve it -->\n",
+            parts.join(", ")
         ));
     }
     if a.omitted > 0 {

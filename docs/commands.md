@@ -99,14 +99,28 @@ spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <tex
 
 `context` prints the sections that an agent needs, in this order:
 
-1. The entry documents or sections.
-2. For a code path: the sections that cite the file by its path, or by an identifier that is in the file ([diagnostics.md](diagnostics.md#code-citations)). A code path is a target or a `--path`, and it can be an untracked file. The documents do not need `applies-to`.
-3. The requirement sections and the summary of the best documents that cite the file.
-4. The documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path.
-5. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
-6. The other sections.
+1. The sections that `[conventions]` names for the type of each target ([show](#show)).
+2. The first tier: each rule whose `applies-to` matches an entry or a path, and each rule with no `applies-to` (it applies to the whole project). Also each top file (`product`, `system` or `terms`) whose `applies-to` matches. A top file with no `applies-to` is not in a task context, but a target can name it.
+3. The entry documents or sections.
+4. For a code path: the sections that cite the file by its path, or by an identifier that is in the file ([diagnostics.md](diagnostics.md#code-citations)). A code path is a target or a `--path`, and it can be an untracked file. The documents do not need `applies-to`.
+5. The requirement sections and the summary of the best documents that cite the file.
+6. The other normative documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path.
+7. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
+8. The other sections.
 
-`context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file. It lists an intent, an incident or a roadmap that cites the file, but it does not serve that document. It never lists a research document.
+The order of the layers orders the first tier. It also orders the documents of one citation class (cite the file, cite an identifier, or cite a directory). The layers come by level, from 0 up. The layers of one level keep the order of the `[layers.*]` tables in `spec-dna.toml`, or the order of the default graph. In the default graph, `foundation` comes before `rules`. `spec-dna layer list` shows the level of each layer ([Layer graph](design/0.6.0.md#layer-graph)).
+
+A layer with `context = "on-request"` is held back. `context` serves its documents only if a target names them. `show` always reads them. `context` counts the documents of these layers that the request reaches, in one line after the listed sections, and lists no file:
+
+```text
+<!-- on-request, not served: research 1, intent 1, incidents 2; name a document as target to serve it -->
+```
+
+The layers are in the order of `context`. The line is not in the output if the request reaches no such document. In the default graph, `research`, `intent`, `incidents` and `pending` are `on-request`. A layer with `context = "always"` can fill the plan without a named target. A `research` document is held back in each layer. The `--json` output has no count.
+
+`context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file.
+
+In a layer with `context = "always"`, `context` lists an intent, an incident or a roadmap that cites the file, but it does not serve that document.
 
 In a document with requirements, the requirement sections come first, then the title section. `context` lists the other sections of that document.
 

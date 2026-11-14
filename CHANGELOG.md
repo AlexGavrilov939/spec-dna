@@ -25,6 +25,8 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - The skill of `init` lists the types that the layers have. After `spec-dna layer add`, run `spec-dna init` to update it, or `check` reports SD502. The skill and the agent `spec-writer` describe the places of `spec-dna new`.
 - `init --reconfigure` keeps a mixed root that has no `default-type` (it became `research`). It does not write `live-sections = { decision = ["Status"] }`, which is the default now. It keeps the keys `types`, `[groups]` and `[templates]`.
 - The demo and the quickstart use the layout of 0.6: `requirements/loans`, `interfaces/http` and `decisions/`. The demo adds the layer `interfaces` with `layer add`.
+- CHANGE OF BEHAVIOR: the order of `context` follows the levels of the layer graph. It lists the layers from level 0 up, and the layers of one level in the order of the configuration. In the default graph, `foundation` comes before `rules`. In 0.5 a rule came first. A top file (`product`, `system` or `terms`) is in the first tier only if its `applies-to` matches, so the top files do not go into each context. The order of the layers also replaces the order of the types among the documents that cite a code path. The `context` order of the tiers does not change ([docs/commands.md](docs/commands.md#context)).
+- CHANGE OF BEHAVIOR: a layer with `context = "on-request"` (in the default graph: `research`, `intent`, `incidents` and `pending`) is held back. `context` serves its documents only for a target that names them, and `show` reads them. `context` counts the documents that it holds back in one line and lists no file. In 0.5 it listed the intents, the incidents and the roadmaps that cite a file. The `--json` output has no count.
 
 ### Added
 

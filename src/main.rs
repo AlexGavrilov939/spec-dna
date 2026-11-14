@@ -1070,10 +1070,17 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .iter()
         .map(|p| p.trim_start_matches("./").to_string())
         .collect();
+    let places = context::Places::new(&c, &cfg);
     let cited = if paths.is_empty() {
         Vec::new()
     } else {
-        cite::citing(&c, &cite::Citations::build(&c), &repo.root, &paths)
+        cite::citing(
+            &c,
+            &cite::Citations::build(&c),
+            &repo.root,
+            &paths,
+            places.ranks(),
+        )
     };
     let asm = context::assemble(
         &c,
@@ -1084,6 +1091,7 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         query.as_ref(),
         a.include_inactive,
         &cfg.conventions,
+        &places,
     );
     print!("{}", context::render(&c, &repo.root, &asm, a.json));
     Ok(0)

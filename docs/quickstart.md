@@ -141,7 +141,7 @@ spec-dna new terms                       # docs/terms.md: a top file has no id
 spec-dna new intent add-drip-lines       # docs/intent/add-drip-lines/intent.md: one change
 ```
 
-There are 15 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec` and `plan`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves a matching rule first. It never serves a `research` document unless a target names it.
+There are 15 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec` and `plan`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves the layers in the order of the graph, from the most stable layer. It never serves a `research` document unless a target names it.
 
 To link a test to a requirement, write a `covers:` tag in a comment of the test. This works in any language:
 

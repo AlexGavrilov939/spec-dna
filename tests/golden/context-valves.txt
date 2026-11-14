@@ -1,4 +1,4 @@
-<!-- spec-dna context VERSION: irrigation/valves, src/controller.rs; 7 sections in full, 2 listed; 1573 of 2500 characters; about 408 tokens (estimated) -->
+<!-- spec-dna context VERSION: irrigation/valves, src/controller.rs; 7 sections in full, 2 listed; 1573 of 2500 characters; about 429 tokens (estimated) -->
 
 <!-- irrigation/valves#requirements h:2a4d76de672f25aa requirements/active entry -->
 ## Requirements
@@ -38,3 +38,4 @@ Chosen option: one controller for each row of beds.
 <!-- not loaded; read one with `spec-dna show <id>` -->
 - `irrigation/valves#rationale` h:d76575f736a8dec0 146 chars (more): Rationale
 - `ADR-1-valve-controller#context-and-problem-statement` h:a76d0959e5acf391 101 chars (more): Context and Problem Statement
+<!-- on-request, not served: research 1; name a document as target to serve it -->

@@ -348,8 +348,6 @@ impl Graph {
 
     /// The positions of the layers in the order of `context`: by level from
     /// 0 up, and the file order inside one level.
-    // `context` reads it (slice S7).
-    #[allow(dead_code)]
     pub fn context_order(&self) -> Vec<usize> {
         let mut v: Vec<usize> = (0..self.layers.len()).collect();
         v.sort_by_key(|&i| (self.levels[i], i));
@@ -1068,6 +1066,47 @@ mod tests {
             .map(|i| g.layers()[i].name.as_str())
             .collect();
         assert_eq!(names, ["base", "other", "mid", "top", "top2"]);
+    }
+
+    #[test]
+    fn context_order_of_the_default_graph_puts_foundation_before_rules() {
+        let g = Graph::default_graph();
+        let names: Vec<&str> = g
+            .context_order()
+            .into_iter()
+            .map(|i| g.layers()[i].name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "foundation",
+                "rules",
+                "requirements",
+                "interfaces",
+                "decisions",
+                "procedures",
+                "research",
+                "intent",
+                "incidents",
+                "pending"
+            ]
+        );
+    }
+
+    #[test]
+    fn context_order_keeps_the_file_order_of_a_custom_layer() {
+        // `custom` has level 0 and comes last in the file: after the layers of
+        // level 0 that come before it, and before each layer of level 1.
+        let g = graph(
+            "[layers.a]\nmoves-to = [\"b\"]\n[layers.b]\n[layers.custom]\npaths = [\"x/**\"]\n[layers.c]\nmoves-to = [\"custom\"]\n",
+        )
+        .unwrap();
+        let names: Vec<&str> = g
+            .context_order()
+            .into_iter()
+            .map(|i| g.layers()[i].name.as_str())
+            .collect();
+        assert_eq!(names, ["b", "custom", "a", "c"]);
     }
 
     #[test]

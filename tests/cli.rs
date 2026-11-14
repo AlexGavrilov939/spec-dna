@@ -1615,9 +1615,12 @@ fn context_serves_the_sections_that_cite_a_code_path() {
     );
     assert!(out.contains("<!-- loans#code h:"), "{out}");
     assert!(out.contains(" cites -->"), "{out}");
+    // The `intent` layer is `on-request`: `context` counts the intent in one
+    // line and lists no file.
+    assert!(!out.contains("intent/idea"), "{out}");
     assert!(
-        out.contains("- `intent/idea/intent#intent`"),
-        "an intent is only listed: {out}"
+        out.contains("<!-- on-request, not served: intent 1;"),
+        "an intent is only counted: {out}"
     );
     assert!(out.contains("- `loans#history`"), "{out}");
     assert!(
@@ -2522,8 +2525,8 @@ fn knowledge_types_have_templates_sections_and_context_rules() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("SD609"), "{out}");
-    // `context` serves the matching rule first, lists the incident, and
-    // never serves the research document.
+    // `context` serves the matching rule first, and
+    // never serves the research document or the incident.
     let (code, out, _) = r.run(&["context", "src/dosing/dose.py"]);
     assert_eq!(code, 0, "{out}");
     let first = out.lines().filter(|l| l.starts_with("<!-- ")).nth(1);
