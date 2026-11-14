@@ -1,6 +1,6 @@
 # Quickstart
 
-This page gives the steps from install to uninstall. You need git.
+This page gives the steps from install to uninstall: set up a repository, use spec-dna with a coding agent, run a change, and upgrade. You need git. spec-dna works with any coding agent. [Agents](agents.md) describes what each agent gets.
 
 ## Install
 
@@ -81,17 +81,18 @@ git add spec-dna.toml CLAUDE.md .claude   # `init` prints the full `git add` com
 git commit -m "build: adopt spec-dna"
 ```
 
-`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph and the agent harness. This version asks 11. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
+`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph, the change policy and the agent harness. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
 
 `init` never edits a document. Without a terminal, or with `--non-interactive`, it uses the detected defaults. `--dry-run` shows the preview only.
 
 `init` writes these files:
 
-- `spec-dna.toml`, with the pinned version, the profile, the layer graph and the document roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) and no `default-type`. The folder of a layer gives the type of a document, so `docs/requirements/loans.md` is a `requirements` document. [docs/config.md](config.md) gives all keys.
-- One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` once for a task that edits code or docs. It also tells them to run `spec-dna check` before a commit. On an existing project, `init` adds only this line. The line never imports another file.
-- The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
+- `spec-dna.toml`, with the pinned version, the profile, the layer graph, the change policy and the document roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) and no `default-type`. The folder of a layer gives the type of a document, so `docs/requirements/loans.md` is a `requirements` document. [docs/config.md](config.md) gives all keys.
+- One line in `AGENTS.md` and in `CLAUDE.md`. Most coding agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or docs. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
+- The skill `.claude/skills/spec-dna/SKILL.md` for Claude Code, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
-- The agent harness for Claude Code (level `lean` by default): agent files in `.claude/agents/`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
+- The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the stage skills in `.claude/skills/`, `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
+- For a new project, the evals skeleton: the folder `evals/` and the workflow `.github/workflows/agent-evals.yml`. [docs/evals.md](evals.md) describes the evals. The workflow runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
 
@@ -153,6 +154,16 @@ def test_due_date_is_14_days_later():
 
 `check` resolves each tag. In the `standard` profile, an active requirement without a test gives a warning (SD608). `show requirements/loans` lists the evidence of each requirement.
 
+## Work with an agent
+
+The instruction line and the skill that `init` wrote tell an agent what to do. The agent can be any coding agent. The steps are the same:
+
+1. Before the agent edits a file, it runs `spec-dna context <path>`. The command gives the sections that cite the file, with their dependencies and decisions.
+2. The agent edits the code and the documents of the change.
+3. Before the work is complete, the agent runs `spec-dna check`. It fixes each new error that `check` reports.
+
+A person can run the same commands. [Daily use](#daily-use) lists them. The skill, the hooks and the evals are for Claude Code. [Agents](agents.md) gives the details.
+
 ## Daily use
 
 ```sh
@@ -180,6 +191,19 @@ For another warning code with more than 10 diagnostics, such as SD608 on a matur
 If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and name a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
 
 Split a document only for a size error: SD702, and in the `strict` profile also SD701, SD703 and SD704. A size warning needs no split.
+
+## Run a change
+
+A change is a folder `docs/intent/<slug>/` with an intent, a spec and a plan. Question 4 of `init` chooses the change policy, and question 5 chooses the gate. A new project gets `three-class` and `block`. A project with no `[change]` table has the policy `none`, so it has no change gate.
+
+```sh
+spec-dna new intent sensor-timeout   # docs/intent/sensor-timeout/intent.md: start a change
+spec-dna next sensor-timeout         # the checklist to the next gate
+spec-dna status                      # each change, its class, its stage and its next gate
+spec-dna finish sensor-timeout       # apply the delta, check the evidence, delete the folder
+```
+
+`next` marks each line done or open. Its last line gives the edit that approves the artifact. To approve a document, set its status in a pull request. `finish` works in the working tree and commits nothing. `spec-dna finish <slug> --dry-run` prints the diff only. [The change guide](guides/change.md) takes one change from the intent to `finish`.
 
 ## CI
 
@@ -223,6 +247,8 @@ jobs:
 
 For a private `install-source`, give the job read access to it, for example with a deploy key.
 
+For the evals skeleton, `init` writes a second workflow, `.github/workflows/agent-evals.yml`. [docs/evals.md](evals.md) describes it.
+
 ## Upgrade
 
 1. Download `spec-dna-pin.toml` of the new release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
@@ -233,13 +259,15 @@ For a private `install-source`, give the job read access to it, for example with
 
 If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To roll back, install the old version and revert the upgrade commit.
 
+To upgrade a project of 0.5 to 0.6, use `spec-dna upgrade`. It moves the pin, the types, the statuses and the harness names. The [upgrade guide](guides/upgrade-0.5.md) gives the steps.
+
 To add the agent harness to a project of 0.4 or older, run `spec-dna init --reconfigure` and choose a level. An upgrade alone does not add it.
 
 To upgrade from 0.1 to 0.2, note this change. A configuration without `profile` uses `standard`. In this profile, the requirement lint is off, and an active requirement without evidence gives SD608. [docs/profiles.md](profiles.md#changes-from-01) gives the 2 rules that keep the behavior of 0.1. `spec-dna init --reconfigure` asks the questions again, with the current values as defaults.
 
 ## Uninstall
 
-If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. It removes the generated agent files, the `CLAUDE.md` line and the hook handlers.
+If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. It removes the generated agent files, the stage skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers.
 
 ```sh
 rm spec-dna.toml
@@ -255,4 +283,4 @@ done
 cargo uninstall spec-dna
 ```
 
-The loop removes the generated line and the blank line before it. It deletes a file that has no other text. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. Your documents are plain Markdown files. They do not change.
+The loop removes the generated line and the blank line before it. It deletes a file that has no other text. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. If `init` wrote the evals skeleton, also remove `evals/` and `.github/workflows/agent-evals.yml`. Your documents are plain Markdown files. They do not change.
