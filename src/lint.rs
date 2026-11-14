@@ -159,12 +159,69 @@ pub const DEFAULT_HISTORY_TERMS: [&str; 7] = [
 ];
 
 /// The text of a requirement that SD903 and SD904 read: without link
-/// destinations, without inline code spans and without `[[id]]` references.
-/// Their text is a name, not prose, so an id with a date does not match.
+/// destinations, without autolinks and bare URLs, without inline code spans
+/// and without `[[id]]` references. Their text is a name, not prose, so an id
+/// with a date does not match.
 pub fn prose(text: &str) -> std::borrow::Cow<'_, str> {
-    if !text.contains(['`', '[']) {
+    if !text.contains(['`', '[', '<']) && !text.contains("://") {
         return std::borrow::Cow::Borrowed(text);
     }
+    std::borrow::Cow::Owned(strip_urls(&strip_code_and_ids(text)))
+}
+
+/// Replaces each autolink (`<scheme:...>`) and each bare URL (`scheme://...`
+/// up to a space) with a space.
+fn strip_urls(text: &str) -> String {
+    let b = text.as_bytes();
+    let scheme_end = |from: usize| {
+        // The end of a scheme (a letter, then letters, digits, `+`, `.` or
+        // `-`) that starts at `from`, if a `:` follows it.
+        let n = b[from..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'.' | b'-'))
+            .count();
+        (n >= 2 && b[from].is_ascii_alphabetic() && b.get(from + n) == Some(&b':'))
+            .then_some(from + n)
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut from = 0;
+    while i < b.len() {
+        if b[i] == b'<'
+            && let Some(colon) = scheme_end(i + 1)
+            && let Some(e) = text[colon..].find(['>', '<', ' ', '\n'])
+            && b[colon + e] == b'>'
+        {
+            out.push_str(&text[from..i]);
+            out.push(' ');
+            i = colon + e + 1;
+            from = i;
+        } else if b[i] == b':' && text[i..].starts_with("://") && i > 0 {
+            // A bare URL: the scheme before `://` and the text up to a space.
+            let mut start = i;
+            while start > from && (b[start - 1].is_ascii_alphanumeric() || b[start - 1] == b'+') {
+                start -= 1;
+            }
+            let end = text[i..]
+                .find(char::is_whitespace)
+                .map_or(text.len(), |e| i + e);
+            if start < i {
+                out.push_str(&text[from..start]);
+                out.push(' ');
+                from = end;
+            }
+            i = end.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
+/// `prose` without the URLs: the text without link destinations, code spans
+/// and `[[id]]` references.
+fn strip_code_and_ids(text: &str) -> String {
     let stripped = crate::parse::strip_link_destinations(text);
     let b = stripped.as_bytes();
     let mut out = String::with_capacity(stripped.len());
@@ -212,7 +269,7 @@ pub fn prose(text: &str) -> std::borrow::Cow<'_, str> {
         }
     }
     out.push_str(&stripped[from..]);
-    std::borrow::Cow::Owned(out)
+    out
 }
 
 /// The words of a text, in lower case. A word is a run of letters and digits

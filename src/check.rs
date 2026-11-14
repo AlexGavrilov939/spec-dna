@@ -124,10 +124,10 @@ fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
     c.docs
         .iter()
         .map(|d| {
-            if d.type_failed || d.untyped {
-                None
-            } else {
+            if d.has_layer() {
                 config.layers.layer_of(rel_in_root(config, d), d.ty)
+            } else {
+                None
             }
         })
         .collect()
@@ -283,7 +283,7 @@ fn reaches(edges: &[Vec<u32>], from: u32, target: u32) -> bool {
 fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
     let ev = facts.ev;
     // The documents that this one references, for SD901. A stub and a
-    // generated index state no layer link.
+    // generated index have no such references.
     let track = !facts.bad.is_empty() && d.moved_to.is_none() && d.generated.is_none();
     let mut hits: Vec<(u32, u32)> = Vec::new();
     let mut out: Vec<Diag> = d
@@ -1086,10 +1086,10 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
 /// item of a `rule`, `requirements` or `interface` document. It changed if its
 /// key has another `frozen` hash, and it was added or removed if its key has
 /// no match on the other side. `Corpus::resolve` applies the aliases, so a move
-/// that keeps the hashes gives nothing. The check compares the base with the
-/// head only. It runs for `check --base`, because a base that is HEAD gives a
+/// that keeps the hashes gives no diagnostic. The check compares the base with
+/// the head only. It runs only for `check --base`, because a base that is HEAD gives a
 /// false SD921 when the branch added its intent in an earlier commit. All
-/// the diagnostics are new. One diagnostic names one document.
+/// diagnostics are new. Each diagnostic names one document.
 pub fn truth_changed(
     config: &Config,
     base: (&Corpus, &Snapshot),

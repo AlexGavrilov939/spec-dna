@@ -252,6 +252,12 @@ pub struct Doc {
 }
 
 impl Doc {
+    /// True if the document can be in a layer. A document with no valid type
+    /// is in no layer (D12): `layer list`, SD901 and SD902 use this rule.
+    pub fn has_layer(&self) -> bool {
+        !(self.type_failed || self.untyped)
+    }
+
     /// The rows of the tables of terms (header `Term` and `Forbidden
     /// synonyms`) of a `terms` document. Another document has none.
     pub fn term_rows(&self) -> &[crate::parse::TermRow] {

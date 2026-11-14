@@ -73,7 +73,7 @@ struct TableState {
 
 impl TableState {
     /// True if the text of a cell matters: a header cell, or a cell of a
-    /// table of terms. This keeps the cost of other tables low.
+    /// table of terms. Other tables thus need less work.
     fn wants_text(&self) -> bool {
         self.in_cell && (self.in_head || self.cols.is_some())
     }
@@ -98,6 +98,14 @@ impl TableState {
     fn end_row(&mut self, out: &mut Vec<TermRow>) {
         let row = std::mem::take(&mut self.row);
         let Some((t, f)) = self.cols else { return };
+        // A row with a `{{...}}` placeholder is a row of a template. SD306
+        // reports it. It is not a term.
+        if row
+            .iter()
+            .any(|c| c.find("{{").is_some_and(|i| c[i + 2..].contains("}}")))
+        {
+            return;
+        }
         let term = row.get(t).cloned().unwrap_or_default();
         let forbidden: Vec<String> = row
             .get(f)

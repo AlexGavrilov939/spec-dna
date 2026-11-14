@@ -91,7 +91,7 @@ codes! {
     RequirementColonMissing = "SD807", "requirement-colon-missing", Warning, "Write the requirement as `- **key**: sentence`, with the colon right after the bold key. Put a note, such as a rule number, after the colon.";
     LinkDirection = "SD901", "link-direction", Warning, "Remove the reference (a link, `[[id]]`, `depends-on` or `supersedes`), or move the text to a layer that is not more stable than the target. As an alternative, add the layer of the document to `linked-from` of the target layer in spec-dna.toml.";
     LayerLimit = "SD902", "layer-limit", Warning, "Move or merge documents of the layer. As an alternative, change `max-docs` or `max-chars` of the layer in a change of its own.";
-    HistoryInRequirements = "SD903", "history-in-requirements", Warning, "Remove the date, the round or the history phrase from the requirement. Write the current rule only. The history belongs in the log of git.";
+    HistoryInRequirements = "SD903", "history-in-requirements", Warning, "Remove the date, the round or the history phrase from the requirement. Write the current rule only. Keep the history in the git log.";
     TermForbidden = "SD904", "term-forbidden", Warning, "Use the term that the message names instead of the forbidden synonym. The terms are in the table of the `terms` document.";
     TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
 }

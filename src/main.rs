@@ -1553,10 +1553,10 @@ fn layer_list(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let mut placed = Vec::new();
     for d in &c.docs {
         let rel = cfg.roots[d.root].rel(&d.path);
-        let p = if d.untyped {
-            None
-        } else {
+        let p = if d.has_layer() {
             g.placement(rel, d.ty)
+        } else {
+            None
         };
         match p {
             Some((i, r)) => counts[i][rules.iter().position(|&x| x == r).unwrap_or(0)] += 1,
