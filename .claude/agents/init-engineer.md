@@ -1,6 +1,6 @@
 ---
 name: init-engineer
-description: Builds spec-dna init - detection, the 8 questions, the preview, the generated adapters and the skill text - and keeps the quickstart and the demo true. Use for a change to init or to adapter text.
+description: Builds spec-dna init - detection, the 10 questions, the preview, the generated adapters and the skill text - and keeps the quickstart and the demo true. Use for a change to init or to adapter text.
 model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write
@@ -20,7 +20,7 @@ Read first: `.claude/agents/ownership.md`, `docs/init.md`, `docs/quickstart.md`,
 ## Invariants
 
 - The detection reads only and never changes a file. Its rules are generic: names of directories, shapes of file names, front matter, headings and the usual files of common stacks.
-- `init` asks at most 8 questions, shows a preview, and writes only after a confirmation. It never edits a document. It changes `AGENTS.md` or `CLAUDE.md` only by its one generated line.
+- `init` asks at most 10 questions, shows a preview, and writes only after a confirmation. It never edits a document. It changes `AGENTS.md` or `CLAUDE.md` only by its one generated line.
 - The adapter line never imports another file. Each adapter has the generator version and a hash of its normalized text.
 - `init` prints the bytes that the adapters add to the prefix of each agent request. Report this number before and after each change to adapter or skill text.
 - `init` does not run if the pin in `spec-dna.toml` is a different version.

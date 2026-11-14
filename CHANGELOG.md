@@ -2,6 +2,31 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.5.0 - 2026-11-14
+
+An optional agent harness for Claude Code: `init` installs a small team of models, and `check` keeps its files true ([ADR 0004](docs/adr/0004-harness.md), [docs/harness.md](docs/harness.md)).
+
+### Added
+
+- `[harness]` in `spec-dna.toml`: the level (`none`, `lean`, `full`), the model and the effort of each generic role (orchestrator, advisor, reviewer, researcher, implementer, spec-writer, helper), the denied tools and the hook values.
+- `init` asks 2 more questions: the harness level and the models of the roles. The answers file has the keys `harness`, `harness-models` and `harness-deny`. A new configuration gets `lean`.
+- Generated Claude Code files:
+  - Agent files `.claude/agents/checker.md`, `Explore.md` (it replaces the built-in Explore) and `fallback-advisor.md`. The level `full` also has `implementer.md` and `spec-writer.md`.
+  - The page `.claude/agents/model-team.md`.
+  - A model-team line in `CLAUDE.md`.
+  - Entries in `.claude/settings.json`: `model`, `modelSettings`, `fallbackModel`, `advisorModel`, `env.CLAUDE_CODE_SUBAGENT_MODEL`, `permissions.deny` and 2 hooks. spec-dna keeps all other keys of the settings file.
+- The harness files, with their removals, are in the `init --dry-run` diffs and in the `diff` of each entry of `--json` `files`, as the other files are. The preview starts with 10 answers: question 9 (the level) and question 10 (the models). Question 10 says `writes nothing` if the level is `none`.
+- `check --staged` reads the harness files of the git index. An edit that is not staged does not count. The upgrade path of `init` changes the hook line of 0.4.1 and the harness files in one run.
+- `spec-dna hook context-meter`: tells an agent its context size once at each level.
+- `spec-dna hook fanout-cap`: asks the person before a workflow whose agent count can exceed the cap.
+- SD504 `harness-missing` and SD505 `harness-settings-invalid`. SD501 and SD502 also apply to the harness files.
+
+### Upgrade notes
+
+- A configuration of 0.4 or older has no `[harness]` table, so `init` adds no harness on upgrade. Run `spec-dna init --reconfigure` to add it.
+- The hooks need spec-dna 0.5.0 or later on the `PATH` of each teammate. Without it, the hooks do nothing.
+- Each new `init`, also with `--non-interactive`, writes the `lean` harness: Opus at `xhigh` for the main session, the Fable advisor, the agent files, a deny rule and 2 hooks. For no harness, answer `none` to question 9, or use an answers file with `harness = "none"`.
+
 ## 0.4.2 - 2026-11-14
 
 Fixes from the use of 0.4.1 in a second real project.

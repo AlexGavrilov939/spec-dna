@@ -24,7 +24,7 @@ Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has these a
 On macOS and Linux, use these commands. They download the binary of your target, compare its sum with `SHA256SUMS`, and install it to `~/.local/bin`. Make sure that `~/.local/bin` is on your `PATH`:
 
 ```sh
-v=0.4.2 t=aarch64-apple-darwin
+v=0.5.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS     # Linux: sha256sum -c --ignore-missing SHA256SUMS
@@ -37,7 +37,7 @@ Apple does not notarize the macOS binaries. `curl` does not set the quarantine a
 On Windows, use these commands in PowerShell:
 
 ```powershell
-$v = "0.4.2"; $t = "x86_64-pc-windows-gnu"
+$v = "0.5.0"; $t = "x86_64-pc-windows-gnu"
 $base = "https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v"
 Invoke-WebRequest "$base/spec-dna-$v-$t.exe" -OutFile spec-dna.exe
 Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
@@ -58,14 +58,14 @@ gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. From v0.4.2 on, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.4.2
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
 ```
 
 A team can also build from a local or a private clone. Give its git URL to `--git`. A plain path does not work.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.4.2            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.4.2  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.5.0            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.5.0  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source. The CI job below also builds from it.
@@ -77,11 +77,11 @@ Run these commands in the root of your git repository:
 ```sh
 spec-dna init                # asks the questions with the detected defaults, shows a preview, then asks for a confirmation
 spec-dna check
-git add spec-dna.toml CLAUDE.md .claude/skills/spec-dna   # `init` prints the full `git add` command
+git add spec-dna.toml CLAUDE.md .claude   # `init` prints the full `git add` command
 git commit -m "build: adopt spec-dna"
 ```
 
-`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 8 questions, for example the profile and the knowledge types. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
+`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 10 questions, for example the profile, the knowledge types and the agent harness. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
 
 `init` never edits a document. Without a terminal, or with `--non-interactive`, it uses the detected defaults. `--dry-run` shows the preview only.
 
@@ -91,6 +91,7 @@ git commit -m "build: adopt spec-dna"
 - One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` once for a task that edits code or docs. It also tells them to run `spec-dna check` before a commit. On an existing project, `init` adds only this line. The line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
+- The agent harness for Claude Code (level `lean` by default): agent files in `.claude/agents/`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
 
@@ -212,14 +213,18 @@ For a private `install-source`, give the job read access to it, for example with
 1. Download `spec-dna-pin.toml` of the new release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
 2. In `spec-dna.toml`, replace the key `spec-dna` and the table `[spec-dna-sha256]` with the content of that file.
 3. Install the new binary. Verify it against the new sum in `spec-dna.toml`.
-4. Run `spec-dna init`. It writes the adapters of the new version.
+4. Run `spec-dna init`. It writes the adapters and the harness files of the new version. It keeps a harness file that you edited.
 5. Run `spec-dna check`. Commit the result.
 
 If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To roll back, install the old version and revert the upgrade commit.
 
+To add the agent harness to a project of 0.4 or older, run `spec-dna init --reconfigure` and choose a level. An upgrade alone does not add it.
+
 To upgrade from 0.1 to 0.2, note this change. A configuration without `profile` uses `standard`. In this profile, the requirement lint is off, and an active requirement without evidence gives SD608. [docs/profiles.md](profiles.md#changes-from-01) gives the 2 rules that keep the behavior of 0.1. `spec-dna init --reconfigure` asks the questions again, with the current values as defaults.
 
 ## Uninstall
+
+If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. It removes the generated agent files, the `CLAUDE.md` line and the hook handlers.
 
 ```sh
 rm spec-dna.toml

@@ -4,6 +4,7 @@
 
 use crate::adapters::VERSION;
 use crate::diag::{Code, Severity};
+use crate::harness::Harness;
 use crate::model::DocType;
 use crate::release;
 use toml::{Table, Value};
@@ -53,6 +54,8 @@ pub struct Config {
     /// project conventions for documents of that type (`[conventions]`), as
     /// `<doc-id or path>[#<anchor>]`.
     pub conventions: [Vec<String>; DocType::COUNT],
+    /// The agent harness (`[harness]`, ADR 0004). `None`: no table.
+    pub harness: Option<Harness>,
 }
 
 /// The default growth allowance: about one amendment or a few registry rows.
@@ -637,6 +640,10 @@ impl Config {
                 conventions[ty as usize] = ptrs;
             }
         }
+        let harness = match t.take("harness") {
+            Some(v) => Some(Harness::parse(v)?),
+            None => None,
+        };
         t.done()?;
         Ok(Config {
             pin,
@@ -656,6 +663,7 @@ impl Config {
             types,
             growth,
             conventions,
+            harness,
         })
     }
 
@@ -1081,14 +1089,14 @@ fn headings_per_type(
 }
 
 /// Reads keys from a table and rejects unknown ones.
-struct Fields<'a> {
+pub(crate) struct Fields<'a> {
     table: &'a Table,
     used: Vec<&'a str>,
     prefix: String,
 }
 
 impl<'a> Fields<'a> {
-    fn new(table: &'a Table, prefix: &str) -> Self {
+    pub(crate) fn new(table: &'a Table, prefix: &str) -> Self {
         Fields {
             table,
             used: Vec::new(),
@@ -1096,12 +1104,12 @@ impl<'a> Fields<'a> {
         }
     }
 
-    fn take(&mut self, key: &'a str) -> Option<&'a Value> {
+    pub(crate) fn take(&mut self, key: &'a str) -> Option<&'a Value> {
         self.used.push(key);
         self.table.get(key)
     }
 
-    fn opt_str(&mut self, key: &'a str) -> Result<Option<String>, String> {
+    pub(crate) fn opt_str(&mut self, key: &'a str) -> Result<Option<String>, String> {
         match self.take(key) {
             None => Ok(None),
             Some(Value::String(s)) => Ok(Some(s.clone())),
@@ -1109,12 +1117,12 @@ impl<'a> Fields<'a> {
         }
     }
 
-    fn req_str(&mut self, key: &'a str) -> Result<String, String> {
+    pub(crate) fn req_str(&mut self, key: &'a str) -> Result<String, String> {
         self.opt_str(key)?
             .ok_or_else(|| format!("`{}{key}` is required", self.prefix))
     }
 
-    fn opt_strs(&mut self, key: &'a str) -> Result<Vec<String>, String> {
+    pub(crate) fn opt_strs(&mut self, key: &'a str) -> Result<Vec<String>, String> {
         match self.take(key) {
             None => Ok(Vec::new()),
             Some(Value::Array(a)) => a
@@ -1132,7 +1140,7 @@ impl<'a> Fields<'a> {
         }
     }
 
-    fn opt_u32(&mut self, key: &'a str) -> Result<Option<u32>, String> {
+    pub(crate) fn opt_u32(&mut self, key: &'a str) -> Result<Option<u32>, String> {
         match self.take(key) {
             None => Ok(None),
             Some(Value::Integer(n)) if *n >= 0 && *n <= u32::MAX as i64 => Ok(Some(*n as u32)),
@@ -1143,7 +1151,7 @@ impl<'a> Fields<'a> {
         }
     }
 
-    fn done(self) -> Result<(), String> {
+    pub(crate) fn done(self) -> Result<(), String> {
         for k in self.table.keys() {
             if !self.used.contains(&k.as_str()) {
                 return Err(format!("unknown key `{}{k}`", self.prefix));

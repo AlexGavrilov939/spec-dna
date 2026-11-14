@@ -42,7 +42,7 @@ Before an agent edits `src/valves.rs`, `context` gives it the requirement that c
 
 ```console
 $ spec-dna context src/valves.rs
-<!-- spec-dna context 0.4.2: src/valves.rs; 2 sections in full, 0 listed; 275 of 8000 characters; about 69 tokens (estimated) -->
+<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 275 of 8000 characters; about 69 tokens (estimated) -->
 
 <!-- valves#requirements h:e27a5916071223ee spec/active cites -->
 ## Requirements
@@ -58,7 +58,7 @@ $ spec-dna context src/valves.rs
 Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has binaries for macOS, Linux and Windows. On macOS (Apple silicon):
 
 ```sh
-v=0.4.2 t=aarch64-apple-darwin
+v=0.5.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS
@@ -68,7 +68,7 @@ install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 To build from source, you need Rust 1.88 or later:
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.4.2
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
 ```
 
 This command needs no package name from v0.4.2 on. For v0.4.1 and earlier, add `spec-dna` at the end.
@@ -77,7 +77,7 @@ You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the ta
 
 ## Use it in a project
 
-1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 8 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml` and the agent adapters. It does not change your documents.
+1. In the root of the repository, run `spec-dna init`. It finds your documents and their layout, asks at most 10 questions, and shows the configuration. After you confirm, it writes `spec-dna.toml` and the agent adapters. By default, it also writes a small agent harness for Claude Code: a main model, an advisor, a reviewer and a search agent. It does not change your documents.
 2. Run `spec-dna check --all`. It shows each problem in the documents once. You do not have to fix the old problems: the gate reports only new ones.
 3. Commit `spec-dna.toml` and the adapters.
 4. Add the gate to CI with `spec-dna check --base origin/<main branch>`, or as a git hook. `init` can write a GitHub Actions job or a pre-commit hook for you.
@@ -133,13 +133,14 @@ In agent experiments, 2 blind graders checked each run. Agents with the gate kep
 - [Quickstart](docs/quickstart.md): install, setup, CI job, upgrade, uninstall
 - [Commands](docs/commands.md): each command, its options and the exit codes
 - [init](docs/init.md): what `init` finds and asks
+- [Agent harness](docs/harness.md): the roles, models and hooks that `init` installs for Claude Code
 - [Configuration](docs/config.md): each key of `spec-dna.toml`
 - [Document types](docs/types.md): the types, their statuses and templates
 - [Diagnostics](docs/diagnostics.md): each diagnostic code and its fix
 - [Profiles](docs/profiles.md): the severity of each code in each profile
 - [Transcripts](docs/transcript.md): token and read counts from agent sessions
 - [Evidence](docs/evidence.md): the experiments and their limits
-- [Decisions](docs/adr/): the information model, the language and the distribution
+- [Decisions](docs/adr/): the information model, the language, the distribution and the agent harness
 
 ## Contributing
 
