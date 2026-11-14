@@ -25,6 +25,8 @@ spec-dna history decisions/cache docs/history/cache.md   # the amendment and his
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
 spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
+spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
+spec-dna hook fanout-cap --cap 10   # a hook of a coding agent
 spec-dna --help                     # commands and options (-h); --version (-V) prints the version
 spec-dna mv --help                  # the help of one command
 ```
@@ -189,11 +191,28 @@ spec-dna transcript <file or dir>... [--expect <id>]... [--format <name>]
 
 It prints counts and ids only. It never prints the text of a prompt, a command or a file. [transcript.md](transcript.md) gives the details.
 
+## hook
+
+```text
+spec-dna hook context-meter [--levels <a,b,...>] [--subagent <n>]
+spec-dna hook fanout-cap [--cap <n>]
+```
+
+`hook` runs inside a coding agent. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it. A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads one more file at most. Unknown flags and bad values are ignored. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
+
+`context-meter` runs after a tool call (the `PostToolUse` event of Claude Code). It finds the size of the context in the transcript of the agent: the input, cache-creation and cache-read tokens of the last assistant message. The file is read from its end, 256 KiB at a time, up to 4 MiB. When the size reaches a level of `--levels`, the hook tells the agent once, with `additionalContext`. In a subagent, the transcript is `<directory of transcript_path>/<session_id>/subagents/agent-<agent_id>.jsonl`, and `--subagent` gives the only level. A level of 0 or an empty list turns the meter off. The `session_id` and the `agent_id` must have 1 to 64 characters of `A-Za-z0-9_-`.
+
+The hook keeps one empty file for each crossing in `<temporary directory>/spec-dna-meter/`. When the size falls under 2/3 of the first level (the agent compacted its context), the hook removes the files of the session, and the next crossing speaks again. It removes files that are older than 3 days.
+
+`fanout-cap` runs before a `Workflow` tool call (the `PreToolUse` event). It reads the script of the workflow (`tool_input.script`, else the file `tool_input.scriptPath` in the `cwd`, else `.claude/workflows/<name>.js` or `.mjs` in `$CLAUDE_PROJECT_DIR`). It finds an upper limit of the `agent(` calls: the call sites, multiplied by the sizes of the loops around them. The hook knows the loops `map`, `filter`, `forEach` and the other array methods, `for`, `while`, `do`, `pipeline` and `Array.from`. It knows a list that is a literal, a variable with a literal, `.slice` with numbers, and `Array.from({ length: N })`. Any other list has no limit. A named function counts once for each mention of its name. A call of itself and a `workflow(` call have no limit. A script that the hook cannot read (for example, its brackets do not match) is allowed.
+
+When the limit is above the cap, or has no limit, the hook answers `permissionDecision: "ask"`, and the user decides. The cap is `SPEC_DNA_FANOUT_CAP` if it is set, else `--cap`, else 10. A cap of 0 turns the hook off.
+
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Success. For `check`: no new error (with `--all`: no error) |
+| 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), or the preservation check of `mv`, `history` or `index` refused the change |
 | 2 | Usage error |
 | 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository |
