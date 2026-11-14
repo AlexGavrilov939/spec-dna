@@ -16,8 +16,8 @@ spec-dna init
 
 `init` detects the document folders, their types, the tests, the agent files, CI and the hooks. Then it asks its questions with the detected answers as defaults. These answers have the largest effect on an existing repository:
 
-- **Profile.** `lite` gives only warnings. Use it for the first weeks. Move to `standard` later.
-- **Layer graph.** `init` proposes `small` for fewer than 30 documents and `default` for more.
+- **Profile.** In `lite`, only the structural errors fail `check`, such as an invalid front matter or an edit of an accepted decision. The other codes are warnings. Use `lite` for the first weeks. Move to `standard` later.
+- **Layer graph.** `init` proposes `small` for fewer than 30 documents and `default` for more. The small graph has no layer for `interface`, `procedure` and `research`, so `init` writes no root for a folder of these types. Choose `default` to keep these folders.
 - **Change policy.** Answer `none` to start with no change process. The layers and their checks still work.
 - **Roots.** `init` shows each detected folder and its type. Accept it, drop it or edit it, for example `type=requirements status=active`. A root of one type gives that type to each document in it, so no document needs a `type:` field.
 - **Budgets.** The question shows the number of documents over the hard budget at each level. `relaxed` doubles the budgets.
@@ -60,7 +60,7 @@ To move a document into a layer folder, use `spec-dna mv`. It moves the file wit
 spec-dna mv valves docs/requirements/valves/closing.md
 ```
 
-`spec-dna mv <document id>#<key> <document id>` moves one requirement. `spec-dna history` moves the amendments of a long decision into a research document. [commands.md](../commands.md#mv) gives the options.
+`spec-dna mv <document id>#<key> <document id>` moves one requirement. `spec-dna history` moves the amendments of a long decision into a research document. The small graph has no `research` layer. Run `spec-dna layer add research --types research` first, then `spec-dna init`. [commands.md](../commands.md#mv) gives the options.
 
 ## Turn on the change process
 

@@ -46,7 +46,7 @@ spec-dna new intent sensor-timeout   # docs/intent/sensor-timeout/intent.md: wha
 spec-dna new spec sensor-timeout     # the delta: ADD, CHANGE and REMOVE lines of requirements
 spec-dna new plan sensor-timeout     # the files, the order, the risks and the proof
 spec-dna next sensor-timeout         # the checklist to the next gate
-spec-dna finish sensor-timeout       # apply the delta, check the tests, delete the folder
+spec-dna finish sensor-timeout       # apply the delta, check the evidence, delete the folder
 ```
 
 ## Why
@@ -57,18 +57,18 @@ When AI agents write a large part of the code, the specifications are the main i
 | --- | --- | --- |
 | An agent edits an accepted decision so that it agrees with its new code | Locks the text of an accepted decision. A new fact goes into an amendment or a new decision | `check` (SD405) |
 | A change renames a file or a function, and a spec still names the old one | Checks the links, ids, anchors and code citations of each change against its base | `check` |
-| Documents grow, and an agent reads whole files to find one rule | Gives the sections that apply to a file, under a budget, and limits the size of documents and layers | `context` |
+| Documents grow, and an agent reads whole files to find one rule | Gives the sections that apply to a file, under a budget. Limits the size of documents and layers | `context`, `check` |
 | Proposals and plans stay in the tree after the work | Keeps each change in one folder, applies its delta to the requirements and deletes the folder | `finish` |
 
 ## How it works
 
 - Your documents stay plain Markdown. spec-dna reads their front matter, headings, links, code spans and requirement list items.
-- The place of a file gives its type: a file under `rules/` is a rule, and a file under `decisions/` is a decision. The folders form a graph of layers, from the current truth to the work that is not complete.
+- The place of a file gives its type: a file under `rules/` is a rule, and a file under `decisions/` is a decision. The layers form a graph, from the stable layers to the work that is not complete.
 - A requirement is a list item with a bold key, such as `- **shutoff**: ... SHALL ...`. Its id is `<document id>#<key>`. Tests and other documents refer to it by this id.
 - A change has its folder `docs/intent/<slug>/`, with its intent, spec and plan. `finish` applies its delta to the requirements and deletes the folder. Git keeps the history.
 - `check` compares a change with its base and reports only the new problems. A mature repository can adopt spec-dna before it fixes the old problems.
-- `context` gives an agent the sections that apply to the files of its task, with the current truth first.
-- `init` writes one line into `AGENTS.md` and `CLAUDE.md`, and a skill. They tell the agent to run `context` before an edit and `check` before it finishes. For Claude Code, `init` can also write a harness of agent roles, stage skills, hooks and evals.
+- `context` gives an agent the sections that apply to the files of its task, with the stable layers first.
+- `init` writes one line into `AGENTS.md` and `CLAUDE.md`, and a skill. They tell the agent to run `context` before an edit and `check` before it finishes. For Claude Code, `init` can also write a harness of agent roles, stage skills and hooks, and an example eval.
 
 [docs/concepts.md](docs/concepts.md) explains the model.
 
@@ -127,9 +127,9 @@ An agent runs `context` and `check` itself, because the skill tells it to. Peopl
 
 ## Status
 
-spec-dna is at version 0.x. A minor version can change the configuration keys and the diagnostics. [CHANGELOG.md](CHANGELOG.md) lists each change.
+spec-dna is at version 0.x. A minor version can rename configuration keys and add diagnostic codes. A code number never changes its meaning. [CHANGELOG.md](CHANGELOG.md) lists each change.
 
-In agent experiments, 2 blind graders checked each run. Agents with the gate kept accepted decisions intact in 15 of 15 runs, against 6 of 15 runs without it. With spec-dna, the agents also read more tokens. [docs/evidence.md](docs/evidence.md) gives the method, the other results and the limits.
+In agent experiments, 2 blind graders checked each run. With the gate, 15 of 15 runs were correct, against 6 of 15 runs without it. Without the gate, the agents edited the locked text of accepted decisions 7 times. With spec-dna, the agents also read more tokens. [docs/evidence.md](docs/evidence.md) gives the method, the other results and the limits.
 
 ## Documentation
 

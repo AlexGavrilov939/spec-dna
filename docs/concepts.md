@@ -64,28 +64,29 @@ Reference: [commands.md](commands.md#show) (`show`, `mv`), [config.md](config.md
 
 ## Layers and the graph
 
-A layer is a named set of document types, in one folder. The layers form a graph. An edge `moves-to` means that the text of one layer matures into another layer. For example, an intent moves into requirements and decisions, and an incident moves into a new intent.
+A layer is a named set of document types. It has a folder, or top files such as `terms.md`. The layers form a graph. An edge `moves-to` means that the text of one layer matures into another layer. For example, an intent moves into requirements and decisions, and an incident moves into a new intent.
 
-The level of a layer is the length of its longest `moves-to` path. Level 0 is the most stable. The layers of level 0 hold the current truth of the project. This is the default graph:
+The level of a layer is the length of its longest `moves-to` path. Level 0 is the most stable. The layers of level 0 are the stable layers. The current truth of the project, its requirements, rules and interfaces, is in stable layers. This is the default graph:
 
-| Layer | Types | Level | In `context` |
+| Layer | Types | Level | `context` |
 | --- | --- | --- | --- |
-| `foundation` | `product`, `system`, `terms` | 0 | always |
-| `rules` | `rule` | 0 | always |
-| `requirements` | `requirements` | 0 | always |
-| `interfaces` | `interface` | 0 | always |
-| `decisions` | `decision` | 0 | always |
-| `procedures` | `procedure` | 0 | always |
-| `research` | `research` | 1 | on request |
-| `intent` | `intent`, `spec`, `plan` | 1 | on request |
-| `incidents` | `incident` | 2 | on request |
-| `pending` | `roadmap`, `questions` | 2 | on request |
+| `foundation` | `product`, `system`, `terms` | 0 | `always` |
+| `rules` | `rule` | 0 | `always` |
+| `requirements` | `requirements` | 0 | `always` |
+| `interfaces` | `interface` | 0 | `always` |
+| `decisions` | `decision` | 0 | `always` |
+| `procedures` | `procedure` | 0 | `always` |
+| `research` | `research` | 1 | `on-request` |
+| `intent` | `intent`, `spec`, `plan` | 1 | `on-request` |
+| `incidents` | `incident` | 2 | `on-request` |
+| `pending` | `roadmap`, `questions` | 2 | `on-request` |
 
 These rules follow from the graph:
 
 - `context` gives the layers by level, from 0 up.
-- A document must not link a document of a less stable layer, unless that layer allows it in `linked-from` (SD901). Thus the current truth never depends on a proposal.
+- A document must not link a document of a less stable layer, unless that layer allows it in `linked-from` (SD901). Thus a stable layer never depends on a proposal.
 - A layer can limit its size with `max-docs` and `max-chars` (SD902).
+- A layer with `context = "always"` can fill the context with no named target. A top file of `foundation` goes into the context only for its `applies-to` paths.
 - The documents of an `on-request` layer go to an agent only when the agent names them.
 
 `init` proposes a small graph of 7 layers for a project with fewer than 30 documents. `spec-dna layer add` adds a layer later, and `spec-dna layer list` shows the layers and their levels.
@@ -94,7 +95,7 @@ Reference: [config.md](config.md#the-table-layers), [commands.md](commands.md#la
 
 ## The gate
 
-`spec-dna check` compares the head with a base and reports only the problems that the change adds. In CI, the base is the target branch (`--base origin/main`). On a computer, the base is `HEAD`, so `check` reads the edits that are not committed.
+`spec-dna check` compares the head with a base and reports only the problems that the change adds. Without `--base`, the base is `HEAD`, so `check` reads the edits that are not committed. In CI, `--base origin/<main branch>` makes the base the merge base with the target branch. The checks of the change lifecycle need the base of the pull request. Without `--base`, they use the merge base with the default branch.
 
 Thus a mature repository can adopt spec-dna before it fixes the old problems. `check --all` shows each problem once. The gate fails only on a new error.
 
@@ -105,7 +106,7 @@ Thus a mature repository can adopt spec-dna before it fixes the old problems. `c
 - A document over its budget, or with no required section.
 - A code citation that a change made stale.
 - A link from a stable layer to a less stable layer (SD901).
-- A change of the current truth with no change folder (SD921).
+- A change of a requirement, a rule or an interface with no intent folder (SD921).
 - An artifact of a change with no approval of the stage before it (SD910).
 
 A profile (`lite`, `standard` or `strict`) gives the default severity of each code, and `[rules]` changes the severity of one code. `spec-dna.toml` pins the version of spec-dna, so each person and each CI job uses the same rules.
@@ -116,15 +117,7 @@ Reference: [commands.md](commands.md#check), [diagnostics.md](diagnostics.md), [
 
 A change is a folder `docs/intent/<slug>/`. It holds `intent.md` (what the originator wants and why), `spec.md` (the delta of the requirements) and `plan.md` (the files, the order, the risks and the proof). The folder stays on the default branch while the work continues. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished changes.
 
-A change has a class. The class sets the documents that the change needs:
-
-| Class | Documents | Who approves the plan |
-| --- | --- | --- |
-| `small-fix` | None: a pull request only | Not applicable |
-| `routine` | `intent.md`, `plan.md` | The agent |
-| `higher-risk` | `intent.md`, `spec.md`, `plan.md` | The owner |
-
-A change that touches a layer or a path of `[change] high-risk-layers` or `high-risk-paths` must be `higher-risk` (SD917). The defaults are the layers `interfaces` and `rules`.
+A change has a class: `small-fix` (a pull request only), `routine` (an intent and a plan) or `higher-risk` (an intent, a spec and a plan). [The change guide](guides/change.md#choose-the-class) gives the documents, the approver and the minimum class of each change.
 
 To approve a document is to set its status (`accepted` or `approved`) in a commit that a pull request merges. spec-dna reads the approval from the base tree, and the branch protection of the repository decides who can merge. Each document of a change needs the approval of the document before it (SD910). `[change] gate` makes this rule an error (`block`), a warning (`warn`) or nothing (`off`).
 
@@ -136,9 +129,9 @@ Reference: [guides/change.md](guides/change.md), [config.md](config.md#the-table
 
 ## Context
 
-`spec-dna context <file>` gives an agent the sections that apply to the files that it will change. Examples are the requirements that cite the file, the rules whose `applies-to` matches the path, and the summaries of the linked decisions. `context` gives the layers by level, so it gives the current truth first.
+`spec-dna context <file>` gives an agent the sections that apply to the files that it will change. Examples are the requirements that cite the file, the rules whose `applies-to` matches the path, and the summaries of the linked decisions. `context` gives the layers by level, so it gives the stable layers first.
 
-The unit is a section, with its id and its hash. Thus an agent can cite what it read, and a later check can find a change of that text. A budget limits the size of the output. `context` lists a section that does not fit with its id, hash and size. It counts the documents of `on-request` layers in one line and does not give them.
+The unit is a section, with its id and its hash. Thus an agent can cite what it read. A spec names the hash of each requirement that it changes, and `finish` stops if that text changed after the author read it (SD914). A budget limits the size of the output. `context` lists a section that does not fit with its id, hash and size. It counts the documents of `on-request` layers in one line and does not give them.
 
 `spec-dna show <id>` gives one whole document. It also works for a document of an `on-request` layer.
 
@@ -151,12 +144,12 @@ Reference: [commands.md](commands.md#context).
 For Claude Code, `init` can also write a harness at the level `lean` or `full`:
 
 - Roles with their models, such as an orchestrator, an advisor, a `verifier` and a researcher.
-- A skill for each stage of a change, and `REVIEW.md` for the review of a pull request.
+- Skills for the stages Plan, Design, Build and Deploy of a change, and `REVIEW.md` for the review of a pull request.
 - Hooks that measure the context, limit the number of agents that a workflow starts, and protect the tests during a fix.
 
 `check` reports a generated file that a person edited (SD501), so the harness stays in agreement with the configuration.
 
-An eval is a task with checks that tests the agent setup of a project. `spec-dna eval run` runs each eval with headless Claude Code in a temporary copy of the project, under a cost limit. For a new project, `init` writes an example eval and a CI workflow. The workflow runs nothing until the repository variable `SPEC_DNA_EVALS` is `true`. A new incident needs a new eval (SD918).
+An eval is a task with checks that tests the agent setup of a project. `spec-dna eval run` runs each eval with headless Claude Code in a temporary directory. The directory holds the fixture of the eval and the harness files of the project. A cost limit stops the runs. For a new project, `init` writes an example eval and a CI workflow. The workflow runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. A new incident needs a new eval (SD918).
 
 Reference: [harness.md](harness.md), [init.md](init.md).
 

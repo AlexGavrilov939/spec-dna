@@ -127,7 +127,9 @@ spec-dna log                    # the finished changes, from the git history
 
 `next` gives the edit that approves the current document on its last line.
 
-## When check stops you
+## When check reports a code
+
+Some of these codes are warnings in some profiles. [profiles.md](../profiles.md) gives the severity of each code.
 
 | Code | What happened | What to do |
 | --- | --- | --- |

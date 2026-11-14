@@ -9,14 +9,14 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | amendment section | A section of an accepted decision that can grow after the acceptance. The default name is `Amendments` | | [config](config.md) |
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
-| base | The commit that `check` compares with the head: `--base <rev>`, or the merge base with the default branch | | [concepts](concepts.md#the-gate) |
+| base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD` | | [concepts](concepts.md#the-gate) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
-| change | The work that one intent folder describes, from the intent to `finish` | type `change` | [change guide](guides/change.md) |
+| change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
 | change class | The weight of a change: `small-fix`, `routine` or `higher-risk` | | [change guide](guides/change.md#choose-the-class) |
 | change policy | The change classes that a project uses: `three-class`, `two-class` or `none` (`[change] policy`) | | [config](config.md) |
 | code citation | A file path or a symbol in a code span of a document. `check` reports a citation that does not resolve | | [diagnostics](diagnostics.md#code-citations) |
 | `covers:` tag | A comment in a test, such as `# covers: valves#shutoff`, that links the test to a requirement | | [concepts](concepts.md#ids-and-requirements) |
-| current truth | The documents of the stable layers: `foundation`, `rules`, `requirements`, `interfaces`, `decisions` and `procedures` | | [concepts](concepts.md#layers-and-the-graph) |
+| current truth | The requirements, rules and interfaces of the project, in `requirements/`, `rules/` and `interfaces/`. A delta changes them, and SD921 guards them | | [concepts](concepts.md#layers-and-the-graph) |
 | decision | A MADR record of a choice. After the acceptance, its text is locked, except its amendment, history and live sections | | [types](types.md) |
 | delta | The list of `ADD`, `CHANGE` and `REMOVE` lines in a spec. Each line names a requirement id | | [change guide](guides/change.md) |
 | diff risk | The class R0, R1 or R2 of a change of requirement text | change-risk class | [ADR 0001](adr/0001-information-model.md) |
@@ -26,7 +26,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `finish` | The command that applies the delta of a change, checks the evidence and deletes the intent folder | | [change guide](guides/change.md) |
 | foundation | The layer of the top files `product.md`, `system.md` and `terms.md` | | [concepts](concepts.md#layers-and-the-graph) |
 | front matter | The YAML block at the start of a document, with fields such as `type` and `status` | | [types](types.md) |
-| gate | A rule that blocks a change until its condition is true. `check` is the gate of spec-dna | | [concepts](concepts.md#the-gate) |
+| gate | A rule that blocks the next stage of a change until the document of the stage before has approval. spec-dna also calls `check` a gate | | [concepts](concepts.md#the-gate) |
 | group | A named set of areas in the configuration. It is a view and never a folder | | [config](config.md) |
 | harness | The agent setup that `init` writes for Claude Code: roles, skills, hooks and `REVIEW.md` | | [harness](harness.md) |
 | hash | The first 16 hexadecimal digits of SHA-256 over the normalized text of a requirement or a section | | [concepts](concepts.md#ids-and-requirements) |
@@ -59,6 +59,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | skill | A `SKILL.md` folder that gives a procedure to the agent | | [harness](harness.md) |
 | `small-fix` | A change class with no intent: a pull request only | | [change guide](guides/change.md#choose-the-class) |
 | spec | `spec.md`: the delta, the interfaces, the decisions and the concerns of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
+| stable layer | A layer of level 0, such as `rules` or `decisions`. The current truth is in stable layers | | [concepts](concepts.md#layers-and-the-graph) |
 | stage | One of Plan, Design, Build, Test, Deploy and Maintain. spec-dna derives the stage of a change from its files and git | | [change guide](guides/change.md) |
 | standard document | A document form that a team already knows, such as an ADR or a PRD | | [types](types.md) |
 | subagent | An agent with its own context, defined in `.claude/agents/` | | [harness](harness.md) |

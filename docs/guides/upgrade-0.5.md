@@ -15,7 +15,7 @@ Version 0.6.0 renames document types, statuses, configuration keys and harness r
 
 - The project pins spec-dna 0.4.0 or later. For an older pin, first upgrade to 0.4.2.
 - The working tree is clean. `upgrade` refuses to run on uncommitted edits.
-- Install the 0.6 binary ([quickstart.md](../quickstart.md#install)). Download `spec-dna-pin.toml` of the release.
+- Install the 0.6 binary ([quickstart.md](../quickstart.md#install)). Download `spec-dna-pin.toml` of the release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
 
 ## Run the upgrade
 
@@ -47,11 +47,9 @@ If one of these checks fails, `upgrade` exits with code 1 and writes nothing.
 
 ## Read the report
 
-The report lists:
+The report lists, for example, the changes that no document cites, the decisions with no `Status` section, the harness files that `upgrade` kept, and the changes of behavior from [What changes](#what-changes). [commands.md](../commands.md) gives the full report.
 
-- Each `done` or `rejected` change that no document cites. You can delete it. `upgrade` does not delete it.
-- Each decision with no `Status` section.
-- The changes of behavior from [What changes](#what-changes).
+`upgrade` deletes no document. The report proposes each `done` or `rejected` change that no document cites for deletion. The owner approves each batch, and a later pull request deletes it.
 
 ## Open the first pull request
 

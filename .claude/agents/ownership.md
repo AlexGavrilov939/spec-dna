@@ -172,6 +172,7 @@ docs/demo.md                         INI
 docs/transcript.md                   TRN
 docs/evidence.md                     ARC (OWN)
 docs/adr/                            ARC (OWN)
+docs/design/                         ARC (OWN)
 docs/research/                       ARC
 docs/README.md, docs/concepts.md     ARC: the facts. DOC: the language
 docs/glossary.md, docs/guides/       ARC: the facts. DOC: the language
