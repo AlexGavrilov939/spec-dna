@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/AlexGavrilov939/spec-dna)](https://github.com/AlexGavrilov939/spec-dna/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Engineering specs that stay small, linked and checked, for AI coding agents.**
+**Engineering specifications that stay small, linked and checked, for AI coding agents.**
 
 spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives a coding agent only the parts of the documents that its task needs. It works in any repository, with any language and with any agent that can run a shell command. It uses no network and no language model.
 
@@ -60,14 +60,14 @@ When AI agents write a large part of the code, the specifications are the main i
 
 | Problem | What spec-dna does | Command |
 | --- | --- | --- |
-| An agent edits an accepted decision so that it agrees with its new code | Locks the text of an accepted decision. A new fact goes into an amendment or a new decision | `check` (SD405) |
+| An agent edits an accepted decision so that it agrees with its new code | Locks the text of an accepted decision. You write a new fact in an amendment or in a new decision | `check` (SD405) |
 | A change renames a file or a function, and a spec still names the old one | Checks the links, ids, anchors and code citations of each change against its base | `check` |
 | Documents grow, and an agent reads whole files to find one rule | Gives the sections that apply to a file, under a budget. Limits the size of documents and layers | `context`, `check` |
 | Proposals and plans stay in the tree after the work | Keeps each change in one folder, applies its delta to the requirements and deletes the folder | `finish` |
 
 ## How it works
 
-- Your documents stay plain Markdown. spec-dna reads their front matter, headings, links, code spans and requirement list items.
+- Your documents stay Markdown files. spec-dna reads their front matter, headings, links, code spans and requirement list items.
 - The place of a file gives its type: a file under `rules/` is a rule, and a file under `decisions/` is a decision. The layers form a graph, from the stable layers to the work that is not complete.
 - A requirement is a list item with a bold key, such as `- **shutoff**: ... SHALL ...`. Its id is `<document id>#<key>`. Tests and other documents refer to it by this id.
 - A change has its folder `docs/intent/<slug>/`, with its intent, spec and plan. `finish` applies its delta to the requirements and deletes the folder. Git keeps the history.
@@ -83,9 +83,9 @@ Spec frameworks such as [OpenSpec](https://github.com/Fission-AI/OpenSpec), [Spe
 
 ## Works with any agent
 
-spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `init` writes these steps into `AGENTS.md`, which Codex, Cursor and many other agents read, and into `CLAUDE.md` for Claude Code.
+spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `init` writes these steps into `AGENTS.md`, which Codex, Cursor and other agents read, and into `CLAUDE.md` for Claude Code.
 
-An adapter adds more for one agent. The Claude Code adapter adds agent roles with their models, a skill for each stage of a change, hooks and evals. [docs/agents.md](docs/agents.md) lists each agent and what it gets.
+An adapter adds parts for one agent. The Claude Code adapter adds agent roles with their models, a skill for each stage of a change, hooks and evals. [docs/agents.md](docs/agents.md) lists each agent and what it gets.
 
 ## Install
 

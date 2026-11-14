@@ -1,6 +1,6 @@
 # Agents
 
-spec-dna works with any coding agent that can run a shell command. This page gives the steps of each agent and the instruction file of each agent. It also gives the parts that an adapter adds for one agent. Read it when you choose the agent files at `spec-dna init`.
+spec-dna works with any coding agent that can run a shell command. This page gives the steps of each agent and the instruction file of each agent. It also gives the parts that an adapter adds for one agent. Read it when you choose the agent files in `spec-dna init`.
 
 ## The steps of an agent
 
@@ -37,14 +37,14 @@ An adapter adds parts for one agent. Today, Claude Code has the only adapter. Ea
 | Evals of the agent setup | Not written | `spec-dna eval run` starts headless Claude Code ([evals.md](evals.md)) |
 | Token and read counts of sessions | Not available | The `claude-code` adapter of `spec-dna transcript` ([transcript.md](transcript.md)) |
 
-`check` compares each generated file of an adapter with the configuration (SD501, SD502). Thus the files of an adapter stay in agreement with `spec-dna.toml`.
+`check` compares each generated file of an adapter with the configuration (SD501, SD502). Thus the files of an adapter agree with `spec-dna.toml`.
 
 ## Files that other agents also read
 
 Some agents read the files of another agent:
 
 - Cursor also loads the skills in `.claude/skills/`, so it sees the spec-dna skill.
-- Cursor can also load the hooks of `.claude/settings.json`. These hooks are for Claude Code. Do not rely on them in Cursor.
+- Cursor can also load the hooks of `.claude/settings.json`. These hooks are for Claude Code. Do not use them in Cursor.
 
 ## Add an agent
 
@@ -54,4 +54,4 @@ To use spec-dna with an agent that is not in the table, do these steps:
 2. Copy the spec-dna line from `AGENTS.md` into the instruction file of the agent.
 3. Give the agent a task that edits a file. Make sure that it runs `spec-dna context` before the edit and `spec-dna check` before the commit.
 
-`spec-dna transcript` can measure the sessions of another agent only through an adapter of its format. [transcript.md](transcript.md#adapters) tells how to add one.
+`spec-dna transcript` can measure the sessions of another agent only through an adapter of its format. [transcript.md](transcript.md#adapters) describes how to add one.

@@ -1,6 +1,6 @@
 # Quickstart
 
-This page gives the steps from install to uninstall: set up a repository, use spec-dna with a coding agent, run a change, and upgrade. You need git. spec-dna works with any coding agent. [Agents](agents.md) describes what each agent gets.
+This page gives the steps to install spec-dna, start it, use it with a coding agent, run a change, upgrade and uninstall. You need git, and you can use any coding agent. [Agents](agents.md) describes what each agent gets.
 
 ## Install
 
@@ -55,13 +55,13 @@ gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 
 ### Build from source
 
-On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. From v0.4.2 on, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
+On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. For v0.4.2 and later, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
 
 ```sh
 cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
 ```
 
-A team can also build from a local or a private clone. Give its git URL to `--git`. A plain path does not work.
+A team can also build from a local or a private clone. Give its git URL to `--git`. A path without `file://` does not work.
 
 ```sh
 cargo install --locked --git file:///srv/git/spec-dna --tag v0.5.0            # a local clone
@@ -88,7 +88,7 @@ git commit -m "build: adopt spec-dna"
 `init` writes these files:
 
 - `spec-dna.toml`, with the pinned version, the profile, the layer graph, the change policy and the document roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) and no `default-type`. The folder of a layer gives the type of a document, so `docs/requirements/loans.md` is a `requirements` document. [docs/config.md](config.md) gives all keys.
-- One line in `AGENTS.md` and in `CLAUDE.md`. Most coding agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or docs. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
+- One line in `AGENTS.md` and in `CLAUDE.md`. Most coding agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or documents. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md` for Claude Code, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
 - The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the stage skills in `.claude/skills/`, `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
@@ -114,7 +114,7 @@ A layer is a named set of documents. It has a folder (`requirements/`, `decision
 
 A document of a type that no layer has gives SD303. To add a layer later, run `spec-dna layer add <name> --types <type>`. Then run `spec-dna init`, so that the skill lists the types of the new layers. Commit `spec-dna.toml` and the skill as a change of their own (SD503). `spec-dna layer list` shows the layers.
 
-Question 3 chooses the areas: the folders of `requirements/`. `init` proposes at most 8 areas, and only if it finds 2 or more. It takes them from the top folders of the specs and from the app folders. The answer `none` gives one folder. `init` never proposes a group.
+Question 3 chooses the areas: the folders of `requirements/`. `init` proposes at most 8 areas, and only if it finds 2 or more. It takes them from the top folders of the roots that hold requirements and from the app folders. The answer `none` gives one folder. `init` never proposes a group.
 
 ## Write documents
 
@@ -184,11 +184,11 @@ To change an accepted decision, do one of these actions:
 - Amend the decision if its outcome stays. Add the detail, the limit or the new code path under `## Amendments`.
 - Supersede the decision if its outcome changes. Write a new decision with `supersedes: [<old id>]`. Set the status of the old decision to `superseded`.
 
-`check` lists the errors and the drift warnings first. Then it gives the fix of each listed code. For the prose lint warnings (SD801 to SD805), it gives one count for each code. `spec-dna check --lint` lists them. The lint is on in the `strict` profile only. `--lint` runs it in any profile, as a report that never fails the gate.
+`check` lists the errors and the drift warnings first. Then it gives the fix of each listed code. For the prose lint warnings (SD801 to SD805), it gives one count for each code. `spec-dna check --lint` lists them. The lint runs in the `strict` profile only. `--lint` runs it in any profile, as a report that never fails the gate.
 
 For another warning code with more than 10 diagnostics, such as SD608 on a mature corpus, `check` also gives one count. `spec-dna check --json` lists each diagnostic.
 
-If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections, and name a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
+If `check` reports SD702 (a document over its hard budget), split the document with one `mv` command. Name the keys or the sections. Name a new or an existing requirements document. The old ids of `HEAD` stay as aliases. A key that is new in the change needs no alias. A preservation check runs before `mv` changes a file.
 
 Split a document only for a size error: SD702, and in the `strict` profile also SD701, SD703 and SD704. A size warning needs no split.
 
@@ -207,7 +207,7 @@ spec-dna finish sensor-timeout       # apply the delta, check the evidence, dele
 
 ## CI
 
-Run the gate against the merge base. This GitHub Actions job installs the pinned version. `spec-dna init` writes the job, with your base branch in place of `main`. The job installs the pinned version in one of 2 ways:
+Run the gate against the merge base. `spec-dna init` writes this GitHub Actions job, with your base branch in place of `main`. The job installs the pinned version in one of 2 ways:
 
 - If `spec-dna.toml` has the sum of the Linux asset in `[spec-dna-sha256]` and no `install-source`, the job downloads that asset and verifies its SHA-256 sum. A different sum stops the job.
 - Otherwise, the job builds the pinned version from source.
@@ -257,17 +257,17 @@ For the evals skeleton, `init` writes a second workflow, `.github/workflows/agen
 4. Run `spec-dna init`. It writes the adapters and the harness files of the new version. It keeps a harness file that you edited.
 5. Run `spec-dna check`. Commit the result.
 
-If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To roll back, install the old version and revert the upgrade commit.
+If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To return to the old version, install it and revert the upgrade commit.
 
 To upgrade a project of 0.5 to 0.6, use `spec-dna upgrade`. It moves the pin, the types, the statuses and the harness names. The [upgrade guide](guides/upgrade-0.5.md) gives the steps.
 
-To add the agent harness to a project of 0.4 or older, run `spec-dna init --reconfigure` and choose a level. An upgrade alone does not add it.
+To add the agent harness to a project of 0.4 or older, run `spec-dna init --reconfigure`. Choose a level. An upgrade alone does not add it.
 
-To upgrade from 0.1 to 0.2, note this change. A configuration without `profile` uses `standard`. In this profile, the requirement lint is off, and an active requirement without evidence gives SD608. [docs/profiles.md](profiles.md#changes-from-01) gives the 2 rules that keep the behavior of 0.1. `spec-dna init --reconfigure` asks the questions again, with the current values as defaults.
+A change applies when you upgrade from 0.1 to 0.2. A configuration without `profile` uses `standard`. In this profile, the requirement lint is off, and an active requirement without evidence gives SD608. [docs/profiles.md](profiles.md#changes-from-01) gives the 2 rules that keep the behavior of 0.1. `spec-dna init --reconfigure` asks the questions again, with the current values as defaults.
 
 ## Uninstall
 
-If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. It removes the generated agent files, the stage skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers.
+If the project has the agent harness, first run `spec-dna init --reconfigure`. Choose `none`. `init` removes the generated agent files, the stage skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers.
 
 ```sh
 rm spec-dna.toml
@@ -283,4 +283,4 @@ done
 cargo uninstall spec-dna
 ```
 
-The loop removes the generated line and the blank line before it. It deletes a file that has no other text. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. If `init` wrote the evals skeleton, also remove `evals/` and `.github/workflows/agent-evals.yml`. Your documents are plain Markdown files. They do not change.
+The loop removes the generated line and the blank line before it. It deletes a file that has no other text. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. If `init` wrote the evals skeleton, also remove `evals/` and `.github/workflows/agent-evals.yml`. Your documents are Markdown files. They do not change.

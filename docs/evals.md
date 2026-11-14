@@ -1,6 +1,8 @@
 # Evals
 
-An eval is a task with checks that tests the agent setup of a project: its instruction files, skills, hooks and roles. `spec-dna eval run` runs the evals and reports the pass rate. Thus a team can see when a change of the setup makes the agent worse. The runner uses the Claude Code adapter: it starts headless Claude Code. [agents.md](agents.md) lists the adapters.
+This page gives the eval file, the runner, the cost limits and the CI job of the evals. Read it when you test the agent setup of a Claude Code project.
+
+An eval is a task with checks that tests the agent setup of a project: its instruction files, skills, hooks and roles. `spec-dna eval run` runs the evals and reports the pass rate. Thus a team can see when a change of the setup makes the agent worse. The runner uses the Claude Code adapter and starts headless Claude Code. [agents.md](agents.md) lists the adapters.
 
 ## Start
 
@@ -13,7 +15,7 @@ For a new project, question 14 of `init` proposes `skeleton`. `skeleton` writes 
 | An example eval and `evals/fixtures/example/` | A task that edits one text file, and one check. It needs no build tool |
 | `.github/workflows/agent-evals.yml` | The CI job. `init` does not write it when the CI answer is `gitlab` |
 
-The CI job runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. An upgraded project has no evals. To add them, run `spec-dna init --reconfigure` and choose `skeleton`.
+The CI job runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`. An upgraded project has no evals. To add them, run `spec-dna init --reconfigure`. Choose `skeleton`.
 
 ## Configuration
 
@@ -54,10 +56,10 @@ An eval is a JSON file directly in `[evals] dir`:
 | `id` | The name of the eval |
 | `task` | The request that the agent gets |
 | `fixture` | The folder that the run starts from |
-| `branch` | Optional. The branch of the run. A `fix/` branch turns on the hook `protect-tests` |
+| `branch` | Optional. The branch of the run. A `fix/` branch enables the hook `protect-tests` |
 | `allowed-tools` | The tools that the agent can use |
 | `max-turns` | The most turns of one run |
-| `max-budget-usd` | Required. The cost limit of one run. The cost limit of the command needs it |
+| `max-budget-usd` | Required. The cost limit of one run. The cost cap of the command needs it |
 | `runs` | Optional. The runs of this eval. `--runs` overrides it, and it overrides `[evals] runs` |
 | `pass-at` | The runs that must pass for the eval to pass |
 | `checks` | Each check: a name, and a command that passes on exit code 0 |
@@ -84,7 +86,7 @@ An eval passes when at least `pass-at` of its runs pass. The suite passes when t
 | --- | --- |
 | 0 | The pass rate is at least `min-pass-rate` |
 | 1 | The pass rate is lower |
-| 3 | A configuration error, the cost limit, or no `claude` binary on `PATH` |
+| 3 | A configuration error, the cost cap, or no `claude` binary on `PATH` |
 
 ## Cost
 
@@ -111,4 +113,4 @@ The job runs on a pull request and a push that change `CLAUDE.md`, `AGENTS.md`, 
 
 ## Incidents and evals
 
-Each incident adds an eval, so that the same failure cannot come back unseen. SD918 warns when a change adds an `incident` document and no file in `[evals] dir`. It applies only when `[evals]` is in the configuration and the change policy is not `none`.
+Each incident adds an eval, so that the same failure cannot occur again without notice. SD918 warns when a change adds an `incident` document and no file in `[evals] dir`. It applies only when `[evals]` is in the configuration and the change policy is not `none`.

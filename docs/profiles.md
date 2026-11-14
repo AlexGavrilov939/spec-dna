@@ -1,5 +1,7 @@
 # Profiles
 
+This page gives the profiles, the severity of each diagnostic code in each profile, and the rules that override a severity. It is for the author of `spec-dna.toml`.
+
 A profile sets the default severity of each diagnostic code. Set it in `spec-dna.toml`:
 
 ```toml
@@ -33,13 +35,13 @@ The rule groups `layers` and `changes` are new in 0.6.0. The word `rules` still 
 
 The codes of the group `changes` depend on the `[change]` table:
 
-- With `policy = "none"`, SD905 and SD910 to SD921 are off. No `[rules]` entry turns SD921 on under `none`.
+- With `policy = "none"`, SD905 and SD910 to SD921 are off. No `[rules]` entry enables SD921 under `none`.
 - Without a `[change]` table, the policy is `none`.
 - SD910 follows `[change] gate`. `block` makes it an error, `warn` makes it a warning, and `off` disables it. If `gate` is absent, SD910 takes the severity of its profile column. `init` always writes `gate`.
 - Without `--base`, the change codes use the merge base with the default branch.
 - `[rules]` can override SD910 and SD921, as it overrides each code.
 
-Use the profiles in this order:
+Choose a profile for the stage of the project:
 
 - `lite`: adoption. Nothing fails `check`, except the structural errors of the model, such as invalid front matter, a changed accepted decision or an invalid eval.
 - `standard`: daily work. Broken references and ids fail `check`. A document that grows over its hard budget fails `check`. A break of the gate or of the finish rules of a change fails `check`. Drift and requirements without evidence give warnings.

@@ -55,10 +55,10 @@ Without `--base`, the lifecycle codes SD910 to SD920 use the merge base with the
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
-| SD201 | duplicate-id | error | Two documents have the same id or alias. |
+| SD201 | duplicate-id | error | More than one document has the same id or alias. |
 | SD202 | id-removed | error | The head tree does not have an id of the base tree, and no document keeps it as an alias. The layer of the base document decides: a layer with `keep = "until-finished"` (the `intent` layer by default) allows the deletion. In a `forever` layer, only the field `was-type: note` or `was-type: change` allows it. The status gives no exemption. |
 | SD203 | key-format | error | A requirement key in a sentence with a BCP 14 keyword is not a slug and not a legacy key. A key that is a template placeholder (`{{key}}`) gives SD306 only. |
-| SD204 | key-duplicate | error | A requirement key occurs two times in one document. |
+| SD204 | key-duplicate | error | A requirement key occurs 2 times in one document. |
 
 ## Front matter, types and sections (SD301 to SD306)
 
@@ -128,8 +128,8 @@ SD501, SD502, SD504 and SD505 check the files that `spec-dna init` writes: the a
 | SD803 | sentence-length | warning | A requirement sentence is longer than `lint.max-words`. |
 | SD804 | vague-term | warning | A requirement uses a term from the vague-term list. The word "many" after "how" ("how many") is a question about a number, so it is not vague. |
 | SD805 | passive-voice | warning | A requirement uses a passive construction (heuristic). |
-| SD806 | requirements-unrecognized | warning | A spec or contract has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or spec-dna recognizes some requirements, but a list item or a table row starts with a `legacy-keys` token. This token is not the key of one of them. The legacy keys are probably in a syntax that spec-dna does not read, such as a table. |
-| SD807 | requirement-colon-missing | warning | In a `requirements`, `interface` or `rule` document, a list item starts with a bold slug key and has a BCP 14 keyword. But no colon follows the key (`- **key** [1.1]: sentence`). Thus the item is not a requirement. |
+| SD806 | requirements-unrecognized | warning | A `requirements`, `interface` or `rule` document has bare tokens that match a `legacy-keys` pattern, but no recognized requirement. Or spec-dna recognizes some requirements, but a list item or a table row starts with a `legacy-keys` token. This token is not the key of one of them. The legacy keys can be in a syntax that spec-dna does not read, such as a table. |
+| SD807 | requirement-colon-missing | warning | In a `requirements`, `interface` or `rule` document, a list item starts with a bold slug key and has a BCP 14 keyword. No colon follows the key (`- **key** [1.1]: sentence`). Thus the item is not a requirement. |
 
 The requirement lint (SD801 to SD805) is off in the `lite` and `standard` profiles. It is a warning in `strict`. The rule `lint` changes this.
 
@@ -156,7 +156,7 @@ These codes apply only to a project with a `[change]` table whose `policy` is no
 | --- | --- | --- | --- |
 | SD905 | fan-out | warning | One change touches more requirement documents than `[change] max-fanout`: the documents of its delta, or for a `routine` change the documents of the diff. Split the change. |
 | SD910 | gate-approval-missing | error | An artifact of a stage changes while the base tree has no approval of the artifact of the stage before. Code under the `Files` of an unapproved plan counts as an artifact. Merge the approval first. `[change] gate` sets the severity: `block` is an error, `warn` is a warning, `off` disables the code. |
-| SD911 | change-stale | warning | A started change has had no commit for `stale-days` days. The check compares the committer dates of the base commit and of the newest commit that touched the folder or a `Files` path. It reads no clock. A shallow clone can hide a stale change, but it never reports a false one. |
+| SD911 | change-stale | warning | A started change has no commit for `stale-days` days. The check compares the committer dates of the base commit and of the newest commit that touched the folder or a `Files` path. It reads no clock. A shallow clone can hide a stale change, but it never reports a false one. |
 | SD912 | started-limit | warning | More changes than `max-started` have an `accepted` intent. Finish or close a started change. |
 | SD913 | outside-plan | warning | The diff of a change touches a file that no item of `Files` matches. The intent folder and the documents of the delta are always in scope. List the file in `Files`. |
 | SD914 | delta-invalid | error | A delta line has an invalid form, names an absent target, targets a layer that `moves-to` does not allow, or has a hash that does not match the requirement. It also reports an interface that `Interfaces` names and that did not change. `check` gives an error for a spec that the diff touches, and a warning for another spec. `finish` always stops on it. |
@@ -180,9 +180,9 @@ The codes SD901 to SD904 and SD921 are new in 0.6.0. They are warnings in `stand
 - SD903 phrases. The default phrases are "previously", "formerly", "no longer", "used to", "was changed", "before this change" and "after this change". `[lint] history-terms` replaces them. The key does not change the dates. `used to` after a form of "be" ("SHALL be used to") is not history.
 - SD903 false matches. The match does not use the meaning of the sentence. "no longer than 2 seconds" matches "no longer", and "round 2 decimals" matches `round <n>`. To avoid such a match, rewrite the sentence, or list your own phrases in `history-terms`.
 - SD904. The table of terms has the header cells `Term` and `Forbidden synonyms` (in any order). spec-dna splits a cell of synonyms at `,` and `;`. A synonym that matches a whole phrase of the requirement text gives SD904. The target of the diagnostic is `<key>:<synonym>`.
-- SD921. The check compares each requirement of the base with the requirement of the head that has the same key. It applies the aliases of `mv`. A requirement has changed if the hash of its text, without link destinations, is different.
+- SD921. The check compares each requirement of the base with the requirement of the head that has the same key. It applies the aliases of `mv`. A requirement counts as changed if the hash of its text, without link destinations, is different.
 - SD921 keys. A key that has no match on the other side was added or removed. A move or a split with `spec-dna mv` keeps the keys through aliases, so it gives nothing. A split by hand with no alias gives 2 diagnostics (an added key and a removed key).
-- SD921 scope. It gives one diagnostic for each document. Without `--base`, its base is the merge base with the default branch, as for the other change codes. It is off in the `lite` profile and with `[change] policy = "none"`. No rule turns it on under `none`.
+- SD921 scope. It gives one diagnostic for each document. Without `--base`, its base is the merge base with the default branch, as for the other change codes. It is off in the `lite` profile and with `[change] policy = "none"`. No rule enables it under `none`.
 
 ## Code citations
 

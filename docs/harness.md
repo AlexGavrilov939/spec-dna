@@ -1,6 +1,6 @@
 # Agent harness
 
-This page is the reference of the Claude Code adapter of the harness. The harness is a team of models, 4 stage skills, a review policy and 3 hooks. It is for people who set up or check the files that `spec-dna init` writes for Claude Code. [Agents](agents.md) describes the other agents.
+This page is the reference of the Claude Code adapter of the harness. The harness is a team of models, 4 stage skills, a review policy and 3 hooks. It is for people who configure or check the files that `spec-dna init` writes for Claude Code. [Agents](agents.md) describes the other agents.
 
 One model builds. A stronger model advises. A verifier checks finished work. A small model searches. The stage skills carry the steps of a change ([change guide](guides/change.md)). `spec-dna check` reports a generated file that differs from the configuration.
 
@@ -135,7 +135,7 @@ Entries in `.claude/settings.json`:
 
 spec-dna writes the settings file again with a 2-space indent. A number form such as `1e3` becomes `1000`, and an integer above 2^53 loses precision.
 
-A key that spec-dna writes into can have a value of the wrong type, for example `permissions.deny` as a string. Then `init` refuses and names the JSON path, and `check` reports SD505. spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key by hand.
+A key that spec-dna writes into can have a value of the wrong type, for example `permissions.deny` as a string. Then `init` refuses and names the JSON path, and `check` reports SD505. spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key manually.
 
 spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
 
@@ -163,7 +163,7 @@ The hook keeps one empty file for each level that it reported, in the temporary 
 
 A workflow script can start many agents, and each agent uses its own context. Before a workflow runs, the hook computes an upper limit of the agents that the script can start. It multiplies each `agent(` call by the size of each loop around it. A loop over a list that the run makes has no limit. If the limit is above the cap, or if there is no limit, Claude Code asks the person before the run.
 
-The bound is a text scan. It does not see a regex literal with a quote or a bracket. It does not see an alias of `agent`. Such a script runs without a question.
+The upper limit is a text scan. It does not see a regex literal with a quote or a bracket. It does not see an alias of `agent`. Such a script runs without a question.
 
 To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<n>`.
 
@@ -188,7 +188,7 @@ The hook does not see an edit through `Bash`. In a headless run, Claude Code den
 | Code | Finding |
 | --- | --- |
 | SD504 | A generated file or the `CLAUDE.md` line is missing, or a file at a role path has no marker. This includes the stage skills and `REVIEW.md` |
-| SD501 | A generated file or line was edited by hand, or has text after its marker. A file with a harness marker that the configuration does not generate and that you edited also gives SD501. Delete the file or the line and run `spec-dna init` |
+| SD501 | A generated file or line was edited by hand, or has text after its marker. A file with a harness marker that the configuration does not generate and that you edited also gives SD501. Delete the file or the line. Then run `spec-dna init` |
 | SD502 | `CLAUDE.md` has a second model-team line. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command. An unedited file with a marker that the configuration does not generate also gives SD502, and `init --reconfigure` removes it. The scan covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, but not the adapter skill |
 | SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |
 
@@ -218,13 +218,13 @@ These options make each request smaller. `init` does not write them, because the
 3. Run `/advisor`. It shows the advisor model.
 4. Type `@`. The list shows `verifier`, `Explore` and `fallback-advisor`.
 5. While a subagent runs, run `/tasks`. Its row shows its model.
-6. When Claude consults the advisor, an `Advising` line shows. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
+6. When Claude consults the advisor, an `Advising` line appears. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
 
 ## Change, upgrade and removal
 
 - Change: edit `[harness]`, or run `spec-dna init --reconfigure`. The preview shows each file before `init` writes it. `init --reconfigure` also offers the parts that a project does not have yet.
-- Upgrade: install the new version, set the pin, and run `spec-dna init`. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
-- Removal: run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files and skills that you did not edit, `REVIEW.md`, the `CLAUDE.md` line and the hook handlers. It keeps the other settings keys and tells you which ones it no longer sets.
+- Upgrade: install the new version. Set the pin. Run `spec-dna init`. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
+- Removal: run `spec-dna init --reconfigure`. Choose `none`. `init` removes the generated agent files and skills that you did not edit, `REVIEW.md`, the `CLAUDE.md` line and the hook handlers. It keeps the other settings keys and tells you which ones it no longer sets.
 
 ### Upgrade from 0.5
 
@@ -244,4 +244,4 @@ The old keys `reviewer` and `spec-writer` in `[harness.roles]` give exit code 3.
 
 `upgrade` never replaces a file that has no marker, at the path of a new part or of an agent with the name `verifier`. It sets the role to `none`, removes the skill from `skills`, or sets `review-md = false`, and it names the file. A generated agent has priority over a user or plugin agent of the same name.
 
-Run `spec-dna init --reconfigure` to turn on the new parts: the stage skills, `REVIEW.md`, `protect-tests` and `code-simplifier`.
+Run `spec-dna init --reconfigure` to enable the new parts: the stage skills, `REVIEW.md`, `protect-tests` and `code-simplifier`.

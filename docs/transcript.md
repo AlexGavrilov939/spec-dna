@@ -9,7 +9,7 @@ spec-dna transcript ~/.claude/projects/<project>/<session>.jsonl
 spec-dna transcript <dir> --expect irrigation/valves --expect ADR-12 --json
 ```
 
-An argument is a file or a directory. A directory gives every `.jsonl` file below it, so the command also reads the files of subagents. In a directory, a file that no adapter reads (for example a workflow journal) gives a warning, and the command continues. A file that you name must be a transcript. The command reads a file once, even if two arguments give it.
+An argument is a file or a directory. A directory gives every `.jsonl` file below it, so the command also reads the files of subagents. In a directory, a file that no adapter reads (for example a workflow journal) gives a warning, and the command continues. A file that you name must be a transcript. The command reads a file once, even if 2 arguments give it.
 
 Run the command in a repository with `spec-dna.toml`. Then the report maps file reads to document ids and sections. Outside such a repository, the report has token and tool counts, and the ids in spec-dna output only.
 
@@ -53,7 +53,7 @@ Thus a malformed or hostile transcript cannot put free text into the report.
 | `expected` (with `--expect`) | `read`: the expected documents that the agent read (a read of the front matter only does not count). `first_relevant_ms`: the time from the start to the first such read | Measured |
 | `document_edits` | Edit and write tools on document paths | Measured |
 
-The usage of a request includes the full prompt prefix, so `cache_read` grows with the length of a session. Thus `spec_tokens_estimated` is an estimate of the document text that entered the context. They are not a share of the billed input.
+The usage of a request includes the full prompt prefix, so `cache_read` grows with the length of a session. Thus `spec_tokens_estimated` is an estimate of the document text that entered the context. This estimate is not a share of the billed input.
 
 ## Document reads
 

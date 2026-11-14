@@ -90,9 +90,9 @@ Then `init` asks at most 14 questions, with the found values as defaults. It sho
 - one line in `CLAUDE.md`, unless `CLAUDE.md` imports such an `AGENTS.md`;
 - the skill `.claude/skills/spec-dna/SKILL.md`.
 
-The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the blocks of many lines that earlier versions wrote.
+The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the multi-line blocks that earlier versions wrote.
 
-The questions 12 and 13 set the [agent harness](harness.md). `init` writes it for Claude Code: agent files, the stage skills, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`. The question 14 writes the eval skeleton ([evals.md](evals.md)).
+Questions 12 and 13 configure the [agent harness](harness.md). `init` writes it for Claude Code: agent files, the stage skills, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`. Question 14 writes the eval skeleton ([evals.md](evals.md)).
 
 If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version. The message names `spec-dna upgrade`, which is the command that moves a pin.
 
@@ -143,9 +143,9 @@ spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <tex
 7. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
 8. The other sections.
 
-The order of the layers orders the first tier. It also orders the documents of one citation class (cite the file, cite an identifier, or cite a directory). The layers come by level, from 0 up. The layers of one level keep the order of the `[layers.*]` tables in `spec-dna.toml`, or the order of the default graph. In the default graph, `foundation` comes before `rules`. `spec-dna layer list` shows the level of each layer ([The table `layers`](config.md#the-table-layers)).
+The order of the layers sets the order of the first tier. It also orders the documents of one citation class (cite the file, cite an identifier, or cite a directory). The layers come by level, from 0 up. The layers of one level keep the order of the `[layers.*]` tables in `spec-dna.toml`, or the order of the default graph. In the default graph, `foundation` comes before `rules`. `spec-dna layer list` shows the level of each layer ([The table `layers`](config.md#the-table-layers)).
 
-A layer with `context = "on-request"` is held back. `context` serves its documents only if a target names them. `show` always reads them. `context` counts the documents of these layers that the request reaches, in one line after the listed sections, and lists no file:
+`context` does not serve the documents of a layer with `context = "on-request"`, unless a target names them. `show` always reads them. `context` counts the documents of these layers that the request reaches, in one line after the listed sections, and lists no file:
 
 ```text
 <!-- on-request, not served: research 1, intent 1, incidents 2; name a document as target to serve it -->
@@ -193,7 +193,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 - In a root of one type, the file is `<root>/<id>.md`.
 - A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
 
-`--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, also for the default. For example, a file `madr.md` replaces the default template of `decision`.
+`--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, including the default template. For example, a file `madr.md` replaces the default template of `decision`.
 
 `new` stops with exit code 2 and writes nothing in these cases:
 
@@ -227,13 +227,13 @@ spec-dna finish <slug> [--dry-run]
 
 `finish` ends a change. It works in the working tree. It applies the delta, checks the evidence, and deletes the folder `docs/intent/<slug>/`. It stops at the first step that fails:
 
-1. Check that no document outside the intent folder links into it. Such a link breaks when `finish` deletes the folder (SD101 for an id, SD102 for a Markdown link). `finish` lists each link in unlocked text and stops. A reference in the locked text of a decision does not stop `finish`, because that text cannot change.
-2. Check that the intent is `accepted`, that the plan is `approved`, and, for a `higher-risk` change, that the spec is `approved`.
-3. Check each concern (SD919) and each needed decision (SD920).
-4. Check each `CHANGE` and `REMOVE` hash against the requirement text of the head tree (SD914). Check that each interface document of the `Interfaces` section, or a file that it cites, changed in the diff (SD914).
-5. Apply the delta. `ADD` appends a list item. `CHANGE` replaces the sentence. `REMOVE` deletes the list item.
-6. Check the evidence of each requirement that the delta adds or changes (SD916). For a `routine` change, which has no delta, check each requirement whose hash differs from the base.
-7. Delete the intent folder.
+1. It checks that no document outside the intent folder links into it. Such a link breaks when `finish` deletes the folder (SD101 for an id, SD102 for a Markdown link). `finish` lists each link in unlocked text and stops. A reference in the locked text of a decision does not stop `finish`, because that text cannot change.
+2. It checks that the intent is `accepted`, that the plan is `approved`, and, for a `higher-risk` change, that the spec is `approved`.
+3. It checks each concern (SD919) and each needed decision (SD920).
+4. It checks each `CHANGE` and `REMOVE` hash against the requirement text of the head tree (SD914). It checks that each interface document of the `Interfaces` section, or a file that it cites, changed in the diff (SD914).
+5. It applies the delta. `ADD` appends a list item. `CHANGE` replaces the sentence. `REMOVE` deletes the list item.
+6. It checks the evidence of each requirement that the delta adds or changes (SD916). For a `routine` change, which has no delta, it checks each requirement whose hash differs from the base.
+7. It deletes the intent folder.
 
 In step 5, `ADD` appends the item at the end of the last list of requirements in its document. If the document does not exist, `finish` writes a minimal one. It has the front matter with the status `active`, the H1, a `Requirements` section and the `ADD` items. It has no placeholder. It has a `type: requirements` line when the place of the file does not give the type. If a root requires more sections of `requirements`, the new document gets SD305, and the author adds them.
 
@@ -266,12 +266,12 @@ A change has no stage field. `status` derives the stage from the files, their st
 | Closed | `intent.md` is `closed`. The next step is `finish`, which deletes the folder |
 | Plan | `intent.md` is `draft` |
 | Design | The class is `higher-risk`, and `spec.md` is absent or `draft` |
-| Build | `plan.md` is absent or `draft`, or no file of `Files` has changed against the base |
+| Build | `plan.md` is absent or `draft`, or no file of `Files` differs from the base |
 | Test | At least one requirement that the diff adds or changes has no evidence |
 | Deploy | Each such requirement has evidence, and the intent folder still exists |
 | Maintain | An `incident` has an open item (`- [ ]`) in its `Follow-ups` section |
 
-For a `higher-risk` change, the requirements of the Test row are the `ADD` and `CHANGE` lines of the delta. For a `routine` change, they are the requirements whose hash differs from the base. A `small-fix` has no folder, so it has no stage. A change that the default branch has finished is no longer in the tree, and [log](#log) lists it. The incident of a Maintain row gets its own intent with `from:`. The author checks the item (`- [x]`) when the follow-up is complete.
+For a `higher-risk` change, the requirements of the Test row are the `ADD` and `CHANGE` lines of the delta. For a `routine` change, they are the requirements whose hash differs from the base. A `small-fix` has no folder, so it has no stage. The tree no longer has a change that the default branch finished, and [log](#log) lists it. The incident of a Maintain row gets its own intent with `from:`. The author checks the item (`- [x]`) when the follow-up is complete.
 
 ## log
 
@@ -328,7 +328,7 @@ A layer is a named set of documents ([The table `layers`](config.md#the-table-la
 
 - A layer that has a `moves-to` key gets the name at the end of the list. This works for a table and for dotted keys.
 - A layer with no `moves-to` key that has a table form (`[layers.a]`) gets a new `moves-to` line below its header.
-- A layer with no `moves-to` key that has dotted keys or an inline table gives exit code 2. Add `moves-to` to it by hand.
+- A layer with no `moves-to` key that has dotted keys or an inline table gives exit code 2. Add `moves-to` to it manually.
 
 If `spec-dna.toml` has no `[layers]` table, the project uses the default graph ([config.md](config.md#the-table-layers)). In this case, `layer add` first writes the tables of that graph. It applies `types`: it drops the layers that hold none of the types, and the edges to them. It then adds the new layer.
 
@@ -338,12 +338,12 @@ The command refuses these cases with exit code 2. It writes nothing, and the fil
 - A name that a layer already has.
 - A type that another layer has.
 - A layer in an edge (`--moves-to`, `--linked-from`, `--moved-from`) that the graph does not have.
-- A value that is not valid. Examples are a name with a character other than a letter, a digit, `-` or `_`, and an unknown type. Other examples are a number that is not a number, and a `--dir` that leaves the root. A `--keep` or `--context` value that is not in the list is not valid. `--files` with `--dir` is not valid, and a folder that another layer has is not valid.
+- A value that is not valid. Examples are a name with a character other than a letter, a digit, `-` or `_`, and an unknown type. Other examples are a numeric option with a value that is not a number, and a `--dir` that leaves the root. A `--keep` or `--context` value that is not in the list is not valid. `--files` with `--dir` is not valid, and a folder that another layer has is not valid.
 - A file layout where the new table has no place, for example `layers = { ... }` as an inline table of the root.
 
 The command reads its own result before it writes it. The result must give the layers that the command expects.
 
-The change goes into `spec-dna.toml` only. Commit it as a change of its own: `check` gives SD503 for a change of `spec-dna.toml` that comes with other files ([diagnostics.md](diagnostics.md)). With `--json`, the output is one object:
+The change goes into `spec-dna.toml` only. Commit it as a change of its own: `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)). With `--json`, the output is one object:
 
 ```json
 {"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"]}
@@ -395,7 +395,7 @@ Before `mv` changes a file, a preservation check compares the result with the cu
 - the locked text of an accepted decision does not change;
 - there is no new error.
 
-If a check fails, `mv` changes nothing. It names each requirement whose text would change, and it exits with code 1.
+If a check fails, `mv` changes nothing. It names each requirement that the move changes, and it exits with code 1.
 
 ## history
 
@@ -439,7 +439,7 @@ spec-dna hook protect-tests
 
 The hooks use the event names of Claude Code, so they belong to its adapter ([agents.md](agents.md)). A coding agent runs `hook`. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it.
 
-A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. A hook ignores unknown flags and bad values. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
+A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. A hook ignores unknown flags and invalid values. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
 
 `context-meter` runs after a tool call (the `PostToolUse` event of Claude Code). It finds the size of the context in the transcript of the agent: the input, cache-creation and cache-read tokens of the last assistant message. The hook reads the file from its end, 256 KiB at a time, up to 4 MiB. When the size reaches a level of `--levels`, the hook tells the agent once, with `additionalContext`.
 
@@ -490,7 +490,7 @@ An eval passes when at least `pass-at` of its runs pass. The suite passes when t
 spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]
 ```
 
-`upgrade` moves a project that pins spec-dna 0.4.0 or later to the version of the running binary. It is also the command that moves the pin. It has no `--to` option, because the binary embeds the standard of its own version. A project with an older pin first moves to 0.4.2 and then runs `upgrade`. [The upgrade guide](guides/upgrade-0.5.md) gives the procedure.
+`upgrade` moves a project that pins spec-dna 0.4.0 or later to the version of the binary that you run. It is also the command that moves the pin. It has no `--to` option, because the binary embeds the standard of its own version. A project with an older pin first moves to 0.4.2 and then runs `upgrade`. [The upgrade guide](guides/upgrade-0.5.md) gives the procedure.
 
 | Option | Meaning |
 | --- | --- |
@@ -548,7 +548,7 @@ With `--json`, the output has the fields `from`, `to`, `files`, `proof` and `rep
 | 3 | A configuration error: no `spec-dna.toml`, a pin before 0.4.0 or after the binary, a file that neither schema reads, or `[spec-dna-sha256]` with no valid `--pin-file` |
 | 4 | A git error |
 
-To undo an upgrade before the commit, run `git reset --hard` and `git clean -fd`. After the merge, a revert needs 2 pull requests, because SD503 of the old binary rejects a configuration and documents together.
+To undo an upgrade before the commit, run `git reset --hard`. Then run `git clean -fd`. After the merge, a revert needs 2 pull requests, because SD503 of the old binary rejects a configuration and documents together.
 
 ## Exit codes
 
@@ -565,4 +565,4 @@ A command that writes to a closed pipe, such as `spec-dna check --json | head -1
 
 ## Cache
 
-spec-dna keeps the parsed documents in a cache at `<git-dir>/spec-dna/index-v1.bin`, with the git blob id as the key. Thus, the cache never goes into a commit, and it stays after a branch switch. On each run, spec-dna parses the files that differ from the git index, and the untracked files. It writes the cache to a temporary file and then renames that file. You can delete the cache at any time, or use `--no-cache`.
+spec-dna keeps the parsed documents in a cache at `<git-dir>/spec-dna/index-v1.bin`, with the git blob id as the key. Thus, a commit never holds the cache, and the cache stays after a branch switch. On each run, spec-dna parses the files that differ from the git index, and the untracked files. It writes the cache to a temporary file and then renames that file. You can delete the cache at any time, or use `--no-cache`.

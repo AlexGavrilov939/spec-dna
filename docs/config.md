@@ -123,7 +123,7 @@ sonnet = "high"
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
 | `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD921. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
-| `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag turns off the checks that read English word lists (SD801 to SD805 and SD904). |
+| `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, SD905 and SD910 to SD921 are off. |
 | `change.gate` | string | the profile | `"block"`, `"warn"` or `"off"`. The strictness of SD910. Without the key, SD910 takes the severity of the profile. |
@@ -141,7 +141,7 @@ sonnet = "high"
 | `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](#default-graph). See [The table `layers`](#the-table-layers). |
 | `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
 | `layers.<name>.dir` | string | the name of the layer | The folder of the layer, relative to the root. No 2 layers have the same folder. |
-| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no leading `/`, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
+| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no `/` at the start, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
 | `layers.<name>.paths` | list of globs | `[]` | Globs, relative to the root. A document that matches belongs to this layer, also when its type is in another layer. The first layer in the file that matches wins. |
 | `layers.<name>.moves-to` | list of strings | `[]` | The layers that the text of this layer matures into. Each name is a layer of `[layers]`. The edges have no cycle. |
 | `layers.<name>.linked-from` | list of strings | `[]` | The layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`. |
@@ -151,7 +151,7 @@ sonnet = "high"
 | `layers.<name>.max-chars` | integer | none | The most body characters in the layer. |
 | `layers.<name>.max-started` | integer | none | The most started changes. |
 | `layers.<name>.stale-days` | integer | none | The days without a commit before a change is stale. |
-| `evidence.tests` | list of globs | the usual test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list turns the tags off. |
+| `evidence.tests` | list of globs | the default test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list disables the tags. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`. The value is a URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
@@ -168,14 +168,14 @@ sonnet = "high"
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. See [Amendment sections](#amendment-sections). |
 | `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `research` document. In a decision, a history section is not locked text. |
 | `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as a coverage table or an evidence table. A table row of such a section belongs to the requirement keys in its first cell. A list item belongs to the keys in its lead. When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. If a row has a key that moves and a key that stays, `mv` stops and changes nothing. |
-| `roots.live-sections` | table | `{ decision = ["Status"] }` | For each type, the names of its live sections, such as `Status` or `Progress`, in any language. A list for a type replaces the default of that type, so `{ decision = [] }` turns it off. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not locked text. New text in it gives no SD605. `mv` and `history` do not move it. |
+| `roots.live-sections` | table | `{ decision = ["Status"] }` | For each type, the names of its live sections, such as `Status` or `Progress`, in any language. A list for a type replaces the default of that type, so `{ decision = [] }` disables it. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not locked text. New text in it gives no SD605. `mv` and `history` do not move it. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They have priority over `[rules]` and over every profile. |
 | `roots.lint-severity` | string | none | The key of 0.1 for the rule `lint` of this root (SD801 to SD805). `roots.rules` has priority over it. |
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` has priority over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
-| `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default is about one amendment or a few table rows. |
+| `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default of 4,000 characters is about the size of one amendment. |
 | `lint.history-terms` | list of strings | `"previously"`, `"formerly"`, `"no longer"`, `"used to"`, `"was changed"`, `"before this change"`, `"after this change"` | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates and `round <n>`. A phrase is not blank, and no phrase is listed twice. |
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
@@ -369,7 +369,7 @@ The table `[change]` sets the change process: the change classes that the projec
 | `warn` | SD910 is a warning. |
 | `off` | SD910 is off. |
 
-`[rules]` can override SD910 and SD921, as it overrides each code. spec-dna turns SD921 off before it reads `[rules]` when the policy is `none`, so a rule cannot turn it on. In `lite`, SD921 is off by default. A project that sets a policy and runs `lite` can turn it on with `[rules] changes = "warning"`.
+`[rules]` can override SD910 and SD921, as it overrides each code. spec-dna turns SD921 off before it reads `[rules]` when the policy is `none`, so a rule cannot enable it. In `lite`, SD921 is off by default. A project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
 
 ## The table `evals`
 
@@ -401,11 +401,11 @@ dir = ".spec-dna/templates"
 
 - A project template names its `type` in its front matter. `new` stops with exit code 2 for a template with no `type`, a template of another type and an unknown template name.
 - `dir` is a path relative to the repository root. An absolute path, a `..` segment, a `\` and a `:` are errors (exit code 3).
-- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the same checks as any other document.
 
 ## The table `harness`
 
-The table `[harness]` configures the harness, the Claude Code adapter of spec-dna ([agents.md](agents.md)). [ADR 0004](adr/0004-harness.md) and [ADR 0008](adr/0008-harness-and-evals.md) give the decisions. [harness.md](harness.md) gives the generated files and the hooks.
+The table `[harness]` configures the harness of the Claude Code adapter of spec-dna ([agents.md](agents.md)). [ADR 0004](adr/0004-harness.md) and [ADR 0008](adr/0008-harness-and-evals.md) give the decisions. [harness.md](harness.md) gives the generated files and the hooks.
 
 ### Parts
 
@@ -444,7 +444,7 @@ The defaults:
 
 The role `reviewer` of 0.5 is now `verifier`. The role `spec-writer` of 0.5 ended, because the stage skills replace it. A key `reviewer` or `spec-writer` is an error (exit code 3). The message names `verifier`, or says that the role ended. `upgrade` renames `reviewer` and removes `spec-writer`.
 
-A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in level full. These rules apply to the values:
+A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. These rules apply to the values:
 
 - A model is a string that is not empty and has no spaces.
 - The orchestrator cannot be `none`, and its effort cannot be `max`. The advisor model cannot be `inherit`, and cannot be `haiku` in any letter case.
@@ -479,7 +479,7 @@ spec-dna = "0.6.0"
 
 ## The pin comes first
 
-Sometimes `spec-dna.toml` does not parse, and its key `spec-dna` is a different version from the binary. Then the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary of a version before 0.4.0 does not have this rule. It reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
+`spec-dna.toml` can fail to parse while its key `spec-dna` is a different version from the binary. Then the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary of a version before 0.4.0 does not have this rule. It reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
 
 ## Budgets
 
@@ -499,7 +499,7 @@ A document over the soft budget gives a warning (SD701). If it also grew against
 
 - A new document over the hard budget is an error (SD702). The exception: a split moved it out of a document that was over the hard budget in the base (its section aliases name that document). Then it gives SD704.
 - A document that was under the hard budget in the base and is over it now is an error (SD702).
-- A document that was over the hard budget in the base and grew by more than `budgets.growth` characters (default 4,000) is an error (SD702). Growth up to that allowance gives the warning SD703. The comparison uses the body characters of the two versions.
+- A document that was over the hard budget in the base and grew by more than `budgets.growth` characters (default 4,000) is an error (SD702). Growth up to that allowance gives the warning SD703. The comparison uses the body characters of the 2 versions.
 - A document that was over the hard budget in the base and did not grow gives a warning (SD704).
 
 A stub that `mv --stub` leaves and an index that `spec-dna index` generates have no budget. In a root with `enforce-budgets = false`, each of the 4 cases above gives SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
@@ -545,6 +545,6 @@ A document is a `.md` or `.markdown` file under a root and outside every exclude
 
 A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory.
 
-In a root of type `research`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other research root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of two research roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
+In a root of type `research`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other research root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of 2 research roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
 
 A section that `mv` moved keeps its old id as an alias: the destination lists `<old-id>#<anchor>` in its `aliases`. A stub (front matter `moved-to: <id>`) has no id of its own. A generated index has the front matter field `generated: spec-dna index h:<hash>`. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.
