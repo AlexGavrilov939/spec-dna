@@ -107,7 +107,6 @@ pub const DEFAULT_EVALS_MAX_TOTAL_USD: f64 = 20.0;
 
 /// The table `[evals]` (ADR 0008).
 #[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)] // The runner (step 4, S6) reads the keys other than `dir`.
 pub struct Evals {
     /// The folder of the evals, relative to the repository root, with no `./`
     /// and no final `/`. It is never part of a root: `is_excluded` is true

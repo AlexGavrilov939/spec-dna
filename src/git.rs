@@ -239,6 +239,32 @@ impl Git {
         Ok(v)
     }
 
+    /// Returns the files of the working tree under `specs` (git pathspecs):
+    /// the tracked files, and the untracked files that git does not ignore.
+    /// The paths are from the repository root, sorted, with no duplicate. A
+    /// tracked file that is deleted in the working tree is also listed, so a
+    /// reader must skip a path that is absent. `eval run` uses it.
+    pub fn list_worktree(&self, specs: &[String]) -> Result<Vec<String>, String> {
+        let mut args = vec![
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+        ];
+        args.extend(specs.iter().map(String::as_str));
+        let out = self.run(&args)?;
+        let mut paths: Vec<String> = out
+            .split(|b| *b == 0)
+            .filter(|r| !r.is_empty())
+            .map(|r| String::from_utf8_lossy(r).into_owned())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
     /// Returns the working-tree changes in `paths`. If `paths` is empty, it
     /// returns the changes in the whole tree. With `untracked`, it also lists
     /// the untracked files that git does not ignore.

@@ -25,6 +25,8 @@ mod context;
 mod detect;
 mod diag;
 mod drift;
+mod eval_run;
+mod evals;
 mod evidence;
 mod finish;
 mod frontmatter;
@@ -245,6 +247,23 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
 4 git.",
     ),
     (
+        "eval",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]",
+        "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
+each run, it copies the fixture and the harness files into a temporary git
+repository, starts `claude -p` in it, and runs the checks of the eval. It
+sources <dir>/check.sh of the project, never the copy. An eval passes when at
+least pass-at of its runs pass. The suite passes when the share of evals that
+pass is at least min-pass-rate. It refuses to start when runs x
+max-budget-usd is above max-total-usd, and it stops when the spend is above
+it. --runs, --min-pass-rate and --max-total-usd replace the values of the
+files and of the table. --out writes the result to <dir>/eval-<time>.json
+(counts, costs and check names only). --dry-run starts no process. --isolate
+adds --setting-sources project. spec-dna makes no network call, but `claude`
+does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
+a stop by the cap or no `claude`, 4 git or file error.",
+    ),
+    (
         "transcript",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
@@ -265,8 +284,8 @@ const OPTIONS: &str = "Options:
     -h, --help    Prints this help; `spec-dna <command> --help` prints the help of one command
     -V, --version Prints the version
 
-Exit codes: 0 ok, 1 check found new errors, 2 usage, 3 configuration,
-4 git or I/O, 5 not found.";
+Exit codes: 0 ok, 1 check found new errors or an eval run failed, 2 usage,
+3 configuration, 4 git or I/O, 5 not found.";
 
 fn indent(text: &str, by: &str) -> String {
     text.lines()
@@ -334,6 +353,11 @@ struct Args {
     group: Option<String>,
     since: Option<String>,
     sdlc: bool,
+    runs: Option<u32>,
+    min_pass_rate: Option<f64>,
+    max_total_usd: Option<f64>,
+    out: Option<String>,
+    isolate: bool,
 }
 
 /// The options of `layer add`.
@@ -404,6 +428,11 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         group: None,
         since: None,
         sdlc: false,
+        runs: None,
+        min_pass_rate: None,
+        max_total_usd: None,
+        out: None,
+        isolate: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -439,6 +468,43 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--group" => a.group = Some(value("--group")?),
             "--since" => a.since = Some(value("--since")?),
             "--sdlc" => a.sdlc = true,
+            "--isolate" => a.isolate = true,
+            "--out" => a.out = Some(value("--out")?),
+            "--runs" => {
+                let v = value("--runs")?;
+                a.runs = Some(
+                    v.parse::<u32>()
+                        .ok()
+                        .filter(|n| (1..=100).contains(n))
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!("--runs: `{v}` is not an integer from 1 to 100"))
+                        })?,
+                );
+            }
+            "--min-pass-rate" => {
+                let v = value("--min-pass-rate")?;
+                a.min_pass_rate = Some(
+                    v.parse::<f64>()
+                        .ok()
+                        .filter(|n| (0.0..=1.0).contains(n))
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!(
+                                "--min-pass-rate: `{v}` is not a number from 0 to 1"
+                            ))
+                        })?,
+                );
+            }
+            "--max-total-usd" => {
+                let v = value("--max-total-usd")?;
+                a.max_total_usd = Some(
+                    v.parse::<f64>()
+                        .ok()
+                        .filter(|n| n.is_finite() && *n > 0.0)
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!("--max-total-usd: `{v}` is not a number above 0"))
+                        })?,
+                );
+            }
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
@@ -554,6 +620,19 @@ fn run(a: Args) -> Result<u8, Fatal> {
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
     }
+    if a.command != "eval" {
+        for (given, name) in [
+            (a.runs.is_some(), "--runs"),
+            (a.min_pass_rate.is_some(), "--min-pass-rate"),
+            (a.max_total_usd.is_some(), "--max-total-usd"),
+            (a.out.is_some(), "--out"),
+            (a.isolate, "--isolate"),
+        ] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
+            }
+        }
+    }
     match a.command.as_str() {
         "" => {
             println!("{}", usage());
@@ -577,6 +656,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "status" => status(&Repo::discover(&cwd)?, &a),
         "log" => log(&Repo::discover(&cwd)?, &a),
         "stats" => stats(&Repo::discover(&cwd)?, &a),
+        "eval" => eval(&cwd, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -2231,6 +2311,38 @@ fn log(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     sdlc::log(repo, &cfg, a.since.as_deref(), a.json)
+}
+
+/// `eval run [<id>...]`: the runner of the evals (`eval_run.rs`). `eval run`
+/// spends money and runs the checks of the project, so a pin mismatch stops
+/// it, as it stops `check` and `finish`.
+fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    if a.positional.first().map(String::as_str) != Some("run") {
+        return Err(Fatal::Usage(
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`".into(),
+        ));
+    }
+    let repo = Repo::discover(cwd)?;
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    let mut ids = a.positional[1..].to_vec();
+    ids.dedup();
+    eval_run::run(
+        &repo,
+        &cfg,
+        &eval_run::Opts {
+            ids,
+            runs: a.runs,
+            min_pass_rate: a.min_pass_rate,
+            max_total_usd: a.max_total_usd,
+            out: a.out.clone(),
+            dry_run: a.dry_run,
+            isolate: a.isolate,
+            json: a.json,
+        },
+    )
 }
 
 /// `stats --sdlc [--group <name>]`: the indicators of the playbook

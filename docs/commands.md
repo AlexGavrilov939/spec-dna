@@ -36,6 +36,9 @@ spec-dna stats --sdlc --group operations        # the same for the changes of a 
 spec-dna finish dose-limit --dry-run            # the diff of the finish of a change, and nothing written
 spec-dna finish dose-limit                      # apply the delta, delete the folder, stage the paths
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
+spec-dna eval run --dry-run                     # the evals, their runs and the estimate; no process starts
+spec-dna eval run                               # run each eval with headless Claude Code; exit 1 below min-pass-rate
+spec-dna eval run example --runs 1 --out evals/results   # one eval, one run, and a result file
 spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
 spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
 spec-dna hook fanout-cap --cap 10   # a hook of a coding agent
@@ -44,7 +47,7 @@ spec-dna --help                     # commands and options (-h); --version (-V) 
 spec-dna mv --help                  # the help of one command
 ```
 
-Each command accepts `--json`. spec-dna does not use the network. It reads the documents with local `git` commands.
+Each command accepts `--json`. spec-dna does not use the network. It reads the documents with local `git` commands. The only command that starts a program that uses the network is `eval run`: it starts `claude`, and spec-dna itself still makes no network call.
 
 A target is a document id, an alias such as `ADR-12`, `<id>#<anchor or key>`, or a repository path.
 
@@ -520,6 +523,114 @@ With `--json`, the output is one object with the 14 indicators of the table, in 
 
 Exit codes: 0 done; 2 usage, an unknown group, or no `--sdlc`; 3 configuration; 4 git.
 
+## eval
+
+```text
+spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]
+```
+
+`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts headless Claude Code (`claude -p`) on a copy of a fixture, and then runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand, is a usage error.
+
+spec-dna itself makes no network call. `claude` does, and each run costs money. A pin that differs from the version of the binary stops the command, as it stops `check`.
+
+### An eval file
+
+An eval is the file `<dir>/<id>.json`, where `<dir>` is `[evals] dir`. A JSON file directly in `<dir>` is an eval. A file in a subfolder is not. The file has at most 64 KiB, it is UTF-8, and it is one JSON object. A key that the table does not list is an error. An integer is a JSON number with no fraction. `eval run` reads the working tree: the tracked files, and the untracked files that git does not ignore. It checks the keys in the order of this table, and it reports the first rule that fails.
+
+| Key | Required | Default | Rule |
+| --- | --- | --- | --- |
+| `id` | yes | - | `[a-z0-9][a-z0-9-]{0,63}`, equal to the name of the file without `.json` |
+| `task` | yes | - | The prompt. Not empty, at most 8,000 bytes, and it does not start with `-` |
+| `fixture` | yes | - | A folder under `<dir>/`, but not under `<dir>/results/`. It has `/` separators and no `..`, `.`, empty segment or `\`. It holds at least one file |
+| `branch` | no | none | A git branch name of at most 100 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, `/` and `-`. It starts with a letter or a digit, has no `..` or `//`, and does not end with `/` or `.lock`. The branch `main` is the base branch, so it gives no switch |
+| `allowed-tools` | no | `[]` | A list of strings. Each one is not empty and has no control character |
+| `max-turns` | no | `20` | An integer from 1 to 1,000 |
+| `max-budget-usd` | yes | - | A number above 0, and at most `[evals] max-total-usd` |
+| `runs` | no | `[evals] runs` | An integer from 1 to 100 |
+| `pass-at` | no | the runs of the eval | An integer from 1 to the runs of the eval |
+| `checks` | yes | - | A list that is not empty. Each item has exactly `name` (`[a-z0-9][a-z0-9-]{0,63}`, once in the file) and `run` (not empty) |
+
+```json
+{
+  "id": "fix-keeps-tests",
+  "task": "Fix the failing renew test by changing the code, not the test.",
+  "fixture": "evals/fixtures/renew",
+  "branch": "fix/renew",
+  "allowed-tools": ["Read", "Edit", "Bash(cargo test*)"],
+  "max-turns": 20,
+  "max-budget-usd": 2,
+  "runs": 3,
+  "pass-at": 2,
+  "checks": [
+    { "name": "tests-unchanged", "run": "tests_unchanged" },
+    { "name": "tests-pass", "run": "cargo test --quiet" }
+  ]
+}
+```
+
+`<dir>/check.sh` is a file of the project. It defines the shell functions that the checks call. `eval run` stops with exit code 3 if the file is absent, or if `<dir>` holds no eval.
+
+### The steps
+
+1. It reads the configuration and checks each eval file. An invalid file gives exit code 3 and the message names the path and the rule. It selects the evals of the ids. With no id, it selects each eval, in the order of the id. An unknown id is a usage error.
+2. The estimate is the sum of `runs x max-budget-usd` of the selected evals. If the estimate is above `max-total-usd`, it stops with exit code 3 and starts no process.
+3. It runs `claude --version` once. If `claude` is absent or cannot start, it stops with exit code 3. The message names `claude`.
+4. For each eval and each run (each run runs; there is no early stop):
+    1. It makes a temporary folder, `spec-dna-eval-<pid>-<n>` in the temporary directory of the system (mode 700 on Unix).
+    2. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path. The copy uses the list of git: a file that git ignores is not copied. It copies no symbolic link, and a warning names it.
+    3. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name.
+    4. It starts `claude` in the folder. The arguments are `-p`, the task, then `--allowedTools` with each tool as its own argument (only for a list that is not empty), then `--output-format json --max-turns <n> --max-budget-usd <usd> --permission-mode dontAsk`, then with `--isolate` `--setting-sources project`. It never passes `--bare`, because an eval must load `CLAUDE.md`, the skills and the hooks. The environment is the environment of `eval run`, without `CLAUDE_PROJECT_DIR`, `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`. A session that starts `eval run` keeps its `CLAUDECODE`: `claude -p` starts under it (Claude Code 2.1.325). `eval run` keeps at most 16 MiB of the output of `claude` in memory.
+    5. It reads `total_cost_usd` and `subtype` from the output. The output is one JSON object, or a list of events that ends with the object of type `result`. If the cost is absent, the spend counts `max-budget-usd` for the run.
+    6. It runs each check with `sh -c` in the folder. The script sources `check.sh` of the project (never the copy, so the agent cannot change its checks), and then runs the `run` text of the check. The environment has `SPEC_DNA_CHECK_SH`, the absolute path of that file, and `SPEC_DNA_EVAL_BASE`, the id of the base commit. The checks also run when `claude` failed. A check passes on exit code 0. A run passes when `claude` exits with code 0 and each check passes.
+    7. It deletes the folder, also after an error.
+    8. It adds the cost to the spend. If the spend is above `max-total-usd` and a run is left, it stops. Claude Code checks `--max-budget-usd` against an estimate of the client, so the real cost can be higher than the budget.
+5. An eval passes when its passed runs are at least `min(pass-at, runs)`. The pass rate is the share of the evals that pass, not of the runs. The suite passes when the pass rate is at least `min-pass-rate`.
+
+### Options
+
+| Option | Meaning |
+| --- | --- |
+| `<id>...` | The evals to run |
+| `--runs <n>` | Replaces the `runs` of each selected eval and `[evals] runs`. An integer from 1 to 100 |
+| `--min-pass-rate <r>` | Replaces `[evals] min-pass-rate`. A number from 0 to 1 |
+| `--max-total-usd <n>` | Replaces `[evals] max-total-usd` for the cap. A number above 0 |
+| `--out <dir>` | Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start; if the file exists, `-2`, `-3` and so on). `<dir>` is relative to the repository root, and `eval run` makes it. It cannot be `[evals] dir`, because the check SD506 reads each `*.json` file there. Use for example `<dir>/results` |
+| `--dry-run` | Checks the evals and prints each eval with its runs and the estimate. It starts no process, and writes no file. Exit code 0, or 3 if the estimate is above the cap |
+| `--isolate` | Adds `--setting-sources project`, so a run does not load the user and local settings of the person. It is off by default, so CI and a laptop run the same command. spec-dna does not test what else a run still loads from the folder of the user |
+| `--json` | Prints the result as one JSON object, and no text |
+
+### Output
+
+```text
+eval run: 2 evals, 4 runs, estimate 7.00 USD, cap 20.00 USD
+example: 1 of 1 runs passed, pass-at 1: pass, 0.12 USD
+fix-keeps-tests: 1 of 3 runs passed, pass-at 2: fail, 1.80 USD
+pass rate 50.0 percent (1 of 2 evals), min-pass-rate 80.0 percent: fail
+spend 1.92 USD
+```
+
+A stop by the cap adds `stopped: the spend <s> USD is above max-total-usd <c> USD; <n> runs did not start`, and the line of the pass rate is absent. An eval that did not run all its runs does not pass. The progress of each run goes to stderr.
+
+The result of `--json` and the result file hold the same object. The file is indented. With `--dry-run`, `--json` prints one object: `spec_dna`, `dry_run` (`true`), `evals_dir`, `max_total_usd`, `estimate_usd`, and `evals`, a list with the `id`, `runs`, `pass_at`, `max_budget_usd` and `estimate_usd` of each eval.
+
+```json
+{"spec_dna":"0.5.0","claude_code":"2.1.325","started":"2026-11-15T10:15:00Z","evals_dir":"evals","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}]}]}]}
+```
+
+- `claude_code` is the first word of `claude --version`, or `null`. `stopped` is `null` or `"max-total-usd"`. After a stop, `pass_rate` is `null`, `passed` is `false`, and an eval that did not start has `"results":[]`.
+- `claude_exit` is the exit code of `claude`, or -1 if a signal ended it. `cost_usd` is `null` when `claude` gave no cost. `spend_usd` is the sum that the cap uses.
+- The result has no task text, no check command, no output text of `claude`, no path of the machine and no value of the environment. A project can keep the files in `<dir>/results`, and the pass-rate indicator of `stats --sdlc` reads them. Claude Code can keep its own session files on the machine. spec-dna does not read or copy them.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | The pass rate is at least `min-pass-rate`. Also `--dry-run` |
+| 1 | The pass rate is lower |
+| 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand |
+| 3 | No `[evals]` table, an invalid eval file, no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, or a `claude` that is absent or cannot start |
+| 4 | A git or file error of `eval run` itself: the temporary folder, the copy, the base commit or the result file |
+
 ## transcript
 
 ```text
@@ -578,10 +689,10 @@ Each step that fails gives no output. `git` runs with `GIT_OPTIONAL_LOCKS=0`. Th
 | Code | Meaning |
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
-| 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, or a step of `finish` stopped |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status` or `stats`, and `stats` without `--sdlc` |
-| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `finish`: also an `accepted` change with no base |
-| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files |
+| 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, or the pass rate of `eval run` is below `min-pass-rate` |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status` or `stats`, `stats` without `--sdlc`, and an unknown id of `eval run` |
+| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
+| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `eval run`: the temporary folder, the copy, the base commit or the result file |
 | 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
 
 A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.

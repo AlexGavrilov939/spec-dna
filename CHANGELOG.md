@@ -71,6 +71,14 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - A teammate needs spec-dna 0.6.0 or later on `PATH` for this hook. `init` and the team page say so when the hook is on.
   - The bytes that the harness adds to each request do not change: the hook adds no text to a request.
 
+- The command `spec-dna eval run [<id>...]` runs the evals of `[evals] dir` with headless Claude Code ([docs/commands.md](docs/commands.md#eval)). An eval is a JSON file `<dir>/<id>.json` with a task, a fixture, checks and a budget. It needs the table `[evals]`, and the file `<dir>/check.sh` of the project.
+  - For each run, it copies the fixture and the harness files (`CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `.claude/`, but not `.claude/settings.local.json`) into a temporary git repository, switches to the `branch` of the eval, starts `claude -p`, and runs each check with `sh -c`. The checks source the `check.sh` of the project, never the copy. It never passes `--bare`, so an eval loads `CLAUDE.md`, the skills and the hooks.
+  - An eval passes when at least `pass-at` of its runs pass. The suite passes when the share of evals that pass is at least `min-pass-rate`. Exit code 0 is a pass and 1 is a fail. The options are `--runs`, `--min-pass-rate`, `--max-total-usd`, `--out`, `--dry-run`, `--isolate` and `--json`.
+  - Cost cap: the command refuses to start (exit code 3) when `runs x max-budget-usd` is above `max-total-usd`. It adds the `total_cost_usd` of each run, and stops (exit code 3) when the spend is above the cap and a run is left. A `claude` that is absent gives exit code 3. A git or file error of the runner gives exit code 4.
+  - `--out <dir>` writes the result as `eval-<time>.json`: counts, costs, check names and versions. The result has no task text, no check command and no output text of `claude`.
+  - The output of `claude --output-format json` is one object, or a list of events (one run with Claude Code 2.1.325 gave a list). The runner reads `total_cost_usd` and `subtype` from the `result` object of either form.
+  - spec-dna makes no network call. `claude` does, and each run costs money. The check SD506 for the eval files comes in a later change of this release.
+
 - The commands `spec-dna next <slug> [--base <rev>]` and `spec-dna status [--group <name>] [--base <rev>]` ([docs/commands.md](docs/commands.md#next)).
   - The stage of a change comes from its files, their statuses, the diff against the lifecycle base and the evidence. The stages are `closed`, `plan`, `design`, `build`, `test` and `deploy`.
   - `next` prints a checklist of at most 12 lines to the next gate. Each line says done or open. The last line gives the edit that approves the artifact.
