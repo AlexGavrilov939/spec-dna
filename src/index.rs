@@ -406,4 +406,32 @@ mod tests {
         bytes.pop();
         assert!(decode(&bytes).is_none());
     }
+
+    #[test]
+    fn round_trip_keeps_the_tasks_and_the_open_questions() {
+        let text = "---\nstatus: draft\n---\n# P\n\n## Order\n\n- [ ] t1: First. Files: `a`, `b/*`. Verify: `cargo test`.\n- [x] t2: Second.\n\n## Open questions\n\n- [ ] Who owns it?\n- [x] Which unit? Seconds.\n";
+        let mut m = HashMap::new();
+        m.insert("p".to_string(), Arc::new(crate::parse::parse(text)));
+        let back = decode(&encode(&m)).unwrap();
+        assert_eq!(*back["p"], *m["p"]);
+        let sections: Vec<_> = back["p"].items.iter().map(|i| i.section).collect();
+        assert_eq!(
+            sections,
+            [
+                ItemSection::Order,
+                ItemSection::Order,
+                ItemSection::OpenQuestions,
+                ItemSection::OpenQuestions
+            ]
+        );
+        let tasks: Vec<_> = back["p"]
+            .items
+            .iter()
+            .filter_map(crate::change::parse_task)
+            .collect();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].files, ["a", "b/*"]);
+        assert_eq!(tasks[0].verify.as_deref(), Some("`cargo test`"));
+        assert!(tasks[1].done);
+    }
 }

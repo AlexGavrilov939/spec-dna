@@ -89,7 +89,7 @@ With a `[change] policy` other than `none`, `check` finds the lifecycle base: th
 
 `--json` has the field `change_base`, the commit id of this base, or `null` if git cannot name it. With `none`, the field is not in the output, and `check` reads no second tree and no history for it. If there is no base, the text output prints this note on stderr: `no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>`. Then `check` runs only the checks of one tree. `origin/HEAD` is the only ref that `check` reads for this base. It does not use a local `main` or `master`. A shallow clone can fail to find the merge base. Then `change_base` is `null`. For a stacked pull request, pass the branch below it as `--base`. SD910 trusts `--base`.
 
-The checks of one tree are SD905 (the delta part), SD912, SD914, SD919 and SD920. They need no base. SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
+The checks of one tree are SD905 (the delta part), SD912, SD914, SD919, SD920 and SD922. They need no base. SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
 
 A change can remove or rename a path or an identifier that a document cites. Then `check` gives a warning that names the document (SD606, SD607). In an accepted decision, an amendment section that cites the new path or identifier clears these warnings.
 

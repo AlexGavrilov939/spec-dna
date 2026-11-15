@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 12;
+pub const PARSER_VERSION: u32 = 13;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -47,9 +47,10 @@ pub struct ParsedDoc {
     /// Only a `terms` document uses them (SD904).
     pub terms: Vec<TermRow>,
     /// The top-level list items of the sections that carry a change (`Delta`,
-    /// `Interfaces`, `Decisions`, `Concerns`, `Files` and `Follow-ups`), in
-    /// the order of the file. The parser stores them for every document. Only
-    /// the documents of a change and an incident use them.
+    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`
+    /// and `Open questions`), in the order of the file. The parser stores
+    /// them for every document. Only the documents of a change and an
+    /// incident use them.
     pub items: Vec<ListItem>,
 }
 
@@ -63,16 +64,20 @@ pub enum ItemSection {
     Concerns = 3,
     Files = 4,
     FollowUps = 5,
+    Order = 6,
+    OpenQuestions = 7,
 }
 
 impl ItemSection {
-    pub const ALL: [ItemSection; 6] = [
+    pub const ALL: [ItemSection; 8] = [
         ItemSection::Delta,
         ItemSection::Interfaces,
         ItemSection::Decisions,
         ItemSection::Concerns,
         ItemSection::Files,
         ItemSection::FollowUps,
+        ItemSection::Order,
+        ItemSection::OpenQuestions,
     ];
 
     pub fn heading(self) -> &'static str {
@@ -83,6 +88,8 @@ impl ItemSection {
             ItemSection::Concerns => "Concerns",
             ItemSection::Files => "Files",
             ItemSection::FollowUps => "Follow-ups",
+            ItemSection::Order => "Order",
+            ItemSection::OpenQuestions => "Open questions",
         }
     }
 
@@ -1347,6 +1354,39 @@ mod tests {
             .map(|(s, t, x, l, _)| (*s, *t, x.as_str(), *l))
             .collect();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn items_under_order_and_open_questions() {
+        let src = "# Plan\n\n## Order\n\n- [ ] t1: Step. Files: `a`.\n1. numbered\n\n### Open questions\n\n- [ ] one\n- [x] two, so the answer\n\n## Open question\n\n- not kept\n\n## Orders\n\n- not kept\n";
+        let got: Vec<_> = items(src)
+            .into_iter()
+            .map(|(s, t, x, l, _)| (s, t, x, l))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    ItemSection::Order,
+                    Some(false),
+                    "t1: Step. Files: `a`.".to_string(),
+                    5
+                ),
+                (ItemSection::Order, None, "numbered".to_string(), 6),
+                (
+                    ItemSection::OpenQuestions,
+                    Some(false),
+                    "one".to_string(),
+                    10
+                ),
+                (
+                    ItemSection::OpenQuestions,
+                    Some(true),
+                    "two, so the answer".to_string(),
+                    11
+                ),
+            ]
+        );
     }
 
     #[test]

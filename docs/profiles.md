@@ -23,7 +23,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
 | `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan) | off | warning | warning |
 | `changes` | SD912 (started limit), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
-| `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted) | warning | error | error |
+| `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted), SD922 (question open) | warning | error | error |
 
 The group `changes` needs a `[change] policy` other than `none`: with `none`, each of its codes is off, and no rule turns it on. SD905 (for a change with no delta), SD910, SD913, SD915, SD916, SD917, SD920 (a decision that is not `accepted`) and SD921 compare with the lifecycle base: the merge base of `--base`, or of `origin/HEAD`, with `HEAD`. They do not run if git cannot name it. SD911 reads the base and the history, and it is silent without a base. It is a state code: it is never new, and `check` shows it only with `--all`. SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off), and then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate. SD918 is not in the group yet.
 

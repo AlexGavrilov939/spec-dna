@@ -37,7 +37,7 @@
       "default": "en"
     },
     "change": {
-      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD921 are off, and no rule can turn them on).",
+      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD922 are off, and no rule can turn them on).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -45,7 +45,7 @@
       ],
       "properties": {
         "policy": {
-          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD921 are off and no rule can turn them on.",
+          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD922 are off and no rule can turn them on.",
           "enum": [
             "three-class",
             "two-class",

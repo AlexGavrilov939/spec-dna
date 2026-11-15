@@ -111,6 +111,7 @@ codes! {
     ConcernOpen = "SD919", "concern-open", Warning, "Resolve each open concern of the spec, or remove it, before the spec is `approved`.";
     DecisionNeededUnaccepted = "SD920", "decision-needed-unaccepted", Warning, "Write the decision that the spec needs, and accept it. A change cannot finish while a needed decision is absent or is not `accepted`.";
     TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
+    QuestionOpen = "SD922", "question-open", Warning, "Answer each open question of the spec, or remove it, before the spec is `approved`. Check the box (`- [x]`) and write the answer after the question.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -223,8 +223,8 @@ pub fn by_document(changes: &[ReqChange]) -> BTreeMap<&str, Vec<&ReqChange>> {
 }
 
 /// The checks of the change lifecycle that read one tree: SD905 (the delta
-/// part), SD912, SD914 (without the check of the diff), SD919 and SD920 (the
-/// absent decision). They need no base and no history. `base` is the tree that
+/// part), SD912, SD914 (without the check of the diff), SD919, SD920 (the
+/// absent decision) and SD922. They need no base and no history. `base` is the tree that
 /// the gate compares with. A `REMOVE` line uses it to tell that the head already
 /// has the result of the line. `layers` is the layer of each document of `c`.
 ///
@@ -242,6 +242,7 @@ pub fn tree_checks(
             Code::StartedLimit,
             Code::DeltaInvalid,
             Code::ConcernOpen,
+            Code::QuestionOpen,
             Code::DecisionNeededUnaccepted,
         ]
         .iter()
@@ -266,6 +267,7 @@ pub fn tree_checks(
         }
         let Some(spec) = &ch.spec else { continue };
         let d = &c.docs[spec.doc as usize];
+        out.extend(question_diags(c, ch));
         if spec.status == "approved" {
             concerns(d, &mut out);
             decisions(c, d, &mut out);
@@ -507,6 +509,36 @@ fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
             ));
         }
     }
+}
+
+/// SD922: each open question (`- [ ]` of `Open questions`) of a spec that is
+/// `approved`. `check` and `finish` use this function. It returns nothing for a
+/// change with no spec, for a spec with another status, and for an item with
+/// no task box or with a checked box. It reads no configuration: the caller
+/// applies the severity.
+pub fn question_diags(c: &Corpus, ch: &change::Change) -> Vec<Diag> {
+    let Some(spec) = &ch.spec else {
+        return Vec::new();
+    };
+    if spec.status != "approved" {
+        return Vec::new();
+    }
+    let doc = &c.docs[spec.doc as usize];
+    ch.open_questions(c)
+        .into_iter()
+        .map(|item| {
+            crate::check::diag(
+                doc,
+                item.line,
+                Code::QuestionOpen,
+                short(&item.text),
+                format!(
+                    "the spec is `approved`, and the question `{}` is open",
+                    short(&item.text)
+                ),
+            )
+        })
+        .collect()
 }
 
 /// SD920, the absent part: a decision of `Decisions` that names no document,

@@ -127,7 +127,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 6 sections for each document. The heading must have exactly this text. The case does not matter, and the heading level does not matter. A section ends at the next heading of any level.
+The parser keeps the list items of 8 sections for each document. The heading must have exactly this text. The case does not matter, and the heading level does not matter. A section ends at the next heading of any level.
 
 | Section | Document | Items |
 | --- | --- | --- |
@@ -135,7 +135,9 @@ The parser keeps the list items of 6 sections for each document. The heading mus
 | `Interfaces` | spec | `CHANGE <interface id>: <text>` |
 | `Decisions` | spec | Links `[[decisions/<slug>]]` |
 | `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved |
+| `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922) |
 | `Files` | plan | The first code span of an item is a path or a glob from the repository root. A final `/` matches the folder and all files in it. An item with no code span counts for nothing |
+| `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
 
 Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range and keep the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
@@ -143,6 +145,26 @@ Each item has its text, its line, and its byte range in the file. The range star
 A delta line is one list item with one paragraph and no nested list. The key is a slug. The hash is 16 hexadecimal digits, as `show` prints them. A line can wrap. Each key has one line in the delta. An item in another form is an invalid line: the parser keeps it with its reason, and a check reports it later (SD914).
 
 A requirement also has the byte range of its sentence: the text after the bold key and its colon, without the markers `aliases` and `verified-by` at its end, and without the space at its start and at its end. The hash of a requirement is the hash of this text.
+
+### Tasks of a plan
+
+The `Order` section of a plan holds a task list. A task is one top-level list item with a task box and a task id:
+
+```md
+- [ ] t1: Add the timer to the valve loop. Files: `src/valve.py`, `tests/`. Verify: `cargo test valve`.
+- [x] t2: Write the sensor driver. Files: `src/sensor.py`. Verify: run the driver on the bench.
+```
+
+- The box `[ ]` is an open task. The box `[x]` (or `[X]`) is a done task.
+- The id is a letter or a digit, then letters, digits, `_` or `-`. The colon follows the id, and then a space or the end of the line. The id is stable: do not renumber the tasks of a started change. The case of the id matters.
+- The text is what follows the colon, up to the first label. spec-dna joins the lines of the item into one line and removes one final `.`.
+- `Files:` and `Verify:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the 2 labels does not matter. The first label of each kind counts.
+- The files of a task are the code spans after `Files:`. They are paths or globs from the repository root.
+- The `Verify:` text is a check: a sentence or a command in a code span. An empty text counts as no text.
+- A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
+- If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
+
+The next task is the first task that is open and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it. They are not in this version: it has the parser and the model of the tasks only.
 
 ## Templates
 
@@ -153,8 +175,8 @@ A requirement also has the byte range of its sentence: the text after the bold k
 | `prd` | `intent` | `new intent <slug> --template prd` | Problem, Users, Goals, Non-goals, Success measures, Open questions |
 | `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
 | `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope. The 3 intent templates have `class: routine` |
-| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns |
-| `plan` (default) | `plan` | `new plan <slug>` | Files, Order, Risks, Proof |
+| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns, Open questions |
+| `plan` (default) | `plan` | `new plan <slug>` | Files, Order (2 example tasks), Risks, Proof |
 | `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |
 | `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |
 | `runbook` | `procedure` | `new procedure <slug> --template runbook` | When to use, Steps, Verify, Rollback |

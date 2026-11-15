@@ -235,6 +235,10 @@ Chosen option: {{option}}, because {{reason}}.
 ## Concerns
 
 - {{An open concern.}}
+
+## Open questions
+
+- [ ] {{A question that has no answer yet.}}
 ",
     ),
     (
@@ -246,7 +250,8 @@ Chosen option: {{option}}, because {{reason}}.
 
 ## Order
 
-1. {{Step.}}
+- [ ] t1: {{The first step.}} Files: {{The paths of the step.}} Verify: {{The check of the step.}}
+- [ ] t2: {{The next step.}} Files: {{The paths of the step.}} Verify: {{The check of the step.}}
 
 ## Risks
 
@@ -563,6 +568,34 @@ mod tests {
             }
         }
         assert_eq!(title_of("ops/cache-policy"), "Cache policy");
+    }
+
+    #[test]
+    fn the_spec_and_plan_templates_hold_the_items_that_the_parser_reads() {
+        use crate::change::{plan_tasks, section_items};
+        use crate::parse::ItemSection;
+        let cfg = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n").unwrap();
+        let build = |name: &str, ty| {
+            let (_, raw) = embedded(name).unwrap();
+            let text = instantiate(&raw, ty, "Example", true);
+            corpus_of(&cfg, &place_of(ty), &text)
+        };
+        let c = build("plan", DocType::Plan);
+        let tasks = plan_tasks(&c.docs[0]);
+        let got: Vec<_> = tasks
+            .iter()
+            .map(|t| (t.id.as_str(), t.done, t.duplicate, t.verify.is_some()))
+            .collect();
+        assert_eq!(
+            got,
+            [("t1", false, false, true), ("t2", false, false, true)]
+        );
+        assert!(tasks.iter().all(|t| !t.text.is_empty()));
+        let c = build("spec", DocType::Spec);
+        let q: Vec<_> = section_items(&c.docs[0], ItemSection::OpenQuestions)
+            .map(|i| i.task)
+            .collect();
+        assert_eq!(q, [Some(false)]);
     }
 
     #[test]

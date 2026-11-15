@@ -501,7 +501,7 @@ impl Profile {
             "SD801" | "SD802" | "SD803" | "SD804" | "SD805" => (None, None, Some(W)),
             "SD901" | "SD902" | "SD903" | "SD904" => (None, Some(W), Some(W)),
             "SD905" => (None, Some(W), Some(W)),
-            "SD910" | "SD914" | "SD915" | "SD916" | "SD919" | "SD920" => {
+            "SD910" | "SD914" | "SD915" | "SD916" | "SD919" | "SD920" | "SD922" => {
                 (Some(W), Some(E), Some(E))
             }
             "SD911" | "SD913" => (None, Some(W), Some(W)),
@@ -535,12 +535,12 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
         "changes",
         &[
             "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
-            "SD919", "SD920", "SD921",
+            "SD919", "SD920", "SD921", "SD922",
         ],
     ),
 ];
 
-/// True for a code of the group `changes`: SD905 and SD910 to SD921.
+/// True for a code of the group `changes`: SD905 and SD910 to SD922.
 fn is_change_code(code: Code) -> bool {
     GROUPS
         .iter()
@@ -2467,12 +2467,13 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 Code::TruthChangedWithoutChange,
                 "truth-changed-without-change",
             ),
+            (Code::QuestionOpen, "question-open"),
         ] {
             assert_eq!(code.name(), name);
             assert_eq!(Code::from_code(code.code()), Some(code));
         }
         // The group `layers` holds SD901 to SD904. The group `changes` holds
-        // SD905 and SD910 to SD921, without SD918 (step 4).
+        // SD905 and SD910 to SD922, without SD918 (step 4).
         let c = with(
             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
             "[change]\npolicy = \"two-class\"\n",
@@ -2492,7 +2493,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         use Severity::{Error as E, Warning as W};
         // The design table: code, lite, standard, strict.
         type Sev = Option<Severity>;
-        let rows: [(Code, Sev, Sev, Sev); 11] = [
+        let rows: [(Code, Sev, Sev, Sev); 12] = [
             (Code::FanOut, None, Some(W), Some(W)),
             (Code::GateApprovalMissing, Some(W), Some(E), Some(E)),
             (Code::ChangeStale, None, Some(W), Some(W)),
@@ -2503,6 +2504,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             (Code::DeltaEvidenceMissing, Some(W), Some(E), Some(E)),
             (Code::ClassTooLow, None, Some(W), Some(E)),
             (Code::ConcernOpen, Some(W), Some(E), Some(E)),
+            (Code::QuestionOpen, Some(W), Some(E), Some(E)),
             (Code::DecisionNeededUnaccepted, Some(W), Some(E), Some(E)),
         ];
         for (code, lite, standard, strict) in rows {
@@ -2613,6 +2615,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             Code::DeltaEvidenceMissing,
             Code::ClassTooLow,
             Code::ConcernOpen,
+            Code::QuestionOpen,
             Code::DecisionNeededUnaccepted,
             Code::TruthChangedWithoutChange,
         ];

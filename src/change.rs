@@ -347,6 +347,209 @@ pub fn applied(line: &DeltaLine, base: &Corpus, head: &Corpus) -> Applied {
     if yes { Applied::Yes } else { Applied::No }
 }
 
+/// One task of the `Order` section of a plan: a list item with a task box and
+/// an id. The item form is
+/// `- [ ] <id>: <text>. Files: `path`, `glob`. Verify: <text or `command`>.`
+/// The id is `[A-Za-z0-9][A-Za-z0-9_-]*` and a colon. A list item of `Order`
+/// that has no task box, or has no id of this form, is not a task.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanTask {
+    pub id: String,
+    /// True for `- [x]` (or `- [X]`), false for `- [ ]`.
+    pub done: bool,
+    /// The text after the id and the colon, before the first label, on one
+    /// line. One final `.` is removed.
+    pub text: String,
+    /// The code spans after the label `Files:`, in the order of the file.
+    pub files: Vec<String>,
+    /// The text after the label `Verify:`, on one line. One final `.` is
+    /// removed. `None` if the label is absent or has no text.
+    pub verify: Option<String>,
+    pub line: u32,
+    /// The byte range of the item in the source of the plan.
+    pub range: Range<u32>,
+    /// True if an earlier task of the same plan has this id. The first task
+    /// with an id counts. A task with `duplicate` is not the next task.
+    pub duplicate: bool,
+}
+
+/// Parses one item of the `Order` section as a task. Returns `None` if the
+/// item is not a task (`duplicate` is false: `plan_tasks` sets it). The
+/// labels `Files:` and `Verify:` are case-sensitive, they follow white space
+/// or the start of the text, and a code span does not hold a label. Each is
+/// optional and ends at the next label.
+pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
+    let done = item.task?;
+    let text = item.text.as_str();
+    // The labels outside code spans: (start, end, is the label `Files:`).
+    let mut labels: Vec<(usize, usize, bool)> = Vec::new();
+    for (start, end) in plain_pieces(text) {
+        for (label, files) in [("Files:", true), ("Verify:", false)] {
+            let mut from = start;
+            while let Some(i) = text[from..end].find(label) {
+                let pos = from + i;
+                if pos == 0 || text[..pos].ends_with(char::is_whitespace) {
+                    labels.push((pos, pos + label.len(), files));
+                }
+                from = pos + label.len();
+            }
+        }
+    }
+    labels.sort();
+    let head_end = labels.first().map_or(text.len(), |l| l.0);
+    let head = text[..head_end].trim_start();
+    let id_len = head
+        .char_indices()
+        .find(|&(i, c)| !(c.is_ascii_alphanumeric() || (i > 0 && (c == '-' || c == '_'))))
+        .map_or(head.len(), |(i, _)| i);
+    let after = head[id_len..].strip_prefix(':')?;
+    if id_len == 0 || !(after.is_empty() || after.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    let mut files = None;
+    let mut verify = None;
+    for (n, &(_, end, is_files)) in labels.iter().enumerate() {
+        let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
+        let seg = &text[end..stop];
+        if is_files {
+            files.get_or_insert_with(|| code_spans(seg));
+        } else if verify.is_none() {
+            let v = one_line(seg);
+            verify = Some((!v.is_empty()).then_some(v));
+        }
+    }
+    Some(PlanTask {
+        id: head[..id_len].to_string(),
+        done,
+        text: one_line(after),
+        files: files.unwrap_or_default(),
+        verify: verify.flatten(),
+        line: item.line,
+        range: item.range.clone(),
+        duplicate: false,
+    })
+}
+
+/// The text on one line: each run of white space is one space, and one final
+/// `.` is removed.
+fn one_line(s: &str) -> String {
+    let t = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    t.strip_suffix('.').unwrap_or(&t).trim_end().to_string()
+}
+
+/// The byte ranges of `text` that are not in a code span. A code span is a run
+/// of backticks, and the next run of the same length. A run with no match is
+/// plain text.
+fn plain_pieces(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut plain = 0;
+    for (start, end, _) in spans(text) {
+        out.push((plain, start));
+        plain = end;
+    }
+    out.push((plain, text.len()));
+    out
+}
+
+/// The text of each code span of `text`, with no space at the ends.
+fn code_spans(text: &str) -> Vec<String> {
+    spans(text)
+        .into_iter()
+        .map(|(_, _, c)| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+/// The code spans of `text`: the start, the end (after the last backtick) and
+/// the content.
+fn spans(text: &str) -> Vec<(usize, usize, &str)> {
+    let b = text.as_bytes();
+    let run = |i: usize| b[i..].iter().take_while(|&&c| c == b'`').count();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let n = run(i);
+        let mut j = i + n;
+        let mut close = None;
+        while j < b.len() {
+            if b[j] == b'`' {
+                let m = run(j);
+                if m == n {
+                    close = Some(j);
+                    break;
+                }
+                j += m;
+            } else {
+                j += 1;
+            }
+        }
+        match close {
+            Some(j) => {
+                out.push((i, j + n, &text[i + n..j]));
+                i = j + n;
+            }
+            None => i += n,
+        }
+    }
+    out
+}
+
+/// The tasks of the `Order` section of a plan, in the order of the file. A
+/// task whose id an earlier task has gets `duplicate = true`. Ids are case
+/// sensitive.
+pub fn plan_tasks(plan: &Doc) -> Vec<PlanTask> {
+    tasks_of(section_items(plan, ItemSection::Order))
+}
+
+/// The tasks of the items of an `Order` section (see `plan_tasks`).
+fn tasks_of<'a>(items: impl Iterator<Item = &'a ListItem>) -> Vec<PlanTask> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut tasks: Vec<PlanTask> = items.filter_map(parse_task).collect();
+    for t in &mut tasks {
+        t.duplicate = !seen.insert(t.id.clone());
+    }
+    tasks
+}
+
+/// The first task that is not done and is not a duplicate.
+pub fn next_open_task(tasks: &[PlanTask]) -> Option<&PlanTask> {
+    tasks.iter().find(|t| !t.done && !t.duplicate)
+}
+
+impl Change {
+    /// The tasks of the plan, in the order of the file. A change with no plan
+    /// has none.
+    #[allow(dead_code)] // reader: S7
+    pub fn tasks(&self, corpus: &Corpus) -> Vec<PlanTask> {
+        match &self.plan {
+            Some(a) => plan_tasks(&corpus.docs[a.doc as usize]),
+            None => Vec::new(),
+        }
+    }
+
+    /// The first open task of the plan, in the order of the file.
+    #[allow(dead_code)] // reader: S7
+    pub fn next_open_task(&self, corpus: &Corpus) -> Option<PlanTask> {
+        next_open_task(&self.tasks(corpus)).cloned()
+    }
+
+    /// The open questions of the spec: the items `- [ ]` of its `Open
+    /// questions` section. A resolved question (`- [x]`) and an item with no
+    /// task box are not open.
+    pub fn open_questions<'a>(&self, corpus: &'a Corpus) -> Vec<&'a ListItem> {
+        let Some(a) = &self.spec else {
+            return Vec::new();
+        };
+        section_items(&corpus.docs[a.doc as usize], ItemSection::OpenQuestions)
+            .filter(|i| i.task == Some(false))
+            .collect()
+    }
+}
+
 /// The targets `<id>#<key>` of the valid `ADD` lines of the changes with an
 /// `accepted` intent, if the tree has no such requirement yet. A `covers:` tag
 /// can name such a requirement before `finish` writes it (SD105). The id is as
@@ -684,5 +887,212 @@ mod tests {
         got.sort();
         // `valve#close` is in the tree already.
         assert_eq!(got, ["requirements/new#first", "requirements/valve#flush"]);
+    }
+
+    /// The tasks of the `Order` section of a plan with the lines `lines`.
+    fn tasks(lines: &[&str]) -> Vec<PlanTask> {
+        let src = format!("# P\n\n## Order\n\n{}\n", lines.join("\n"));
+        tasks_of_source(&src)
+    }
+
+    fn tasks_of_source(src: &str) -> Vec<PlanTask> {
+        let d = parse(src);
+        let items = d.items.iter().filter(|i| i.section == ItemSection::Order);
+        tasks_of(items)
+    }
+
+    #[test]
+    fn task_ids_follow_the_grammar() {
+        for id in ["t1", "T-1", "a_b", "0x", "plan-3", "A", "a--b__c", "123"] {
+            let t = tasks(&[&format!("- [ ] {id}: Do it.")]);
+            assert_eq!(t.len(), 1, "{id}");
+            assert_eq!(t[0].id, id);
+            assert_eq!(t[0].text, "Do it");
+        }
+        for line in [
+            "- [ ] -t1: x",
+            "- [ ] _t1: x",
+            "- [ ] t 1: x",
+            "- [ ] t1 x",
+            "- [ ] t1 : x",
+            "- [ ] t.1: x",
+            "- [ ] \u{fc}1: x",
+            "- [ ] : x",
+            "- [ ] t1:x",
+            "- [ ] https://example.org/a",
+            "- [ ] **t1**: x",
+            "- [ ] `t1`: x",
+            "- [ ] Write the code",
+            "- [ ]",
+            // No task box: not a task.
+            "- t1: x",
+            "1. t1: x",
+        ] {
+            assert!(tasks(&[line]).is_empty(), "{line}");
+        }
+        // The colon can end the item.
+        assert_eq!(tasks(&["- [ ] t1:"]).len(), 1);
+        // Another list marker is fine, and so is a number.
+        let t = tasks(&["* [ ] a: x", "+ [x] b: y", "1. [ ] c: z", "2) [X] d: w"]);
+        let got: Vec<_> = t.iter().map(|t| (t.id.as_str(), t.done)).collect();
+        assert_eq!(got, [("a", false), ("b", true), ("c", false), ("d", true)]);
+    }
+
+    #[test]
+    fn a_line_that_is_not_a_task_is_ignored() {
+        let t = tasks(&[
+            "- Prose item.",
+            "- [ ] t1: First.",
+            "- [ ] Not a task",
+            "- [x] t2: Second.",
+        ]);
+        let ids: Vec<_> = t.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["t1", "t2"]);
+        // A task box outside `Order` is not a task of the plan.
+        let d = parse("# P\n\n## Risks\n\n- [ ] t1: x\n");
+        assert!(tasks_of(d.items.iter().filter(|i| i.section == ItemSection::Order)).is_empty());
+    }
+
+    #[test]
+    fn files_and_verify_are_labels_after_the_text() {
+        let t = tasks(&[
+            "- [ ] t1: Add the timer. Files: `src/timer.rs`, `src/*.rs`. Verify: `cargo test timer`.",
+            "- [ ] t2: Only text.",
+            "- [ ] t3: Text. Verify: read the log. Files: `a/`.",
+            "- [x] t4: Text. Files: no code span here. Verify: .",
+            "- [ ] t5: Text. files: `x`. Verify : `y`.",
+            "- [ ] t6: Text.Files: `x`.",
+            "- [ ] t7: Text with `Files: not a label` inside code. Verify: ok",
+            "- [ ] t8: Text. Files: ``a `b` c``, ` d `.",
+            "- [ ] t9: Text. Files: `a`. Files: `b`. Verify: one. Verify: two.",
+        ]);
+        let f = |n: usize| (t[n].text.as_str(), t[n].files.clone(), t[n].verify.clone());
+        assert_eq!(
+            f(0),
+            (
+                "Add the timer",
+                vec!["src/timer.rs".to_string(), "src/*.rs".to_string()],
+                Some("`cargo test timer`".to_string())
+            )
+        );
+        assert_eq!(f(1), ("Only text", vec![], None));
+        // The order of the labels does not matter.
+        assert_eq!(
+            f(2),
+            (
+                "Text",
+                vec!["a/".to_string()],
+                Some("read the log".to_string())
+            )
+        );
+        // An empty `Verify:` is no text.
+        assert_eq!(f(3), ("Text", vec![], None));
+        // A label is case-sensitive, and it follows white space.
+        assert_eq!(f(4).1, Vec::<String>::new());
+        assert_eq!(f(4).0, "Text. files: `x`. Verify : `y`");
+        assert_eq!(f(5), ("Text.Files: `x`", vec![], None));
+        // A code span does not hold a label.
+        assert_eq!(
+            f(6),
+            (
+                "Text with `Files: not a label` inside code",
+                vec![],
+                Some("ok".to_string())
+            )
+        );
+        // A code span with a longer run of backticks, and the trim of a span.
+        assert_eq!(f(7).1, ["a `b` c", "d"]);
+        // The first label of each kind counts.
+        assert_eq!(f(8).1, ["a"]);
+        assert_eq!(f(8).2.as_deref(), Some("one"));
+        assert!(t[3].done && !t[0].done);
+    }
+
+    #[test]
+    fn a_task_can_span_lines_and_hold_a_nested_list() {
+        let src = "# P\n\n## Order\n\n- [ ] t1: First line\n  and the second line.\n  Files: `a`.\n  - [ ] t9: a nested box\n  - [x] nested two\n- [x] t2: Next.\n\n  A second paragraph.\n- [ ] t3: Last.\n";
+        let t = tasks_of_source(src);
+        let ids: Vec<_> = t.iter().map(|t| t.id.as_str()).collect();
+        // A nested item is part of its parent, and it is no task.
+        assert_eq!(ids, ["t1", "t2", "t3"]);
+        assert_eq!(t[0].text, "First line and the second line");
+        assert_eq!(t[0].files, ["a"]);
+        assert_eq!(t[0].line, 5);
+        assert_eq!(t[1].line, 10);
+        assert!(src[t[0].range.start as usize..t[0].range.end as usize].ends_with("nested two\n"));
+        assert!(t[1].done);
+    }
+
+    #[test]
+    fn the_byte_range_of_a_task_keeps_crlf() {
+        let src = "---\r\nstatus: draft\r\n---\r\n# P\r\n\r\n## Order\r\n\r\n- [ ] t1: One. Files: `a`.\r\n- [x] t2: Two.\r\n  - nested\r\n\r\n- [ ] t3: Three. Verify: `go`.";
+        let t = tasks_of_source(src);
+        let slice = |n: usize| &src[t[n].range.start as usize..t[n].range.end as usize];
+        assert_eq!(slice(0), "- [ ] t1: One. Files: `a`.\r\n");
+        assert_eq!(slice(1), "- [x] t2: Two.\r\n  - nested\r\n");
+        assert_eq!(slice(2), "- [ ] t3: Three. Verify: `go`.");
+        assert_eq!(t[0].text, "One");
+        assert_eq!(t[0].files, ["a"]);
+        assert_eq!(t[2].verify.as_deref(), Some("`go`"));
+        assert_eq!((t[0].line, t[1].line, t[2].line), (8, 9, 12));
+    }
+
+    #[test]
+    fn the_first_task_with_an_id_counts() {
+        let t = tasks(&[
+            "- [ ] t1: First.",
+            "- [x] t2: Second.",
+            "- [ ] t1: Again.",
+            "- [ ] T1: Other case.",
+            "- [ ] t2: Done again.",
+        ]);
+        let dup: Vec<_> = t.iter().map(|t| t.duplicate).collect();
+        assert_eq!(dup, [false, false, true, false, true]);
+        // `next_open_task` skips a duplicate: the open `t1` of line 3 is not it.
+        assert_eq!(next_open_task(&t).unwrap().text, "First");
+        let t = tasks(&["- [x] t1: First.", "- [ ] t1: Again."]);
+        assert!(t[1].duplicate);
+        assert!(next_open_task(&t).is_none());
+    }
+
+    #[test]
+    fn the_next_open_task_is_the_first_open_task_in_file_order() {
+        let plan = |lines: &str| {
+            format!(
+                "---\nstatus: draft\n---\n# P\n\n## Order\n\n{lines}\n\n## Risks\n\n- [ ] r1: A risk.\n"
+            )
+        };
+        let next = |lines: &str| {
+            let c = corpus(&[("docs/intent/x/plan.md", &plan(lines))]);
+            collect(&c)[0].next_open_task(&c).map(|t| t.id)
+        };
+        assert_eq!(next("- [ ] b: x\n- [ ] a: y"), Some("b".to_string()));
+        assert_eq!(
+            next("- [x] b: x\n- [ ] a: y\n- [ ] c: z"),
+            Some("a".to_string())
+        );
+        assert_eq!(next("- [x] b: x\n- [X] a: y"), None);
+        assert_eq!(next("1. Step one.\n2. Step two."), None);
+        assert_eq!(next(""), None);
+        // A change with no plan has no task.
+        let c = corpus(&[("docs/intent/x/intent.md", "---\nstatus: draft\n---\n# I\n")]);
+        assert!(collect(&c)[0].tasks(&c).is_empty());
+        assert_eq!(collect(&c)[0].next_open_task(&c), None);
+    }
+
+    #[test]
+    fn open_questions_are_the_unchecked_items_of_the_section() {
+        let spec = "---\nstatus: draft\n---\n# S\n\n## Concerns\n\n- [ ] A concern.\n\n### open QUESTIONS\n\n- [ ] Who owns it?\n- [x] Which unit? Seconds.\n- A bullet with no box.\n- [ ] Is 5 a limit?\n  - [ ] nested\n\n## Files\n\n- [ ] no\n";
+        let c = corpus(&[("docs/intent/x/spec.md", spec)]);
+        let ch = &collect(&c)[0];
+        let q: Vec<_> = ch
+            .open_questions(&c)
+            .iter()
+            .map(|i| i.text.clone())
+            .collect();
+        // The heading level and the case do not matter. `Concerns` is not it.
+        assert_eq!(q, ["Who owns it?", "Is 5 a limit?"]);
+        let c = corpus(&[("docs/intent/x/plan.md", "---\nstatus: draft\n---\n# P\n")]);
+        assert!(collect(&c)[0].open_questions(&c).is_empty());
     }
 }
