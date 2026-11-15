@@ -1546,28 +1546,40 @@ fn validate_harness(h: &Harness) -> Result<(), String> {
 }
 
 /// The harness files that exist: (path, text) of `CLAUDE.md`,
-/// `.claude/settings.json` and `.claude/agents/*.md`.
+/// `.claude/settings.json`, `REVIEW.md`, `.claude/agents/*.md` and
+/// `.claude/skills/*/SKILL.md`. The adapter skill is not one of them.
 fn harness_existing(repo: &Repo) -> Vec<(String, String)> {
     let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).ok();
     let mut out = Vec::new();
-    for p in [harness::CLAUDE, harness::SETTINGS] {
+    for p in [harness::CLAUDE, harness::SETTINGS, harness::REVIEW] {
         if let Some(t) = read(p) {
             out.push((p.to_string(), t));
         }
     }
-    if let Ok(dir) = std::fs::read_dir(repo.root.join(harness::AGENTS_DIR)) {
-        let mut names: Vec<String> = dir
+    let names = |dir: &str| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(repo.root.join(dir))
+            .into_iter()
+            .flatten()
             .flatten()
             .filter_map(|e| e.file_name().into_string().ok())
             .collect();
         names.sort();
-        for n in names {
-            let p = format!("{}{n}", harness::AGENTS_DIR);
-            if harness::wanted(&p)
-                && let Some(t) = read(&p)
-            {
-                out.push((p, t));
-            }
+        names
+    };
+    for n in names(harness::AGENTS_DIR) {
+        let p = format!("{}{n}", harness::AGENTS_DIR);
+        if harness::wanted(&p)
+            && let Some(t) = read(&p)
+        {
+            out.push((p, t));
+        }
+    }
+    for n in names(harness::SKILLS_DIR) {
+        let p = format!("{}{n}/SKILL.md", harness::SKILLS_DIR);
+        if harness::wanted(&p)
+            && let Some(t) = read(&p)
+        {
+            out.push((p, t));
         }
     }
     out
@@ -1773,8 +1785,13 @@ fn print_harness(h: &HarnessRun, with_files: bool) {
         println!("  warning: {w}");
     }
     if h.level != Level::None {
+        let what = if h.plan.skill_bytes > 0 {
+            "the CLAUDE.md line, the agent descriptions and the skill descriptions"
+        } else {
+            "the CLAUDE.md line and the agent descriptions"
+        };
         println!(
-            "  The harness adds about {} bytes to each request of the main session (the CLAUDE.md line and the agent descriptions).",
+            "  The harness adds about {} bytes to each request of the main session ({what}).",
             h.plan.request_bytes
         );
         println!("  Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.");

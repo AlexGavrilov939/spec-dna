@@ -11,6 +11,7 @@
 use crate::adapters::VERSION;
 use crate::config::Fields;
 use crate::diag::{Code, Diag};
+use crate::harness_text;
 use crate::hash::{hash_normalized, hex};
 use crate::json::{self, Value};
 use toml::Value as Toml;
@@ -307,7 +308,6 @@ impl Skill {
     }
 
     /// The name of the skill: `spec-dna-intent`.
-    #[allow(dead_code)] // The text of the skills (step 4, S3) reads it.
     pub fn name(self) -> String {
         format!("spec-dna-{}", self.key())
     }
@@ -971,6 +971,24 @@ fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) 
     format!("{s}\n{}\n", marker_text(&s))
 }
 
+/// The text of a stage skill file: the front matter, the body and the marker.
+/// The text is static, so the file is the same in each project.
+fn render_skill(skill: Skill) -> String {
+    let s = format!(
+        "---\nname: {}\ndescription: {}\n---\n\n{}\n",
+        skill.name(),
+        harness_text::description(skill),
+        harness_text::body(skill)
+    );
+    format!("{s}\n{}\n", marker_text(&s))
+}
+
+/// The text of `REVIEW.md`: the review policy and the marker.
+fn render_review() -> String {
+    let s = harness_text::review_md();
+    format!("{s}\n{}\n", marker_text(&s))
+}
+
 fn shown(m: &Model) -> &str {
     match m {
         Model::Inherit => "inherit",
@@ -1054,6 +1072,22 @@ fn team_page(h: &Harness) -> String {
     }
     s += "\n## Precedence\n\nThis project file has priority over the user settings. The options `--model`, `--effort` and `--advisor`, and a resumed session, have priority over this project file.\n";
     s += "\n## Reload\n\nClaude Code reloads `advisorModel`, `fallbackModel`, `env` and the `.claude/agents` directory while it runs. Claude Code reads `model` and `modelSettings` only when a session starts.\n";
+    if !h.skills.is_empty() {
+        let names: Vec<String> = h.skills.iter().map(|k| format!("`{}`", k.name())).collect();
+        s += &format!(
+            "\n## Skills\n\nspec-dna writes these stage skills: {}. Each skill runs spec-dna commands for one stage of a change.\n",
+            names.join(", ")
+        );
+    }
+    if h.review_md {
+        s += &format!(
+            "\n## Review policy\n\n`{REVIEW}` holds the review policy of the Code Review service. The local review command does not read it."
+        );
+        if h.skills.contains(&Skill::Review) {
+            s += " The skill `spec-dna-review` has the same text.";
+        }
+        s += "\n";
+    }
     if h.context_hook_on() || h.fanout_hook_on() {
         s += "\n## Hooks\n\n";
         if h.context_hook_on() {
@@ -1074,14 +1108,17 @@ fn team_page(h: &Harness) -> String {
 pub struct Generated {
     pub path: String,
     pub text: String,
-    /// The agent name, or `None` for the team page.
+    /// The agent name, or `None` for another file.
     pub agent: Option<&'static str>,
+    /// The skill, for the file of a stage skill.
+    pub skill: Option<Skill>,
     /// A short description for a preview.
     pub note: String,
 }
 
 /// The files that a configuration generates as a whole: the agent files in the
-/// order of the roles, and the team page. Level `none` gives no file.
+/// order of the roles, the stage skills in the order of `Skill`, `REVIEW.md`
+/// and the team page. Level `none` gives no file.
 pub fn generated_files(h: &Harness) -> Vec<Generated> {
     let mut out = Vec::new();
     if h.level == Level::None {
@@ -1109,24 +1146,69 @@ pub fn generated_files(h: &Harness) -> Vec<Generated> {
             path: def.path(),
             text: render_agent(def, model, c.effort, &h.deny),
             agent: Some(def.name),
+            skill: None,
             note,
+        });
+    }
+    for skill in &h.skills {
+        out.push(Generated {
+            path: skill.path(),
+            text: render_skill(*skill),
+            agent: None,
+            skill: Some(*skill),
+            note: format!("skill {}", skill.name()),
+        });
+    }
+    if h.review_md {
+        out.push(Generated {
+            path: REVIEW.to_string(),
+            text: render_review(),
+            agent: None,
+            skill: None,
+            note: "review policy".to_string(),
         });
     }
     out.push(Generated {
         path: TEAM_PAGE.to_string(),
         text: team_page(h),
         agent: None,
+        skill: None,
         note: "team page".to_string(),
     });
     out
 }
 
+/// The folder of the skills of Claude Code.
+pub const SKILLS_DIR: &str = ".claude/skills/";
+
+/// The folder of the adapter skill of ADR 0003. It has its own marker, and the
+/// harness never reads, writes or removes it.
+const ADAPTER_SKILL: &str = ".claude/skills/spec-dna/SKILL.md";
+
+/// Returns true for the file of a skill: `.claude/skills/<name>/SKILL.md`, one
+/// folder level, except the adapter skill.
+fn is_skill_path(path: &str) -> bool {
+    path != ADAPTER_SKILL
+        && path
+            .strip_prefix(SKILLS_DIR)
+            .and_then(|r| r.strip_suffix("/SKILL.md"))
+            .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+}
+
+/// Returns true for a file that the harness generates as a whole and that
+/// `init --reconfigure` can remove: an agent file, a skill file or `REVIEW.md`.
+pub fn is_generated_kind(path: &str) -> bool {
+    path == REVIEW || is_skill_path(path) || (path.starts_with(AGENTS_DIR) && wanted(path))
+}
+
 /// Returns true for a path that the harness can write: an agent file in
-/// `.claude/agents`, `.claude/settings.json` and `CLAUDE.md`. `init` and
-/// `check` read these paths.
+/// `.claude/agents`, a skill file, `REVIEW.md`, `.claude/settings.json` and
+/// `CLAUDE.md`. `init` and `check` read these paths.
 pub fn wanted(path: &str) -> bool {
     path == CLAUDE
         || path == SETTINGS
+        || path == REVIEW
+        || is_skill_path(path)
         || path
             .strip_prefix(AGENTS_DIR)
             .is_some_and(|r| r.ends_with(".md") && !r.contains('/'))
@@ -1144,8 +1226,10 @@ pub fn is_output_path(path: &str) -> bool {
     path == CLAUDE
         || path == SETTINGS
         || path == TEAM_PAGE
+        || path == REVIEW
         || OLD_AGENT_PATHS.contains(&path)
         || AGENT_DEFS.iter().any(|d| d.path() == path)
+        || Skill::ALL.iter().any(|s| s.path() == path)
 }
 
 // ---- The line of CLAUDE.md ----
@@ -1742,8 +1826,11 @@ pub struct Plan {
     pub kept: Vec<String>,
     pub warnings: Vec<String>,
     /// The bytes that the harness adds to each request of the main session:
-    /// the line of `CLAUDE.md` and the agent descriptions.
+    /// the line of `CLAUDE.md`, the agent descriptions and the skill listing.
+    /// `REVIEW.md` adds none.
     pub request_bytes: usize,
+    /// The part of `request_bytes` that the skill listing gives.
+    pub skill_bytes: usize,
 }
 
 /// Returns the name of an agent file: the `name` of its front matter, else the
@@ -1783,10 +1870,10 @@ pub fn name_conflicts(existing: &[(String, String)]) -> Vec<(Role, String)> {
     out
 }
 
-/// Returns true if an agent file or the line of `CLAUDE.md` exists.
+/// Returns true if a generated file or the line of `CLAUDE.md` exists.
 pub fn is_installed(existing: &[(String, String)]) -> bool {
     existing.iter().any(|(p, t)| {
-        (p.starts_with(AGENTS_DIR) && has_marker(t)) || (p == CLAUDE && find_line(t).is_some())
+        (is_generated_kind(p) && has_marker(t)) || (p == CLAUDE && find_line(t).is_some())
     })
 }
 
@@ -1857,8 +1944,15 @@ pub fn plan(
                     text: g.text.clone(),
                 }),
                 State::NoMarker => {
+                    let way = if g.skill.is_some() {
+                        "move it, or remove the skill from `skills` in [harness]"
+                    } else if g.path == REVIEW {
+                        "move it, or set `review-md = false` in [harness]"
+                    } else {
+                        "move it, or turn the harness off"
+                    };
                     return Err(format!(
-                        "{} exists, and spec-dna did not generate it; move it, or turn the harness off",
+                        "{} exists, and spec-dna did not generate it; {way}",
                         g.path
                     ));
                 }
@@ -1867,7 +1961,7 @@ pub fn plan(
     }
     if mode == Mode::Reconfigure {
         for (p, t) in existing {
-            if !p.starts_with(AGENTS_DIR) || !wanted(p) || expected.iter().any(|g| g.path == *p) {
+            if !is_generated_kind(p) || expected.iter().any(|g| g.path == *p) {
                 continue;
             }
             let Some(m) = file_marker(t) else { continue };
@@ -1886,12 +1980,19 @@ pub fn plan(
     claude_change(&mut plan, get(CLAUDE), new, mode);
     settings_change(&mut plan, get(SETTINGS), old, new, mode)?;
     plan.warnings = new.warnings();
+    let line = |name: &str, description: &str| format!("- {name}: {description}\n").len();
+    for g in generated_files(new) {
+        if let Some(skill) = g.skill {
+            plan.skill_bytes += line(&skill.name(), harness_text::description(skill));
+        }
+    }
     plan.request_bytes = claude_line(new).map_or(0, |l| l.len() + 1)
+        + plan.skill_bytes
         + generated_files(new)
             .iter()
             .filter_map(|g| {
                 let def = AGENT_DEFS.iter().find(|d| Some(d.name) == g.agent)?;
-                Some(format!("- {}: {}\n", def.name, def.description).len())
+                Some(line(def.name, def.description))
             })
             .sum::<usize>();
     Ok(plan)
@@ -3592,5 +3693,158 @@ opus = "xhigh"
             GoneRole::SpecWriter.word_message()
         )));
         assert!(!GoneRole::is_word_error("unknown role `judge`"));
+    }
+
+    fn with_skills(extra: &str) -> Harness {
+        parse(&format!("level = \"lean\"\n{extra}")).unwrap()
+    }
+
+    #[test]
+    fn wanted_accepts_a_skill_file_and_review_md_but_not_the_adapter_skill() {
+        for p in [
+            "REVIEW.md",
+            ".claude/skills/spec-dna-intent/SKILL.md",
+            ".claude/skills/mine/SKILL.md",
+        ] {
+            assert!(wanted(p), "{p}");
+        }
+        for p in [
+            ".claude/skills/spec-dna/SKILL.md",
+            ".claude/skills/SKILL.md",
+            ".claude/skills//SKILL.md",
+            ".claude/skills/a/b/SKILL.md",
+            ".claude/skills/a/README.md",
+            "docs/REVIEW.md",
+            "review.md",
+        ] {
+            assert!(!wanted(p), "{p}");
+        }
+        assert!(is_generated_kind("REVIEW.md"));
+        assert!(!is_generated_kind(CLAUDE));
+        assert!(!is_generated_kind(SETTINGS));
+        assert!(!is_generated_kind(".claude/skills/spec-dna/SKILL.md"));
+    }
+
+    #[test]
+    fn is_output_path_accepts_the_skills_and_review_md() {
+        for s in Skill::ALL {
+            assert!(is_output_path(&s.path()), "{s:?}");
+        }
+        assert!(is_output_path("REVIEW.md"));
+        assert!(!is_output_path(".claude/skills/spec-dna/SKILL.md"));
+        assert!(!is_output_path(".claude/skills/mine/SKILL.md"));
+    }
+
+    #[test]
+    fn generated_files_put_the_skills_and_review_md_between_the_agents_and_the_page() {
+        let h = with_skills("skills = [\"review\", \"intent\"]\nreview-md = true");
+        let paths: Vec<String> = generated_files(&h).into_iter().map(|g| g.path).collect();
+        let want = [
+            ".claude/agents/fallback-advisor.md",
+            ".claude/agents/verifier.md",
+            ".claude/agents/Explore.md",
+            ".claude/skills/spec-dna-intent/SKILL.md",
+            ".claude/skills/spec-dna-review/SKILL.md",
+            "REVIEW.md",
+            TEAM_PAGE,
+        ];
+        assert_eq!(paths, want);
+        // Level `none` gives nothing, also with the keys.
+        let mut none = h.clone();
+        none.level = Level::None;
+        assert!(generated_files(&none).is_empty());
+        // The keys off give the files of step 4 S2.
+        let off = with_skills("");
+        assert_eq!(generated_files(&off).len(), 4);
+    }
+
+    #[test]
+    fn a_skill_file_has_the_front_matter_the_body_and_the_marker_last() {
+        let h = with_skills("skills = [\"plan\"]");
+        let g = generated_files(&h)
+            .into_iter()
+            .find(|g| g.skill == Some(Skill::Plan))
+            .unwrap();
+        assert!(
+            g.text
+                .starts_with("---\nname: spec-dna-plan\ndescription: Writes plan.md of a change")
+        );
+        let m = file_marker(&g.text).expect("marker");
+        assert!(!m.edited());
+        assert!(g.text.ends_with(" -->\n"));
+        assert_eq!(m.after, "");
+        // The text is static: another configuration gives the same file.
+        let mut other = with_skills("skills = [\"plan\"]");
+        other.cfg_mut(Role::Verifier).model = Model::Id("sonnet".into());
+        let g2 = generated_files(&other)
+            .into_iter()
+            .find(|g| g.skill == Some(Skill::Plan))
+            .unwrap();
+        assert_eq!(g.text, g2.text);
+    }
+
+    #[test]
+    fn the_request_bytes_count_the_listing_of_the_skills_and_nothing_for_review_md() {
+        let plan_of = |h: &Harness| plan(&[], None, h, Mode::Reconfigure).unwrap().request_bytes;
+        let off = plan_of(&with_skills(""));
+        assert_eq!(plan_of(&with_skills("review-md = true")), off);
+        let all = plan_of(&with_skills(
+            "skills = [\"intent\", \"spec\", \"plan\", \"review\"]",
+        ));
+        let listing: usize = Skill::ALL
+            .iter()
+            .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
+            .sum();
+        assert_eq!(all, off + listing);
+        assert!(listing <= 800);
+    }
+
+    #[test]
+    fn the_team_page_has_no_new_section_while_the_keys_are_off() {
+        let off = team_page(&with_skills(""));
+        assert!(!off.contains("## Skills") && !off.contains("REVIEW.md"));
+        let on = team_page(&with_skills("skills = [\"spec\"]\nreview-md = true"));
+        assert!(on.contains("\n## Skills\n\nspec-dna writes these stage skills: `spec-dna-spec`."));
+        assert!(on.contains("\n## Review policy\n\n`REVIEW.md` holds"));
+        assert!(!on.contains("`spec-dna-review` has the same text"));
+        let both = team_page(&with_skills("skills = [\"review\"]\nreview-md = true"));
+        assert!(both.contains("The skill `spec-dna-review` has the same text."));
+    }
+
+    #[test]
+    fn plan_reconfigure_removes_an_unedited_stray_skill_and_keeps_an_edited_one() {
+        let on = with_skills("skills = [\"intent\", \"plan\"]\nreview-md = true");
+        let files: Vec<(String, String)> = generated_files(&on)
+            .into_iter()
+            .map(|g| (g.path, g.text))
+            .collect();
+        let off = with_skills("");
+        let p = plan(&files, Some(&on), &off, Mode::Reconfigure).unwrap();
+        let removed: Vec<&str> = p
+            .changes
+            .iter()
+            .filter(|c| c.action == Action::Remove)
+            .map(|c| c.path.as_str())
+            .collect();
+        assert_eq!(
+            removed,
+            [
+                ".claude/skills/spec-dna-intent/SKILL.md",
+                ".claude/skills/spec-dna-plan/SKILL.md",
+                "REVIEW.md"
+            ]
+        );
+        let mut edited = files.clone();
+        for f in &mut edited {
+            if f.0 == "REVIEW.md" {
+                f.1.push_str("Own line.\n");
+            }
+        }
+        let p = plan(&edited, Some(&on), &off, Mode::Reconfigure).unwrap();
+        assert!(!p.changes.iter().any(|c| c.path == "REVIEW.md"));
+        assert!(p.kept.iter().any(|k| k.starts_with("kept REVIEW.md:")));
+        // `Mode::Upgrade` removes nothing.
+        let p = plan(&files, Some(&on), &off, Mode::Upgrade).unwrap();
+        assert!(!p.changes.iter().any(|c| c.action == Action::Remove));
     }
 }

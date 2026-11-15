@@ -7,7 +7,7 @@ The harness is optional. `init` asks for a level.
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people |
+| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills` and `review-md` add the stage skills and `REVIEW.md` |
 | `full` | `lean`, and `implementer` and `code-simplifier` |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
@@ -42,6 +42,8 @@ deny = ["NotebookEdit"]
 context-meter = [300000, 600000]
 subagent-meter = 250000
 fanout-cap = 10
+skills = ["intent", "spec", "plan", "review"]
+review-md = true
 
 [harness.roles]
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
@@ -54,6 +56,8 @@ helper = { claude-code = "haiku" }
 sonnet = "high"
 ```
 
+A new configuration has `skills = []` and `review-md = false`. The example shows the 4 skills and `REVIEW.md` as they are when you select them.
+
 | Key | Meaning |
 | --- | --- |
 | `level` | `none`, `lean` or `full` |
@@ -61,6 +65,8 @@ sonnet = "high"
 | `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` disables the meter for the main session |
 | `subagent-meter` | The context size at which a subagent gets a message. `0` disables it |
 | `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
+| `skills` | The stage skills that `init` writes: `intent`, `spec`, `plan` and `review`, each once. `[]` writes none. `init` writes them in this order, also if the list has another order. See [Stage skills and `REVIEW.md`](#stage-skills-and-reviewmd) |
+| `review-md` | `true` writes `REVIEW.md`. `false` writes no file |
 | `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` disables a role. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file) |
 | `[harness.efforts]` | The effort of a model when a person selects it with `/model` |
 
@@ -73,6 +79,8 @@ A model is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model id. The
 | File | How spec-dna writes it |
 | --- | --- |
 | `.claude/agents/<name>.md` | The whole file. The last line is a marker with the version and a hash: `<!-- spec-dna harness v<version> h:<hash> -->` |
+| `.claude/skills/spec-dna-<skill>/SKILL.md` | The whole file, with the same marker, for each skill of `skills`. The adapter skill `.claude/skills/spec-dna/SKILL.md` has its own marker and is not part of the harness |
+| `REVIEW.md` | The whole file, with the same marker, if `review-md` is `true` |
 | `.claude/agents/model-team.md` | The whole file, with the same marker. It has no front matter, so Claude Code does not load it as an agent. It tells people what the team is and how to check it |
 | `CLAUDE.md` | One line: the model-team rule, with the same marker. It is the second spec-dna line in this file |
 | `.claude/settings.json` | A merge. spec-dna sets its entries and keeps every other key |
@@ -92,7 +100,28 @@ Entries in `.claude/settings.json`:
 
 spec-dna writes the settings file again with a 2-space indent, so a number form such as `1e3` becomes `1000`, and an integer above 2^53 loses precision. If a key that spec-dna writes into has a value of the wrong type, for example `permissions.deny` as a string, `init` refuses and names the JSON path, and `check` reports SD505. spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key by hand. spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
 
-A file of your own in `.claude/agents` stays. If its agent name is the name of a role file, `init` disables that role by default. `init` never replaces your file.
+A file of your own in `.claude/agents` stays. If its agent name is the name of a role file, `init` disables that role by default. `init` never replaces your file. A file with no marker at the path of a skill or of `REVIEW.md`, when the configuration generates it, stops `init` with exit code 2. Move the file, remove the skill from `skills`, or set `review-md = false`.
+
+## Stage skills and `REVIEW.md`
+
+The 4 stage skills help an agent through the stages of a change ([ADR 0008](adr/0008-harness-and-evals.md)). Each skill runs spec-dna commands for its steps.
+
+| Skill | Use | What it does |
+| --- | --- | --- |
+| `spec-dna-intent` | A request starts a change | `spec-dna new intent <slug>`, then the class, then `spec-dna next` |
+| `spec-dna-spec` | The intent is `accepted`, and the change is `higher-risk` | `spec-dna new spec <slug>`: `Delta` with the hash of each `CHANGE` and `REMOVE` line from `spec-dna show`, `Interfaces`, `Decisions`, `Concerns` and `Open questions` |
+| `spec-dna-plan` | Before the code | `spec-dna new plan <slug>`, in plan mode if the session has it: `Files`, the tasks of `Order`, `Risks` and `Proof` |
+| `spec-dna-review` | Before a merge | The diff against the base, `spec.md` and `plan.md`, then the review policy |
+
+- The text of a skill is static. It holds no value of the configuration, so the file is the same in each project.
+- A skill never sets `accepted` or `approved`. A person approves in a pull request.
+- Each description has at most 160 characters, and the 4 descriptions together have 588 bytes in the listing of Claude Code. The body has at most 2,500 bytes.
+- The 4 names do not change the skill names that `spec-dna next` prints.
+
+`REVIEW.md` is the review policy for the Code Review service of Claude Code. It has 3 passes: Bugs, Security and Compliance. Compliance compares the diff with `spec.md`, `plan.md` and the documents of the layer `rules`, so put the policy of the project in `rules`. A finding has the severity Important or Nit, and a review has at most 5 Nits. The list "Do not report" names the findings of `spec-dna check`, which CI runs, and the files that spec-dna generates.
+
+- The service reads `REVIEW.md` from the base branch or the default branch, so a change applies after the merge. The local `/code-review` command does not read the file. Thus `spec-dna-review` holds the same passes. spec-dna writes both from one text, so they agree in each version.
+- Claude Code does not load `REVIEW.md` for a task, so the file adds no bytes to a request.
 
 ## Hooks
 
@@ -137,6 +166,8 @@ As for the other adapters, only findings that are new against the base fail the 
 - The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
 - `verifier`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request.
 - The `CLAUDE.md` line is part of each request (about 200 tokens).
+- The descriptions of the stage skills are part of each request: 588 bytes for the 4 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
+- `init` prints the bytes that the harness adds to each request, with the skill descriptions in the sum.
 
 These options make each request smaller. `init` does not write them, because they remove features that some teams use:
 
@@ -148,7 +179,7 @@ These options make each request smaller. `init` does not write them, because the
 1. Start a new session. Do not resume an old session: it keeps the model of its transcript.
 2. Read the header. It shows the main model.
 3. Run `/advisor`. It shows the advisor model.
-4. Type `@`. The list shows `verifier`, `Explore` and `fallback-advisor`.
+4. Type `@`. The list shows `verifier`, `Explore` and `fallback-advisor`. If the configuration has skills, type `/`. The list shows the skills `spec-dna-...`.
 5. While a subagent runs, run `/tasks`. Its row shows its model.
 6. When Claude consults the advisor, an `Advising` line shows. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
 
@@ -156,4 +187,5 @@ These options make each request smaller. `init` does not write them, because the
 
 - Change: edit `[harness]`, or run `spec-dna init --reconfigure`. The preview shows each file before `init` writes it.
 - Upgrade: install the new version, set the pin, and run `spec-dna init`. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
-- Removal: run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files that you did not edit, the `CLAUDE.md` line and the hook handlers. It keeps the other settings keys and tells you which ones it no longer sets.
+- Removal: run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files, skill files and `REVIEW.md` that you did not edit, the `CLAUDE.md` line and the hook handlers. It keeps the other settings keys and tells you which ones it no longer sets.
+- Fewer skills: `spec-dna init --reconfigure` also removes an unedited skill file or `REVIEW.md` that the configuration no longer generates. It keeps an edited file and names it. Plain `init` removes no file.

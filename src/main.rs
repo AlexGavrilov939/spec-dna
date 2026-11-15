@@ -31,6 +31,7 @@ mod frontmatter;
 mod git;
 mod glob;
 mod harness;
+mod harness_text;
 mod hash;
 mod hook;
 mod index;
@@ -687,6 +688,7 @@ fn harness_texts(
                 .status(
                     &[
                         format!(":(literal){}", harness::CLAUDE),
+                        format!(":(literal){}", harness::REVIEW),
                         ":(literal).claude".to_string(),
                     ],
                     true,
