@@ -10,9 +10,9 @@ use crate::lint::Phrases;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
 use crate::repo::Snapshot;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
-fn diag(
+pub(crate) fn diag(
     d: &Doc,
     line: u32,
     code: Code,
@@ -45,6 +45,13 @@ pub fn apply_severity(config: &Config, diags: Vec<Diag>) -> Vec<Diag> {
 /// Returns every diagnostic of one tree, with the severities of the
 /// configuration.
 pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
+    diagnose_against(config, c, None)
+}
+
+/// Like `diagnose`. `base` is the tree that the gate compares with. The
+/// lifecycle checks of one tree use it to find a delta line that the head
+/// already applies (`lifecycle::tree_checks`).
+pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag> {
     let (ev, mut out) = Evidence::build(c);
     let layers = doc_layers(config, c);
     let facts = Facts::build(config, c, &ev, &layers);
@@ -114,23 +121,24 @@ pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
     }
     let mut out = apply_severity(config, out);
     out.extend(layer_limits(config, c, &layers));
+    out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
     out.sort();
     out
 }
 
 /// The layer of each document, as `layer list` shows it. A document with no
 /// valid type is in no layer (D12).
-fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
-    c.docs
-        .iter()
-        .map(|d| {
-            if d.has_layer() {
-                config.layers.layer_of(rel_in_root(config, d), d.ty)
-            } else {
-                None
-            }
-        })
-        .collect()
+pub(crate) fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
+    c.docs.iter().map(|d| doc_layer(config, d)).collect()
+}
+
+/// The layer of one document (see `doc_layers`).
+pub(crate) fn doc_layer(config: &Config, d: &Doc) -> Option<usize> {
+    if d.has_layer() {
+        config.layers.layer_of(rel_in_root(config, d), d.ty)
+    } else {
+        None
+    }
 }
 
 /// The path of a document relative to its root. The head configuration gives
@@ -298,16 +306,28 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
         out.push(diag(d, 1, Code::IndexStale, "", stale));
     }
 
+    // An accepted decision cannot change its locked text (the body outside the
+    // amendment, history and live sections). A reference there that no longer
+    // resolves gives no SD101 or SD102: the author cannot fix it (a finished
+    // intent leaves no document). SD611 already warned. `supersedes` and
+    // `depends-on` are in the front matter, which the author can change.
+    let editable = editable_chunks(config, d);
+    let quiet = |line: u32| {
+        editable
+            .as_ref()
+            .is_some_and(|e| in_locked_text(d, e, line))
+    };
     for r in &p.refs {
         match r.kind {
             RefKind::Wiki => {
-                if let Some(t) = id_ref(c, d, &r.target, r.line, &mut out)
+                if let Some(t) = id_ref(c, d, &r.target, r.line, quiet(r.line), &mut out)
                     && track
                 {
                     hits.push((t, r.line));
                 }
             }
             RefKind::Link | RefKind::Image => match c.resolve_link(&d.path, &r.target) {
+                LinkRes::Missing(_) if quiet(r.line) => {}
                 LinkRes::Missing(path) => out.push(diag(
                     d,
                     r.line,
@@ -350,18 +370,18 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
     }
     // A stub needs only a `moved-to` that resolves.
     if let Some((t, line)) = &d.moved_to {
-        id_ref(c, d, t, *line, &mut out);
+        id_ref(c, d, t, *line, false, &mut out);
         return out;
     }
     for (t, line) in d.supersedes.iter() {
-        if let Some(t) = id_ref(c, d, t, *line, &mut out)
+        if let Some(t) = id_ref(c, d, t, *line, false, &mut out)
             && track
         {
             hits.push((t, *line));
         }
     }
     for (t, line) in d.depends_on.iter() {
-        if let Some(i) = id_ref(c, d, t, *line, &mut out)
+        if let Some(i) = id_ref(c, d, t, *line, false, &mut out)
             && track
         {
             hits.push((i, *line));
@@ -386,6 +406,14 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 _ => {}
             }
         }
+    }
+    // The field `from` of an intent names the incident that the change
+    // answers. It is a reference, as `depends-on` is.
+    if let Some((t, line)) = &d.from
+        && let Some(i) = id_ref(c, d, t, *line, false, &mut out)
+        && track
+    {
+        hits.push((i, *line));
     }
     let exists = |path: &str| {
         let p = crate::cite::strip_location(path).trim_matches('/');
@@ -570,6 +598,34 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
     })
 }
 
+/// The chunks of an accepted decision that can change in place: the amendment,
+/// history and live sections. It returns `None` for any other document: its
+/// text is not locked.
+pub(crate) fn editable_chunks(config: &Config, d: &Doc) -> Option<Vec<usize>> {
+    if d.ty != DocType::Decision || d.status_str() != "accepted" || d.generated.is_some() {
+        return None;
+    }
+    let mut v = crate::model::amendment_chunks(
+        &d.parsed.chunks,
+        &config.roots[d.root].live_sections[d.ty as usize],
+    );
+    v.extend(&d.amendments);
+    v.extend(&d.history);
+    Some(v)
+}
+
+/// True if a line of an accepted decision is in none of the `editable` chunks.
+/// The line of a reference of the body is in the locked text then (SD405). A
+/// line of the front matter has no chunk. SD611 treats it as locked, but SD405
+/// does not lock it, so SD101 does not use this function for it.
+pub(crate) fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
+    !d.parsed
+        .chunks
+        .iter()
+        .rposition(|ch| ch.line <= line)
+        .is_some_and(|i| editable.contains(&i))
+}
+
 /// SD611: an accepted decision links a document of the type `intent` in its
 /// locked text, or in `depends-on`. You can delete a finished intent (SD202
 /// allows it: its layer is `until-finished`), but you cannot remove the link from
@@ -578,18 +634,8 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
 /// Returns the intents that it reports. SD901 skips these pairs.
 fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) -> Vec<u32> {
     let p = &d.parsed;
-    let live = crate::model::amendment_chunks(
-        &p.chunks,
-        &config.roots[d.root].live_sections[d.ty as usize],
-    );
-    let editable = |line: u32| {
-        p.chunks
-            .iter()
-            .rposition(|ch| ch.line <= line)
-            .is_some_and(|i| {
-                d.amendments.contains(&i) || d.history.contains(&i) || live.contains(&i)
-            })
-    };
+    let editable = editable_chunks(config, d).unwrap_or_default();
+    let editable = |line: u32| !in_locked_text(d, &editable, line);
     let mut seen: Vec<u32> = Vec::new();
     let mut hit = |t: u32, line: u32| {
         let target = &c.docs[t as usize];
@@ -742,10 +788,20 @@ fn history_and_terms(config: &Config, d: &Doc, facts: &Facts, out: &mut Vec<Diag
 }
 
 /// Reports a reference that does not resolve. Returns the document that it
-/// names, if it names one.
-fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) -> Option<u32> {
+/// names, if it names one. With `quiet`, it does not report a document or a
+/// section that is absent (SD101): this is the locked text of a decision.
+fn id_ref(
+    c: &Corpus,
+    d: &Doc,
+    target: &str,
+    line: u32,
+    quiet: bool,
+    out: &mut Vec<Diag>,
+) -> Option<u32> {
     match c.resolve(target) {
         Res::Found(i, _, true) => return Some(i),
+        Res::Found(i, Some(_), false) if quiet => return Some(i),
+        Res::Missing if quiet => {}
         Res::Found(i, Some(frag), false) => {
             out.push(diag(
                 d,
@@ -1087,13 +1143,19 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
 /// key has another `frozen` hash, and it was added or removed if its key has
 /// no match on the other side. `Corpus::resolve` applies the aliases, so a move
 /// that keeps the hashes gives no diagnostic. The check compares the base with
-/// the head only. It runs only for `check --base`, because a base that is HEAD gives a
-/// false SD921 when the branch added its intent in an earlier commit. All
-/// diagnostics are new. Each diagnostic names one document.
+/// the head only. The base is the lifecycle base (design 0.6.0, "Gates"): a
+/// base that is `HEAD` gives a false SD921 when the branch added its intent in
+/// an earlier commit. All diagnostics are new. Each diagnostic names one
+/// document.
+///
+/// A document that `exempt` matches gives nothing (D19). `exempt` has the
+/// `Files` patterns of the changes whose plan covers the diff
+/// (`lifecycle::BaseReport::exempt`).
 pub fn truth_changed(
     config: &Config,
     base: (&Corpus, &Snapshot),
     head: (&Corpus, &Snapshot),
+    exempt: &[String],
 ) -> Vec<Diag> {
     if config.is_off(Code::TruthChangedWithoutChange) {
         return Vec::new();
@@ -1106,91 +1168,15 @@ pub fn truth_changed(
     // A requirement that spec-dna reads: of a document of the 3 types in a
     // layer that keeps its documents forever.
     let truth = |d: &Doc| {
-        matches!(
-            d.ty,
-            DocType::Rule | DocType::Requirements | DocType::Interface
-        ) && !d.type_failed
-            && d.moved_to.is_none()
-            && d.generated.is_none()
+        crate::lifecycle::requirement_doc(d)
             && config
                 .layers
                 .layer_of(rel_in_root(config, d), d.ty)
                 .is_some_and(|i| config.layers.layers()[i].keep == Keep::Forever)
+            && !crate::change::in_scope(exempt, &d.path)
     };
-    #[derive(Default)]
-    struct Change {
-        path: String,
-        line: u32,
-        changed: Vec<String>,
-        added: Vec<String>,
-        removed: Vec<String>,
-    }
-    let mut by_doc: BTreeMap<String, Change> = BTreeMap::new();
-    let mut matched: HashSet<(u32, usize)> = HashSet::new();
-    for b in base.docs.iter().filter(|d| truth(d)) {
-        for &ri in &b.reqs {
-            let r = &b.parsed.reqs[ri];
-            let target = format!("{}#{}", b.id, r.key);
-            let hit = match head.resolve(&target) {
-                Res::Found(hd, Some(key), true) => {
-                    head.docs[hd as usize].req(&key).map(|hri| (hd, hri))
-                }
-                // Two documents have the name, so the result is unknown.
-                Res::Ambiguous(_) => continue,
-                _ => None,
-            };
-            match hit {
-                Some((hd, hri)) => {
-                    matched.insert((hd, hri));
-                    let h = &head.docs[hd as usize];
-                    let hr = &h.parsed.reqs[hri];
-                    if hr.frozen != r.frozen {
-                        let e = by_doc.entry(h.id.clone()).or_default();
-                        e.path.clone_from(&h.path);
-                        e.line = if e.line == 0 { hr.line } else { e.line };
-                        e.changed.push(hr.key.clone());
-                    }
-                }
-                None => {
-                    // The document can be in the head, without the key.
-                    let owner = match head.resolve(&b.id) {
-                        Res::Found(hd, None, _) => &head.docs[hd as usize],
-                        _ => b,
-                    };
-                    let e = by_doc.entry(owner.id.clone()).or_default();
-                    e.path.clone_from(&owner.path);
-                    e.line = if e.line == 0 && std::ptr::eq(owner, b) {
-                        r.line
-                    } else {
-                        e.line
-                    };
-                    e.removed.push(r.key.clone());
-                }
-            }
-        }
-    }
-    for (hi, h) in head.docs.iter().enumerate().filter(|(_, d)| truth(d)) {
-        for &ri in &h.reqs {
-            if matched.contains(&(hi as u32, ri)) {
-                continue;
-            }
-            let r = &h.parsed.reqs[ri];
-            // The key can exist in the base in another kind of document, or
-            // under an old name of the document or of the key.
-            let names = std::iter::once(&h.id).chain(&h.aliases);
-            let old = names
-                .map(|n| format!("{n}#{}", r.key))
-                .chain(r.aliases.iter().cloned())
-                .any(|n| matches!(base.resolve(&n), Res::Found(_, _, true) | Res::Ambiguous(_)));
-            if !old {
-                let e = by_doc.entry(h.id.clone()).or_default();
-                e.path.clone_from(&h.path);
-                e.line = if e.line == 0 { r.line } else { e.line };
-                e.added.push(r.key.clone());
-            }
-        }
-    }
-    let list = |keys: &[String]| {
+    let changes = crate::lifecycle::requirement_changes(base, head, truth);
+    let list = |keys: &[&str]| {
         let shown: Vec<String> = keys.iter().take(3).map(|k| format!("`{k}`")).collect();
         let more = keys.len().saturating_sub(3);
         let mut s = shown.join(", ");
@@ -1199,24 +1185,37 @@ pub fn truth_changed(
         }
         s
     };
-    let out = by_doc
+    let out = crate::lifecycle::by_document(&changes)
         .into_iter()
-        .map(|(id, e)| {
+        .map(|(id, list_of)| {
+            let of = |kind: crate::lifecycle::ReqChangeKind| -> Vec<&str> {
+                list_of
+                    .iter()
+                    .filter(|c| c.kind == kind)
+                    .map(|c| c.key.as_str())
+                    .collect()
+            };
             let mut parts = Vec::new();
-            for (what, keys) in [
-                ("changed", &e.changed),
-                ("added", &e.added),
-                ("removed", &e.removed),
+            for (what, kind) in [
+                ("changed", crate::lifecycle::ReqChangeKind::Changed),
+                ("added", crate::lifecycle::ReqChangeKind::Added),
+                ("removed", crate::lifecycle::ReqChangeKind::Removed),
             ] {
+                let keys = of(kind);
                 if !keys.is_empty() {
-                    parts.push(format!("{what} {}", list(keys)));
+                    parts.push(format!("{what} {}", list(&keys)));
                 }
             }
+            let line = list_of
+                .iter()
+                .map(|c| c.line)
+                .find(|&l| l != 0)
+                .unwrap_or(0);
             Diag {
-                path: e.path,
-                line: e.line.max(1),
+                path: list_of.last().map(|c| c.path.clone()).unwrap_or_default(),
+                line: line.max(1),
                 code: Code::TruthChangedWithoutChange,
-                doc: id,
+                doc: id.to_string(),
                 target: String::new(),
                 message: format!(
                     "requirements {}, and no file of the intent folder changed",
@@ -1233,24 +1232,13 @@ pub fn truth_changed(
 /// changed. A head file with no blob id (an edit of the working tree) counts as
 /// a change. A project with no `intent` layer has no such folder.
 fn intent_changed(config: &Config, base: &Snapshot, head: &Snapshot) -> bool {
-    let Some(dir) = config
-        .layers
-        .layer_of_type(DocType::Intent)
-        .and_then(|i| config.layers.layers()[i].dir())
-    else {
-        return false;
-    };
-    let prefixes: Vec<String> = config
-        .roots
+    let prefixes: Vec<String> = crate::lifecycle::intent_dirs(config)
         .iter()
-        .map(|r| {
-            if r.path.is_empty() {
-                format!("{dir}/")
-            } else {
-                format!("{}/{dir}/", r.path)
-            }
-        })
+        .map(|d| format!("{d}/"))
         .collect();
+    if prefixes.is_empty() {
+        return false;
+    }
     let under = |p: &str| prefixes.iter().any(|x| p.starts_with(x.as_str()));
     let before: HashMap<&str, Option<&str>> = base
         .files
@@ -1281,8 +1269,16 @@ pub struct Outcome {
     pub new: Vec<bool>,
 }
 
-pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
-    let mut head_diags = diagnose(config, head);
+/// Gates the head tree against `base`. `lifecycle` is the lifecycle base tree,
+/// if there is one. The checks of the delta that need a tree before the change
+/// read it, and `base` is their fallback.
+pub fn gate(
+    config: &Config,
+    base: Option<&Corpus>,
+    lifecycle: Option<&Corpus>,
+    head: &Corpus,
+) -> Outcome {
+    let mut head_diags = diagnose_against(config, head, lifecycle.or(base));
     let budget: Vec<(Diag, bool)> = hard_budget(config, base, head)
         .into_iter()
         .filter_map(|(mut d, n)| {

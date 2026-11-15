@@ -1028,7 +1028,7 @@ fn the_upgrade_dry_run_gives_the_diff_of_each_harness_file() {
 }
 
 #[test]
-fn the_preview_has_11_answers_and_question_13_writes_nothing_without_a_harness() {
+fn the_preview_has_13_answers_and_question_13_writes_nothing_without_a_harness() {
     let r = Repo::empty();
     let (code, out, err) = r.run3(&["init", "--dry-run", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -1066,10 +1066,10 @@ fn the_preview_has_11_answers_and_question_13_writes_nothing_without_a_harness()
         "{shown}"
     );
     assert!(!shown.contains("/8 "), "{shown}");
-    // `--json` has the 11 answers.
+    // `--json` has the 13 answers.
     let (code, json, err) = r.init_with("harness = \"none\"\n", &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{json}{err}");
-    assert_eq!(json.matches("\"number\":").count(), 11, "{json}");
+    assert_eq!(json.matches("\"number\":").count(), 13, "{json}");
     assert!(
         json.contains("{\"number\":13,\"name\":\"harness models\",\"value\":\"-\","),
         "{json}"

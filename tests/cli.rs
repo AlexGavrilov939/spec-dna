@@ -3033,9 +3033,10 @@ fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
 fn init_asks_on_a_terminal() {
     let r = Repo::fixture("brownfield");
     // The numbers are the numbers of the design: 1 profile, 2 graph, 3 areas,
-    // 6 evidence, 7 language, 8 mapping (4 roots), 9 budgets, 10 adapters, 11
-    // CI, hook and base, 12 harness, 13 models, then the confirmation.
-    let answers = "strict\ndefault\n\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
+    // 4 change policy, 5 gate, 6 evidence, 7 language, 8 mapping (4 roots), 9
+    // budgets, 10 adapters, 11 CI, hook and base, 12 harness, 13 models, then
+    // the confirmation.
+    let answers = "strict\ndefault\n\ntwo-class\nwarn\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
     let (code, out) = on_terminal(&r.dir, &["init"], answers);
     assert_eq!(code, 0, "{out}");
     for want in [
@@ -3045,6 +3046,8 @@ fn init_asks_on_a_terminal() {
         "2. Layer graph (small, default, custom) [small]: ",
         "    Areas found: none. An area is a folder of requirements/.",
         "3. Areas of requirements/ (names, or none) [none]: ",
+        "4. Change policy (three-class, two-class, none) [three-class]: ",
+        "5. Gate (block, warn, off) [block]: ",
         "6. Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both) [profile, both]: ",
         "8. Mapping: 4 roots.",
         "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-notes.md, README.md) [accept]: ",
@@ -3068,6 +3071,11 @@ fn init_asks_on_a_terminal() {
         cfg.contains("evidence = \"error\"\nbudgets = \"off\"\n"),
         "{cfg}"
     );
+    assert!(
+        cfg.contains("[change]  # the change process (docs/config.md)\npolicy = \"two-class\"  #"),
+        "{cfg}"
+    );
+    assert!(cfg.contains("\ngate = \"warn\"  #"), "{cfg}");
     assert!(!cfg.contains("path = \"docs/adr\""), "{cfg}");
     assert!(
         cfg.contains("path = \"docs/specs\"\ntype = \"requirements\""),
@@ -3096,7 +3104,7 @@ fn init_asks_on_a_terminal() {
 
     // A "no" at the confirmation writes nothing.
     let r = Repo::empty();
-    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\nn\n");
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\n\n\nn\n");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("nothing written"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());

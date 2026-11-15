@@ -37,7 +37,7 @@
       "default": "en"
     },
     "change": {
-      "description": "The change process. Without this table the policy is `none`. In 0.6.0 step 2 the table has only the key `policy`.",
+      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD922 are off, and no rule can turn them on).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -45,12 +45,43 @@
       ],
       "properties": {
         "policy": {
-          "description": "The change classes. With `none`, SD921 is off and no rule can turn it on.",
+          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD922 are off and no rule can turn them on.",
           "enum": [
             "three-class",
             "two-class",
             "none"
           ]
+        },
+        "gate": {
+          "description": "The strictness of SD910. `block`: SD910 is an error. `warn`: SD910 is a warning. `off`: SD910 is off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority over the gate.",
+          "enum": [
+            "block",
+            "warn",
+            "off"
+          ]
+        },
+        "high-risk-layers": {
+          "description": "The names of layers of the graph. A delta line that targets a document of one of these layers makes the change higher-risk. Each name must be a layer of the graph. Default: `interfaces` and `rules`, without the names that the graph does not have.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "high-risk-paths": {
+          "description": "Globs from the repository root. A plan or a diff that has a path that matches one of them makes the change higher-risk. Default: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "max-fanout": {
+          "description": "The most requirement documents that one change can touch before SD905. Default 8.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 8
         }
       }
     },

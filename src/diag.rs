@@ -31,6 +31,12 @@ macro_rules! codes {
             pub fn name(self) -> &'static str { match self { $(Code::$variant => $name),* } }
             pub fn severity(self) -> Severity { match self { $(Code::$variant => Severity::$sev),* } }
             pub fn fix(self) -> &'static str { match self { $(Code::$variant => $fix),* } }
+            /// A state code reports the state of the tree, not a change of
+            /// the diff. It is never "new" against the base, and `check --all`
+            /// and `status` show it (design 0.6.0, K4, D35).
+            pub fn is_state(self) -> bool {
+                matches!(self.code(), "SD911")
+            }
             /// The prose lint of requirement sentences (SD801-SD805). The
             /// human output of `check` gives one count for each code.
             pub fn is_prose_lint(self) -> bool {
@@ -93,7 +99,19 @@ codes! {
     LayerLimit = "SD902", "layer-limit", Warning, "Move or merge documents of the layer. As an alternative, change `max-docs` or `max-chars` of the layer in a change of its own.";
     HistoryInRequirements = "SD903", "history-in-requirements", Warning, "Remove the date, the round or the history phrase from the requirement. Write the current rule only. Keep the history in the git log.";
     TermForbidden = "SD904", "term-forbidden", Warning, "Use the term that the message names instead of the forbidden synonym. The terms are in the table of the `terms` document.";
+    FanOut = "SD905", "fan-out", Warning, "Split the change. One change touches more requirement documents than `[change] max-fanout` allows. Write each part as its own intent.";
+    GateApprovalMissing = "SD910", "gate-approval-missing", Warning, "Get the approval of the earlier artifact into the base first. Approve the earlier artifact in its own pull request and merge it. An approval in the same pull request does not count. The order of artifacts is `intent.md`, `spec.md`, `plan.md`, then code.";
+    ChangeStale = "SD911", "change-stale", Warning, "Finish the change, or close it. To drop it, set the status of its intent to `closed` in a pull request. A later pull request runs `spec-dna finish`.";
+    StartedLimit = "SD912", "started-limit", Warning, "Finish or close a started change before you start a new one. The number of `accepted` intents is above `max-started`.";
+    OutsidePlan = "SD913", "outside-plan", Warning, "Add the path to `Files` of the plan, or move the edit to a change of its own. Each edited file must match an item of `Files`.";
+    DeltaInvalid = "SD914", "delta-invalid", Warning, "Fix the delta line. Use `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`. Name an existing target in a layer that `moves-to` allows. Copy the hash from `spec-dna show`.";
+    FinishIncomplete = "SD915", "finish-incomplete", Warning, "Apply the delta, or set the intent to `closed` before you delete the folder. Run `spec-dna finish <slug>` to apply the delta and delete the folder in one step.";
+    DeltaEvidenceMissing = "SD916", "delta-evidence-missing", Warning, "Link a test for each requirement that the change adds or changes. Add `covers: <doc-id>#<key>` in a test file, or `<!-- verified-by: <path> -->` at the end of the requirement.";
+    ClassTooLow = "SD917", "class-too-low", Warning, "Raise the `class` of the intent. The diff or the delta needs a higher class (`higher-risk`), because it touches a layer of `high-risk-layers` or a path of `high-risk-paths`.";
+    ConcernOpen = "SD919", "concern-open", Warning, "Resolve each open concern of the spec, or remove it, before the spec is `approved`.";
+    DecisionNeededUnaccepted = "SD920", "decision-needed-unaccepted", Warning, "Write the decision that the spec needs, and accept it. A change cannot finish while a needed decision is absent or is not `accepted`.";
     TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
+    QuestionOpen = "SD922", "question-open", Warning, "Answer each open question of the spec, or remove it, before the spec is `approved`. Check the box (`- [x]`) and write the answer after the question.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -155,6 +173,7 @@ mod tests {
             assert!(seen.insert(c.code()), "duplicate {}", c.code());
             assert!(seen.insert(c.name()), "duplicate {}", c.name());
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
+            assert_eq!(c.is_state(), c.code() == "SD911");
             // Codes from 600 up are warnings. SD702 became an error by a decision at
             // checkpoint 2.
             let is_warning = c.code().as_bytes()[2] >= b'6' && c.code() != "SD702";

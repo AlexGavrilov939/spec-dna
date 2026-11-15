@@ -104,10 +104,14 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD921. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905, SD910 to SD917 and SD919 to SD922. It has no SD918 (step 4). The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag turns off the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
-| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, SD921 is off, and no rule can turn it on. |
+| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD922 are off, and no rule can turn them on. |
+| `change.gate` | string | none | `"block"`, `"warn"` or `"off"`. It sets the severity of SD910: error, warning or off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority. |
+| `change.high-risk-layers` | array of strings | `["interfaces", "rules"]`, without the names that the graph does not have | The layers whose documents make a change higher-risk. Each name must be a layer of the graph, or the exit code is 3. |
+| `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
+| `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
@@ -243,12 +247,27 @@ A project with no `[layers]` table gets the [default graph](design/0.6.0.md#defa
 
 ```toml
 [change]
-policy = "three-class"
+policy = "three-class"                      # "three-class", "two-class" or "none"
+gate = "block"                              # "block", "warn" or "off"
+high-risk-layers = ["interfaces", "rules"]  # layers whose documents make a change higher-risk
+high-risk-paths = []                        # globs from the repository root
+max-fanout = 8                              # documents that one change can touch before SD905
 ```
 
-Step 2 of 0.6.0 reads only the key `policy`. The key is required in the table. Any other key is an error (exit code 3), and the message says that the key comes in a later step. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. `two-class` has the same trigger as `three-class` for SD921.
+The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. `spec-dna init` writes the table with the 5 keys for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps its values ([init.md](init.md)). An unknown key is an error (exit code 3). `two-class` runs the same checks as `three-class`.
 
-SD921 (a requirement of a `forever` layer changed with no intent folder) is off when the policy is `none`. spec-dna turns it off before it reads `[rules]`, so a rule of the file cannot turn it on. In `lite` it is off by default, so a project that sets a policy and runs `lite` can turn it on with `[rules] changes = "warning"`.
+With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD922) are off. spec-dna turns them off before it reads `[rules]`, so a rule of the file cannot turn them on. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can turn it on with `[rules] changes = "warning"`.
+
+The key `gate` sets the severity of SD910. The order of the sources for SD910 is:
+
+1. The policy `none` turns it off.
+2. A rule for SD910 in the table of a root, or in `[rules]` (the group `changes` also sets it).
+3. The key `gate`: `block` is an error, `warn` is a warning, `off` is off.
+4. The profile ([profiles.md](profiles.md)).
+
+`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905.
+
+The lifecycle checks compare the head with the merge base of `origin/HEAD` and `HEAD`, or of `--base` and `HEAD`. `git remote set-head origin <branch>` sets `origin/HEAD`. A clone that has no `origin/HEAD` needs `--base`. spec-dna reads no local branch for this base and uses no network.
 
 ## The table `templates`
 

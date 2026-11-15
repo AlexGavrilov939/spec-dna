@@ -81,7 +81,7 @@ git add spec-dna.toml CLAUDE.md .claude   # `init` prints the full `git add` com
 git commit -m "build: adopt spec-dna"
 ```
 
-`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph and the agent harness. This version asks 11. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
+`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph and the agent harness. This version asks 13. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
 
 `init` never edits a document. Without a terminal, or with `--non-interactive`, it uses the detected defaults. `--dry-run` shows the preview only.
 
@@ -94,6 +94,8 @@ git commit -m "build: adopt spec-dna"
 - The agent harness for Claude Code (level `lean` by default): agent files in `.claude/agents/`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
+
+A new project gets the change process. Questions 4 and 5 propose the policy `three-class` and the gate `block`, and `init` writes the table `[change]`. Answer `none` to question 4 if you do not want the change process. `init` prints the line `docs/intent/*/spec.md @OWNER` for your `CODEOWNERS` file. It does not write that file. [docs/init.md](init.md) gives the details.
 
 The profile sets which diagnostics fail `check`. The profiles are `lite` (only warnings, for adoption), `standard` (the default) and `strict`. [docs/profiles.md](profiles.md) gives the table.
 
