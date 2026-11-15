@@ -40,6 +40,13 @@
 //! can read each of them. If a section does not fit the character budget, the
 //! assembly lists it as a stub too.
 //!
+//! With `--group <name>`, the plan has no document of another area, and the
+//! assembly counts these documents. A document has an area if it is a
+//! `requirements` document under `<folder of the layer>/<area>/`, or an
+//! `intent` with `areas`. A document with no area is in each group. A target
+//! that names a document of another area serves it. `render` prints one line
+//! with the count. The `--json` output has no count.
+//!
 //! A superseded, retired or rejected document that no target names is only
 //! listed, with its status and successor. The exception: you set
 //! `--include-inactive`.
@@ -124,6 +131,10 @@ pub struct Assembly {
     /// because their layer has `context = "on-request"`. For each layer, the
     /// name and the number of documents, in the order of `context`.
     pub held: Vec<(String, usize)>,
+    /// The name of the group of `--group`, and the number of documents that
+    /// the request reaches and that the plan does not serve, because they
+    /// are of another area.
+    pub other_area: Option<(String, usize)>,
 }
 
 /// What the plan needs to know of the layer of each document. The index of a
@@ -138,6 +149,10 @@ pub struct Places {
     top: Vec<bool>,
     /// The name of the layer, for the count line.
     layer: Vec<Option<String>>,
+    /// The group of `--group`, and for each document, true if it has areas
+    /// and none of them is in the group. All false without a group.
+    group: Option<String>,
+    other_area: Vec<bool>,
 }
 
 impl Places {
@@ -153,6 +168,8 @@ impl Places {
             on_request: Vec::new(),
             top: Vec::new(),
             layer: Vec::new(),
+            group: None,
+            other_area: vec![false; c.docs.len()],
         };
         for d in &c.docs {
             let rel = cfg
@@ -176,6 +193,38 @@ impl Places {
             }
         }
         p
+    }
+
+    /// Sets the group of `--group`: `areas` are the areas of the group. A
+    /// document has an area if it is a `requirements` document under
+    /// `<folder of the layer>/<area>/`, or an `intent` with `areas`. A
+    /// document that has areas and none in the group is of another area. A
+    /// document with no area (a rule, a decision, a top file) is in each group.
+    pub fn with_group(mut self, c: &Corpus, cfg: &Config, name: &str, areas: &[String]) -> Places {
+        let dir = cfg
+            .layers
+            .layer_of_type(DocType::Requirements)
+            .and_then(|i| cfg.layers.layers()[i].dir())
+            .unwrap_or("requirements");
+        for (i, d) in c.docs.iter().enumerate() {
+            let own: Vec<&str> = match d.ty {
+                DocType::Requirements => {
+                    d.id.strip_prefix(dir)
+                        .and_then(|r| r.strip_prefix('/'))
+                        .and_then(|r| r.split_once('/'))
+                        .filter(|(a, t)| !a.is_empty() && !t.is_empty())
+                        .map(|(a, _)| a)
+                        .into_iter()
+                        .collect()
+                }
+                DocType::Intent => d.areas.iter().map(String::as_str).collect(),
+                _ => Vec::new(),
+            };
+            self.other_area[i] =
+                !own.is_empty() && !own.iter().any(|a| areas.iter().any(|g| g == a));
+        }
+        self.group = Some(name.to_string());
+        self
     }
 
     /// The position of the layer of a document in the order of `context`.
@@ -429,14 +478,23 @@ pub fn assemble(
     // A research document, and a document of a layer with `context =
     // "on-request"`, are cold material: the plan has them only if a target
     // names them. The assembly counts the others that the request reaches.
+    // With `--group`, a document of another area is cold too, and the
+    // assembly counts it.
     let held: RefCell<BTreeSet<u32>> = RefCell::new(BTreeSet::new());
+    let other: RefCell<BTreeSet<u32>> = RefCell::new(BTreeSet::new());
     let hold = |d: u32| -> bool {
-        let cold = c.docs[d as usize].ty == DocType::Research || places.on_request[d as usize];
-        let hit = cold && !entry_docs.contains(&d);
-        if hit {
-            held.borrow_mut().insert(d);
+        if entry_docs.contains(&d) {
+            return false;
         }
-        hit
+        if c.docs[d as usize].ty == DocType::Research || places.on_request[d as usize] {
+            held.borrow_mut().insert(d);
+            return true;
+        }
+        if places.other_area[d as usize] {
+            other.borrow_mut().insert(d);
+            return true;
+        }
+        false
     };
     let mut add = |plan: &mut Vec<(u32, usize, Tier)>, d: u32, ch: usize, t: Tier| {
         if !hold(d) && seen.insert((d, ch)) {
@@ -819,6 +877,7 @@ pub fn assemble(
         used,
         query: terms,
         held: count_held(c, places, &held.into_inner()),
+        other_area: places.group.clone().map(|g| (g, other.into_inner().len())),
     }
 }
 
@@ -1190,7 +1249,10 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
             out.push_str(&stub_line(c, &c.docs[u.doc as usize], u.chunk, u.tier));
         }
     }
-    if a.units.is_empty() && a.files.is_empty() && !a.paths.is_empty() {
+    // A group that holds back a document that the request reaches: the
+    // group line says why the plan is empty, and "no document cites" is false.
+    let group_held = a.other_area.as_ref().is_some_and(|(_, n)| *n > 0);
+    if a.units.is_empty() && a.files.is_empty() && !a.paths.is_empty() && !group_held {
         out.push_str(&format!(
             "<!-- no document cites or applies to {}; to search by words, add --query \"<the task>\" -->\n",
             a.paths.join(", ")
@@ -1201,6 +1263,12 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
         out.push_str(&format!(
             "<!-- on-request, not served: {}; name a document as target to serve it -->\n",
             parts.join(", ")
+        ));
+    }
+    if let Some((g, n)) = a.other_area.as_ref().filter(|(_, n)| *n > 0) {
+        out.push_str(&format!(
+            "<!-- group {g}: {n} {} of another area not served; name a document as target to serve it -->\n",
+            if *n == 1 { "document" } else { "documents" }
         ));
     }
     if a.omitted > 0 {

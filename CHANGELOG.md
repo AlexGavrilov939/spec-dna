@@ -67,6 +67,9 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Added
 
+- `spec-dna context --group <name>` serves no document of an area outside the group ([docs/commands.md](docs/commands.md#context)). A document has an area if it is a `requirements` document under `<folder of the layer>/<area>/`, or an `intent` with `areas`. A document with no area is in each group, and a target that names a document of another area serves it.
+  - One line counts the documents that the request reaches and that the group holds back. The `--json` output has no count. An unknown group is exit code 2.
+  - Without `--group`, the output has the same bytes as before.
 - `spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]` moves a project that pins 0.4.0 or later to the version of the binary (ADR 0009). It reads `HEAD`, builds the whole plan in memory, and proves that each old id, alias, requirement and section still resolves to the same text. Then it writes the new `spec-dna.toml`, the front matter, the adapters and the harness files. It moves each `proposed`, `accepted` or `rejected` change to `intent/<slug>/intent.md` with `git mv`. With `--layout`, it also moves the folders of the other 0.5 namespaces of a mixed root.
   - It refuses a tree that is not clean (staged, unstaged, or untracked and not ignored), also with `--dry-run` (exit code 1). It never commits, and it never deletes a document. The last line is the `git add` command.
   - The exit codes are 0 (a write, or nothing to change), 1 (a tree that is not clean, a stop of a move, a symbolic link in a path, a file that git ignores, or a failed proof), 2 (usage), 3 (configuration, pin or pin file) and 4 (a git or write error, with the commands that restore the tree).
@@ -115,7 +118,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - `--group` lists the changes of a group of `areas`. An unknown group is exit code 2. `next` gives exit code 5 for a slug with no folder.
   - Without a base, both commands print a note, and the stage stops at `build`.
   - With `[change] policy = "none"`, both commands say that the change process is off.
-  - `--json` gives the fields of both commands. `context --group` is not in this version.
+  - `--json` gives the fields of both commands.
 - The command `spec-dna log [--since <rev>]` ([docs/commands.md](docs/commands.md#log)). It lists the finished and the closed changes from the history of git, the newest first.
   - It reads each commit that deleted an `intent.md`. The status of the intent in the parent of that commit gives the result: `accepted` is `finished`, and any other status is `closed`.
   - For each change it prints the date, the result, the slug and the class. It also prints the counts of the delta lines (`add`, `change`, `remove`), the commit and the title.

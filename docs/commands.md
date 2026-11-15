@@ -117,7 +117,7 @@ The JSON output lists each diagnostic. It also lists each document with its numb
 ## context
 
 ```text
-spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]
+spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--group <name>] [--include-inactive]
 ```
 
 `context` prints the sections that an agent needs, in this order:
@@ -150,6 +150,14 @@ In a document with requirements, the requirement sections come first, then the t
 `context` does not serve a superseded, retired or rejected document. It lists the document with its status and its successor. A target that names the document, or `--include-inactive`, makes `context` serve it.
 
 If a section does not fit the budget, `context` lists its id, hash and size. Each section has its id and hash.
+
+With `--group <name>`, `context` serves no document of an area outside the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A document has an area if it is a `requirements` document under `<folder of the layer>/<area>/`, or an `intent` with `areas`. A document with no area, such as a rule, a decision or a top file, is in each group. A target that names a document of another area serves it. One line after the listed sections counts the other documents that the request reaches:
+
+```text
+<!-- group operations: 2 documents of another area not served; name a document as target to serve it -->
+```
+
+The line is not in the output if no document is held back, and the `--json` output has no count. An unknown group is a usage error (exit code 2).
 
 With `--query` (the task in plain words), the sections that match its words come first. BM25 ranks them, without a network or a model. Use this option for long documents without requirement lists.
 
@@ -422,7 +430,7 @@ dose-limit routine build intent accepted spec - plan approved tasks 1/3 next-tas
 follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm for a stuck valve.
 ```
 
-`--group <name>` lists only the changes that are in the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target. The area of a delta target is the first folder under the folder of the layer of `requirements`. For example, the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). `context --group` is not in this version.
+`--group <name>` lists only the changes that are in the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target. The area of a delta target is the first folder under the folder of the layer of `requirements`. For example, the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). [context](#context) reads the groups too.
 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 

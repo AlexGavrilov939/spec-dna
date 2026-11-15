@@ -124,9 +124,11 @@ lists all diagnostics.",
     ),
     (
         "context",
-        "context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]",
+        "context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--group <name>] [--include-inactive]",
         "Assembles the sections that an agent needs for the targets. With
---query, the sections that match the words of the text come first. A
+--query, the sections that match the words of the text come first. With
+--group, it serves no document of an area outside the group, and it counts
+them in one line; a target that names such a document serves it. A
 superseded, retired or rejected document is only listed, unless
 --include-inactive is set or a target names it.",
     ),
@@ -1568,7 +1570,10 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .iter()
         .map(|p| p.trim_start_matches("./").to_string())
         .collect();
-    let places = context::Places::new(&c, &cfg);
+    let mut places = context::Places::new(&c, &cfg);
+    if let Some(g) = a.group.as_deref() {
+        places = places.with_group(&c, &cfg, g, group_areas(&cfg, g)?);
+    }
     let cited = if paths.is_empty() {
         Vec::new()
     } else {
