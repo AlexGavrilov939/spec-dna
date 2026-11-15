@@ -4,7 +4,7 @@ This page explains how spec-dna works and why. It gives the model, not each opti
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the requirements in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="assets/how-it-works.svg">
+  <img alt="An agent writes one change: intent.md, spec.md for a higher-risk change only, plan.md, then code and tests. finish applies the delta to the requirements in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="assets/how-it-works.svg">
 </picture>
 
 An agent writes one change. `finish` applies the delta of the change to the current truth and deletes the folder of the change. `check` gates the pull request of each step. `context` gives the agent only the sections that its task needs. A small fix has no folder: it is a pull request only.
@@ -147,12 +147,7 @@ Reference: [commands.md](commands.md#context).
 
 spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `spec-dna init` writes these steps into the instruction file of the agent. Codex, Cursor and many other agents read `AGENTS.md`, and Claude Code reads `CLAUDE.md`.
 
-An adapter adds more for one agent. The Claude Code adapter adds these parts:
-
-- A harness at the level `lean` or `full`: roles with their models, such as an orchestrator, an advisor, a `verifier` and a researcher.
-- Skills for the stages Plan, Design, Build and Deploy of a change, and `REVIEW.md` for the review of a pull request.
-- Hooks that measure the context, limit the number of agents that a workflow starts, and protect the tests during a fix.
-- Evals: `spec-dna eval run` gives tasks with checks to headless Claude Code, under a cost limit, and reports the pass rate. A new incident needs a new eval (SD918).
+For Claude Code, more adapters add the spec-dna skill, a harness and evals. The harness has roles with their models, stage skills, hooks and `REVIEW.md`. [agents.md](agents.md) lists the parts for each agent.
 
 `check` reports a generated file that a person edited (SD501), so the files of an adapter stay in agreement with the configuration.
 

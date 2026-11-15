@@ -88,7 +88,7 @@ git commit -m "build: adopt spec-dna"
 `init` writes these files:
 
 - `spec-dna.toml`, with the pinned version, the profile, the layer graph, the change policy and the document roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) and no `default-type`. The folder of a layer gives the type of a document, so `docs/requirements/loans.md` is a `requirements` document. [docs/config.md](config.md) gives all keys.
-- One line in `AGENTS.md` and in `CLAUDE.md`. Most coding agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or documents. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
+- One line in `CLAUDE.md`, and in `AGENTS.md` when `AGENTS.md` exists or `CLAUDE.md` does not exist. Codex, Cursor and many other agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or documents. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md` for Claude Code, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
 - The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the stage skills in `.claude/skills/`, `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
@@ -136,11 +136,12 @@ A document needs no `type:` line in the folder of its layer. To set another type
 spec-dna new requirements loans          # docs/requirements/loans.md
 spec-dna new decision pump-choice        # docs/decisions/pump-choice.md
 spec-dna new rule water                  # docs/rules/water.md: rules that every change in its scope keeps
-spec-dna new procedure restart-worker    # docs/procedures/restart-worker.md (the layer `procedures` is in the default graph)
 spec-dna new incident 2026-11-flooded-bed
 spec-dna new terms                       # docs/terms.md: a top file has no id
 spec-dna new intent add-drip-lines       # docs/intent/add-drip-lines/intent.md: one change
 ```
+
+A new project has the small graph, with no layer for `procedure`, `interface` and `research`. `spec-dna layer add` adds a layer ([commands.md](commands.md#layer-add)).
 
 There are 15 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec` and `plan`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves the layers in the order of the graph, from the most stable layer. It never serves a `research` document unless a target names it.
 

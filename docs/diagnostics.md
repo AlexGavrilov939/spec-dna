@@ -5,7 +5,7 @@ This page gives each diagnostic code of `check`, with its name, its severity and
 ## Read the output
 
 ```text
-docs/irrigation/valves.md:3: error SD103 evidence-missing: `verified-by` path `tests/valves.rs` is not in the git tree
+docs/requirements/valves/closing.md:3: error SD103 evidence-missing: `verified-by` path `tests/valves.rs` is not in the git tree
 SD103 fix: Fix the `verified-by` path. The path must exist in the git tree.
 ```
 
@@ -170,7 +170,7 @@ These codes apply only to a project with a `[change]` table whose `policy` is no
 
 ## Checks of the layers and of the requirement text
 
-The codes SD506, SD901 to SD905 and SD910 to SD921 are new in 0.6.0. They are warnings in `standard` ([profiles.md](profiles.md)). The rule groups are `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD921).
+The codes SD506, SD901 to SD905 and SD910 to SD921 are new in 0.6.0. [profiles.md](profiles.md) gives the severity of each one in each profile. The rule groups are `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD921).
 
 - SD901. The graph of the layers gives the direction. A document can link a layer that its own layer moves into. It can also link a layer that lists its own layer in `linked-from`.
 - A rule that links an intent gives SD901, because an intent moves into a rule, and a finished intent is deleted. An accepted decision that links an intent in its locked text gives SD611, not SD901. In an amendment section, a link to an intent gives SD901. Name the intent as plain text there.

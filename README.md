@@ -10,39 +10,46 @@ spec-dna is a command-line tool for the specifications that a team keeps as Mark
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
-  <img alt="An agent writes one change: intent.md, spec.md, plan.md, then code and tests. finish applies the delta to the requirements in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="docs/assets/how-it-works.svg">
+  <img alt="An agent writes one change: intent.md, spec.md for a higher-risk change only, plan.md, then code and tests. finish applies the delta to the requirements in docs/ and deletes the folder. check gates the pull request of each step. context gives the agent only the sections that its task needs." src="docs/assets/how-it-works.svg">
 </picture>
 
 ## See it in action
 
-One task, from the request to the merge. The agent runs spec-dna itself, because `init` wrote the steps into the instruction file of the agent.
+One task, from the request to the merge. The agent runs spec-dna itself, because `init` wrote the steps into the instruction file of the agent. The output is real, and `(2 more sections)` marks a cut.
 
 ```text
 You:    When a moisture sensor times out, close the valve of its bed.
 
 Agent:  $ spec-dna context src/valves.rs
-        requirements/valves/closing#requirements   cites src/valves.rs
-        rules/safety#rules                         applies to src/**
+        <!-- spec-dna context 0.6.0: src/valves.rs; 4 sections in full, 0 listed; 557 of 8000 characters; about 140 tokens (estimated) -->
+        <!-- rules/safety#rules h:890c76437219354e rule/active rule -->
+        - **fail-closed**: A valve SHALL close when the controller loses power.
+        <!-- requirements/valves/closing#requirements h:c6fb31aaba81ab80 requirements/active cites -->
+        - **overflow**: When a tray overflows, the controller SHALL close the valve of that tray.
+        (2 more sections)
+
         The task adds a requirement, so I start a routine change.
         $ spec-dna new intent sensor-timeout
-        wrote docs/intent/sensor-timeout/intent.md
+        wrote docs/intent/sensor-timeout/intent.md (intent template); replace each {{...}} placeholder
+        $ spec-dna check
+        docs/intent/sensor-timeout/intent.md:8: error SD306 placeholder-left: the template placeholder `{{What this change gives, and for whom.}}` is still in the document
+        I replaced the placeholders. Please accept the intent.
 
 You:    Accepted and merged.
 
 Agent:  $ spec-dna new plan sensor-timeout
-        wrote docs/intent/sensor-timeout/plan.md
-        I approved the plan in its pull request.
+        wrote docs/intent/sensor-timeout/plan.md (plan template); replace each {{...}} placeholder
+        I wrote the files, the order, the risks and the proof, and I approved the plan.
 
 You:    Merged.
 
-Agent:  I wrote the code and the new requirement.
+Agent:  I wrote the code and the requirement sensor-timeout.
         $ spec-dna finish sensor-timeout
-        error SD916: requirements/valves/closing#sensor-timeout has no evidence
+        docs/requirements/valves/closing.md:10: error SD916 delta-evidence-missing: the requirement has no `covers:` tag and no `verified-by`
         I added a test with "covers: requirements/valves/closing#sensor-timeout".
         $ spec-dna finish sensor-timeout
-        evidence: 1 of 1 changed requirements; deleted docs/intent/sensor-timeout/
         $ spec-dna check --base origin/main
-        0 new errors
+        spec-dna check: 4 documents; 0 new errors and 0 new warnings against c469adb3b955 (0 errors and 2 warnings in total)
 ```
 
 When an agent edits an accepted decision, `check` stops the change:
@@ -85,7 +92,7 @@ Spec frameworks such as [OpenSpec](https://github.com/Fission-AI/OpenSpec), [Spe
 
 spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `init` writes these steps into `AGENTS.md`, which Codex, Cursor and other agents read, and into `CLAUDE.md` for Claude Code.
 
-An adapter adds parts for one agent. The Claude Code adapter adds agent roles with their models, a skill for each stage of a change, hooks and evals. [docs/agents.md](docs/agents.md) lists each agent and what it gets.
+For Claude Code, more adapters add agent roles with their models, skills for the stages of a change, hooks and evals. [docs/agents.md](docs/agents.md) lists each agent and what it gets.
 
 ## Install
 

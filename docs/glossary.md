@@ -4,7 +4,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 
 | Term | Meaning | Name in 0.5 | Page |
 | --- | --- | --- | --- |
-| adapter | The part of spec-dna for one agent: its instruction file, and for some agents a harness, evals and a transcript reader | | [agents](agents.md) |
+| adapter | A part of spec-dna for one agent or one file format: the line in `AGENTS.md` (`agents-md`) or `CLAUDE.md` (`claude-md`), the skill (`skill`), or the `claude-code` adapter of the harness, the evals and the transcripts | | [agents](agents.md) |
 | advisor | A second, stronger model that the main model consults before a decision | | [harness](harness.md) |
 | alias | An earlier id of a document or a requirement. A reference to an alias resolves to the current id | | [concepts](concepts.md#ids-and-requirements) |
 | amendment section | A section of an accepted decision that can grow after the acceptance. The default name is `Amendments` | | [config](config.md) |
@@ -34,7 +34,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | harness | The agent setup that an adapter writes: roles, skills, hooks and `REVIEW.md`. Today only the Claude Code adapter writes a harness | | [harness](harness.md) |
 | hash | The first 16 hexadecimal digits of SHA-256 over the normalized text of a requirement or a section | | [concepts](concepts.md#ids-and-requirements) |
 | `higher-risk` | A change class with an intent, a spec and a plan. The owner approves the plan | | [change guide](guides/change.md#choose-the-class) |
-| hook | A command that the agent runs on an event, such as `PreToolUse` of Claude Code | | [harness](harness.md#hooks) |
+| hook | A command that the agent runs on an event, for example before a tool call | | [harness](harness.md#hooks) |
 | incident | A post-mortem record of one event, in `incidents/` | | [types](types.md) |
 | indicator | A measure of one stage of the playbook that `stats --sdlc` prints. It is leading or lagging | | [concepts](concepts.md#the-change-lifecycle) |
 | instruction file | The file that an agent reads at the start of each session, such as `AGENTS.md` or `CLAUDE.md` | | [agents](agents.md) |
@@ -58,7 +58,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | requirement id | `<document id>#<key>`: the global form of a requirement | | [concepts](concepts.md#ids-and-requirements) |
 | `requirements` | The type of a document that holds the requirements of one capability | type `spec` | [types](types.md) |
 | research | Material that agents read only on request, in `research/` | types `note`, `reference` | [types](types.md) |
-| `REVIEW.md` | The review policy of the repository. A code review service, such as Claude Code Code Review, reads it | | [harness](harness.md) |
+| `REVIEW.md` | The review policy of the repository, which a code review service reads | | [harness](harness.md) |
 | role | A job in the harness, such as `verifier`, with its model and its agent file | | [harness](harness.md#roles) |
 | root | A folder that `spec-dna.toml` maps to document types. Document ids are relative to it | | [config](config.md) |
 | `routine` | A change class with an intent and a plan. The agent approves the plan | | [change guide](guides/change.md#choose-the-class) |

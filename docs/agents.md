@@ -27,9 +27,9 @@ The line is short, because each agent request sends it again. `init` prints the 
 
 ## Adapters
 
-An adapter adds parts for one agent. Today, Claude Code has the only adapter. Each other agent uses the steps through its instruction file.
+An adapter is a part of spec-dna for one agent. Each agent gets the adapter of its instruction file: `agents-md` or `claude-md`. Claude Code also gets the `skill` adapter and the `claude-code` adapter of the harness, the evals and the transcripts.
 
-| Part | Each agent | Claude Code adapter |
+| Part | Each agent | Claude Code |
 | --- | --- | --- |
 | The instruction line | `AGENTS.md` | `CLAUDE.md` |
 | The spec-dna skill, with the full procedure | Not written | `.claude/skills/spec-dna/SKILL.md` |

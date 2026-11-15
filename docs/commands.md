@@ -43,18 +43,18 @@ spec-dna check --base origin/master # in CI: new diagnostics against the merge b
 spec-dna check --all                # every diagnostic
 spec-dna check --lint               # also list each prose lint warning (any profile)
 spec-dna check --staged             # check the git index, as a pre-commit hook does
-spec-dna context irrigation/valves --path src/valves.rs
-spec-dna context irrigation/valves --query "close a valve after a sensor timeout"
-spec-dna show irrigation/valves#sensor-timeout
-spec-dna mv irrigation/valves irrigation/valve-rules   # the old id becomes an alias
-spec-dna mv irrigation/valves#sensor-timeout irrigation/sensors
-spec-dna mv irrigation/valves#flush irrigation/valves#sensor-timeout irrigation/sensors   # several keys
-spec-dna mv irrigation/valves#drip irrigation/drip-lines  # a whole section into a new spec
+spec-dna context requirements/valves/closing --path src/valves.rs
+spec-dna context requirements/valves/closing --query "close a valve after a sensor timeout"
+spec-dna show requirements/valves/closing#sensor-timeout
+spec-dna mv requirements/valves/closing requirements/valves/shutoff   # the old id becomes an alias
+spec-dna mv requirements/valves/closing#sensor-timeout requirements/sensors/timeouts
+spec-dna mv requirements/valves/closing#flush requirements/valves/closing#sensor-timeout requirements/sensors/timeouts   # several keys
+spec-dna mv requirements/valves/closing#drip requirements/valves/drip-lines   # a whole section into a new document
 spec-dna mv procedures/deploy#rollback procedures/rollback --type procedure   # a section of a procedure into a new procedure
 spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a research document
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
 spec-dna mv procedures/old procedures/new --stub    # a stub at the old path for tools that read by path
-spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves   # a Claude Code session
+spec-dna transcript ~/.claude/projects/<project> --expect requirements/valves/closing   # a Claude Code session
 spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
 spec-dna hook fanout-cap --cap 10   # a hook of a coding agent
 spec-dna hook protect-tests         # a hook of a coding agent: ask before an edit of a test file

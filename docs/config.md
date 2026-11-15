@@ -316,7 +316,7 @@ For a project of fewer than 30 documents, also a new project, `init` writes the 
 | `pending` | `intent` | 2 |
 | `incidents` | `intent` | 2 |
 
-Each other key of a layer of the small graph has the value that the layer has in the default graph.
+Each layer of the small graph keeps its `keep`, `context` and limit keys from the default graph. Its `moves-to` and `linked-from` lists name only the layers that the small graph has.
 
 ## Areas and groups
 
