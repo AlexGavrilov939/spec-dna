@@ -1,6 +1,8 @@
 # Document types
 
-spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a default template: `spec-dna new <type> [<id>]` writes a document from it. [Templates](#templates) lists them all.
+This page gives the 15 document types of spec-dna. It lists the purpose, the statuses, the required sections, the budgets and the use in `context` of each type. Read it when you write a document or choose a type.
+
+[ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a default template: `spec-dna new <type> [<id>]` writes a document from it. [Templates](#templates) lists them all.
 
 | Type | Purpose | Statuses | Required sections | Budget (soft, hard) | In `context` |
 | --- | --- | --- | --- | --- | --- |
@@ -9,7 +11,7 @@ spec-dna has 15 document types. [ADR 0001](adr/0001-information-model.md) define
 | `terms` | The terms of the project: term, meaning and forbidden synonyms | none | none | 10,000, 20,000 | first, for its `applies-to` |
 | `roadmap` | Work that the project plans and does not do yet | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
 | `questions` | Open questions | none | none | 8,000, 16,000 | counted only (`on-request` layer) |
-| `rule` | Project-wide rules with stable ids and an `applies-to` scope | draft, active, deprecated, superseded, retired (status moves forward only) | `Rules` | 3,000, 6,000 | first, for a matching scope |
+| `rule` | Project-wide rules with stable ids and an `applies-to` scope | draft, active, deprecated, superseded, retired (status moves forward only) | `Rules` | 3,000, 6,000 | first, for a scope that matches |
 | `requirements` | The behavior and constraints of one capability | as `rule` | none | 10,000, 20,000 | yes |
 | `interface` | An interface, or a pointer to its schema | as `rule` | none | 10,000, 20,000 | yes |
 | `decision` | The reason for a choice (MADR minimal) | proposed, accepted, superseded, rejected | `Decision Outcome` or `Decision` | 7,000, 14,000 | summary of a linked decision |
@@ -26,7 +28,9 @@ The types `intent`, `spec` and `plan` are the documents of one change. Their fil
 
 ## Types of 0.5
 
-Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as input. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The name `spec` is also a type of 0.6, so a message cannot tell the 0.5 `spec` from the new one. Use `requirements` for the type that was `spec`. A `spec` document outside the `intent` layer gives SD303, and its message names `requirements` ([Place gives the type](#place-gives-the-type)).
+Version 0.6.0 renames and merges the types of 0.5. It accepts no old name as input. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type.
+
+The name `spec` is also a type of 0.6, so a message cannot tell the 0.5 `spec` from the new one. Use `requirements` for the type that was `spec`. A `spec` document outside the `intent` layer gives SD303, and its message names `requirements` ([Place gives the type](#place-gives-the-type)).
 
 | 0.5 type | 0.6 type | Note |
 | --- | --- | --- |
@@ -51,9 +55,11 @@ If no rule gives a type, the document gives SD303. A mixed root has no `default-
 
 The layer of a document is the first layer in the file whose `paths` match it. If no layer matches, it is the layer that has the type of the document. A `paths` match does not give a type.
 
-The types `intent`, `spec` and `plan` are valid only as `<dir>/<slug>/<type>.md`, where `<dir>` is the folder of the layer that has the type (`intent` by default). A document of one of these types at another place gives SD303. For a `spec`, the message says that the 0.5 type `spec` is the 0.6 type `requirements`. The document probably needs `type: requirements`. These 3 types are also not valid as `type` or `default-type` of a root: that is an error (exit code 3).
+The types `intent`, `spec` and `plan` are valid only as `<dir>/<slug>/<type>.md`. `<dir>` is the folder of the layer that has the type (`intent` by default). A document of one of these types at another place gives SD303. For a `spec`, the message says that the 0.5 type `spec` is the 0.6 type `requirements`. The document can need `type: requirements`.
 
-A document of a type that no layer has gives SD303. The message says to run `spec-dna layer add`. A project with no `[layers]` table has the [default graph](design/0.6.0.md#default-graph), so each type has a layer.
+These 3 types are also not valid as `type` or `default-type` of a root. That is an error (exit code 3).
+
+A document of a type that no layer has gives SD303. The message says to run `spec-dna layer add`. A project with no `[layers]` table has the [default graph](config.md#default-graph), so each type has a layer.
 
 The default graph gives these places. The folder is the name of the layer, unless the layer sets `dir`.
 
@@ -73,29 +79,21 @@ The default graph gives these places. The folder is the name of the layer, unles
 
 `draft` is the state of a document that waits for approval. The types `rule`, `requirements`, `interface`, `procedure` and `intent` have no `proposed` status. `proposed` belongs to a decision, which a person accepts or rejects. When a document of another type has the status `proposed`, `check` gives SD304 and names `draft`. A root that uses `proposed` for its requirements can map it: `status-map = { proposed = "draft" }`.
 
-An `intent` ends with the status `closed`, and then you can delete it (SD202 allows it).
+A change ends with `finish`, which deletes its intent folder: an accepted change after its work, and a closed change at once. A folder that a pull request deletes with an unapplied delta gives SD915.
 
 ## Links between types
 
-In a new corpus, link the documents in these directions. A link of another direction is not an error, except the case that SD611 reports.
+The layer graph gives the direction of each link. A document must not link a document of a less stable layer, unless that layer lists it in `linked-from` (SD901). [config.md](config.md#default-graph) gives the default graph. An incident links the requirement, the rule, the decision or the procedure that it involves (SD609).
 
-| From | To | Why |
-| --- | --- | --- |
-| `intent` | the `requirements`, `interface`, `rule` or `decision` that it changes | An intent is a request. It links the permanent documents. |
-| `decision` | `requirements`, `interface`, `rule`, `research`, and another `decision` (`supersedes`) | A decision gives the reason for a requirement. |
-| `requirements`, `interface`, `rule`, `procedure` | `decision` (the reason), `requirements`, `interface` | A permanent document names the reason for its rules. |
-| `incident` | `requirements`, `rule`, `decision`, `procedure` | An incident without such a link gives SD609. |
-| `research` | any type | These documents give information only. |
+A permanent document does not link an intent. `finish` deletes the intent folder, so a link to it breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is locked (SD405).
 
-A permanent document does not link an intent. An intent ends with the status `closed`, and then you can delete it (SD202 allows it). A link to a deleted intent breaks (SD101, SD102). For a decision, this is a problem that the author cannot fix later: the text of an accepted decision is frozen (SD405).
-
-Thus an accepted decision that links an intent in its locked text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it. In such a section, name the intent as plain text, not as a link. SD901 and `finish` would stop on a link.
+Thus an accepted decision that links an intent in its locked text or in `depends-on` gets SD611, a warning. To fix it, link the decision from the intent instead. A link in an amendment section, a history section or a live section can change, so SD611 does not report it. In such a section, name the intent as plain text, not as a link. A link there gives SD901, and `finish` stops on it.
 
 ## Rule
 
 A rule states what every change in its scope keeps, such as "the system stores amounts in minor units". Its rules are requirements: list items with a bold slug key. Their ids (`<doc-id>#<key>`) are stable, and tests can cover them.
 
-`applies-to` sets the scope: path globs or namespaces. A rule without `applies-to` applies to the whole repository. `context` serves the requirement sections of each rule with a matching scope first, before the entry documents. Keep each rule document short, because its budget is small.
+`applies-to` sets the scope: path globs or namespaces. A rule without `applies-to` applies to the whole repository. `context` first serves the requirement sections of each rule whose scope matches, before the entry documents. Keep each rule document short, because its budget is small.
 
 ## Procedure
 
@@ -107,7 +105,9 @@ An incident records an event: a summary, a timeline, the root cause, links, and 
 
 ## Research
 
-A research document holds research, data, transcripts or other material that agents seldom read. It has no budget and no status. `context` never serves it, unless a target names it. It counts the research documents that a request reaches, in one line. `show` reads it. Use it for large material that agents read only on request. `spec-dna history` moves the history sections of a document into a research document.
+A research document holds research, data, transcripts or other material that agents seldom read. It has no budget and no status. `context` never serves it, unless a target names it. It counts the research documents that a request reaches, in one line. `show` reads it.
+
+Use it for large material that agents read only on request. `spec-dna history` moves the history sections of a document into a research document.
 
 ## Intent, spec and plan
 
@@ -172,7 +172,8 @@ A `Files` item of a plan, and an entry of the label `Files:` of a task, gives pa
 
 An item that has no code span, or an entry that has none, is a plain path if it follows these rules:
 
-- The text, with no white space at its ends, without one final `.`, `,`, `:` or `;` (a mark of the sentence), and without the parentheses that wrap it, is one token: it has no white space. A link `[text](destination)` gives its text. A destination is not read.
+- The text is one token: it has no white space. A link `[text](destination)` gives its text. A destination is not read.
+- Before this check, spec-dna removes the white space at the ends of the text. It also removes one final `.`, `,`, `:` or `;` (a mark of the sentence), and the parentheses that wrap the text.
 - The token has a `/`, a `.` or a `*`, and a letter, a digit or a `*`. Thus `src/dose.py`, `tests/*.py`, `README.md` and `docs/` are plain paths. `Makefile`, `LICENSE` and `none` are words, and not paths: write a file with no `/` and no `.` in a code span.
 - The token has no backtick, no `<`, no `>`, no `"`, no `|`, no `{{` and no `://`. A URL, a tag and a template placeholder are not paths.
 - `src/a.py and src/b.py`, `no code here` and `src/a.py: the main file` are prose, and they are not paths. An item or an entry that is not a path has no effect. A code span that holds a template placeholder (`` `{{path}}` ``) is not a path either.
@@ -183,7 +184,7 @@ A plain path has the same meaning as the same text in a code span. A final `/` m
 
 The patterns of a plan are the paths of its section `Files`, then the `Files:` paths of its tasks of `Order`, with no repeat. Each reader of the scope uses this list: the checks SD905, SD910, SD911, SD913, SD915, SD916, SD917 and SD921, `finish`, `stats --sdlc`, `status` and `next`. A plan can list its paths only in its tasks.
 
-When the items of `Files` are not paths, and the plan lists no path in `Files` and none in its tasks, `next` and `status` say so and show the first such item. SD913 and SD915 do the same in their message ([diagnostics](diagnostics.md)). If the plan lists a path, they do not name an item, because the item is not the reason for the diagnostic.
+Assume that the items of `Files` are not paths, and the plan lists no path in `Files` or in its tasks. Then `next` and `status` say so and show the first such item. The messages of SD913 and SD915 do the same ([diagnostics](diagnostics.md)). If the plan lists a path, they do not name an item, because the item is not the reason for the diagnostic.
 
 ## Templates
 
@@ -207,16 +208,13 @@ The `prd` and `rfc` templates satisfy the required section of an `intent`, becau
 
 The `Status` section of a decision is a live section: its text can change after the decision has the status `accepted` (`live-sections`, [config.md](config.md#sections-of-a-decision)). It comes before `Amendments`, because an amendment goes at the end of the file and must not be inside the live section. The `Amendments` section of the template is empty.
 
-A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template and writes the H1 from the id. It sets the first status of the type. It removes `was-type`, and it removes `type` where the place gives the type. `check` reads no file of the folder as a document.
+A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template and writes the H1 from the id. It sets the first status of the type.
 
-`spec-dna new <type> [<id>]` writes the template of a type at its place:
+`new` also removes `was-type`, and it removes `type` where the place gives the type. `check` reads no file of the folder as a document.
 
-- A top file type (`product`, `system`, `terms`, `roadmap`, `questions`) takes no id. `spec-dna new terms` writes `<root>/terms.md`.
-- `spec-dna new intent add-sensor` writes `<root>/intent/add-sensor/intent.md`. `spec-dna new spec add-sensor` and `spec-dna new plan add-sensor` write the 2 other files into the same folder. Without that folder, they stop with exit code 5.
-- Another type writes `<root>/<dir>/<id>.md` in a mixed root, where `<dir>` is the folder of the layer of the type. For example, `spec-dna new decision pump-choice` writes `<root>/decisions/pump-choice.md`, and `spec-dna new requirements valves/closing` writes `<root>/requirements/valves/closing.md`. The id is relative to that folder.
-- In a root of one type, the file is `<root>/<id>.md`.
+`spec-dna new <type> [<id>]` writes the template of a type at the place of its layer. [commands.md](commands.md#new) gives each place and the exit codes.
 
-`spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root. It writes no `type:` line where the place gives the type, and it writes the line where the place gives none. In a template that has the field `was-type`, it removes the field from the copy.
+`spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root. It writes the `type:` line only where the place gives no type.
 
 A placeholder of a template has the form `{{text}}`, such as `{{key}}` or `{{The cause.}}`. `check` reports each placeholder that remains in a document (SD306, an error). Thus a template cannot pass the gate before an author replaces each placeholder. `${{ ... }}` and `{{ ... }}` with spaces inside the braces (GitHub Actions and Jinja syntax) are not placeholders.
 
@@ -237,6 +235,45 @@ applies-to: ["**"]
 
 {{Why the rule exists. Link the decision.}}
 ```
+
+## Standard documents
+
+A team can already know a document form, such as an ADR, a PRD or a runbook. The table gives the 0.6 form of each standard document. The first column is the name that a team uses.
+
+| Standard document | 0.6 form | Note |
+| --- | --- | --- |
+| ADR (Nygard, MADR, Y-statement) | `decision` | `required-sections` maps the section names. A Y-statement has no heading for the outcome, so give it one |
+| RFC, design proposal | `intent` with `--template rfc`, and `spec` for the design | The delta of the `spec` holds the requirements. A `decision` holds the reasons. `finish` deletes the RFC text |
+| PRD | `intent` with `--template prd` | `finish` deletes the intent. Before `finish`, the author moves each goal that stays into `product` or `requirements` |
+| Technical specification, design document | `spec` (one change) and `requirements` (the current truth) | |
+| Software requirements specification (ISO/IEC/IEEE 29148) | `requirements` | One document for each capability, one folder for each area |
+| User story | `intent` | Each acceptance criterion becomes an `ADD` line |
+| Epic | An entry of `roadmap` that names its intents | One intent is one change, and `max-started` limits them |
+| API reference, OpenAPI, AsyncAPI | `interface` that names the schema file | |
+| Architecture overview, C4 levels 1 and 2 | `system` | Levels 3 and 4 stay in the code or in `research` |
+| Product vision, strategy | `product` | |
+| Glossary, controlled vocabulary | `terms` | |
+| Roadmap | `roadmap` | |
+| Open questions, risk register | `questions` | |
+| Engineering standard, coding convention | `rule` (a testable rule) or `procedure` (a how-to) | |
+| Non-functional requirement | `rule` if it applies to the whole project, `requirements` if it is local | |
+| SLO, SLA | `rule`, or `requirements` if it is local | |
+| Runbook, playbook | `procedure` with `--template runbook` | |
+| Post-mortem, incident report | `incident` | Each incident adds an eval |
+| Threat model | `research`, and each mitigation as a `rule` | |
+| Test plan | The `Proof` section of a `plan`, and `covers:` tags | |
+| Project-wide test strategy | `procedure` or `rule` | |
+| BDD feature file | A test file with `covers:` tags | |
+| Meeting notes, research notes | `research` | |
+| How-to or tutorial (Diataxis) | `procedure` | An explanation page goes to `system` or `research` |
+| Data model, database schema | `interface` that names the schema file | |
+| arc42 | Split into `system`, `decision`, `terms` and `rule` | |
+| Constitution of a spec framework | `rule` | |
+| Change folder of a spec framework | The intent folder. A task list goes to the `Order` section of a `plan` | |
+| Release notes, changelog | Outside spec-dna. `CHANGELOG.md` stays | |
+| README, onboarding | Outside spec-dna, or `procedure` | |
+| `AGENTS.md`, `CLAUDE.md`, skills | Outside spec-dna. `init` writes its adapter lines and skills | |
+| `SECURITY.md` | Outside spec-dna | |
 
 ## Project types
 

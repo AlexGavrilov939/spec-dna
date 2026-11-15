@@ -1,13 +1,15 @@
 # Transcripts: `spec-dna transcript`
 
-`spec-dna transcript` reads the transcripts of agent sessions. It reports, for each session and each episode, the token usage, the tool calls and the documents that the agent read. An A/B measurement uses it to compare two arms with real usage instead of document sizes.
+`spec-dna transcript` reads the session files of a coding agent. It reports, for each session and each episode, the token usage, the tool calls and the documents that the agent read. Use it to measure what an agent setup costs, or to compare 2 arms of an experiment with real usage instead of document sizes.
+
+An adapter reads the format of one agent ([Adapters](#adapters)). The examples read Claude Code sessions:
 
 ```sh
 spec-dna transcript ~/.claude/projects/<project>/<session>.jsonl
-spec-dna transcript <dir> --expect irrigation/valves --expect ADR-12 --json
+spec-dna transcript <dir> --expect requirements/valves/closing --expect ADR-12 --json
 ```
 
-An argument is a file or a directory. A directory gives every `.jsonl` file below it, so the command also reads the files of subagents. In a directory, a file that no adapter reads (for example a workflow journal) gives a warning, and the command continues. A file that you name must be a transcript. The command reads a file once, even if two arguments give it.
+An argument is a file or a directory. A directory gives every `.jsonl` file below it, so the command also reads the files of subagents. In a directory, a file that no adapter reads (for example a workflow journal) gives a warning, and the command continues. A file that you name must be a transcript. The command reads a file once, even if 2 arguments give it.
 
 Run the command in a repository with `spec-dna.toml`. Then the report maps file reads to document ids and sections. Outside such a repository, the report has token and tool counts, and the ids in spec-dna output only.
 
@@ -51,14 +53,14 @@ Thus a malformed or hostile transcript cannot put free text into the report.
 | `expected` (with `--expect`) | `read`: the expected documents that the agent read (a read of the front matter only does not count). `first_relevant_ms`: the time from the start to the first such read | Measured |
 | `document_edits` | Edit and write tools on document paths | Measured |
 
-The usage of a request includes the full prompt prefix, so `cache_read` grows with the length of a session. Thus `spec_tokens_estimated` is an estimate of the document text that entered the context. They are not a share of the billed input.
+The usage of a request includes the full prompt prefix, so `cache_read` grows with the length of a session. Thus `spec_tokens_estimated` is an estimate of the document text that entered the context. This estimate is not a share of the billed input.
 
 ## Document reads
 
 The report gives a tool result to a document in these cases:
 
 1. A file read tool reads a document path. If the read has a line range, the report lists the sections that the range overlaps. A range that covers only the front matter shows as `front matter only`. A read without a range is a full read.
-2. A reader program in a shell command (`cat`, `head`, `tail`, `sed`, `less`, `more`, `bat`, `nl`, `awk`, `grep`, `egrep`, `rg`, `ag`, `cut`, `diff`) gets a document path, for example `sed -n 1,40p docs/a.md`. The report counts a full read. A `>` target, `git add` or `wc` is not a read. If the command names several documents, each gets an equal share of the result size.
+2. A shell command gives a document path to a reader program, for example `sed -n 1,40p docs/a.md`. The reader programs are `cat`, `head`, `tail`, `sed`, `less`, `more`, `bat`, `nl`, `awk`, `grep`, `egrep`, `rg`, `ag`, `cut` and `diff`. The report counts a full read. A `>` target, `git add` or `wc` is not a read. If the command names several documents, each gets an equal share of the result size.
 3. A shell command runs `spec-dna`, and its result contains section headers (`<!-- <id> h:<hash> ... -->`). Each served section counts. A listed stub does not count. In a repository with `spec-dna.toml`, only ids that name a document count. Elsewhere, only strings with the form of an id count (letters, digits, `-`, `_`, `.`, `/`, `#`). Thus other text with the same shape cannot reach the report.
 
 A path maps to a document in this order:
@@ -71,7 +73,7 @@ Thus a session in an exported copy of the repository maps to the same ids.
 
 ## Adapters
 
-An adapter converts one transcript format into a small set of records: prompt, usage, tool call and tool result. The analysis does not depend on the format. The first line that parses selects the adapter of a file. `--format <name>` selects one adapter for all files.
+An adapter converts the transcript format of one agent into a small set of records: prompt, usage, tool call and tool result. The analysis does not depend on the format, so a new agent needs only a new adapter. The first line that parses selects the adapter of a file. `--format <name>` selects one adapter for all files.
 
 | Adapter | Format |
 | --- | --- |

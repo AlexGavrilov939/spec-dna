@@ -1,9 +1,11 @@
 # Configuration: `spec-dna.toml`
 
-`spec-dna.toml` is in the repository root. `spec-dna init` writes the first version of the file. The JSON Schema is [schema/spec-dna.schema.json](../schema/spec-dna.schema.json). An unknown key is an error (exit code 3). Thus a typo cannot disable a rule without an error message.
+`spec-dna.toml` is in the repository root. This page gives each key, its default and its meaning, for the authors of the file. `spec-dna init` writes the first version of the file, and [schema/spec-dna.schema.json](../schema/spec-dna.schema.json) is its JSON Schema.
+
+An unknown key is an error (exit code 3), so a typo cannot disable a rule without an error message. A key or a type name of 0.5 is also an error, and its message names the new name.
 
 ```toml
-spec-dna = "0.5.0"              # required: the pinned version
+spec-dna = "0.6.0"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
 types = ["requirements", "decision", "rule", "procedure", "incident", "research"]  # default: all 15
 exclude = ["**/vendor/**"]      # repository globs that are never documents
@@ -29,13 +31,20 @@ types = ["decision"]
 operations = ["valves", "sensors"]
 
 [spec-dna-sha256]               # optional: the release assets of the pin, and their SHA-256 sums
-"spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.6.0-x86_64-unknown-linux-gnu" = "<64 lowercase hexadecimal characters>"
 
-[rules]                         # severity overrides (docs/profiles.md)
+[rules]                         # severity overrides (profiles.md)
 drift = "error"                 # a rule group, or a code such as SD704
 
 [change]                        # optional: without it the policy is "none"
-policy = "three-class"          # "three-class", "two-class" or "none"
+policy = "three-class"          # required in the table: "three-class", "two-class" or "none"
+gate = "block"                  # "block", "warn" or "off"
+high-risk-layers = ["interfaces", "rules"]  # a delta in these layers makes a change higher-risk (default)
+high-risk-paths = []            # globs from the repository root (default: none)
+max-fanout = 8                  # documents that one change can touch before SD905 (default)
+
+[templates]
+dir = ".spec-dna/templates"     # project templates (default); not a root
 
 [evidence]
 tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
@@ -110,13 +119,13 @@ sonnet = "high"
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
+| `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
 | `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD922. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
-| `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag turns off the checks that read English word lists (SD801 to SD805 and SD904). |
+| `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
-| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD922 are off, and no rule can turn them on. |
+| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD922 are off, and no rule can enable them. |
 | `change.gate` | string | none | `"block"`, `"warn"` or `"off"`. It sets the severity of SD910: error, warning or off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority. |
 | `change.high-risk-layers` | array of strings | `["interfaces", "rules"]`, without the names that the graph does not have | The layers whose documents make a change higher-risk. Each name must be a layer of the graph, or the exit code is 3. |
 | `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
@@ -124,10 +133,10 @@ sonnet = "high"
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
-| `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). See [The table `layers`](#the-table-layers). |
+| `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](#default-graph). See [The table `layers`](#the-table-layers). |
 | `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
 | `layers.<name>.dir` | string | the name of the layer | The folder of the layer, relative to the root. No 2 layers have the same folder. |
-| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no leading `/`, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
+| `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no `/` at the start, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
 | `layers.<name>.paths` | list of globs | `[]` | Globs, relative to the root. A document that matches belongs to this layer, also when its type is in another layer. The first layer in the file that matches wins. |
 | `layers.<name>.moves-to` | list of strings | `[]` | The layers that the text of this layer matures into. Each name is a layer of `[layers]`. The edges have no cycle. |
 | `layers.<name>.linked-from` | list of strings | `[]` | The layers that can link to this layer, although they are more stable than it. Each name is a layer of `[layers]`. |
@@ -137,7 +146,7 @@ sonnet = "high"
 | `layers.<name>.max-chars` | integer | none | The most body characters in the layer. |
 | `layers.<name>.max-started` | integer | none | The most started changes. |
 | `layers.<name>.stale-days` | integer | none | The days without a commit before a change is stale. |
-| `evidence.tests` | list of globs | the usual test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list turns the tags off. |
+| `evidence.tests` | list of globs | the default test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list disables the tags. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`. The value is a URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
@@ -152,17 +161,17 @@ sonnet = "high"
 | `roots.status-map` | table | `{}` | Legacy status words and the status that each word maps to, such as `released = "active"`. The file keeps its word. Every rule reads the mapped status. A word applies only to a document whose type does not allow that word. The target must be a status of the type of the root (in a mixed root, a status of any type). |
 | `roots.required-sections` | table | see [docs/types.md](types.md) | For each type, its required sections, in any language. See [Required sections](#required-sections). |
 | `roots.amendment-sections` | table | `{ decision = ["Amendments"] }` | For each type, the names of its amendment sections, in any language. See [Amendment sections](#amendment-sections). |
-| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `research` document. In a decision, a history section is not frozen text. |
+| `roots.history-sections` | table | `{}` | For each type, the names of its history sections, such as `Iteration log`, `Discussion` or `Superseded notes`. They match as amendment sections do. `spec-dna history <id>` moves them, and the amendment sections of a decision, into a `research` document. In a decision, a history section is not locked text. |
 | `roots.companion-sections` | table | `{}` | For each type, the names of the sections that belong to the requirements, such as a coverage table or an evidence table. A table row of such a section belongs to the requirement keys in its first cell. A list item belongs to the keys in its lead. When `mv` moves requirements, their rows move with them into the section of the destination that matches the same name, or into a new section. If a row has a key that moves and a key that stays, `mv` stops and changes nothing. |
-| `roots.live-sections` | table | `{ decision = ["Status"] }` | For each type, the names of its live sections, such as `Status` or `Progress`, in any language. A list for a type replaces the default of that type, so `{ decision = [] }` turns it off. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not frozen text. New text in it gives no SD605. `mv` and `history` do not move it. |
+| `roots.live-sections` | table | `{ decision = ["Status"] }` | For each type, the names of its live sections, such as `Status` or `Progress`, in any language. A list for a type replaces the default of that type, so `{ decision = [] }` disables it. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, a live section is not locked text. New text in it gives no SD605. `mv` and `history` do not move it. |
 | `roots.enforce-budgets` | boolean | `true` | If `false`, a document over its hard budget gives the warning SD704 and never the error SD702. |
 | `roots.profile` | string | the project profile | The profile of the documents of this root. |
 | `roots.rules` | table | `{}` | Severity overrides for this root, with the keys of `rules`. They have priority over `[rules]` and over every profile. |
 | `roots.lint-severity` | string | none | The key of 0.1 for the rule `lint` of this root (SD801 to SD805). `roots.rules` has priority over it. |
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` has priority over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
-| `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default is about one amendment or a few table rows. |
-| `lint.history-terms` | list of strings | the default phrases | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates and `round <n>`. A phrase is not blank, and no phrase is listed twice. |
+| `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default of 4,000 characters is about the size of one amendment. |
+| `lint.history-terms` | list of strings | `"previously"`, `"formerly"`, `"no longer"`, `"used to"`, `"was changed"`, `"before this change"`, `"after this change"` | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates, `round <n>` and `iteration <n>`. A phrase is not blank, and no phrase is listed twice. |
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
@@ -175,7 +184,7 @@ sonnet = "high"
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
 | `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper. `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
-| `harness.deny` | list of strings | `[]` | Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
+| `harness.deny` | list of strings | `[]` | Claude Code adapter. Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
 | `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
@@ -183,7 +192,7 @@ sonnet = "high"
 | `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
-| `harness.efforts` | table | `{ sonnet = "high" }` | The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
+| `harness.efforts` | table | `{ sonnet = "high" }` | Claude Code adapter. The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 
 ## Details of keys
 
@@ -228,7 +237,7 @@ The value of a type is the list of the names of its amendment sections, in any l
 
 For example, `## Nachtrag 2026-01-02: TTL` matches `Nachtrag`, and `## Nachtragsplan` does not. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type.
 
-After a decision is accepted, the text outside its amendment sections is frozen (SD405). New amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome.
+After a decision is accepted, the text outside its amendment sections is locked (SD405). New amendment text that states an outcome gives SD605. For a decision, `context` serves the amendment sections with the outcome.
 
 ### Conventions
 
@@ -242,7 +251,9 @@ When a target of `context` is a document of that type, `context` serves these se
 
 ## The table `layers`
 
-A layer is a named set of documents. The table `[layers.<name>]` gives its keys. The name has only letters, digits, `-` and `_`. The file order of the tables is the order of the layers. Write each layer as a table (`[layers.intent]`), as dotted keys (`layers.intent.keep = "forever"`) or as an inline table. The order is the same in each form. `spec-dna layer add` adds a layer to the file, and `spec-dna layer list` shows the layers ([commands.md](commands.md#layer)).
+A layer is a named set of documents. The table `[layers.<name>]` gives its keys. The name has only letters, digits, `-` and `_`. The file order of the tables is the order of the layers.
+
+Write each layer as a table (`[layers.intent]`), as dotted keys (`layers.intent.keep = "forever"`) or as an inline table. The order is the same in each form. `spec-dna layer add` adds a layer to the file, and `spec-dna layer list` shows the layers ([commands.md](commands.md#layer)).
 
 The graph has these rules. A break of a rule is a configuration error (exit code 3), and the message names the key:
 
@@ -256,9 +267,70 @@ The graph has these rules. A break of a rule is a configuration error (exit code
 
 The layers also give the place of a document: its type, if the front matter has no `type`. [Place gives the type](types.md#place-gives-the-type) has the rule. A mixed root with `[layers]` needs a layer for each type that its documents have. A document of a type that no layer has gives SD303, and the message says to run `spec-dna layer add`.
 
-The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges. A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
+The level of a layer is the number of edges on its longest `moves-to` path to a layer with no edge out. A layer with no edge in or out has level 0. Level 0 is the most stable. The file has no level key. A layer X is more stable than a layer Y if X is reachable from Y by `moves-to` edges.
 
-A project with no `[layers]` table gets the [default graph](design/0.6.0.md#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
+
+A project with no `[layers]` table gets the [default graph](#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+
+### Keep and context
+
+`keep` sets what happens to a document of the layer:
+
+- `keep = "forever"`: a document stays. SD202 reports a deleted document that keeps no alias. A status can end a document (`superseded`, `retired`). An author can edit it, unless its type locks text, as a decision does.
+- `keep = "until-finished"`: a deleted document gives no SD202. In the `intent` layer, `finish` deletes the folder of a change, and the limits `max-started` and `stale-days` apply. Another layer with this value gets the SD202 exemption and the limits `max-docs` and `max-chars`. It has no `finish` command, no SD911 and no SD912.
+
+`context` sets how `spec-dna context` serves the documents of the layer:
+
+- `context = "always"`: the layer can fill the plan of `context` without a named target. The order of the layers by level replaces the type order of 0.5.
+- `context = "on-request"`: `context` serves the documents of the layer only when a target names them, or when `show` reads them. The plan counts them in one line and lists no file.
+
+### Default graph
+
+`init` writes the default graph for a project of 30 documents or more. A project with no `[layers]` table also gets it. The column "Level" is a result of the graph. It is not a key.
+
+| Layer | Types | `moves-to` | `linked-from` | `keep` | `context` | Limits | Level |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `foundation` | `product`, `system`, `terms` (`files`) | none | none | `forever` | `always` | `max-chars = 30000` | 0 |
+| `rules` | `rule` | none | none | `forever` | `always` | `max-docs = 30` | 0 |
+| `requirements` | `requirements` | none | none | `forever` | `always` | none | 0 |
+| `interfaces` | `interface` | none | none | `forever` | `always` | none | 0 |
+| `decisions` | `decision` | none | none | `forever` | `always` | none | 0 |
+| `procedures` | `procedure` | none | none | `forever` | `always` | none | 0 |
+| `research` | `research` | `decisions`, `requirements` | `decisions`, `requirements` | `forever` | `on-request` | none | 1 |
+| `intent` | `intent`, `spec`, `plan` | `requirements`, `interfaces`, `rules`, `decisions`, `procedures` | none | `until-finished` | `on-request` | `max-docs = 30`, `max-started = 3`, `stale-days = 14` | 1 |
+| `incidents` | `incident` | `intent` | `rules`, `procedures`, `decisions`, `requirements`, `interfaces`, `intent` | `forever` | `on-request` | none | 2 |
+| `pending` | `roadmap`, `questions` (`files`) | `intent`, `decisions` | `intent` | `forever` | `on-request` | `max-docs = 2` | 2 |
+
+A layer at level 0 needs no `linked-from`, because no layer is more stable than it. `research` and `incidents` keep `linked-from` entries, because a decision, a rule or a procedure names its source.
+
+For a project of fewer than 30 documents, also a new project, `init` writes the small graph. It has 7 of the 10 layers: `interfaces`, `procedures` and `research` are not in it. `layer add` adds a missing layer later.
+
+| Layer | `moves-to` | Level |
+| --- | --- | --- |
+| `foundation` | none | 0 |
+| `rules` | none | 0 |
+| `requirements` | none | 0 |
+| `decisions` | none | 0 |
+| `intent` | `rules`, `requirements`, `decisions` | 1 |
+| `pending` | `intent` | 2 |
+| `incidents` | `intent` | 2 |
+
+Each layer of the small graph keeps its `keep`, `context` and limit keys from the default graph. Its `moves-to` and `linked-from` lists name only the layers that the small graph has, and `pending` moves only to `intent`.
+
+## Areas and groups
+
+An area is a folder under `requirements/`. The key `areas` lists the areas. `init` proposes them when it detects 2 or more. A group is a named set of areas:
+
+```toml
+areas = ["valves", "sensors", "reports"]
+
+[groups]
+operations = ["valves", "sensors"]
+reporting = ["reports"]
+```
+
+A project has no group by default, and `init` never proposes one. A group is a view. The options `--group <name>` of `status` and `stats` read it. A group never makes a folder, an id or a requirement key.
 
 ## The table `change`
 
@@ -271,16 +343,28 @@ high-risk-paths = []                        # globs from the repository root
 max-fanout = 8                              # documents that one change can touch before SD905
 ```
 
-The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. `spec-dna init` writes the table with the 5 keys for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps its values ([init.md](init.md)). An unknown key is an error (exit code 3). `two-class` runs the same checks as `three-class`.
+The table `[change]` sets the change process: the change classes that the project uses, and the strictness of the gate. [The change guide](guides/change.md) gives the process. The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate.
 
-With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD922) are off. spec-dna turns them off before it reads `[rules]`, so a rule of the file cannot turn them on. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can turn it on with `[rules] changes = "warning"`.
+`spec-dna init` writes the table with the 5 keys for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps its values ([init.md](init.md)). An unknown key is an error (exit code 3).
+
+`policy` has these values:
+
+| Policy | Classes | Meaning |
+| --- | --- | --- |
+| `three-class` | `small-fix`, `routine`, `higher-risk` | The default for a new project. |
+| `two-class` | `routine`, `higher-risk` | Each change has an intent. It runs the same checks as `three-class`. |
+| `none` | none | No change process: the layers and their checks only. |
+
+With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD922) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
 
 The key `gate` sets the severity of SD910. The order of the sources for SD910 is:
 
-1. The policy `none` turns it off.
+1. The policy `none` disables it.
 2. A rule for SD910 in the table of a root, or in `[rules]` (the group `changes` also sets it).
 3. The key `gate`: `block` is an error, `warn` is a warning, `off` is off.
-4. The profile ([profiles.md](profiles.md)).
+4. The profile ([profiles.md](profiles.md)): a warning in `lite`, an error in `standard` and `strict`.
+
+With `gate = "block"`, a change to the artifact of a stage needs the base tree to show approval of the earlier artifact.
 
 `high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905.
 
@@ -297,7 +381,7 @@ dir = ".spec-dna/templates"
 
 - A project template names its `type` in its front matter. `new` stops with exit code 2 for a template with no `type`, a template of another type and an unknown template name.
 - `dir` is a path relative to the repository root. An absolute path, a `..` segment, a `\` and a `:` are errors (exit code 3).
-- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the same checks as any other document.
 
 ## The table `evals`
 
@@ -309,7 +393,7 @@ runs = 3
 max-total-usd = 20
 ```
 
-[ADR 0008](adr/0008-harness-and-evals.md) gives the evals. An eval is a file `<dir>/<id>.json`. The table is optional. With no table, there are no evals.
+An eval is a task with checks that tests the agent setup of a project ([ADR 0008](adr/0008-harness-and-evals.md)). An eval is a file `<dir>/<id>.json`. The table is optional: with no table, there are no evals. The table enables `spec-dna eval run`, SD506 and SD918. `init` writes the table for a new project, unless the harness level or the answer to question 14 is `none`. [evals.md](evals.md) gives the eval file and the runner.
 
 - `dir` is a path relative to the repository root. spec-dna drops a leading `./` and a final `/`. An absolute path, a `..` or `.` segment, a `\` and a `:` are errors (exit code 3).
 - `dir` and `templates.dir` must not overlap: one folder is not the other folder, and it is not inside the other folder. If they overlap, the exit code is 3.
@@ -318,7 +402,23 @@ max-total-usd = 20
 
 ## The table `harness`
 
-[ADR 0004](adr/0004-harness.md) gives the roles. [docs/harness.md](harness.md) gives the generated files and the hooks.
+The table `[harness]` configures the harness of the Claude Code adapter of spec-dna ([agents.md](agents.md)). [ADR 0004](adr/0004-harness.md) and [ADR 0008](adr/0008-harness-and-evals.md) give the decisions. [harness.md](harness.md) gives the generated files and the hooks.
+
+An unknown key in `[harness]` is an error, as in the rest of the file. `spec-dna init` writes the table, and `spec-dna check` compares the generated files with it (SD501, SD502, SD504 and SD505).
+
+### Parts
+
+These keys select the parts of the harness that `init` writes besides the agents. `check` compares each generated file with them (SD501, SD502 and SD504). A value that is not in the lists of the table is an error (exit code 3). `init` writes the 3 keys. A file that has none of them gets no skill, no `REVIEW.md` and no hook entry.
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `skills` | a list of `intent`, `spec`, `plan` and `review` | The stage skills. Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes all 4 when `[change] policy` is not `none`, and `[]` when it is `none`. |
+| `review-md` | `true` or `false` | `true` writes `REVIEW.md` in the repository root. |
+| `protect-tests` | `"fix-branches"`, `"always"` or `"off"` | It selects when the hook `protect-tests` asks before an edit of a tracked test file. `"fix-branches"` asks only on a branch that starts with `fix/`. `"always"` removes the branch test. `"off"` writes no hook. An empty `[evidence] tests` list also writes no hook. |
+
+`init --reconfigure` keeps a part that the file sets. A part with no key gets the default of a new project.
+
+### Roles
 
 `[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `verifier`, `researcher`, `implementer`, `code-simplifier` and `helper`. The keys `reviewer` and `spec-writer` of spec-dna 0.5 give exit code 3. The role `reviewer` is now `verifier`. The role `spec-writer` ended.
 
@@ -341,7 +441,7 @@ The defaults:
 | `code-simplifier` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
-A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in level full. These rules apply to the values:
+A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. These rules apply to the values:
 
 - A model is a string that is not empty and has no spaces.
 - The orchestrator cannot be `none`, and its effort cannot be `max`. The advisor model cannot be `inherit`, and cannot be `haiku` in any letter case.
@@ -349,25 +449,21 @@ A role that the level does not include is an error, for example `harness.roles.i
 - For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` reports it.
 - The advisor should not be a weaker model than the orchestrator. If it is weaker, the configuration is still valid, and `init` prints a warning. spec-dna ranks the known aliases from strong to weak: `fable`, `opus`, `sonnet`, `haiku`.
 
-`skills`, `review-md` and `protect-tests` set the files that `init` writes besides the agents. A value that is not in the lists of the keys table is an error (exit code 3). `init` writes the 3 keys. A file that has none of them gets no skill, no `REVIEW.md` and no hook entry.
-
-An unknown key in `[harness]` is an error, as in the rest of the file. `spec-dna init` writes the table, and `spec-dna check` compares the generated files with it (SD501, SD502, SD504 and SD505).
-
 ## The table `spec-dna-sha256`
 
 [ADR 0003](adr/0003-distribution.md) (amendment "phase 2") gives the form of this table. Each release has the file `spec-dna-pin.toml`. It has the key `spec-dna` and the full table of that release. Copy both into `spec-dna.toml`. You can remove the lines of the targets that your project does not use.
 
 ```toml
-spec-dna = "0.5.0"
+spec-dna = "0.6.0"
 
 [spec-dna-sha256]
-"spec-dna-0.5.0-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
-"spec-dna-0.5.0-aarch64-pc-windows-gnullvm.exe" = "<...>"
-"spec-dna-0.5.0-aarch64-unknown-linux-gnu" = "<...>"
-"spec-dna-0.5.0-x86_64-apple-darwin" = "<...>"
-"spec-dna-0.5.0-x86_64-pc-windows-gnu.exe" = "<...>"
-"spec-dna-0.5.0-x86_64-unknown-linux-gnu" = "<...>"
-"spec-dna-0.5.0-x86_64-unknown-linux-musl" = "<...>"
+"spec-dna-0.6.0-aarch64-apple-darwin" = "<64 lowercase hexadecimal characters>"
+"spec-dna-0.6.0-aarch64-pc-windows-gnullvm.exe" = "<...>"
+"spec-dna-0.6.0-aarch64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.6.0-x86_64-apple-darwin" = "<...>"
+"spec-dna-0.6.0-x86_64-pc-windows-gnu.exe" = "<...>"
+"spec-dna-0.6.0-x86_64-unknown-linux-gnu" = "<...>"
+"spec-dna-0.6.0-x86_64-unknown-linux-musl" = "<...>"
 ```
 
 - If the pin is the version of the binary, each command validates the table. Each key must be a release asset of that version: one of the 7 targets, with `.exe` for the 2 Windows targets. Each value must be 64 lowercase hexadecimal characters. A table error is a configuration error (exit code 3).
@@ -378,7 +474,7 @@ spec-dna = "0.5.0"
 
 ## The pin comes first
 
-Sometimes `spec-dna.toml` does not parse, and its key `spec-dna` is a different version from the binary. Then the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary of a version before 0.4.0 does not have this rule. It reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
+`spec-dna.toml` can fail to parse while its key `spec-dna` is a different version from the binary. Then the binary gives the message of the version mismatch (exit code 3), not the parse error. A file of a later version can have keys that this binary does not know. The binary finds the key `spec-dna` with a line scan of the lines before the first table header. A binary of a version before 0.4.0 does not have this rule. It reports ``unknown key `spec-dna-sha256` `` for a pin with sums.
 
 ## Budgets
 
@@ -398,7 +494,7 @@ A document over the soft budget gives a warning (SD701). If it also grew against
 
 - A new document over the hard budget is an error (SD702). The exception: a split moved it out of a document that was over the hard budget in the base (its section aliases name that document). Then it gives SD704.
 - A document that was under the hard budget in the base and is over it now is an error (SD702).
-- A document that was over the hard budget in the base and grew by more than `budgets.growth` characters (default 4,000) is an error (SD702). Growth up to that allowance gives the warning SD703. The comparison uses the body characters of the two versions.
+- A document that was over the hard budget in the base and grew by more than `budgets.growth` characters (default 4,000) is an error (SD702). Growth up to that allowance gives the warning SD703. The comparison uses the body characters of the 2 versions.
 - A document that was over the hard budget in the base and did not grow gives a warning (SD704).
 
 A stub that `mv --stub` leaves and an index that `spec-dna index` generates have no budget. In a root with `enforce-budgets = false`, each of the 4 cases above gives SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
@@ -409,11 +505,11 @@ An accepted decision has 3 kinds of section:
 
 | Kind | Key | After acceptance | `context` | `mv`, `history` |
 | --- | --- | --- | --- | --- |
-| Frozen text | (all other sections) | Cannot change (SD405). Supersede the decision to change its outcome. | The title and the outcome are the summary. | Stays in place. |
+| Locked text | (all other sections) | Cannot change (SD405). Supersede the decision to change its outcome. | The title and the outcome are the summary. | Stays in place. |
 | Amendment section | `amendment-sections` (default `Amendments`) | Can change and grow. New text that states a requirement, a BCP 14 keyword or a status word gives SD605. | Served with the outcome. | Moves into a `research` document. |
 | Live section | `live-sections` (default `Status`) | Can change in place, with no SD605. Use it for a current state, such as a status or a progress section. | Served as a section of the document. | Stays in place. |
 
-A history section (`history-sections`) is not frozen text either, and `history` moves it. If you change the name in a heading, the kind of its section can change. A renamed live heading is frozen text again.
+A history section (`history-sections`) is not locked text either, and `history` moves it. If you change the name in a heading, the kind of its section can change. A renamed live heading is locked text again.
 
 ## Evidence
 
@@ -440,8 +536,10 @@ A link with a scheme (`https:`) or a `//` prefix is external, unless it starts w
 
 ## Documents
 
-A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does. An untracked document is not part of that gate until you run `git add`. Its id is its path under the root, without the extension. A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory.
+A document is a `.md` or `.markdown` file under a root and outside every exclude. It can be a tracked or an untracked file, but not an ignored file. `check --base <rev>` reads tracked files only, as CI does. An untracked document is not part of that gate until you run `git add`. Its id is its path under the root, without the extension.
 
-In a root of type `research`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other research root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of two research roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
+A `README.md` or `index.md` file takes the id of its directory. If that file is directly in a root, it takes the name of the root directory.
+
+In a root of type `research`, an id starts with a namespace. The namespace is the shortest suffix of the root path (whole segments) that no other research root has, such as `history/rollout` for `docs/history/rollout.md`. Thus the ids of 2 research roots never collide. The id without the namespace (the id of 0.2) stays a fallback name. It resolves if no other id has it and if it names one document.
 
 A section that `mv` moved keeps its old id as an alias: the destination lists `<old-id>#<anchor>` in its `aliases`. A stub (front matter `moved-to: <id>`) has no id of its own. A generated index has the front matter field `generated: spec-dna index h:<hash>`. [ADR 0001](adr/0001-information-model.md), section "Metadata", describes the front matter.

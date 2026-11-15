@@ -88,7 +88,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Git access | `src/git.rs` | ARC | COR | TST | REL |
 | Harness role or generated file | `src/harness.rs` and `src/harness_text.rs`; `docs/harness.md`; `tests/golden/harness/`; the harness tests; `CHANGELOG.md` | ARC | INI, and DIA for the function `check` | COR, TST, DOC | REL |
 | Hook | `src/hook.rs`; the `hook` section of `docs/commands.md`; the hooks section of `docs/harness.md`; `tests/hook*.rs` | ARC | INI | TST | REL |
-| Eval file form or runner | `src/evals.rs` and `src/eval_run.rs`; the `eval` section and the exit codes of `docs/commands.md`; `tests/eval_run.rs`; SD506 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
+| Eval file form or runner | `src/evals.rs` and `src/eval_run.rs`; the `eval` section and the exit codes of `docs/commands.md`; `docs/evals.md`; `tests/eval_run.rs`; SD506 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
 | Eval skeleton or workflow | `src/skeleton.rs`; question 14 in `src/init.rs`; `tests/golden/evals/`; `docs/init.md` | ARC | INI | COR, DIA, REL | DOC |
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
 | Convention | `AGENTS.md`, `CONTRIBUTING.md`, `README.md` and `.github/pull_request_template.md`; lint and editor configs | OWN | ARC | DOC, REL | All |
@@ -184,11 +184,17 @@ docs/diagnostics.md                  DIA
 docs/profiles.md                     DIA
 docs/init.md, docs/quickstart.md     INI. REL: the version in docs/quickstart.md
 docs/harness.md                      INI. DIA: the section "Check"
+docs/agents.md                       INI
+docs/evals.md                        COR. INI: the starter files and the CI job
 docs/demo.md                         INI
 docs/transcript.md                   TRN
 docs/evidence.md                     ARC (OWN)
 docs/adr/                            ARC (OWN)
+docs/design/                         ARC (OWN)
 docs/research/                       ARC
+docs/README.md, docs/concepts.md     ARC: the facts. DOC: the language
+docs/glossary.md, docs/guides/       ARC: the facts. DOC: the language
+docs/assets/                         ARC (OWN)
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA

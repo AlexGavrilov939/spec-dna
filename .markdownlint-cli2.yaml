@@ -8,5 +8,8 @@ config:
     siblings_only: true
   # Templates and CLAUDE.md do not start with an H1.
   MD041: false
+  # An image with a dark variant needs <picture>. Other HTML stays an error.
+  MD033:
+    allowed_elements: [picture, source, img]
 
 gitignore: true
