@@ -313,7 +313,6 @@ impl Plan {
     /// The plan as a change of the snapshot of its tree: the moves, the
     /// removes and the new text of each write. `check` lays it over the
     /// snapshot of the base commit (D155).
-    #[allow(dead_code)] // S12: the handler of `check` calls it.
     pub fn overlay(&self) -> repo::Overlay {
         repo::Overlay {
             moved: self
@@ -337,7 +336,6 @@ impl Plan {
 /// the person gave, for the messages. A stop of the plan is exit code 3 here,
 /// whatever its code in `upgrade`, because `check` can not ask the person to
 /// change the base.
-#[allow(dead_code)] // S12: the handler of `check` calls it.
 pub fn plan_base(git: &Git, rev: &str, label: &str, head: &Config) -> Result<Plan, Fatal> {
     let data = TreeData::from_git(git, rev)?;
     let opts = PlanOpts {

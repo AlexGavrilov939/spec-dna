@@ -266,7 +266,6 @@ pub struct Snapshot {
 /// A change of a snapshot of a commit: the base tree that `upgrade` plans in
 /// memory for `check` (D155). It never writes to git.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[allow(dead_code)] // S12: the handler of `check` builds it.
 pub struct Overlay {
     /// The moves, as (old path, new path). A moved file keeps its blob.
     pub moved: Vec<(String, String)>,
@@ -371,7 +370,6 @@ impl Snapshot {
     /// plan writes has no blob and has its text in memory. A moved file with
     /// no new text keeps its blob. Another file keeps its blob, so the readers
     /// that compare blob ids see only the planned change.
-    #[allow(dead_code)] // S12: the handler of `check` calls it.
     pub fn overlaid(self, overlay: &Overlay) -> Snapshot {
         let mut files: BTreeMap<String, Option<String>> =
             self.files.into_iter().map(|e| (e.path, e.blob)).collect();

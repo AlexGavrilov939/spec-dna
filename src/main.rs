@@ -951,10 +951,56 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         None => repo.head_commit(),
     };
+    // The pin of the base of the gate (D154). A base before 0.6.0 has 0.5
+    // documents, which 0.6 rejects. Then `check` plans the base with the code
+    // of `upgrade`, in memory, and compares the head with the result.
+    let base_label = a.base.as_deref().unwrap_or("HEAD");
+    let gate_pin = match &base_commit {
+        Some(c) => base_pin(repo, c)?,
+        None => None,
+    };
+    let plan_base = match &gate_pin {
+        Some(pin) => match config::pin_class(pin, VERSION) {
+            config::PinClass::BeforeOldest => {
+                return Err(Fatal::Config(format!(
+                    "the base `{base_label}` pins `{pin}`; move it to {} first, with the {} binary and `spec-dna init`, in a pull request of its own",
+                    config::PIN_FIRST_STEP,
+                    config::PIN_FIRST_STEP
+                )));
+            }
+            class => class == config::PinClass::Model05,
+        },
+        None => false,
+    };
     // The lifecycle base for the change checks. With the policy `none` it
-    // reads nothing.
-    let change_base =
+    // reads nothing. A git diff cannot read a planned tree, so a lifecycle base
+    // before 0.6.0 counts as no lifecycle base (D154).
+    let mut change_base =
         lifecycle::change_base(&cfg, &repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let mut life_note: Option<String> = None;
+    if let Some(c) = &change_base {
+        let pin = if Some(c) == base_commit.as_ref() {
+            gate_pin.clone()
+        } else {
+            base_pin(repo, c)?
+        };
+        if let Some(pin) = pin
+            && matches!(
+                config::pin_class(&pin, VERSION),
+                config::PinClass::BeforeOldest | config::PinClass::Model05
+            )
+        {
+            let which = if Some(c) == base_commit.as_ref() {
+                format!("the base `{base_label}`")
+            } else {
+                format!("the merge base `{}`", &c[..c.len().min(12)])
+            };
+            life_note = Some(format!(
+                "{which} pins `{pin}`, before 0.6.0, so the change checks have no lifecycle base"
+            ));
+            change_base = None;
+        }
+    }
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
@@ -986,6 +1032,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         )
     });
     let (head_snap, base_snap, extra_snap) = (head_snap?, base_snap?, extra_snap?);
+    let base_snap = match (&base_commit, plan_base) {
+        (Some(c), true) => {
+            let plan = upgrade::plan_base(&repo.git, c, base_label, &cfg)?;
+            base_snap.overlaid(&plan.overlay())
+        }
+        _ => base_snap,
+    };
     let use_base = base_commit.is_some();
     let mut snaps: Vec<&Snapshot> = if use_base {
         vec![&head_snap, &base_snap]
@@ -1192,7 +1245,10 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             outcome.new.push(is_new);
         }
     }
+    // A base before 0.6.0 and the head hold the configuration and the
+    // documents of one upgrade, so SD503 does not apply (D156).
     if let Some(c) = &base_commit
+        && !plan_base
         && let Some(d) = config_not_alone(repo, &cfg, c, untracked)?
     {
         outcome.head.push(d);
@@ -1291,11 +1347,31 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             (None, false) => format!("{total} (no base commit, so all are new)"),
         };
         println!("spec-dna check: {} documents; {counts}", head.docs.len());
-        if cfg.change_policy != config::ChangePolicy::None && change_base.is_none() {
+        if cfg.change_policy != config::ChangePolicy::None
+            && change_base.is_none()
+            && life_note.is_none()
+        {
             eprintln!("note: {}", lifecycle::NO_BASE_NOTE);
         }
     }
+    if let Some(n) = &life_note {
+        eprintln!("note: {n}");
+    }
     Ok(if failed { 1 } else { 0 })
+}
+
+/// The pin of `spec-dna.toml` in a commit. `None` if the commit has no
+/// `spec-dna.toml` (the adoption), or the file has no pin that `scan_pin` reads.
+fn base_pin(repo: &Repo, commit: &str) -> Result<Option<String>, Fatal> {
+    let got = repo
+        .git
+        .read_at(&[(commit.to_string(), config::FILE_NAME.to_string())])
+        .map_err(Fatal::Io)?;
+    Ok(got
+        .into_iter()
+        .next()
+        .flatten()
+        .and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b))))
 }
 
 /// SD503: a change that edits `spec-dna.toml` together with documents or
