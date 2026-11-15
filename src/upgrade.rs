@@ -17,6 +17,7 @@ use crate::config::{self, Config, PinClass};
 use crate::diag::{Diag, Severity};
 use crate::evidence::{self, Cover};
 use crate::finish;
+use crate::git::Git;
 use crate::harness::{self, Level, Mode, Model, Role};
 use crate::init::{self, Adapter, HOOK_FILES};
 use crate::json::{self, Obj};
@@ -308,6 +309,56 @@ impl Plan {
             && self.docs.moves.is_empty()
             && self.removes.is_empty()
     }
+
+    /// The plan as a change of the snapshot of its tree: the moves, the
+    /// removes and the new text of each write. `check` lays it over the
+    /// snapshot of the base commit (D155).
+    #[allow(dead_code)] // S12: the handler of `check` calls it.
+    pub fn overlay(&self) -> repo::Overlay {
+        repo::Overlay {
+            moved: self
+                .docs
+                .moves
+                .iter()
+                .map(|m| (m.from.clone(), m.to.clone()))
+                .collect(),
+            removed: self.removes.clone(),
+            texts: self
+                .writes
+                .iter()
+                .map(|(p, t)| (p.clone(), t.clone().into_bytes()))
+                .collect(),
+        }
+    }
+}
+
+/// The plan of the base commit of `check` (D154): the tree of `rev`, with no
+/// `--layout`, the pin and the sums of the head. `label` is the revision that
+/// the person gave, for the messages. A stop of the plan is exit code 3 here,
+/// whatever its code in `upgrade`, because `check` can not ask the person to
+/// change the base.
+#[allow(dead_code)] // S12: the handler of `check` calls it.
+pub fn plan_base(git: &Git, rev: &str, label: &str, head: &Config) -> Result<Plan, Fatal> {
+    let data = TreeData::from_git(git, rev)?;
+    let opts = PlanOpts {
+        layout: false,
+        pin: head.pin.clone(),
+        sums: head.sha256.clone(),
+    };
+    data.with(|tree| {
+        plan(tree, &opts).map_err(|e| match e {
+            Fatal::Config(m) | Fatal::Refused(m) => {
+                let pin = tree_text(tree, config::FILE_NAME)
+                    .ok()
+                    .and_then(|t| config::scan_pin(&t))
+                    .unwrap_or_default();
+                Fatal::Config(format!(
+                    "the base `{label}` pins `{pin}`, and upgrade cannot plan it: {m}"
+                ))
+            }
+            other => other,
+        })
+    })
 }
 
 /// True if the tree has the path. The list of files is sorted.
@@ -1860,6 +1911,157 @@ mod tests {
             out.remove(path);
         }
         out
+    }
+
+    #[test]
+    fn the_overlay_of_a_plan_gives_the_tree_that_the_plan_writes() {
+        let blobs = blobs_of(&["harness-lean"]);
+        let first = TreeData::from_map(blobs.clone())
+            .with(|t| plan(t, &popts()))
+            .unwrap();
+        let ov = first.overlay();
+        assert!(!ov.moved.is_empty() && !ov.removed.is_empty());
+        assert!(ov.moved.iter().all(|(from, to)| {
+            first
+                .docs
+                .moves
+                .iter()
+                .any(|m| m.from == *from && m.to == *to)
+        }));
+        assert!(
+            ov.removed
+                .contains(&".claude/agents/checker.md".to_string())
+        );
+        assert_eq!(
+            ov.texts.keys().collect::<BTreeSet<_>>(),
+            first.writes.keys().collect::<BTreeSet<_>>()
+        );
+        assert!(ov.texts.contains_key(".claude/agents/verifier.md"));
+        // The snapshot with the overlay has the paths of the tree after the plan.
+        let snap = repo::Snapshot {
+            worktree: false,
+            files: {
+                let mut f: Vec<repo::Entry> = blobs
+                    .keys()
+                    .map(|p| repo::Entry {
+                        path: p.clone(),
+                        blob: Some(format!("blob-{p}")),
+                    })
+                    .collect();
+                f.sort_by(|a, b| a.path.cmp(&b.path));
+                f
+            },
+            texts: None,
+        }
+        .overlaid(&ov);
+        let got: BTreeSet<&str> = snap.files.iter().map(|e| e.path.as_str()).collect();
+        let want = after_plan(&blobs, &first);
+        assert_eq!(got, want.keys().map(String::as_str).collect());
+    }
+
+    /// A git repository with the files of a fixture and 1 commit.
+    fn commit_of(overlays: &[&str], name: &str) -> PathBuf {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!(
+            "spec-dna-upgrade-base-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, bytes) in blobs_of(overlays) {
+            let full = dir.join(&path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(full, bytes).unwrap();
+        }
+        let git = |args: &[&str]| {
+            let o = Command::new("git")
+                .current_dir(&dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "x"]);
+        dir
+    }
+
+    fn head_config(extra: &str) -> Config {
+        Config::parse(&format!(
+            "spec-dna = \"{VERSION}\"\n{extra}[[roots]]\npath = \"docs\"\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_plan_of_a_base_commit_takes_the_pin_and_the_sums_of_the_head() {
+        let dir = commit_of(&[], "sums");
+        let sums: String = crate::release::assets(VERSION)
+            .into_iter()
+            .map(|a| format!("\"{a}\" = \"{}\"\n", "c".repeat(64)))
+            .collect();
+        let head = head_config(&format!("[spec-dna-sha256]\n{sums}\n"));
+        assert!(head.sha256.is_some());
+        let git = Git::new(&dir);
+        let p = plan_base(&git, "HEAD", "main", &head).unwrap();
+        assert_eq!((p.from.as_str(), p.to.as_str()), ("0.5.0", VERSION));
+        let toml = &p.writes[config::FILE_NAME];
+        assert!(
+            toml.starts_with(&format!("spec-dna = \"{VERSION}\"")),
+            "{toml}"
+        );
+        assert!(toml.contains(&"c".repeat(64)), "{toml}");
+        // The base has no `--layout` move: only the changes move.
+        assert!(p.docs.moves.iter().all(|m| !m.layout));
+        // The tree of the commit is the base, not the work directory.
+        std::fs::write(dir.join("spec-dna.toml"), "spec-dna = \"0.4.2\"\n").unwrap();
+        let again = plan_base(&git, "HEAD", "main", &head).unwrap();
+        assert_eq!(again.from, "0.5.0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_plan_error_of_the_base_is_exit_code_3_and_names_the_base_and_the_pin() {
+        let dir = commit_of(&[], "stop");
+        let mut text = std::fs::read_to_string(dir.join("spec-dna.toml")).unwrap();
+        text.push_str("\nbogus = 1\n");
+        std::fs::write(dir.join("spec-dna.toml"), text).unwrap();
+        let status = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "-a",
+                "-m",
+                "y",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let got = plan_base(&Git::new(&dir), "HEAD", "main", &head_config(""));
+        match got {
+            Err(Fatal::Config(m)) => {
+                assert!(
+                    m.starts_with("the base `main` pins `0.5.0`, and upgrade cannot plan it: "),
+                    "{m}"
+                );
+                assert!(m.contains("unknown key"), "{m}");
+            }
+            other => panic!("not a configuration error: {:?}", other.err()),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        // A folder with no git repository: a git error is no plan error.
+        let none =
+            std::env::temp_dir().join(format!("spec-dna-upgrade-nogit-{}", std::process::id()));
+        std::fs::create_dir_all(&none).unwrap();
+        let got = plan_base(&Git::new(&none), "HEAD", "main", &head_config(""));
+        assert!(matches!(got, Err(Fatal::Io(_))), "{:?}", got.err());
+        let _ = std::fs::remove_dir_all(&none);
     }
 
     #[test]

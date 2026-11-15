@@ -777,20 +777,10 @@ fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, Stri
             }
         }
     } else {
-        let ids: Vec<(&'static str, String)> = adapters::PATHS
-            .iter()
-            .filter_map(|p| {
-                snap.blob_of(p)
-                    .and_then(|e| e.blob.clone())
-                    .map(|b| (*p, b))
-            })
-            .collect();
-        let blobs = repo
-            .git
-            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
-            .map_err(Fatal::Io)?;
-        for (p, b) in ids {
-            if let Some(bytes) = blobs.get(&b) {
+        let paths: Vec<String> = adapters::PATHS.iter().map(|p| p.to_string()).collect();
+        let got = snap.read(repo, &paths)?;
+        for p in adapters::PATHS {
+            if let Some(bytes) = got.get(p) {
                 out.push((p, String::from_utf8_lossy(bytes).into_owned()));
             }
         }
@@ -839,20 +829,9 @@ fn harness_texts(
         }
         return Ok(out);
     }
-    let ids: Vec<(String, String)> = paths
-        .into_iter()
-        .filter_map(|p| {
-            snap.blob_of(&p)
-                .and_then(|e| e.blob.clone())
-                .map(|b| (p, b))
-        })
-        .collect();
-    let blobs = repo
-        .git
-        .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
-        .map_err(Fatal::Io)?;
-    for (p, b) in ids {
-        if let Some(bytes) = blobs.get(&b) {
+    let got = snap.read(repo, &paths)?;
+    for p in paths {
+        if let Some(bytes) = got.get(&p) {
             out.push((p, String::from_utf8_lossy(bytes).into_owned()));
         }
     }
@@ -862,15 +841,9 @@ fn harness_texts(
 /// Reads the configuration of the base snapshot. Returns `None` if the base
 /// has no `spec-dna.toml`, or a configuration that does not parse.
 fn base_config(repo: &Repo, snap: &Snapshot) -> Result<Option<config::Config>, Fatal> {
-    let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
-        return Ok(None);
-    };
-    let blobs = repo
-        .git
-        .read_blobs(std::slice::from_ref(&blob))
-        .map_err(Fatal::Io)?;
-    Ok(blobs
-        .get(&blob)
+    let got = snap.read(repo, &[config::FILE_NAME.to_string()])?;
+    Ok(got
+        .get(config::FILE_NAME)
         .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok()))
 }
 
@@ -926,22 +899,11 @@ fn eval_tree(
             }
         }
     } else {
-        let ids: Vec<(String, String)> = paths
-            .iter()
-            .filter(direct)
-            .filter_map(|p| {
-                snap.blob_of(p)
-                    .and_then(|e| e.blob.clone())
-                    .map(|b| (p.clone(), b))
-            })
-            .collect();
-        let blobs = repo
-            .git
-            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
-            .map_err(Fatal::Io)?;
-        for (p, b) in ids {
-            if let Some(bytes) = blobs.get(&b) {
-                json.push((p, bytes.clone()));
+        let want: Vec<String> = paths.iter().filter(direct).cloned().collect();
+        let mut got = snap.read(repo, &want)?;
+        for p in want {
+            if let Some(bytes) = got.remove(&p) {
+                json.push((p, bytes));
             }
         }
     }
