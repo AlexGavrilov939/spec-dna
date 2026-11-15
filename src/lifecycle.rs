@@ -41,6 +41,15 @@ pub fn change_base(
     if config.change_policy == ChangePolicy::None {
         return Ok(None);
     }
+    merge_base_of(git, base)
+}
+
+/// The merge base of `--base` (or, without it, of `refs/remotes/origin/HEAD`)
+/// with `HEAD`, for any policy. `change_base` returns `None` for the policy
+/// `none` before it calls this function. `finish` always needs the base of an
+/// `accepted` change, so it calls this function. The result has the same
+/// meaning as the result of `change_base`.
+pub fn merge_base_of(git: &Git, base: Option<&str>) -> Result<Option<String>, String> {
     let tip = match base {
         Some(rev) => Some(git.commit(rev).ok_or_else(|| {
             format!(
@@ -254,13 +263,7 @@ pub fn tree_checks(
     let mut out = Vec::new();
     // The layers that the `intent` layer moves into.
     let intent_layer = config.layers.layer_of_type(DocType::Intent);
-    let allowed: Option<Vec<&str>> = intent_layer.map(|i| {
-        config.layers.layers()[i]
-            .moves_to
-            .iter()
-            .map(String::as_str)
-            .collect()
-    });
+    let allowed = allowed_layers(config);
     for ch in &changes {
         if ch.intent_status() == "closed" {
             continue;
@@ -325,9 +328,22 @@ pub fn tree_checks(
     out
 }
 
+/// The names of the layers that the `intent` layer moves into (its `moves-to`
+/// list), or `None` if the project has no `intent` layer. A delta line must
+/// target a document of one of them.
+pub fn allowed_layers(config: &Config) -> Option<Vec<&str>> {
+    config.layers.layer_of_type(DocType::Intent).map(|i| {
+        config.layers.layers()[i]
+            .moves_to
+            .iter()
+            .map(String::as_str)
+            .collect()
+    })
+}
+
 /// The text of an item on one line, at most 60 characters. It is the target
 /// of a diagnostic about an item that has no id.
-fn short(text: &str) -> String {
+pub(crate) fn short(text: &str) -> String {
     text.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -363,7 +379,7 @@ fn already_applied(c: &Corpus, base: Option<&Corpus>, d: &Delta) -> bool {
 
 /// The first problem of a delta line with a valid form, or `None`. The order
 /// is: the target document, its type, its layer, its key, its hash.
-fn delta_problem(
+pub(crate) fn delta_problem(
     config: &Config,
     c: &Corpus,
     layers: &[Option<usize>],
@@ -442,7 +458,7 @@ fn delta_problem(
 /// SD914 for the items of `Interfaces`: `CHANGE <interface id>: <text>`. An
 /// item with another form, an absent document and a document that is not an
 /// interface give SD914.
-fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
     for item in change::section_items(spec, ItemSection::Interfaces) {
         let mut push = |target: String, message: String| {
             out.push(crate::check::diag(
@@ -481,6 +497,49 @@ fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
     }
 }
 
+/// SD914 for an interface of `Interfaces` that the diff does not change: the
+/// pull request must change the interface document, or one file that it cites.
+/// `changed` tells if a path (from the repository root) is in the diff. An item
+/// that `interfaces` reports (a bad form, an absent document, a document that
+/// is not an interface) gives nothing here. `check` can call this function
+/// with the diff against the lifecycle base, and `finish` calls it with the
+/// diff and the documents that its own edits change.
+pub fn interfaces_unchanged(c: &Corpus, spec: &Doc, changed: &dyn Fn(&str) -> bool) -> Vec<Diag> {
+    let mut out = Vec::new();
+    let mut cits: Option<crate::cite::Citations> = None;
+    for item in change::section_items(spec, ItemSection::Interfaces) {
+        let Some(id) = interface_id(item) else {
+            continue;
+        };
+        let Res::Found(i, None, _) = c.resolve(id) else {
+            continue;
+        };
+        let doc = &c.docs[i as usize];
+        if doc.ty != DocType::Interface || changed(&doc.path) {
+            continue;
+        }
+        let cits = cits.get_or_insert_with(|| crate::cite::Citations::build(c));
+        let cited = cits
+            .files
+            .iter()
+            .any(|(f, v)| v.iter().any(|ct| ct.doc == i) && changed(f));
+        if cited {
+            continue;
+        }
+        out.push(crate::check::diag(
+            spec,
+            item.line,
+            Code::DeltaInvalid,
+            id,
+            format!(
+                "the spec lists the interface `{id}`, and the diff changes neither `{}` nor a file that it cites; change the interface document, or a file that it cites, in this pull request",
+                doc.path
+            ),
+        ));
+    }
+    out
+}
+
 /// The id of an item of `Interfaces`, or `None` if the item is not in the form
 /// `CHANGE <interface id>: <text>`. The id can be in `[[ ]]` or in a code span.
 fn interface_id(item: &ListItem) -> Option<&str> {
@@ -493,8 +552,9 @@ fn interface_id(item: &ListItem) -> Option<&str> {
     (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty()).then_some(id)
 }
 
-/// SD919: each open concern (`- [ ]`) of a spec that is `approved`.
-fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
+/// SD919: each open concern (`- [ ]`) of a spec that is `approved`. The
+/// function does not read the status: the caller does.
+pub(crate) fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
     for item in change::section_items(spec, ItemSection::Concerns) {
         if item.task == Some(false) {
             out.push(crate::check::diag(

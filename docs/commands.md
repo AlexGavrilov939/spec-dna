@@ -26,6 +26,8 @@ spec-dna mv irrigation/valves#drip irrigation/drip-lines  # a whole section into
 spec-dna mv guides/deploy#rollback runbooks/rollback --type runbook   # a section of a guide into a new runbook
 spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a research document
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
+spec-dna finish dose-limit --dry-run            # the diff of the finish of a change, and nothing written
+spec-dna finish dose-limit                      # apply the delta, delete the folder, stage the paths
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
 spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
 spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
@@ -289,6 +291,35 @@ spec-dna index <dir or file> [--replace]
 
 `index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
 
+## finish
+
+```text
+spec-dna finish <slug> [--dry-run] [--base <rev>]
+```
+
+`finish` ends a change ([Finish](design/0.6.0.md#finish)). It applies the delta of the spec of `<intent folder>/<slug>/` to the requirements, checks the evidence, and deletes the folder. The author runs it in the pull request of the code, so the review sees the code and the new current truth in one diff. It stops at the first step that fails. A stop writes nothing.
+
+1. Step 0: no document outside the folder links into it. It reads a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` and `from`. It skips a stub, a generated index and the locked text of an accepted decision. It lists each reference and stops, also in the profile `lite`.
+2. Step 1: the intent is `accepted`, the plan is `approved`, and (for a `higher-risk` change) the spec is `approved`. An intent with the status `closed` runs steps 0 and 1, and then `finish` deletes the folder. It applies no delta.
+3. Step 2: no open concern (SD919), no open question (SD922), and each decision of `Decisions` is `accepted` (SD920).
+4. Step 3: each delta line is valid against the tree (SD914). A `CHANGE` or `REMOVE` hash is the hash of the requirement now. The delta is the delta of the base tree: an approved delta must not change. The pull request changes each interface document of `Interfaces`, or a file that it cites.
+5. Step 4: it applies the delta in memory. `ADD` writes a list item after the last requirement item of the document, with its indent and marker (an ordered list gets the next number). With no item, it writes into the section `Requirements` (`Rules` for a rule), and it adds the section if needed. A document that does not exist is written at `<root>/<id>.md` with the status `active`, the line `type: requirements` only where the place gives no type, the H1 from the id, a `Requirements` section (`Rules` for a rule) and the items. `CHANGE` replaces the sentence on one line, and it keeps the key, the nested lists and the `aliases` and `verified-by` markers (also a marker inside a sentence that wraps). `REMOVE` deletes the lines of the item. A relative link of a delta line moves to the path of the target document. The result keeps CRLF, a BOM and the final newline of each file. A line that the tree applies already is skipped, so a second run changes nothing.
+6. Step 5: each requirement that the delta adds or changes has evidence (SD916). For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
+
+If no step stops, `finish` writes all the files in one pass, deletes the tracked files of the folder, and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code. A generated index that lists a deleted file is written again, so `check` gives no SD610. `finish` also needs the folder to be tracked and equal to `HEAD`: an untracked file in the folder, or an edit that is not committed, stops it.
+
+The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. An `accepted` change needs it. A `closed` change needs none. The base of step 3 does not depend on `[change] policy`, and the stops do not follow the profile or a `[rules]` entry.
+
+`--dry-run` writes nothing. It prints the diff of each file that `finish` would write, and `remove <path>` for each file that it would delete. With `--json`, the output is one object:
+
+```json
+{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}]}
+```
+
+A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
+
+`finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
+
 ## transcript
 
 ```text
@@ -335,11 +366,11 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 | Code | Meaning |
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
-| 1 | `check` found a new error (with `--all`: any error), or the preservation check of `mv`, `history` or `index` refused the change |
+| 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, or a step of `finish` stopped |
 | 2 | Usage error. Also a refusal of `layer add`: it changes nothing |
-| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository |
-| 4 | Git or file system error |
-| 5 | A target names no document, section or requirement |
+| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository. For `finish`: also an `accepted` change with no base |
+| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files |
+| 5 | A target names no document, section or requirement. For `finish`: no folder for the slug |
 
 A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.
 

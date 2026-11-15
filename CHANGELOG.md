@@ -61,6 +61,14 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - SD920 also reports a decision of `Decisions` that is absent or is not `accepted`.
   - SD911 (`change-stale`) reports an `accepted` change that has had no commit for more than `stale-days` of the `intent` layer. It compares the committer dates of the merge base and of the newest commit that touched the folder or a `Files` path. It never reads the clock or the time zone. It is a state code: `check --all` shows it, and it is never new. It needs a real merge base. A shallow clone can hide a stale change, and it never reports a false one.
   - `check` reads the `covers:` tags also when only SD916 needs them.
+- `spec-dna finish <slug> [--dry-run] [--base <rev>]` ends a change ([docs/commands.md](docs/commands.md#finish)). It runs 6 steps in memory and stops at the first one that fails, then it writes nothing:
+  - Step 0: a document outside the folder links into it (a Markdown link, `[[id]]`, `depends-on`, `supersedes` or `from`). The locked text of an accepted decision, a stub and a generated index do not count. This stop also applies in the profile `lite`.
+  - Step 1: the statuses (`accepted` intent, `approved` plan, and `approved` spec for a `higher-risk` change). An intent with the status `closed` runs steps 0 and 1, and then `finish` deletes the folder.
+  - Steps 2 and 3: SD919, SD922, SD920 and SD914, whatever the profile, the rules and the policy. SD914 also covers a delta that differs from the approved delta of the base tree, and an interface of `Interfaces` that the diff does not change.
+  - Steps 4 and 5: it applies `ADD`, `CHANGE` and `REMOVE` by byte range, with CRLF, a BOM, markers and nested lists kept, and then it checks the evidence (SD916). The result may add no error, except SD305 for a new document.
+  - The write is one pass: the files, then the deletion of the tracked files of the folder, then `git add -A` of each path. A generated index that lists a deleted file is written again. `finish` makes no commit.
+  - `--dry-run` prints the diff of each file and `remove <path>`. `--json` has `slug`, `ok`, `dry_run`, `step`, `diagnostics` and `files`. Exit codes: 1 a stop, 2 usage, 3 pin, base or configuration, 4 a write error, 5 no folder.
+  - `finish` is the one command that deletes documents. It deletes only the files of the intent folder.
 - A `covers:` tag that names the requirement of an `ADD` line of an `accepted` change gives no SD105.
 - The field `from` of an intent is a reference: it gives SD101 if it names no document, and SD901 follows the layers.
 - The check SD901 (`link-direction`, warning). A document of a layer X references a document of a layer Y, X is more stable than Y, and Y does not list X in `linked-from`. A reference is a Markdown link, `[[id]]`, `depends-on` or `supersedes`. A link of a locked decision that gives SD611 does not give SD901.

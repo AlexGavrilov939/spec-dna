@@ -601,7 +601,7 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
 /// The chunks of an accepted decision that can change in place: the amendment,
 /// history and live sections. It returns `None` for any other document: its
 /// text is not locked.
-fn editable_chunks(config: &Config, d: &Doc) -> Option<Vec<usize>> {
+pub(crate) fn editable_chunks(config: &Config, d: &Doc) -> Option<Vec<usize>> {
     if d.ty != DocType::Decision || d.status_str() != "accepted" || d.generated.is_some() {
         return None;
     }
@@ -618,7 +618,7 @@ fn editable_chunks(config: &Config, d: &Doc) -> Option<Vec<usize>> {
 /// The line of a reference of the body is in the locked text then (SD405). A
 /// line of the front matter has no chunk. SD611 treats it as locked, but SD405
 /// does not lock it, so SD101 does not use this function for it.
-fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
+pub(crate) fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
     !d.parsed
         .chunks
         .iter()

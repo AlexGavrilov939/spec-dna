@@ -2948,7 +2948,7 @@ const DIFF_CONTEXT: usize = 2;
 /// A unified diff of two texts, or an empty string if they are equal. `old`
 /// is `None` for a file that does not exist yet. `deleted` is true for a file
 /// that `init` removes: `new` is then empty, and the new side is `/dev/null`.
-fn unified_diff(path: &str, old: Option<&str>, new: &str, deleted: bool) -> String {
+pub(crate) fn unified_diff(path: &str, old: Option<&str>, new: &str, deleted: bool) -> String {
     if old == Some(new) || (deleted && old.is_none()) {
         return String::new();
     }

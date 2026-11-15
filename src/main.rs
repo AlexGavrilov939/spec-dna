@@ -26,6 +26,7 @@ mod detect;
 mod diag;
 mod drift;
 mod evidence;
+mod finish;
 mod frontmatter;
 mod git;
 mod glob;
@@ -156,6 +157,26 @@ pointer in place of each section and a backlink.",
         "Writes a generated index of the documents under a directory (default
 file: <dir>/README.md). --replace replaces a hand-kept file. `check`
 reports a stale index (SD610).",
+    ),
+    (
+        "finish",
+        "finish <slug> [--dry-run] [--base <rev>]",
+        "Finishes the change <slug>: it applies the delta of its spec to the
+requirements, checks the evidence of each requirement that it adds or
+changes, and deletes the folder of the change. It stops at the first failed
+step, and then it changes nothing. A stop is a reference to the folder from
+another document, a status that is not accepted (intent) or approved (plan,
+spec), an open concern or question, a decision that is not accepted, a delta
+line that does not match the tree (SD914), a delta that differs from the
+approved delta of the base tree, an interface that the diff does not change,
+a requirement with no evidence (SD916), or a new error. The base is the merge
+base of --base (default: origin/HEAD) and HEAD. An intent with the status
+closed runs the first two steps and deletes the folder. The folder must be
+tracked and clean. --dry-run prints the diff of each file and `remove <path>`
+for each deleted file, and writes nothing. Without it, the command writes the
+files, deletes the folder, and stages the paths with `git add`. It makes no
+commit. It is the only command that deletes documents. Exit codes: 1 a stop,
+3 pin, base or configuration, 4 write error, 5 no folder.",
     ),
     (
         "transcript",
@@ -470,6 +491,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "mv" => mv(&Repo::discover(&cwd)?, &a),
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
+        "finish" => finish(&Repo::discover(&cwd)?, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -2022,6 +2044,219 @@ fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
     }
     Ok(0)
+}
+
+/// A stop of `finish`, printed as text or as one JSON object. The exit code is
+/// 1.
+fn report_stop(slug: &str, a: &Args, stop: &finish::Stop) -> u8 {
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("slug", slug)
+                .bool("ok", false)
+                .bool("dry_run", a.dry_run)
+                .num("step", stop.step)
+                .str("reason", &stop.reason)
+                .raw(
+                    "diagnostics",
+                    &json::array(stop.diags.iter().map(|d| d.json(true)))
+                )
+                .raw("files", "[]")
+                .end()
+        );
+    } else {
+        let shown: Vec<&diag::Diag> = stop.diags.iter().collect();
+        for line in human_lines(&shown, false) {
+            println!("{line}");
+        }
+        eprintln!(
+            "spec-dna: finish `{slug}` stopped at step {}: {}; nothing changed",
+            stop.step, stop.reason
+        );
+    }
+    1
+}
+
+/// Finishes a change: the plan, then the write (`finish.rs`).
+fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    let slug = a.positional[0].as_str();
+    if !finish::valid_slug(slug) {
+        return Err(Fatal::Usage(format!(
+            "`{slug}` is not the name of a change; give the folder name of the change, with no `/`"
+        )));
+    }
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    // The base needs no policy: `finish` stops whatever the policy is.
+    let base_rev = lifecycle::merge_base_of(&repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let folder = lifecycle::intent_dirs(&cfg)
+        .iter()
+        .map(|d| format!("{d}/{slug}"))
+        .find(|f| repo.root.join(f).is_dir())
+        .ok_or_else(|| {
+            Fatal::NotFound(format!(
+                "no folder `<intent folder>/{slug}` for the change `{slug}`"
+            ))
+        })?;
+    // The folder must be tracked and equal to HEAD: `finish` deletes it, and
+    // git must keep what it deletes.
+    let precondition = |reason: String| {
+        report_stop(
+            slug,
+            a,
+            &finish::Stop {
+                step: 0,
+                reason,
+                diags: Vec::new(),
+            },
+        )
+    };
+    let prefix = format!("{folder}/");
+    if repo.head_commit().is_none() {
+        return Ok(precondition("the repository has no commit".to_string()));
+    }
+    let tracked: Vec<String> = repo
+        .git
+        .ls_files()
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .map(|e| e.0)
+        .filter(|p| p.starts_with(&prefix))
+        .collect();
+    if tracked.is_empty() {
+        return Ok(precondition(format!(
+            "git tracks no file of the folder `{folder}`; commit the change first"
+        )));
+    }
+    let dirty: Vec<String> = repo
+        .git
+        .diff_paths("HEAD", true)
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .map(|(p, _)| p)
+        .filter(|p| p.starts_with(&prefix))
+        .collect();
+    if !dirty.is_empty() {
+        return Ok(precondition(format!(
+            "the folder `{folder}` differs from HEAD (an edit that is not committed, or a file that git does not track): {}; commit or remove them first",
+            dirty
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    // The trees: the working tree, and the lifecycle base if git names it.
+    let head_snap = Snapshot::worktree(repo, &repo::root_paths(&cfg), true)?;
+    let base_snap = base_rev
+        .as_deref()
+        .map(|r| Snapshot::at(repo, r))
+        .transpose()?;
+    let mut snaps: Vec<&Snapshot> = vec![&head_snap];
+    snaps.extend(base_snap.as_ref());
+    let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, false)?;
+    let base = if base_snap.is_some() {
+        Some(loaded.corpora.remove(1))
+    } else {
+        None
+    };
+    let mut head = loaded.corpora.remove(0);
+    head.covers = evidence::load(repo, &cfg, None, true)?;
+    let diff = base_rev
+        .as_deref()
+        .map(|r| lifecycle::Diff::read(&repo.git, r, true))
+        .transpose()
+        .map_err(Fatal::Io)?;
+    let read = |p: &str| mv::read(repo, p).map_err(|e| e.message().to_string());
+    let exists = |p: &str| repo.root.join(p).exists();
+    let cx = finish::Ctx {
+        config: &cfg,
+        head: &head,
+        base: base.as_ref(),
+        diff: diff.as_ref(),
+        folder: &folder,
+        folder_files: &tracked,
+        read: &read,
+        exists: &exists,
+    };
+    let plan = match finish::plan(&cx) {
+        Ok(p) => p,
+        Err(finish::Failure::Stop(s)) => return Ok(report_stop(slug, a, &s)),
+        Err(finish::Failure::NoBase) => {
+            return Err(Fatal::Config(format!(
+                "the change `{slug}` is `accepted`, and `finish` compares its delta with the base tree; {}",
+                lifecycle::NO_BASE_NOTE
+            )));
+        }
+        Err(finish::Failure::Io(m)) => return Err(Fatal::Io(m)),
+    };
+    if !a.dry_run {
+        finish::write_plan(&repo.root, &repo.git, &plan).map_err(|e| Fatal::Io(e.message))?;
+    }
+    report_finish(slug, &folder, a, &plan);
+    Ok(0)
+}
+
+/// The report of a plan that no step stopped, written or not (`--dry-run`).
+fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
+    let diff_of = |w: &finish::Write| init::unified_diff(&w.path, w.old.as_deref(), &w.new, false);
+    if a.json {
+        let writes = plan.writes.iter().map(|w| {
+            Obj::new()
+                .str("path", &w.path)
+                .str("action", "write")
+                .str("diff", &diff_of(w))
+                .end()
+        });
+        let removes = plan.removes.iter().map(|p| {
+            Obj::new()
+                .str("path", p)
+                .str("action", "remove")
+                .str("diff", "")
+                .end()
+        });
+        println!(
+            "{}",
+            Obj::new()
+                .str("slug", slug)
+                .bool("ok", true)
+                .bool("dry_run", a.dry_run)
+                .num("step", 6)
+                .raw("diagnostics", "[]")
+                .raw("files", &json::array(writes.chain(removes)))
+                .end()
+        );
+        return;
+    }
+    let (add, change, remove) = plan.applied;
+    for w in &plan.writes {
+        if a.dry_run {
+            print!("{}", diff_of(w));
+        } else {
+            println!("wrote {}", w.path);
+        }
+    }
+    for p in &plan.removes {
+        println!("{} {p}", if a.dry_run { "remove" } else { "removed" });
+    }
+    let lines = format!("{add} ADD, {change} CHANGE and {remove} REMOVE delta lines");
+    if a.dry_run {
+        println!(
+            "spec-dna finish `{slug}` (dry run): it would apply {lines}, write {} files and delete the folder `{folder}` ({} files); nothing changed",
+            plan.writes.len(),
+            plan.removes.len()
+        );
+    } else {
+        println!(
+            "spec-dna finish `{slug}`: applied {lines}, wrote {} files and deleted the folder `{folder}` ({} files). The paths are staged with `git add`; read the diff, then commit it with the code",
+            plan.writes.len(),
+            plan.removes.len()
+        );
+    }
 }
 
 fn report_move(m: &mv::Moved, json: bool) {

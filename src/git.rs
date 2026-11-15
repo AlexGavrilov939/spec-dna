@@ -815,6 +815,19 @@ impl Git {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }
 
+    /// Stages the paths with `git add -A`: a new file, an edit and a deletion.
+    /// Each path is a literal path of the repository (no glob). It writes the
+    /// git index and it makes no commit.
+    pub fn add_paths(&self, paths: &[String]) -> Result<(), String> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let specs: Vec<String> = paths.iter().map(|p| format!(":(literal){p}")).collect();
+        let mut args = vec!["add", "-A", "--"];
+        args.extend(specs.iter().map(String::as_str));
+        self.run(&args).map(|_| ())
+    }
+
     /// Returns true if an ignore rule of git matches the path. A tracked
     /// file is never ignored.
     pub fn is_ignored(&self, path: &str) -> bool {
