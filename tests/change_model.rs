@@ -158,7 +158,16 @@ fn class_values_a_table() {
 
 #[test]
 fn areas_and_from_of_an_intent_give_no_diagnostic() {
+    // `from` is a reference since slice S3: the incident must exist.
     let r = repo();
+    r.write(
+        "docs/incidents/flood.md",
+        "---\nstatus: active\n---\n# Flood\n\n## Summary\n\nThe bed flooded.\n\n## Root cause\n\nThe valve stayed open. See [[procedures/dose]].\n",
+    );
+    r.write(
+        "docs/procedures/dose.md",
+        "---\nstatus: active\n---\n# Dose\n\nText.\n",
+    );
     r.write(
         "docs/intent/drip/intent.md",
         &intent("class: higher-risk\nareas: [valves, sensors]\nfrom: incidents/flood\n"),

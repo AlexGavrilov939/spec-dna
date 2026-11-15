@@ -734,6 +734,28 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
     let mut outcome = check::gate(&cfg, base, head);
+    // SD914 is an error only for a spec that the diff touches (design, K3).
+    // With no lifecycle base, no spec is touched.
+    if outcome
+        .head
+        .iter()
+        .any(|d| d.code == diag::Code::DeltaInvalid && d.severity == Severity::Error)
+    {
+        let touched: Vec<String> = match &change_base {
+            Some(b) => lifecycle::Diff::read(&repo.git, b, untracked)
+                .map_err(Fatal::Io)?
+                .files
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect(),
+            None => Vec::new(),
+        };
+        for d in &mut outcome.head {
+            if d.code == diag::Code::DeltaInvalid && !touched.contains(&d.path) {
+                d.severity = Severity::Warning;
+            }
+        }
+    }
     repo::trace("diagnose", &mut t);
     if let Some(base) = base {
         let drift = drift::check(

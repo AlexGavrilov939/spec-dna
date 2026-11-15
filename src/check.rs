@@ -12,7 +12,7 @@ use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
 use crate::repo::Snapshot;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-fn diag(
+pub(crate) fn diag(
     d: &Doc,
     line: u32,
     code: Code,
@@ -45,6 +45,13 @@ pub fn apply_severity(config: &Config, diags: Vec<Diag>) -> Vec<Diag> {
 /// Returns every diagnostic of one tree, with the severities of the
 /// configuration.
 pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
+    diagnose_against(config, c, None)
+}
+
+/// Like `diagnose`. `base` is the tree that the gate compares with. The
+/// lifecycle checks of one tree use it to find a delta line that the head
+/// already applies (`lifecycle::tree_checks`).
+pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag> {
     let (ev, mut out) = Evidence::build(c);
     let layers = doc_layers(config, c);
     let facts = Facts::build(config, c, &ev, &layers);
@@ -114,6 +121,7 @@ pub fn diagnose(config: &Config, c: &Corpus) -> Vec<Diag> {
     }
     let mut out = apply_severity(config, out);
     out.extend(layer_limits(config, c, &layers));
+    out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
     out.sort();
     out
 }
@@ -298,16 +306,28 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
         out.push(diag(d, 1, Code::IndexStale, "", stale));
     }
 
+    // An accepted decision cannot change its locked text (the body outside the
+    // amendment, history and live sections). A reference there that no longer
+    // resolves gives no SD101 or SD102: the author cannot fix it (a finished
+    // intent leaves no document). SD611 already warned. `supersedes` and
+    // `depends-on` are in the front matter, which the author can change.
+    let editable = editable_chunks(config, d);
+    let quiet = |line: u32| {
+        editable
+            .as_ref()
+            .is_some_and(|e| in_locked_text(d, e, line))
+    };
     for r in &p.refs {
         match r.kind {
             RefKind::Wiki => {
-                if let Some(t) = id_ref(c, d, &r.target, r.line, &mut out)
+                if let Some(t) = id_ref(c, d, &r.target, r.line, quiet(r.line), &mut out)
                     && track
                 {
                     hits.push((t, r.line));
                 }
             }
             RefKind::Link | RefKind::Image => match c.resolve_link(&d.path, &r.target) {
+                LinkRes::Missing(_) if quiet(r.line) => {}
                 LinkRes::Missing(path) => out.push(diag(
                     d,
                     r.line,
@@ -350,18 +370,18 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
     }
     // A stub needs only a `moved-to` that resolves.
     if let Some((t, line)) = &d.moved_to {
-        id_ref(c, d, t, *line, &mut out);
+        id_ref(c, d, t, *line, false, &mut out);
         return out;
     }
     for (t, line) in d.supersedes.iter() {
-        if let Some(t) = id_ref(c, d, t, *line, &mut out)
+        if let Some(t) = id_ref(c, d, t, *line, false, &mut out)
             && track
         {
             hits.push((t, *line));
         }
     }
     for (t, line) in d.depends_on.iter() {
-        if let Some(i) = id_ref(c, d, t, *line, &mut out)
+        if let Some(i) = id_ref(c, d, t, *line, false, &mut out)
             && track
         {
             hits.push((i, *line));
@@ -386,6 +406,14 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 _ => {}
             }
         }
+    }
+    // The field `from` of an intent names the incident that the change
+    // answers. It is a reference, as `depends-on` is.
+    if let Some((t, line)) = &d.from
+        && let Some(i) = id_ref(c, d, t, *line, false, &mut out)
+        && track
+    {
+        hits.push((i, *line));
     }
     let exists = |path: &str| {
         let p = crate::cite::strip_location(path).trim_matches('/');
@@ -570,6 +598,34 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
     })
 }
 
+/// The chunks of an accepted decision that can change in place: the amendment,
+/// history and live sections. It returns `None` for any other document: its
+/// text is not locked.
+fn editable_chunks(config: &Config, d: &Doc) -> Option<Vec<usize>> {
+    if d.ty != DocType::Decision || d.status_str() != "accepted" || d.generated.is_some() {
+        return None;
+    }
+    let mut v = crate::model::amendment_chunks(
+        &d.parsed.chunks,
+        &config.roots[d.root].live_sections[d.ty as usize],
+    );
+    v.extend(&d.amendments);
+    v.extend(&d.history);
+    Some(v)
+}
+
+/// True if a line of an accepted decision is in none of the `editable` chunks.
+/// The line of a reference of the body is in the locked text then (SD405). A
+/// line of the front matter has no chunk. SD611 treats it as locked, but SD405
+/// does not lock it, so SD101 does not use this function for it.
+fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
+    !d.parsed
+        .chunks
+        .iter()
+        .rposition(|ch| ch.line <= line)
+        .is_some_and(|i| editable.contains(&i))
+}
+
 /// SD611: an accepted decision links a document of the type `intent` in its
 /// locked text, or in `depends-on`. You can delete a finished intent (SD202
 /// allows it: its layer is `until-finished`), but you cannot remove the link from
@@ -578,18 +634,8 @@ fn links_knowledge(c: &Corpus, d: &Doc) -> bool {
 /// Returns the intents that it reports. SD901 skips these pairs.
 fn decision_links_change(config: &Config, c: &Corpus, d: &Doc, out: &mut Vec<Diag>) -> Vec<u32> {
     let p = &d.parsed;
-    let live = crate::model::amendment_chunks(
-        &p.chunks,
-        &config.roots[d.root].live_sections[d.ty as usize],
-    );
-    let editable = |line: u32| {
-        p.chunks
-            .iter()
-            .rposition(|ch| ch.line <= line)
-            .is_some_and(|i| {
-                d.amendments.contains(&i) || d.history.contains(&i) || live.contains(&i)
-            })
-    };
+    let editable = editable_chunks(config, d).unwrap_or_default();
+    let editable = |line: u32| !in_locked_text(d, &editable, line);
     let mut seen: Vec<u32> = Vec::new();
     let mut hit = |t: u32, line: u32| {
         let target = &c.docs[t as usize];
@@ -742,10 +788,20 @@ fn history_and_terms(config: &Config, d: &Doc, facts: &Facts, out: &mut Vec<Diag
 }
 
 /// Reports a reference that does not resolve. Returns the document that it
-/// names, if it names one.
-fn id_ref(c: &Corpus, d: &Doc, target: &str, line: u32, out: &mut Vec<Diag>) -> Option<u32> {
+/// names, if it names one. With `quiet`, it does not report a document or a
+/// section that is absent (SD101): this is the locked text of a decision.
+fn id_ref(
+    c: &Corpus,
+    d: &Doc,
+    target: &str,
+    line: u32,
+    quiet: bool,
+    out: &mut Vec<Diag>,
+) -> Option<u32> {
     match c.resolve(target) {
         Res::Found(i, _, true) => return Some(i),
+        Res::Found(i, Some(_), false) if quiet => return Some(i),
+        Res::Missing if quiet => {}
         Res::Found(i, Some(frag), false) => {
             out.push(diag(
                 d,
@@ -1282,7 +1338,7 @@ pub struct Outcome {
 }
 
 pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
-    let mut head_diags = diagnose(config, head);
+    let mut head_diags = diagnose_against(config, head, base);
     let budget: Vec<(Diag, bool)> = hard_budget(config, base, head)
         .into_iter()
         .filter_map(|(mut d, n)| {

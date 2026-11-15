@@ -121,7 +121,7 @@ An intent has these front matter fields, in addition to `status`. spec-dna reads
 | --- | --- | --- |
 | `class` | `routine` or `higher-risk` | The class of the change ([Change classes](design/0.6.0.md#change-classes)). No `class`, or an empty value, is `routine`. Another value, such as `small-fix`, gives SD302 and counts as `routine`. A small fix has no intent |
 | `areas` | a list of area names | The areas that the change touches. The groups of `[groups]` use them |
-| `from` | one id | The id of the incident that the change answers |
+| `from` | one id | The id of the incident that the change answers. It is a reference: SD101 reports an id that names no document, and SD901 checks its direction |
 
 The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new intent <slug>` writes it. A project template of an intent keeps its own front matter.
 

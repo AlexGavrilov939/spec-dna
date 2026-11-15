@@ -1,15 +1,18 @@
 //! The base of the change checks (design 0.6.0, "Gates"), the diff against it,
-//! and the requirements that the diff changes. Step 3 builds this module for
-//! the lifecycle checks of the next slices.
+//! the requirements that the diff changes, and the checks of the change
+//! lifecycle that need one tree only (`tree_checks`).
 //!
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`) with
 //! `HEAD`. It is never the tip of `--base`: a branch that was cut from an old
 //! commit is not behind the default branch because of that.
 
+use crate::change::{self, Delta, Verb};
 use crate::config::{ChangePolicy, Config};
+use crate::diag::{Code, Diag};
 use crate::git::{Git, PathChange};
-use crate::hash::Hash;
-use crate::model::{Corpus, Doc, Res};
+use crate::hash::{Hash, hex};
+use crate::model::{Corpus, Doc, DocType, Res};
+use crate::parse::{ItemSection, ListItem};
 use std::collections::{BTreeMap, HashSet};
 
 /// The note that a command prints when the lifecycle base is unknown.
@@ -48,7 +51,6 @@ pub fn change_base(
 }
 
 /// The files that a change touches: the diff of the head against the base.
-#[allow(dead_code)] // reader: S4
 #[derive(Clone, Debug, Default)]
 pub struct Diff {
     pub files: Vec<(String, PathChange)>,
@@ -226,6 +228,353 @@ pub fn by_document(changes: &[ReqChange]) -> BTreeMap<&str, Vec<&ReqChange>> {
         m.entry(c.doc.as_str()).or_default().push(c);
     }
     m
+}
+
+/// The checks of the change lifecycle that read one tree: SD905 (the delta
+/// part), SD912, SD914 (without the check of the diff), SD919 and SD920 (the
+/// absent decision). They need no base and no history. `base` is the tree that
+/// the gate compares with. A `REMOVE` line uses it to tell that the head already
+/// has the result of the line. `layers` is the layer of each document of `c`.
+///
+/// A change whose intent is `closed` does not proceed, so its spec gives
+/// nothing. All the checks return no diagnostic if the policy is `none`.
+pub fn tree_checks(
+    config: &Config,
+    c: &Corpus,
+    base: Option<&Corpus>,
+    layers: &[Option<usize>],
+) -> Vec<Diag> {
+    if config.change_policy == ChangePolicy::None
+        || [
+            Code::FanOut,
+            Code::StartedLimit,
+            Code::DeltaInvalid,
+            Code::ConcernOpen,
+            Code::DecisionNeededUnaccepted,
+        ]
+        .iter()
+        .all(|&k| config.is_off(k))
+    {
+        return Vec::new();
+    }
+    let changes = change::collect(c);
+    let mut out = Vec::new();
+    // The layers that the `intent` layer moves into.
+    let intent_layer = config.layers.layer_of_type(DocType::Intent);
+    let allowed: Option<Vec<&str>> = intent_layer.map(|i| {
+        config.layers.layers()[i]
+            .moves_to
+            .iter()
+            .map(String::as_str)
+            .collect()
+    });
+    for ch in &changes {
+        if ch.intent_status() == "closed" {
+            continue;
+        }
+        let Some(spec) = &ch.spec else { continue };
+        let d = &c.docs[spec.doc as usize];
+        if spec.status == "approved" {
+            concerns(d, &mut out);
+            decisions(c, d, &mut out);
+        }
+        let mut targets: HashSet<String> = HashSet::new();
+        for (line, item) in ch
+            .delta(c)
+            .into_iter()
+            .zip(change::section_items(d, ItemSection::Delta))
+        {
+            let delta = match &line.parsed {
+                Ok(delta) => delta,
+                Err(reason) => {
+                    out.push(crate::check::diag(
+                        d,
+                        line.line,
+                        Code::DeltaInvalid,
+                        short(&item.text),
+                        format!("the delta line is not valid: {reason}"),
+                    ));
+                    continue;
+                }
+            };
+            targets.insert(target_doc(c, &delta.id));
+            if already_applied(c, base, delta) {
+                continue;
+            }
+            if let Some(problem) = delta_problem(config, c, layers, allowed.as_deref(), delta) {
+                out.push(crate::check::diag(
+                    d,
+                    line.line,
+                    Code::DeltaInvalid,
+                    delta.target(),
+                    format!("`{}`: {problem}", delta.target()),
+                ));
+            }
+        }
+        interfaces(c, d, &mut out);
+        let limit = config.max_fanout as usize;
+        if targets.len() > limit {
+            out.push(crate::check::diag(
+                d,
+                1,
+                Code::FanOut,
+                "",
+                format!(
+                    "the delta touches {} requirement documents, more than `max-fanout = {limit}`",
+                    targets.len()
+                ),
+            ));
+        }
+    }
+    let mut out = crate::check::apply_severity(config, out);
+    out.extend(started_limit(config, intent_layer, &changes));
+    out
+}
+
+/// The text of an item on one line, at most 60 characters. It is the target
+/// of a diagnostic about an item that has no id.
+fn short(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(60)
+        .collect()
+}
+
+/// The name of the document that a delta line names: the id of the document in
+/// the tree, or the id of the line if the tree has no such document.
+fn target_doc(c: &Corpus, id: &str) -> String {
+    match c.resolve(id) {
+        Res::Found(i, None, _) => c.docs[i as usize].id.clone(),
+        _ => id.to_string(),
+    }
+}
+
+/// True if the tree already has the result of a delta line, so the line gives
+/// no diagnostic (design T3). `ADD` and `CHANGE`: the head requirement has the
+/// text of the line. `REMOVE`: the head has no such requirement, and the base
+/// has it. With no base, a `REMOVE` of an absent requirement is not applied.
+fn already_applied(c: &Corpus, base: Option<&Corpus>, d: &Delta) -> bool {
+    let head = change::target_req(c, &d.id, &d.key);
+    match d.verb {
+        Verb::Add | Verb::Change => {
+            matches!((head, d.frozen()), (Some(r), Some(f)) if r.frozen == f)
+        }
+        Verb::Remove => {
+            head.is_none() && base.is_some_and(|b| change::target_req(b, &d.id, &d.key).is_some())
+        }
+    }
+}
+
+/// The first problem of a delta line with a valid form, or `None`. The order
+/// is: the target document, its type, its layer, its key, its hash.
+fn delta_problem(
+    config: &Config,
+    c: &Corpus,
+    layers: &[Option<usize>],
+    allowed: Option<&[&str]>,
+    d: &Delta,
+) -> Option<String> {
+    let id = &d.id;
+    let (doc, layer) = match c.resolve(id) {
+        Res::Ambiguous(v) => return Some(format!("`{id}` names {} documents", v.len())),
+        Res::Found(i, None, _) => (Some(&c.docs[i as usize]), layers[i as usize]),
+        _ => (None, None),
+    };
+    let layer_problem = |layer: Option<usize>, what: &str| -> Option<String> {
+        let allowed = allowed?;
+        let Some(l) = layer else {
+            return Some(format!("{what} is in no layer"));
+        };
+        let name = &config.layers.layers()[l].name;
+        (!allowed.contains(&name.as_str())).then(|| {
+            format!("{what} is in the layer `{name}`, and the `moves-to` list of the layer `intent` does not have it")
+        })
+    };
+    let not_requirements = |ty: DocType| {
+        format!(
+            "`{id}` is a `{}` document; a delta line needs a document of the type `requirements`, `interface` or `rule`",
+            ty.name()
+        )
+    };
+    let Some(doc) = doc else {
+        if d.verb != Verb::Add {
+            return Some(format!("`{id}` names no document"));
+        }
+        // A new document: `finish` writes it at the place of its id.
+        let rel = format!("{id}.md");
+        let ty = config
+            .layers
+            .place_type(&rel)
+            .unwrap_or(DocType::Requirements);
+        if !ty.has_requirements() {
+            return Some(not_requirements(ty));
+        }
+        return layer_problem(
+            config.layers.layer_of(&rel, ty),
+            &format!("the new document `{id}`"),
+        );
+    };
+    if !doc.has_layer() {
+        return Some(format!("`{id}` has no valid type"));
+    }
+    if !doc.ty.has_requirements() {
+        return Some(not_requirements(doc.ty));
+    }
+    if let Some(p) = layer_problem(layer, &format!("`{id}`")) {
+        return Some(p);
+    }
+    let req = doc.req(&d.key).map(|i| &doc.parsed.reqs[i]);
+    match (d.verb, req) {
+        (Verb::Add, Some(_)) => Some(format!(
+            "`{id}` has the key `{}` already; an ADD line needs a new key",
+            d.key
+        )),
+        (Verb::Add, None) => None,
+        (_, None) => Some(format!("`{id}` has no requirement `{}`", d.key)),
+        (_, Some(r)) => {
+            let hash = d.hash.as_deref().unwrap_or("");
+            (!change::hash_matches(r, hash)).then(|| {
+                format!(
+                    "the hash `{hash}` is not the hash of the requirement now (`{}`); read the requirement again and copy the hash from `spec-dna show`",
+                    hex(&r.hash)
+                )
+            })
+        }
+    }
+}
+
+/// SD914 for the items of `Interfaces`: `CHANGE <interface id>: <text>`. An
+/// item with another form, an absent document and a document that is not an
+/// interface give SD914.
+fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+    for item in change::section_items(spec, ItemSection::Interfaces) {
+        let mut push = |target: String, message: String| {
+            out.push(crate::check::diag(
+                spec,
+                item.line,
+                Code::DeltaInvalid,
+                target,
+                message,
+            ))
+        };
+        let Some(id) = interface_id(item) else {
+            push(
+                short(&item.text),
+                "an item of `Interfaces` is `CHANGE <interface id>: <text>`".to_string(),
+            );
+            continue;
+        };
+        match c.resolve(id) {
+            Res::Found(i, None, _) if c.docs[i as usize].ty == DocType::Interface => {}
+            Res::Found(i, None, _) => push(
+                id.to_string(),
+                format!(
+                    "`{id}` is a `{}` document, not an interface",
+                    c.docs[i as usize].ty.name()
+                ),
+            ),
+            Res::Ambiguous(v) => push(
+                id.to_string(),
+                format!("`{id}` names {} documents", v.len()),
+            ),
+            _ => push(
+                id.to_string(),
+                format!("`{id}` names no interface document"),
+            ),
+        }
+    }
+}
+
+/// The id of an item of `Interfaces`, or `None` if the item is not in the form
+/// `CHANGE <interface id>: <text>`. The id can be in `[[ ]]` or in a code span.
+fn interface_id(item: &ListItem) -> Option<&str> {
+    let rest = item.text.strip_prefix("CHANGE")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let (id, text) = rest.split_once(':')?;
+    let id = id.trim().trim_matches(['[', ']', '`']);
+    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty()).then_some(id)
+}
+
+/// SD919: each open concern (`- [ ]`) of a spec that is `approved`.
+fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
+    for item in change::section_items(spec, ItemSection::Concerns) {
+        if item.task == Some(false) {
+            out.push(crate::check::diag(
+                spec,
+                item.line,
+                Code::ConcernOpen,
+                short(&item.text),
+                format!(
+                    "the spec is `approved`, and the concern `{}` is open",
+                    short(&item.text)
+                ),
+            ));
+        }
+    }
+}
+
+/// SD920, the absent part: a decision of `Decisions` that names no document,
+/// in a spec that is `approved`. The check that the decision is `accepted`
+/// runs when `finish` runs.
+fn decisions(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+    for item in change::section_items(spec, ItemSection::Decisions) {
+        let mut rest = item.text.as_str();
+        while let Some(start) = rest.find("[[") {
+            let Some(len) = rest[start + 2..].find("]]") else {
+                break;
+            };
+            let inner = &rest[start + 2..start + 2 + len];
+            rest = &rest[start + 2 + len + 2..];
+            let id = inner.split(['#', '|']).next().unwrap_or("").trim();
+            if !id.is_empty() && matches!(c.resolve(id), Res::Missing) {
+                out.push(crate::check::diag(
+                    spec,
+                    item.line,
+                    Code::DecisionNeededUnaccepted,
+                    id,
+                    format!("the spec is `approved`, and the decision `{id}` names no document"),
+                ));
+            }
+        }
+    }
+}
+
+/// SD912: more changes than `max-started` of the `intent` layer have an
+/// `accepted` intent. The diagnostic is on `spec-dna.toml`, as the one of SD902
+/// is, so the rules of a root do not apply.
+fn started_limit(config: &Config, layer: Option<usize>, changes: &[change::Change]) -> Vec<Diag> {
+    let Some(layer) = layer.map(|i| &config.layers.layers()[i]) else {
+        return Vec::new();
+    };
+    let Some(max) = layer.max_started else {
+        return Vec::new();
+    };
+    let Some(severity) = config.severity(Code::StartedLimit, None) else {
+        return Vec::new();
+    };
+    let started = changes
+        .iter()
+        .filter(|ch| ch.intent_status() == "accepted")
+        .count();
+    if started <= max as usize {
+        return Vec::new();
+    }
+    vec![Diag {
+        path: crate::config::FILE_NAME.to_string(),
+        line: 1,
+        code: Code::StartedLimit,
+        doc: crate::config::FILE_NAME.to_string(),
+        target: format!("{}:max-started", layer.name),
+        message: format!(
+            "{started} changes have an `accepted` intent, more than `max-started = {max}` of the layer `{}`",
+            layer.name
+        ),
+        severity,
+    }]
 }
 
 #[cfg(test)]

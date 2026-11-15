@@ -48,7 +48,6 @@ pub struct Change {
 /// is an artifact if its type is `intent`, `spec` or `plan` and it is at the
 /// place of that type. A folder with one such document is a change, also
 /// without an intent.
-#[allow(dead_code)] // reader: S3
 pub fn collect(corpus: &Corpus) -> Vec<Change> {
     let mut by_dir: BTreeMap<&str, Change> = BTreeMap::new();
     for (i, d) in corpus.docs.iter().enumerate() {
@@ -97,7 +96,6 @@ impl Change {
 
     /// The typed lines of the delta of the spec, with the line errors. A
     /// change with no spec has no delta line.
-    #[allow(dead_code)] // reader: S3
     pub fn delta(&self, corpus: &Corpus) -> Vec<DeltaLine> {
         match &self.spec {
             Some(a) => delta_lines(&corpus.docs[a.doc as usize]),
@@ -120,7 +118,6 @@ impl Change {
 }
 
 /// The top-level list items of a section of a document.
-#[allow(dead_code)] // reader: S3
 pub fn section_items(doc: &Doc, section: ItemSection) -> impl Iterator<Item = &ListItem> {
     doc.parsed
         .items
@@ -298,13 +295,12 @@ pub fn parse_delta(item: &ListItem) -> Result<Delta, String> {
 /// True if a hash of a delta line names the text of the requirement: it is
 /// the hash that `show` prints, or the hash `frozen` (the same text with no
 /// link destinations, so a `mv` that rewrote a link keeps the line).
-#[allow(dead_code)] // reader: S3
 pub fn hash_matches(req: &Req, hash: &str) -> bool {
     hash.eq_ignore_ascii_case(&hex(&req.hash)) || hash.eq_ignore_ascii_case(&hex(&req.frozen))
 }
 
 /// The valid requirement of a document id and a key in a tree.
-fn target_req<'a>(corpus: &'a Corpus, id: &str, key: &str) -> Option<&'a Req> {
+pub fn target_req<'a>(corpus: &'a Corpus, id: &str, key: &str) -> Option<&'a Req> {
     let Res::Found(d, None, _) = corpus.resolve(id) else {
         return None;
     };
@@ -358,7 +354,6 @@ pub fn applied(line: &DeltaLine, base: &Corpus, head: &Corpus) -> Applied {
 /// `accepted` intent, if the tree has no such requirement yet. A `covers:` tag
 /// can name such a requirement before `finish` writes it (SD105). The id is as
 /// the line writes it.
-#[allow(dead_code)] // reader: S3
 pub fn pending_adds(corpus: &Corpus) -> HashSet<String> {
     let mut out = HashSet::new();
     for c in collect(corpus) {

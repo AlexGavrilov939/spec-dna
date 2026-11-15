@@ -87,6 +87,8 @@ The hook that `init` writes runs `spec-dna check --staged`. A commit records the
 
 With a `[change] policy` other than `none`, `check` also finds the lifecycle base: the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`. `--json` has the field `change_base`, the commit id of this base, or `null` if git cannot name it. With `none`, the field is not in the output, and `check` reads no second tree and no history for it. If there is no base, the text output prints this note on stderr: `no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>`. `origin/HEAD` is the only ref that `check` reads for this base. It does not use a local `main` or `master`. A shallow clone can fail to find the merge base. Then `change_base` is `null`.
 
+With a `[change] policy` other than `none`, `check` also runs the lifecycle checks that read one tree: SD905, SD912, SD914, SD919 and SD920 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). They need no base. SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
+
 A change can remove or rename a path or an identifier that a document cites. Then `check` gives a warning that names the document (SD606, SD607). In an accepted decision, an amendment section that cites the new path or identifier clears these warnings.
 
 The text output gives the errors first, then SD606 and SD607, then the other warnings. Each prose lint code (SD801 to SD805) gets one line with a count. Another warning code with more than 10 diagnostics also gets one line with a count. At the end, the output gives the fix of each listed code once.

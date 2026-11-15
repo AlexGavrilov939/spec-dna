@@ -27,6 +27,8 @@ An error fails `check` when the error is new against the base. A warning never f
 
 The group `changes` needs a `[change] policy` other than `none`: with `none`, each of its codes is off, and no rule turns it on. SD921 runs only with `--base`. SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off), and then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate. SD918 is not in the group yet.
 
+SD914 has one exception to the column of the profile. `check` lowers an error of SD914 to a warning for a spec that the diff does not touch, and for each spec when git cannot name the lifecycle base. SD912 is on `spec-dna.toml`, so the profile and the rules of the root do not apply to it, as for SD902 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
+
 The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the frozen text of an accepted decision changed) is always an error.
 
 Use the profiles in this order:

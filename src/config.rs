@@ -97,7 +97,6 @@ pub struct Config {
     pub high_risk_paths: Vec<String>,
     /// `[change] max-fanout`: the most requirement documents that one change
     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
-    #[allow(dead_code)] // reader: S3
     pub max_fanout: u32,
 }
 
