@@ -473,3 +473,136 @@ fn the_readers_do_not_write_the_index() {
         .unwrap();
     assert_eq!(before, after);
 }
+
+// Readers of slice S8: `deleted_intents_first_parent`, `artifact_touches`,
+// `first_parent_paths` and `read_at`.
+
+#[test]
+fn the_first_parent_walk_gives_the_merge_commit_of_a_merge() {
+    let r = with_intent();
+    delete_intent_on_the_branch(&r);
+    merge_commit(&r.dir);
+    let git = git_of(&r);
+    let all = git.deleted_intents(DIR, None).unwrap();
+    let first = git.deleted_intents_first_parent(DIR).unwrap();
+    assert_eq!(first.len(), 1, "{first:?}");
+    // The first-parent entry is the merge commit, and the other walk gives the
+    // commit of the branch.
+    assert_eq!(first[0].commit, sha_of(&r));
+    assert_ne!(first[0].commit, all[0].commit);
+    assert_eq!(
+        first[0].parent.as_deref(),
+        Some(parents(&r, "HEAD")[0].as_str())
+    );
+    // A squash and a rebase merge give the same commit in both walks.
+    for merge in [merge_squash, merge_rebase] {
+        let r = with_intent();
+        delete_intent_on_the_branch(&r);
+        merge(&r.dir);
+        let git = git_of(&r);
+        let first = git.deleted_intents_first_parent(DIR).unwrap();
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert_eq!(first, git.deleted_intents(DIR, None).unwrap());
+    }
+}
+
+#[test]
+fn artifact_touches_lists_the_3_files_in_the_order_of_the_ancestry() {
+    let r = with_intent();
+    r.write("docs/intent/slug/spec.md", "# Spec\n");
+    r.write("docs/intent/slug/notes.md", "# Notes\n");
+    r.commit_at("spec", D2);
+    std::fs::remove_file(r.dir.join("docs/intent/slug/plan.md")).unwrap();
+    r.commit_at("drop the plan", D3);
+    let touches = git_of(&r).artifact_touches(DIR).unwrap();
+    let list: Vec<(&str, PathChange)> = touches.iter().map(|t| (t.path.as_str(), t.kind)).collect();
+    // The newest first. `notes.md` is not an artifact.
+    assert_eq!(list[0], ("docs/intent/slug/plan.md", PathChange::Deleted));
+    assert_eq!(list.len(), 4, "{list:?}");
+    assert_eq!(touches[0].time, T3);
+    assert!(
+        touches
+            .iter()
+            .any(|t| t.path.ends_with("spec.md") && t.kind == PathChange::Added && t.time == T2)
+    );
+    assert!(touches.iter().all(|t| !t.path.ends_with("notes.md")));
+    assert!(touches.iter().all(|t| t.parents.len() <= 1));
+    assert!(git_of(&r).artifact_touches("elsewhere").unwrap().is_empty());
+}
+
+#[test]
+fn first_parent_paths_gives_the_diff_of_a_merge_against_its_first_parent() {
+    let r = with_intent();
+    delete_intent_on_the_branch(&r);
+    merge_commit(&r.dir);
+    let merge = sha_of(&r);
+    let paths = git_of(&r)
+        .first_parent_paths(std::slice::from_ref(&merge))
+        .unwrap();
+    let mut got = paths[&merge].clone();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "docs/intent/slug/intent.md",
+            "feature-a.txt",
+            "feature-b.txt"
+        ]
+    );
+    assert_eq!(paths.len(), 1);
+    // A commit that git does not have is an error, and no commit is no run.
+    assert!(git_of(&r).first_parent_paths(&["0".repeat(40)]).is_err());
+    assert!(git_of(&r).first_parent_paths(&[]).unwrap().is_empty());
+}
+
+#[test]
+fn read_at_returns_one_item_for_each_spec_in_order() {
+    let r = with_intent();
+    let first = sha_of(&r);
+    r.write("src/code.txt", "changed\n");
+    r.commit("change");
+    let second = sha_of(&r);
+    let got = git_of(&r)
+        .read_at(&[
+            (second.clone(), "src/code.txt".to_string()),
+            (first.clone(), "src/code.txt".to_string()),
+            (first.clone(), "no/such file.md".to_string()),
+            (first.clone(), "docs".to_string()),
+            ("0".repeat(40), "src/code.txt".to_string()),
+            (first, "docs/intent/slug/plan.md".to_string()),
+        ])
+        .unwrap();
+    assert_eq!(got.len(), 6);
+    assert_eq!(got[0].as_deref(), Some(&b"changed\n"[..]));
+    assert_eq!(got[1].as_deref(), Some(&b"code\n"[..]));
+    // An absent file, a folder and an unknown commit are `None`.
+    assert_eq!((&got[2], &got[3], &got[4]), (&None, &None, &None));
+    assert_eq!(got[5].as_deref(), Some(&b"# Plan\n"[..]));
+    assert!(git_of(&r).read_at(&[]).unwrap().is_empty());
+}
+
+#[test]
+fn artifact_touches_gives_a_rename_as_a_touch_of_the_new_path() {
+    let r = with_intent();
+    r.git(&["mv", "docs/intent/slug", "docs/intent/other"]);
+    r.commit_at("rename", D2);
+    let touches = git_of(&r).artifact_touches(DIR).unwrap();
+    let renames: Vec<_> = touches
+        .iter()
+        .filter(|t| t.from.is_some())
+        .map(|t| (t.path.as_str(), t.from.as_deref().unwrap(), t.kind))
+        .collect();
+    assert_eq!(renames.len(), 2, "{touches:?}");
+    assert!(renames.contains(&(
+        "docs/intent/other/intent.md",
+        "docs/intent/slug/intent.md",
+        PathChange::Modified
+    )));
+    assert!(renames.contains(&(
+        "docs/intent/other/plan.md",
+        "docs/intent/slug/plan.md",
+        PathChange::Modified
+    )));
+    // No touch is a deletion: a rename is not an end.
+    assert!(touches.iter().all(|t| t.kind != PathChange::Deleted));
+}

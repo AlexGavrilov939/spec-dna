@@ -29,6 +29,10 @@ spec-dna index docs/incidents --replace         # a generated index in place of 
 spec-dna next dose-limit                        # the checklist to the next gate of a change
 spec-dna status                                 # each change, its stage and its next gate
 spec-dna status --group operations              # the changes of a group of areas
+spec-dna log                                    # the finished and the closed changes, from the history of git
+spec-dna log --since v0.6.0                     # only the changes that finished after a revision
+spec-dna stats --sdlc                           # the indicators of the playbook, from git and the files
+spec-dna stats --sdlc --group operations        # the same for the changes of a group of areas
 spec-dna finish dose-limit --dry-run            # the diff of the finish of a change, and nothing written
 spec-dna finish dose-limit                      # apply the delta, delete the folder, stage the paths
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
@@ -421,6 +425,95 @@ A status is `null` if the file is absent. `max_started` is `null` if the layer h
 
 Exit codes: 0 done; 2 usage, or an unknown group; 3 configuration, or a `--base` that is not a commit; 4 git.
 
+## log
+
+```text
+spec-dna log [--since <rev>]
+```
+
+`log` lists the changes that left the default branch. A finished change leaves no folder, so the history of git is the only record of it. `log` reads each commit that deleted an `intent.md` under the folder of the `intent` layer. It uses `git log -M --diff-filter=D`, with no `--first-parent` and no `-m`. Thus a squash merge, a merge commit and a rebase merge each give one entry for one deleted file. The entry is the commit that deleted the file, and it is never a merge commit.
+
+The status of the intent in the parent of that commit gives the result:
+
+| Status in the parent tree | Result |
+| --- | --- |
+| `accepted` | `finished` |
+| any other status, also `draft` | `closed` |
+
+For each change, `log` gives the date of the commit (UTC), the result, the slug, the class, the counts of the delta lines of its spec (`add`, `change` and `remove`), the commit and the title. The counts and the class come from the parent tree too. A line that has no valid form is not counted. The newest change comes first.
+
+```text
+2024-04-05 finished dose-limit higher-risk add 1 change 2 remove 0 3f2a9c1b7e0d Dose limit
+2024-03-18 closed old-idea routine add 0 change 0 remove 0 91be40d27c5a Old idea
+```
+
+`--since <rev>` limits the walk to the commits after `<rev>` (`<rev>..HEAD`). A `<rev>` that is not a commit is exit code 3.
+
+A change has an entry only if the folder came to the default branch in an earlier commit. A pull request that holds the intent, the approval and the code together, and that a squash merge brings to the default branch, never had the folder there, so it has no entry. A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion: the entry comes later, under the new name.
+
+In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
+
+With `--json`, the output is one object:
+
+```json
+{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
+```
+
+Exit codes: 0 done; 2 usage; 3 configuration, or a `--since` that is not a commit; 4 git.
+
+## stats
+
+```text
+spec-dna stats --sdlc [--group <name>]
+```
+
+`stats --sdlc` prints the leading and the lagging indicators of the playbook under the playbook names. It reads the history of git and the committed files. It reads no working tree, no pull request data and no clock. `stats` without `--sdlc` is a usage error (exit code 2).
+
+The command rebuilds the life of each change from the commits that touched its `intent.md`, `spec.md` and `plan.md`. A life ends at the commit that deleted the `intent.md`. A change that is still in the history of `HEAD` is open. The order of the commits is the order of the ancestry, not the order of the dates. A span that would be negative is not counted. The durations use the committer dates. A rename of the folder inside the `intent` folder keeps the life under the new name.
+
+| Play | Kind | Indicator | Value |
+| --- | --- | --- | --- |
+| Plan | leading | Time from first conversation to a committed `intent.md` | The median days from the first commit of the folder to the first commit that sets `accepted`. The conversation is not in git. |
+| Plan | lagging | Survival rate | The percent of intents that are `accepted` rather than `closed`. A deleted intent counts as in `log`. A draft that is still open does not count. |
+| Design | leading | Time between the `intent.md` commit and the `spec.md` commit | The median days from the first commit of the intent to the first commit of the spec. |
+| Design | lagging | Requirements rework after build starts | The mean of the `spec.md` commits after the first `plan.md` commit, for each change that has a spec and a plan. |
+| Build | leading | Time from plan approval to the merged pull request | The median days from the first commit that sets the plan `approved` to the commit that deleted the folder. It counts finished changes. |
+| Build | leading | Share of changes that merge from the first implementation pass | `n/a`: it needs pull request metadata. |
+| Build | lagging | How often the merged diff still matches the committed `plan.md` | The percent of finished changes whose diff has no path that SD913 reports for the scope of the plan. |
+| Build | lagging | Rework cycles per change | `n/a`: it needs pull request metadata. |
+| Test | leading | The eval pass rate over time | `n/a`: evals come in step 4 of 0.6.0. |
+| Test | leading | How long a production incident takes to become a permanent eval | `n/a`: evals come in step 4 of 0.6.0. |
+| Test | lagging | Regressions caught in CI against regressions found in production | `n/a`: it needs the incident tracker. |
+| Maintain | leading | Time from band breach to an `intent.md` in the triage queue | `n/a`: spec-dna has no bands. |
+| Maintain | lagging | Repeat incidents of the same class | `n/a`: an incident has no class field. |
+| Deploy | both | The other indicators of the playbook | `n/a`: they need CI logs, telemetry or an incident tracker. |
+
+The commit that "deleted the folder" is the first-parent commit of the deletion: for a merge commit it is the merge commit, and for a squash merge it is the squash commit. A rebase merge shows only its last commit, so for such a change the time and the diff can be smaller than the real ones.
+
+The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree: the folder, the `Files` patterns, and the documents that the delta and `Interfaces` name. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
+
+A shallow clone can miss old changes, so each indicator that it computes has this note in `reason`. An indicator with no data has no value, and the reason says what is missing.
+
+`--group <name>` counts only the changes that are in the group. A group is a name of `[groups]` and its areas. A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target, as for [status](#status). The areas come from the last tree of the change. An unknown group is a usage error (exit code 2). With `[change] policy = "none"`, `stats` says that the change process is off and gives no indicator. It warns on a pin mismatch.
+
+The text output has a summary line, then one line for each indicator. A value that has a note gets a second line that starts with `note:`. An indicator that git cannot give shows `n/a` and its reason:
+
+```text
+4 changes in the history: 2 finished, 1 closed, 1 open
+Plan lagging: Survival rate: the share of intent.md files that are accepted rather than closed: 66.7 percent (3 changes)
+Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
+```
+
+With `--json`, the output is one object with the 14 indicators of the table, in its order:
+
+```json
+{"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
+```
+
+`value` is a number with 1 decimal, or `null` for an indicator with no value. `unit` is `days`, `percent` or `commits per change`. `count` is the number of changes that the value counts, and it is `null` for an indicator that git cannot give. `reason` is `null` for a full value. Each `null` value has a reason.
+
+Exit codes: 0 done; 2 usage, an unknown group, or no `--sdlc`; 3 configuration; 4 git.
+
 ## transcript
 
 ```text
@@ -468,8 +561,8 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, or a step of `finish` stopped |
-| 2 | Usage error. Also a refusal of `layer add`: it changes nothing, and an unknown `--group` of `status` |
-| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository. For `finish`: also an `accepted` change with no base |
+| 2 | Usage error. Also a refusal of `layer add`: it changes nothing, an unknown `--group` of `status` or `stats`, and `stats` without `--sdlc` |
+| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `finish`: also an `accepted` change with no base |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files |
 | 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
 

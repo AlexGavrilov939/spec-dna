@@ -39,7 +39,6 @@ pub enum PathChange {
 }
 
 /// A commit that deleted an `intent.md` (`Git::deleted_intents`).
-#[allow(dead_code)] // reader: S8
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeletedIntent {
     /// The deleting commit. It has at most 1 parent.
@@ -50,6 +49,24 @@ pub struct DeletedIntent {
     pub time: i64,
     /// The deleted file, from the repository root.
     pub path: String,
+}
+
+/// A touch of an `intent.md`, a `spec.md` or a `plan.md` by a commit
+/// (`Git::artifact_touches`). A rename is a touch of the new path with the old
+/// path in `from`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactTouch {
+    pub commit: String,
+    /// The parents of the commit. The list has at most 1 item, because a merge
+    /// commit gives no touch.
+    pub parents: Vec<String>,
+    /// The committer date of the commit, in seconds.
+    pub time: i64,
+    /// The file, from the repository root.
+    pub path: String,
+    pub kind: PathChange,
+    /// The old path, if the commit renamed the file (`kind` is `Modified`).
+    pub from: Option<String>,
 }
 
 #[derive(Default)]
@@ -111,6 +128,26 @@ impl Git {
             .env("LC_ALL", "C")
             .stdin(Stdio::null());
         c
+    }
+
+    /// Like `run`, and git never fetches an absent object from a remote. A
+    /// reader of history that uses rename detection needs this in a partial
+    /// clone.
+    fn run_offline(&self, args: &[&str]) -> Result<Vec<u8>, String> {
+        let out = self
+            .cmd(args)
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(out.stdout)
     }
 
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -323,7 +360,6 @@ impl Git {
     }
 
     /// Returns true if the repository is a shallow clone.
-    #[allow(dead_code)] // reader: S8
     pub fn is_shallow(&self) -> bool {
         self.run(&["rev-parse", "--is-shallow-repository"])
             .is_ok_and(|o| String::from_utf8_lossy(&o).trim() == "true")
@@ -389,7 +425,6 @@ impl Git {
     /// Returns the commits (id and committer date) that touched a path, the
     /// newest first. A touch is an addition, a change or a deletion of the
     /// file. The path is a literal path from the repository root.
-    #[allow(dead_code)] // reader: S8
     pub fn file_log(&self, rev: &str, path: &str) -> Result<Vec<(String, i64)>, String> {
         let spec = format!(":(literal){path}");
         let out = self.run(&[
@@ -476,25 +511,44 @@ impl Git {
     /// commit and a rebase merge each give one entry for a deleted file. An
     /// entry is the non-merge commit that deleted the file. Its parent gives
     /// the status of the intent before the deletion.
-    #[allow(dead_code)] // reader: S8
     pub fn deleted_intents(
         &self,
         dir: &str,
         since: Option<&str>,
     ) -> Result<Vec<DeletedIntent>, String> {
+        self.walk_deleted(dir, since, false)
+    }
+
+    /// Like `deleted_intents`, with the first-parent line of `HEAD` only. A
+    /// merge commit shows its diff against its first parent, so the entry of a
+    /// merge commit or of a squash commit is the commit that reached the
+    /// default branch. A rebase merge has one entry, the commit that deleted
+    /// the file. The `parent` of an entry is its first parent.
+    pub fn deleted_intents_first_parent(&self, dir: &str) -> Result<Vec<DeletedIntent>, String> {
+        self.walk_deleted(dir, None, true)
+    }
+
+    fn walk_deleted(
+        &self,
+        dir: &str,
+        since: Option<&str>,
+        first_parent: bool,
+    ) -> Result<Vec<DeletedIntent>, String> {
         let range = since.map_or("HEAD".to_string(), |s| format!("{s}..HEAD"));
         let spec = intent_glob(dir);
-        let out = self.run(&[
+        let mut args = vec![
             "log",
             "-M",
             "--diff-filter=D",
             "--name-only",
             "--format=%x01%H %P|%ct",
             "-z",
-            &range,
-            "--",
-            &spec,
-        ])?;
+        ];
+        if first_parent {
+            args.extend(["-m", "--first-parent"]);
+        }
+        args.extend([range.as_str(), "--", spec.as_str()]);
+        let out = self.run(&args)?;
         let mut found = Vec::new();
         let mut head: Option<(String, Vec<String>, i64)> = None;
         let mut first = false;
@@ -515,8 +569,9 @@ impl Git {
                 continue;
             };
             // A merge commit has no diff here, and the check keeps a
-            // guard against a git that shows one.
-            if parents.len() > 1 || !path.ends_with("/intent.md") {
+            // guard against a git that shows one. The first-parent walk
+            // wants the merge commits.
+            if (!first_parent && parents.len() > 1) || !path.ends_with("/intent.md") {
                 continue;
             }
             found.push(DeletedIntent {
@@ -527,6 +582,228 @@ impl Git {
             });
         }
         Ok(found)
+    }
+
+    /// Returns each touch of an `intent.md`, `spec.md` or `plan.md` that is
+    /// one level under `dir` (the folder of the `intent` layer, from the
+    /// repository root, with no final `/`), in the history of `HEAD`. The
+    /// order is the topological order, the newest first: a parent never comes
+    /// before its child. It is not the order of the committer dates, which a
+    /// history does not keep in order. A commit that touches 2 files gives 2
+    /// entries, one after the other. A merge commit gives no entry. A rename of the
+    /// folder inside `dir` is a touch of the new path, with the old path in
+    /// `from`. A move out of `dir` reads as a deletion.
+    pub fn artifact_touches(&self, dir: &str) -> Result<Vec<ArtifactTouch>, String> {
+        let specs: Vec<String> = ["intent.md", "spec.md", "plan.md"]
+            .iter()
+            .map(|n| artifact_glob(dir, n))
+            .collect();
+        let mut args = vec![
+            "-c",
+            "log.showRoot=true",
+            "log",
+            "--topo-order",
+            "-M",
+            "--name-status",
+            "--format=%x01%H %P|%ct",
+            "-z",
+            "HEAD",
+            "--",
+        ];
+        args.extend(specs.iter().map(String::as_str));
+        let out = self.run_offline(&args)?;
+        let mut found = Vec::new();
+        let mut head: Option<(String, Vec<String>, i64)> = None;
+        // After a header come the records of a status and one path, or of a
+        // status of a rename and 2 paths. The first record after a header
+        // starts with a line feed.
+        let mut status: Option<char> = None;
+        let mut old: Option<String> = None;
+        for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let rec = String::from_utf8_lossy(rec);
+            if let Some(h) = rec.strip_prefix('\x01') {
+                head = parse_commit_header(h);
+                status = None;
+                old = None;
+                continue;
+            }
+            let rec = rec.strip_prefix('\n').unwrap_or(&rec);
+            let Some(st) = status else {
+                status = rec.chars().next();
+                continue;
+            };
+            if st == 'R' && old.is_none() {
+                old = Some(rec.to_string());
+                continue;
+            }
+            status = None;
+            let Some((commit, parents, time)) = &head else {
+                continue;
+            };
+            let kind = match st {
+                'A' => PathChange::Added,
+                'D' => PathChange::Deleted,
+                _ => PathChange::Modified,
+            };
+            found.push(ArtifactTouch {
+                commit: commit.clone(),
+                parents: parents.clone(),
+                time: *time,
+                path: rec.to_string(),
+                kind,
+                from: old.take(),
+            });
+        }
+        Ok(found)
+    }
+
+    /// Returns, for each commit, the paths that it changes against its first
+    /// parent. A merge commit shows the whole diff of its branch. A commit
+    /// that git does not have is an error. It runs one git command.
+    pub fn first_parent_paths(
+        &self,
+        commits: &[String],
+    ) -> Result<HashMap<String, Vec<String>>, String> {
+        let mut out = HashMap::new();
+        if commits.is_empty() {
+            return Ok(out);
+        }
+        let input: String = commits.iter().map(|c| format!("{c}\n")).collect();
+        let text = self.run_with_input(
+            &[
+                "-c",
+                "log.showRoot=true",
+                "log",
+                "--no-walk=unsorted",
+                "--stdin",
+                "-m",
+                "--first-parent",
+                "--no-renames",
+                "--name-only",
+                "--format=%x01%H",
+                "-z",
+            ],
+            input,
+        )?;
+        let mut cur: Option<String> = None;
+        let mut first = false;
+        for rec in text.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let rec = String::from_utf8_lossy(rec);
+            if let Some(h) = rec.strip_prefix('\x01') {
+                let id = h.trim().to_string();
+                out.entry(id.clone()).or_insert_with(Vec::new);
+                cur = Some(id);
+                first = true;
+                continue;
+            }
+            let path = if first {
+                rec.strip_prefix('\n').unwrap_or(&rec)
+            } else {
+                &rec
+            };
+            first = false;
+            if let Some(c) = &cur
+                && !path.is_empty()
+            {
+                out.entry(c.clone()).or_default().push(path.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Reads files of commits with one `git cat-file --batch` process. Each
+    /// spec is a commit and a path from the repository root. The result has one
+    /// item for each spec, in the same order: `None` if the commit has no such
+    /// file, or the path is not a file.
+    pub fn read_at(&self, specs: &[(String, String)]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        let mut out: Vec<Option<Vec<u8>>> = Vec::with_capacity(specs.len());
+        if specs.is_empty() {
+            return Ok(out);
+        }
+        // In a partial clone, an absent blob is `None`: no command here
+        // fetches it.
+        let mut child = self
+            .cmd(&["cat-file", "--batch"])
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("cannot run git cat-file: {e}"))?;
+        let mut stdin = child.stdin.take().unwrap();
+        // A name with a line feed cannot go on a line. It reads as absent.
+        let input: String = specs
+            .iter()
+            .map(|(rev, path)| {
+                if path.contains('\n') {
+                    "missing:\n".to_string()
+                } else {
+                    format!("{rev}:{path}\n")
+                }
+            })
+            .collect();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        });
+        let mut r = BufReader::new(child.stdout.take().unwrap());
+        let mut header = String::new();
+        for _ in specs {
+            header.clear();
+            if r.read_line(&mut header).map_err(|e| e.to_string())? == 0 {
+                out.push(None);
+                continue;
+            }
+            let line = header.trim_end();
+            let parts: Vec<&str> = line.split(' ').collect();
+            let body = if line.ends_with(" missing") || parts.len() != 3 {
+                None
+            } else {
+                Some(
+                    parts[2]
+                        .parse::<usize>()
+                        .map_err(|_| "bad cat-file header".to_string())?,
+                )
+            };
+            let Some(size) = body else {
+                out.push(None);
+                continue;
+            };
+            let mut buf = vec![0u8; size + 1];
+            r.read_exact(&mut buf).map_err(|e| e.to_string())?;
+            buf.pop();
+            out.push((parts[1] == "blob").then_some(buf));
+        }
+        let _ = writer.join();
+        let _ = child.wait();
+        Ok(out)
+    }
+
+    /// Runs a git command with `input` on its standard input.
+    fn run_with_input(&self, args: &[&str], input: String) -> Result<Vec<u8>, String> {
+        let mut child = self
+            .cmd(args)
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let mut stdin = child.stdin.take().unwrap();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        });
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let _ = writer.join();
+        if !out.status.success() {
+            return Err(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(out.stdout)
     }
 
     /// Reads blobs with one `git cat-file --batch` process.
@@ -871,6 +1148,16 @@ fn intent_glob(dir: &str) -> String {
         ":(glob)*/intent.md".to_string()
     } else {
         format!(":(glob){}/*/intent.md", glob_escape(dir))
+    }
+}
+
+/// The pathspec of the files with the name `name` one level under `dir`.
+fn artifact_glob(dir: &str, name: &str) -> String {
+    let dir = dir.trim_matches('/');
+    if dir.is_empty() {
+        format!(":(glob)*/{name}")
+    } else {
+        format!(":(glob){}/*/{name}", glob_escape(dir))
     }
 }
 

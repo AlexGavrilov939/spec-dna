@@ -47,6 +47,7 @@ mod rank;
 mod registry;
 mod release;
 mod repo;
+mod sdlc;
 mod split;
 mod stage;
 mod templates;
@@ -211,6 +212,38 @@ and lists nothing. Exit codes: 2 usage or unknown group, 3 base or configuration
 4 git.",
     ),
     (
+        "log",
+        "log [--since <rev>]",
+        "Lists the finished and the closed changes, the newest first, from the
+history of git. It reads each commit that deleted an intent.md. The status of
+the intent in the parent of that commit gives the result: accepted is
+finished, and any other status is closed. For each change it prints the date,
+the result, the slug, the class, the counts of the delta lines (add, change,
+remove) of its spec, the commit and the title. A change that one pull request
+held with its approval and its code, and that a squash merge brought to the
+default branch, has no entry. A move of the folder out of the intent folder
+reads as a deletion. --since limits the walk to the commits after <rev>. In a
+shallow clone, a note says that older changes can be missing, and --json has
+shallow: true. With the policy none, it says that the change process is off
+and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
+not a commit, 4 git.",
+    ),
+    (
+        "stats",
+        "stats --sdlc [--group <name>]",
+        "Prints the leading and the lagging indicators of the playbook under the
+playbook names. It reads git and the committed files only: the plan and
+design times, the survival rate of the intents, the spec commits after the
+first plan commit, the time from plan approval to the merged pull request,
+and how often the merged diff stays inside the plan (SD913). An indicator
+that git cannot give prints n/a with the reason, and --json has value null
+and a reason. With --group, it counts only the changes that have an area of
+the group. An unknown group is a usage error, and so is stats without --sdlc.
+With the policy none, it says that the change process is off and gives no
+indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
+4 git.",
+    ),
+    (
         "transcript",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
@@ -298,6 +331,8 @@ struct Args {
     template: Option<String>,
     layer: LayerFlags,
     group: Option<String>,
+    since: Option<String>,
+    sdlc: bool,
 }
 
 /// The options of `layer add`.
@@ -366,6 +401,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         template: None,
         layer: LayerFlags::default(),
         group: None,
+        since: None,
+        sdlc: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -399,6 +436,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
             "--group" => a.group = Some(value("--group")?),
+            "--since" => a.since = Some(value("--since")?),
+            "--sdlc" => a.sdlc = true,
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
@@ -508,6 +547,12 @@ fn run(a: Args) -> Result<u8, Fatal> {
             None => Err(Fatal::Usage(format!("unknown command `{name}`"))),
         };
     }
+    if a.since.is_some() && a.command != "log" {
+        return Err(Fatal::Usage("--since is an option of `log`".into()));
+    }
+    if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
+        return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
+    }
     match a.command.as_str() {
         "" => {
             println!("{}", usage());
@@ -529,6 +574,8 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "finish" => finish(&Repo::discover(&cwd)?, &a),
         "next" => next(&Repo::discover(&cwd)?, &a),
         "status" => status(&Repo::discover(&cwd)?, &a),
+        "log" => log(&Repo::discover(&cwd)?, &a),
+        "stats" => stats(&Repo::discover(&cwd)?, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -2135,29 +2182,78 @@ fn next(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     stage::next(repo, &cfg, slug, a.base.as_deref(), a.json, !a.no_cache)
 }
 
+/// The areas of the group `name` of `spec-dna.toml`. An unknown group is a
+/// usage error.
+fn group_areas<'a>(cfg: &'a config::Config, name: &str) -> Result<&'a [String], Fatal> {
+    match cfg.groups.iter().find(|(n, _)| n == name) {
+        Some((_, areas)) => Ok(areas.as_slice()),
+        None => {
+            let names: Vec<&str> = cfg.groups.iter().map(|(n, _)| n.as_str()).collect();
+            Err(Fatal::Usage(if names.is_empty() {
+                format!("`--group {name}`: spec-dna.toml has no [groups] table")
+            } else {
+                format!(
+                    "`--group {name}` is not a group of spec-dna.toml; the groups are: {}",
+                    names.join(", ")
+                )
+            }))
+        }
+    }
+}
+
 /// `status [--group <name>]`: each change and its stage (`stage.rs`).
 fn status(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
-    let areas = match &a.group {
-        None => None,
-        Some(g) => match cfg.groups.iter().find(|(n, _)| n == g) {
-            Some((_, areas)) => Some(areas.as_slice()),
-            None => {
-                let names: Vec<&str> = cfg.groups.iter().map(|(n, _)| n.as_str()).collect();
-                return Err(Fatal::Usage(if names.is_empty() {
-                    format!("`--group {g}`: spec-dna.toml has no [groups] table")
-                } else {
-                    format!(
-                        "`--group {g}` is not a group of spec-dna.toml; the groups are: {}",
-                        names.join(", ")
-                    )
-                }));
-            }
-        },
-    };
+    let areas = a
+        .group
+        .as_deref()
+        .map(|g| group_areas(&cfg, g))
+        .transpose()?;
     stage::status(repo, &cfg, areas, a.base.as_deref(), a.json, !a.no_cache)
+}
+
+/// `log [--since <rev>]`: the finished and the closed changes (`sdlc.rs`).
+fn log(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    for (given, name) in [
+        (a.group.is_some(), "--group"),
+        (a.base.is_some(), "--base"),
+        (a.sdlc, "--sdlc"),
+    ] {
+        if given {
+            return Err(Fatal::Usage(format!("`log` has no {name} option")));
+        }
+    }
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    sdlc::log(repo, &cfg, a.since.as_deref(), a.json)
+}
+
+/// `stats --sdlc [--group <name>]`: the indicators of the playbook
+/// (`sdlc.rs`).
+fn stats(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    if !a.sdlc {
+        return Err(Fatal::Usage(
+            "`stats` needs --sdlc: `spec-dna stats --sdlc [--group <name>]` prints the indicators of the playbook"
+                .into(),
+        ));
+    }
+    for (given, name) in [(a.since.is_some(), "--since"), (a.base.is_some(), "--base")] {
+        if given {
+            return Err(Fatal::Usage(format!("`stats` has no {name} option")));
+        }
+    }
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    let group = a
+        .group
+        .as_deref()
+        .map(|g| group_areas(&cfg, g).map(|areas| (g, areas)))
+        .transpose()?;
+    sdlc::stats(repo, &cfg, group, a.json)
 }
 
 /// Finishes a change: the plan, then the write (`finish.rs`).
