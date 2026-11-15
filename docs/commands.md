@@ -126,8 +126,6 @@ The hook that `init` writes runs `spec-dna check --staged`. A commit records the
 
 `check` also compares the requirements of the lifecycle base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder changed, it gives SD921. This check runs only with a `[change] policy` other than `none`, and only if git can name the lifecycle base.
 
-If the pin of the base is before 0.6.0, `check` first runs the plan of [`upgrade`](#upgrade) on the base tree in memory. Then it compares the head with the result, and SD503 does not apply. A base pin before 0.4.0 gives exit code 3.
-
 With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`.
 
 Without `--base`, the base that decides which diagnostics are new stays `HEAD`. The lifecycle base is only for the change codes that compare the head with a base ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). Their diagnostics are always new. With `--staged`, they diff the git index against the lifecycle base.

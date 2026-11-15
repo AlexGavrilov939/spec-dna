@@ -130,7 +130,7 @@ The 4 stage skills help an agent through the stages of a change ([ADR 0008](adr/
 | `spec-dna-review` | Before a merge | The diff against the base, `spec.md` and `plan.md`, then the review policy |
 
 - The text of a skill is static. It holds no value of the configuration, so the file is the same in each project.
-- A skill never sets `accepted`. It sets `approved` only on the plan of a `routine` change, which the agent approves ([change guide](guides/change.md#choose-the-class)). A person approves each other document in a pull request.
+- A stage skill never sets `accepted` or `approved`. [The change guide](guides/change.md#choose-the-class) gives who approves each document.
 - A description is part of each request. Each description has at most 160 characters, and the 4 descriptions together have 588 bytes in the listing of Claude Code. The body has at most 2,500 bytes.
 - The 4 names do not change the skill names that `spec-dna next` prints.
 - The adapter skill `.claude/skills/spec-dna/SKILL.md` is separate. It has its own marker and exists with or without a harness ([init.md](init.md)).
