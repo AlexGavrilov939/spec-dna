@@ -327,7 +327,6 @@ pub enum Applied {
 ///
 /// A requirement has the text of a line if its hash `frozen` is the hash
 /// `frozen` of the sentence of the line.
-#[allow(dead_code)] // reader: S5
 pub fn applied(line: &DeltaLine, base: &Corpus, head: &Corpus) -> Applied {
     let Ok(d) = &line.parsed else {
         return Applied::Invalid;

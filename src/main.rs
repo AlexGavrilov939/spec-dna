@@ -722,7 +722,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     repo::trace("git base tree", &mut t);
     let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
     // The `covers:` tags of the test files, for the evidence checks.
-    if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
+    if !(cfg.is_off(diag::Code::CoversUnresolved)
+        && cfg.is_off(diag::Code::RequirementUnverified)
+        && cfg.is_off(diag::Code::DeltaEvidenceMissing))
     {
         // The working tree and the base, in parallel. The snapshots do not
         // tell whether a test file outside the document roots changed, so the
@@ -805,7 +807,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         repo::trace("drift", &mut t);
     }
     // The checks of the diff against the lifecycle base: SD905 (a change with
-    // no delta), SD910, SD913, SD917 and SD921. With `--base` and no merge base,
+    // no delta), SD910, SD913, SD915, SD916, SD917, SD920 (a decision that is
+    // not `accepted`) and SD921. With `--base` and no merge base,
     // SD921 compares with the base of the gate.
     let mut report = lifecycle::BaseReport::default();
     if let (Some(life), Some(diff), Some(rev)) = (life, &diff, &change_base) {
@@ -815,6 +818,14 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .new
             .extend(std::iter::repeat_n(true, report.diags.len()));
         outcome.head.append(&mut report.diags);
+    }
+    // SD911 is a state code: it reports the tree, so it is never new. It needs
+    // a real merge base, and it is silent with the tip fallback.
+    if let Some(rev) = &change_base {
+        let stale = lifecycle::stale_changes(&cfg, &repo.git, head, rev).map_err(Fatal::Io)?;
+        let diags = lifecycle::stale_diags(&cfg, head, &stale);
+        outcome.new.extend(std::iter::repeat_n(true, diags.len()));
+        outcome.head.extend(diags);
     }
     let truth_base = match (life, base) {
         (Some(l), _) => Some((l, life_snap)),
@@ -887,6 +898,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     {
         outcome.head.push(d);
         outcome.new.push(true);
+    }
+
+    // A state code is never new, whichever check made it.
+    for (d, new) in outcome.head.iter().zip(outcome.new.iter_mut()) {
+        if d.code.is_state() {
+            *new = false;
+        }
     }
 
     let count = |sev: Severity, only_new: bool| {

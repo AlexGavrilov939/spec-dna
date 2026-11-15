@@ -1,7 +1,8 @@
 //! The base of the change checks (design 0.6.0, "Gates"), the diff against it,
 //! the requirements that the diff changes, the checks of the change lifecycle
-//! that need one tree only (`tree_checks`), and the checks of the diff against
-//! the base (`base_checks`: SD905, SD910, SD913 and SD917).
+//! that need one tree only (`tree_checks`), the checks of the diff against the
+//! base (`base_checks`: SD905, SD910, SD913, SD915, SD916, SD917 and SD920), and
+//! the staleness of a started change (`stale_changes`, SD911).
 //!
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`) with
 //! `HEAD`. It is never the tip of `--base`: a branch that was cut from an old
@@ -10,6 +11,7 @@
 use crate::change::{self, Change, Delta, Verb};
 use crate::config::{ChangePolicy, Config};
 use crate::diag::{Code, Diag};
+use crate::evidence::Evidence;
 use crate::git::{Git, PathChange};
 use crate::hash::{Hash, hex};
 use crate::model::{Class, Corpus, Doc, DocType, Res};
@@ -512,15 +514,8 @@ fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
 /// runs when `finish` runs.
 fn decisions(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
     for item in change::section_items(spec, ItemSection::Decisions) {
-        let mut rest = item.text.as_str();
-        while let Some(start) = rest.find("[[") {
-            let Some(len) = rest[start + 2..].find("]]") else {
-                break;
-            };
-            let inner = &rest[start + 2..start + 2 + len];
-            rest = &rest[start + 2 + len + 2..];
-            let id = inner.split(['#', '|']).next().unwrap_or("").trim();
-            if !id.is_empty() && matches!(c.resolve(id), Res::Missing) {
+        for id in decision_ids(&item.text) {
+            if matches!(c.resolve(id), Res::Missing) {
                 out.push(crate::check::diag(
                     spec,
                     item.line,
@@ -531,6 +526,25 @@ fn decisions(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
             }
         }
     }
+}
+
+/// The ids that the `[[ ]]` references of the text of an item name. A fragment
+/// and a label are not part of the id.
+fn decision_ids(text: &str) -> Vec<&str> {
+    let mut ids = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        let Some(len) = rest[start + 2..].find("]]") else {
+            break;
+        };
+        let inner = &rest[start + 2..start + 2 + len];
+        rest = &rest[start + 2 + len + 2..];
+        let id = inner.split(['#', '|']).next().unwrap_or("").trim();
+        if !id.is_empty() {
+            ids.push(id);
+        }
+    }
+    ids
 }
 
 /// SD912: more changes than `max-started` of the `intent` layer have an
@@ -771,8 +785,8 @@ impl<'a> Ctx<'a> {
 }
 
 /// Runs the checks of the diff against the lifecycle base: SD905 (the part for
-/// a change with no delta), SD910, SD913 and SD917. It also finds the data for
-/// SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
+/// a change with no delta), SD910, SD913, SD915, SD916, SD917 and SD920 (the
+/// decision that is not `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
 /// diff of the head against it. The checks read the artifacts of a change from
 /// the head tree, and from the base tree if the diff deletes the folder. They
 /// read approvals from the base tree only, so an approval in the same pull
@@ -793,6 +807,9 @@ pub fn base_checks(
             Code::OutsidePlan,
             Code::ClassTooLow,
             Code::TruthChangedWithoutChange,
+            Code::FinishIncomplete,
+            Code::DeltaEvidenceMissing,
+            Code::DecisionNeededUnaccepted,
         ]
         .iter()
         .any(|&k| on(k))
@@ -824,6 +841,7 @@ pub fn base_checks(
     if on(Code::FanOut) {
         out.extend(routine_fan_out(&ctx, &changes));
     }
+    out.extend(finished_checks(&ctx, &changes));
     // A plan that covers a document: the plan of a change in the diff, and the
     // approved plan of a started change in the base.
     let mut exempt: Vec<String> = changes
@@ -1316,6 +1334,333 @@ fn routine_fan_out(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         }
     }
     out
+}
+
+/// The checks of a finished change: SD915, SD916 and SD920 (a decision that is
+/// not `accepted`). They apply to a change that the diff deletes: the base tree
+/// has its folder, and the head tree has not. A change whose base status is
+/// `closed` gives none of them. A branch-born change gives none, because the
+/// base tree has no folder. The checks read the spec and the plan from the base
+/// tree, so an edit of them in the pull request of `finish` has no effect
+/// (design, "Finish").
+fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
+    let on = |k: Code| !ctx.config.is_off(k);
+    let sole = changes.len() == 1;
+    let mut out = Vec::new();
+    let deleted = changes
+        .iter()
+        .filter(|c| c.origin == Origin::Touched && matches!(c.side, Side::Base));
+    for ch in deleted {
+        if ch.change.intent_status() == "closed" {
+            continue;
+        }
+        if on(Code::FinishIncomplete) {
+            out.extend(finish_incomplete(ctx, ch, sole));
+        }
+        if on(Code::DeltaEvidenceMissing) {
+            let mine = |path: &str| sole || change::in_scope(&ch.files, path);
+            out.extend(evidence_missing(
+                ctx.head, ctx.base, ctx.base, &ch.change, &mine,
+            ));
+        }
+        if on(Code::DecisionNeededUnaccepted) {
+            out.extend(decisions_unaccepted(ctx.head, ctx.base, &ch.change));
+        }
+    }
+    out
+}
+
+/// SD915 for one deleted change whose base status is not `closed`. A change
+/// with a delta needs each line applied in the head (design, T3). The lines
+/// come from the base tree, so a correction in the same pull request does not
+/// count. A change with no delta needs a changed `Files` path or a changed
+/// requirement hash. A `REMOVE` line for a key that neither tree has is not
+/// reported: the head has no such key, and SD914 reported the line earlier.
+fn finish_incomplete(ctx: &Ctx, ch: &DiffChange, sole: bool) -> Vec<Diag> {
+    let c = &ch.change;
+    let status = match c.intent_status() {
+        "" => "none",
+        s => s,
+    };
+    let lines = c.delta(ctx.base);
+    if let (false, Some(a)) = (lines.is_empty(), &c.spec) {
+        let spec = &ctx.base.docs[a.doc as usize];
+        let mut out = Vec::new();
+        let items = change::section_items(spec, ItemSection::Delta);
+        for (line, item) in lines.iter().zip(items) {
+            let (target, what) = match (change::applied(line, ctx.base, ctx.head), &line.parsed) {
+                (change::Applied::Yes, _) => continue,
+                (change::Applied::Invalid, Ok(_)) => continue,
+                (change::Applied::Invalid, Err(reason)) => (
+                    short(&item.text),
+                    format!("the delta line is not valid ({reason})"),
+                ),
+                (change::Applied::No, Ok(d)) => (
+                    d.target(),
+                    format!(
+                        "the head does not have the result of the delta line for `{}`",
+                        d.target()
+                    ),
+                ),
+                (change::Applied::No, Err(_)) => continue,
+            };
+            out.push(crate::check::diag(
+                spec,
+                line.line,
+                Code::FinishIncomplete,
+                target,
+                format!(
+                    "the diff deletes the change `{}`, its base status is `{status}`, and {what}; apply the delta with `spec-dna finish {}`, or set the intent to `closed` in an earlier pull request",
+                    c.slug, c.slug
+                ),
+            ));
+        }
+        return out;
+    }
+    let prefix = format!("{}/", c.dir);
+    let files_changed = ctx
+        .diff
+        .files
+        .iter()
+        .any(|(p, _)| !p.starts_with(&prefix) && change::in_scope(&ch.files, p));
+    if files_changed {
+        return Vec::new();
+    }
+    let hash_changed = requirement_changes(ctx.base, ctx.head, requirement_doc)
+        .iter()
+        .any(|r| sole || change::in_scope(&ch.files, &r.path));
+    if hash_changed {
+        return Vec::new();
+    }
+    let Some(anchor) = c.intent.as_ref().or(c.plan.as_ref()).or(c.spec.as_ref()) else {
+        return Vec::new();
+    };
+    vec![crate::check::diag(
+        &ctx.base.docs[anchor.doc as usize],
+        1,
+        Code::FinishIncomplete,
+        "",
+        format!(
+            "the diff deletes the change `{}`, its base status is `{status}`, and the diff changes no `Files` path and no requirement hash; do the work first, or set the intent to `closed` in an earlier pull request",
+            c.slug
+        ),
+    )]
+}
+
+/// The index of a requirement in a tree: the document and the position in
+/// `parsed.reqs`.
+fn req_index(c: &Corpus, id: &str, key: &str) -> Option<(u32, usize)> {
+    let Res::Found(d, None, _) = c.resolve(id) else {
+        return None;
+    };
+    c.docs[d as usize].req(key).map(|r| (d, r))
+}
+
+/// SD916 for a change: each requirement that the change adds or changes has
+/// evidence in `head` (a `covers:` tag, a `verified-by` marker or the
+/// `verified-by` of the document).
+///
+/// - With a delta, the requirements are the targets of the `ADD` and `CHANGE`
+///   lines that `head` applies. A line that `head` does not apply gives no
+///   SD916 here, because SD915 (or `finish`) reports it.
+/// - With no delta, the requirements are those whose hash differs from `base`,
+///   in a document whose path `scope` accepts (design, "Finish", step 5).
+///
+/// `source` is the tree that has the spec of the change: the base tree for a
+/// deleted folder, the head tree when `finish` runs. `check` and `finish` both
+/// call this function. The function reads no git data. `head.covers` must hold
+/// the `covers:` tags of the tests.
+pub fn evidence_missing(
+    head: &Corpus,
+    base: &Corpus,
+    source: &Corpus,
+    ch: &Change,
+    scope: &dyn Fn(&str) -> bool,
+) -> Vec<Diag> {
+    let lines = ch.delta(source);
+    let mut wanted: Vec<(u32, usize)> = Vec::new();
+    if lines.is_empty() {
+        for r in requirement_changes(base, head, requirement_doc) {
+            if r.kind != ReqChangeKind::Removed
+                && scope(&r.path)
+                && let Some(i) = req_index(head, &r.doc, &r.key)
+            {
+                wanted.push(i);
+            }
+        }
+    } else {
+        for line in &lines {
+            if let Ok(d) = &line.parsed
+                && d.verb != Verb::Remove
+                && change::applied(line, base, head) == change::Applied::Yes
+                && let Some(i) = req_index(head, &d.id, &d.key)
+            {
+                wanted.push(i);
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let (ev, _) = Evidence::build(head);
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for (di, ri) in wanted {
+        if !seen.insert((di, ri)) {
+            continue;
+        }
+        let doc = &head.docs[di as usize];
+        let req = &doc.parsed.reqs[ri];
+        if ev.of(di, doc, ri).is_empty() {
+            out.push(crate::check::diag(
+                doc,
+                req.line,
+                Code::DeltaEvidenceMissing,
+                format!("{}#{}", doc.id, req.key),
+                format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
+                    ch.slug, doc.id, req.key
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// SD920, the part for a decision that is not `accepted`: each `[[id]]` of
+/// `Decisions` in the spec of the change must name a document of `head` with
+/// the status `accepted`. `source` is the tree that has the spec (see
+/// `evidence_missing`).
+pub fn decisions_unaccepted(head: &Corpus, source: &Corpus, ch: &Change) -> Vec<Diag> {
+    let Some(a) = &ch.spec else {
+        return Vec::new();
+    };
+    let spec = &source.docs[a.doc as usize];
+    let mut out = Vec::new();
+    for item in change::section_items(spec, ItemSection::Decisions) {
+        for id in decision_ids(&item.text) {
+            let why = match head.resolve(id) {
+                Res::Missing => "names no document".to_string(),
+                Res::Found(d, _, _) => match head.docs[d as usize].status_str() {
+                    "accepted" => continue,
+                    "" => "has no status, and a needed decision must be `accepted`".to_string(),
+                    s => format!("is `{s}`, and a needed decision must be `accepted`"),
+                },
+                _ => continue,
+            };
+            out.push(crate::check::diag(
+                spec,
+                item.line,
+                Code::DecisionNeededUnaccepted,
+                id,
+                format!(
+                    "the change `{}` needs the decision `{id}`, and it {why}",
+                    ch.slug
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// A started change that has had no commit for more than `stale-days`
+/// (SD911).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stale {
+    pub slug: String,
+    /// The index of its intent in the head corpus.
+    pub intent: u32,
+    /// The whole days between the newest commit that touched the change and the
+    /// base commit.
+    pub idle_days: i64,
+    pub limit: u32,
+}
+
+/// Finds the started changes (an `accepted` intent) of `head` that are stale
+/// (design 0.6.0, K4). A change is stale if the committer date of the newest
+/// commit that touched its folder or a `Files` path is more than `stale-days`
+/// of the `intent` layer older than the committer date of `base_rev`.
+///
+/// The function never reads the clock. `base_rev` must be a real merge base
+/// (`change_base`), not the tip that a command used because no merge base
+/// exists. One `git log` pass reads the dates of all changes. A change that no
+/// commit touched (a folder that is not committed) is not stale. In a shallow
+/// clone, the newest touch is as new as in the full repository or newer, so a
+/// shallow clone can hide a stale change and never reports a false one.
+pub fn stale_changes(
+    config: &Config,
+    git: &Git,
+    head: &Corpus,
+    base_rev: &str,
+) -> Result<Vec<Stale>, String> {
+    if config.change_policy == ChangePolicy::None || config.is_off(Code::ChangeStale) {
+        return Ok(Vec::new());
+    }
+    let limit = config
+        .layers
+        .layer_of_type(DocType::Intent)
+        .and_then(|i| config.layers.layers()[i].stale_days);
+    let Some(limit) = limit else {
+        return Ok(Vec::new());
+    };
+    let started: Vec<Change> = change::collect(head)
+        .into_iter()
+        .filter(|c| c.intent_status() == "accepted")
+        .collect();
+    if started.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut specs: Vec<String> = Vec::new();
+    for c in &started {
+        specs.push(c.dir.clone());
+        specs.extend(c.files(head));
+    }
+    let touched = git.last_touch("HEAD", &specs)?;
+    let base_time = git.commit_time(base_rev)?;
+    let mut out = Vec::new();
+    for c in started {
+        let prefix = format!("{}/", c.dir);
+        let files = c.files(head);
+        let newest = touched
+            .iter()
+            .filter(|(p, _)| p.starts_with(&prefix) || change::in_scope(&files, p))
+            .map(|(_, t)| *t)
+            .max();
+        let (Some(newest), Some(intent)) = (newest, &c.intent) else {
+            continue;
+        };
+        let idle = base_time - newest;
+        if idle > i64::from(limit) * 86_400 {
+            out.push(Stale {
+                slug: c.slug.clone(),
+                intent: intent.doc,
+                idle_days: idle / 86_400,
+                limit,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// The SD911 diagnostics of a list of stale changes, with the severity of the
+/// profile. They are state diagnostics: they are never new (`Code::is_state`).
+pub fn stale_diags(config: &Config, head: &Corpus, stale: &[Stale]) -> Vec<Diag> {
+    let out = stale
+        .iter()
+        .map(|s| {
+            crate::check::diag(
+                &head.docs[s.intent as usize],
+                1,
+                Code::ChangeStale,
+                "",
+                format!(
+                    "the change `{}` is `accepted`, and its newest commit is {} days older than the base commit, more than `stale-days = {}`",
+                    s.slug, s.idle_days, s.limit
+                ),
+            )
+        })
+        .collect();
+    crate::check::apply_severity(config, out)
 }
 
 #[cfg(test)]

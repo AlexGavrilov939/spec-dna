@@ -314,7 +314,6 @@ impl Git {
 
     /// Returns the committer date of a commit, in seconds. It never reads the
     /// clock.
-    #[allow(dead_code)] // reader: S5
     pub fn commit_time(&self, rev: &str) -> Result<i64, String> {
         let out = self.run(&["log", "-1", "--format=%ct", rev, "--"])?;
         String::from_utf8_lossy(&out)
@@ -341,7 +340,6 @@ impl Git {
     /// committer dates of a history are not always in order. In a shallow
     /// clone, the boundary commit shows its files as added, so each date is
     /// the same as in the full repository or later (see the top of this file).
-    #[allow(dead_code)] // reader: S5
     pub fn last_touch(&self, rev: &str, specs: &[String]) -> Result<HashMap<String, i64>, String> {
         let mut touched = HashMap::new();
         let pathspecs = glob_pathspecs(specs);

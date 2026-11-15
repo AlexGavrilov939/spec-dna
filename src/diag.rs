@@ -34,7 +34,6 @@ macro_rules! codes {
             /// A state code reports the state of the tree, not a change of
             /// the diff. It is never "new" against the base, and `check --all`,
             /// `status` and `next` show it (design 0.6.0, K4).
-            #[allow(dead_code)] // reader: S5
             pub fn is_state(self) -> bool {
                 matches!(self.code(), "SD911")
             }
