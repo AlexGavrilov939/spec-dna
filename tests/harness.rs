@@ -260,7 +260,7 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
     }
     assert!(out.contains("The harness adds about "), "{out}");
     assert!(
-        out.contains("Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks."),
+        out.contains("Each teammate needs spec-dna 0.6.0 or later on PATH for the hooks."),
         "{out}"
     );
     assert!(
@@ -293,7 +293,7 @@ fn a_dry_run_shows_the_harness_and_writes_nothing() {
         "{out}"
     );
     assert!(
-        out.contains("  create .claude/settings.json (settings: ") && out.contains("2 hooks)\n"),
+        out.contains("  create .claude/settings.json (settings: ") && out.contains("3 hooks)\n"),
         "{out}"
     );
     assert!(
@@ -1012,7 +1012,7 @@ fn the_upgrade_dry_run_gives_the_diff_of_each_harness_file() {
 }
 
 #[test]
-fn the_preview_has_13_answers_and_question_13_writes_nothing_without_a_harness() {
+fn the_preview_has_14_answers_and_questions_13_and_14_write_nothing_without_a_harness() {
     let r = Repo::empty();
     let (code, out, err) = r.run3(&["init", "--dry-run", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -1050,10 +1050,10 @@ fn the_preview_has_13_answers_and_question_13_writes_nothing_without_a_harness()
         "{shown}"
     );
     assert!(!shown.contains("/8 "), "{shown}");
-    // `--json` has the 13 answers.
+    // `--json` has the 14 answers.
     let (code, json, err) = r.init_with("harness = \"none\"\n", &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{json}{err}");
-    assert_eq!(json.matches("\"number\":").count(), 13, "{json}");
+    assert_eq!(json.matches("\"number\":").count(), 14, "{json}");
     assert!(
         json.contains("{\"number\":13,\"name\":\"harness models\",\"value\":\"-\","),
         "{json}"

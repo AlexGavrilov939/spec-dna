@@ -584,9 +584,12 @@ fn on_terminal(dir: &Path, args: &[&str], answers: &[&str]) -> (i32, String) {
 #[test]
 fn question_5_is_asked_unless_the_policy_is_none() {
     // Questions 1 to 3 keep their defaults. The policy `none` ends the change
-    // questions, so the 8 answers after it belong to the questions 6 to 13.
+    // questions, so the 10 answers after it belong to the questions 6 to 14
+    // (question 12 has 2 prompts).
     let r = Repo::empty();
-    let none = ["", "", "", "none", "", "", "", "", "", "", "", "", "y"];
+    let none = [
+        "", "", "", "none", "", "", "", "", "", "", "", "", "", "", "y",
+    ];
     let (code, out) = on_terminal(&r.dir, &["init"], &none);
     assert_eq!(code, 0, "{out}");
     assert!(
@@ -596,7 +599,8 @@ fn question_5_is_asked_unless_the_policy_is_none() {
     assert!(!out.contains("5. Gate"), "{out}");
     assert!(out.contains("13. Models"), "{out}");
     assert_eq!(text(&r.change().unwrap(), "policy"), "none");
-    // The other policies ask question 5: 13 answers and the confirmation.
+    assert!(out.contains("14. Evals"), "{out}");
+    // The other policies ask question 5: 15 answers and the confirmation.
     let r = Repo::empty();
     let two = [
         "",
@@ -604,6 +608,8 @@ fn question_5_is_asked_unless_the_policy_is_none() {
         "",
         "two-class",
         "warn",
+        "",
+        "",
         "",
         "",
         "",

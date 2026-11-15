@@ -528,22 +528,13 @@ fn a_new_configuration_uses_the_globs_that_check_reads() {
     r.commit("start");
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
-    // The answers of the new configuration set no `protect-tests`, so the
-    // value that the file has decides. Set it and run `--reconfigure`.
+    // The default of a new project is `fix-branches`, and the hook has the
+    // 10 default globs.
     let toml = r.read("spec-dna.toml");
-    assert!(toml.contains("protect-tests = \"off\""), "{toml}");
-    r.write(
-        "spec-dna.toml",
-        &toml.replace(
-            "protect-tests = \"off\"",
-            "protect-tests = \"fix-branches\"",
-        ),
-    );
-    r.commit("protect");
-    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
-    assert_eq!(code, 0, "{out}{err}");
+    assert!(toml.contains("protect-tests = \"fix-branches\""), "{toml}");
     let cmds = commands(&r, HANDLER);
     assert_eq!(cmds.len(), 1, "{cmds:?}");
+    assert_eq!(cmds[0].matches(" --test ").count(), 10, "{cmds:?}");
     // The documents of this repository have no layer for their type, so `check`
     // has an error that is not about the harness.
     let (_, out, _) = r.run(&["check", "--all"]);

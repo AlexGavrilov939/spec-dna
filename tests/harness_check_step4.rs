@@ -19,7 +19,10 @@ const SIMPLIFIER: &str = ".claude/agents/code-simplifier.md";
 const CHECKER: &str = ".claude/agents/checker.md";
 
 const FULL_ALL_ON: &str = "[harness]\nlevel = \"full\"\nskills = [\"intent\", \"spec\", \"plan\", \"review\"]\nreview-md = true\n";
-const LEAN_OFF: &str = "[harness]\nlevel = \"lean\"\n";
+// `init --reconfigure` gives the defaults of a new project to a part that the
+// file has no key for (S9), so the parts are off by explicit keys.
+const LEAN_OFF: &str =
+    "[harness]\nlevel = \"lean\"\nskills = []\nreview-md = false\nprotect-tests = \"off\"\n";
 
 const SD501_STRAY: &str = "the configuration does not generate this file, and it has an edit; delete the file, or delete its marker line to keep it as a file of the project";
 const SD502_STRAY: &str =

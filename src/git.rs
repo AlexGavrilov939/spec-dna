@@ -1207,7 +1207,7 @@ fn artifact_glob(dir: &str, name: &str) -> String {
 
 /// Turns paths and globs of the repository root into git pathspecs. A value
 /// that git does not accept (empty, or with a `.` or `..` segment) is left out.
-fn glob_pathspecs(specs: &[String]) -> Vec<String> {
+pub fn glob_pathspecs(specs: &[String]) -> Vec<String> {
     specs
         .iter()
         .map(|g| g.trim_matches('/'))

@@ -64,7 +64,7 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 - the vendored, generated and large reference directories;
 - the budgets, the stack, the tests, the agent files, CI, the hooks and the default branch.
 
-Then `init` asks at most 14 questions (13 in this version, 14 after step 4), with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. With a change policy other than `none`, the preview has a note with the `CODEOWNERS` line for the specs. `--json` has the field `codeowners`. `init` never writes the `CODEOWNERS` file. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+Then `init` asks at most 14 questions, with the found values as defaults. Questions 12 to 14 set the harness and the evals. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. With a change policy other than `none`, the preview has a note with the `CODEOWNERS` line for the specs. `--json` has the field `codeowners`. `init` never writes the `CODEOWNERS` file. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
 
 `init` writes these adapters:
 
@@ -74,7 +74,7 @@ Then `init` asks at most 14 questions (13 in this version, 14 after step 4), wit
 
 The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the blocks of many lines that earlier versions wrote.
 
-The questions 9 and 10 set the [agent harness](harness.md). `init` writes it for Claude Code: agent files, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`.
+Questions 12 and 13 set the [agent harness](harness.md). `init` writes it for Claude Code: agent files, the stage skills, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`. Question 14 sets the evals: `skeleton` writes the table `[evals]`, `evals/check.sh`, an example eval and, for the CI answer `github`, the workflow `.github/workflows/agent-evals.yml`. It starts no run. A new project gets `skeleton`, and an upgraded project keeps `none`.
 
 If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version.
 

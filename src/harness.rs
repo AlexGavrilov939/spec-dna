@@ -335,7 +335,7 @@ impl Protect {
         }
     }
 
-    fn from_name(s: &str) -> Option<Protect> {
+    pub fn from_name(s: &str) -> Option<Protect> {
         [Protect::FixBranches, Protect::Always, Protect::Off]
             .into_iter()
             .find(|p| p.name() == s)
@@ -1525,7 +1525,7 @@ fn context_command(h: &Harness) -> String {
 }
 
 /// Quotes a word for a POSIX shell: single quotes, and `'\''` for a quote.
-fn shell_quote(word: &str) -> String {
+pub fn shell_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
 }
 

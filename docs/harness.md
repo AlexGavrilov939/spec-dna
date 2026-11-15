@@ -7,7 +7,7 @@ The harness is optional. `init` asks for a level.
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills` and `review-md` add the stage skills and `REVIEW.md` |
+| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the stage skills, `REVIEW.md` and a third hook. A new configuration has all 3 keys on |
 | `full` | `lean`, and `implementer` and `code-simplifier` |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
@@ -56,7 +56,7 @@ helper = { claude-code = "haiku" }
 sonnet = "high"
 ```
 
-A new configuration has `skills = []` and `review-md = false`. The example shows the 4 skills and `REVIEW.md` as they are when you select them.
+A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no `protect-tests` hook. A new configuration from `spec-dna init` has all 3 keys. It has the 4 skills if the change policy is not `none`, `review-md = true` and `protect-tests = "fix-branches"`. [init.md](init.md#parts-of-the-harness) gives the defaults.
 
 | Key | Meaning |
 | --- | --- |
@@ -67,6 +67,7 @@ A new configuration has `skills = []` and `review-md = false`. The example shows
 | `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
 | `skills` | The stage skills that `init` writes: `intent`, `spec`, `plan` and `review`, each once. `[]` writes none. `init` writes them in this order, also if the list has another order. See [Stage skills and `REVIEW.md`](#stage-skills-and-reviewmd) |
 | `review-md` | `true` writes `REVIEW.md`. `false` writes no file |
+| `protect-tests` | `fix-branches`, `always` or `off`. It selects the hook that asks before an edit of a test file. See [`spec-dna hook protect-tests`](#spec-dna-hook-protect-tests) |
 | `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` disables a role. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file) |
 | `[harness.efforts]` | The effort of a model when a person selects it with `/model` |
 
@@ -158,7 +159,7 @@ Set `protect-tests` in `[harness]`:
 | --- | --- |
 | `fix-branches` | On a branch that starts with `fix/` |
 | `always` | On each branch. Use it if your fix branches have another prefix |
-| `off` | Never. This is the default, and `init` writes no entry |
+| `off` | Never. `init` writes no entry. A file with no `protect-tests` key acts as `off`, and a new configuration has `fix-branches` |
 
 The test files are the globs of `[evidence] tests`. The generated command has one `--test '<glob>'` for each glob and the mode. The hook runs `git` only for a path that matches a glob, at most 2 times: once for the branch, and once to find if git tracks the file. A path that is not below `CLAUDE_PROJECT_DIR` (else the `cwd` of the event) gets no question. An error gives no output and exit code 0, so the edit continues.
 

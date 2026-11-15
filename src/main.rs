@@ -51,6 +51,7 @@ mod registry;
 mod release;
 mod repo;
 mod sdlc;
+mod skeleton;
 mod split;
 mod stage;
 mod templates;
