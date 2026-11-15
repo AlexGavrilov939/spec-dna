@@ -652,7 +652,7 @@ fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
         "dontAsk",
     ]);
     if ctx.isolate {
-        cmd.args(["--setting-sources", "project"]);
+        cmd.args(["--setting-sources", "project", "--strict-mcp-config"]);
     }
     cmd.current_dir(dir)
         .stdin(Stdio::null())

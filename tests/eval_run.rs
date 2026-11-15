@@ -242,11 +242,11 @@ fn the_command_line_of_claude_has_the_exact_order_and_no_bare() {
         "dontAsk",
     ];
     assert_eq!(fx.runs(), vec![want.clone()]);
-    // `--isolate` adds `--setting-sources project` at the end, and only then.
+    // `--isolate` adds `--setting-sources project --strict-mcp-config` at the end, and only then.
     let (code, out, err) = fx.run(&["--isolate"]);
     assert_eq!(code, 0, "{out}{err}");
     let mut isolated = want;
-    isolated.extend(["--setting-sources", "project"]);
+    isolated.extend(["--setting-sources", "project", "--strict-mcp-config"]);
     assert_eq!(
         fx.runs().last(),
         Some(&isolated.iter().map(|s| s.to_string()).collect())

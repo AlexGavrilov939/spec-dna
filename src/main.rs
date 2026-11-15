@@ -260,7 +260,7 @@ max-budget-usd is above max-total-usd, and it stops when the spend is above
 it. --runs, --min-pass-rate and --max-total-usd replace the values of the
 files and of the table. --out writes the result to <dir>/eval-<time>.json
 (counts, costs and check names only). --dry-run starts no process. --isolate
-adds --setting-sources project. spec-dna makes no network call, but `claude`
+adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
 does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
 a stop by the cap or no `claude`, 4 git or file error.",
     ),
