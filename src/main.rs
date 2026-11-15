@@ -172,7 +172,7 @@ read by path. Or moves requirements and whole sections of a document of
 any type to an existing or a new document of any type. Every moved key and
 section of HEAD keeps its old id as an alias, and the companion rows of the
 moved requirements move with them. Each moved section leaves its heading
-with a one-line pointer. A decision keeps its frozen text: only its amendment
+with a one-line pointer. A decision keeps its locked text: only its amendment
 and history sections move, into a research document. A preservation
 check runs first; if it fails, nothing changes.",
     ),

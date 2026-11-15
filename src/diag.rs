@@ -187,4 +187,12 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn no_name_or_fix_text_says_frozen() {
+        for c in Code::ALL {
+            let text = format!("{} {}", c.name(), c.fix()).to_lowercase();
+            assert!(!text.contains("frozen"), "{}", c.code());
+        }
+    }
 }

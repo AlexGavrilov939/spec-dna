@@ -786,7 +786,7 @@
           }
         },
         "amendment-sections": {
-          "description": "For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. The default is `decision = [\"Amendments\"]`. After a decision is accepted, the text outside its amendment sections is frozen (SD405). For a decision, `context` serves the amendment sections with the outcome.",
+          "description": "For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. The default is `decision = [\"Amendments\"]`. After a decision is accepted, the text outside its amendment sections is locked (SD405). For a decision, `context` serves the amendment sections with the outcome.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -800,7 +800,7 @@
           }
         },
         "live-sections": {
-          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605. Default: `{ decision = [\"Status\"] }`.",
+          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not locked text (no SD405), and new text in it gives no SD605. Default: `{ decision = [\"Status\"] }`.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"
@@ -814,7 +814,7 @@
           }
         },
         "history-sections": {
-          "description": "For each type, the names of its history sections (iteration logs, discussions, superseded notes). They match as amendment sections do. `spec-dna history` moves them, and the amendment sections of a decision, into a reference document. In a decision, a history section is not frozen text.",
+          "description": "For each type, the names of its history sections (iteration logs, discussions, superseded notes). They match as amendment sections do. `spec-dna history` moves them, and the amendment sections of a decision, into a reference document. In a decision, a history section is not locked text.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/type"

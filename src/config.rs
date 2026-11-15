@@ -629,7 +629,7 @@ pub struct Root {
     /// For each type, the names of its history sections (iteration logs,
     /// discussions, superseded drafts). They match as amendment sections do.
     /// `spec-dna history` moves them into a `research` document. In a
-    /// decision, they are not frozen text.
+    /// decision, they are not locked text.
     pub history_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of the sections that belong to the
     /// requirements, such as a coverage table. When requirements move, their
@@ -637,7 +637,7 @@ pub struct Root {
     pub companion_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of its live sections, such as a
     /// progress section. They match as amendment sections do. In a
-    /// decision, they are not frozen text, and their text can change in
+    /// decision, they are not locked text, and their text can change in
     /// place.
     pub live_sections: [Vec<String>; DocType::COUNT],
     /// For a root of type `research`: the namespace of its ids, a suffix of

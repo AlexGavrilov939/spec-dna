@@ -16,8 +16,8 @@
 //! - The requirement hashes of all documents are the same multiset.
 //! - Every requirement id resolves, to a requirement with the same hash (a new
 //!   key at its new id).
-//! - The frozen text of every accepted decision is the same (a link
-//!   destination is not frozen text).
+//! - The locked text of every accepted decision is the same (a link
+//!   destination is not locked text).
 //! - No error diagnostic is new.
 //!
 //! If a check fails, `mv` changes no file and exits with code 1.
@@ -126,7 +126,7 @@ pub fn run(
     let pointer = to_type == DocType::Research;
 
     // The history of a decision: only amendment and history sections move,
-    // and only into a research document. The frozen text stays.
+    // and only into a research document. The locked text stays.
     for p in &parts {
         let d = &c.docs[p.doc() as usize];
         if d.ty != DocType::Decision {
@@ -137,7 +137,7 @@ pub fn run(
                 (first..=last).find(|i| !d.amendments.contains(i) && !d.history.contains(i))
         {
             return Err(Fatal::Usage(format!(
-                "`{}#{}` is frozen text of the decision `{}`; only its amendment and history sections (`amendment-sections`, `history-sections`) can move",
+                "`{}#{}` is locked text of the decision `{}`; only its amendment and history sections (`amendment-sections`, `history-sections`) can move",
                 d.id, d.parsed.chunks[i].anchor, d.id
             )));
         }
@@ -1247,7 +1247,7 @@ fn preserve(
             .is_some_and(|&i| n.docs[i as usize].frozen_hash == d.frozen_hash);
         if !kept {
             return Err(format!(
-                "the frozen text of the accepted decision `{}` would change",
+                "the locked text of the accepted decision `{}` would change",
                 d.id
             ));
         }
@@ -1497,6 +1497,29 @@ mod tests {
         assert_eq!(
             e,
             "the text of 2 requirements would change: `a#cap`: the requirement would be lost; `a#dose`: the text \"…sing pump SHALL add 3 percent of [the volume](b.md…\" would become \"…sing pump SHALL add 4 percent of [the volume](b.md…\""
+        );
+    }
+
+    #[test]
+    fn a_refusal_for_a_decision_says_locked() {
+        let cfg =
+            Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"adr\"\ntype = \"decision\"\n")
+                .unwrap();
+        let c = corpus(
+            &cfg,
+            &[(
+                "adr/a.md",
+                "---\nstatus: accepted\n---\n# A\n\n## Decision Outcome\n\nUse X.\n",
+            )],
+        );
+        let edited = HashMap::from([(
+            "adr/a.md".to_string(),
+            "---\nstatus: accepted\n---\n# A\n\n## Decision Outcome\n\nUse Y.\n".to_string(),
+        )]);
+        let e = preserve(&cfg, &c, &edited, None, "c", &HashSet::new(), &[]).unwrap_err();
+        assert_eq!(
+            e,
+            "the locked text of the accepted decision `a` would change"
         );
     }
 

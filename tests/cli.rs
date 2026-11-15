@@ -3328,12 +3328,29 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
 }
 
 #[test]
+fn no_text_of_mv_or_the_schema_says_frozen() {
+    let r = hygiene_project();
+    let (code, out, err) = r.run(&["help", "mv"]);
+    let help = format!("{out}{err}");
+    assert_eq!(code, 0, "{help}");
+    assert!(help.contains("locked text"), "{help}");
+    assert!(!help.to_lowercase().contains("frozen"), "{help}");
+    let schema = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/schema/spec-dna.schema.json"
+    ))
+    .unwrap();
+    assert!(!schema.to_lowercase().contains("frozen"));
+}
+
+#[test]
 fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
     let r = hygiene_project();
     let before = r.read("adr/ADR-3-rainwater.md");
     let (code, _, err) = r.run(&["mv", "ADR-3#decision-outcome", "docs/history/adr-3.md"]);
     assert_eq!(code, 2, "{err}");
-    assert!(err.contains("is frozen text of the decision"), "{err}");
+    assert!(err.contains("is locked text of the decision"), "{err}");
+    assert!(!err.to_lowercase().contains("frozen"), "{err}");
     let (code, _, err) = r.run(&["mv", "ADR-3#amendments", "watering"]);
     assert_eq!(code, 2, "{err}");
     assert!(
