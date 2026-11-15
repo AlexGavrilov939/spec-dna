@@ -181,7 +181,7 @@ fn the_workflow_uses_the_base_branch_and_the_evals_folder() {
     let (code, out, err) = init_with(&r, "ci = \"github\"\nbase = \"trunk\"\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
     let w = r.read(WORKFLOW);
-    assert!(w.contains("    branches:\n      - trunk\n"), "{w}");
+    assert!(w.contains("    branches:\n      - \"trunk\"\n"), "{w}");
     assert!(w.contains("      - .spec-dna/evals/**\n"), "{w}");
     assert!(!w.contains("      - evals/**\n"), "{w}");
 }

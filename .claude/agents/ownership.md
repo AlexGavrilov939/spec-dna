@@ -200,7 +200,7 @@ tests/init_change.rs, tests/init_language.rs   INI
 tests/init_graph.rs                  INI
 tests/harness.rs, tests/hook.rs      INI
 tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/init_evals.rs   INI
-tests/harness_drift.rs, tests/evals_checks.rs   DIA
+tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
 tests/config_step4.rs, tests/eval_run.rs, tests/stats_evals.rs   COR
 tests/context_layers.rs              CTX
 tests/golden/                        The agent of the command. INI: tests/golden/harness/ and tests/golden/evals/

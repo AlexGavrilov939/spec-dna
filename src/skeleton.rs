@@ -74,6 +74,25 @@ pub fn example_json(dir: &str) -> String {
     ])
 }
 
+/// A YAML double-quoted scalar with the same value as `text`. It escapes `\`
+/// and `"`, and writes each control character, and the line separators
+/// U+2028 and U+2029, as an escape. So a name such as `{x}`, `*dev` or
+/// `rel #1` keeps its value.
+fn yaml_quote(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\u{2028}' | '\u{2029}' => out.push_str(&format!("\\u{:04X}", u32::from(c))),
+            c if c.is_control() => out.push_str(&format!("\\x{:02X}", u32::from(c))),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// The text of `.github/workflows/agent-evals.yml`. `checkout` is the step
 /// that checks out the repository, and `install` is the step that installs
 /// the pinned spec-dna (both with their indent, as `init` writes them in
@@ -89,7 +108,7 @@ pub fn workflow(dir: &str, base: &str, checkout: &str, install: &str) -> String 
         "      - .claude/settings.json",
         &dir_path,
     ];
-    let base_line = format!("      - {base}");
+    let base_line = format!("      - {}", yaml_quote(base));
     let version_line = format!("      CLAUDE_CODE_VERSION: \"{CLAUDE_CODE_VERSION}\"");
     let mut head = vec!["name: Agent evals", "on:", "  pull_request:", "    paths:"];
     head.extend(paths);
@@ -144,6 +163,25 @@ mod tests {
         let none = check_sh(&[]);
         assert!(none.contains("return 2; }\n"), "{none}");
         assert!(!none.contains("set -- "), "{none}");
+    }
+
+    #[test]
+    fn the_base_branch_is_a_double_quoted_yaml_scalar() {
+        let cases = [
+            ("main", "      - \"main\"\n"),
+            ("{x}", "      - \"{x}\"\n"),
+            ("*dev", "      - \"*dev\"\n"),
+            ("rel #1", "      - \"rel #1\"\n"),
+            ("a\\b\"c", "      - \"a\\\\b\\\"c\"\n"),
+            ("a\u{1}b\u{85}c", "      - \"a\\x01b\\x85c\"\n"),
+        ];
+        for (base, line) in cases {
+            let text = workflow("evals", base, "", "");
+            assert!(
+                text.contains(&format!("    branches:\n{line}    paths:\n")),
+                "{base}: {text}"
+            );
+        }
     }
 
     #[test]

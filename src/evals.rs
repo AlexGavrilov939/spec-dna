@@ -205,13 +205,17 @@ pub fn parse_eval(
             let mut tools = Vec::new();
             for item in items {
                 match item {
-                    Value::Str(s) if !s.is_empty() && !s.chars().any(char::is_control) => {
+                    Value::Str(s)
+                        if !s.is_empty()
+                            && !s.starts_with('-')
+                            && !s.chars().any(char::is_control) =>
+                    {
                         tools.push(s.clone());
                     }
                     _ => {
                         return err(
                             "allowed-tools",
-                            "`allowed-tools` must be a list of strings with no empty string and no control character",
+                            "`allowed-tools` must be a list of strings with no empty string, no string that starts with `-` and no control character",
                         );
                     }
                 }

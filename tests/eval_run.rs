@@ -230,8 +230,7 @@ fn the_command_line_of_claude_has_the_exact_order_and_no_bare() {
         "-p",
         "Change the word draft to done.",
         "--allowedTools",
-        "Read",
-        "Edit",
+        "Read,Edit",
         "--output-format",
         "json",
         "--max-turns",
@@ -254,6 +253,33 @@ fn the_command_line_of_claude_has_the_exact_order_and_no_bare() {
     for call in fx.calls() {
         assert!(!call.iter().any(|a| a.contains("bare")), "{call:?}");
     }
+}
+
+#[test]
+fn a_tool_that_starts_with_a_dash_gives_exit_code_3_and_no_process() {
+    let mut e = ev("example");
+    e.tools = r#""--bare", "--dangerously-skip-permissions""#;
+    let fx = Fx::with(&[e]);
+    let (code, out, err) = fx.run(&[]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("evals/example.json") && err.contains("allowed-tools"),
+        "{err}"
+    );
+    assert!(!fx.path("log").exists(), "the stub ran");
+}
+
+#[test]
+fn the_tools_are_one_argument_so_no_later_word_is_a_flag() {
+    let mut e = ev("example");
+    e.tools = r#""Read", "Bash(cargo test*)""#;
+    let fx = Fx::with(&[e]);
+    let (code, out, err) = fx.run(&[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let run = &fx.runs()[0];
+    let at = run.iter().position(|a| a == "--allowedTools").unwrap();
+    assert_eq!(run[at + 1], "Read,Bash(cargo test*)", "{run:?}");
+    assert_eq!(run[at + 2], "--output-format", "{run:?}");
 }
 
 #[test]
@@ -956,6 +982,38 @@ fn an_invalid_eval_gives_exit_code_3_with_its_path_and_no_process() {
         err.contains("evals/bad.json") && err.contains("`id`"),
         "{err}"
     );
+}
+
+#[test]
+fn an_out_that_is_a_file_gives_exit_code_4_before_any_process() {
+    let fx = Fx::with(&[ev("example")]);
+    fx.repo.write("result", "not a folder\n");
+    let (code, out, err) = fx.run(&["--out", "result"]);
+    assert_eq!(code, 4, "{out}{err}");
+    assert!(err.contains("result"), "{err}");
+    assert!(!fx.path("log").exists(), "the stub ran");
+    // A folder below a file fails in the same way.
+    let (code, out, err) = fx.run(&["--out", "result/sub"]);
+    assert_eq!(code, 4, "{out}{err}");
+    assert!(!fx.path("log").exists(), "the stub ran");
+    // A dry run makes no folder, so it does not check one.
+    let (code, out, err) = fx.run(&["--dry-run", "--out", "later/results"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!fx.repo.dir.join("later").exists());
+}
+
+#[test]
+fn the_out_folder_exists_before_the_first_run() {
+    let fx = Fx::with(&[ev("example")]);
+    let made = fx.repo.dir.join("made/results");
+    let made = made.to_str().unwrap();
+    let edit = "test -d \"$OUT_DIR\" && touch \"$OUT_DIR/seen\"; echo 'status: done' > notes.txt";
+    let (code, out, err) = fx.run_env(
+        &["--out", "made/results"],
+        &[("STUB_EDIT", edit), ("OUT_DIR", made)],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(fx.repo.dir.join("made/results/seen").exists());
 }
 
 #[test]

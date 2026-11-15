@@ -195,6 +195,10 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         return Ok(0);
     }
 
+    // A bad `--out` must stop the command before the first run spends money.
+    if let Some(dir) = &out_dir {
+        make_out_dir(repo, dir)?;
+    }
     let claude_code = claude_version()?;
     let harness = harness_list(repo)?;
     if !o.json {
@@ -639,7 +643,9 @@ fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
     let mut cmd = Command::new("claude");
     cmd.arg("-p").arg(&p.eval.task);
     if !p.eval.allowed_tools.is_empty() {
-        cmd.arg("--allowedTools").args(&p.eval.allowed_tools);
+        // One argument, so no later word of the list can be read as a flag.
+        cmd.arg("--allowedTools")
+            .arg(p.eval.allowed_tools.join(","));
     }
     cmd.args([
         "--output-format",
@@ -840,13 +846,26 @@ fn report_json(r: &Report) -> String {
     obj.bool("passed", r.passed()).raw("evals", &evals).end()
 }
 
+/// Makes the folder of `--out`, and checks that it is a folder.
+fn make_out_dir(repo: &Repo, dir: &str) -> Result<(), Fatal> {
+    let folder = repo.root.join(dir);
+    fs::create_dir_all(&folder).map_err(|e| Fatal::Io(format!("cannot make `{dir}`: {e}")))?;
+    if folder.is_dir() {
+        Ok(())
+    } else {
+        Err(Fatal::Io(format!(
+            "cannot make `{dir}`: it is not a folder"
+        )))
+    }
+}
+
 /// Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json`. If the file
 /// exists, the name gets the first free suffix from `-2` to `-999`. Returns the path from the
 /// repository root.
 fn write_result(repo: &Repo, dir: &str, started: &str, compact: &str) -> Result<String, Fatal> {
     let text = json::pretty(&json::parse(compact).map_err(Fatal::Io)?);
     let folder = repo.root.join(dir);
-    fs::create_dir_all(&folder).map_err(|e| Fatal::Io(format!("cannot make `{dir}`: {e}")))?;
+    make_out_dir(repo, dir)?;
     // `2026-11-15T10:15:00Z` gives `20261115T101500Z`.
     let stamp: String = started
         .chars()

@@ -10,7 +10,7 @@ on:
       - evals/**
   push:
     branches:
-      - main
+      - "main"
     paths:
       - CLAUDE.md
       - AGENTS.md

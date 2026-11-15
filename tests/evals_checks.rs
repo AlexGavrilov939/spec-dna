@@ -142,6 +142,14 @@ fn each_rule_of_the_eval_file_gives_its_key_as_the_target() {
             "allowed-tools",
         ),
         (
+            "dash-tool",
+            eval(
+                "dash-tool",
+                &[("allowed-tools", Some("[\"Read\", \"--bare\"]"))],
+            ),
+            "allowed-tools",
+        ),
+        (
             "no-turns",
             eval("no-turns", &[("max-turns", Some("0"))]),
             "max-turns",
