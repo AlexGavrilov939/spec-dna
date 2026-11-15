@@ -85,13 +85,7 @@ The proof refuses a new error of the groups `references` and `ids`. Another grou
 
 `upgrade` stages the moves with `git mv` and leaves the other changes unstaged. It prints the `git add` command for the result after the report. Run that command, and commit.
 
-`git log --follow` can lose the history of a small moved change, because the commit moves the file and edits its front matter and links. To keep the history, commit the moves first:
-
-1. Run `git commit --no-verify`. This commit holds only the renames.
-2. Run the `git add` command of the report. Run `git commit --no-verify`.
-3. Run `spec-dna check --base origin/main`.
-
-Use `--no-verify` for both commits. After the first commit, `HEAD` pins 0.5.0 and has moved documents. In that state, `spec-dna check` without `--base` exits with code 3, and a pre-commit hook of spec-dna fails. A squash merge keeps one commit, so it keeps no history.
+`git log --follow` can lose the history of a small moved change, because the commit moves the file and edits its front matter and links. A squash merge keeps one commit, so it keeps no history anyway. Commit the whole result at once.
 
 ## Open the first pull request
 
