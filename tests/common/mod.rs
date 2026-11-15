@@ -5,6 +5,9 @@
 //! age of a commit. `Repo::run_env` runs the binary with a changed
 //! environment, `stub_bin` and `path_with` replace a program on `PATH`, and
 //! `normalize_marker` removes the version from a harness marker.
+//! `Repo::from_fixture` copies a committed tree of `tests/fixtures/upgrade/`
+//! into a new repository with 1 commit, and `tree_bytes` lists a tree for an
+//! equal compare.
 
 // Each file in tests/ is its own crate and uses only some helpers.
 #![allow(dead_code)]
@@ -17,6 +20,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub const BIN: &str = env!("CARGO_BIN_EXE_spec-dna");
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
+/// The date of the first commit of `Repo::from_fixture`.
+pub const FIXTURE_DATE: &str = "2026-01-15T12:00:00+00:00";
 
 /// A git command in `dir` with the fixed identity and the isolated config.
 fn git_cmd(dir: &Path) -> Command {
@@ -189,6 +194,21 @@ impl Repo {
         repo
     }
 
+    /// A repository on `main` with 1 commit, dated `FIXTURE_DATE`. The
+    /// commit holds the fixture `name` of `tests/fixtures/upgrade/`, then
+    /// each folder of `overlays` laid over it. A file of an overlay replaces
+    /// the file of the same path. A file `<path>.append` adds its text at the
+    /// end of `<path>`, which must exist. The fixture folders have no other
+    /// file than the files of the project, so a dotfile is copied too.
+    pub fn from_fixture(name: &str, overlays: &[&str]) -> Repo {
+        let repo = Repo::new();
+        for part in std::iter::once(&name).chain(overlays) {
+            overlay(&fixture_dir(part), &repo.dir);
+        }
+        repo.commit_at("fixture", FIXTURE_DATE);
+        repo
+    }
+
     /// Writes a file, and its parent folders.
     pub fn write(&self, path: &str, text: &str) {
         write_file(&self.dir, path, text);
@@ -296,5 +316,69 @@ pub fn normalize_marker(text: &str) -> String {
         }
     }
     out.push_str(rest);
+    out
+}
+
+/// The folder of the fixture `name` under `tests/fixtures/upgrade/`.
+pub fn fixture_dir(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/upgrade")
+        .join(name)
+}
+
+/// Copies the files of `from` into `to`. A file `<path>.append` is added to
+/// the end of `<path>`.
+fn overlay(from: &Path, to: &Path) {
+    assert!(from.is_dir(), "no fixture folder {}", from.display());
+    for (rel, bytes) in tree_bytes(from) {
+        let target = match rel.strip_suffix(".append") {
+            Some(base) => {
+                let mut text = fs::read(to.join(base)).expect("the file to append to exists");
+                text.extend_from_slice(&bytes);
+                write_bytes(to, base, &text);
+                continue;
+            }
+            None => rel,
+        };
+        write_bytes(to, &target, &bytes);
+    }
+}
+
+fn write_bytes(dir: &Path, path: &str, bytes: &[u8]) {
+    let full = dir.join(path);
+    fs::create_dir_all(full.parent().unwrap()).unwrap();
+    fs::write(full, bytes).unwrap();
+}
+
+/// Each file under `dir` with its path (relative, with `/`) and its bytes,
+/// sorted by path. The folder `.git` is not in the list. Two equal trees give
+/// two equal lists.
+pub fn tree_bytes(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+        let mut entries: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            if path.file_name().is_some_and(|n| n == ".git") {
+                continue;
+            }
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else {
+                let rel = path.strip_prefix(root).unwrap();
+                let rel = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                out.push((rel, fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
     out
 }

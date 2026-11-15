@@ -1,0 +1,45 @@
+# case brownfield, recorded with spec-dna 0.5.0
+exit 1
+doc docs/adr/ADR-001-choice-1.md ADR-001-choice-1 decision accepted
+doc docs/adr/ADR-002-choice-2.md ADR-002-choice-2 decision accepted
+doc docs/adr/ADR-003-choice-3-notes.md ADR-003-choice-3-notes decision accepted
+doc docs/adr/ADR-003-choice-3.md ADR-003-choice-3 decision accepted
+doc docs/adr/README.md adr decision accepted
+doc docs/guides/style.md style guide active
+doc docs/meetings/2026-03-planning.md 2026-03-planning note -
+doc docs/ops/restart.md restart runbook active
+doc docs/rfcs/rfc-001-drip.md rfc-001-drip change proposed
+doc docs/rfcs/rfc-002-reports.md rfc-002-reports change done
+doc docs/specs/review.md review spec active
+doc docs/specs/watering.md watering spec active
+doc docs/vendor/upstream.md vendor/upstream reference -
+finding SD201 error docs/adr/ADR-003-choice-3-notes.md
+finding SD305 error docs/adr/ADR-003-choice-3-notes.md
+finding SD201 error docs/adr/ADR-003-choice-3.md
+finding SD305 error docs/adr/README.md
+finding SD303 error docs/specs/review.md
+finding SD806 warning docs/specs/review.md
+finding SD608 warning docs/specs/watering.md
+finding SD608 warning docs/specs/watering.md
+file 6159f2aaecf2a2ab22021f47966338c3a626f43b .claude/skills/spec-dna/SKILL.md
+file fb814bbe00b08632a8a311e2bad7702a23ae1e72 AGENTS.md
+file 5018de968d3736ef1fce3dae08aacfbb1fe7f989 CLAUDE.md
+file fbf3f486c2be32f9cb2d628718b9869f7d1e90f7 README.md
+file 64b8641d0816d35bef79609c7f9af975ff2713cd docs/adr/ADR-001-choice-1.md
+file 3db312ac27d79647f109c7c249353b5da59772d8 docs/adr/ADR-002-choice-2.md
+file b0a3796f298f07484476a844bf7d46b77bb6f687 docs/adr/ADR-003-choice-3-notes.md
+file d9a70914ef6c8a3b4b664189cc40dbeba91cbc82 docs/adr/ADR-003-choice-3.md
+file 0dc9c8703eb7cb3e293c8c024985d3f3e2709eb0 docs/adr/README.md
+file 67f434dfcee68e9a799d495b31f8843da9d91e9e docs/guides/style.md
+file 637aeea7f42a8f9de8b284f0834153dcf80c9784 docs/guides/vendor-a/SKILL.md
+file ed4fbe041b5839fb5b45feaefdd80dcd4d008bd1 docs/guides/vendor-b/SKILL.md
+file 6f5401a9f5b41a75fe49d0076c02ec3e67572b99 docs/index.md
+file 979845dbb328f23f8f4f0f648f0be71e7f3e50c0 docs/meetings/2026-03-planning.md
+file 96c8679fb45c856c16f26ae64c332790fc9dc0f1 docs/ops/restart.md
+file 0f3ca64c98f617cf6462c5f261f0192b729f5b81 docs/rfcs/rfc-001-drip.md
+file 95149fb944e254db4d6e16dade89a4ad2a7ef7f8 docs/rfcs/rfc-002-reports.md
+file 34be9f4ce2187b3248be40e8c87be99b8949b42b docs/setup.md
+file a4bdf57c3fd2dd3c2a40a67164797ab4813364ac docs/specs/review.md
+file e268358c5a73aa1c19b0b79957add62f22176625 docs/specs/watering.md
+file f006c0ea789a66468d08e3b9aad39be66beae3b1 docs/vendor/upstream.md
+file 808ecc31a3535abddff2f95e91f6a76a77f1e3ec spec-dna.toml

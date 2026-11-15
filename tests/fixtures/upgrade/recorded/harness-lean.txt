@@ -1,0 +1,86 @@
+# case harness-lean, recorded with spec-dna 0.5.0
+exit 1
+doc docs/changes/add-drip-lines.md changes/add-drip-lines change proposed
+doc docs/changes/new-sensors/index.md changes/new-sensors change proposed
+doc docs/changes/planning/add-pump-timer.md changes/planning/add-pump-timer change proposed
+doc docs/changes/rework-pumps.md changes/rework-pumps change accepted
+doc docs/changes/solar-pump.md changes/solar-pump change rejected
+doc docs/changes/tune-pump.md changes/tune-pump change done
+doc docs/contracts/valve-api.md contracts/valve-api contract active
+doc docs/decisions/4-drain-timing.md 4-drain-timing decision proposed
+doc docs/decisions/ADR-1-valve-controller.md ADR-1-valve-controller decision accepted
+doc docs/decisions/ADR-2-pump-schedule.md ADR-2-pump-schedule decision accepted
+doc docs/decisions/ADR-3-solar-pump.md ADR-3-solar-pump decision accepted
+doc docs/field-notes/frost.md frost note -
+doc docs/guides/logging.md guides/logging guide active
+doc docs/harvest/records.md harvest/records spec superseded
+doc docs/incidents/2026-flood.md incidents/2026-flood incident -
+doc docs/invariants/water-limits.md invariants/water-limits invariant active
+doc docs/irrigation/alias-clash.md irrigation/alias-clash spec active
+doc docs/irrigation/legacy.md irrigation/legacy spec superseded
+doc docs/irrigation/pumps.md irrigation/pumps spec active
+doc docs/irrigation/sensors.md irrigation/sensors spec deprecated
+doc docs/irrigation/valves.md irrigation/valves spec active
+doc docs/lab/seed-trial.md seed-trial note -
+doc docs/notes/research.md notes/research note -
+doc docs/reference/soil-study.md reference/soil-study reference -
+doc docs/runbooks/restart-pump.md runbooks/restart-pump runbook active
+finding SD101 error docs/changes/add-drip-lines.md
+finding SD601 warning docs/changes/add-drip-lines.md
+finding SD603 warning docs/changes/add-drip-lines.md
+finding SD608 warning docs/contracts/valve-api.md
+finding SD305 error docs/decisions/ADR-2-pump-schedule.md
+finding SD611 warning docs/decisions/ADR-3-solar-pump.md
+finding SD402 error docs/harvest/records.md
+finding SD608 warning docs/invariants/water-limits.md
+finding SD201 error docs/irrigation/alias-clash.md
+finding SD402 error docs/irrigation/legacy.md
+finding SD608 warning docs/irrigation/pumps.md
+finding SD802 warning docs/irrigation/sensors.md
+finding SD103 error docs/irrigation/valves.md
+finding SD201 error docs/irrigation/valves.md
+finding SD203 error docs/irrigation/valves.md
+finding SD602 warning docs/irrigation/valves.md
+finding SD604 warning docs/irrigation/valves.md
+finding SD804 warning docs/irrigation/valves.md
+finding SD804 warning docs/irrigation/valves.md
+finding SD805 warning docs/irrigation/valves.md
+finding SD102 error docs/notes/research.md
+finding SD102 error docs/notes/research.md
+finding SD701 warning docs/notes/research.md
+file 71fcbcd1086b4425814acaf83a8291e627733755 .claude/agents/Explore.md
+file 51357cd1bff338db3f24eace92e063dcb7c2e5c2 .claude/agents/checker.md
+file 94fb9b2b871d81b5b37f061a6397d996d5b8f2f4 .claude/agents/fallback-advisor.md
+file 0a77583ddb02c85e6eadee696f81e4b7063f3d4a .claude/agents/model-team.md
+file 23ebb05b17b77e5a6630d4f95338a6e9729988e9 .claude/settings.json
+file 6159f2aaecf2a2ab22021f47966338c3a626f43b .claude/skills/spec-dna/SKILL.md
+file fb814bbe00b08632a8a311e2bad7702a23ae1e72 AGENTS.md
+file 955b6f4f4ba74b187c364ec4142e4e4a39265972 CLAUDE.md
+file 49dfbdc5f69f3783318f3d75e5cbe66ce440c896 docs/changes/add-drip-lines.md
+file 43a72a7e76e136390dcf9c784d4655d06dd312de docs/changes/new-sensors/index.md
+file 455bd0451c8d3c8a8633ba12982e7c3a848cb65c docs/changes/planning/add-pump-timer.md
+file 9144b8241f8b3fbaa00f2cf6fa9a4265350c4e4b docs/changes/rework-pumps.md
+file 1ba9fb0b0e2bc36f285cda7a638b23cce26ba6a6 docs/changes/solar-pump.md
+file c0912804834c38205840f6bf538b44029eb5c98b docs/changes/tune-pump.md
+file 70843402b941b069b92c8ac71a799b3f65da06d9 docs/contracts/valve-api.md
+file 681d34a1cd06fed042b214024053165bc16a4ea1 docs/decisions/4-drain-timing.md
+file a0c2e323926b634d1fda8ac9110a34e92f1324fe docs/decisions/ADR-1-valve-controller.md
+file 78cb97982014760e6fcc50cbc68f698953354ca0 docs/decisions/ADR-2-pump-schedule.md
+file fa375389dc44949d847f38711d7a12ebffa61330 docs/decisions/ADR-3-solar-pump.md
+file 0396ed1ad61551ff21b9f789ca7aeca4386f8f4c docs/field-notes/frost.md
+file 72cdd847b8856854f55f73fea168c039c6de9c67 docs/guides/logging.md
+file ea6d96718db5ad7e350db3e0a98bece317a283ff docs/harvest/records.md
+file efad532327b0a86fe7b75d58e1966cc791f2bd86 docs/incidents/2026-flood.md
+file dc8b1c6220e5a83c36a1fb8e024028d26b5f8bf4 docs/invariants/water-limits.md
+file 445903da7c3237178089a9e39d543b361ca6f598 docs/irrigation/alias-clash.md
+file 8721125a74a7e6439dc84c1a1b8ccb510fef278e docs/irrigation/legacy.md
+file 36b00ee06147945286c26bbed30700ad78085e4e docs/irrigation/pumps.md
+file 1e26a4b3fd421cbe19023c30d761cba827a2f342 docs/irrigation/sensors.md
+file 30651994294fe7a142e43befa06029b12298b502 docs/irrigation/valves.md
+file f69cdb76d72c072bc555fd22b02128cf960971aa docs/lab/seed-trial.md
+file bc7570dc930a03dea23010ec0a64a52229b2c635 docs/notes/research.md
+file 3ed4edc0ac454949d5cb02b4c765b42f843c1855 docs/reference/soil-study.md
+file b359ea8cf3c52aa626e8312c33799829daa7b63f docs/runbooks/restart-pump.md
+file 5e578bb0016931be39ab6703b2a4900d8cf9b015 docs/vendor/upstream.md
+file 1b6a227a835562f911d9ba421bd449849b32e42b spec-dna.toml
+file bb3da97a522fbda65cacdfe69118f252e2eb9e94 src/controller.rs
