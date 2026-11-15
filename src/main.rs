@@ -60,6 +60,7 @@ mod transcript;
 mod upgrade_config;
 mod upgrade_docs;
 mod upgrade_old;
+mod upgrade_proof;
 
 use crate::adapters::VERSION;
 use crate::diag::Severity;

@@ -741,7 +741,7 @@ fn ancestors(path: &str) -> Vec<&str> {
 /// The map of the links: each moved file, and each folder that a link can name
 /// and that moves whole. A folder moves whole if each tracked file in it moves
 /// to the same place under the new folder (D146).
-fn link_moves(tree: &Tree, moves: &[Move]) -> HashMap<String, String> {
+pub(crate) fn link_moves(tree: &Tree, moves: &[Move]) -> HashMap<String, String> {
     let mut map: HashMap<String, String> = moves
         .iter()
         .map(|m| (m.from.clone(), m.to.clone()))
@@ -885,17 +885,17 @@ pub fn plan_docs(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::upgrade_config::{self, ConfigOpts, ConfigPlan};
     use std::path::{Path, PathBuf};
 
-    fn fixtures() -> PathBuf {
+    pub(crate) fn fixtures() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade")
     }
 
     /// Each file of a fixture folder, as a tree in memory.
-    fn fixture_tree(case: &str) -> TreeData {
+    pub(crate) fn fixture_tree(case: &str) -> TreeData {
         fn walk(dir: &Path, rel: &str, out: &mut HashMap<String, Vec<u8>>) {
             for e in std::fs::read_dir(dir).unwrap() {
                 let e = e.unwrap();
@@ -917,7 +917,7 @@ mod tests {
         TreeData::from_map(blobs)
     }
 
-    fn mem(files: &[(&str, &str)]) -> TreeData {
+    pub(crate) fn mem(files: &[(&str, &str)]) -> TreeData {
         TreeData::from_map(
             files
                 .iter()
@@ -926,7 +926,7 @@ mod tests {
         )
     }
 
-    fn opts() -> ConfigOpts {
+    pub(crate) fn opts() -> ConfigOpts {
         ConfigOpts {
             pin: "0.6.0".into(),
             sums: None,
@@ -935,16 +935,16 @@ mod tests {
 
     /// What the pipeline of `plan` gives for a tree and a 0.5 file, up to the
     /// edits of the front matter.
-    struct Run {
-        classified: Classified,
-        facts: Facts,
-        plan: ConfigPlan,
-        fin: Config,
-        changes: Vec<DocChange>,
+    pub(crate) struct Run {
+        pub(crate) classified: Classified,
+        pub(crate) facts: Facts,
+        pub(crate) plan: ConfigPlan,
+        pub(crate) fin: Config,
+        pub(crate) changes: Vec<DocChange>,
     }
 
     /// The pipeline up to the final configuration. `changes` is empty.
-    fn pipeline(tree: &TreeData, toml: &str) -> Run {
+    pub(crate) fn pipeline(tree: &TreeData, toml: &str) -> Run {
         let old = OldConfig::read(toml).unwrap_or_else(|e| panic!("{e}\n{toml}"));
         let p1 = upgrade_config::pass1(toml, &old, &opts()).unwrap();
         let cfg1 = Config::parse(&p1.text).unwrap();
@@ -971,17 +971,17 @@ mod tests {
         }
     }
 
-    fn run_with(tree: &TreeData, toml: &str, dest: &HashMap<String, String>) -> Run {
+    pub(crate) fn run_with(tree: &TreeData, toml: &str, dest: &HashMap<String, String>) -> Run {
         let mut r = pipeline(tree, toml);
         r.changes = edit_docs(&r.classified, &r.fin, dest).unwrap();
         r
     }
 
-    fn run(tree: &TreeData, toml: &str) -> Run {
+    pub(crate) fn run(tree: &TreeData, toml: &str) -> Run {
         run_with(tree, toml, &HashMap::new())
     }
 
-    fn edited<'a>(r: &'a Run, path: &str) -> &'a str {
+    pub(crate) fn edited<'a>(r: &'a Run, path: &str) -> &'a str {
         r.changes
             .iter()
             .find(|c| c.path == path)
@@ -989,7 +989,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no change for {path}"))
     }
 
-    fn message(e: Fatal) -> String {
+    pub(crate) fn message(e: Fatal) -> String {
         match e {
             Fatal::Config(m) | Fatal::Refused(m) => m,
             other => panic!("unexpected error: {other:?}"),
@@ -997,7 +997,7 @@ mod tests {
     }
 
     /// A mixed root with no default type: each document says its type.
-    const MIXED: &str = "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nlive-sections = {}\n";
+    pub(crate) const MIXED: &str = "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\nlive-sections = {}\n";
 
     // --- one case for each row of the mapping ---
 
@@ -1391,7 +1391,7 @@ mod tests {
 
     /// The facts of the documents of a fixture, from the file that the 0.5.0
     /// binary recorded: the path, the id, the 0.5 type and the 0.5 status.
-    fn recorded(case: &str) -> Vec<(String, String, String)> {
+    pub(crate) fn recorded(case: &str) -> Vec<(String, String, String)> {
         let rec = std::fs::read_to_string(fixtures().join(format!("recorded/{case}.txt"))).unwrap();
         rec.lines()
             .filter_map(|l| l.strip_prefix("doc "))
@@ -1402,11 +1402,12 @@ mod tests {
             .collect()
     }
 
-    const CASES: [&str; 5] = ["v05", "v04", "brownfield", "harness-lean", "harness-full"];
+    pub(crate) const CASES: [&str; 5] =
+        ["v05", "v04", "brownfield", "harness-lean", "harness-full"];
 
     /// The tree and the 0.5 file of a case. A harness case is `v05/` with the
     /// files that `init` of 0.5.0 wrote, and its `[harness]` text.
-    fn fixture_case(case: &str) -> (TreeData, String) {
+    pub(crate) fn fixture_case(case: &str) -> (TreeData, String) {
         let read = |p: &str| String::from_utf8(std::fs::read(fixtures().join(p)).unwrap()).unwrap();
         if let Some(_level) = case.strip_prefix("harness-") {
             let mut blobs = HashMap::new();
@@ -1438,7 +1439,7 @@ mod tests {
         (fixture_tree(case), read(&format!("{case}/spec-dna.toml")))
     }
 
-    fn fixture_run(case: &str) -> Run {
+    pub(crate) fn fixture_run(case: &str) -> Run {
         let (tree, toml) = fixture_case(case);
         run(&tree, &toml)
     }
@@ -1639,18 +1640,22 @@ mod tests {
 
     // --- S7: the moves ---
 
-    fn full(tree: &TreeData, toml: &str, layout: bool) -> Result<(Run, DocsPlan), Fatal> {
+    pub(crate) fn full(
+        tree: &TreeData,
+        toml: &str,
+        layout: bool,
+    ) -> Result<(Run, DocsPlan), Fatal> {
         let mut r = pipeline(tree, toml);
         let p = tree.with(|t| plan_docs(t, &r.classified, &r.fin, layout))?;
         r.changes = p.docs.clone();
         Ok((r, p))
     }
 
-    fn go(tree: &TreeData, toml: &str, layout: bool) -> (Run, DocsPlan) {
+    pub(crate) fn go(tree: &TreeData, toml: &str, layout: bool) -> (Run, DocsPlan) {
         full(tree, toml, layout).unwrap_or_else(|e| panic!("{e:?}"))
     }
 
-    fn refused(tree: &TreeData, toml: &str, layout: bool) -> String {
+    pub(crate) fn refused(tree: &TreeData, toml: &str, layout: bool) -> String {
         match full(tree, toml, layout) {
             Err(Fatal::Refused(m)) => m,
             Err(other) => panic!("not a stop with exit code 1: {other:?}"),
@@ -1658,7 +1663,7 @@ mod tests {
         }
     }
 
-    fn mv<'a>(p: &'a DocsPlan, from: &str) -> &'a Move {
+    pub(crate) fn mv<'a>(p: &'a DocsPlan, from: &str) -> &'a Move {
         p.moves
             .iter()
             .find(|m| m.from == from)
@@ -1789,7 +1794,7 @@ mod tests {
 
     /// Reads the tree after the plan: each moved file at its new path, and
     /// each written text.
-    fn after_tree(tree: &TreeData, p: &DocsPlan) -> TreeData {
+    pub(crate) fn after_tree(tree: &TreeData, p: &DocsPlan) -> TreeData {
         let mut blobs: HashMap<String, Vec<u8>> = tree.with(|t| (t.read)(t.files).unwrap());
         for m in &p.moves {
             let b = blobs.remove(&m.from).unwrap();

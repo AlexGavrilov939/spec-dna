@@ -23,7 +23,7 @@
 //! If a check fails, `mv` changes no file and exits with code 1.
 
 use crate::config::Config;
-use crate::diag::{Code, Severity};
+use crate::diag::{Code, Diag, Severity};
 use crate::hash::Hash;
 use crate::model::{Corpus, DocType, Res, is_doc_path, join, same_heading};
 use crate::mv::{add_req_alias, dedent, line_span, parent, read, relative, write};
@@ -1303,33 +1303,67 @@ pub fn check_no_new_errors(
     Ok(anchors(&n).saturating_sub(anchors(c)))
 }
 
+/// Refuses a change that gives a new error diagnostic.
 fn new_errors(config: &Config, before: &Corpus, after: &Corpus) -> Result<(), String> {
-    let errors = |k: &Corpus| {
-        let mut m: HashMap<(Code, String), usize> = HashMap::new();
-        for d in crate::check::diagnose(config, k) {
-            if d.severity == Severity::Error {
-                *m.entry((d.code, d.target)).or_default() += 1;
-            }
-        }
-        m
+    match new_error_diags(config, before, after, None).first() {
+        Some(d) => Err(format!("a new error {} for `{}`", d.code.code(), d.target)),
+        None => Ok(()),
+    }
+}
+
+/// Each error diagnostic of `after` that `before` does not have, in the order
+/// of the diagnostics. It counts by code and target, so a move does not change
+/// the key of a diagnostic. `only` limits the check to a list of codes (the
+/// proof of `upgrade` checks the groups `references` and `ids`); `None` checks
+/// each code, as `mv` and `finish` do.
+pub(crate) fn new_error_diags(
+    config: &Config,
+    before: &Corpus,
+    after: &Corpus,
+    only: Option<&[Code]>,
+) -> Vec<Diag> {
+    let errors = |k: &Corpus| -> Vec<Diag> {
+        crate::check::diagnose(config, k)
+            .into_iter()
+            .filter(|d| d.severity == Severity::Error)
+            .filter(|d| only.is_none_or(|codes| codes.contains(&d.code)))
+            .collect()
     };
-    let (eb, ea) = (errors(before), errors(after));
-    for ((code, target), count) in &ea {
-        if count > eb.get(&(*code, target.clone())).unwrap_or(&0) {
-            return Err(format!("a new error {} for `{target}`", code.code()));
+    let mut seen: HashMap<(Code, String), usize> = HashMap::new();
+    for d in errors(before) {
+        *seen.entry((d.code, d.target)).or_default() += 1;
+    }
+    let mut out = Vec::new();
+    for d in errors(after) {
+        // The first diagnostics of a key use up the count of `before`.
+        match seen.get_mut(&(d.code, d.target.clone())) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => out.push(d),
         }
     }
-    Ok(())
+    out
 }
 
 /// Names each requirement whose text the move would change, with the
 /// reason: the changed text, a lost requirement or a new one.
 fn hash_changes(before: &Corpus, after: &Corpus) -> String {
+    hash_changes_of(before, after, &|d| d.reqs.clone())
+}
+
+/// Like `hash_changes`. `reqs_before` gives the requirements of a document of
+/// `before`: the proof of `upgrade` reads the 0.5 type of a document, so it can
+/// leave out a list item that only the fallback type of a document that
+/// failed its type would read as a requirement.
+pub(crate) fn hash_changes_of(
+    before: &Corpus,
+    after: &Corpus,
+    reqs_before: &dyn Fn(&crate::model::Doc) -> Vec<usize>,
+) -> String {
     type Items<'a> = HashMap<Hash, Vec<(String, &'a str)>>;
-    fn items(k: &Corpus) -> Items<'_> {
+    fn items<'a>(k: &'a Corpus, reqs: &dyn Fn(&crate::model::Doc) -> Vec<usize>) -> Items<'a> {
         let mut m: Items = HashMap::new();
         for d in &k.docs {
-            for &r in &d.reqs {
+            for r in reqs(d) {
                 let req = &d.parsed.reqs[r];
                 m.entry(req.frozen)
                     .or_default()
@@ -1338,7 +1372,10 @@ fn hash_changes(before: &Corpus, after: &Corpus) -> String {
         }
         m
     }
-    let (b, a) = (items(before), items(after));
+    let (b, a) = (
+        items(before, reqs_before),
+        items(after, &|d| d.reqs.clone()),
+    );
     // The items of `x` that `y` does not have, in a stable order.
     let extra = |x: &Items<'_>, y: &Items<'_>| {
         let mut out: Vec<(String, String)> = Vec::new();
