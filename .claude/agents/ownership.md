@@ -90,9 +90,10 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Hook | `src/hook.rs`; the `hook` section of `docs/commands.md`; the hooks section of `docs/harness.md`; `tests/hook*.rs` | ARC | INI | TST | REL |
 | Eval file form or runner | `src/evals.rs` and `src/eval_run.rs`; the `eval` section and the exit codes of `docs/commands.md`; `tests/eval_run.rs`; SD506 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
 | Eval skeleton or workflow | `src/skeleton.rs`; question 14 in `src/init.rs`; `tests/golden/evals/`; `docs/init.md` | ARC | INI | COR, DIA, REL | DOC |
+| Upgrade plan | `src/upgrade.rs`, `src/upgrade_old.rs`, `src/upgrade_config.rs`, `src/upgrade_docs.rs`, `src/upgrade_proof.rs` and `src/config_text.rs`; `tests/upgrade_*.rs`, `tests/fixtures/upgrade/` and `tests/golden/upgrade/`; the doc page of the command, when it exists; `CHANGELOG.md` | ARC | COR | DIA, HYG, INI, TST | DOC, REL |
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
 | Convention | `AGENTS.md`, `CONTRIBUTING.md`, `README.md` and `.github/pull_request_template.md`; lint and editor configs | OWN | ARC | DOC, REL | All |
-| Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the checkout SHA and the Claude Code version that `init` writes into a workflow (`src/init.rs`, `src/skeleton.rs`); the tag | OWN | REL | ARC, TST | All |
+| Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the checkout SHA and the Claude Code version that `init` writes into a workflow (`src/init.rs`, `src/skeleton.rs`); the tag. The pin in `spec-dna.toml` of this repository moves in its own pull request after the release, because SD503 rejects a change of the configuration with other files | OWN | REL | ARC, TST | All |
 | CI or hooks | `.github/` except the PR template, `.pre-commit-config.yaml`, `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh` and `src/release.rs` | ARC | REL | TST | OWN |
 | Agent team | `.claude/` and `CLAUDE.md`; the pointers in `AGENTS.md` and `CONTRIBUTING.md` | OWN | ARC | DOC | All |
 
@@ -160,6 +161,10 @@ src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 t
 src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
 src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
 src/sdlc.rs                          COR: `log` and `stats --sdlc`
+src/upgrade.rs, src/upgrade_old.rs   COR: `upgrade`, its plan and its 0.5 reader
+src/upgrade_config.rs                COR: the plan of the configuration
+src/upgrade_docs.rs, src/upgrade_proof.rs   COR: the plan of the documents and the proof. HYG is c for the moves
+src/config_text.rs                   COR: the edits of TOML text by path
 src/evals.rs                         COR: the eval file form and its rules, which SD506 and `eval run` share
 src/eval_run.rs                      COR: `eval run`
 src/harness.rs                       INI: the roles, the generated files, the settings merge. DIA: the function `check` (SD501, SD502, SD504, SD505)
@@ -203,12 +208,14 @@ tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/in
 tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
 tests/config_step4.rs, tests/eval_run.rs, tests/stats_evals.rs   COR
 tests/context_layers.rs              CTX
-tests/golden/                        The agent of the command. INI: tests/golden/harness/ and tests/golden/evals/
+tests/upgrade_cli.rs, tests/upgrade_config.rs, tests/upgrade_first_pr.rs, tests/upgrade_fixtures.rs, tests/upgrade_pin.rs, tests/upgrade_review_fixes.rs   COR
+tests/golden/                        The agent of the command. INI: tests/golden/harness/ and tests/golden/evals/. COR: tests/golden/upgrade/
 tests/fixtures/corpus/               TST
 tests/fixtures/brownfield/           INI
 tests/fixtures/layouts/              INI
 tests/fixtures/demo/                 INI
 tests/fixtures/transcripts*/         TRN
+tests/fixtures/upgrade/             COR: the projects of 0.4 and 0.5. TST: the policy
 bench/tool/                          TST
 bench/retrieval/                     CTX
 bench/harness/                       TST
@@ -235,5 +242,7 @@ SECURITY.md                          ARC (OWN)
 .gitignore, .markdownlint-cli2.yaml  ARC (OWN)
 _typos.toml                          ARC (OWN)
 CLAUDE.md, .claude/                  ARC (OWN)
+spec-dna.toml                        ARC (OWN): the configuration of this repository. The pin moves in its own pull request (see "Release")
+docs/intent/                         ARC (OWN): the intents of the open changes. `new intent` writes them and `finish` deletes them
 LICENSE                              OWN
 ```
