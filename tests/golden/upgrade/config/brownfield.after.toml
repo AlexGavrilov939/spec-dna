@@ -1,0 +1,74 @@
+spec-dna = "0.6.0"
+
+# Each folder of the project keeps its name. A root of one type maps it.
+[[roots]]
+path = "docs/adr"
+type = "decision"
+status = "accepted"
+legacy-ids = ["ADR-{n}"]
+required-sections = { decision = ["Decisión", "Decision"] }
+live-sections = {}
+
+[[roots]]
+path = "docs/specs"
+type = "requirements"
+status = "active"
+legacy-keys = ["R-{n}"]
+status-map = { shipped = "active" }
+live-sections = {}
+
+[[roots]]
+path = "docs/ops"
+type = "procedure"
+status = "active"
+required-sections = { procedure = ["Restart"] }
+live-sections = {}
+
+[[roots]]
+path = "docs/guides"
+type = "procedure"
+status = "active"
+exclude = ["vendor-*/**"]
+live-sections = {}
+
+[[roots]]
+path = "docs/rfcs"
+type = "mixed"
+default-type = "research"
+required-sections = { intent = [] }
+live-sections = {}
+
+[[roots]]
+path = "docs/meetings"
+type = "mixed"
+default-type = "research"
+live-sections = {}
+
+[[roots]]
+path = "docs/vendor"
+type = "research"
+live-sections = {}
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.decisions]
+types = ["decision"]
+
+[layers.procedures]
+types = ["procedure"]
+
+[layers.research]
+types = ["research"]
+moves-to = ["decisions", "requirements"]
+linked-from = ["decisions", "requirements"]
+context = "on-request"
+
+[layers.intent]
+types = ["intent", "spec", "plan"]
+moves-to = ["requirements", "decisions", "procedures"]
+keep = "until-finished"
+context = "on-request"
+
+[change]
+policy = "none"

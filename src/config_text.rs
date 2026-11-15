@@ -12,10 +12,6 @@
 //! A path names a key: `[k("budgets"), k("guide")]` is `[budgets.guide]`, and
 //! `[k("roots"), at(1), k("type")]` is the key `type` of the second `[[roots]]`.
 
-// The edits of `upgrade` (step 5, slice 5) call these functions. Until then
-// only the tests use them.
-#![allow(dead_code)]
-
 use crate::repo::Fatal;
 use toml::de::{DeTable, DeValue};
 use toml::{Table, Value};
@@ -246,7 +242,7 @@ fn is_table_array(text: &str, f: &Found) -> bool {
 }
 
 /// The key as a part of a header or a dotted key: bare if it can be, else quoted.
-fn key_text(name: &str) -> String {
+pub(crate) fn key_text(name: &str) -> String {
     let bare = !name.is_empty()
         && name
             .bytes()
@@ -265,7 +261,7 @@ fn key_like(old: &str, new: &str) -> String {
 }
 
 /// The text of a value in the inline form.
-fn render_value(v: &Value) -> String {
+pub(crate) fn render_value(v: &Value) -> String {
     match v {
         Value::String(s) => quote(s),
         Value::Integer(i) => i.to_string(),
