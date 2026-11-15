@@ -1,0 +1,13 @@
+{
+  "id": "example",
+  "task": "In notes.txt, change the word draft to done. Do not change other files.",
+  "fixture": "evals/fixtures/example",
+  "allowed-tools": ["Read", "Edit"],
+  "max-turns": 5,
+  "max-budget-usd": 1,
+  "runs": 1,
+  "pass-at": 1,
+  "checks": [
+    { "name": "notes-done", "run": "file_has notes.txt 'status: done'" }
+  ]
+}

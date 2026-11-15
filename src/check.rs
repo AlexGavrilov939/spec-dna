@@ -2,8 +2,9 @@
 //! checks the transitions between the base tree and the head tree, and it
 //! applies the gate against the base.
 
-use crate::config::Config;
+use crate::config::{Config, Evals};
 use crate::diag::{Code, Diag};
+use crate::evals;
 use crate::evidence::{Evidence, needs_evidence};
 use crate::layer::Keep;
 use crate::lint::Phrases;
@@ -1259,6 +1260,66 @@ fn intent_changed(config: &Config, base: &Snapshot, head: &Snapshot) -> bool {
         }
     }
     seen != before.len()
+}
+
+/// The files of one tree under `[evals] dir`, for SD506.
+#[derive(Default)]
+pub struct EvalTree {
+    /// Each path of the tree under `<dir>/`, from the repository root, sorted.
+    pub paths: Vec<String>,
+    /// The bytes of each `*.json` file directly in `<dir>`. A file that the
+    /// reader could not read is absent. At most `evals::MAX_BYTES + 1` bytes
+    /// of a file are enough for the check.
+    pub json: Vec<(String, Vec<u8>)>,
+}
+
+/// SD506: each eval file of the tree that `evals::parse_eval` rejects, and the
+/// absent file `<dir>/check.sh`. It reads no text of `check.sh`, of a fixture
+/// or of a file in a subfolder. The diagnostic is on the file, on line 1, with
+/// the key of the broken rule as the target. Its `doc` is the path of the file,
+/// as for the harness files, so that two files that break the same rule have
+/// two fingerprints (design 0.6.0, D94). The severity is the default of the
+/// code. The caller applies the rules.
+pub fn evals_invalid(evals: &Evals, tree: &EvalTree) -> Vec<Diag> {
+    let dir = &evals.dir;
+    let under = |path: &str| {
+        let prefix = format!("{path}/");
+        tree.paths.iter().any(|p| p.starts_with(&prefix))
+    };
+    let on_file = |path: &str, key: &str, message: String| Diag {
+        path: path.to_string(),
+        line: 1,
+        code: Code::EvalsInvalid,
+        doc: path.to_string(),
+        target: key.to_string(),
+        message,
+        severity: Code::EvalsInvalid.severity(),
+    };
+    let mut out = Vec::new();
+    let prefix = format!("{dir}/");
+    for (path, bytes) in &tree.json {
+        // The same files as `eval run`: `<id>.json` directly in the folder.
+        let Some(stem) = path
+            .strip_prefix(&prefix)
+            .filter(|n| !n.contains('/'))
+            .and_then(|n| n.strip_suffix(".json"))
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        if let Err(e) = evals::parse_eval(stem, bytes, evals, &under) {
+            out.push(on_file(path, &e.key, e.message));
+        }
+    }
+    let check = format!("{dir}/{}", evals::CHECK_FILE);
+    if !tree.paths.contains(&check) {
+        out.push(on_file(
+            &check,
+            evals::CHECK_FILE,
+            "the check file is absent; `eval run` sources it".to_string(),
+        ));
+    }
+    out
 }
 
 /// The result of the gate against the base.

@@ -12,8 +12,8 @@ Build leading: Share of changes that merge from the first implementation pass: n
 Build lagging: How often the merged diff still matches the committed plan.md: 50.0 percent (2 changes)
   note: the value is the share of finished changes whose merged diff has no path outside the folder, `Files`, the `Files:` paths of the tasks and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit
 Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
-Test leading: The eval pass rate over time: n/a (evals come in step 4 of 0.6.0, with the files of `eval run --out`)
-Test leading: How long a production incident takes to become a permanent eval: n/a (evals come in step 4 of 0.6.0)
+Test leading: The eval pass rate over time: n/a (the configuration has no [evals] table)
+Test leading: How long a production incident takes to become a permanent eval: n/a (the configuration has no [evals] table)
 Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
 Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
 Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)

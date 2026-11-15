@@ -1,6 +1,6 @@
 //! `spec-dna init` (docs/init.md). It detects the facts of the repository
-//! (`detect.rs`). It asks at most 14 questions with the detected defaults (this
-//! version asks 13: see `QUESTIONS`). It
+//! (`detect.rs`). It asks at most 14 questions with the detected defaults (see
+//! `QUESTIONS`). It
 //! shows a preview (the full `spec-dna.toml` and the files to create or
 //! change), and it writes only after a confirmation. It never edits a
 //! document. It changes an instruction file (`AGENTS.md`, `CLAUDE.md`) only by
@@ -23,11 +23,12 @@ use crate::adapters::{self, VERSION};
 use crate::config::{self, ChangePolicy, Config, DEFAULT_BUDGETS, Gate, Profile, Rules};
 use crate::detect::{self, Facts, GitInfo, Row};
 use crate::diag::Severity;
-use crate::harness::{self, Effort, Harness, Level, Model, Role};
+use crate::harness::{self, Effort, GoneRole, Harness, Level, Model, Protect, Role, Skill};
 use crate::json::{self, Obj};
 use crate::layer::{self, Graph};
 use crate::model::DocType;
 use crate::repo::{Fatal, Repo, Snapshot};
+use crate::{evals, harness_text, skeleton};
 use std::io::{BufRead, IsTerminal, Write};
 
 /// The options of `init`.
@@ -113,7 +114,8 @@ const SMALL_LIMIT: usize = 30;
 
 /// The questions of `init` with their numbers in the design
 /// (docs/design/0.6.0.md, "Init questions"), and the name that the preview
-/// shows. The step 4 of 0.6.0 adds the question 14.
+/// shows. Question 12 has a second prompt for the parts of the harness, with
+/// the same number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Question {
     Profile,
@@ -129,11 +131,12 @@ enum Question {
     Ci,
     Harness,
     Models,
+    Evals,
 }
 
 /// The questions in the order that `init` asks them: the number of the design
 /// and the name in the preview.
-const QUESTIONS: [(Question, usize, &str); 13] = [
+const QUESTIONS: [(Question, usize, &str); 14] = [
     (Question::Profile, 1, "profile"),
     (Question::Graph, 2, "layer graph"),
     (Question::Areas, 3, "areas of requirements"),
@@ -151,6 +154,7 @@ const QUESTIONS: [(Question, usize, &str); 13] = [
     (Question::Ci, 11, "CI step, hook and base branch"),
     (Question::Harness, 12, "agent harness"),
     (Question::Models, 13, "harness models"),
+    (Question::Evals, 14, "evals"),
 ];
 
 impl Question {
@@ -168,6 +172,60 @@ impl Question {
     /// The start of a prompt: the number, a point and the text.
     fn prompt(self, text: &str) -> String {
         format!("{}. {text}", self.number())
+    }
+}
+
+/// The answer to question 14.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvalsAnswer {
+    /// No `[evals]` table. A current table goes, and its files stay.
+    None,
+    /// The table `[evals]` and the starter files.
+    Skeleton,
+}
+
+impl EvalsAnswer {
+    fn name(self) -> &'static str {
+        match self {
+            EvalsAnswer::None => "none",
+            EvalsAnswer::Skeleton => "skeleton",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<EvalsAnswer> {
+        [EvalsAnswer::None, EvalsAnswer::Skeleton]
+            .into_iter()
+            .find(|a| a.name() == s)
+    }
+}
+
+/// The 3 parts of question 12: `skills`, `review-md` and `protect-tests`.
+/// A part that the person did not set follows its default. The default of
+/// `skills` follows the final change policy, and the default of
+/// `protect-tests` follows the test globs, so `settle_parts` computes both
+/// after the answers.
+#[derive(Clone, Debug, Default)]
+pub struct Parts {
+    /// True: `skills` has no value in the file and no answer.
+    derive_skills: bool,
+    derive_review: bool,
+    derive_protect: bool,
+    /// The stage skills whose file exists with no marker. The default leaves
+    /// them out.
+    unmarked_skills: Vec<Skill>,
+    /// True if `REVIEW.md` exists with no marker.
+    unmarked_review: bool,
+}
+
+impl Parts {
+    /// All 3 parts follow their defaults.
+    fn derived() -> Parts {
+        Parts {
+            derive_skills: true,
+            derive_review: true,
+            derive_protect: true,
+            ..Parts::default()
+        }
     }
 }
 
@@ -236,6 +294,15 @@ pub struct Plan {
     pub harness_old: Option<Harness>,
     /// Why a role is off by default.
     pub harness_notes: Vec<String>,
+    /// The parts of question 12 that follow a default.
+    pub parts: Parts,
+    /// The answer to question 14.
+    pub evals: EvalsAnswer,
+    /// The table `[evals]` that `init` writes for the answer `skeleton`: the
+    /// current table, or the defaults.
+    pub evals_table: config::Evals,
+    /// True if the current file has the table `[evals]`.
+    pub evals_current: bool,
 }
 
 impl Plan {
@@ -296,6 +363,22 @@ impl Plan {
             toml_list(&self.high_risk_layers_written()),
             toml_list(&self.high_risk_paths),
             self.max_fanout
+        )
+    }
+
+    /// The table `[evals]` and the empty line after it, or an empty string.
+    /// It comes directly before `[harness]`.
+    fn evals_section(&self) -> String {
+        if self.evals != EvalsAnswer::Skeleton {
+            return String::new();
+        }
+        let e = &self.evals_table;
+        format!(
+            "[evals]  # agent evals (docs/config.md)\ndir = {}\nmin-pass-rate = {}  # the share of evals that must pass\nruns = {}  # the runs of an eval that sets no `runs`\nmax-total-usd = {}  # eval run refuses or stops above this spend\n\n",
+            toml_str(&e.dir),
+            e.min_pass_rate,
+            e.runs,
+            e.max_total_usd
         )
     }
 
@@ -393,18 +476,20 @@ fn blank_row(path: &str, ty: Option<DocType>, default_type: DocType) -> Row {
     }
 }
 
-/// Lists the files of the working tree and reads the facts.
-fn detect_repo(repo: &Repo) -> Result<Facts, Fatal> {
+/// Lists the files of the working tree and reads the facts. Returns the file
+/// list too: tracked files, and untracked files that git does not ignore.
+fn detect_repo(repo: &Repo) -> Result<(Facts, Vec<String>), Fatal> {
     let snap = Snapshot::worktree(repo, &[], true)?;
     let files: Vec<String> = snap.files.iter().map(|e| e.path.clone()).collect();
     let root = repo.root.clone();
-    Ok(detect::detect(
+    let facts = detect::detect(
         &files,
         |p| std::fs::read_to_string(root.join(p)).ok(),
         GitInfo {
             base: repo.git.default_branch(),
         },
-    ))
+    );
+    Ok((facts, files))
 }
 
 /// The plan of the detected defaults.
@@ -479,6 +564,20 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         harness: Harness::new(Level::Lean),
         harness_old: None,
         harness_notes: Vec::new(),
+        parts: Parts::derived(),
+        evals: EvalsAnswer::Skeleton,
+        evals_table: default_evals(config::DEFAULT_EVALS_DIR),
+        evals_current: false,
+    }
+}
+
+/// The table `[evals]` with the default values and the folder `dir`.
+fn default_evals(dir: &str) -> config::Evals {
+    config::Evals {
+        dir: dir.to_string(),
+        min_pass_rate: config::DEFAULT_EVALS_MIN_PASS_RATE,
+        runs: config::DEFAULT_EVALS_RUNS,
+        max_total_usd: config::DEFAULT_EVALS_MAX_TOTAL_USD,
     }
 }
 
@@ -531,6 +630,35 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     if let Some(h) = &cfg.harness {
         p.harness = h.clone();
         p.harness_old = Some(h.clone());
+    }
+    // A part that the file sets stays. A part that the file has no key for
+    // follows its default: `Harness::parse` cannot tell an absent `skills`
+    // from `skills = []`, so the raw table decides.
+    let has_key = |k: &str| {
+        text.parse::<toml::Table>()
+            .ok()
+            .and_then(|t| {
+                t.get("harness")
+                    .and_then(|h| h.as_table().map(|h| h.contains_key(k)))
+            })
+            .unwrap_or(false)
+    };
+    p.parts = Parts {
+        derive_skills: !has_key("skills"),
+        derive_review: !has_key("review-md"),
+        derive_protect: !has_key("protect-tests"),
+        ..Parts::default()
+    };
+    // The current table is the default of question 14. A file with no table
+    // has the answer `none`.
+    p.evals_current = cfg.evals.is_some();
+    p.evals = if cfg.evals.is_some() {
+        EvalsAnswer::Skeleton
+    } else {
+        EvalsAnswer::None
+    };
+    if let Some(e) = &cfg.evals {
+        p.evals_table = e.clone();
     }
     // The outcome and amendment aliases are in the rows already.
     p.outcome = Vec::new();
@@ -853,6 +981,7 @@ pub fn render(plan: &Plan) -> String {
     }
     out.push_str(&plan.change_section());
     out.push('\n');
+    out.push_str(&plan.evals_section());
     out.push_str(&plan.harness.toml_section());
     if plan.writes_layers() {
         out.push_str("\n# The layer graph (docs/config.md). `spec-dna layer add` adds a layer.\n");
@@ -1042,10 +1171,17 @@ fn lines(items: &[&str]) -> String {
     items.iter().map(|l| format!("{l}\n")).collect()
 }
 
-/// The GitHub Actions job, as in docs/quickstart.md. With the sum of the
-/// release asset in `spec-dna.toml` and no `install-source`, the job downloads
-/// the binary and verifies its sum. Otherwise it builds the pin from source.
-fn github_workflow(base: &str) -> String {
+/// The step that checks out the repository, with the full commit SHA that
+/// Dependabot keeps current in this repository. `spec-dna.yml` and
+/// `agent-evals.yml` use it, so `init` needs no network. The version tag is in
+/// the trailing comment (`AGENTS.md`, "Conventions").
+const CHECKOUT_USES: &str = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1";
+
+/// The step "Install the pinned spec-dna" of the CI jobs, with its indent for
+/// a step of a job. With the sum of the release asset in `spec-dna.toml` and
+/// no `install-source`, the step downloads the binary and verifies its sum.
+/// Otherwise it builds the pin from source.
+fn install_step() -> String {
     let download = format!(
         "            curl --fail --silent --show-error --location --output \"$RUNNER_TEMP/$asset\" \"{}/releases/download/v$pin/$asset\"",
         config::DEFAULT_INSTALL_SOURCE
@@ -1054,22 +1190,7 @@ fn github_workflow(base: &str) -> String {
         "            cargo install --locked --git \"${{src:-{}}}\" --tag \"v$pin\" spec-dna",
         config::DEFAULT_INSTALL_SOURCE
     );
-    let check =
-        format!("      - run: spec-dna check --base \"origin/${{GITHUB_BASE_REF:-{base}}}\"");
     lines(&[
-        "name: Specs",
-        "on: pull_request",
-        "permissions: {}",
-        "jobs:",
-        "  spec-dna:",
-        "    runs-on: ubuntu-24.04",
-        "    permissions:",
-        "      contents: read",
-        "    steps:",
-        "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
-        "        with:",
-        "          fetch-depth: 0",
-        "          persist-credentials: false",
         "      - name: Install the pinned spec-dna",
         "        run: |",
         "          pin=$(sed -n 's/^spec-dna = \"\\(.*\\)\"/\\1/p' spec-dna.toml)",
@@ -1084,8 +1205,39 @@ fn github_workflow(base: &str) -> String {
         "          else",
         &build,
         "          fi",
-        &check,
     ])
+}
+
+/// The GitHub Actions job, as in docs/quickstart.md.
+fn github_workflow(base: &str) -> String {
+    let check =
+        format!("      - run: spec-dna check --base \"origin/${{GITHUB_BASE_REF:-{base}}}\"");
+    let head = lines(&[
+        "name: Specs",
+        "on: pull_request",
+        "permissions: {}",
+        "jobs:",
+        "  spec-dna:",
+        "    runs-on: ubuntu-24.04",
+        "    permissions:",
+        "      contents: read",
+        "    steps:",
+        &format!("      - uses: {CHECKOUT_USES}"),
+        "        with:",
+        "          fetch-depth: 0",
+        "          persist-credentials: false",
+    ]);
+    format!("{head}{}{}", install_step(), lines(&[&check]))
+}
+
+/// The workflow of the evals: `.github/workflows/agent-evals.yml`.
+fn evals_workflow(dir: &str, base: &str) -> String {
+    let checkout = lines(&[
+        &format!("      - uses: {CHECKOUT_USES}"),
+        "        with:",
+        "          persist-credentials: false",
+    ]);
+    skeleton::workflow(dir, base, &checkout, &install_step())
 }
 
 /// The local hook of pre-commit.
@@ -1265,6 +1417,86 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
         _ => {}
     }
     (out, manual)
+}
+
+/// The path of the workflow of the evals.
+const EVALS_WORKFLOW: &str = ".github/workflows/agent-evals.yml";
+
+/// The 2 commands that enable the CI runs of the evals.
+const EVALS_COMMANDS: [&str; 2] = [
+    "gh secret set ANTHROPIC_API_KEY",
+    "gh variable set SPEC_DNA_EVALS --body true",
+];
+
+/// The starter files of the answer `skeleton`, and the notes. `init` writes
+/// a file once: a path that exists stays, and a note names it. The workflow
+/// is only for the CI answer `github` (D43). With a current table, `init`
+/// writes no file. `tests` holds the globs of `[evidence] tests` that the new
+/// configuration has.
+fn skeleton_changes(repo: &Repo, plan: &Plan, tests: &[String]) -> (Vec<Change>, Vec<String>) {
+    let dir = plan.evals_table.dir.as_str();
+    let mut notes = Vec::new();
+    if plan.evals == EvalsAnswer::None {
+        if plan.evals_current {
+            notes.push(format!(
+                "`init` removes the table `[evals]`. The files in `{dir}/` stay. Delete them by hand if you do not need them"
+            ));
+        }
+        return (Vec::new(), notes);
+    }
+    if plan.evals_current {
+        return (Vec::new(), notes);
+    }
+    if dir != config::DEFAULT_EVALS_DIR {
+        notes.push(format!(
+            "`{}/` holds files of the project, so `[evals] dir` is `{dir}`",
+            config::DEFAULT_EVALS_DIR
+        ));
+    }
+    let pathspecs: Vec<String> = crate::git::glob_pathspecs(tests)
+        .iter()
+        .map(|p| harness::shell_quote(p))
+        .collect();
+    let paths = evals::skeleton_paths(dir);
+    let mut files = vec![
+        (
+            paths[0].clone(),
+            skeleton::check_sh(&pathspecs),
+            "the checks of the evals",
+        ),
+        (
+            paths[1].clone(),
+            skeleton::example_json(dir),
+            "an example eval",
+        ),
+        (
+            paths[2].clone(),
+            skeleton::NOTES.to_string(),
+            "the fixture of the example eval",
+        ),
+    ];
+    if plan.ci == "github" {
+        files.push((
+            paths[3].clone(),
+            evals_workflow(dir, &plan.base),
+            "the CI job of the evals: it runs only if the variable SPEC_DNA_EVALS is true",
+        ));
+    }
+    let mut out = Vec::new();
+    for (path, text, note) in files {
+        if repo.root.join(&path).exists() {
+            notes.push(format!("{path} exists, so `init` did not write it"));
+        } else {
+            out.push(Change {
+                path,
+                created: true,
+                remove: false,
+                text,
+                note: note.into(),
+            });
+        }
+    }
+    (out, notes)
 }
 
 fn indent2(text: &str) -> String {
@@ -1485,6 +1717,9 @@ fn apply_models(h: &mut Harness, words: &[String]) -> Result<(), String> {
         let (key, value) = w
             .split_once('=')
             .ok_or_else(|| format!("`{w}`: write role=model[:effort]"))?;
+        if let Some(gone) = GoneRole::from_key(key) {
+            return Err(gone.word_message());
+        }
         let role = Role::from_key(key).ok_or_else(|| {
             let keys: Vec<&str> = Role::ALL.iter().map(|r| r.key()).collect();
             format!("unknown role `{key}`; use {}", keys.join(", "))
@@ -1543,28 +1778,40 @@ fn validate_harness(h: &Harness) -> Result<(), String> {
 }
 
 /// The harness files that exist: (path, text) of `CLAUDE.md`,
-/// `.claude/settings.json` and `.claude/agents/*.md`.
+/// `.claude/settings.json`, `REVIEW.md`, `.claude/agents/*.md` and
+/// `.claude/skills/*/SKILL.md`. The adapter skill is not one of them.
 fn harness_existing(repo: &Repo) -> Vec<(String, String)> {
     let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).ok();
     let mut out = Vec::new();
-    for p in [harness::CLAUDE, harness::SETTINGS] {
+    for p in [harness::CLAUDE, harness::SETTINGS, harness::REVIEW] {
         if let Some(t) = read(p) {
             out.push((p.to_string(), t));
         }
     }
-    if let Ok(dir) = std::fs::read_dir(repo.root.join(harness::AGENTS_DIR)) {
-        let mut names: Vec<String> = dir
+    let names = |dir: &str| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(repo.root.join(dir))
+            .into_iter()
+            .flatten()
             .flatten()
             .filter_map(|e| e.file_name().into_string().ok())
             .collect();
         names.sort();
-        for n in names {
-            let p = format!("{}{n}", harness::AGENTS_DIR);
-            if harness::wanted(&p)
-                && let Some(t) = read(&p)
-            {
-                out.push((p, t));
-            }
+        names
+    };
+    for n in names(harness::AGENTS_DIR) {
+        let p = format!("{}{n}", harness::AGENTS_DIR);
+        if harness::wanted(&p)
+            && let Some(t) = read(&p)
+        {
+            out.push((p, t));
+        }
+    }
+    for n in names(harness::SKILLS_DIR) {
+        let p = format!("{}{n}/SKILL.md", harness::SKILLS_DIR);
+        if harness::wanted(&p)
+            && let Some(t) = read(&p)
+        {
+            out.push((p, t));
         }
     }
     out
@@ -1667,6 +1914,8 @@ fn refuse_ignored(repo: &Repo, h: &Harness) -> Result<(), Fatal> {
 /// The harness plan of `init`, merged into the list of changes.
 struct HarnessRun {
     level: Level,
+    /// The first version of spec-dna that has the hooks of the configuration.
+    hooks_version: &'static str,
     plan: harness::Plan,
     notes: Vec<String>,
 }
@@ -1740,9 +1989,171 @@ fn plan_harness(
     }
     Ok(Some(HarnessRun {
         level: new.level,
+        hooks_version: harness::hooks_version(new),
         plan,
         notes,
     }))
+}
+
+/// Computes the parts that follow a default, from the final answers: the
+/// skills follow the policy that `settle_change` leaves, `review-md` follows
+/// the file `REVIEW.md` of the project, and `protect-tests` follows the test
+/// globs. A part that the file or the person set stays. The call is
+/// idempotent.
+fn settle_parts(plan: &mut Plan) {
+    if plan.harness.level == Level::None {
+        return;
+    }
+    if plan.parts.derive_skills {
+        plan.harness.skills = if plan.change_policy == ChangePolicy::None {
+            Vec::new()
+        } else {
+            Skill::ALL
+                .into_iter()
+                .filter(|s| !plan.parts.unmarked_skills.contains(s))
+                .collect()
+        };
+    }
+    if plan.parts.derive_review {
+        plan.harness.review_md = !plan.parts.unmarked_review;
+    }
+    if plan.parts.derive_protect {
+        // `[evidence] tests` is empty only for the link style `verified-by`.
+        // An empty list of detected globs renders no table, and the default
+        // globs apply.
+        plan.harness.protect_tests = if plan.style == Style::VerifiedBy {
+            Protect::Off
+        } else {
+            Protect::FixBranches
+        };
+    }
+}
+
+/// The level `none` asks no question 14. A new configuration then has no
+/// evals. With `--reconfigure`, the current state stays: a file that has the
+/// table `[evals]` keeps it.
+fn settle_evals(plan: &mut Plan) {
+    if plan.harness.level == Level::None && !plan.evals_current {
+        plan.evals = EvalsAnswer::None;
+    }
+}
+
+/// The parts of the harness whose files exist with no marker. The default
+/// leaves them out, and a note names each file. A skill or `REVIEW.md` that
+/// spec-dna generated has a marker, so it is no conflict.
+fn unmarked_parts(plan: &mut Plan, existing: &[(String, String)]) {
+    plan.parts.unmarked_skills.clear();
+    plan.parts.unmarked_review = false;
+    for (path, text) in existing {
+        if harness::has_marker(text) {
+            continue;
+        }
+        if path == harness::REVIEW && plan.parts.derive_review {
+            plan.parts.unmarked_review = true;
+            plan.harness_notes.push(format!(
+                "{path} exists, and spec-dna did not generate it: `review-md` is false. Move the file to get the generated one"
+            ));
+        } else if let Some(s) = Skill::ALL
+            .into_iter()
+            .find(|s| s.path() == *path && plan.parts.derive_skills)
+        {
+            plan.parts.unmarked_skills.push(s);
+            plan.harness_notes.push(format!(
+                "{path} exists, and spec-dna did not generate it: the skill `{}` is not in `skills`. Move the file to get the generated one",
+                s.key()
+            ));
+        }
+    }
+}
+
+/// The line of question 12 for the parts, as it is the default: `skills=none`
+/// or the names with commas, then `review-md` and `protect-tests`.
+fn parts_line(h: &Harness) -> String {
+    let skills = if h.skills.is_empty() {
+        "none".to_string()
+    } else {
+        h.skills
+            .iter()
+            .map(|s| s.key())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    format!(
+        "skills={skills} review-md={} protect-tests={}",
+        h.review_md,
+        h.protect_tests.name()
+    )
+}
+
+/// Reads the names of `skills`: each name once, in the order of `Skill`.
+fn parse_skills(names: &[String]) -> Result<Vec<Skill>, String> {
+    let mut out: Vec<Skill> = Vec::new();
+    for n in names {
+        let s = Skill::from_key(n)
+            .ok_or_else(|| format!("unknown skill `{n}`; use intent, spec, plan, review"))?;
+        if out.contains(&s) {
+            return Err(format!("`skills` lists `{n}` more than once"));
+        }
+        out.push(s);
+    }
+    out.sort();
+    Ok(out)
+}
+
+fn parse_bool_word(what: &str, w: &str) -> Result<bool, String> {
+    match w {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("`{what}` must be true or false, not `{w}`")),
+    }
+}
+
+fn parse_protect(w: &str) -> Result<Protect, String> {
+    Protect::from_name(w)
+        .ok_or_else(|| format!("`protect-tests` must be fix-branches, always or off, not `{w}`"))
+}
+
+/// Applies the `key=value` words of the parts line of question 12. A word
+/// that is not in the line keeps the default.
+fn apply_parts(plan: &mut Plan, words: &[String]) -> Result<(), String> {
+    for w in words {
+        let (key, value) = w
+            .split_once('=')
+            .ok_or_else(|| format!("`{w}`: write key=value"))?;
+        match key {
+            "skills" => {
+                let names: Vec<String> = value
+                    .split(',')
+                    .filter(|n| !n.is_empty() && *n != "none")
+                    .map(str::to_string)
+                    .collect();
+                plan.harness.skills = parse_skills(&names)?;
+                plan.parts.derive_skills = false;
+            }
+            "review-md" => {
+                plan.harness.review_md = parse_bool_word("review-md", value)?;
+                plan.parts.derive_review = false;
+            }
+            "protect-tests" => {
+                plan.harness.protect_tests = parse_protect(value)?;
+                plan.parts.derive_protect = false;
+            }
+            other => {
+                return Err(format!(
+                    "unknown part `{other}`; use skills, review-md, protect-tests"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The bytes of the skill listing that `skills` adds to each request.
+fn skill_listing_bytes() -> usize {
+    Skill::ALL
+        .into_iter()
+        .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(s)).len())
+        .sum()
 }
 
 /// The note for `.claude/agents/Explore.md`. Only an agent with the name
@@ -1770,11 +2181,19 @@ fn print_harness(h: &HarnessRun, with_files: bool) {
         println!("  warning: {w}");
     }
     if h.level != Level::None {
+        let what = if h.plan.skill_bytes > 0 {
+            "the CLAUDE.md line, the agent descriptions and the skill descriptions"
+        } else {
+            "the CLAUDE.md line and the agent descriptions"
+        };
         println!(
-            "  The harness adds about {} bytes to each request of the main session (the CLAUDE.md line and the agent descriptions).",
+            "  The harness adds about {} bytes to each request of the main session ({what}).",
             h.plan.request_bytes
         );
-        println!("  Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.");
+        println!(
+            "  Each teammate needs spec-dna {} or later on PATH for the hooks.",
+            h.hooks_version
+        );
     }
 }
 
@@ -2410,8 +2829,8 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.base = b.clone();
     }
 
-    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `checker`, `Explore`, `fallback-advisor`, 2 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `spec-writer`. none writes nothing. The files are for Claude Code only.");
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
+    io.say("    full also writes `implementer` and `code-simplifier`. none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -2420,16 +2839,41 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.harness.level.name(),
     );
     plan.harness.level = parse_level(&a)?;
+    settle_evals(plan);
     if plan.harness.level != Level::None {
+        settle_parts(plan);
+        io.say(&format!(
+            "    The 4 stage skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
+            skill_listing_bytes()
+        ));
+        let a = io.line(
+            &Question::Harness.prompt(
+                "Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>)",
+            ),
+            &parts_line(&plan.harness),
+        );
+        // A skills value has commas, so the words split at spaces only.
+        let parts: Vec<String> = a.split_whitespace().map(str::to_string).collect();
+        apply_parts(plan, &parts)?;
         io.say("    The main model sets the cost of each request.");
         io.say("    The advisor reads the whole context at its own price each time that it is consulted. It needs Fable access, or `fallback-advisor` gives the advice.");
-        io.say("    `checker` and `Explore` run only when the main session uses them.");
+        io.say("    `verifier` and `Explore` run only when the main session uses them.");
         io.say("    `none` turns a role off. Write advisor=<model>/<model of fallback-advisor> to set both.");
         let a = io.line(
             &Question::Models.prompt("Models (role=model[:effort] ...)"),
             &models_line(&plan.harness),
         );
         apply_models(&mut plan.harness, &words(&a))?;
+        io.say(&format!(
+            "    skeleton writes the table [evals], {dir}/check.sh and an example eval with its fixture. For the CI answer github, it also writes .github/workflows/agent-evals.yml. CI runs no eval until you set the repository variable SPEC_DNA_EVALS. The check SD918 (each incident needs an eval) needs skeleton.",
+            dir = plan.evals_table.dir
+        ));
+        let a = io.line(
+            &Question::Evals.prompt("Evals (none, skeleton)"),
+            plan.evals.name(),
+        );
+        plan.evals =
+            EvalsAnswer::from_name(&a).ok_or(format!("evals `{a}`: use none or skeleton"))?;
     }
     validate_harness(&plan.harness)?;
     Ok(())
@@ -2458,7 +2902,7 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
             Some(_) => Err(format!("answers: `{k}` must be an array of strings")),
         }
     };
-    const KEYS: [&str; 22] = [
+    const KEYS: [&str; 26] = [
         "profile",
         "graph",
         "areas",
@@ -2480,6 +2924,10 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
         "harness",
         "harness-models",
         "harness-deny",
+        "harness-skills",
+        "harness-review-md",
+        "harness-protect-tests",
+        "evals",
         "write",
     ];
     if t.contains_key("types") {
@@ -2587,6 +3035,46 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
     if let Some(v) = l("harness-models")? {
         apply_models(&mut plan.harness, &v).map_err(|e| format!("answers: harness-models: {e}"))?;
     }
+    if let Some(v) = l("harness-skills")? {
+        plan.harness.skills = parse_skills(&v).map_err(|e| format!("answers: {e}"))?;
+        plan.parts.derive_skills = false;
+    }
+    match t.get("harness-review-md") {
+        None => {}
+        Some(toml::Value::Boolean(b)) => {
+            plan.harness.review_md = *b;
+            plan.parts.derive_review = false;
+        }
+        Some(_) => return Err("answers: `harness-review-md` must be true or false".into()),
+    }
+    if let Some(v) = s("harness-protect-tests")? {
+        plan.harness.protect_tests = parse_protect(&v).map_err(|e| format!("answers: {e}"))?;
+        plan.parts.derive_protect = false;
+    }
+    if let Some(v) = s("evals")? {
+        plan.evals = EvalsAnswer::from_name(&v)
+            .ok_or_else(|| format!("answers: evals `{v}`: use none or skeleton"))?;
+    }
+    // The level `none` asks no question 12 parts and no question 14, so an
+    // answer for them has no effect: say so.
+    if plan.harness.level == Level::None {
+        for key in [
+            "harness-skills",
+            "harness-review-md",
+            "harness-protect-tests",
+        ] {
+            if t.contains_key(key) {
+                return Err(format!(
+                    "answers: `{key}` needs a harness level other than none"
+                ));
+            }
+        }
+        if s("evals")?.as_deref() == Some("skeleton") && !plan.evals_current {
+            return Err(
+                "answers: `evals` \"skeleton\" needs a harness level other than none".into(),
+            );
+        }
+    }
     validate_harness(&plan.harness).map_err(|e| format!("answers: {e}"))?;
     match t.get("write") {
         None => Ok(true),
@@ -2607,6 +3095,16 @@ fn roots_text(v: &toml::Value) -> Option<String> {
     Some(out)
 }
 
+/// The exit code of an error of the answers: 3 for a role of 0.5 that does
+/// not exist (the same code as the key of the table), else 2.
+fn answer_error(e: String) -> Fatal {
+    if GoneRole::is_word_error(&e) {
+        Fatal::Config(e)
+    } else {
+        Fatal::Usage(e)
+    }
+}
+
 /// Runs `init`.
 pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let cfg_path = repo.config_path();
@@ -2624,7 +3122,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             "--reconfigure needs a spec-dna.toml; run `spec-dna init` first".into(),
         ));
     }
-    let facts = detect_repo(repo)?;
+    let (facts, files) = detect_repo(repo)?;
     let root = o.root.as_deref().unwrap_or("docs").to_string();
     let mut plan = if exists {
         let text = std::fs::read_to_string(&cfg_path).map_err(|e| Fatal::Io(e.to_string()))?;
@@ -2643,6 +3141,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         let (h, notes) = harness_defaults(repo, &existing);
         plan.harness = h;
         plan.harness_notes = notes;
+        plan.parts = Parts::derived();
         if was_none {
             plan.harness.level = Level::None;
         }
@@ -2651,6 +3150,16 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         let h = &mut plan.harness;
         plan.harness_notes = apply_conflicts(h, &existing, true);
     }
+    unmarked_parts(&mut plan, &existing);
+    // A folder `evals/` of the project is not the folder of the evals (D50).
+    if !plan.evals_current
+        && plan.evals_table.dir == config::DEFAULT_EVALS_DIR
+        && files
+            .iter()
+            .any(|f| f.starts_with(&format!("{}/", config::DEFAULT_EVALS_DIR)))
+    {
+        plan.evals_table.dir = ".spec-dna/evals".to_string();
+    }
     let before = plan.clone();
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let interactive = !o.non_interactive && o.answers.is_none() && terminal;
@@ -2658,7 +3167,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     if let Some(path) = &o.answers {
         let text = std::fs::read_to_string(path)
             .map_err(|e| Fatal::Usage(format!("--answers {path}: {e}")))?;
-        write = apply_answers(&mut plan, &text).map_err(Fatal::Usage)?;
+        write = apply_answers(&mut plan, &text).map_err(answer_error)?;
     } else if interactive {
         let stdin = std::io::stdin();
         let mut input = stdin.lock();
@@ -2667,19 +3176,27 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             input: &mut input,
             out: &mut out,
         };
-        ask(&mut plan, &facts, &mut io).map_err(Fatal::Usage)?;
+        ask(&mut plan, &facts, &mut io).map_err(answer_error)?;
     }
     // The answers can change the graph, so the roots follow it now. The
     // preview shows the defaults with the same rule.
     settle(&mut plan);
     settle_change(&mut plan);
+    settle_parts(&mut plan);
+    settle_evals(&mut plan);
     let mut offered = before.clone();
     settle(&mut offered);
     settle_change(&mut offered);
+    settle_parts(&mut offered);
+    settle_evals(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
-    Config::parse(&text)
+    let parsed = Config::parse(&text)
         .map_err(|e| Fatal::Config(format!("the new spec-dna.toml is not valid: {e}")))?;
+    // The hook `protect-tests` uses the test globs that `check` reads from this
+    // text, so `check` finds no difference.
+    let mut new_harness = plan.harness.clone();
+    new_harness.tests = parsed.evidence_tests.clone();
     let mut changes = Vec::new();
     let old = std::fs::read_to_string(&cfg_path).ok();
     if old.as_deref() != Some(text.as_str()) {
@@ -2702,12 +3219,15 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // A new configuration and `--reconfigure` both replace the harness.
     let hrun = plan_harness(
         repo,
-        &plan.harness,
+        &new_harness,
         plan.harness_old.as_ref(),
         &plan.harness_notes,
         harness::Mode::Reconfigure,
         &mut changes,
     )?;
+    let (skeleton, skeleton_notes) = skeleton_changes(repo, &plan, &parsed.evidence_tests);
+    changes.extend(skeleton);
+    plan.notes.extend(skeleton_notes);
 
     let preview = o.dry_run || interactive || !write;
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
@@ -2772,6 +3292,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .opt_str("codeowners", codeowners.as_deref())
                 .raw("harness", &harness_json(hrun.as_ref(), plan.harness.level))
                 .strs("written", &written)
+                .strs("evals_commands", &evals_commands(&written))
                 .end()
         );
         return Ok(0);
@@ -2841,8 +3362,25 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         println!("{m}");
     }
     report_harness(hrun.as_ref(), &written);
+    let commands = evals_commands(&written);
+    if !commands.is_empty() {
+        println!("To run the evals in CI, set the secret and the variable:");
+        for c in commands {
+            println!("  {c}");
+        }
+    }
     report_commit(&written);
     Ok(0)
+}
+
+/// The 2 commands that enable the CI runs of the evals, if the write created
+/// the workflow. Otherwise `init` prints nothing and the list is empty.
+fn evals_commands(written: &[String]) -> Vec<String> {
+    if written.iter().any(|w| w == EVALS_WORKFLOW) {
+        EVALS_COMMANDS.map(str::to_string).to_vec()
+    } else {
+        Vec::new()
+    }
 }
 
 /// Writes the changes. Returns the paths.
@@ -2934,10 +3472,13 @@ fn resolved_answers(
         // The harness writes `CLAUDE.md` too, and question 12 lists it.
         .filter(|p| *p != harness::CLAUDE || plan.adapters.contains(&Adapter::ClaudeMd))
         .collect();
+    let evals_paths = evals::skeleton_paths(&plan.evals_table.dir);
     let ci_files: Vec<&str> = changes
         .iter()
         .map(|c| c.path.as_str())
         .filter(|p| *p != config::FILE_NAME && !adapters::PATHS.contains(p))
+        // The starter files of the evals belong to question 14.
+        .filter(|p| !evals_paths.iter().any(|e| e == p))
         .filter(|p| !hrun.is_some_and(|h| h.plan.changes.iter().any(|x| x.path == *p)))
         .collect();
     // The harness files that the answer writes. A removal says so.
@@ -3086,6 +3627,29 @@ fn resolved_answers(
                 String::new()
             } else {
                 "[harness.roles] table".to_string()
+            },
+        ),
+        (
+            Question::Evals,
+            plan.evals.name().to_string(),
+            // The level `none` asks no question 14. Its default is `none`, and
+            // the current state for a file that has the table.
+            if plan.harness.level == Level::None && !plan.evals_current {
+                EvalsAnswer::None.name().to_string()
+            } else {
+                before.evals.name().to_string()
+            },
+            if plan.evals == EvalsAnswer::Skeleton {
+                let mut w = vec!["[evals]".to_string()];
+                w.extend(
+                    changes
+                        .iter()
+                        .map(|c| c.path.clone())
+                        .filter(|p| evals_paths.contains(p)),
+                );
+                w.join(", ")
+            } else {
+                String::new()
             },
         ),
     ];
@@ -3409,6 +3973,83 @@ fn harness_level(cfg: &Config) -> Level {
 mod tests {
     use super::*;
 
+    fn plan_of_empty_repo() -> Plan {
+        let facts = detect::detect(
+            &[],
+            |_| None,
+            GitInfo {
+                base: "main".into(),
+            },
+        );
+        defaults(&facts, None)
+    }
+
+    #[test]
+    fn the_parts_line_round_trips_and_keeps_an_omitted_word() {
+        let mut plan = plan_of_empty_repo();
+        settle_parts(&mut plan);
+        let line = parts_line(&plan.harness);
+        assert_eq!(
+            line,
+            "skills=intent,spec,plan,review review-md=true protect-tests=fix-branches"
+        );
+        let words: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+        let mut again = plan.clone();
+        apply_parts(&mut again, &words).unwrap();
+        assert_eq!(parts_line(&again.harness), line);
+        // An omitted word keeps its default, and a word sets its part.
+        let mut p = plan.clone();
+        apply_parts(
+            &mut p,
+            &["skills=none".into(), "protect-tests=always".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            parts_line(&p.harness),
+            "skills=none review-md=true protect-tests=always"
+        );
+        assert!(!p.parts.derive_skills && p.parts.derive_review);
+    }
+
+    #[test]
+    fn a_bad_part_word_is_an_error() {
+        let mut plan = plan_of_empty_repo();
+        for (w, want) in [
+            ("skills=build", "unknown skill `build`"),
+            ("skills=spec,spec", "`spec` more than once"),
+            ("review-md=yes", "true or false"),
+            ("protect-tests=never", "fix-branches, always or off"),
+            ("models=none", "unknown part `models`"),
+            ("skills", "key=value"),
+        ] {
+            let e = apply_parts(&mut plan, &[w.to_string()]).unwrap_err();
+            assert!(e.contains(want), "{w}: {e}");
+        }
+    }
+
+    #[test]
+    fn the_default_skills_follow_the_final_policy_and_the_link_style() {
+        let mut plan = plan_of_empty_repo();
+        settle_parts(&mut plan);
+        assert_eq!(plan.harness.skills.len(), 4);
+        // A later answer changes the default, because no one set the part.
+        plan.change_policy = ChangePolicy::None;
+        plan.style = Style::VerifiedBy;
+        settle_parts(&mut plan);
+        assert!(plan.harness.skills.is_empty());
+        assert_eq!(plan.harness.protect_tests, Protect::Off);
+        // A part that the answers set stays.
+        plan.parts.derive_skills = false;
+        plan.harness.skills = vec![Skill::Spec];
+        settle_parts(&mut plan);
+        assert_eq!(plan.harness.skills, vec![Skill::Spec]);
+    }
+
+    #[test]
+    fn the_listing_of_the_4_skills_is_588_bytes() {
+        assert_eq!(skill_listing_bytes(), 588);
+    }
+
     #[test]
     fn pre_commit_hook_goes_at_the_end_of_repos() {
         let t =
@@ -3512,23 +4153,53 @@ mod tests {
     }
 
     #[test]
+    fn the_test_globs_of_the_hook_are_the_globs_that_check_reads() {
+        // `init` gives the hook `protect-tests` the globs that `Config::parse`
+        // reads from the text that `render` writes, so `check` finds no
+        // difference. 3 cases: an empty repository, a subset of hits and
+        // `verified-by`.
+        let globs = |plan: &Plan| {
+            let mut h = Harness::new(Level::Lean);
+            h.protect_tests = harness::Protect::FixBranches;
+            h.tests = Config::parse(&render(plan)).unwrap().evidence_tests;
+            h
+        };
+        let defaults_list = config::DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
+        let mut plan = defaults(&Facts::default(), Some("docs"));
+        // An empty repository: no hit, so `render` writes no `[evidence]`.
+        plan.tests = Vec::new();
+        let h = globs(&plan);
+        assert_eq!(h.tests, defaults_list);
+        assert!(h.protect_hook_on());
+        // A subset of hits.
+        plan.tests = vec!["t/**".into(), "**/*_t.*".into()];
+        let h = globs(&plan);
+        assert_eq!(h.tests, ["t/**", "**/*_t.*"]);
+        assert!(h.protect_hook_on());
+        // `verified-by` gives no glob, so no hook.
+        plan.style = Style::VerifiedBy;
+        let h = globs(&plan);
+        assert!(h.tests.is_empty() && !h.protect_hook_on());
+    }
+
+    #[test]
     fn the_models_line_round_trips_through_its_parser() {
         let mut h = Harness::new(Level::Lean);
         assert_eq!(
             models_line(&h),
-            "orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku"
+            "orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku"
         );
         h.level = Level::Full;
         assert!(
             models_line(&h)
-                .ends_with("helper=haiku implementer=sonnet:high spec-writer=sonnet:high"),
+                .ends_with("helper=haiku implementer=sonnet:high code-simplifier=sonnet:high"),
             "{}",
             models_line(&h)
         );
         let edits: Vec<String> = [
             "orchestrator=sonnet:inherit",
             "advisor=opus/sonnet:high",
-            "reviewer=none",
+            "verifier=none",
             "researcher=inherit",
         ]
         .map(String::from)
@@ -3537,7 +4208,7 @@ mod tests {
         let line = models_line(&h);
         assert!(
             line.starts_with(
-                "orchestrator=sonnet:inherit advisor=opus/sonnet:high reviewer=none researcher=inherit:high helper=haiku"
+                "orchestrator=sonnet:inherit advisor=opus/sonnet:high verifier=none researcher=inherit:high helper=haiku"
             ),
             "{line}"
         );
@@ -3551,17 +4222,28 @@ mod tests {
     fn the_model_words_refuse_what_the_configuration_refuses() {
         let lean = || Harness::new(Level::Lean);
         for (word, want) in [
-            ("reviewer", "write role=model[:effort]"),
+            ("verifier", "write role=model[:effort]"),
+            ("reviewer=opus", "the role `reviewer` is now `verifier`"),
+            ("spec-writer=opus", "the role `spec-writer` ended"),
             ("judge=opus", "unknown role `judge`"),
             ("implementer=opus", "role `implementer` is in level full"),
             ("helper=haiku:high", "the role `helper` has no effort"),
-            ("reviewer=", "the model is empty"),
-            ("reviewer=opus:ultra", "unknown effort `ultra`"),
-            ("reviewer=opus:", "unknown effort ``"),
+            ("verifier=", "the model is empty"),
+            ("verifier=opus:ultra", "unknown effort `ultra`"),
+            ("verifier=opus:", "unknown effort ``"),
             ("advisor=opus/haiku:ultra", "unknown effort `ultra`"),
         ] {
             let e = apply_models(&mut lean(), &[word.to_string()]).unwrap_err();
             assert!(e.contains(want), "{word}: {e}");
+        }
+        // A word of a role of 0.5 gives exit code 3, the other errors 2.
+        for (word, code) in [
+            ("reviewer=opus", 3),
+            ("spec-writer=opus", 3),
+            ("judge=opus", 2),
+        ] {
+            let e = apply_models(&mut lean(), &[word.to_string()]).unwrap_err();
+            assert_eq!(answer_error(e).exit_code(), code, "{word}");
         }
         // The configuration rules apply to the result.
         for (word, want) in [
@@ -3581,9 +4263,9 @@ mod tests {
         validate_harness(&h).unwrap();
         // A suffix that is no effort belongs to the model id.
         let mut h = lean();
-        apply_models(&mut h, &["reviewer=vendor.model-v1:0".to_string()]).unwrap();
+        apply_models(&mut h, &["verifier=vendor.model-v1:0".to_string()]).unwrap();
         assert_eq!(
-            h.cfg(Role::Reviewer).model,
+            h.cfg(Role::Verifier).model,
             Model::Id("vendor.model-v1:0".into())
         );
         // Level none takes any role word.
@@ -3596,14 +4278,14 @@ mod tests {
         let own =
             |path: &str, name: &str| (path.to_string(), format!("---\nname: {name}\n---\nown\n"));
         let existing = vec![
-            own(".claude/agents/mine.md", "checker"),
+            own(".claude/agents/mine.md", "verifier"),
             own(".claude/agents/fallback-advisor.md", "fallback-advisor"),
             own(".claude/agents/implementer.md", "implementer"),
         ];
         let mut h = Harness::new(Level::Lean);
         let notes = apply_conflicts(&mut h, &existing, false);
         assert_eq!(notes.len(), 3, "{notes:?}");
-        assert_eq!(h.cfg(Role::Reviewer).model, Model::None);
+        assert_eq!(h.cfg(Role::Verifier).model, Model::None);
         assert_eq!(h.cfg(Role::Advisor).agent, Model::None);
         assert!(h.cfg(Role::Advisor).model != Model::None);
         assert_eq!(h.cfg(Role::Implementer).model, Model::None);
@@ -3611,7 +4293,7 @@ mod tests {
         let mut h = Harness::new(Level::Lean);
         let notes = apply_conflicts(&mut h, &existing, true);
         assert_eq!(notes.len(), 1, "{notes:?}");
-        assert_eq!(h.cfg(Role::Reviewer).model, Model::Id("opus".into()));
+        assert_eq!(h.cfg(Role::Verifier).model, Model::Id("opus".into()));
     }
 
     fn facts_with(scripts: &[(&str, usize)], outcome: &[&str]) -> Facts {

@@ -219,6 +219,43 @@ impl Git {
         Ok(v)
     }
 
+    /// Returns the new paths of the renames between a commit and the working
+    /// tree (or the git index, for a `staged` `Git`), with the rename
+    /// detection of git. Only a tracked path can be the target of a rename, so
+    /// an untracked file is never in the result.
+    pub fn renamed_paths(&self, rev: &str) -> Result<Vec<String>, String> {
+        let mut args = vec!["diff"];
+        if self.staged {
+            args.push("--cached");
+        }
+        args.extend([
+            "--name-status",
+            "-z",
+            "-M",
+            "--ignore-submodules=all",
+            rev,
+            "--",
+        ]);
+        let out = self.run(&args)?;
+        let mut v = Vec::new();
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        while let (Some(status), Some(_)) = (recs.next(), recs.next()) {
+            // A rename or a copy has the old path, then the new path.
+            match status.first() {
+                Some(b'R') => {
+                    if let Some(new) = recs.next() {
+                        v.push(String::from_utf8_lossy(new).into_owned());
+                    }
+                }
+                Some(b'C') => {
+                    recs.next();
+                }
+                _ => {}
+            }
+        }
+        Ok(v)
+    }
+
     /// Returns the paths and blob ids of the git index (stage 0, or the first
     /// stage of a conflicted path).
     pub fn ls_files(&self) -> Result<Vec<Entry>, String> {
@@ -237,6 +274,32 @@ impl Git {
             v.push((path.to_string(), oid.to_string(), mode == "160000"));
         }
         Ok(v)
+    }
+
+    /// Returns the files of the working tree under `specs` (git pathspecs):
+    /// the tracked files, and the untracked files that git does not ignore.
+    /// The paths are from the repository root, sorted, with no duplicate. A
+    /// tracked file that is deleted in the working tree is also listed, so a
+    /// reader must skip a path that is absent. `eval run` uses it.
+    pub fn list_worktree(&self, specs: &[String]) -> Result<Vec<String>, String> {
+        let mut args = vec![
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+        ];
+        args.extend(specs.iter().map(String::as_str));
+        let out = self.run(&args)?;
+        let mut paths: Vec<String> = out
+            .split(|b| *b == 0)
+            .filter(|r| !r.is_empty())
+            .map(|r| String::from_utf8_lossy(r).into_owned())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
     }
 
     /// Returns the working-tree changes in `paths`. If `paths` is empty, it
@@ -401,6 +464,59 @@ impl Git {
             }
         }
         Ok(touched)
+    }
+
+    /// Returns the committer date of the oldest commit in the history of
+    /// `rev` that added each of the literal paths. The order is the order of
+    /// the ancestry, not of the dates (`--topo-order`). A path that no commit
+    /// added is absent from the map. A path can be added again after a
+    /// deletion, and then the oldest add counts. A shallow clone shows the
+    /// files of its boundary commit as added.
+    pub fn first_added(&self, rev: &str, paths: &[String]) -> Result<HashMap<String, i64>, String> {
+        let mut added: HashMap<String, i64> = HashMap::new();
+        for group in paths.chunks(500) {
+            let specs: Vec<String> = group.iter().map(|p| format!(":(literal){p}")).collect();
+            let mut args = vec![
+                "-c",
+                "log.showRoot=true",
+                "log",
+                "--topo-order",
+                "--no-renames",
+                "--diff-filter=A",
+                "--format=%x01%ct",
+                "--name-only",
+                "-z",
+                rev,
+                "--",
+            ];
+            args.extend(specs.iter().map(String::as_str));
+            let out = self.run(&args)?;
+            // The output is `\x01<seconds> NUL LF <path> NUL <path> NUL ...`
+            // for each commit, the newest first. A later line is an older
+            // commit, so it overwrites the earlier one.
+            let mut when: Option<i64> = None;
+            let mut first = false;
+            for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+                let rec = String::from_utf8_lossy(rec);
+                if let Some(ts) = rec.strip_prefix('\x01') {
+                    when = ts.trim().parse().ok();
+                    first = true;
+                    continue;
+                }
+                let path = if first {
+                    rec.strip_prefix('\n').unwrap_or(&rec)
+                } else {
+                    &rec
+                };
+                first = false;
+                if let Some(t) = when
+                    && !path.is_empty()
+                {
+                    added.insert(path.to_string(), t);
+                }
+            }
+        }
+        Ok(added)
     }
 
     /// Returns the commits (id and committer date) that touched a path, the
@@ -1144,7 +1260,7 @@ fn artifact_glob(dir: &str, name: &str) -> String {
 
 /// Turns paths and globs of the repository root into git pathspecs. A value
 /// that git does not accept (empty, or with a `.` or `..` segment) is left out.
-fn glob_pathspecs(specs: &[String]) -> Vec<String> {
+pub fn glob_pathspecs(specs: &[String]) -> Vec<String> {
     specs
         .iter()
         .map(|g| g.trim_matches('/'))

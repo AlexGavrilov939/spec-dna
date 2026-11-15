@@ -4,6 +4,8 @@
 mod common;
 
 use common::*;
+#[cfg(unix)]
+use std::fs;
 
 /// A repository with 1 commit on `main`.
 fn base() -> Repo {
@@ -162,4 +164,103 @@ fn with_config_writes_the_pin_and_run_reads_it() {
     );
     let (code, _, _) = repo.run(&["--version"]);
     assert_eq!(code, 0);
+}
+
+#[test]
+fn run_env_sets_and_removes_variables() {
+    // `SPEC_DNA_TRACE` makes the binary write `trace` lines to stderr.
+    let repo = Repo::with_config("[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n");
+    repo.write("docs/a.md", "# A\n");
+    repo.commit("config");
+    let has_trace = |set: &[(&str, &str)], remove: &[&str]| {
+        let (_, _, err) = repo.run_env(&["check"], set, remove);
+        err.contains("trace ")
+    };
+    assert!(!has_trace(&[], &[]));
+    assert!(has_trace(&[("SPEC_DNA_TRACE", "1")], &[]));
+    // A name in both lists is removed.
+    assert!(!has_trace(&[("SPEC_DNA_TRACE", "1")], &["SPEC_DNA_TRACE"]));
+}
+
+#[test]
+fn run_without_env_keeps_the_exit_code_and_output() {
+    let repo = Repo::with_config("");
+    let (code, out, _) = repo.run(&["--version"]);
+    assert_eq!(code, 0);
+    assert_eq!(out, format!("spec-dna {VERSION}\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn stub_bin_writes_an_executable_script() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Repo::empty();
+    let bin = dir.dir.join("nested").join("bin");
+    let path = stub_bin(&bin, "claude", "#!/bin/sh\necho \"$1\"\n");
+    assert_eq!(path, bin.join("claude"));
+    let mode = fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+    let out = std::process::Command::new(&path)
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "--version\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn path_with_puts_the_stub_first() {
+    let dir = Repo::empty();
+    let bin = dir.dir.join("bin");
+    stub_bin(&bin, "spec-dna-stub-probe", "#!/bin/sh\necho stub\n");
+    let path = path_with(&bin);
+    let first = std::env::split_paths(&path).next().unwrap();
+    assert_eq!(first, bin);
+    let out = std::process::Command::new("spec-dna-stub-probe")
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "stub\n");
+    // The real PATH stays after the stub folder.
+    let old = std::env::var_os("PATH").unwrap_or_default();
+    assert_eq!(
+        std::env::split_paths(&path).skip(1).collect::<Vec<_>>(),
+        std::env::split_paths(&old).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn normalize_marker_replaces_the_version_and_keeps_the_hash() {
+    let text = "# Notes\n\n<!-- spec-dna harness v0.0.1 h:abc123 -->\n";
+    assert_eq!(
+        normalize_marker(text),
+        "# Notes\n\n<!-- spec-dna harness v{VERSION} h:abc123 -->\n"
+    );
+    // An inline marker (the line of CLAUDE.md) and 2 markers in 1 text.
+    let two = "line <!-- spec-dna harness v1.2.3 h:aa -->\nx\n<!-- spec-dna harness v9.9.9-rc.1 h:bb -->\n";
+    assert_eq!(
+        normalize_marker(two),
+        "line <!-- spec-dna harness v{VERSION} h:aa -->\nx\n<!-- spec-dna harness v{VERSION} h:bb -->\n"
+    );
+    // The current version gives the same result as an old one.
+    let now = format!("<!-- spec-dna harness v{VERSION} h:cc -->");
+    assert_eq!(
+        normalize_marker(&now),
+        "<!-- spec-dna harness v{VERSION} h:cc -->"
+    );
+}
+
+#[test]
+fn normalize_marker_leaves_other_text_alone() {
+    let prose = "The line ends with `<!-- spec-dna harness v<version> h:<hash> -->`.\n";
+    // A text with no marker, or a broken marker, stays as it is. A
+    // placeholder in prose has the shape of a marker, so it changes too.
+    assert_eq!(normalize_marker("no marker\n"), "no marker\n");
+    assert_eq!(normalize_marker(""), "");
+    let broken = "<!-- spec-dna harness v0.1.0 -->\n<!-- spec-dna harness v\n";
+    assert_eq!(normalize_marker(broken), broken);
+    assert_eq!(
+        normalize_marker(prose),
+        "The line ends with `<!-- spec-dna harness v{VERSION} h:<hash> -->`.\n"
+    );
 }

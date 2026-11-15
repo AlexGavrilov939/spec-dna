@@ -40,6 +40,12 @@ policy = "three-class"          # "three-class", "two-class" or "none"
 [evidence]
 tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
 
+[evals]                         # optional: the agent evals (see "The table `evals`")
+dir = "evals"                   # the folder of the evals (default "evals")
+min-pass-rate = 0.8             # the share of evals that must pass, from 0 to 1 (default 0.8)
+runs = 3                        # the runs of an eval that sets no `runs`, from 1 to 100 (default 3)
+max-total-usd = 20              # the maximum spend of `eval run`, above 0 (default 20)
+
 [[roots]]                       # required: one table per document root
 path = "docs"
 type = "mixed"                  # one type of a root (not intent, spec or plan), or "mixed" (default)
@@ -85,11 +91,14 @@ deny = ["NotebookEdit"]         # tools that no generated agent gets (default []
 context-meter = [300000, 600000]  # context sizes of the main session for the hook; [] = off
 subagent-meter = 250000         # context size of a subagent for the hook; 0 = off
 fanout-cap = 10                 # agents that a workflow can start before the hook asks; 0 = off
+skills = ["intent", "spec", "plan", "review"]  # the stage skills to write (default [])
+review-md = true                # write REVIEW.md (default false)
+protect-tests = "fix-branches"  # "fix-branches", "always" or "off" (default "off")
 
 [harness.roles]                 # a role that is not here takes its default
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
-reviewer = { claude-code = "opus", effort = "high" }
+verifier = { claude-code = "opus", effort = "high" }
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -104,7 +113,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check` does not run and prints the install command. The other commands print a warning. |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905, SD910 to SD917 and SD919 to SD922. It has no SD918 (step 4). The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD922. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag turns off the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD922 are off, and no rule can turn them on. |
@@ -158,13 +167,21 @@ sonnet = "high"
 | `context.budget` | integer | `8000` | The default budget of `spec-dna context`, in characters. Each later request of an agent carries the output again, so the default is small. |
 | `repos` | table | `{}` | Aliases of other repositories. A reference into one of them is a warning until pinned indexes exist. |
 | `templates.dir` | string | `.spec-dna/templates` | The folder of the project templates, relative to the repository root. A file `<name>.md` in it is a template for `spec-dna new --template <name>`. See [The table `templates`](#the-table-templates). The folder is never part of a root. |
+| `evals` | table | none | The agent evals. No table means no evals. See [The table `evals`](#the-table-evals). |
+| `evals.dir` | string | `evals` | The folder of the evals, relative to the repository root. The rules are those of `templates.dir`. The folder cannot be the folder of `templates.dir`, hold it or be inside it. The folder is never part of a root. |
+| `evals.min-pass-rate` | number | `0.8` | The share of evals that must pass, from 0 to 1. The integers 0 and 1 are valid. |
+| `evals.runs` | integer | `3` | The runs of an eval that sets no `runs`, from 1 to 100. |
+| `evals.max-total-usd` | number | `20` | The maximum spend of `eval run`, in USD. A number above 0. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
-| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them. |
+| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper. `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
 | `harness.deny` | list of strings | `[]` | Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
 | `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
+| `harness.skills` | list of strings | `[]` | The stage skills that `init` writes. Each value is `intent`, `spec`, `plan` or `review`, and each is listed once. The order of the list does not matter: spec-dna uses the order of `intent`, `spec`, `plan`, `review`. Each skill is the file `.claude/skills/spec-dna-<skill>/SKILL.md`. With `none`, spec-dna reads the key and ignores it. |
+| `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
+| `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
 | `harness.efforts` | table | `{ sonnet = "high" }` | The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 
@@ -282,11 +299,28 @@ dir = ".spec-dna/templates"
 - `dir` is a path relative to the repository root. An absolute path, a `..` segment, a `\` and a `:` are errors (exit code 3).
 - The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. `check` does not read a project template for its content. The document that `new` writes gets the usual checks.
 
+## The table `evals`
+
+```toml
+[evals]
+dir = "evals"
+min-pass-rate = 0.8
+runs = 3
+max-total-usd = 20
+```
+
+[ADR 0008](adr/0008-harness-and-evals.md) gives the evals. An eval is a file `<dir>/<id>.json`. The table is optional. With no table, there are no evals.
+
+- `dir` is a path relative to the repository root. spec-dna drops a leading `./` and a final `/`. An absolute path, a `..` or `.` segment, a `\` and a `:` are errors (exit code 3).
+- `dir` and `templates.dir` must not overlap: one folder is not the other folder, and it is not inside the other folder. If they overlap, the exit code is 3.
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. For the same reason, `REVIEW.md` and the stage skills that `[harness]` writes are never part of a root.
+- `min-pass-rate`, `runs` and `max-total-usd` are the defaults of a run. An eval file can set `runs`. The command `eval run` can replace each of them. `pass-at` is a key of an eval file only. In `[evals]` it is an unknown key.
+
 ## The table `harness`
 
 [ADR 0004](adr/0004-harness.md) gives the roles. [docs/harness.md](harness.md) gives the generated files and the hooks.
 
-`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `reviewer`, `researcher`, `implementer`, `spec-writer` and `helper`.
+`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `verifier`, `researcher`, `implementer`, `code-simplifier` and `helper`. The keys `reviewer` and `spec-writer` of spec-dna 0.5 give exit code 3. The role `reviewer` is now `verifier`. The role `spec-writer` ended.
 
 | Key | Roles | Meaning |
 | --- | --- | --- |
@@ -301,10 +335,10 @@ The defaults:
 | --- | --- | --- | --- |
 | `orchestrator` | `opus` | `xhigh` | `lean`, `full` |
 | `advisor` | `fable` (agent: `opus`) | `xhigh` (agent) | `lean`, `full` |
-| `reviewer` | `opus` | `high` | `lean`, `full` |
+| `verifier` | `opus` | `high` | `lean`, `full` |
 | `researcher` | `haiku` | `high` | `lean`, `full` |
 | `implementer` | `sonnet` | `high` | `full` |
-| `spec-writer` | `sonnet` | `high` | `full` |
+| `code-simplifier` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
 A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in level full. These rules apply to the values:
@@ -314,6 +348,8 @@ A role that the level does not include is an error, for example `harness.roles.i
 - A value in `[harness.efforts]` cannot be `max`.
 - For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` reports it.
 - The advisor should not be a weaker model than the orchestrator. If it is weaker, the configuration is still valid, and `init` prints a warning. spec-dna ranks the known aliases from strong to weak: `fable`, `opus`, `sonnet`, `haiku`.
+
+`skills`, `review-md` and `protect-tests` set the files that `init` writes besides the agents. A value that is not in the lists of the keys table is an error (exit code 3). `init` writes the 3 keys. A file that has none of them gets no skill, no `REVIEW.md` and no hook entry.
 
 An unknown key in `[harness]` is an error, as in the rest of the file. `spec-dna init` writes the table, and `spec-dna check` compares the generated files with it (SD501, SD502, SD504 and SD505).
 

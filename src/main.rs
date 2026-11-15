@@ -25,12 +25,15 @@ mod context;
 mod detect;
 mod diag;
 mod drift;
+mod eval_run;
+mod evals;
 mod evidence;
 mod finish;
 mod frontmatter;
 mod git;
 mod glob;
 mod harness;
+mod harness_text;
 mod hash;
 mod hook;
 mod index;
@@ -48,6 +51,7 @@ mod registry;
 mod release;
 mod repo;
 mod sdlc;
+mod skeleton;
 mod split;
 mod stage;
 mod templates;
@@ -244,6 +248,23 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
 4 git.",
     ),
     (
+        "eval",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]",
+        "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
+each run, it copies the fixture and the harness files into a temporary git
+repository, starts `claude -p` in it, and runs the checks of the eval. It
+sources <dir>/check.sh of the project, never the copy. An eval passes when at
+least pass-at of its runs pass. The suite passes when the share of evals that
+pass is at least min-pass-rate. It refuses to start when runs x
+max-budget-usd is above max-total-usd, and it stops when the spend is above
+it. --runs, --min-pass-rate and --max-total-usd replace the values of the
+files and of the table. --out writes the result to <dir>/eval-<time>.json
+(counts, costs and check names only). --dry-run starts no process. --isolate
+adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
+does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
+a stop by the cap or no `claude`, 4 git or file error.",
+    ),
+    (
         "transcript",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
@@ -251,7 +272,7 @@ episode of agent transcripts. It prints counts and ids only.",
     ),
     (
         "hook",
-        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]",
+        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]\nhook protect-tests [--mode <fix-branches|always>] [--test <glob>]...",
         "Runs a hook of a coding agent. It reads one JSON object from stdin,
 prints JSON only when the agent must see a message, and exits with 0.
 It reads no configuration.",
@@ -264,8 +285,8 @@ const OPTIONS: &str = "Options:
     -h, --help    Prints this help; `spec-dna <command> --help` prints the help of one command
     -V, --version Prints the version
 
-Exit codes: 0 ok, 1 check found new errors, 2 usage, 3 configuration,
-4 git or I/O, 5 not found.";
+Exit codes: 0 ok, 1 check found new errors or an eval run failed, 2 usage,
+3 configuration, 4 git or I/O, 5 not found.";
 
 fn indent(text: &str, by: &str) -> String {
     text.lines()
@@ -333,6 +354,11 @@ struct Args {
     group: Option<String>,
     since: Option<String>,
     sdlc: bool,
+    runs: Option<u32>,
+    min_pass_rate: Option<f64>,
+    max_total_usd: Option<f64>,
+    out: Option<String>,
+    isolate: bool,
 }
 
 /// The options of `layer add`.
@@ -403,6 +429,11 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         group: None,
         since: None,
         sdlc: false,
+        runs: None,
+        min_pass_rate: None,
+        max_total_usd: None,
+        out: None,
+        isolate: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -438,6 +469,43 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--group" => a.group = Some(value("--group")?),
             "--since" => a.since = Some(value("--since")?),
             "--sdlc" => a.sdlc = true,
+            "--isolate" => a.isolate = true,
+            "--out" => a.out = Some(value("--out")?),
+            "--runs" => {
+                let v = value("--runs")?;
+                a.runs = Some(
+                    v.parse::<u32>()
+                        .ok()
+                        .filter(|n| (1..=100).contains(n))
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!("--runs: `{v}` is not an integer from 1 to 100"))
+                        })?,
+                );
+            }
+            "--min-pass-rate" => {
+                let v = value("--min-pass-rate")?;
+                a.min_pass_rate = Some(
+                    v.parse::<f64>()
+                        .ok()
+                        .filter(|n| (0.0..=1.0).contains(n))
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!(
+                                "--min-pass-rate: `{v}` is not a number from 0 to 1"
+                            ))
+                        })?,
+                );
+            }
+            "--max-total-usd" => {
+                let v = value("--max-total-usd")?;
+                a.max_total_usd = Some(
+                    v.parse::<f64>()
+                        .ok()
+                        .filter(|n| n.is_finite() && *n > 0.0)
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!("--max-total-usd: `{v}` is not a number above 0"))
+                        })?,
+                );
+            }
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
@@ -553,6 +621,19 @@ fn run(a: Args) -> Result<u8, Fatal> {
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
     }
+    if a.command != "eval" {
+        for (given, name) in [
+            (a.runs.is_some(), "--runs"),
+            (a.min_pass_rate.is_some(), "--min-pass-rate"),
+            (a.max_total_usd.is_some(), "--max-total-usd"),
+            (a.out.is_some(), "--out"),
+            (a.isolate, "--isolate"),
+        ] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
+            }
+        }
+    }
     match a.command.as_str() {
         "" => {
             println!("{}", usage());
@@ -576,6 +657,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "status" => status(&Repo::discover(&cwd)?, &a),
         "log" => log(&Repo::discover(&cwd)?, &a),
         "stats" => stats(&Repo::discover(&cwd)?, &a),
+        "eval" => eval(&cwd, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -687,6 +769,7 @@ fn harness_texts(
                 .status(
                     &[
                         format!(":(literal){}", harness::CLAUDE),
+                        format!(":(literal){}", harness::REVIEW),
                         ":(literal).claude".to_string(),
                     ],
                     true,
@@ -723,10 +806,9 @@ fn harness_texts(
     Ok(out)
 }
 
-/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
-/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
-/// configuration that does not parse.
-fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+/// Reads the configuration of the base snapshot. Returns `None` if the base
+/// has no `spec-dna.toml`, or a configuration that does not parse.
+fn base_config(repo: &Repo, snap: &Snapshot) -> Result<Option<config::Config>, Fatal> {
     let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
         return Ok(None);
     };
@@ -736,8 +818,81 @@ fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>
         .map_err(Fatal::Io)?;
     Ok(blobs
         .get(&blob)
-        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok())
-        .and_then(|c| c.harness))
+        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok()))
+}
+
+/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
+/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
+/// configuration that does not parse.
+fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+    Ok(base_config(repo, snap)?.and_then(|c| c.harness))
+}
+
+/// The files of a tree under `[evals] dir`, for SD506. In the working tree,
+/// the paths are the tracked files and, with `untracked`, the untracked files
+/// that git does not ignore (the folder is outside the document roots, so the
+/// snapshot does not list its untracked files). A path that is absent on disk
+/// is no file. The bytes of each `*.json` file directly in the folder are read
+/// from the disk, or from the tree.
+fn eval_tree(
+    repo: &Repo,
+    snap: &Snapshot,
+    dir: &str,
+    untracked: bool,
+) -> Result<check::EvalTree, Fatal> {
+    use std::io::Read;
+    let prefix = format!("{dir}/");
+    let mut paths: Vec<String> = snap
+        .files
+        .iter()
+        .filter(|e| e.path.starts_with(&prefix))
+        .map(|e| e.path.clone())
+        .collect();
+    if snap.worktree {
+        if untracked {
+            let st = repo
+                .git
+                .status(&[format!(":(literal){dir}")], true)
+                .map_err(Fatal::Io)?;
+            paths.extend(st.untracked.into_iter().filter(|p| p.starts_with(&prefix)));
+        }
+        paths.retain(|p| std::fs::symlink_metadata(repo.root.join(p)).is_ok());
+    }
+    paths.sort();
+    paths.dedup();
+    let direct =
+        |p: &&String| p[prefix.len()..].ends_with(".json") && !p[prefix.len()..].contains('/');
+    let mut json = Vec::new();
+    if snap.worktree {
+        for p in paths.iter().filter(direct) {
+            let mut bytes = Vec::new();
+            let read = std::fs::File::open(repo.root.join(p))
+                .and_then(|f| f.take(evals::MAX_BYTES as u64 + 1).read_to_end(&mut bytes));
+            if read.is_ok() {
+                json.push((p.clone(), bytes));
+            }
+        }
+    } else {
+        let ids: Vec<(String, String)> = paths
+            .iter()
+            .filter(direct)
+            .filter_map(|p| {
+                snap.blob_of(p)
+                    .and_then(|e| e.blob.clone())
+                    .map(|b| (p.clone(), b))
+            })
+            .collect();
+        let blobs = repo
+            .git
+            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
+            .map_err(Fatal::Io)?;
+        for (p, b) in ids {
+            if let Some(bytes) = blobs.get(&b) {
+                json.push((p, bytes.clone()));
+            }
+        }
+    }
+    Ok(check::EvalTree { paths, json })
 }
 
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
@@ -913,8 +1068,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         repo::trace("drift", &mut t);
     }
     // The checks of the diff against the lifecycle base: SD905 (a change with
-    // no delta), SD910, SD913, SD915, SD916, SD917, SD920 (a decision that is
-    // not `accepted`) and SD921. With `--base` and no merge base,
+    // no delta), SD910, SD913, SD915, SD916, SD917, SD918, SD920 (a decision
+    // that is not `accepted`) and SD921. With `--base` and no merge base,
     // SD921 compares with the base of the gate.
     let mut report = lifecycle::BaseReport::default();
     if let (Some(life), Some(diff), Some(rev)) = (life, &diff, &change_base) {
@@ -995,6 +1150,29 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         };
         for d in head_hd {
             let is_new = !base_hd.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
+    // SD506: the eval files, only for a project with `[evals]`. The base
+    // findings use the `[evals]` table of the base, so only a new finding
+    // fails the gate. A base with no table has no findings.
+    if let Some(ev) = cfg
+        .evals
+        .as_ref()
+        .filter(|_| !cfg.is_off(diag::Code::EvalsInvalid))
+    {
+        let tree = eval_tree(repo, &head_snap, &ev.dir, untracked)?;
+        let head_ev = check::apply_severity(&cfg, check::evals_invalid(ev, &tree));
+        let base_ev: Vec<_> = match base_config(repo, &base_snap)?.and_then(|c| c.evals) {
+            Some(bev) if use_base => {
+                let tree = eval_tree(repo, &base_snap, &bev.dir, false)?;
+                check::apply_severity(&cfg, check::evals_invalid(&bev, &tree))
+            }
+            _ => Vec::new(),
+        };
+        for d in head_ev {
+            let is_new = !base_ev.iter().any(|b| b.fingerprint() == d.fingerprint());
             outcome.head.push(d);
             outcome.new.push(is_new);
         }
@@ -1108,7 +1286,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
 /// `init` writes with it (the adapters, the harness files, the hook files
-/// that `init` writes or upgrades, and files named `spec-dna*`) do not count,
+/// that `init` writes or upgrades, the starter files of the evals, and files
+/// named `spec-dna*`) do not count,
 /// and a new `spec-dna.toml` (the adoption) is not checked.
 fn config_not_alone(
     repo: &Repo,
@@ -1123,6 +1302,12 @@ fn config_not_alone(
     if *added {
         return Ok(None);
     }
+    // The starter files of `skeleton` come with the table `[evals]`.
+    let starter: Vec<String> = cfg
+        .evals
+        .as_ref()
+        .map(|e| evals::skeleton_paths(&e.dir).to_vec())
+        .unwrap_or_default();
     let others: Vec<&str> = changed
         .iter()
         .map(|(p, _)| p.as_str())
@@ -1130,6 +1315,7 @@ fn config_not_alone(
             *p != config::FILE_NAME
                 && !adapters::PATHS.contains(p)
                 && !harness::is_output_path(p)
+                && !starter.iter().any(|s| s == p)
                 && !init::HOOK_FILES.contains(p)
                 && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
         })
@@ -2229,6 +2415,38 @@ fn log(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     sdlc::log(repo, &cfg, a.since.as_deref(), a.json)
+}
+
+/// `eval run [<id>...]`: the runner of the evals (`eval_run.rs`). `eval run`
+/// spends money and runs the checks of the project, so a pin mismatch stops
+/// it, as it stops `check` and `finish`.
+fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    if a.positional.first().map(String::as_str) != Some("run") {
+        return Err(Fatal::Usage(
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`".into(),
+        ));
+    }
+    let repo = Repo::discover(cwd)?;
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    let mut ids = a.positional[1..].to_vec();
+    ids.dedup();
+    eval_run::run(
+        &repo,
+        &cfg,
+        &eval_run::Opts {
+            ids,
+            runs: a.runs,
+            min_pass_rate: a.min_pass_rate,
+            max_total_usd: a.max_total_usd,
+            out: a.out.clone(),
+            dry_run: a.dry_run,
+            isolate: a.isolate,
+            json: a.json,
+        },
+    )
 }
 
 /// `stats --sdlc [--group <name>]`: the indicators of the playbook

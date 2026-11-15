@@ -72,6 +72,8 @@ pub struct Config {
     /// repository root, with no `./` and no final `/`. It is never part of a
     /// root: `is_excluded` is true for each path in it.
     pub templates_dir: String,
+    /// `[evals]`. `None`: no table, so there are no evals.
+    pub evals: Option<Evals>,
     /// The language of the normative text: a BCP 47 tag (`language`). The
     /// default is `en`. A primary subtag other than `en` turns off the checks
     /// that read English word lists (SD801 to SD805 and SD904).
@@ -95,6 +97,79 @@ pub struct Config {
     /// `[change] max-fanout`: the most requirement documents that one change
     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
     pub max_fanout: u32,
+}
+
+/// The default folder of the evals.
+pub const DEFAULT_EVALS_DIR: &str = "evals";
+pub const DEFAULT_EVALS_MIN_PASS_RATE: f64 = 0.8;
+pub const DEFAULT_EVALS_RUNS: u32 = 3;
+pub const DEFAULT_EVALS_MAX_TOTAL_USD: f64 = 20.0;
+
+/// The table `[evals]` (ADR 0008).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Evals {
+    /// The folder of the evals, relative to the repository root, with no `./`
+    /// and no final `/`. It is never part of a root: `is_excluded` is true
+    /// for each path in it.
+    pub dir: String,
+    /// The share of evals that must pass, from 0 to 1.
+    pub min_pass_rate: f64,
+    /// The runs of an eval that sets no `runs`, from 1 to 100.
+    pub runs: u32,
+    /// The most that `eval run` can spend, in USD. Above 0.
+    pub max_total_usd: f64,
+}
+
+impl Evals {
+    fn parse(v: &Value, templates_dir: &str) -> Result<Evals, String> {
+        let tbl = v.as_table().ok_or("`evals` must be a table")?;
+        let mut f = Fields::new(tbl, "evals.");
+        let dir = match f.opt_str("dir")? {
+            Some(d) => dir_value("evals.dir", &d, "evals")?,
+            None => DEFAULT_EVALS_DIR.to_string(),
+        };
+        if dir == templates_dir
+            || dir.starts_with(&format!("{templates_dir}/"))
+            || templates_dir.starts_with(&format!("{dir}/"))
+        {
+            return Err(format!(
+                "`evals.dir` and `templates.dir` overlap (`{dir}` and `{templates_dir}`); write 2 folders, none inside the other"
+            ));
+        }
+        let min_pass_rate = match f.take("min-pass-rate") {
+            None => DEFAULT_EVALS_MIN_PASS_RATE,
+            Some(v) => number(v)
+                .filter(|n| (0.0..=1.0).contains(n))
+                .ok_or("`evals.min-pass-rate` must be a number from 0 to 1")?,
+        };
+        let runs = match f.take("runs") {
+            None => DEFAULT_EVALS_RUNS,
+            Some(Value::Integer(n)) if (1..=100).contains(n) => *n as u32,
+            Some(_) => return Err("`evals.runs` must be an integer from 1 to 100".into()),
+        };
+        let max_total_usd = match f.take("max-total-usd") {
+            None => DEFAULT_EVALS_MAX_TOTAL_USD,
+            Some(v) => number(v)
+                .filter(|n| n.is_finite() && *n > 0.0)
+                .ok_or("`evals.max-total-usd` must be a number above 0")?,
+        };
+        f.done()?;
+        Ok(Evals {
+            dir,
+            min_pass_rate,
+            runs,
+            max_total_usd,
+        })
+    }
+}
+
+/// Returns a TOML integer or float as a number.
+fn number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Integer(n) => Some(*n as f64),
+        Value::Float(n) => Some(*n),
+        _ => None,
+    }
 }
 
 /// The gate of the change process (`[change] gate`, design 0.6.0, "Gates").
@@ -506,6 +581,7 @@ impl Profile {
             "SD911" | "SD913" => (None, Some(W), Some(W)),
             "SD912" => (None, Some(W), Some(E)),
             "SD917" | "SD921" => (None, Some(W), Some(E)),
+            "SD918" => (None, Some(W), Some(W)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -529,12 +605,11 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
-    // SD918 is not in the group: it comes in step 4 (deviation D27).
     (
         "changes",
         &[
             "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
-            "SD919", "SD920", "SD921", "SD922",
+            "SD918", "SD919", "SD920", "SD921", "SD922",
         ],
     ),
 ];
@@ -970,6 +1045,10 @@ impl Config {
             }
             None => DEFAULT_TEMPLATES_DIR.to_string(),
         };
+        let evals = match t.take("evals") {
+            Some(v) => Some(Evals::parse(v, &templates_dir)?),
+            None => None,
+        };
         let language = match t.opt_str("language")? {
             None => DEFAULT_LANGUAGE.to_string(),
             Some(l) if is_language_tag(&l) => l,
@@ -987,6 +1066,12 @@ impl Config {
             }
         };
         t.done()?;
+        // The hook `protect-tests` reads the globs of the base, so the
+        // harness keeps them.
+        let harness = harness.map(|mut h| {
+            h.tests = evidence_tests.clone();
+            h
+        });
         Ok(Config {
             pin,
             force_lint: false,
@@ -1011,6 +1096,7 @@ impl Config {
             areas,
             groups,
             templates_dir,
+            evals,
             language,
             history_terms,
             change_policy: change.policy,
@@ -1104,9 +1190,25 @@ impl Config {
             .is_some_and(|rest| rest.starts_with('/'))
     }
 
+    /// Returns true if a path is in `[evals] dir`.
+    pub fn in_evals_dir(&self, path: &str) -> bool {
+        self.evals.as_ref().is_some_and(|e| {
+            path.strip_prefix(&e.dir)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
+    /// True for a document that the harness configuration writes: `REVIEW.md`
+    /// and a stage skill (step 4, D44).
+    fn is_harness_doc(&self, path: &str) -> bool {
+        self.harness.as_ref().is_some_and(|h| h.writes_doc(path))
+    }
+
     pub fn is_excluded(&self, root: usize, path: &str) -> bool {
         let rel = self.roots[root].rel(path);
         self.in_templates_dir(path)
+            || self.in_evals_dir(path)
+            || self.is_harness_doc(path)
             || self.exclude.iter().any(|g| crate::glob::matches(g, path))
             || self.roots[root]
                 .exclude
@@ -1378,12 +1480,18 @@ impl Root {
     }
 }
 
-/// Checks the value of `[templates] dir` and returns it in the form that the
-/// code compares: no `./` at the start, no `/` at the end.
+/// Checks the value of `[templates] dir`.
 fn templates_dir_value(d: &str) -> Result<String, String> {
+    dir_value("templates.dir", d, ".spec-dna/templates")
+}
+
+/// Checks the value of a key that names a folder (`[templates] dir`,
+/// `[evals] dir`) and returns it in the form that the code compares: no `./`
+/// at the start, no `/` at the end.
+fn dir_value(key: &str, d: &str, example: &str) -> Result<String, String> {
     let bad = |why: &str| {
         Err(format!(
-            "`templates.dir`: `{d}` {why}; write a folder inside the repository, such as `.spec-dna/templates`"
+            "`{key}`: `{d}` {why}; write a folder inside the repository, such as `{example}`"
         ))
     };
     let mut dir = d.trim();
@@ -2224,12 +2332,92 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
     #[test]
     fn a_later_step_key_is_still_unknown() {
-        // `language`, `[lint] history-terms` and `[change] policy` come in
-        // step 2. `[evals]` comes in step 4.
-        let e =
-            Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n[evals]\ndir = \"e\"\n")
-                .unwrap_err();
-        assert!(e.contains("unknown key"), "{e}");
+        // `[evals]` and the 3 new keys of `[harness]` come in step 4. A key
+        // of step 5 or later is unknown.
+        let e = with("", "[evals]\nlist = true\n").unwrap_err();
+        assert!(e.contains("unknown key `evals.list`"), "{e}");
+        let e = with("", "[harness]\nlevel = \"lean\"\nupgrade = true\n").unwrap_err();
+        assert!(e.contains("unknown key `harness.upgrade`"), "{e}");
+        let e = with("upgrade = true", "").unwrap_err();
+        assert!(e.contains("unknown key `upgrade`"), "{e}");
+    }
+
+    #[test]
+    fn evals_has_defaults_and_limits() {
+        assert!(Config::parse(BASE).unwrap().evals.is_none());
+        let e = with("", "[evals]\n").unwrap().evals.unwrap();
+        assert_eq!(
+            e,
+            Evals {
+                dir: "evals".into(),
+                min_pass_rate: 0.8,
+                runs: 3,
+                max_total_usd: 20.0
+            }
+        );
+        let e = with(
+            "",
+            "[evals]\ndir = \"./q/e/\"\nmin-pass-rate = 1\nruns = 100\nmax-total-usd = 0.25\n",
+        )
+        .unwrap()
+        .evals
+        .unwrap();
+        assert_eq!(e.dir, "q/e");
+        assert_eq!((e.min_pass_rate, e.runs, e.max_total_usd), (1.0, 100, 0.25));
+        assert_eq!(
+            with("", "[evals]\nmin-pass-rate = 0\n")
+                .unwrap()
+                .evals
+                .unwrap()
+                .min_pass_rate,
+            0.0
+        );
+        for bad in [
+            "min-pass-rate = 1.01",
+            "runs = 0",
+            "runs = 101",
+            "max-total-usd = 0",
+            "max-total-usd = inf",
+            "pass-at = 1",
+        ] {
+            assert!(with("", &format!("[evals]\n{bad}\n")).is_err(), "{bad}");
+        }
+        let e = with("", "[evals]\ndir = \"..\"\n").unwrap_err();
+        assert!(e.contains("`evals.dir`") && e.contains("`evals`"), "{e}");
+    }
+
+    #[test]
+    fn the_evals_dir_and_the_harness_files_are_never_part_of_a_root() {
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n[evals]\ndir = \"q/evals/\"\n[harness]\nlevel = \"lean\"\nskills = [\"spec\"]\nreview-md = true\n",
+        )
+        .unwrap();
+        assert!(c.is_excluded(0, "q/evals/fixtures/a/notes.md"));
+        assert!(!c.is_excluded(0, "q/evals.md"));
+        assert!(!c.is_excluded(0, "q/evalsx/a.md"));
+        assert!(c.is_excluded(0, "REVIEW.md"));
+        assert!(c.is_excluded(0, ".claude/skills/spec-dna-spec/SKILL.md"));
+        // A skill that the configuration does not write stays a file of the root.
+        assert!(!c.is_excluded(0, ".claude/skills/spec-dna-plan/SKILL.md"));
+        assert!(!c.is_excluded(0, "docs/a.md"));
+        // With `review-md = false`, and at level `none`, `REVIEW.md` is a document.
+        for h in [
+            "[harness]\nlevel = \"lean\"\n",
+            "[harness]\nlevel = \"none\"\nreview-md = true\nskills = [\"spec\"]\n",
+        ] {
+            let c = Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n{h}"
+            ))
+            .unwrap();
+            assert!(!c.is_excluded(0, "REVIEW.md"), "{h}");
+            assert!(
+                !c.is_excluded(0, ".claude/skills/spec-dna-spec/SKILL.md"),
+                "{h}"
+            );
+        }
+        // No `[evals]` table: no folder.
+        let c = Config::parse(BASE).unwrap();
+        assert!(!c.in_evals_dir("evals/a.md"));
     }
 
     #[test]
@@ -2472,7 +2660,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert_eq!(Code::from_code(code.code()), Some(code));
         }
         // The group `layers` holds SD901 to SD904. The group `changes` holds
-        // SD905 and SD910 to SD922, without SD918 (step 4).
+        // SD905 and SD910 to SD922.
         let c = with(
             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
             "[change]\npolicy = \"two-class\"\n",
@@ -2492,7 +2680,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         use Severity::{Error as E, Warning as W};
         // The design table: code, lite, standard, strict.
         type Sev = Option<Severity>;
-        let rows: [(Code, Sev, Sev, Sev); 12] = [
+        let rows: [(Code, Sev, Sev, Sev); 13] = [
             (Code::FanOut, None, Some(W), Some(W)),
             (Code::GateApprovalMissing, Some(W), Some(E), Some(E)),
             (Code::ChangeStale, None, Some(W), Some(W)),
@@ -2505,6 +2693,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             (Code::ConcernOpen, Some(W), Some(E), Some(E)),
             (Code::QuestionOpen, Some(W), Some(E), Some(E)),
             (Code::DecisionNeededUnaccepted, Some(W), Some(E), Some(E)),
+            (Code::IncidentEvalMissing, None, Some(W), Some(W)),
         ];
         for (code, lite, standard, strict) in rows {
             for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
@@ -2522,9 +2711,22 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                     .any(|g| g.0 == "changes" && g.1.contains(&code.code()))
             );
         }
-        // SD918 has no code before step 4, and no group has it.
-        assert!(Code::from_code("SD918").is_none());
-        assert!(!GROUPS.iter().any(|g| g.1.contains(&"SD918")));
+        // SD918 (step 4) is in the group `changes`, and it needs `[evals]`.
+        assert_eq!(Code::from_code("SD918"), Some(Code::IncidentEvalMissing));
+        assert_eq!(Code::IncidentEvalMissing.name(), "incident-eval-missing");
+        // SD506 (step 4) is in no group, and it keeps its severity in each
+        // profile.
+        assert_eq!(Code::from_code("SD506"), Some(Code::EvalsInvalid));
+        assert_eq!(Code::EvalsInvalid.name(), "evals-invalid");
+        assert!(!GROUPS.iter().any(|g| g.1.contains(&"SD506")));
+        for profile in ["lite", "standard", "strict"] {
+            let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+            assert_eq!(
+                c.severity(Code::EvalsInvalid, Some(0)),
+                Some(E),
+                "{profile}"
+            );
+        }
         // SD911 is a state code: it is never new against the base (K4).
         assert!(Code::ChangeStale.is_state());
         assert!(!Code::GateApprovalMissing.is_state());
@@ -2787,6 +2989,68 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             !is_unknown(&e),
             "the parser does not know `lint.history-terms`: {e}"
         );
+        // The keys of `[evals]`: exactly the 4 keys of step 4.
+        let evals = schema.get("properties").get("evals");
+        let mut ekeys = keys(evals);
+        ekeys.sort();
+        assert_eq!(ekeys, ["dir", "max-total-usd", "min-pass-rate", "runs"]);
+        for k in &ekeys {
+            let e = with("", &format!("[evals]\n{k} = true\n")).unwrap_err();
+            assert!(!is_unknown(&e), "the parser does not know `evals.{k}`: {e}");
+        }
+        assert_eq!(
+            evals.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
+        );
+        let e = with("", "[evals]\ninvented = true\n").unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+        // The keys of `[harness]`.
+        let harness = schema.get("properties").get("harness");
+        let mut hkeys = keys(harness);
+        hkeys.sort();
+        assert_eq!(
+            hkeys,
+            [
+                "context-meter",
+                "deny",
+                "efforts",
+                "fanout-cap",
+                "level",
+                "protect-tests",
+                "review-md",
+                "roles",
+                "skills",
+                "subagent-meter",
+            ]
+        );
+        for k in &hkeys {
+            let e = with("", &format!("[harness]\nlevel = \"lean\"\n{k} = \"x\"\n")).unwrap_err();
+            assert!(
+                !is_unknown(&e),
+                "the parser does not know `harness.{k}`: {e}"
+            );
+        }
+        assert_eq!(
+            harness.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
+        );
+        // The roles of `[harness.roles]`. The roles of 0.5 that ended are not
+        // in the schema, and the parser gives an error that is not "unknown".
+        let mut rkeys = keys(harness.get("properties").get("roles"));
+        rkeys.sort();
+        let mut roles: Vec<&str> = crate::harness::Role::ALL.iter().map(|r| r.key()).collect();
+        roles.sort();
+        assert_eq!(rkeys, roles);
+        for gone in ["reviewer", "spec-writer"] {
+            assert!(!rkeys.iter().any(|k| k == gone), "{gone}");
+            let toml = format!("[harness]\nlevel = \"lean\"\n[harness.roles]\n{gone} = {{}}\n");
+            let e = with("", &toml).unwrap_err();
+            assert!(!is_unknown(&e), "{gone}: {e}");
+            assert!(
+                e.contains(&format!("`harness.roles.{gone}`")),
+                "{gone}: {e}"
+            );
+        }
         // The rule groups of the schema are the groups of the parser.
         let pattern = match schema
             .get("$defs")

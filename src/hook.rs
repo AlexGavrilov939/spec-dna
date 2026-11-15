@@ -4,11 +4,14 @@
 //! stdin and one file at most. It never reads `spec-dna.toml`, never checks the
 //! pin and never scans the repository. Unknown flags and bad values are
 //! ignored, the exit code is always 0, and an error gives no output.
+//! `protect-tests` reads no file. It runs `git` at most 2 times, and only for
+//! a path that matches a test glob.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 use crate::json::{self, Obj, Value};
@@ -58,6 +61,15 @@ pub fn run(args: &[String]) {
                     project.as_deref(),
                 )
             }
+            "protect-tests" => {
+                let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from);
+                protect(
+                    &input,
+                    &ProtectOpts::parse(flags),
+                    project.as_deref(),
+                    &mut run_git,
+                )
+            }
             _ => None,
         };
         if let Some(text) = out {
@@ -84,6 +96,25 @@ fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 fn flag_cap(args: &[String]) -> Option<u64> {
     flag_value(args, "--cap").and_then(|v| v.parse().ok())
+}
+
+/// Returns each value of a flag that can repeat, in order, in the form
+/// `--name value` or `--name=value`.
+fn flag_values<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == name {
+            if let Some(v) = args.get(i + 1) {
+                found.push(v.as_str());
+            }
+            i += 1;
+        } else if let Some(v) = args[i].strip_prefix(name).and_then(|r| r.strip_prefix('=')) {
+            found.push(v);
+        }
+        i += 1;
+    }
+    found
 }
 
 fn output(event: &str, key: &str, text: &str) -> String {
@@ -1208,6 +1239,161 @@ impl<'a> Scan<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// protect-tests
+// ---------------------------------------------------------------------------
+
+/// The flags of `protect-tests`. With no glob, the hook is off.
+#[derive(Default)]
+pub struct ProtectOpts {
+    /// `--mode always`. Any other value, or no `--mode`, acts as
+    /// `fix-branches`.
+    pub always: bool,
+    /// One `--test <glob>` for each glob of `[evidence] tests`.
+    pub tests: Vec<String>,
+}
+
+impl ProtectOpts {
+    fn parse(args: &[String]) -> Self {
+        ProtectOpts {
+            always: flag_value(args, "--mode") == Some("always"),
+            tests: flag_values(args, "--test")
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+}
+
+/// The answer of one `git` call: true for exit code 0, and its stdout.
+pub struct GitOut {
+    pub ok: bool,
+    pub stdout: String,
+}
+
+/// Runs `git -C <root> <args>`. The call takes no lock, reads no input and
+/// shows no error text. It returns `None` if `git` does not start.
+fn run_git(root: &Path, args: &[&str]) -> Option<GitOut> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    Some(GitOut {
+        ok: out.status.success(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+    })
+}
+
+/// The part of `file` below `root`, if both use `/` and `file` is inside.
+fn below<'a>(root: &str, file: &'a str) -> Option<&'a str> {
+    let rest = file
+        .strip_prefix(root.trim_end_matches('/'))?
+        .strip_prefix('/')?;
+    (!rest.is_empty()).then_some(rest)
+}
+
+/// Gives each `\` as `/`.
+fn slashes(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+/// True for a path that starts with `/` or with a drive letter and `:`.
+fn is_absolute(p: &str) -> bool {
+    p.starts_with('/')
+        || (p.as_bytes().get(1) == Some(&b':') && p.as_bytes()[0].is_ascii_alphabetic())
+}
+
+/// Returns the root and the path of `file` relative to it. If `file` is not
+/// below `root`, the function resolves links in `root` and in the folder of
+/// `file`, and tries again (`/var` is a link to `/private/var` on macOS). Both
+/// paths must be absolute. The relative path has no `..`, `.` or empty segment.
+fn relative_to(root: &str, file: &str) -> Option<(String, String)> {
+    let (root, file) = (slashes(root), slashes(file));
+    if !is_absolute(&root) || !is_absolute(&file) {
+        return None;
+    }
+    let (root, rel) = match below(&root, &file) {
+        Some(rel) => (root.clone(), rel.to_string()),
+        None => {
+            let real_root = slashes(&std::fs::canonicalize(&root).ok()?.to_string_lossy());
+            let path = Path::new(&file);
+            let parent = std::fs::canonicalize(path.parent()?).ok()?;
+            let real_file = slashes(&parent.join(path.file_name()?).to_string_lossy());
+            let rel = below(&real_root, &real_file)?.to_string();
+            (real_root, rel)
+        }
+    };
+    rel.split('/')
+        .all(|s| !s.is_empty() && s != "." && s != "..")
+        .then_some((root, rel))
+}
+
+/// Handles one `PreToolUse` event of `Edit` or `Write`. It returns the JSON to
+/// print when the file is a test file that git tracks, and (unless the mode is
+/// `always`) the branch starts with `fix/`. `project` is `CLAUDE_PROJECT_DIR`.
+/// `git` runs `git -C <root> <args>`. It runs 0 times for a path that matches
+/// no glob, and at most 2 times.
+pub fn protect(
+    input: &str,
+    opts: &ProtectOpts,
+    project: Option<&Path>,
+    git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>,
+) -> Option<String> {
+    if opts.tests.is_empty() {
+        return None;
+    }
+    let v = json::parse(input).ok()?;
+    if !matches!(v.get("tool_name").as_str(), Some("Edit" | "Write")) {
+        return None;
+    }
+    let file = v.get("tool_input").get("file_path").as_str()?;
+    let root = match project.and_then(Path::to_str).filter(|p| !p.is_empty()) {
+        Some(p) => p,
+        None => v.get("cwd").as_str().filter(|c| !c.is_empty())?,
+    };
+    let (root, rel) = relative_to(root, file)?;
+    if !opts.tests.iter().any(|g| crate::glob::matches(g, &rel)) {
+        return None;
+    }
+    let root = PathBuf::from(root);
+    let mut branch = String::new();
+    if !opts.always {
+        let out = git(&root, &["symbolic-ref", "--short", "-q", "HEAD"])?;
+        branch = out.stdout.trim_end_matches(['\n', '\r']).to_string();
+        if !out.ok || !branch.starts_with("fix/") {
+            return None;
+        }
+    }
+    let spec = format!(":(literal){rel}");
+    if !git(&root, &["ls-files", "--error-unmatch", "--", &spec])?.ok {
+        return None;
+    }
+    let reason = if opts.always {
+        format!(
+            "spec-dna protect-tests: {rel} is a test file that git tracks. Approve the edit only if the test is wrong."
+        )
+    } else {
+        format!(
+            "spec-dna protect-tests: {rel} is a test file that git tracks, and {branch} is a fix branch. A fix changes the code, not the test. Approve the edit only if the test is wrong."
+        )
+    };
+    let inner = Obj::new()
+        .str("hookEventName", "PreToolUse")
+        .str("permissionDecision", "ask")
+        .str("permissionDecisionReason", &reason)
+        .end();
+    Some(Obj::new().raw("hookSpecificOutput", &inner).end())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1841,5 +2027,190 @@ mod tests {
         assert_eq!(flag_cap(&a(&["--cap", "x"])), None);
         assert_eq!(flag_cap(&a(&["--cap"])), None);
         assert_eq!(flag_cap(&a(&[])), None);
+    }
+    // ---- protect-tests ----
+
+    fn ptest(always: bool, globs: &[&str]) -> ProtectOpts {
+        ProtectOpts {
+            always,
+            tests: globs.iter().map(|g| g.to_string()).collect(),
+        }
+    }
+
+    fn protect_event(tool: &str, file: &str, cwd: &str) -> String {
+        let q = |s: &str| s.replace('\\', "\\\\");
+        format!(
+            "{{\"tool_name\":\"{tool}\",\"cwd\":\"{}\",\"tool_input\":{{\"file_path\":\"{}\"}}}}",
+            q(cwd),
+            q(file)
+        )
+    }
+
+    /// Runs `protect` with a fake `git`. `branch` is the answer of
+    /// `symbolic-ref` (`None`: a detached HEAD), and `tracked` is the answer
+    /// of `ls-files`. Returns the output and the calls of `git`.
+    fn pcall(
+        input: &str,
+        opts: &ProtectOpts,
+        project: Option<&str>,
+        branch: Option<&str>,
+        tracked: bool,
+    ) -> (Option<String>, Vec<(String, Vec<String>)>) {
+        let mut calls = Vec::new();
+        let out = protect(input, opts, project.map(Path::new), &mut |root, args| {
+            calls.push((
+                root.to_string_lossy().into_owned(),
+                args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            ));
+            Some(if args[0] == "symbolic-ref" {
+                GitOut {
+                    ok: branch.is_some(),
+                    stdout: branch.map(|b| format!("{b}\n")).unwrap_or_default(),
+                }
+            } else {
+                GitOut {
+                    ok: tracked,
+                    stdout: String::new(),
+                }
+            })
+        });
+        (out, calls)
+    }
+
+    #[test]
+    fn protect_runs_git_only_for_a_path_that_matches_a_glob() {
+        let opts = ptest(false, &["**/tests/**", "**/*_test.*"]);
+        let ev = |f: &str| protect_event("Edit", f, "/p");
+        // No glob matches: no process.
+        let (out, calls) = pcall(&ev("/p/src/lib.rs"), &opts, Some("/p"), Some("fix/x"), true);
+        assert_eq!((out, calls.len()), (None, 0));
+        // A match on another branch: 1 process.
+        let (out, calls) = pcall(&ev("/p/tests/a.rs"), &opts, Some("/p"), Some("main"), true);
+        assert_eq!((out, calls.len()), (None, 1));
+        assert_eq!(calls[0].0, "/p");
+        assert_eq!(calls[0].1, ["symbolic-ref", "--short", "-q", "HEAD"]);
+        // A detached HEAD: 1 process.
+        let (out, calls) = pcall(&ev("/p/tests/a.rs"), &opts, Some("/p"), None, true);
+        assert_eq!((out, calls.len()), (None, 1));
+        // A new file on a fix branch: 2 processes, no output.
+        let (out, calls) = pcall(
+            &ev("/p/tests/a.rs"),
+            &opts,
+            Some("/p"),
+            Some("fix/x"),
+            false,
+        );
+        assert_eq!((out, calls.len()), (None, 2));
+        assert_eq!(
+            calls[1].1,
+            ["ls-files", "--error-unmatch", "--", ":(literal)tests/a.rs"]
+        );
+        // A tracked file on a fix branch: 2 processes, and the answer.
+        let (out, calls) = pcall(&ev("/p/tests/a.rs"), &opts, Some("/p"), Some("fix/x"), true);
+        assert_eq!(calls.len(), 2);
+        let out = out.unwrap();
+        assert!(out.contains("\"permissionDecision\":\"ask\""), "{out}");
+        assert!(
+            out.contains("tests/a.rs is a test file that git tracks, and fix/x is a fix branch")
+        );
+        // The mode `always` has no branch call.
+        let always = ptest(true, &["**/tests/**"]);
+        let (out, calls) = pcall(&ev("/p/tests/a.rs"), &always, Some("/p"), None, true);
+        assert_eq!(calls.len(), 1);
+        assert!(
+            out.unwrap()
+                .contains("tests/a.rs is a test file that git tracks. Approve")
+        );
+    }
+
+    #[test]
+    fn protect_reads_a_windows_path() {
+        let opts = ptest(false, &["**/tests/**"]);
+        let ev = protect_event("Write", "C:\\work\\p\\tests\\a.rs", "C:\\work\\p");
+        let (out, calls) = pcall(&ev, &opts, Some("C:\\work\\p"), Some("fix/x"), true);
+        assert!(
+            out.unwrap()
+                .contains("spec-dna protect-tests: tests/a.rs is")
+        );
+        // The root has no backslash when git runs.
+        assert_eq!(calls[0].0, "C:/work/p");
+        // The root has a final separator, and the cwd is the root.
+        let ev = protect_event("Write", "C:\\work\\p\\tests\\a.rs", "C:\\work\\p\\");
+        assert!(pcall(&ev, &opts, None, Some("fix/x"), true).0.is_some());
+        let (out, _) = pcall(&ev, &opts, Some("C:\\work\\p\\"), Some("fix/x"), true);
+        assert!(out.is_some());
+        // A path of another drive, or of a longer folder name, is outside.
+        for f in ["D:\\work\\p\\tests\\a.rs", "C:\\work\\pp\\tests\\a.rs"] {
+            let ev = protect_event("Edit", f, "C:\\work\\p");
+            let (out, calls) = pcall(&ev, &opts, Some("C:\\work\\p"), Some("fix/x"), true);
+            assert_eq!((out, calls.len()), (None, 0), "{f}");
+        }
+    }
+
+    #[test]
+    fn protect_stops_on_each_bad_input_before_it_starts_git() {
+        let opts = ptest(true, &["**"]);
+        for input in [
+            "",
+            "not json",
+            "[]",
+            "{}",
+            "{\"tool_name\":\"Edit\"}",
+            "{\"tool_name\":\"Bash\",\"tool_input\":{\"file_path\":\"/p/a\"}}",
+            "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"\"}}",
+            "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a\"}}",
+            "{\"tool_name\":\"Edit\",\"cwd\":\"\",\"tool_input\":{\"file_path\":\"/p/a\"}}",
+        ] {
+            let (out, calls) = pcall(input, &opts, None, Some("fix/x"), true);
+            assert_eq!((out, calls.len()), (None, 0), "{input}");
+        }
+        // A segment `..`, `.` or an empty segment gives no output.
+        for f in [
+            "/p/../p/a",
+            "/p/./a",
+            "/p//a",
+            "/p/a/..",
+            "/p",
+            "/p/",
+            "a/b",
+        ] {
+            let (out, calls) = pcall(
+                &protect_event("Edit", f, "/p"),
+                &opts,
+                Some("/p"),
+                None,
+                true,
+            );
+            assert_eq!((out, calls.len()), (None, 0), "{f}");
+        }
+        // No glob: no output, even with a test file.
+        let none = ptest(true, &[]);
+        let ev = protect_event("Edit", "/p/tests/a.rs", "/p");
+        assert_eq!(pcall(&ev, &none, Some("/p"), None, true).1.len(), 0);
+        // A `git` that does not start gives no output.
+        let ev = protect_event("Edit", "/p/tests/a.rs", "/p");
+        assert_eq!(
+            protect(&ev, &ptest(true, &["**"]), None, &mut |_, _| None),
+            None
+        );
+    }
+
+    #[test]
+    fn protect_flags_collect_each_test_glob() {
+        let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let o = ProtectOpts::parse(&a(&[
+            "--mode",
+            "always",
+            "--test",
+            "a/**",
+            "--test=b/**",
+            "--wat",
+            "--test",
+        ]));
+        assert!(o.always);
+        assert_eq!(o.tests, ["a/**", "b/**"]);
+        let o = ProtectOpts::parse(&a(&["--mode=fix-branches"]));
+        assert!(!o.always && o.tests.is_empty());
+        assert!(!ProtectOpts::parse(&a(&["--mode", "x"])).always);
     }
 }
