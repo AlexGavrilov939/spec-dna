@@ -63,7 +63,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - The requirement lint (SD801 to SD805) is off when `language` has a primary subtag other than `en`, also with `check --lint`.
 - SD101 and SD102 give no diagnostic for a reference in the locked text of an accepted decision. This text is the body outside the amendment, history and live sections. The author cannot change it, and a finished intent leaves no document to link.
 - The plan template (`spec-dna new plan`) writes a code span in its `Files` item and in the `Files:` label of its example tasks. The span holds the placeholder `{{path}}`. A placeholder is no path, so an untouched plan lists no path.
-- CHANGE OF BEHAVIOR: the pin mismatch message depends on the pin. A pin from 0.4.0 to before this version says "run `spec-dna upgrade`", with `--pin-file spec-dna-pin.toml` if the file has `[spec-dna-sha256]`. A pin before 0.4.0 says to move to 0.4.2 first. A pin after the binary has no sentence to move the project. A pin that is not 3 numbers keeps the earlier sentence. A command that stops on a pin mismatch gives this message. `init` and `init --reconfigure` stop with exit code 3 and write nothing. The pin scan also reads a pin in single quotes and a file with a byte order mark.
+- CHANGE OF BEHAVIOR: the pin mismatch message depends on the pin. A pin from 0.4.0 to before this version says "run `spec-dna upgrade`", with `--pin-file ../spec-dna-pin.toml` (a file outside the repository) if the file has `[spec-dna-sha256]`. A pin before 0.4.0 says to move to 0.4.2 first. A pin after the binary has no sentence to move the project. A pin that is not 3 numbers keeps the earlier sentence. A command that stops on a pin mismatch gives this message. `init` and `init --reconfigure` stop with exit code 3 and write nothing. The pin scan also reads a pin in single quotes and a file with a byte order mark.
 
 ### Added
 
@@ -80,6 +80,13 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - SD503 does not apply when the base pins a version before 0.6.0, so one pull request can hold the configuration and the documents. A later change of the configuration keeps SD503.
   - The change checks (SD910 to SD921) have no lifecycle base when that base pins a version before 0.6.0. `check` prints a note.
   - A base that pins a version before 0.4.0 gives exit code 3: move the project to 0.4.2 first. A base that `upgrade` cannot plan gives exit code 3 and the reason.
+  - Known limits:
+    - Save the file of `--pin-file` outside the repository. A file inside it makes the tree dirty.
+    - A file with CRLF line endings gets the new block of aliases with LF line endings, so the file can have both. `spec-dna mv` does the same.
+    - `git log --follow` can lose the history of a small change that `upgrade` moves, because git does not see the file as the same file after the edit of its front matter and links.
+    - `status`, `next` and `finish` read a lifecycle base with a pin before 0.6.0 with the rules of 0.6.
+    - If `upgrade` fails at its first write step, empty folders can stay. Git does not show them. The message says how to restore the tree.
+    - A hand edit that the message of `upgrade` asks for must use the 0.5 names. The next run of `upgrade` reads the file with the 0.5 reader.
 - The configuration has the table `[evals]` with 4 keys: `dir` (default `evals`), `min-pass-rate` (default 0.8), `runs` (default 3) and `max-total-usd` (default 20). Without the table, there are no evals. A bad value is an error (exit code 3). `evals.dir` follows the rules of `templates.dir`, and it cannot overlap `templates.dir`. The folder is never part of a root. `pass-at` is a key of an eval file only, so it is unknown in `[evals]` ([docs/config.md](docs/config.md)).
 - `[harness]` has 3 new keys: `skills` (a list of `intent`, `spec`, `plan` and `review`, default `[]`), `review-md` (default `false`) and `protect-tests` (`fix-branches`, `always` or `off`, default `off`). A file that has none of them behaves as in 0.5. `REVIEW.md` and the stage skills that the configuration writes are never part of a root. A new configuration from `spec-dna init` has other defaults (see the entry on the 14 questions).
 - `spec-dna init` writes the 4 stage skills and `REVIEW.md`, when `[harness] skills` and `review-md` select them ([docs/harness.md](docs/harness.md#stage-skills-and-reviewmd)). The defaults of a new project are in the entry on the 14 questions.

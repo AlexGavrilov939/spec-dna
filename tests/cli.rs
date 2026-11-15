@@ -2854,7 +2854,8 @@ fn another_pin_does_not_validate_the_sha256_table_and_comes_before_a_parse_error
     );
     assert!(
         err.contains("download https://github.com/AlexGavrilov939/spec-dna/releases/download/")
-            && err.contains("run `spec-dna upgrade --pin-file spec-dna-pin.toml`"),
+            && err.contains("outside the repository")
+            && err.contains("run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`"),
         "{err}"
     );
     // A key that this binary does not know, in a file of another version.

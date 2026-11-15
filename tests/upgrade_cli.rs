@@ -403,7 +403,7 @@ fn the_hint_stages_the_whole_result() {
         .split(' ')
         .collect();
     assert!(
-        paths.contains(&"spec-dna.toml") && paths.contains(&".claude/agents/checker.md"),
+        paths.contains(&":/spec-dna.toml") && paths.contains(&":/.claude/agents/checker.md"),
         "{line}"
     );
     let mut cmd = vec!["add", "-A", "--"];

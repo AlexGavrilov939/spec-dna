@@ -558,7 +558,7 @@ fn mismatch_message(
             "  First move the project to {PIN_FIRST_STEP} with the {PIN_FIRST_STEP} binary and `spec-dna init`, then run `spec-dna upgrade`."
         )),
         PinClass::Model05 | PinClass::Model06 if sums.is_some() => m.push_str(&format!(
-            "  To move the project to {binary}, download {DEFAULT_INSTALL_SOURCE}/releases/download/v{binary}/spec-dna-pin.toml, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file spec-dna-pin.toml`."
+            "  To move the project to {binary}, download {DEFAULT_INSTALL_SOURCE}/releases/download/v{binary}/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`."
         )),
         PinClass::Model05 | PinClass::Model06 => m.push_str(&format!(
             "  To move the project to {binary}, run `spec-dna upgrade`."
@@ -2325,7 +2325,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         let m = pin_mismatch_message("0.5.0", DEFAULT_INSTALL_SOURCE, Some(&sums));
         let src = DEFAULT_INSTALL_SOURCE;
         let want = format!(
-            "spec-dna.toml pins version 0.5.0, but this binary is {VERSION}.\n  To use 0.5.0, download it and compare its SHA-256 with spec-dna.toml:\n    {src}/releases/download/v0.5.0/{own}\n    SHA-256: {SUM}\n  Or build it from source:\n    cargo install --locked --force --git {src} --tag v0.5.0 spec-dna\n  To move the project to {VERSION}, download {src}/releases/download/v{VERSION}/spec-dna-pin.toml, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file spec-dna-pin.toml`."
+            "spec-dna.toml pins version 0.5.0, but this binary is {VERSION}.\n  To use 0.5.0, download it and compare its SHA-256 with spec-dna.toml:\n    {src}/releases/download/v0.5.0/{own}\n    SHA-256: {SUM}\n  Or build it from source:\n    cargo install --locked --force --git {src} --tag v0.5.0 spec-dna\n  To move the project to {VERSION}, download {src}/releases/download/v{VERSION}/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`."
         );
         assert_eq!(m, want);
         // A source of the project gets the build command only. The table still
@@ -2334,7 +2334,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert!(!m.contains("SHA-256"), "{m}");
         assert!(m.contains("--git file:///srv/x --tag v0.5.0"), "{m}");
         assert!(
-            m.ends_with("run `spec-dna upgrade --pin-file spec-dna-pin.toml`."),
+            m.ends_with("run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`."),
             "{m}"
         );
         // No sum of this binary, or no table: the text of phase 1.
@@ -2372,7 +2372,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert_eq!(
                 last(pin, true, "0.6.3"),
                 format!(
-                    "  To move the project to 0.6.3, download {src}/releases/download/v0.6.3/spec-dna-pin.toml, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file spec-dna-pin.toml`."
+                    "  To move the project to 0.6.3, download {src}/releases/download/v0.6.3/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`."
                 ),
                 "{pin}"
             );

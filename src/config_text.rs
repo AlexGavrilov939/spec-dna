@@ -147,6 +147,8 @@ fn exists(path: &[Seg], name: &str) -> Fatal {
 }
 
 const FORM_LINE: &str = "`key = value` on a line of its own";
+const FORM_ARRAY_LINE: &str =
+    "an array on one line, with the same names that it has now and no comment inside it";
 const FORM_INLINE: &str = "an inline table, such as `key = { a = 1 }`";
 
 /// The form of a table with a header, with the header of `path`: `[roots.x]`,
@@ -378,8 +380,18 @@ pub fn rename_key(text: &str, path: &[Seg], new: &str) -> Result<String, Fatal> 
         end: span.end,
         text: key_like(&text[span.clone()], new),
     };
-    // The name of a key in 2 places has one span: the check below sees it.
-    let form = format!("`{new}` in each place that has the name `{old}`");
+    // The name of a key in 2 places has one span: the check below sees it. A
+    // table is the only value that can have 2 places. The person writes it
+    // with a header and the name that it has now, because the 0.5 reader of
+    // `upgrade` refuses a new name.
+    let form = if matches!(found.value.get_ref(), DeValue::Table(_)) {
+        format!(
+            "{}, with each key of the table under that header and with the name `{old}` as it is now",
+            form_header(path)
+        )
+    } else {
+        format!("`{new}` in each place that has the name `{old}`")
+    };
     finish(text, vec![edit], path, &form, &[expected])
 }
 
@@ -407,7 +419,7 @@ pub fn set_value(text: &str, path: &[Seg], new: &Value) -> Result<String, Fatal>
                 .iter()
                 .all(|e| !matches!(e.get_ref(), DeValue::Table(_) | DeValue::Array(_)));
             if items.len() != values.len() || !values.iter().all(simple) || !flat {
-                return Err(by_hand(path, "an array with the same number of elements"));
+                return Err(by_hand(path, FORM_ARRAY_LINE));
             }
             items
                 .iter()
@@ -920,11 +932,19 @@ budget = 2500\n";
         // The name of a key that 2 lines write: one span, 2 places.
         let d = "b.guide.soft = 1\nb.guide.hard = 2\n";
         let m = refusal(rename_key(d, &[k("b"), k("guide")], "g"));
-        assert_by_hand(&m, "b.guide", "`g` in each place that has the name `guide`");
+        assert_by_hand(
+            &m,
+            "b.guide",
+            "a table with a header, such as `[b.guide]`, with each key of the table under that header and with the name `guide` as it is now",
+        );
         // The same for 2 headers with one prefix.
         let h = "[a.b]\nx = 1\n[a.c]\ny = 1\n";
         let m = refusal(rename_key(h, &[k("a")], "z"));
-        assert_by_hand(&m, "a", "`z` in each place that has the name `a`");
+        assert_by_hand(
+            &m,
+            "a",
+            "a table with a header, such as `[a]`, with each key of the table under that header and with the name `a` as it is now",
+        );
         // The new name exists.
         let m = refusal(rename_key(SAMPLE, &[k("budgets"), k("note")], "guide"));
         assert!(
@@ -1028,7 +1048,7 @@ budget = 2500\n";
         // Another length: no one splice per element.
         let short = Value::Array(vec![Value::String("x".into())]);
         let m = refusal(set_value(t, &[k("a")], &short));
-        assert_by_hand(&m, "a", "an array with the same number of elements");
+        assert_by_hand(&m, "a", FORM_ARRAY_LINE);
         // An element that is a table: no splice.
         let tables = Value::Array(vec![
             Value::Table(Table::new()),
@@ -1038,7 +1058,7 @@ budget = 2500\n";
         assert_by_hand(
             &refusal(set_value(t, &[k("a")], &tables)),
             "a",
-            "an array with the same number of elements",
+            FORM_ARRAY_LINE,
         );
     }
 

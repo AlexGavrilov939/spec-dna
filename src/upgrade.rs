@@ -872,8 +872,32 @@ fn unclean_message(paths: &[String]) -> String {
     )
 }
 
+/// A file in the place of a folder of a path stops the write. A part of the
+/// path that is a symbolic link is the case of `link_problem`.
+fn file_problem(root: &Path, path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let mut cur = root.to_path_buf();
+    for (i, part) in parts.iter().enumerate().take(parts.len().saturating_sub(1)) {
+        cur.push(part);
+        let meta = std::fs::symlink_metadata(&cur).ok()?;
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+        if meta.is_file() {
+            return Some(format!(
+                "`{}` is a file, and upgrade needs a folder there for `{path}`; move or delete the file, then run `spec-dna upgrade` again",
+                parts[..=i].join("/")
+            ));
+        }
+    }
+    None
+}
+
 /// A symbolic link in a path stops the write (D146, D203).
 fn link_problem(root: &Path, path: &str) -> Option<String> {
+    if let Some(m) = file_problem(root, path) {
+        return Some(m);
+    }
     finish::path_problem(root, path).map(|m| {
         let cut = m.split("; `finish`").next().unwrap_or(&m).to_string();
         format!(
@@ -1181,7 +1205,10 @@ fn output_text(plan: &Plan, files: &[Entry], proof: &Proof, report: &Report, dry
         proof.ids, proof.requirements, proof.sections, proof.types
     ));
     out.push_str(&report_text(report));
-    let paths: Vec<String> = add_paths(plan).iter().map(|p| shell_word(p)).collect();
+    let paths: Vec<String> = add_paths(plan)
+        .iter()
+        .map(|p| shell_word(&format!(":/{p}")))
+        .collect();
     out.push_str(&format!("to commit: git add -A -- {}\n", paths.join(" ")));
     out.push_str(&if dry {
         "spec-dna upgrade: dry run; nothing written\n".to_string()
