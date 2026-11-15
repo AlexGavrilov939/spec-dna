@@ -38,9 +38,12 @@ fn parses(head: &str) {
     assert_ne!(code, 3, "{head}\n{out}{err}");
 }
 
-/// Runs `check --all` and asserts exit code 0.
+/// Runs `check --all` and asserts exit code 0. These tests check the keys of
+/// the configuration, not the eval files, so SD506 is off here (it gives an
+/// error for a missing `check.sh`; `tests/evals_checks.rs` covers it).
 fn accepts(head: &str) {
-    let (code, out, err) = repo(head).run(&["check", "--all"]);
+    let head = format!("{head}\n[rules]\nSD506 = \"off\"\n");
+    let (code, out, err) = repo(&head).run(&["check", "--all"]);
     assert_eq!(code, 0, "{head}\n{out}{err}");
 }
 
@@ -134,6 +137,7 @@ fn the_evals_folder_is_never_part_of_a_root() {
     // file with no front matter and a broken link. `check` does not read it.
     let r = Repo::with_config("[evals]\n\n[[roots]]\npath = \".\"\ntype = \"mixed\"\n");
     r.write("terms.md", "# Terms\n\nA valve closes a pipe.\n");
+    r.write("evals/check.sh", "true\n");
     r.write(
         "evals/fixtures/a/notes.md",
         "# Notes\n\nSee [x](../missing.md).\n",

@@ -77,7 +77,12 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - Cost cap: the command refuses to start (exit code 3) when `runs x max-budget-usd` is above `max-total-usd`. It adds the `total_cost_usd` of each run, and stops (exit code 3) when the spend is above the cap and a run is left. A `claude` that is absent gives exit code 3. A git or file error of the runner gives exit code 4.
   - `--out <dir>` writes the result as `eval-<time>.json`: counts, costs, check names and versions. The result has no task text, no check command and no output text of `claude`.
   - The output of `claude --output-format json` is one object, or a list of events (one run with Claude Code 2.1.325 gave a list). The runner reads `total_cost_usd` and `subtype` from the `result` object of either form.
-  - spec-dna makes no network call. `claude` does, and each run costs money. The check SD506 for the eval files comes in a later change of this release.
+  - spec-dna makes no network call. `claude` does, and each run costs money. The check SD506 reads the same eval files (see below).
+
+- The checks SD506 and SD918 for the evals ([docs/diagnostics.md](docs/diagnostics.md#checks-of-the-evals)). Both need the table `[evals]` in `spec-dna.toml`, so no project of 0.5 gets them.
+  - SD506 (`evals-invalid`) is an error in each profile, and it does not depend on `[change] policy`. It reports each `*.json` file directly in `[evals] dir` that `spec-dna eval run` would reject, with the key of the broken rule as the target, and an absent `<dir>/check.sh`. It reads no text of `check.sh` or of a fixture, and no file in a subfolder. A rule for SD506 in `[rules]` changes its severity. A finding of the base is not new. The base findings use the `[evals]` table of the base.
+  - SD918 (`incident-eval-missing`) is a warning in `standard` and `strict`, and off in `lite`. It is in the rule group `changes`, so `policy = "none"` turns it off. It reports each incident that the diff adds, if the diff adds or changes no `*.json` file directly in `[evals] dir`. A move of an incident, also with an edit, is not an add. It is always new, and it needs the lifecycle base.
+  - SD503 does not count the starter files of `skeleton` (`<dir>/check.sh`, `<dir>/example.json`, `<dir>/fixtures/example/notes.txt` and `.github/workflows/agent-evals.yml`) when the head configuration has `[evals]`.
 
 - The commands `spec-dna next <slug> [--base <rev>]` and `spec-dna status [--group <name>] [--base <rev>]` ([docs/commands.md](docs/commands.md#next)).
   - The stage of a change comes from its files, their statuses, the diff against the lifecycle base and the evidence. The stages are `closed`, `plan`, `design`, `build`, `test` and `deploy`.
@@ -133,8 +138,8 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - `high-risk-layers` names layers of the graph. The default is `interfaces` and `rules`, without the names that the graph does not have.
   - `high-risk-paths` has globs from the repository root (default none). `max-fanout` is an integer (default 8).
   - An unknown key of `[change]` is an error (exit code 3).
-  - Without the table the policy is `none`. With `none`, the codes SD905, SD910 to SD917 and SD919 to SD922 are off, and no rule in `spec-dna.toml` can turn them on.
-- The rule groups `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD922, without SD918) for `[rules]`. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table.
+  - Without the table the policy is `none`. With `none`, the codes SD905 and SD910 to SD922 are off, and no rule in `spec-dna.toml` can turn them on.
+- The rule groups `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD922) for `[rules]`. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table.
 - The codes SD905, SD910 to SD917, SD919 and SD920 of the change lifecycle, with their names, their profile severities and their fix texts. SD910 follows `[change] gate`, and a rule for SD910 in `[rules]` has priority over it.
 - `check --json` has the field `change_base` when `[change] policy` is not `none`. The field is the merge base of `--base` (or of `origin/HEAD`) with `HEAD`, or `null`.
   - The text output prints a note on stderr if there is no base.

@@ -73,6 +73,7 @@ codes! {
     ConfigNotAlone = "SD503", "config-not-alone", Error, "Do not edit spec-dna.toml in a change of documents or code. Revert the edit, or make the configuration change a change of its own.";
     HarnessMissing = "SD504", "harness-missing", Error, "Run `spec-dna init` to write the harness files. To keep a file of your own, rename its agent, set the role to \"none\" in [harness.roles], remove the skill from `skills` in [harness], or set `review-md = false` in [harness].";
     HarnessSettingsInvalid = "SD505", "harness-settings-invalid", Error, "Make .claude/settings.json valid JSON, with the value types that the message names. spec-dna cannot check the harness settings in a file that it cannot read.";
+    EvalsInvalid = "SD506", "evals-invalid", Error, "Fix the eval file as the message says. The message names the key of the broken rule. If `check.sh` is absent, add it to [evals] dir. `spec-dna eval run` reads the same files, and it stops with exit code 3 on the same error.";
     TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.";
     AnchorMissing = "SD602", "anchor-missing", Warning, "Link to an existing heading anchor or requirement key.";
     CrossRepoUnpinned = "SD603", "cross-repo-unpinned", Warning, "A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.";
@@ -110,6 +111,7 @@ codes! {
     ClassTooLow = "SD917", "class-too-low", Warning, "Raise the `class` of the intent. The diff or the delta needs a higher class (`higher-risk`), because it touches a layer of `high-risk-layers` or a path of `high-risk-paths`.";
     ConcernOpen = "SD919", "concern-open", Warning, "Resolve each open concern of the spec, or remove it, before the spec is `approved`.";
     DecisionNeededUnaccepted = "SD920", "decision-needed-unaccepted", Warning, "Write the decision that the spec needs, and accept it. A change cannot finish while a needed decision is absent or is not `accepted`.";
+    IncidentEvalMissing = "SD918", "incident-eval-missing", Warning, "Add an eval for the incident to [evals] dir in the same change, and name its file in the `Eval` section of the incident.";
     TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
     QuestionOpen = "SD922", "question-open", Warning, "Answer each open question of the spec, or remove it, before the spec is `approved`. Check the box (`- [x]`) and write the answer after the question.";
 }

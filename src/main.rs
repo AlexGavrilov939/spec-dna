@@ -805,10 +805,9 @@ fn harness_texts(
     Ok(out)
 }
 
-/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
-/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
-/// configuration that does not parse.
-fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+/// Reads the configuration of the base snapshot. Returns `None` if the base
+/// has no `spec-dna.toml`, or a configuration that does not parse.
+fn base_config(repo: &Repo, snap: &Snapshot) -> Result<Option<config::Config>, Fatal> {
     let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
         return Ok(None);
     };
@@ -818,8 +817,81 @@ fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>
         .map_err(Fatal::Io)?;
     Ok(blobs
         .get(&blob)
-        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok())
-        .and_then(|c| c.harness))
+        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok()))
+}
+
+/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
+/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
+/// configuration that does not parse.
+fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+    Ok(base_config(repo, snap)?.and_then(|c| c.harness))
+}
+
+/// The files of a tree under `[evals] dir`, for SD506. In the working tree,
+/// the paths are the tracked files and, with `untracked`, the untracked files
+/// that git does not ignore (the folder is outside the document roots, so the
+/// snapshot does not list its untracked files). A path that is absent on disk
+/// is no file. The bytes of each `*.json` file directly in the folder are read
+/// from the disk, or from the tree.
+fn eval_tree(
+    repo: &Repo,
+    snap: &Snapshot,
+    dir: &str,
+    untracked: bool,
+) -> Result<check::EvalTree, Fatal> {
+    use std::io::Read;
+    let prefix = format!("{dir}/");
+    let mut paths: Vec<String> = snap
+        .files
+        .iter()
+        .filter(|e| e.path.starts_with(&prefix))
+        .map(|e| e.path.clone())
+        .collect();
+    if snap.worktree {
+        if untracked {
+            let st = repo
+                .git
+                .status(&[format!(":(literal){dir}")], true)
+                .map_err(Fatal::Io)?;
+            paths.extend(st.untracked.into_iter().filter(|p| p.starts_with(&prefix)));
+        }
+        paths.retain(|p| std::fs::symlink_metadata(repo.root.join(p)).is_ok());
+    }
+    paths.sort();
+    paths.dedup();
+    let direct =
+        |p: &&String| p[prefix.len()..].ends_with(".json") && !p[prefix.len()..].contains('/');
+    let mut json = Vec::new();
+    if snap.worktree {
+        for p in paths.iter().filter(direct) {
+            let mut bytes = Vec::new();
+            let read = std::fs::File::open(repo.root.join(p))
+                .and_then(|f| f.take(evals::MAX_BYTES as u64 + 1).read_to_end(&mut bytes));
+            if read.is_ok() {
+                json.push((p.clone(), bytes));
+            }
+        }
+    } else {
+        let ids: Vec<(String, String)> = paths
+            .iter()
+            .filter(direct)
+            .filter_map(|p| {
+                snap.blob_of(p)
+                    .and_then(|e| e.blob.clone())
+                    .map(|b| (p.clone(), b))
+            })
+            .collect();
+        let blobs = repo
+            .git
+            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
+            .map_err(Fatal::Io)?;
+        for (p, b) in ids {
+            if let Some(bytes) = blobs.get(&b) {
+                json.push((p, bytes.clone()));
+            }
+        }
+    }
+    Ok(check::EvalTree { paths, json })
 }
 
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
@@ -995,8 +1067,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         repo::trace("drift", &mut t);
     }
     // The checks of the diff against the lifecycle base: SD905 (a change with
-    // no delta), SD910, SD913, SD915, SD916, SD917, SD920 (a decision that is
-    // not `accepted`) and SD921. With `--base` and no merge base,
+    // no delta), SD910, SD913, SD915, SD916, SD917, SD918, SD920 (a decision
+    // that is not `accepted`) and SD921. With `--base` and no merge base,
     // SD921 compares with the base of the gate.
     let mut report = lifecycle::BaseReport::default();
     if let (Some(life), Some(diff), Some(rev)) = (life, &diff, &change_base) {
@@ -1077,6 +1149,29 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         };
         for d in head_hd {
             let is_new = !base_hd.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
+    // SD506: the eval files, only for a project with `[evals]`. The base
+    // findings use the `[evals]` table of the base, so only a new finding
+    // fails the gate. A base with no table has no findings.
+    if let Some(ev) = cfg
+        .evals
+        .as_ref()
+        .filter(|_| !cfg.is_off(diag::Code::EvalsInvalid))
+    {
+        let tree = eval_tree(repo, &head_snap, &ev.dir, untracked)?;
+        let head_ev = check::apply_severity(&cfg, check::evals_invalid(ev, &tree));
+        let base_ev: Vec<_> = match base_config(repo, &base_snap)?.and_then(|c| c.evals) {
+            Some(bev) if use_base => {
+                let tree = eval_tree(repo, &base_snap, &bev.dir, false)?;
+                check::apply_severity(&cfg, check::evals_invalid(&bev, &tree))
+            }
+            _ => Vec::new(),
+        };
+        for d in head_ev {
+            let is_new = !base_ev.iter().any(|b| b.fingerprint() == d.fingerprint());
             outcome.head.push(d);
             outcome.new.push(is_new);
         }
@@ -1190,7 +1285,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
 /// `init` writes with it (the adapters, the harness files, the hook files
-/// that `init` writes or upgrades, and files named `spec-dna*`) do not count,
+/// that `init` writes or upgrades, the starter files of the evals, and files
+/// named `spec-dna*`) do not count,
 /// and a new `spec-dna.toml` (the adoption) is not checked.
 fn config_not_alone(
     repo: &Repo,
@@ -1205,6 +1301,12 @@ fn config_not_alone(
     if *added {
         return Ok(None);
     }
+    // The starter files of `skeleton` come with the table `[evals]`.
+    let starter: Vec<String> = cfg
+        .evals
+        .as_ref()
+        .map(|e| evals::skeleton_paths(&e.dir).to_vec())
+        .unwrap_or_default();
     let others: Vec<&str> = changed
         .iter()
         .map(|(p, _)| p.as_str())
@@ -1212,6 +1314,7 @@ fn config_not_alone(
             *p != config::FILE_NAME
                 && !adapters::PATHS.contains(p)
                 && !harness::is_output_path(p)
+                && !starter.iter().any(|s| s == p)
                 && !init::HOOK_FILES.contains(p)
                 && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
         })

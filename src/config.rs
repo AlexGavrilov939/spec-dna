@@ -581,6 +581,7 @@ impl Profile {
             "SD911" | "SD913" => (None, Some(W), Some(W)),
             "SD912" => (None, Some(W), Some(E)),
             "SD917" | "SD921" => (None, Some(W), Some(E)),
+            "SD918" => (None, Some(W), Some(W)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -604,12 +605,11 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
-    // SD918 is not in the group: it comes in step 4 (deviation D27).
     (
         "changes",
         &[
             "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
-            "SD919", "SD920", "SD921", "SD922",
+            "SD918", "SD919", "SD920", "SD921", "SD922",
         ],
     ),
 ];
@@ -2660,7 +2660,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert_eq!(Code::from_code(code.code()), Some(code));
         }
         // The group `layers` holds SD901 to SD904. The group `changes` holds
-        // SD905 and SD910 to SD922, without SD918 (step 4).
+        // SD905 and SD910 to SD922.
         let c = with(
             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
             "[change]\npolicy = \"two-class\"\n",
@@ -2680,7 +2680,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         use Severity::{Error as E, Warning as W};
         // The design table: code, lite, standard, strict.
         type Sev = Option<Severity>;
-        let rows: [(Code, Sev, Sev, Sev); 12] = [
+        let rows: [(Code, Sev, Sev, Sev); 13] = [
             (Code::FanOut, None, Some(W), Some(W)),
             (Code::GateApprovalMissing, Some(W), Some(E), Some(E)),
             (Code::ChangeStale, None, Some(W), Some(W)),
@@ -2693,6 +2693,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             (Code::ConcernOpen, Some(W), Some(E), Some(E)),
             (Code::QuestionOpen, Some(W), Some(E), Some(E)),
             (Code::DecisionNeededUnaccepted, Some(W), Some(E), Some(E)),
+            (Code::IncidentEvalMissing, None, Some(W), Some(W)),
         ];
         for (code, lite, standard, strict) in rows {
             for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
@@ -2710,9 +2711,22 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                     .any(|g| g.0 == "changes" && g.1.contains(&code.code()))
             );
         }
-        // SD918 has no code before step 4, and no group has it.
-        assert!(Code::from_code("SD918").is_none());
-        assert!(!GROUPS.iter().any(|g| g.1.contains(&"SD918")));
+        // SD918 (step 4) is in the group `changes`, and it needs `[evals]`.
+        assert_eq!(Code::from_code("SD918"), Some(Code::IncidentEvalMissing));
+        assert_eq!(Code::IncidentEvalMissing.name(), "incident-eval-missing");
+        // SD506 (step 4) is in no group, and it keeps its severity in each
+        // profile.
+        assert_eq!(Code::from_code("SD506"), Some(Code::EvalsInvalid));
+        assert_eq!(Code::EvalsInvalid.name(), "evals-invalid");
+        assert!(!GROUPS.iter().any(|g| g.1.contains(&"SD506")));
+        for profile in ["lite", "standard", "strict"] {
+            let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+            assert_eq!(
+                c.severity(Code::EvalsInvalid, Some(0)),
+                Some(E),
+                "{profile}"
+            );
+        }
         // SD911 is a state code: it is never new against the base (K4).
         assert!(Code::ChangeStale.is_state());
         assert!(!Code::GateApprovalMissing.is_state());

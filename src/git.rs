@@ -219,6 +219,43 @@ impl Git {
         Ok(v)
     }
 
+    /// Returns the new paths of the renames between a commit and the working
+    /// tree (or the git index, for a `staged` `Git`), with the rename
+    /// detection of git. Only a tracked path can be the target of a rename, so
+    /// an untracked file is never in the result.
+    pub fn renamed_paths(&self, rev: &str) -> Result<Vec<String>, String> {
+        let mut args = vec!["diff"];
+        if self.staged {
+            args.push("--cached");
+        }
+        args.extend([
+            "--name-status",
+            "-z",
+            "-M",
+            "--ignore-submodules=all",
+            rev,
+            "--",
+        ]);
+        let out = self.run(&args)?;
+        let mut v = Vec::new();
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        while let (Some(status), Some(_)) = (recs.next(), recs.next()) {
+            // A rename or a copy has the old path, then the new path.
+            match status.first() {
+                Some(b'R') => {
+                    if let Some(new) = recs.next() {
+                        v.push(String::from_utf8_lossy(new).into_owned());
+                    }
+                }
+                Some(b'C') => {
+                    recs.next();
+                }
+                _ => {}
+            }
+        }
+        Ok(v)
+    }
+
     /// Returns the paths and blob ids of the git index (stage 0, or the first
     /// stage of a conflicted path).
     pub fn ls_files(&self) -> Result<Vec<Entry>, String> {

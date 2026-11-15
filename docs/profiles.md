@@ -21,19 +21,19 @@ An error fails `check` when the error is new against the base. A warning never f
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
-| `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan) | off | warning | warning |
+| `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan), SD918 (incident with no eval) | off | warning | warning |
 | `changes` | SD912 (started limit), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
 | `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted), SD922 (question open) | warning | error | error |
 
-The group `changes` needs a `[change] policy` other than `none`. With `none`, each of its codes is off, and no rule turns it on.
+The group `changes` needs a `[change] policy` other than `none`. With `none`, each of its codes is off, and no rule turns it on. SD918 also needs the table `[evals]`.
 
-SD905 (for a change with no delta), SD910, SD913, SD915, SD916, SD917, SD920 (a decision that is not `accepted`) and SD921 compare with the lifecycle base. This base is the merge base of `--base`, or of `origin/HEAD`, with `HEAD`. These codes do not run if git cannot name it. SD911 reads the base and the history, and it is silent without a base. SD911 is a state code: it is never new, and `check` shows it only with `--all`.
+SD905 (for a change with no delta), SD910, SD913, SD915, SD916, SD917, SD918, SD920 (a decision that is not `accepted`) and SD921 compare with the lifecycle base. This base is the merge base of `--base`, or of `origin/HEAD`, with `HEAD`. These codes do not run if git cannot name it. SD911 reads the base and the history, and it is silent without a base. SD911 is a state code: it is never new, and `check` shows it only with `--all`.
 
-SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off). Then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate. SD918 is not in the group yet.
+SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off). Then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate.
 
 SD914 has one exception to the column of the profile. `check` lowers an error of SD914 to a warning in 2 cases: the diff does not touch the spec, or git cannot name the lifecycle base. SD912 is on `spec-dna.toml`, so the profile and the rules of the root do not apply to it, as for SD902 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
 
-The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the frozen text of an accepted decision changed) is always an error.
+The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. SD506 (an eval file that is not valid, or an absent `check.sh`) is in no group, so it is an error in every profile. A rule for SD506 in `[rules]` can change it. For example, SD405 (the frozen text of an accepted decision changed) is always an error.
 
 Use the profiles in this order:
 

@@ -68,7 +68,6 @@ impl Eval {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EvalError {
     /// The key of the rule, or `file` for a rule of the whole file.
-    #[allow(dead_code)] // SD506 uses it as the target (step 4, S7).
     pub key: String,
     /// The message. It names the key in backticks.
     pub message: String,
@@ -382,7 +381,6 @@ fn parse_checks(items: &[Value]) -> Result<Vec<Check>, EvalError> {
 
 /// The paths of the starter files that `init` writes for the answer
 /// `skeleton`, with the folder `dir` of `[evals]`.
-#[allow(dead_code)] // `init` and the check SD503 use it (step 4, S7 and S9).
 pub fn skeleton_paths(dir: &str) -> [String; 4] {
     [
         format!("{dir}/{CHECK_FILE}"),

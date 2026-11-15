@@ -1,7 +1,8 @@
 //! The base of the change checks (design 0.6.0, "Gates"), the diff against it,
 //! the requirements that the diff changes, the checks of the change lifecycle
 //! that need one tree only (`tree_checks`), the checks of the diff against the
-//! base (`base_checks`: SD905, SD910, SD913, SD915, SD916, SD917 and SD920), and
+//! base (`base_checks`: SD905, SD910, SD913, SD915, SD916, SD917, SD918 and
+//! SD920), and
 //! the staleness of a started change (`stale_changes`, SD911).
 //!
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`) with
@@ -889,8 +890,8 @@ impl<'a> Ctx<'a> {
 
 /// Runs the checks of the diff against the lifecycle base: SD905 (the part for
 /// a change with no delta), SD910, SD913, SD914 (the interface that the diff
-/// does not change), SD915, SD916, SD917 and SD920 (the decision that is not
-/// `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
+/// does not change), SD915, SD916, SD917, SD918 and SD920 (the decision that is
+/// not `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
 /// diff of the head against it. The checks read the artifacts of a change from
 /// the head tree, and from the base tree if the diff deletes the folder. They
 /// read approvals from the base tree only, so an approval in the same pull
@@ -915,6 +916,7 @@ pub fn base_checks(
             Code::DeltaEvidenceMissing,
             Code::DecisionNeededUnaccepted,
             Code::DeltaInvalid,
+            Code::IncidentEvalMissing,
         ]
         .iter()
         .any(|&k| on(k))
@@ -947,6 +949,9 @@ pub fn base_checks(
         out.extend(routine_fan_out(&ctx, &changes));
     }
     out.extend(finished_checks(&ctx, &changes));
+    if on(Code::IncidentEvalMissing) {
+        out.extend(incident_eval_missing(&ctx)?);
+    }
     // A plan that covers a document: the plan of a change in the diff, and the
     // approved plan of a started change in the base.
     let mut exempt: Vec<String> = changes
@@ -964,6 +969,63 @@ pub fn base_checks(
         exempt,
         born: changes.iter().any(|c| c.origin == Origin::Born),
     })
+}
+
+/// SD918: the diff adds a document of type `incident`, and adds or changes no
+/// `*.json` file directly in `[evals] dir`. It runs only for a project with
+/// `[evals]`. An add is a path that the diff adds, that git does not detect as
+/// the target of a rename, and whose id and aliases the base does not have. Thus
+/// a move is no add, also a move to a path with another id. A deleted eval does not count
+/// (design 0.6.0, D53, D95). One diagnostic for each added incident, on line 1,
+/// with its id as the target.
+fn incident_eval_missing(ctx: &Ctx) -> Result<Vec<Diag>, String> {
+    let Some(evals) = &ctx.config.evals else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{}/", evals.dir);
+    let has_eval = ctx.diff.files.iter().any(|(p, k)| {
+        *k != PathChange::Deleted
+            && p.strip_prefix(&prefix)
+                .is_some_and(|n| n.ends_with(".json") && !n.contains('/'))
+    });
+    if has_eval {
+        return Ok(Vec::new());
+    }
+    let added: Vec<&Doc> = ctx
+        .head
+        .docs
+        .iter()
+        .filter(|d| d.ty == DocType::Incident)
+        .filter(|d| ctx.diff.kind(&d.path) == Some(PathChange::Added))
+        .filter(|d| {
+            // The id of the document, or an alias that it keeps (`spec-dna mv`
+            // writes the old id as an alias), is a document of the base.
+            std::iter::once(&d.id)
+                .chain(&d.aliases)
+                .chain(&d.legacy_aliases)
+                .all(|id| matches!(ctx.base.resolve(id), Res::Missing))
+        })
+        .collect();
+    if added.is_empty() {
+        return Ok(Vec::new());
+    }
+    let renamed = ctx.git.renamed_paths(ctx.base_rev)?;
+    Ok(added
+        .into_iter()
+        .filter(|d| !renamed.contains(&d.path))
+        .map(|d| Diag {
+            path: d.path.clone(),
+            line: 1,
+            code: Code::IncidentEvalMissing,
+            doc: d.id.clone(),
+            target: d.id.clone(),
+            message: format!(
+                "the change adds the incident `{}` and no eval file (`{}<id>.json`); add an eval for the incident in the same change",
+                d.id, prefix
+            ),
+            severity: Code::IncidentEvalMissing.severity(),
+        })
+        .collect())
 }
 
 fn plan_status(c: &Change) -> &str {
