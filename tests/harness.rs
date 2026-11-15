@@ -1237,7 +1237,7 @@ fn the_fix_texts_of_sd501_and_sd505_say_to_delete_and_name_the_types() {
     let (code, out) = r.run(&["check", "--all"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("SD501 fix: Run `spec-dna init` to regenerate the adapter. For a harness file or the model-team line, delete it first. Put your own text outside of the generated text.\n"),
+        out.contains("SD501 fix: Run `spec-dna init` to regenerate the adapter. For a harness file or the model-team line, delete it first. Put your own text outside of the generated text. If the configuration does not generate the file, delete the file, or delete its marker line to keep it as a file of the project.\n"),
         "{out}"
     );
     assert!(

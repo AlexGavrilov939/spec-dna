@@ -174,9 +174,9 @@ The test files are the globs of `[evidence] tests`. The generated command has on
 
 | Code | Finding |
 | --- | --- |
-| SD504 | A generated file or the `CLAUDE.md` line is missing, or a file at a role path has no marker |
-| SD501 | A generated file or line was edited by hand, or has text after its marker. Delete the file or the line and run `spec-dna init` |
-| SD502 | `CLAUDE.md` has a second model-team line. Delete it. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command |
+| SD504 | A generated file (an agent file, a stage skill, `REVIEW.md` or the team page) or the `CLAUDE.md` line is missing, or a file at the path of a generated file has no marker. spec-dna does not replace such a file. The message names the way out: move the file, set the role of an agent file to `none`, remove the skill from `skills`, or set `review-md = false` |
+| SD501 | A generated file or line was edited by hand, or has text after its marker. Delete the file or the line and run `spec-dna init`. The same code covers a file with a marker that the configuration does not generate (an old `checker.md`, or a skill or `REVIEW.md` that you turned off) and that has an edit. Delete the file, or delete its marker line to keep it as a file of the project |
+| SD502 | `CLAUDE.md` has a second model-team line. Delete it. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command. A file with a marker that the configuration does not generate, and that has no edit, also gives SD502. Run `spec-dna init --reconfigure` to remove it. The scan covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, but not the adapter skill |
 | SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |
 
 As for the other adapters, only findings that are new against the base fail the gate. The check of the base uses the `[harness]` table of the base. Thus a change of the table, without a change of the files, gives new findings. To change the team, change `[harness]` and run `spec-dna init --reconfigure`. Do not edit the generated files.

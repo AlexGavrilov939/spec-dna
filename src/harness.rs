@@ -1944,6 +1944,20 @@ fn file_state(actual: &str, expected: &str) -> State {
     }
 }
 
+/// The way out for a file with no marker at the path of a generated file.
+/// spec-dna never replaces such a file, so the person moves it or changes the
+/// configuration. `plan` (exit code 2) and `check` (SD504) give these words for
+/// a skill and for `REVIEW.md`.
+fn no_marker_way(g: &Generated) -> &'static str {
+    if g.skill.is_some() {
+        "move it, or remove the skill from `skills` in [harness]"
+    } else if g.path == REVIEW {
+        "move it, or set `review-md = false` in [harness]"
+    } else {
+        "move it, or turn the harness off"
+    }
+}
+
 /// Plans the harness files of a configuration. `existing` holds (path, text)
 /// of each existing file that `wanted` accepts. `old` is the configuration that
 /// wrote the files, if any. For `CLAUDE.md`, give the text after `init` has
@@ -1995,16 +2009,10 @@ pub fn plan(
                     text: g.text.clone(),
                 }),
                 State::NoMarker => {
-                    let way = if g.skill.is_some() {
-                        "move it, or remove the skill from `skills` in [harness]"
-                    } else if g.path == REVIEW {
-                        "move it, or set `review-md = false` in [harness]"
-                    } else {
-                        "move it, or turn the harness off"
-                    };
                     return Err(format!(
-                        "{} exists, and spec-dna did not generate it; {way}",
-                        g.path
+                        "{} exists, and spec-dna did not generate it; {}",
+                        g.path,
+                        no_marker_way(g)
                     ));
                 }
             },
@@ -2200,7 +2208,17 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
                 &g.path,
                 1,
                 "file",
-                "the file has no harness marker, so spec-dna did not generate it".into(),
+                format!(
+                    "the file has no harness marker, so spec-dna did not generate it; {}",
+                    // `check` also names the role of an agent file.
+                    match g.agent.and_then(|n| AGENT_DEFS.iter().find(|d| d.name == n)) {
+                        Some(def) => format!(
+                            "move it, or set the role `{}` to \"none\" in [harness.roles]",
+                            def.role.key()
+                        ),
+                        None => no_marker_way(g).to_string(),
+                    }
+                ),
             )),
             Some(m) if m.edited() => out.push(d(
                 Code::AdapterModified,
@@ -2222,12 +2240,24 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
             Some(_) => {}
         }
     }
+    // A file with a marker that the configuration does not generate. The scan
+    // covers the agent files, the skill files and `REVIEW.md`, but not the
+    // adapter skill (`is_generated_kind`). A file with no marker is the file of
+    // the project.
     for (p, t) in files {
-        if p.starts_with(AGENTS_DIR)
-            && wanted(p)
-            && !expected.iter().any(|g| g.path == *p)
-            && has_marker(t)
-        {
+        if !is_generated_kind(p) || expected.iter().any(|g| g.path == *p) {
+            continue;
+        }
+        let Some(m) = file_marker(t) else { continue };
+        if m.edited() {
+            out.push(d(
+                Code::AdapterModified,
+                p,
+                line_of(t, m.start),
+                "file",
+                "the configuration does not generate this file, and it has an edit; delete the file, or delete its marker line to keep it as a file of the project".into(),
+            ));
+        } else {
             out.push(d(
                 Code::AdapterOutdated,
                 p,
@@ -3620,6 +3650,62 @@ opus = "xhigh"
             "{}",
             d[0].message
         );
+    }
+
+    #[test]
+    fn check_scans_agents_skills_and_review_md_for_marked_files_of_no_part() {
+        let h = lean();
+        let clean = installed(&h);
+        let full_on = Harness {
+            skills: Skill::ALL.to_vec(),
+            review_md: true,
+            ..full()
+        };
+        let src = files(&full_on);
+        let text = |p: &str| src.iter().find(|f| f.0 == p).unwrap().1.clone();
+        let strays = [
+            ".claude/agents/implementer.md",
+            ".claude/agents/code-simplifier.md",
+            ".claude/skills/spec-dna-plan/SKILL.md",
+            REVIEW,
+        ];
+        for p in strays {
+            // An unedited file is SD502, and an edit above or below the marker
+            // is SD501.
+            let mut t = clean.clone();
+            t.push((p.into(), text(p)));
+            let d = check(&h, &t);
+            assert_eq!((codes(&d), d[0].target.as_str()), (vec!["SD502"], "file"));
+            assert_eq!(d[0].path, p);
+            for edited in [format!("{}more\n", text(p)), format!("x{}", text(p))] {
+                let mut t = clean.clone();
+                t.push((p.into(), edited));
+                let d = check(&h, &t);
+                assert_eq!(codes(&d), ["SD501"], "{p}");
+                assert!(d[0].message.contains("delete its marker line"), "{p}");
+            }
+            // With no marker line, the file is the file of the project.
+            let mut t = clean.clone();
+            let own = text(p);
+            t.push((
+                p.into(),
+                own[..own.rfind("<!-- spec-dna harness v").unwrap()].into(),
+            ));
+            assert!(check(&h, &t).is_empty(), "{p}");
+        }
+        // The adapter skill has its own marker, and the harness skips it.
+        let mut t = clean.clone();
+        t.push((
+            ADAPTER_SKILL.into(),
+            format!("own\n{}\n", marker_text("own\n")),
+        ));
+        assert!(check(&h, &t).is_empty());
+        // The 2 agent files of 0.5.
+        for p in OLD_AGENT_PATHS {
+            let mut t = clean.clone();
+            t.push((p.into(), text(".claude/agents/implementer.md")));
+            assert_eq!(codes(&check(&h, &t)), ["SD502"], "{p}");
+        }
     }
 
     #[test]
