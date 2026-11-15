@@ -792,6 +792,67 @@ fn the_scope_of_a_commit_is_the_union_of_the_changes_that_it_finished() {
     );
 }
 
+#[test]
+fn the_files_of_the_task_lines_are_inside_the_scope() {
+    // The plan has no path in `Files`. Its task lines list the files.
+    let plan = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- None.\n\n## Order\n\n- [ ] t1: Edit the code. Files: src/dose.py, `tests/test_dose.py`. Verify: run the tests.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n";
+    let r = Repo::with_config(&config(ON));
+    r.write(
+        "docs/intent/dose/intent.md",
+        &intent("Dose", "accepted", "routine", "valves"),
+    );
+    r.write("docs/intent/dose/plan.md", plan);
+    r.write("src/dose.py", "x = 1\n");
+    r.commit_at("base", &at("01-02"));
+    fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
+    r.write("src/dose.py", "x = 2\n");
+    r.write("tests/test_dose.py", "t = 1\n");
+    r.commit_at("finish", &at("01-05"));
+    let out = stats_json(&r, &[]);
+    has(
+        indicator(&out, "How often the merged diff"),
+        &["\"value\":100.0", "\"count\":1"],
+    );
+}
+
+#[test]
+fn a_plan_added_on_the_branch_is_inside_the_scope_after_a_merge_commit() {
+    // The base has the intent only. The branch adds the plan with the code,
+    // then deletes the folder. `stats` reads the last tree of the life, which
+    // is the parent of the deleting commit, so it has the plan of the branch.
+    // A squash merge keeps no commit of the branch, so `stats` cannot see it.
+    let r = Repo::with_config(&config(ON));
+    r.write(
+        "docs/intent/dose/intent.md",
+        &intent("Dose", "accepted", "routine", "valves"),
+    );
+    r.write("src/dose.py", "x = 1\n");
+    r.commit_at("base", &at("01-02"));
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(
+        "docs/intent/dose/plan.md",
+        &plan("approved", &["src/dose.py", "tests/test_dose.py"]),
+    );
+    r.write("src/dose.py", "x = 2\n");
+    r.write("tests/test_dose.py", "t = 1\n");
+    r.commit_at("plan and code", &at("01-05"));
+    fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
+    r.commit_at("finish", &at("01-06"));
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "o = 1\n");
+    r.commit_at("main side", &at("01-07"));
+    git_at(
+        &r.dir,
+        &["merge", "-q", "--no-ff", "-m", "merge", "feature"],
+        &at("01-08"),
+    );
+    let out = stats_json(&r, &[]);
+    has(
+        indicator(&out, "How often the merged diff"),
+        &["\"value\":100.0", "\"count\":1"],
+    );
+}
+
 fn golden(name: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")

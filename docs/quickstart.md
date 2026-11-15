@@ -91,7 +91,7 @@ git commit -m "build: adopt spec-dna"
 - One line in `AGENTS.md` and in `CLAUDE.md`. The line tells agents to run `spec-dna context` once for a task that edits code or docs. It also tells them to run `spec-dna check` before a commit. On an existing project, `init` adds only this line. The line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md`, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
-- The agent harness for Claude Code (level `lean` by default): agent files in `.claude/agents/`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
+- The agent harness for Claude Code (level `lean` by default): agent files in `.claude/agents/`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. The file `.claude/agents/Explore.md` replaces the built-in `Explore` subagent. [docs/harness.md](harness.md) describes the roles, the models, the hooks and how to remove that file. Each teammate needs spec-dna on `PATH` for the hooks.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
 

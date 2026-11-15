@@ -136,7 +136,7 @@ The parser keeps the list items of 8 sections for each document. The heading tex
 | `Decisions` | spec | Links `[[decisions/<slug>]]` |
 | `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved |
 | `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922) |
-| `Files` | plan | The first code span of an item is a path or a glob from the repository root. A final `/` matches the folder and all files in it. An item with no code span has no effect |
+| `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect |
 | `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
 
@@ -159,12 +159,31 @@ The `Order` section of a plan holds a task list. A task is one top-level list it
 - The id is a letter or a digit, then letters, digits, `_` or `-`. The colon follows the id, and then a space or the end of the line. The id is stable: do not renumber the tasks of a started change. The id is case-sensitive.
 - The text is what follows the colon, up to the first label. spec-dna joins the lines of the item into one line. It removes one final `.`.
 - `Files:` and `Verify:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the 2 labels does not matter. The first label of each kind counts.
-- The files of a task are the code spans after `Files:`. They are paths or globs from the repository root.
+- The files of a task are the entries after `Files:`. spec-dna removes one final `.` or `;` of the text, and the parentheses that wrap it. An entry is a part of the text up to a comma that is not in a code span and not in a link (`[text](destination)`). An entry gives its code spans, or, if it has no code span, its text if the text is a plain path. They are paths or globs from the repository root.
 - The `Verify:` text is a check: a sentence or a command in a code span. An empty text counts as no text.
 - A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
 - If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
 
 The next task is the first task that is open and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it ([commands.md](commands.md#next)).
+
+### Files and paths
+
+A `Files` item of a plan, and an entry of the label `Files:` of a task, gives paths and globs. The code span is the first choice. Write each path in a code span, as `` `src/valve.py` ``.
+
+An item that has no code span, or an entry that has none, is a plain path if it follows these rules:
+
+- The text, with no white space at its ends, without one final `.`, `,`, `:` or `;` (a mark of the sentence), and without the parentheses that wrap it, is one token: it has no white space. A link `[text](destination)` gives its text. A destination is not read.
+- The token has a `/`, a `.` or a `*`, and a letter, a digit or a `*`. Thus `src/dose.py`, `tests/*.py`, `README.md` and `docs/` are plain paths. `Makefile`, `LICENSE` and `none` are words, and not paths: write a file with no `/` and no `.` in a code span.
+- The token has no backtick, no `<`, no `>`, no `"`, no `|`, no `{{` and no `://`. A URL, a tag and a template placeholder are not paths.
+- `src/a.py and src/b.py`, `no code here` and `src/a.py: the main file` are prose, and they are not paths. An item or an entry that is not a path has no effect. A code span that holds a template placeholder (`` `{{path}}` ``) is not a path either.
+
+The rules are about the form only. A token such as `n/a` or `**src/a.py**` passes them, and it is then a pattern that matches no file. Write a path in a code span if it has a form that these rules do not take.
+
+A plain path has the same meaning as the same text in a code span. A final `/` matches the folder and all files in it.
+
+The patterns of a plan are the paths of its section `Files`, then the `Files:` paths of its tasks of `Order`, with no repeat. Each reader of the scope uses this list: the checks SD905, SD910, SD911, SD913, SD915, SD916, SD917 and SD921, `finish`, `stats --sdlc`, `status` and `next`. A plan can list its paths only in its tasks.
+
+When the items of `Files` are not paths, and the plan lists no path in `Files` and none in its tasks, `next` and `status` say so and show the first such item. SD913 and SD915 do the same in their message ([diagnostics](diagnostics.md)). If the plan lists a path, they do not name an item, because the item is not the reason for the diagnostic.
 
 ## Templates
 
@@ -176,7 +195,7 @@ The next task is the first task that is open and is not a duplicate, in the orde
 | `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
 | `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope. The 3 intent templates have `class: routine` |
 | `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns, Open questions |
-| `plan` (default) | `plan` | `new plan <slug>` | Files, Order (2 example tasks), Risks, Proof |
+| `plan` (default) | `plan` | `new plan <slug>` | Files (the item `` `{{path}}` ``), Order (2 example tasks, each with `` Files: `{{path}}` ``), Risks, Proof |
 | `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |
 | `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |
 | `runbook` | `procedure` | `new procedure <slug> --template runbook` | When to use, Steps, Verify, Rollback |

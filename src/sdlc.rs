@@ -108,7 +108,8 @@ struct Facts {
     delta: [usize; 3],
     /// The status of the intent, or an empty string.
     status: String,
-    /// The `Files` patterns of the plan, or `None` if there is no plan.
+    /// The `Files` patterns of the plan and the paths of the label `Files:` of
+    /// its tasks, or `None` if there is no plan.
     files: Option<Vec<String>>,
     /// The paths that the delta and `Interfaces` name, for each root.
     named: Vec<String>,
@@ -851,7 +852,7 @@ fn indicators(git: &Git, ms: &[Measured], shallow: bool) -> Result<Vec<Indicator
         (total > 0).then(|| 100.0 * clean as f64 / total as f64),
         "percent",
         total,
-        "the value is the share of finished changes whose merged diff has no path outside the folder, `Files` and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit",
+        "the value is the share of finished changes whose merged diff has no path outside the folder, `Files`, the `Files:` paths of the tasks and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit",
         "no finished change has a plan and a readable diff in the history yet",
         shallow,
     ));

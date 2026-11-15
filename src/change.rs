@@ -102,17 +102,102 @@ impl Change {
         }
     }
 
-    /// The patterns of the `Files` section of the plan, in the order of the
-    /// file. A `Files` item is its first code span (`Files` list of the
-    /// design, T8). An item with no code span gives no pattern.
+    /// The patterns of the plan: the paths of the `Files` section, then the
+    /// paths of the label `Files:` of the tasks of `Order`, in the order of the
+    /// file, with no repeat. A `Files` item gives one pattern: its first code
+    /// span, or, with no code span, its text if the text is a plain path
+    /// ([`plain_path`]). An item that gives no pattern has no effect
+    /// ([`Change::files_not_paths`]). Each reader of the scope of a change uses
+    /// this list.
     pub fn files(&self, corpus: &Corpus) -> Vec<String> {
         let Some(a) = &self.plan else {
             return Vec::new();
         };
+        let mut out: Vec<String> = Vec::new();
+        let items = section_items(&corpus.docs[a.doc as usize], ItemSection::Files)
+            .filter_map(item_pattern)
+            .chain(self.tasks(corpus).into_iter().flat_map(|t| t.files));
+        for p in items {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// The items of the `Files` section that give no pattern, in the order of
+    /// the file: prose, and a code span that is a template placeholder. Each
+    /// is on one line and has at most 80 characters.
+    pub fn files_not_paths(&self, corpus: &Corpus) -> Vec<String> {
+        let Some(a) = &self.plan else {
+            return Vec::new();
+        };
         section_items(&corpus.docs[a.doc as usize], ItemSection::Files)
-            .filter_map(|i| i.code.clone())
+            .filter(|i| item_pattern(i).is_none())
+            .map(|i| shown(&i.text))
+            .filter(|t| !t.is_empty())
             .collect()
     }
+}
+
+/// The pattern of a `Files` item. A code span is the first choice. An item
+/// with no code span is a pattern only if its whole text is a plain path.
+fn item_pattern(item: &ListItem) -> Option<String> {
+    match &item.code {
+        Some(c) => usable_code(c).then(|| c.clone()),
+        None => plain_path(&item.text),
+    }
+}
+
+/// True if a code span can be a pattern. A template placeholder is not one.
+fn usable_code(code: &str) -> bool {
+    !code.contains("{{")
+}
+
+/// The text on one line, with at most 80 characters, for a message.
+fn shown(text: &str) -> String {
+    let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if t.chars().count() > 80 {
+        format!("{}...", t.chars().take(77).collect::<String>().trim_end())
+    } else {
+        t
+    }
+}
+
+/// Returns the path or the glob that `text` is, or `None` if `text` is not a
+/// plain path. A plain path is the text of a `Files` item, or of one entry of
+/// the label `Files:` of a task, that has no code span. Rules:
+///
+/// - The text, with no white space at its ends, without one final `.`, `,`,
+///   `:` or `;` (a mark of the sentence), and without the parentheses that
+///   wrap it, is one token: it has no white space.
+/// - If the text is a link (`[text](destination)`), the token is the link
+///   text.
+/// - The token has a `/`, a `.` or a `*`, and it has a letter, a digit or a
+///   `*`. A token with none of these (`Makefile`, `none`) is a word.
+/// - A token with a backtick, `<`, `>`, `"`, `|`, `{{` or `://` is not a path
+///   (a URL, a tag or a placeholder).
+pub fn plain_path(text: &str) -> Option<String> {
+    let mut s = text.trim();
+    if let Some(rest) = s.strip_suffix(['.', ',', ':', ';']) {
+        s = rest.trim_end();
+    }
+    s = unwrap_parens(s);
+    if let Some(inner) = s
+        .strip_prefix('[')
+        .and_then(|r| r.strip_suffix(')'))
+        .and_then(|r| r.find("](").map(|i| &r[..i]))
+    {
+        s = inner.trim();
+    }
+    let token = !s.is_empty()
+        && !s.contains(char::is_whitespace)
+        && !s.contains(['`', '<', '>', '"', '|'])
+        && !s.contains("{{")
+        && !s.contains("://");
+    let looks_like_a_path =
+        s.contains(['/', '.', '*']) && s.chars().any(|c| c.is_alphanumeric() || c == '*');
+    (token && looks_like_a_path).then(|| s.to_string())
 }
 
 /// The top-level list items of a section of a document.
@@ -359,7 +444,9 @@ pub struct PlanTask {
     /// The text after the id and the colon, before the first label, on one
     /// line. One final `.` is removed.
     pub text: String,
-    /// The code spans after the label `Files:`, in the order of the file.
+    /// The paths after the label `Files:`, in the order of the file: the code
+    /// spans, and the plain paths of the entries that have no code span
+    /// ([`plain_path`]).
     pub files: Vec<String>,
     /// The text after the label `Verify:`, on one line. One final `.` is
     /// removed. `None` if the label is absent or has no text.
@@ -411,7 +498,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
         let seg = &text[end..stop];
         if is_files {
-            files.get_or_insert_with(|| code_spans(seg));
+            files.get_or_insert_with(|| label_paths(seg));
         } else if verify.is_none() {
             let v = one_line(seg);
             verify = Some((!v.is_empty()).then_some(v));
@@ -447,6 +534,76 @@ fn plain_pieces(text: &str) -> Vec<(usize, usize)> {
         plain = end;
     }
     out.push((plain, text.len()));
+    out
+}
+
+/// The text without the parentheses that wrap it. They wrap it only if the
+/// first `(` closes at the last character: `(a)/(b)` is not wrapped.
+fn unwrap_parens(s: &str) -> &str {
+    let Some(inner) = s.strip_prefix('(').and_then(|r| r.strip_suffix(')')) else {
+        return s;
+    };
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => return s,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    if depth == 0 { inner.trim() } else { s }
+}
+
+/// The paths of the text after the label `Files:`. The text is a list of
+/// entries. The mark at its end (`.` or `;`) and the parentheses that wrap it
+/// are removed, and then it splits at the commas that are not in a code span
+/// and not in a link (`[text](destination)`). An entry gives its code spans,
+/// or, with no code span, its text if the text is a plain path.
+fn label_paths(seg: &str) -> Vec<String> {
+    let mut seg = seg.trim();
+    while let Some(rest) = seg.strip_suffix(['.', ';']) {
+        seg = rest.trim_end();
+    }
+    seg = unwrap_parens(seg);
+    let mut cuts: Vec<usize> = Vec::new();
+    // The depth of `[...]`, and whether the `(...)` of a link is open.
+    let mut bracket = 0usize;
+    let mut link = false;
+    let mut after_close = false;
+    for (start, end) in plain_pieces(seg) {
+        for (i, c) in seg[start..end].char_indices() {
+            let open_paren = after_close && c == '(';
+            after_close = false;
+            match c {
+                '[' if !link => bracket += 1,
+                ']' if !link && bracket > 0 => {
+                    bracket -= 1;
+                    after_close = bracket == 0;
+                }
+                '(' if open_paren => link = true,
+                ')' if link => link = false,
+                ',' if bracket == 0 && !link => cuts.push(start + i),
+                _ => {}
+            }
+        }
+    }
+    let mut entries = Vec::new();
+    let mut from = 0;
+    for cut in cuts {
+        entries.push(&seg[from..cut]);
+        from = cut + 1;
+    }
+    entries.push(&seg[from..]);
+    let mut out = Vec::new();
+    for entry in entries {
+        let codes = code_spans(entry);
+        if codes.is_empty() {
+            out.extend(plain_path(entry));
+        } else {
+            out.extend(codes.into_iter().filter(|c| usable_code(c)));
+        }
+    }
     out
 }
 
@@ -755,6 +912,178 @@ mod tests {
         let ch = &collect(&c)[0];
         // A code span in a link text is a code span.
         assert_eq!(ch.files(&c), ["src/valve.py", "docs/", "tests/*.py"]);
+    }
+
+    #[test]
+    fn files_accept_plain_paths_and_code_spans() {
+        let plan = "---\nstatus: draft\n---\n# P\n\n## Files\n\n- src/valve.py\n- tests/*.py,\n- docs/.\n- `src/code.py` and src/plain.py\n- [src/link.py](src/link.py)\n- [the file](src/other.py)\n- Makefile\n- no code here\n- the code in src/valve.py\n- src/a.py src/b.py\n- https://example.com/a.html\n- ./lib/x.rs\n- src/dose/\n  - nested.py\n\n## Order\n\n- src/not-a-file.py\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(
+            ch.files(&c),
+            [
+                "src/valve.py",
+                "tests/*.py",
+                "docs/",
+                "src/code.py",
+                "src/link.py",
+                "./lib/x.rs",
+                "src/dose/"
+            ]
+        );
+        // The items that give no pattern, in the order of the file.
+        assert_eq!(
+            ch.files_not_paths(&c),
+            [
+                "[the file](src/other.py)",
+                "Makefile",
+                "no code here",
+                "the code in src/valve.py",
+                "src/a.py src/b.py",
+                "https://example.com/a.html"
+            ]
+        );
+    }
+
+    #[test]
+    fn files_of_a_crlf_plan_accept_plain_paths() {
+        let plan = "---\r\nstatus: draft\r\n---\r\n# P\r\n\r\n## Files\r\n\r\n- src/valve.py\r\n- `src/code.py`\r\n- two words\r\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(ch.files(&c), ["src/valve.py", "src/code.py"]);
+        assert_eq!(ch.files_not_paths(&c), ["two words"]);
+    }
+
+    #[test]
+    fn a_plain_path_is_one_token_that_looks_like_a_path() {
+        let ok = [
+            ("src/a.py", "src/a.py"),
+            ("  src/a.py  ", "src/a.py"),
+            ("src/a.py.", "src/a.py"),
+            ("src/a.py,", "src/a.py"),
+            ("src/a.py:", "src/a.py"),
+            ("src/", "src/"),
+            ("README.md", "README.md"),
+            (".github/ci.yml", ".github/ci.yml"),
+            ("tests/*.py", "tests/*.py"),
+            ("**/*.rs", "**/*.rs"),
+            ("*.toml", "*.toml"),
+            ("[src/a.py](src/a.py)", "src/a.py"),
+            ("[src/a.py](src/a.py).", "src/a.py"),
+            ("[src/a.py](../../../src/a.py)", "src/a.py"),
+            ("app/[slug]/page.tsx", "app/[slug]/page.tsx"),
+            // Known limits: a token with a `/` or a `.` is a path.
+            ("n/a", "n/a"),
+            ("[[requirements/valves]]", "[[requirements/valves]]"),
+            ("**src/a.py**", "**src/a.py**"),
+        ];
+        for (text, want) in ok {
+            assert_eq!(plain_path(text).as_deref(), Some(want), "{text:?}");
+        }
+        for text in [
+            "",
+            ".",
+            "no code here",
+            "None.",
+            "Makefile",
+            "src/a.py and src/b.py",
+            "src/a.py\nsrc/b.py",
+            "the code in src/a.py",
+            "[the file](src/a.py)",
+            "https://example.com/a.html",
+            "`src/a.py`",
+            "<src/a.py>",
+            "{{path}}",
+            "{{src/path.py}}",
+            "...",
+            "[the file](../src/a.py)",
+        ] {
+            assert_eq!(plain_path(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_placeholder_is_not_a_path_also_in_a_code_span() {
+        let plan = "---\nstatus: draft\n---\n# P\n\n## Files\n\n- `{{path}}`: {{Why.}}\n- `src/a.py`\n\n## Order\n\n- [ ] t1: Text. Files: `{{path}}`, `src/b.py`. Verify: ok.\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(ch.files(&c), ["src/a.py", "src/b.py"]);
+        assert_eq!(ch.files_not_paths(&c), ["`{{path}}`: {{Why.}}"]);
+        assert_eq!(ch.tasks(&c)[0].files, ["src/b.py"]);
+    }
+
+    #[test]
+    fn a_long_item_is_cut_for_a_message() {
+        let long = "word ".repeat(40);
+        let plan = format!("---\nstatus: draft\n---\n# P\n\n## Files\n\n- {long}\n  more\n");
+        let c = corpus(&[("docs/intent/x/plan.md", &plan)]);
+        let shown = &collect(&c)[0].files_not_paths(&c)[0];
+        assert_eq!(shown.chars().count(), 80, "{shown}");
+        assert!(shown.ends_with("..."), "{shown}");
+        assert!(!shown.contains('\n'));
+    }
+
+    #[test]
+    fn task_files_accept_plain_paths_and_code_spans() {
+        let t = tasks(&[
+            "- [ ] t1: Text. Files: src/a.py, tests/*.py. Verify: ok.",
+            "- [ ] t2: Text. Files: `src/a.py`, src/b.py. Verify: ok.",
+            "- [ ] t3: Text. Files: src/a.py and src/b.py.",
+            "- [ ] t4: Text. Files: none.",
+            "- [ ] t5: Text. Verify: ok. Files: docs/.",
+            "- [ ] t6: Text. Files: [src/a.py](src/a.py), `x`.",
+        ]);
+        let f = |n: usize| t[n].files.clone();
+        assert_eq!(f(0), ["src/a.py", "tests/*.py"]);
+        // An entry with a code span gives its code span. An entry with no code
+        // span gives its plain path. No entry is dropped.
+        assert_eq!(f(1), ["src/a.py", "src/b.py"]);
+        // An entry with more than one word is prose.
+        assert_eq!(f(2), Vec::<String>::new());
+        assert_eq!(f(3), Vec::<String>::new());
+        assert_eq!(f(4), ["docs/"]);
+        assert_eq!(f(5), ["src/a.py", "x"]);
+        assert_eq!(t[0].verify.as_deref(), Some("ok"));
+        let t = tasks_of_source(
+            "# P\r\n\r\n## Order\r\n\r\n- [ ] t1: One. Files: src/a.py,\r\n  src/b.py. Verify: `go`.\r\n- [ ] t2: Two. Files: src/c.py.\r\n",
+        );
+        assert_eq!(t[0].files, ["src/a.py", "src/b.py"]);
+        assert_eq!(t[1].files, ["src/c.py"]);
+    }
+
+    #[test]
+    fn task_files_split_only_outside_code_spans_and_links() {
+        let t = tasks(&[
+            "- [ ] t1: Text. Files: [a, b](src/a.py), src/c.py. Verify: ok.",
+            "- [ ] t2: Text. Files: [src/a.py](../a, b), src/b.py;",
+            "- [ ] t3: Text. Files: (src/a.py, src/b.py).",
+            "- [ ] t4: Text. Files: src/a.py; Verify: ok.",
+            "- [ ] t5: Text. Files: [src/a.py](src/a.py), [src/b.py](src/b.py).",
+            "- [ ] t6: Text. Files: app/[slug]/page.tsx, `x, y`.",
+            "- [ ] t7: Text. Files: (src/a.py).",
+        ]);
+        let f = |n: usize| t[n].files.clone();
+        // The link text `a, b` is prose, and the comma in it is no cut.
+        assert_eq!(f(0), ["src/c.py"]);
+        assert_eq!(f(1), ["src/a.py", "src/b.py"]);
+        assert_eq!(f(2), ["src/a.py", "src/b.py"]);
+        assert_eq!(f(3), ["src/a.py"]);
+        assert_eq!(f(4), ["src/a.py", "src/b.py"]);
+        assert_eq!(f(5), ["app/[slug]/page.tsx", "x, y"]);
+        assert_eq!(f(6), ["src/a.py"]);
+        assert_eq!(plain_path("src/a.py;").as_deref(), Some("src/a.py"));
+        assert_eq!(plain_path("(src/a.py)").as_deref(), Some("src/a.py"));
+        // The parentheses do not wrap the whole text.
+        assert_eq!(plain_path("(a)/(b)").as_deref(), Some("(a)/(b)"));
+    }
+
+    #[test]
+    fn files_are_the_section_then_the_task_lines_with_no_repeat() {
+        let plan = "---\nstatus: draft\n---\n# P\n\n## Files\n\n- None.\n- `src/a.py`\n\n## Order\n\n- [ ] t1: One. Files: src/b.py, `src/a.py`.\n- [x] t2: Two. Files: tests/*.py.\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(ch.files(&c), ["src/a.py", "src/b.py", "tests/*.py"]);
+        assert_eq!(ch.files_not_paths(&c), ["None."]);
     }
 
     #[test]

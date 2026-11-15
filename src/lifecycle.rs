@@ -757,11 +757,16 @@ struct DiffChange {
     change: Change,
     origin: Origin,
     side: Side,
-    /// The `Files` patterns of the plan.
+    /// The patterns of the plan (`Change::files`), from the tree of `side`.
     files: Vec<String>,
-    /// The scope of SD913: the folder, the `Files` patterns and the documents
-    /// that the delta and `Interfaces` name.
+    /// The items of `Files` that are not paths, as the plan has them.
+    not_paths: Vec<String>,
+    /// The scope of SD913 from the tree of `side`: the folder, the patterns of
+    /// the plan, and the documents that the delta and `Interfaces` name.
     scope: Vec<String>,
+    /// What the newest text of the branch adds to the scope, if the diff deletes
+    /// the folder. It is read when SD913 needs it ([`DiffChange::branch`]).
+    branch: OnceCell<Option<BranchScope>>,
     /// The number of items in `Delta`.
     delta_count: usize,
     /// The ids that the valid delta lines name.
@@ -1025,6 +1030,48 @@ fn diff_changes(ctx: &Ctx) -> Result<Vec<DiffChange>, String> {
     Ok(out)
 }
 
+/// What the newest text of a change on the branch adds to the scope of SD913.
+struct BranchScope {
+    /// The patterns of the plan of the branch.
+    files: Vec<String>,
+    /// The items of `Files` of the plan of the branch that are not paths.
+    not_paths: Vec<String>,
+    /// The documents that its delta and `Interfaces` name.
+    scope: Vec<String>,
+}
+
+impl DiffChange {
+    /// The newest text of the branch before the deletion of the folder. It is
+    /// read from git on the first call only. A change that the diff does not
+    /// delete has none: the head tree is its newest text.
+    fn branch(&self, ctx: &Ctx) -> Option<&BranchScope> {
+        self.branch
+            .get_or_init(|| {
+                if !matches!(self.side, Side::Base) {
+                    return None;
+                }
+                let (newest, corpus) = branch_version(ctx, &self.change.dir)?;
+                let mut scope = Vec::new();
+                scope_paths(ctx, &newest, &corpus, &mut scope, None);
+                Some(BranchScope {
+                    files: newest.files(&corpus),
+                    not_paths: newest.files_not_paths(&corpus),
+                    scope,
+                })
+            })
+            .as_ref()
+    }
+
+    /// True if `path` is in the scope of SD913. The first test reads the tree
+    /// of `side` only. The branch is read only if it fails.
+    fn covers(&self, ctx: &Ctx, path: &str) -> bool {
+        change::in_scope(&self.scope, path)
+            || self.branch(ctx).is_some_and(|b| {
+                change::in_scope(&b.scope, path) || change::in_scope(&b.files, path)
+            })
+    }
+}
+
 fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
     let corpus: &Corpus = match &side {
         Side::Head => ctx.head,
@@ -1032,14 +1079,40 @@ fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
         Side::Born(c) => c,
     };
     let files = change.files(corpus);
+    let delta_count = change.delta(corpus).len();
     let mut scope = vec![format!("{}/", change.dir)];
-    scope.extend(files.iter().cloned());
-    let lines = change.delta(corpus);
     let mut targets = Vec::new();
-    for l in &lines {
+    let not_paths = change.files_not_paths(corpus);
+    scope_paths(ctx, &change, corpus, &mut scope, Some(&mut targets));
+    scope.extend(files.iter().cloned());
+    DiffChange {
+        delta_count,
+        change,
+        origin,
+        side,
+        files,
+        not_paths,
+        scope,
+        branch: OnceCell::new(),
+        targets,
+    }
+}
+
+/// Adds the documents that the delta and `Interfaces` of a change name to
+/// `scope`, and the ids of the valid delta lines to `targets`.
+fn scope_paths(
+    ctx: &Ctx,
+    change: &Change,
+    corpus: &Corpus,
+    scope: &mut Vec<String>,
+    mut targets: Option<&mut Vec<String>>,
+) {
+    for l in &change.delta(corpus) {
         if let Ok(d) = &l.parsed {
             scope.extend(ctx.named_paths(&d.id));
-            targets.push(d.id.clone());
+            if let Some(t) = targets.as_deref_mut() {
+                t.push(d.id.clone());
+            }
         }
     }
     if let Some(a) = &change.spec {
@@ -1050,15 +1123,53 @@ fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
             }
         }
     }
-    DiffChange {
-        delta_count: lines.len(),
-        change,
-        origin,
-        side,
-        files,
-        scope,
-        targets,
+}
+
+/// The newest artifacts of a change whose folder the diff deletes, as the
+/// branch has them before the deletion. For each of `intent.md`, `spec.md` and
+/// `plan.md`, the last commit of `<base>..HEAD` that touched the file gives the
+/// text: the file in that commit, or, if the commit deleted it, in its first
+/// parent. `None` if the branch did not touch the folder, or git cannot give
+/// the text (a shallow clone).
+///
+/// It reads committed text of `<base>..HEAD` only. A partial clone without the
+/// blobs, an edit that no commit holds, and an edit that a side branch made and
+/// merged after `finish` give no text. The scope then comes from the base tree
+/// alone, and SD913 can fire.
+fn branch_version(ctx: &Ctx, folder: &str) -> Option<(Change, Corpus)> {
+    let range = format!("{}..HEAD", ctx.base_rev);
+    let mut specs: Vec<(String, String)> = Vec::new();
+    for name in ["intent.md", "spec.md", "plan.md"] {
+        let path = format!("{folder}/{name}");
+        let log = ctx.git.file_log(&range, &path).ok()?;
+        if let Some((last, _)) = log.first() {
+            specs.push((last.clone(), path.clone()));
+            specs.push((format!("{last}^"), path));
+        }
     }
+    if specs.is_empty() {
+        return None;
+    }
+    let texts = ctx.git.read_at(&specs).ok()?;
+    let docs: Vec<(String, Arc<ParsedDoc>)> = specs
+        .chunks(2)
+        .zip(texts.chunks(2))
+        .filter_map(|(s, t)| {
+            let bytes = t[0].as_ref().or(t[1].as_ref())?;
+            Some((
+                s[0].1.clone(),
+                Arc::new(parse(&String::from_utf8_lossy(bytes))),
+            ))
+        })
+        .collect();
+    if docs.is_empty() {
+        return None;
+    }
+    let corpus = Corpus::build(ctx.config, docs.iter().map(|d| d.0.clone()).collect(), docs);
+    let change = change::collect(&corpus)
+        .into_iter()
+        .find(|c| c.dir == folder)?;
+    Some((change, corpus))
 }
 
 /// The newest artifacts of a change that a commit of the branch added and
@@ -1244,22 +1355,55 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         return Vec::new();
     }
     let mut out = Vec::new();
+    // A plan with items that are not paths, and no path at all, has no scope.
+    let cause = OnceCell::new();
     for (p, _) in &ctx.diff.files {
+        // The scope of the trees first: git reads the branch only for a path
+        // that no tree covers.
         if changes.iter().any(|c| change::in_scope(&c.scope, p))
             || ctx.paths().generated.contains(p)
+            || changes.iter().any(|c| c.covers(ctx, p))
         {
             continue;
         }
+        let cause: &String = cause.get_or_init(|| {
+            changes
+                .iter()
+                .find_map(|c| not_paths_cause(c, c.branch(ctx)))
+                .unwrap_or_default()
+        });
         out.push(path_diag(
             p,
             Code::OutsidePlan,
             "",
             format!(
-                "`{p}` is in the diff, and no `Files` item of a change in the diff matches it; add it to `Files` of the plan, or move the edit to a change of its own"
+                "`{p}` is in the diff, and no `Files` item of a change in the diff matches it; add it to `Files` of the plan, or move the edit to a change of its own{cause}"
             ),
         ));
     }
     out
+}
+
+/// The note of a message when the plan of a change has no path at all, and an
+/// item of `Files` that is not a path. A plan that has a path gives no note: the
+/// path that the message is about is not in it for another reason, and an
+/// unrelated item would mislead.
+fn not_paths_cause(ch: &DiffChange, branch: Option<&BranchScope>) -> Option<String> {
+    if !ch.files.is_empty() || branch.is_some_and(|b| !b.files.is_empty()) {
+        return None;
+    }
+    let first = ch
+        .not_paths
+        .first()
+        .or_else(|| branch.and_then(|b| b.not_paths.first()))?;
+    Some(not_paths_note(&ch.change.slug, first))
+}
+
+/// The note for the first item of `Files` that is not a path.
+fn not_paths_note(slug: &str, item: &str) -> String {
+    format!(
+        "; the `Files` of the change `{slug}` has an item that is not a path (the first is \"{item}\"): write each path or glob in a code span"
+    )
 }
 
 /// True if a glob of `high-risk-paths` matches the path.
@@ -1443,7 +1587,8 @@ fn routine_fan_out(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
 /// `closed` gives none of them. A branch-born change gives none, because the
 /// base tree has no folder. The checks read the spec and the plan from the base
 /// tree, so an edit of them in the pull request of `finish` has no effect
-/// (design, "Finish").
+/// (design, "Finish"). Only the scope of SD913 also reads the newest plan of
+/// the branch ([`branch_version`]).
 fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
     let on = |k: Code| !ctx.config.is_off(k);
     let sole = changes.len() == 1;
@@ -1545,13 +1690,15 @@ fn finish_incomplete(ctx: &Ctx, ch: &DiffChange, sole: bool) -> Vec<Diag> {
     let Some(anchor) = c.intent.as_ref().or(c.plan.as_ref()).or(c.spec.as_ref()) else {
         return Vec::new();
     };
+    // SD915 reads the base tree only, so the note is about its plan.
+    let cause = not_paths_cause(ch, None).unwrap_or_default();
     vec![crate::check::diag(
         &ctx.base.docs[anchor.doc as usize],
         1,
         Code::FinishIncomplete,
         "",
         format!(
-            "the diff deletes the change `{}`, its base status is `{status}`, and the diff changes no `Files` path and no requirement hash; do the work first, or set the intent to `closed` in an earlier pull request",
+            "the diff deletes the change `{}`, its base status is `{status}`, and the diff changes no `Files` path and no requirement hash{cause}; do the work first, or set the intent to `closed` in an earlier pull request",
             c.slug
         ),
     )]

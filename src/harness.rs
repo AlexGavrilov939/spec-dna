@@ -817,10 +817,19 @@ fn team_page(h: &Harness) -> String {
         Role::SpecWriter,
     ] {
         if let (true, Some(def)) = (h.on(r), r.agent()) {
+            // `Explore` is the name of a built-in subagent, and this file replaces it.
+            let file = if r == Role::Researcher {
+                format!(
+                    "`{}` (replaces the built-in `Explore` subagent)",
+                    def.path()
+                )
+            } else {
+                format!("`{}`", def.path())
+            };
             rows.push(format!(
-                "| {} | `{}` | {} | {} |",
+                "| {} | {} | {} | {} |",
                 r.key(),
-                def.path(),
+                file,
                 shown(&c(r).model),
                 eff(c(r).effort)
             ));

@@ -1727,12 +1727,27 @@ fn plan_harness(
             }),
         }
     }
+    let mut notes = notes.to_vec();
+    // The file replaces a built-in subagent, so the person must know it when
+    // `init` writes the file. An unchanged file gives no note.
+    if let Some(def) = Role::Researcher.agent()
+        && plan.changes.iter().any(|c| {
+            c.path == def.path()
+                && matches!(c.action, harness::Action::Create | harness::Action::Change)
+        })
+    {
+        notes.push(EXPLORE_NOTE.to_string());
+    }
     Ok(Some(HarnessRun {
         level: new.level,
         plan,
-        notes: notes.to_vec(),
+        notes,
     }))
 }
+
+/// The note for `.claude/agents/Explore.md`. Only an agent with the name
+/// `Explore` replaces the built-in subagent (ADR 0008).
+const EXPLORE_NOTE: &str = "`.claude/agents/Explore.md` replaces the built-in `Explore` subagent of Claude Code, with its model, tools and text. The built-in subagent uses the model of the main session. To remove the file, set `researcher = { claude-code = \"none\" }` in `[harness.roles]` and run `spec-dna init --reconfigure`.";
 
 /// Prints the harness block of the preview, or its summary after a write.
 fn print_harness(h: &HarnessRun, with_files: bool) {
