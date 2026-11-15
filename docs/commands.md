@@ -601,7 +601,7 @@ An eval is the file `<dir>/<id>.json`, where `<dir>` is `[evals] dir`. A JSON fi
 | `--max-total-usd <n>` | Replaces `[evals] max-total-usd` for the cap. A number above 0 |
 | `--out <dir>` | Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start; if the file exists, `-2`, `-3` and so on). `<dir>` is relative to the repository root, and `eval run` makes it. It cannot be `[evals] dir`, because the check SD506 reads each `*.json` file there. Use for example `<dir>/results` |
 | `--dry-run` | Checks the evals and prints each eval with its runs and the estimate. It starts no process, and writes no file. Exit code 0, or 3 if the estimate is above the cap |
-| `--isolate` | Adds `--setting-sources project`, so a run does not load the user and local settings of the person. It is off by default, so CI and a laptop run the same command. spec-dna does not test what else a run still loads from the folder of the user |
+| `--isolate` | Adds `--setting-sources project`, so a run does not load the user and local settings of the person. It is off by default, so CI and a laptop run the same command. A test with Claude Code 2.1.325 (probe P2 of the design page) showed the effect. The flag removes the user skills, the user agents and the plugins that the user settings enable. The test gave no sign of the user `CLAUDE.md` (a weak proof, the answer of the model). It keeps the plugins that `CLAUDE_CODE_PLUGIN_DIRS` names and the MCP servers of the account of the person, because `eval run` passes no `--strict-mcp-config`. Unset the variable before the command to remove the plugins. A clean `CLAUDE_CONFIG_DIR` also removes the login |
 | `--json` | Prints the result as one JSON object, and no text |
 
 ### Output
