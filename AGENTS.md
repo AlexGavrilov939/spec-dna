@@ -32,6 +32,7 @@ CI runs the same hooks (`.github/workflows/ci.yml`). A change is complete only w
 - Write specifications, docs and code comments in ASD-STE100 Simplified Technical English. Make them clear and concise. The rules are in `CONTRIBUTING.md`, section "Writing".
 - Commits and PR titles follow Conventional Commits. See `CONTRIBUTING.md`.
 - Work on a branch. Do not commit to `master` directly.
+- Start each change that is not a small fix with `spec-dna new intent <slug>`. `CONTRIBUTING.md`, section "Changes", gives the steps.
 - GitHub Actions: pin each `uses:` to a full commit SHA, with the version tag in a trailing comment. Set `permissions: {}` at the workflow level, and give each job only the permissions that it needs.
 - Do not commit secrets or local agent state: `.env*`, `.claude/settings.local.json`, `CLAUDE.local.md`.
 - Claude Code: `.claude/settings.json` and `.claude/agents/` set a team of models and agents, and `CLAUDE.md` gives its rule. `.claude/agents/README.md` describes the team. `.claude/agents/ownership.md` gives the responsible agent of each task and each path.

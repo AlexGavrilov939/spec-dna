@@ -74,6 +74,17 @@ Write a code comment only when it gives information that the code and its names 
 - Write the subject in the imperative, with a lowercase first letter and no period at the end.
 - Sign your commits (`git config commit.gpgsign true`).
 
+## Changes
+
+This repository uses its own change process ([ADR 0006](docs/adr/0006-change-lifecycle.md)). `spec-dna.toml` sets the policy `three-class` and the gate `warn`.
+
+- A small fix needs only a pull request. Examples are a typo, a dependency update and a CI fix.
+- Start each other change with `spec-dna new intent <slug>`. The command writes `docs/intent/<slug>/intent.md`. Replace each `{{...}}` placeholder, because `check` reports it as an error (SD306).
+- Set `class: higher-risk` in the intent of a change of a contract. The change sets in `.claude/agents/ownership.md` list the contracts. Such a change also has a `spec.md`, and the maintainer approves it.
+- Merge the accepted intent in a pull request before the code. If the intent and the code merge together, `check` gives the warning SD910, and `spec-dna log` has no record of the change.
+- `spec-dna next <slug>` gives the next step. `spec-dna finish <slug>` applies the change and deletes the folder. Commit the result with the code.
+- Use spec-dna at the version of the pin in `spec-dna.toml`, because `check` does not run with another version. Before the release of that version, run the binary of this tree: `cargo run --quiet -- <command>`.
+
 ## Pull requests
 
 - Put one logical change in each pull request. Complete the template.
@@ -99,6 +110,8 @@ Write a code comment only when it gives information that the code and its names 
 The tag starts `.github/workflows/release.yml`. The workflow compares the tag with the version. It builds and runs the binaries again. It publishes the binaries, `SHA256SUMS` and `spec-dna-pin.toml` with build-provenance attestations. The notes of the release are the section of the version in `CHANGELOG.md`.
 
 The repository has immutable releases. After the publication, nobody can change the assets or the tag of a release. To correct a release, publish a new version.
+
+After the release, move the pin in `spec-dna.toml` to the new version in a pull request of its own. `check` gives SD503 for a change of `spec-dna.toml` that comes with other files.
 
 ## Dependencies
 
