@@ -9,6 +9,7 @@
 //! the graph read the rest in later slices.
 
 use crate::config::{Fields, unknown_type};
+use crate::config_text::{Splice, append_tables, line_ending, quote};
 use crate::glob;
 use crate::model::DocType;
 use toml::Table;
@@ -752,26 +753,6 @@ fn file_order(text: &str, layers: &Table) -> Vec<String> {
     order
 }
 
-/// Writes a TOML string with double quotes.
-fn quote(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 fn quote_list<S: AsRef<str>>(items: &[S]) -> String {
     let v: Vec<String> = items.iter().map(|s| quote(s.as_ref())).collect();
     format!("[{}]", v.join(", "))
@@ -822,13 +803,6 @@ pub fn render_table(l: &Layer) -> String {
 pub fn render_graph(g: &Graph) -> String {
     let tables: Vec<String> = g.layers().iter().map(render_table).collect();
     tables.join("\n")
-}
-
-/// An insertion into the text of the configuration.
-#[derive(Debug, PartialEq, Eq)]
-struct Splice {
-    at: usize,
-    text: String,
 }
 
 /// The insertion that adds the layer `target` to the `moves-to` list of the
@@ -952,27 +926,6 @@ pub fn add_layer(
         );
     }
     Ok(out)
-}
-
-/// The line ending of a text: `\r\n` if its first line ends so, else `\n`.
-fn line_ending(text: &str) -> &'static str {
-    match text.find('\n') {
-        Some(i) if text[..i].ends_with('\r') => "\r\n",
-        _ => "\n",
-    }
-}
-
-/// Appends tables at the end of a text, after one empty line. The tables
-/// have `\n` line endings. This function gives them the ending `eol`.
-fn append_tables(out: &mut String, tables: &str, eol: &str) {
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push_str(eol);
-    }
-    let blank = format!("{eol}{eol}");
-    if !out.is_empty() && !out.ends_with(&blank) && !out.ends_with("\n\n") {
-        out.push_str(eol);
-    }
-    out.push_str(&tables.replace('\n', eol));
 }
 
 #[cfg(test)]

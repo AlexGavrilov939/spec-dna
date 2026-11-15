@@ -21,6 +21,7 @@ mod change;
 mod check;
 mod cite;
 mod config;
+mod config_text;
 mod context;
 mod detect;
 mod diag;

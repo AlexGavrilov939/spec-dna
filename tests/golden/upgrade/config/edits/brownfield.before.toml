@@ -1,0 +1,40 @@
+spec-dna = "0.5.0"
+
+# Each folder of the project keeps its name. A root of one type maps it.
+[[roots]]
+path = "docs/adr"
+type = "decision"
+status = "accepted"
+legacy-ids = ["ADR-{n}"]
+required-sections = { decision = ["Decisión", "Decision"] }
+
+[[roots]]
+path = "docs/specs"
+type = "spec"
+status = "active"
+legacy-keys = ["R-{n}"]
+status-map = { shipped = "active" }
+
+[[roots]]
+path = "docs/ops"
+type = "runbook"
+status = "active"
+required-sections = { runbook = ["Restart"] }
+
+[[roots]]
+path = "docs/guides"
+type = "guide"
+status = "active"
+exclude = ["vendor-*/**"]
+
+[[roots]]
+path = "docs/rfcs"
+type = "change"
+
+[[roots]]
+path = "docs/meetings"
+type = "note"
+
+[[roots]]
+path = "docs/vendor"
+type = "reference"
