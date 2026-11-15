@@ -63,6 +63,13 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - The bytes that the harness adds to each request: the 4 skill descriptions add 588 bytes (`lean` 1,601 to 2,189, `full` 2,067 to 2,655, with the default models). `REVIEW.md` adds none. `init` counts the skill descriptions in the sum.
   - For a file that the configuration generates, `check` reports SD504 (absent or no marker), SD501 (edited) and SD502 (old text). SD503 accepts these files with a change of `spec-dna.toml`.
 
+- The hook `spec-dna hook protect-tests` asks the person before an edit of a test file that git tracks ([docs/harness.md](docs/harness.md#spec-dna-hook-protect-tests)). It is off by default. `protect-tests = "fix-branches"` in `[harness]` makes `init` write the entry (matcher `Edit|Write`, event `PreToolUse`) into `.claude/settings.json`, and `"always"` removes the branch test.
+  - The hook answers `permissionDecision: "ask"` with a reason, when the file matches a glob of `[evidence] tests`, git tracks the file, and (for `fix-branches`) the branch starts with `fix/`. A new test file does not trigger it. In a run with `claude -p` that cannot ask, Claude Code denies the edit, and the model reads the reason.
+  - The generated command holds the globs and the mode, so the hook reads no configuration: `spec-dna hook protect-tests --mode fix-branches --test '**/tests/**' ... 2>/dev/null || true`. The hook runs `git` at most 2 times, and only for a path that matches a glob. An error gives no output and exit code 0.
+  - There is no entry for `off`, for an empty `[evidence] tests` (`verified-by`), or for level `none`. A change of `[evidence] tests` gives SD502 for the entry until `init` runs. `init --reconfigure` removes the handler by its command prefix and keeps the other handlers.
+  - A teammate needs spec-dna 0.6.0 or later on `PATH` for this hook. `init` and the team page say so when the hook is on.
+  - The bytes that the harness adds to each request do not change: the hook adds no text to a request.
+
 - The commands `spec-dna next <slug> [--base <rev>]` and `spec-dna status [--group <name>] [--base <rev>]` ([docs/commands.md](docs/commands.md#next)).
   - The stage of a change comes from its files, their statuses, the diff against the lifecycle base and the evidence. The stages are `closed`, `plan`, `design`, `build`, `test` and `deploy`.
   - `next` prints a checklist of at most 12 lines to the next gate. Each line says done or open. The last line gives the edit that approves the artifact.

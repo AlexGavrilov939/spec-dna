@@ -1682,6 +1682,8 @@ fn refuse_ignored(repo: &Repo, h: &Harness) -> Result<(), Fatal> {
 /// The harness plan of `init`, merged into the list of changes.
 struct HarnessRun {
     level: Level,
+    /// The first version of spec-dna that has the hooks of the configuration.
+    hooks_version: &'static str,
     plan: harness::Plan,
     notes: Vec<String>,
 }
@@ -1755,6 +1757,7 @@ fn plan_harness(
     }
     Ok(Some(HarnessRun {
         level: new.level,
+        hooks_version: harness::hooks_version(new),
         plan,
         notes,
     }))
@@ -1794,7 +1797,10 @@ fn print_harness(h: &HarnessRun, with_files: bool) {
             "  The harness adds about {} bytes to each request of the main session ({what}).",
             h.plan.request_bytes
         );
-        println!("  Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.");
+        println!(
+            "  Each teammate needs spec-dna {} or later on PATH for the hooks.",
+            h.hooks_version
+        );
     }
 }
 
@@ -2708,8 +2714,12 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_change(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
-    Config::parse(&text)
+    let parsed = Config::parse(&text)
         .map_err(|e| Fatal::Config(format!("the new spec-dna.toml is not valid: {e}")))?;
+    // The hook `protect-tests` uses the test globs that `check` reads from this
+    // text, so `check` finds no difference.
+    let mut new_harness = plan.harness.clone();
+    new_harness.tests = parsed.evidence_tests.clone();
     let mut changes = Vec::new();
     let old = std::fs::read_to_string(&cfg_path).ok();
     if old.as_deref() != Some(text.as_str()) {
@@ -2732,7 +2742,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // A new configuration and `--reconfigure` both replace the harness.
     let hrun = plan_harness(
         repo,
-        &plan.harness,
+        &new_harness,
         plan.harness_old.as_ref(),
         &plan.harness_notes,
         harness::Mode::Reconfigure,
@@ -3539,6 +3549,36 @@ mod tests {
         // The default test globs render as no `[evidence]` table.
         plan.tests = config::DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
         assert!(!render(&plan).contains("[evidence]"));
+    }
+
+    #[test]
+    fn the_test_globs_of_the_hook_are_the_globs_that_check_reads() {
+        // `init` gives the hook `protect-tests` the globs that `Config::parse`
+        // reads from the text that `render` writes, so `check` finds no
+        // difference. 3 cases: an empty repository, a subset of hits and
+        // `verified-by`.
+        let globs = |plan: &Plan| {
+            let mut h = Harness::new(Level::Lean);
+            h.protect_tests = harness::Protect::FixBranches;
+            h.tests = Config::parse(&render(plan)).unwrap().evidence_tests;
+            h
+        };
+        let defaults_list = config::DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
+        let mut plan = defaults(&Facts::default(), Some("docs"));
+        // An empty repository: no hit, so `render` writes no `[evidence]`.
+        plan.tests = Vec::new();
+        let h = globs(&plan);
+        assert_eq!(h.tests, defaults_list);
+        assert!(h.protect_hook_on());
+        // A subset of hits.
+        plan.tests = vec!["t/**".into(), "**/*_t.*".into()];
+        let h = globs(&plan);
+        assert_eq!(h.tests, ["t/**", "**/*_t.*"]);
+        assert!(h.protect_hook_on());
+        // `verified-by` gives no glob, so no hook.
+        plan.style = Style::VerifiedBy;
+        let h = globs(&plan);
+        assert!(h.tests.is_empty() && !h.protect_hook_on());
     }
 
     #[test]

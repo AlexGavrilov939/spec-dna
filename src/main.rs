@@ -252,7 +252,7 @@ episode of agent transcripts. It prints counts and ids only.",
     ),
     (
         "hook",
-        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]",
+        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]\nhook protect-tests [--mode <fix-branches|always>] [--test <glob>]...",
         "Runs a hook of a coding agent. It reads one JSON object from stdin,
 prints JSON only when the agent must see a message, and exits with 0.
 It reads no configuration.",

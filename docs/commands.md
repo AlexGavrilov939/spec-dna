@@ -39,6 +39,7 @@ spec-dna mv guides/old guides/new --stub        # a stub at the old path for too
 spec-dna transcript ~/.claude/projects/<project> --expect irrigation/valves
 spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
 spec-dna hook fanout-cap --cap 10   # a hook of a coding agent
+spec-dna hook protect-tests --mode fix-branches --test '**/tests/**'   # a hook of a coding agent
 spec-dna --help                     # commands and options (-h); --version (-V) prints the version
 spec-dna mv --help                  # the help of one command
 ```
@@ -538,9 +539,10 @@ It prints counts and ids only. It never prints the text of a prompt, a command o
 ```text
 spec-dna hook context-meter [--levels <a,b,...>] [--subagent <n>]
 spec-dna hook fanout-cap [--cap <n>]
+spec-dna hook protect-tests [--mode <fix-branches|always>] [--test <glob>]...
 ```
 
-A coding agent runs `hook`. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it. A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. A hook ignores unknown flags and bad values. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
+A coding agent runs `hook`. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it. A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. `protect-tests` reads no file, and runs `git` at most 2 times, only for a path that matches a test glob. A hook ignores unknown flags and bad values. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
 
 `context-meter` runs after a tool call (the `PostToolUse` event of Claude Code). It finds the size of the context in the transcript of the agent: the input, cache-creation and cache-read tokens of the last assistant message. The hook reads the file from its end, 256 KiB at a time, up to 4 MiB. When the size reaches a level of `--levels`, the hook tells the agent once, with `additionalContext`.
 
@@ -559,6 +561,17 @@ The hook finds an upper limit of the `agent(` calls: the call sites, multiplied 
 A named function counts once for each mention of its name. A call of itself and a `workflow(` call have no limit. The hook allows a script that it cannot read (for example, when its brackets do not match).
 
 When the limit is above the cap, or if there is no limit, the hook answers `permissionDecision: "ask"`, and the user decides. The cap is `SPEC_DNA_FANOUT_CAP` if it is set. Otherwise the cap is `--cap`, and its default is 10. A cap of 0 disables the hook.
+
+`protect-tests` runs before an `Edit` or `Write` tool call (the `PreToolUse` event). It reads `tool_name`, `tool_input.file_path` and `cwd` of the event, and `CLAUDE_PROJECT_DIR` of the environment. `init` writes the command from `[harness] protect-tests` and `[evidence] tests`, with one `--test <glob>` for each glob. `--mode` is `fix-branches` or `always`. An absent or unknown value acts as `fix-branches`. With no `--test`, the hook prints nothing. The steps, in this order:
+
+1. The tool is `Edit` or `Write`.
+2. The root is `CLAUDE_PROJECT_DIR`, else `cwd`. `file_path` is absolute and below the root. If it is not, the hook resolves the links of the root and of the folder of the file, and tries again. A path with a `..`, `.` or empty segment stops the hook.
+3. The path relative to the root matches a `--test` glob. With no match, the hook stops, and no process starts.
+4. For `fix-branches`: `git symbolic-ref --short -q HEAD` gives a name that starts with `fix/`. A detached HEAD stops the hook.
+5. `git ls-files --error-unmatch` finds the file in the index. A new file stops the hook.
+6. The hook answers `permissionDecision: "ask"` with a reason. The reason has the relative path and, for `fix-branches`, the branch.
+
+Each step that fails gives no output. `git` runs with `GIT_OPTIONAL_LOCKS=0`. The hook stores nothing. In a run that cannot ask the person (`claude -p`), Claude Code denies the edit, and the model reads the reason.
 
 ## Exit codes
 

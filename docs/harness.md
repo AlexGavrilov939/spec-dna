@@ -97,6 +97,7 @@ Entries in `.claude/settings.json`:
 | `permissions.deny` | Each `deny` entry |
 | `hooks.PostToolUse` | `spec-dna hook context-meter ...` |
 | `hooks.PreToolUse` (matcher `Workflow`) | `spec-dna hook fanout-cap ...` |
+| `hooks.PreToolUse` (matcher `Edit\|Write`) | `spec-dna hook protect-tests ...`, only if `protect-tests` is not `off` and `[evidence] tests` is not empty |
 
 spec-dna writes the settings file again with a 2-space indent, so a number form such as `1e3` becomes `1000`, and an integer above 2^53 loses precision. If a key that spec-dna writes into has a value of the wrong type, for example `permissions.deny` as a string, `init` refuses and names the JSON path, and `check` reports SD505. spec-dna never deletes a key or a deny entry of the owner. If a new configuration no longer sets a key, `init` reports it. Remove the key by hand. spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
 
@@ -127,7 +128,7 @@ The 4 stage skills help an agent through the stages of a change ([ADR 0008](adr/
 
 Each hook is a subcommand of the spec-dna binary. A hook reads the event of Claude Code from stdin. It does not read `spec-dna.toml`, so the generated command contains the values. It never fails: an error gives no output and exit code 0. The command ends with `2>/dev/null || true`, so a teammate with an older spec-dna, or without spec-dna, gets no error and no hook.
 
-Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
+Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `protect-tests` needs 0.6.0 or later. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
 
 ### `spec-dna hook context-meter`
 
@@ -146,6 +147,26 @@ The hook keeps one empty file for each level that it reported, in the temporary 
 A workflow script can start many agents, and each agent uses its own context. Before a workflow runs, the hook computes an upper limit of the agents that the script can start. It multiplies each `agent(` call by the size of each loop around it. A loop over a list that the run makes has no limit. If the limit is above the cap, or if there is no limit, Claude Code asks the person before the run. The bound is a text scan. It does not see a regex literal with a quote or a bracket, or an alias of `agent`, so such a script runs without a question.
 
 To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<n>`.
+
+### `spec-dna hook protect-tests`
+
+A fix must change the code, not the test that finds the defect. An agent can edit the test to make it pass. Before an `Edit` or `Write` call, the hook asks the person if the file is a test file that git tracks, and the branch starts with `fix/`. It does not ask for a new test file, because a fix can add a test. The person approves the edit only if the test is wrong.
+
+Set `protect-tests` in `[harness]`:
+
+| Value | The hook asks |
+| --- | --- |
+| `fix-branches` | On a branch that starts with `fix/` |
+| `always` | On each branch. Use it if your fix branches have another prefix |
+| `off` | Never. This is the default, and `init` writes no entry |
+
+The test files are the globs of `[evidence] tests`. The generated command has one `--test '<glob>'` for each glob and the mode. The hook runs `git` only for a path that matches a glob, at most 2 times: once for the branch, and once to find if git tracks the file. A path that is not below `CLAUDE_PROJECT_DIR` (else the `cwd` of the event) gets no question. An error gives no output and exit code 0, so the edit continues.
+
+- In a run with `claude -p`, nobody can answer the question. Claude Code denies the edit, and the model reads the reason. This is also true if `--allowedTools` lists `Edit`, so the hook guards an eval.
+- The hook does not see an edit through `Bash`, such as `sed -i`. The check `tests_unchanged` of an eval proves that no test changed.
+- If the agent enters a worktree, `CLAUDE_PROJECT_DIR` stays at the main checkout, and only the `cwd` moves. A file of a worktree that the agent enters gets no question, also if the worktree is inside the main checkout. Start the session in the worktree to protect it.
+- A change of `[evidence] tests` changes the command, and `check` reports SD502 for the entry until you run `spec-dna init`.
+- To remove the entry, set `protect-tests = "off"` and run `spec-dna init --reconfigure`. Plain `init` removes no entry.
 
 ## Check
 
