@@ -57,6 +57,7 @@ mod split;
 mod stage;
 mod templates;
 mod transcript;
+mod upgrade_old;
 
 use crate::adapters::VERSION;
 use crate::diag::Severity;

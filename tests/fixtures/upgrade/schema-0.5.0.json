@@ -1,0 +1,632 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlexGavrilov939/spec-dna/blob/master/schema/spec-dna.schema.json",
+  "title": "spec-dna.toml",
+  "description": "The project configuration of spec-dna. spec-dna reads it as TOML. See docs/config.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "spec-dna",
+    "roots"
+  ],
+  "properties": {
+    "spec-dna": {
+      "description": "The pinned spec-dna version. `check` does not run with a binary of another version.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
+    },
+    "profile": {
+      "$ref": "#/$defs/profile",
+      "description": "The profile of the project: the default severity of each diagnostic code. Default `standard`."
+    },
+    "rules": {
+      "$ref": "#/$defs/rules"
+    },
+    "types": {
+      "description": "The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. Default: every type.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/type"
+      },
+      "uniqueItems": true
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tests": {
+          "description": "Globs of the test files where `check` reads `covers: <doc-id>#<key>` tags. An empty list turns the tags off. Default: the usual test directories and file names of common stacks.",
+          "$ref": "#/$defs/globs"
+        }
+      }
+    },
+    "exclude": {
+      "description": "Repository path globs that are never documents (vendored or generated text). Links to them still resolve as files.",
+      "$ref": "#/$defs/globs"
+    },
+    "self-urls": {
+      "description": "URL prefixes that address this repository. A link under one of them resolves as a path from the repository root. `*` is one whole path segment, such as a branch.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^https?://[^*]+/((\\*|[^*/]+)/)*$"
+      }
+    },
+    "install-source": {
+      "description": "The git source of spec-dna for `cargo install --git`, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch uses it. Default: the public repository.",
+      "type": "string",
+      "pattern": "^\\S+$"
+    },
+    "spec-dna-sha256": {
+      "description": "The SHA-256 sums of the release assets of the pin. A key is an asset name, `spec-dna-<version>-<target>`, with `.exe` for a Windows target. If the pin is the version of the binary, the binary also checks that each key is an asset of that version. Copy the table from `spec-dna-pin.toml` of the release.",
+      "type": "object",
+      "patternProperties": {
+        "^spec-dna-[^\\s]+-(aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|x86_64-unknown-linux-musl|x86_64-pc-windows-gnu\\.exe|aarch64-pc-windows-gnullvm\\.exe)$": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "roots": {
+      "description": "Directories of documents. A path belongs to the deepest root that contains it.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/root"
+      }
+    },
+    "budgets": {
+      "description": "Size budgets in Unicode characters of body text, per document type.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/budget"
+        },
+        "contract": {
+          "$ref": "#/$defs/budget"
+        },
+        "guide": {
+          "$ref": "#/$defs/budget"
+        },
+        "decision": {
+          "$ref": "#/$defs/budget"
+        },
+        "change": {
+          "$ref": "#/$defs/budget"
+        },
+        "note": {
+          "$ref": "#/$defs/budget"
+        },
+        "invariant": {
+          "$ref": "#/$defs/budget"
+        },
+        "runbook": {
+          "$ref": "#/$defs/budget"
+        },
+        "incident": {
+          "$ref": "#/$defs/budget"
+        },
+        "reference": {
+          "$ref": "#/$defs/budget"
+        },
+        "growth": {
+          "description": "The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). Default 4000.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "lint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max-words": {
+          "description": "The maximum number of words in a requirement sentence. A longer sentence gives a warning. Default 30.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "description": "The default character budget of `spec-dna context`. Default 8000.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "conventions": {
+      "description": "For each type, pointers (`<doc-id or path>[#<anchor>]`) to the sections of project documents, or of Markdown files that are not documents (outside every root, or excluded), that state the conventions of the project for documents of that type. `context` serves them first when a target is a document of that type. `show --conventions <type>` prints them. A pointer that names nothing gives SD106.",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/type"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      }
+    },
+    "repos": {
+      "description": "Aliases of other repositories for `<repo>:<namespace>/<slug>` references.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "harness": {
+      "description": "The agent harness (ADR 0004): generic agent roles, and the files that `init` writes for Claude Code. No table is the same as level `none`. See docs/harness.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level"
+      ],
+      "properties": {
+        "level": {
+          "description": "`none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them.",
+          "enum": [
+            "none",
+            "lean",
+            "full"
+          ]
+        },
+        "deny": {
+          "description": "Tools that spec-dna removes from the `tools` list of each generated agent, and writes to `permissions.deny` of `.claude/settings.json`. A list that removes each tool of a generated agent is an error. Default: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\S+$"
+          }
+        },
+        "context-meter": {
+          "description": "The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. Ascending, each above 0. An empty list turns the main-session meter off. Default `[300000, 600000]`.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          }
+        },
+        "subagent-meter": {
+          "description": "The context size of a subagent, in tokens, at which the hook `context-meter` tells it its size. 0 turns it off. Default 250000.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "fanout-cap": {
+          "description": "The number of agents that a workflow can start before the hook `fanout-cap` asks the person. 0 turns it off. Default 10.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "roles": {
+          "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "orchestrator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The orchestrator cannot be `none`.",
+                  "not": {
+                    "const": "none"
+                  }
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort-main"
+                },
+                "fallback": {
+                  "description": "The models of `fallbackModel`, in order. Default `[\"opus\", \"sonnet\"]`. An empty list writes no `fallbackModel`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^\\S+$",
+                    "not": {
+                      "enum": [
+                        "none",
+                        "inherit"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "advisor": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The advisor cannot be `haiku`, a model id with `haiku` in it, or `inherit`.",
+                  "not": {
+                    "enum": [
+                      "haiku",
+                      "inherit"
+                    ]
+                  }
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                },
+                "agent": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the `fallback-advisor` agent. `none` writes no agent file. Default `opus`."
+                }
+              }
+            },
+            "reviewer": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "researcher": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "implementer": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "spec-writer": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "helper": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). `inherit` writes no `CLAUDE_CODE_SUBAGENT_MODEL`."
+                }
+              }
+            }
+          }
+        },
+        "efforts": {
+          "description": "The effort for each model alias, in `modelSettings` of `.claude/settings.json`. A `/model` switch uses it. Default `{ sonnet = \"high\" }`.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S+$"
+          },
+          "additionalProperties": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "inherit"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "globs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "type": {
+      "enum": [
+        "spec",
+        "contract",
+        "guide",
+        "decision",
+        "change",
+        "note",
+        "invariant",
+        "runbook",
+        "incident",
+        "reference"
+      ]
+    },
+    "pattern": {
+      "description": "Literal text with exactly one `{n}` (one or more digits). `*` matches any text.",
+      "type": "string",
+      "pattern": "^[^{}]*\\{n\\}[^{}]*$"
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "soft": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hard": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "Directory relative to the repository root. Use `.` for the whole repository.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type of every document in the root. With `mixed` (the default), the front matter of each document gives the type.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/type"
+            },
+            {
+              "const": "mixed"
+            }
+          ]
+        },
+        "default-type": {
+          "description": "For mixed roots only: the type of a document that has no `type` field. Default `note`.",
+          "$ref": "#/$defs/type"
+        },
+        "status": {
+          "description": "The status of a document that has the default type of the root and no `status` field.",
+          "type": "string"
+        },
+        "exclude": {
+          "description": "Globs relative to the root that are not documents.",
+          "$ref": "#/$defs/globs"
+        },
+        "legacy-ids": {
+          "description": "Patterns that make aliases from the names of files, such as `ADR-{n}`.",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/pattern"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "alias"
+                ],
+                "properties": {
+                  "alias": {
+                    "$ref": "#/$defs/pattern"
+                  },
+                  "file": {
+                    "$ref": "#/$defs/pattern"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "legacy-keys": {
+          "description": "Patterns of requirement keys that spec-dna keeps as written, such as `R-{n}`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pattern"
+          }
+        },
+        "status-map": {
+          "description": "Legacy status words, each with the status that it maps to, such as `released = \"active\"`. The target must be a status of the type of the root, or of any type in a mixed root.",
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "draft",
+              "active",
+              "deprecated",
+              "superseded",
+              "retired",
+              "proposed",
+              "accepted",
+              "rejected",
+              "done"
+            ]
+          }
+        },
+        "required-sections": {
+          "description": "For each type, its required sections. The value is a list of headings (one required section, with alternative headings) or a list of such lists (several required sections). A document needs one heading of each list (SD305). The comparison ignores case. A value replaces the default of its type. An empty list removes the requirement. The defaults are: decision `[\"Decision Outcome\", \"Decision\"]`, invariant `[\"Rules\"]`, runbook `[\"Steps\"]`, incident `[[\"Summary\"], [\"Root cause\"]]`. For a decision, `context` serves the first required section as the summary.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/type"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "amendment-sections": {
+          "description": "For each type, the names of its amendment sections, in any language. A heading of level 2 or more starts an amendment section if it is a name, or if it starts with a name and a character that is not a letter or a digit. The comparison ignores case. The section continues to the next heading of the same or a higher level. A list replaces the default of its type. The default is `decision = [\"Amendments\"]`. After a decision is accepted, the text outside its amendment sections is frozen (SD405). For a decision, `context` serves the amendment sections with the outcome.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/type"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          }
+        },
+        "live-sections": {
+          "description": "For each type, the names of its live sections, such as a progress section, in any language. They match as amendment sections do. A live section records a current state, so its text can change in place. In a decision, it is not frozen text (no SD405), and new text in it gives no SD605.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/type"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          }
+        },
+        "history-sections": {
+          "description": "For each type, the names of its history sections (iteration logs, discussions, superseded notes). They match as amendment sections do. `spec-dna history` moves them, and the amendment sections of a decision, into a reference document. In a decision, a history section is not frozen text.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/type"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          }
+        },
+        "companion-sections": {
+          "description": "For each type, the names of the sections that belong to the requirements, such as a coverage table. When `mv` moves requirements, the table rows and list items of these sections that name the moved keys move with them.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/type"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          }
+        },
+        "enforce-budgets": {
+          "description": "If false, a document over its hard budget gives the warning SD704, never the error SD702. Default true.",
+          "type": "boolean"
+        },
+        "lint-severity": {
+          "description": "The rule `lint` of this root (SD801 to SD805), as in 0.1. `rules` has priority over it.",
+          "$ref": "#/$defs/severity"
+        },
+        "drift-severity": {
+          "description": "The rule `drift` of this root (SD606, SD607), as in 0.1. `rules` has priority over it.",
+          "$ref": "#/$defs/severity"
+        },
+        "profile": {
+          "$ref": "#/$defs/profile",
+          "description": "The profile of this root, if it differs from the project profile."
+        },
+        "rules": {
+          "$ref": "#/$defs/rules",
+          "description": "Severity overrides for this root. They have priority over `[rules]` and over every profile."
+        }
+      }
+    },
+    "severity": {
+      "enum": [
+        "off",
+        "warning",
+        "error"
+      ]
+    },
+    "rules": {
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, lint) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(references|ids|budgets|drift|evidence|lint|SD[0-9]{3})$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/severity"
+      }
+    },
+    "profile": {
+      "description": "The default severities: `lite`, `standard` or `strict` (docs/profiles.md).",
+      "enum": [
+        "lite",
+        "standard",
+        "strict"
+      ]
+    },
+    "harness-model": {
+      "description": "An alias, a model id, `inherit` or `none`.",
+      "type": "string",
+      "pattern": "^\\S+$"
+    },
+    "harness-effort": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "inherit"
+      ]
+    },
+    "harness-effort-main": {
+      "description": "The effort of the main model. `max` is not allowed.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "inherit"
+      ]
+    }
+  }
+}
