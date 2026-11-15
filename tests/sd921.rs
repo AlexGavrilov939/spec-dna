@@ -1,8 +1,11 @@
 //! Integration tests of SD921 (`truth-changed-without-change`). The check runs
-//! only with `--base`, and only with a `[change] policy` other than `none`. It
-//! fires when a requirement of a `forever` layer changed and no file of the
-//! intent folder did. The helpers are small copies of the ones in
-//! tests/sd202.rs.
+//! on the lifecycle base: the merge base of `--base`, or of `origin/HEAD`. It
+//! has no base, and so it does not run, if the repository has neither. It runs
+//! only with a `[change] policy` other than `none`. It fires when a requirement
+//! of a `forever` layer changed and no file of the intent folder did. The
+//! helpers are small copies of the ones in tests/sd202.rs. The tests of the
+//! run on `origin/HEAD` and of the `Files` exemption are in
+//! tests/lifecycle_base.rs.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -356,10 +359,11 @@ fn two_class_has_the_same_trigger() {
 }
 
 #[test]
-fn without_base_it_does_not_run() {
+fn without_a_lifecycle_base_it_does_not_run() {
     let r = Repo::new("strict", "three-class");
     edit_a_key(&r);
-    // The working tree equals HEAD: no diagnostic is new.
+    // The repository has no `origin/HEAD`, so there is no base. The working
+    // tree equals HEAD: no diagnostic is new.
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!has_sd921(&out), "{out}");

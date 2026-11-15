@@ -106,7 +106,6 @@ impl Change {
     /// The patterns of the `Files` section of the plan, in the order of the
     /// file. A `Files` item is its first code span (`Files` list of the
     /// design, T8). An item with no code span counts for nothing.
-    #[allow(dead_code)] // reader: S4
     pub fn files(&self, corpus: &Corpus) -> Vec<String> {
         let Some(a) = &self.plan else {
             return Vec::new();
@@ -129,7 +128,6 @@ pub fn section_items(doc: &Doc, section: ItemSection) -> impl Iterator<Item = &L
 /// glob from the repository root (a leading `./` or `/` does not count). A
 /// pattern with a final `/` matches the folder and each file below it. Any
 /// other pattern matches the whole path.
-#[allow(dead_code)] // reader: S4
 pub fn in_scope(patterns: &[String], path: &str) -> bool {
     patterns.iter().any(|p| {
         let p = p.trim();

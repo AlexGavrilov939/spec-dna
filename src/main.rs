@@ -84,7 +84,10 @@ in a profile that has it off, as a report: its warnings never fail the
 gate. Without --all, --lint lists the new findings only. --staged checks the
 git index (the tree that the next commit records) in place of the working
 tree. Untracked and unstaged files do not count. The hook that `init`
-writes uses it. --json lists all diagnostics.",
+writes uses it. With a [change] policy, the change checks (SD905, SD910,
+SD913, SD917, SD921) compare with the merge base of --base (default:
+origin/HEAD) and HEAD, and they print a note if there is none. --json
+lists all diagnostics.",
     ),
     (
         "context",
@@ -679,11 +682,17 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
-    let (head_snap, base_snap) = std::thread::scope(|s| {
+    // The lifecycle tree is a third tree only if the lifecycle base is not the
+    // base of the gate.
+    let extra_commit = change_base
+        .as_ref()
+        .filter(|c| Some(*c) != base_commit.as_ref());
+    let (head_snap, base_snap, extra_snap) = std::thread::scope(|s| {
         let base = s.spawn(|| match &base_commit {
             Some(c) => Snapshot::at(repo, c),
             None => Ok(Snapshot::empty()),
         });
+        let extra = s.spawn(|| extra_commit.map(|c| Snapshot::at(repo, c)).transpose());
         // A gate against `--base` reads tracked files only, as CI does
         // (ADR 0001, amendments).
         let head = if a.staged {
@@ -695,15 +704,21 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             head,
             base.join()
                 .unwrap_or_else(|_| Err(Fatal::Io("listing the base tree failed".into()))),
+            extra
+                .join()
+                .unwrap_or_else(|_| Err(Fatal::Io("listing the lifecycle tree failed".into()))),
         )
     });
-    let (head_snap, base_snap) = (head_snap?, base_snap?);
+    let (head_snap, base_snap, extra_snap) = (head_snap?, base_snap?, extra_snap?);
     let use_base = base_commit.is_some();
-    let snaps: Vec<&Snapshot> = if use_base {
+    let mut snaps: Vec<&Snapshot> = if use_base {
         vec![&head_snap, &base_snap]
     } else {
         vec![&head_snap]
     };
+    if let Some(x) = &extra_snap {
+        snaps.push(x);
+    }
     repo::trace("git base tree", &mut t);
     let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
     // The `covers:` tags of the test files, for the evidence checks.
@@ -733,7 +748,19 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     t = std::time::Instant::now();
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
-    let mut outcome = check::gate(&cfg, base, head);
+    // The lifecycle tree: the base of the gate, or the third tree.
+    let (life, life_snap): (Option<&model::Corpus>, &Snapshot) =
+        match (&change_base, extra_snap.as_ref()) {
+            (Some(_), Some(x)) => (loaded.corpora.get(2), x),
+            (Some(_), None) => (base, &base_snap),
+            _ => (None, &base_snap),
+        };
+    // The diff against the lifecycle base, read once.
+    let diff = match &change_base {
+        Some(b) => Some(lifecycle::Diff::read(&repo.git, b, untracked).map_err(Fatal::Io)?),
+        None => None,
+    };
+    let mut outcome = check::gate(&cfg, base, life, head);
     // SD914 is an error only for a spec that the diff touches (design, K3).
     // With no lifecycle base, no spec is touched.
     if outcome
@@ -741,18 +768,26 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .iter()
         .any(|d| d.code == diag::Code::DeltaInvalid && d.severity == Severity::Error)
     {
-        let touched: Vec<String> = match &change_base {
-            Some(b) => lifecycle::Diff::read(&repo.git, b, untracked)
-                .map_err(Fatal::Io)?
-                .files
-                .into_iter()
-                .map(|(p, _)| p)
-                .collect(),
-            None => Vec::new(),
-        };
+        let touched: Vec<&str> = diff
+            .iter()
+            .flat_map(|d| d.files.iter().map(|(p, _)| p.as_str()))
+            .collect();
         for d in &mut outcome.head {
-            if d.code == diag::Code::DeltaInvalid && !touched.contains(&d.path) {
+            if d.code == diag::Code::DeltaInvalid && !touched.contains(&d.path.as_str()) {
                 d.severity = Severity::Warning;
+            }
+        }
+    }
+    // SD912 is new when the head has more started changes than the lifecycle
+    // base has (K5).
+    if let Some(life) = life {
+        let (now, before) = (
+            lifecycle::started_count(head),
+            lifecycle::started_count(life),
+        );
+        for (d, new) in outcome.head.iter().zip(outcome.new.iter_mut()) {
+            if d.code == diag::Code::StartedLimit {
+                *new = now > before;
             }
         }
     }
@@ -768,13 +803,32 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.new.extend(std::iter::repeat_n(true, drift.len()));
         outcome.head.extend(drift);
         repo::trace("drift", &mut t);
-        // SD921 runs only with `--base` (D16).
-        if a.base.is_some() {
-            let truth = check::truth_changed(&cfg, (base, &base_snap), (head, &head_snap));
-            outcome.new.extend(std::iter::repeat_n(true, truth.len()));
-            outcome.head.extend(truth);
-        }
     }
+    // The checks of the diff against the lifecycle base: SD905 (a change with
+    // no delta), SD910, SD913, SD917 and SD921. With `--base` and no merge base,
+    // SD921 compares with the base of the gate.
+    let mut report = lifecycle::BaseReport::default();
+    if let (Some(life), Some(diff), Some(rev)) = (life, &diff, &change_base) {
+        report =
+            lifecycle::base_checks(&cfg, &repo.git, head, life, rev, diff).map_err(Fatal::Io)?;
+        outcome
+            .new
+            .extend(std::iter::repeat_n(true, report.diags.len()));
+        outcome.head.append(&mut report.diags);
+    }
+    let truth_base = match (life, base) {
+        (Some(l), _) => Some((l, life_snap)),
+        (None, Some(b)) if a.base.is_some() => Some((b, &base_snap)),
+        _ => None,
+    };
+    if let Some(tb) = truth_base
+        && !report.born
+    {
+        let truth = check::truth_changed(&cfg, tb, (head, &head_snap), &report.exempt);
+        outcome.new.extend(std::iter::repeat_n(true, truth.len()));
+        outcome.head.extend(truth);
+    }
+    repo::trace("lifecycle", &mut t);
     let head_ad = check::apply_severity(
         &cfg,
         adapters::check(

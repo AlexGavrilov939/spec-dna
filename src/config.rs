@@ -89,11 +89,9 @@ pub struct Config {
     /// `[change] high-risk-layers`: names of layers of the graph. The default
     /// is `interfaces` and `rules`, without the names that the graph does not
     /// have.
-    #[allow(dead_code)] // reader: S4
     pub high_risk_layers: Vec<String>,
     /// `[change] high-risk-paths`: globs from the repository root. The
     /// default is none.
-    #[allow(dead_code)] // reader: S4
     pub high_risk_paths: Vec<String>,
     /// `[change] max-fanout`: the most requirement documents that one change
     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.

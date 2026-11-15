@@ -25,7 +25,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `changes` | SD912 (started limit), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
 | `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted) | warning | error | error |
 
-The group `changes` needs a `[change] policy` other than `none`: with `none`, each of its codes is off, and no rule turns it on. SD921 runs only with `--base`. SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off), and then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate. SD918 is not in the group yet.
+The group `changes` needs a `[change] policy` other than `none`: with `none`, each of its codes is off, and no rule turns it on. SD905 (for a change with no delta), SD910, SD913, SD917 and SD921 compare with the lifecycle base: the merge base of `--base`, or of `origin/HEAD`, with `HEAD`. They do not run if git cannot name it. SD910 follows `[change] gate` when the key is present (`block`: error, `warn`: warning, `off`: off), and then the column of the profile does not apply. A rule for SD910 in `[rules]` has priority over the gate. SD918 is not in the group yet.
 
 SD914 has one exception to the column of the profile. `check` lowers an error of SD914 to a warning for a spec that the diff does not touch, and for each spec when git cannot name the lifecycle base. SD912 is on `spec-dna.toml`, so the profile and the rules of the root do not apply to it, as for SD902 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
 

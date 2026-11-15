@@ -366,7 +366,9 @@ fn with_base(profile: &str) -> Repo {
         &VALVES.replace("Valves", "Pumps"),
     );
     let bad = |doc: &str| delta(&[&format!("- CHANGE {doc}#close@0123456789abcdef: Text.")]);
-    change(&r, "dose", "draft", "draft", &bad("requirements/valves"));
+    // The intent of `dose` is `accepted`, so the branch can edit its spec
+    // without SD910.
+    change(&r, "dose", "accepted", "draft", &bad("requirements/valves"));
     change(&r, "flow", "draft", "draft", &bad("requirements/pumps"));
     r.git(&["add", "-A"]);
     r.git(&["commit", "-q", "-m", "base"]);

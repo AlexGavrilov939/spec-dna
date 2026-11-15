@@ -419,7 +419,6 @@ impl Git {
     /// finished (or removed) in the branch. `dir` is the folder of the
     /// `intent` layer, from the repository root, with no final `/`. The
     /// result is sorted.
-    #[allow(dead_code)] // reader: S4
     pub fn added_intents(&self, base: &str, head: &str, dir: &str) -> Result<Vec<String>, String> {
         let range = format!("{base}..{head}");
         let spec = intent_glob(dir);

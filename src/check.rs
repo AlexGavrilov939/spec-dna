@@ -10,7 +10,7 @@ use crate::lint::Phrases;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD, RefKind};
 use crate::repo::Snapshot;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 pub(crate) fn diag(
     d: &Doc,
@@ -128,17 +128,17 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
 
 /// The layer of each document, as `layer list` shows it. A document with no
 /// valid type is in no layer (D12).
-fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
-    c.docs
-        .iter()
-        .map(|d| {
-            if d.has_layer() {
-                config.layers.layer_of(rel_in_root(config, d), d.ty)
-            } else {
-                None
-            }
-        })
-        .collect()
+pub(crate) fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
+    c.docs.iter().map(|d| doc_layer(config, d)).collect()
+}
+
+/// The layer of one document (see `doc_layers`).
+pub(crate) fn doc_layer(config: &Config, d: &Doc) -> Option<usize> {
+    if d.has_layer() {
+        config.layers.layer_of(rel_in_root(config, d), d.ty)
+    } else {
+        None
+    }
 }
 
 /// The path of a document relative to its root. The head configuration gives
@@ -1143,13 +1143,19 @@ fn transition_ok(ty: DocType, from: &str, to: &str) -> bool {
 /// key has another `frozen` hash, and it was added or removed if its key has
 /// no match on the other side. `Corpus::resolve` applies the aliases, so a move
 /// that keeps the hashes gives no diagnostic. The check compares the base with
-/// the head only. It runs only for `check --base`, because a base that is HEAD gives a
-/// false SD921 when the branch added its intent in an earlier commit. All
-/// diagnostics are new. Each diagnostic names one document.
+/// the head only. The base is the lifecycle base (design 0.6.0, "Gates"): a
+/// base that is `HEAD` gives a false SD921 when the branch added its intent in
+/// an earlier commit. All diagnostics are new. Each diagnostic names one
+/// document.
+///
+/// A document that `exempt` matches gives nothing (D19). `exempt` has the
+/// `Files` patterns of the changes whose plan covers the diff
+/// (`lifecycle::BaseReport::exempt`).
 pub fn truth_changed(
     config: &Config,
     base: (&Corpus, &Snapshot),
     head: (&Corpus, &Snapshot),
+    exempt: &[String],
 ) -> Vec<Diag> {
     if config.is_off(Code::TruthChangedWithoutChange) {
         return Vec::new();
@@ -1162,91 +1168,15 @@ pub fn truth_changed(
     // A requirement that spec-dna reads: of a document of the 3 types in a
     // layer that keeps its documents forever.
     let truth = |d: &Doc| {
-        matches!(
-            d.ty,
-            DocType::Rule | DocType::Requirements | DocType::Interface
-        ) && !d.type_failed
-            && d.moved_to.is_none()
-            && d.generated.is_none()
+        crate::lifecycle::requirement_doc(d)
             && config
                 .layers
                 .layer_of(rel_in_root(config, d), d.ty)
                 .is_some_and(|i| config.layers.layers()[i].keep == Keep::Forever)
+            && !crate::change::in_scope(exempt, &d.path)
     };
-    #[derive(Default)]
-    struct Change {
-        path: String,
-        line: u32,
-        changed: Vec<String>,
-        added: Vec<String>,
-        removed: Vec<String>,
-    }
-    let mut by_doc: BTreeMap<String, Change> = BTreeMap::new();
-    let mut matched: HashSet<(u32, usize)> = HashSet::new();
-    for b in base.docs.iter().filter(|d| truth(d)) {
-        for &ri in &b.reqs {
-            let r = &b.parsed.reqs[ri];
-            let target = format!("{}#{}", b.id, r.key);
-            let hit = match head.resolve(&target) {
-                Res::Found(hd, Some(key), true) => {
-                    head.docs[hd as usize].req(&key).map(|hri| (hd, hri))
-                }
-                // Two documents have the name, so the result is unknown.
-                Res::Ambiguous(_) => continue,
-                _ => None,
-            };
-            match hit {
-                Some((hd, hri)) => {
-                    matched.insert((hd, hri));
-                    let h = &head.docs[hd as usize];
-                    let hr = &h.parsed.reqs[hri];
-                    if hr.frozen != r.frozen {
-                        let e = by_doc.entry(h.id.clone()).or_default();
-                        e.path.clone_from(&h.path);
-                        e.line = if e.line == 0 { hr.line } else { e.line };
-                        e.changed.push(hr.key.clone());
-                    }
-                }
-                None => {
-                    // The document can be in the head, without the key.
-                    let owner = match head.resolve(&b.id) {
-                        Res::Found(hd, None, _) => &head.docs[hd as usize],
-                        _ => b,
-                    };
-                    let e = by_doc.entry(owner.id.clone()).or_default();
-                    e.path.clone_from(&owner.path);
-                    e.line = if e.line == 0 && std::ptr::eq(owner, b) {
-                        r.line
-                    } else {
-                        e.line
-                    };
-                    e.removed.push(r.key.clone());
-                }
-            }
-        }
-    }
-    for (hi, h) in head.docs.iter().enumerate().filter(|(_, d)| truth(d)) {
-        for &ri in &h.reqs {
-            if matched.contains(&(hi as u32, ri)) {
-                continue;
-            }
-            let r = &h.parsed.reqs[ri];
-            // The key can exist in the base in another kind of document, or
-            // under an old name of the document or of the key.
-            let names = std::iter::once(&h.id).chain(&h.aliases);
-            let old = names
-                .map(|n| format!("{n}#{}", r.key))
-                .chain(r.aliases.iter().cloned())
-                .any(|n| matches!(base.resolve(&n), Res::Found(_, _, true) | Res::Ambiguous(_)));
-            if !old {
-                let e = by_doc.entry(h.id.clone()).or_default();
-                e.path.clone_from(&h.path);
-                e.line = if e.line == 0 { r.line } else { e.line };
-                e.added.push(r.key.clone());
-            }
-        }
-    }
-    let list = |keys: &[String]| {
+    let changes = crate::lifecycle::requirement_changes(base, head, truth);
+    let list = |keys: &[&str]| {
         let shown: Vec<String> = keys.iter().take(3).map(|k| format!("`{k}`")).collect();
         let more = keys.len().saturating_sub(3);
         let mut s = shown.join(", ");
@@ -1255,24 +1185,37 @@ pub fn truth_changed(
         }
         s
     };
-    let out = by_doc
+    let out = crate::lifecycle::by_document(&changes)
         .into_iter()
-        .map(|(id, e)| {
+        .map(|(id, list_of)| {
+            let of = |kind: crate::lifecycle::ReqChangeKind| -> Vec<&str> {
+                list_of
+                    .iter()
+                    .filter(|c| c.kind == kind)
+                    .map(|c| c.key.as_str())
+                    .collect()
+            };
             let mut parts = Vec::new();
-            for (what, keys) in [
-                ("changed", &e.changed),
-                ("added", &e.added),
-                ("removed", &e.removed),
+            for (what, kind) in [
+                ("changed", crate::lifecycle::ReqChangeKind::Changed),
+                ("added", crate::lifecycle::ReqChangeKind::Added),
+                ("removed", crate::lifecycle::ReqChangeKind::Removed),
             ] {
+                let keys = of(kind);
                 if !keys.is_empty() {
-                    parts.push(format!("{what} {}", list(keys)));
+                    parts.push(format!("{what} {}", list(&keys)));
                 }
             }
+            let line = list_of
+                .iter()
+                .map(|c| c.line)
+                .find(|&l| l != 0)
+                .unwrap_or(0);
             Diag {
-                path: e.path,
-                line: e.line.max(1),
+                path: list_of.last().map(|c| c.path.clone()).unwrap_or_default(),
+                line: line.max(1),
                 code: Code::TruthChangedWithoutChange,
-                doc: id,
+                doc: id.to_string(),
                 target: String::new(),
                 message: format!(
                     "requirements {}, and no file of the intent folder changed",
@@ -1289,24 +1232,13 @@ pub fn truth_changed(
 /// changed. A head file with no blob id (an edit of the working tree) counts as
 /// a change. A project with no `intent` layer has no such folder.
 fn intent_changed(config: &Config, base: &Snapshot, head: &Snapshot) -> bool {
-    let Some(dir) = config
-        .layers
-        .layer_of_type(DocType::Intent)
-        .and_then(|i| config.layers.layers()[i].dir())
-    else {
-        return false;
-    };
-    let prefixes: Vec<String> = config
-        .roots
+    let prefixes: Vec<String> = crate::lifecycle::intent_dirs(config)
         .iter()
-        .map(|r| {
-            if r.path.is_empty() {
-                format!("{dir}/")
-            } else {
-                format!("{}/{dir}/", r.path)
-            }
-        })
+        .map(|d| format!("{d}/"))
         .collect();
+    if prefixes.is_empty() {
+        return false;
+    }
     let under = |p: &str| prefixes.iter().any(|x| p.starts_with(x.as_str()));
     let before: HashMap<&str, Option<&str>> = base
         .files
@@ -1337,8 +1269,16 @@ pub struct Outcome {
     pub new: Vec<bool>,
 }
 
-pub fn gate(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Outcome {
-    let mut head_diags = diagnose_against(config, head, base);
+/// Gates the head tree against `base`. `lifecycle` is the lifecycle base tree,
+/// if there is one. The checks of the delta that need a tree before the change
+/// read it, and `base` is their fallback.
+pub fn gate(
+    config: &Config,
+    base: Option<&Corpus>,
+    lifecycle: Option<&Corpus>,
+    head: &Corpus,
+) -> Outcome {
+    let mut head_diags = diagnose_against(config, head, lifecycle.or(base));
     let budget: Vec<(Diag, bool)> = hard_budget(config, base, head)
         .into_iter()
         .filter_map(|(mut d, n)| {
