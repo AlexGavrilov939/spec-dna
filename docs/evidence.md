@@ -14,7 +14,7 @@ This page gives the results of the agent experiments that shaped spec-dna, and t
 
 | Question | Setup | Result |
 | --- | --- | --- |
-| Does the gate keep accepted decisions intact? | Synthetic project, 5 tasks, 2 arms, 3 runs each | With spec-dna: 15 of 15 runs correct. Without it: 6 of 15. The agents edited the frozen text of accepted decisions 7 times and left 3 stale code citations. The cost of one correct result was about half ($1.02 against $2.03, estimated from token prices). |
+| Does the gate keep accepted decisions intact? | Synthetic project, 5 tasks, 2 arms, 3 runs each | With spec-dna: 15 of 15 runs correct. Without it: 6 of 15. The agents edited the locked text of accepted decisions 7 times and left 3 stale code citations. The cost of one correct result was about half ($1.02 against $2.03, estimated from token prices). |
 | Does the gate keep the documents small and consistent as the project grows? | Synthetic project grown by 80 agent tasks in each of 3 arms | All 240 tasks passed. With the gate, the documents were about one third smaller, and drift and broken code citations occurred about half as often. The tasks cost about 14% less. The accuracy of spot questions about the project did not change by more than the noise (118, 114 and 113 of 120). |
 | Does it help on a mature real repository? | A private product repository with about 2,300 Markdown documents; real and replayed changes | The light configuration has the gate as a hint, the skill, and the project conventions first. With it, agents gave more correct results in 2 of 3 comparisons and the same number in the third. The cost of one correct result stayed about the same. With the gate, the agents made no more edits of the outcome of accepted decisions. |
 

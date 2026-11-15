@@ -283,7 +283,7 @@ Fixes from the use of 0.4.1 in a second real project.
 - `check --lint` runs the prose lint (SD801 to SD805) in every profile, even when `lint` is off. The findings are warnings, so they never fail the gate. Without `--lint`, nothing changes.
 - A requirement key that is a template placeholder (`{{key}}`) gives SD306 only. It no longer gives SD203 too.
 - SD804 does not report "many" after "how" ("how many").
-- SD304 for `proposed` on a spec, a contract or an invariant names `draft`. `draft` is the proposal state of these types, and `proposed` is for a decision and a change. The namespace `reference/` stays singular. [docs/types.md](docs/types.md#statuses-and-namespaces) gives the reason and the namespace of each type.
+- SD304 for `proposed` on a spec, a contract or an invariant names `draft`. `draft` is the proposal state of these types, and `proposed` is for a decision and a change. The namespace `reference/` stays singular. [docs/types.md](docs/types.md#statuses) gives the reason and the namespace of each type.
 - `spec-dna new` says "replace each {{...}} placeholder". The templates use that form.
 - A command that writes to a closed pipe (`spec-dna check --json | head -1`) ends with its own exit code, with no panic. A non-interactive `init` with a closed stdout now writes its files.
 
