@@ -95,7 +95,7 @@ git commit -m "build: adopt spec-dna"
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
 
-A new project gets the change process: questions 4 and 5 propose the policy `three-class` and the gate `block`, and `init` writes the table `[change]`. Answer `none` to question 4 if you do not want it. `init` prints the line `docs/intent/*/spec.md @OWNER` for your `CODEOWNERS` file, and does not write that file. [docs/init.md](init.md) gives the details.
+A new project gets the change process. Questions 4 and 5 propose the policy `three-class` and the gate `block`, and `init` writes the table `[change]`. Answer `none` to question 4 if you do not want the change process. `init` prints the line `docs/intent/*/spec.md @OWNER` for your `CODEOWNERS` file. It does not write that file. [docs/init.md](init.md) gives the details.
 
 The profile sets which diagnostics fail `check`. The profiles are `lite` (only warnings, for adoption), `standard` (the default) and `strict`. [docs/profiles.md](profiles.md) gives the table.
 

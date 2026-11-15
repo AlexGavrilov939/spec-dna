@@ -49,6 +49,10 @@ pub struct Ctx<'a> {
     pub read: &'a dyn Fn(&str) -> Result<String, String>,
     /// True if a path exists on disk, tracked or not.
     pub exists: &'a dyn Fn(&str) -> bool,
+    /// The problem of a path that `finish` writes or deletes (a symbolic link
+    /// in the path, or a path outside the repository), or `None`. `main` gives
+    /// `path_problem` of the repository root.
+    pub path_problem: &'a dyn Fn(&str) -> Option<String>,
 }
 
 /// A file that `finish` writes.
@@ -160,6 +164,7 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     if ch.intent_status() == "closed" {
         // A closed change does not proceed: only the folder goes away.
         let rebuilt = finish_indexes(cx, &removed, &mut out.writes)?;
+        paths_problem(cx, &out, 1)?;
         no_new_errors(cx, &rebuilt, None, &HashSet::new())?;
         return Ok(out);
     }
@@ -217,6 +222,7 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
             let problem = lifecycle::delta_problem(cx.config, head, &layers, allowed.as_deref(), d)
                 .or_else(|| target_in_folder_problem(cx, ch, d))
                 .or_else(|| new_document_problem(cx, ch, d))
+                .or_else(|| (cx.path_problem)(&target_path(cx, ch, d)))
                 .or_else(|| {
                     (applied == Applied::Invalid).then(|| {
                         "the target is in neither the base tree nor the head tree".to_string()
@@ -258,6 +264,8 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     out.writes = edits;
     out.applied = counts(&todo);
     let rebuilt = finish_indexes(cx, &removed, &mut out.writes)?;
+    paths_problem(cx, &out, 4)?;
+    dropped_keys(cx, ch, &todo, &removed, &rebuilt)?;
     // The result must give the result of each line, as SD915 will read it.
     let unapplied: Vec<String> = lines
         .iter()
@@ -297,6 +305,118 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     }
     no_new_errors(cx, &rebuilt, Some(base), &created)?;
     Ok(out)
+}
+
+/// The problem of a path that `finish` writes or deletes, if there is one: a
+/// symbolic link in the path (also as the last part), or a path that leaves the
+/// repository. It reads only the metadata of the path, and it never follows a
+/// link. `rel` is a path from the repository root.
+pub fn path_problem(root: &std::path::Path, rel: &str) -> Option<String> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == "." || *p == "..")
+    {
+        return Some(format!(
+            "`{rel}` is not a path below the root of the repository"
+        ));
+    }
+    let mut cur = root.to_path_buf();
+    let mut shown = String::new();
+    for part in &parts {
+        cur.push(part);
+        if !shown.is_empty() {
+            shown.push('/');
+        }
+        shown.push_str(part);
+        match std::fs::symlink_metadata(&cur) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Some(format!(
+                    "`{rel}` is, or goes through, the symbolic link `{shown}`; `finish` does not write or delete through a link. Replace the link, or move the requirement to a path with no link"
+                ));
+            }
+            Ok(_) => {}
+            // The rest of the path does not exist, so it has no link.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => return Some(format!("cannot read `{shown}`: {e}")),
+        }
+    }
+    // The deepest folder of the path that exists must be in the repository.
+    let canon = root.canonicalize().ok()?;
+    let mut dir = root.join(rel);
+    dir.pop();
+    let real = loop {
+        match dir.canonicalize() {
+            Ok(p) => break p,
+            Err(_) if dir.pop() => {}
+            Err(_) => return Some(format!("cannot resolve the folder of `{rel}`")),
+        }
+    };
+    (!real.starts_with(&canon)).then(|| format!("`{rel}` is outside the repository"))
+}
+
+/// Stops if a path of the plan (a file to write or to delete) has a symbolic
+/// link or leaves the repository. The plan has written nothing yet.
+fn paths_problem(cx: &Ctx, plan: &Plan, step: u8) -> Result<(), Failure> {
+    let why: Vec<String> = plan
+        .writes
+        .iter()
+        .map(|w| w.path.as_str())
+        .chain(plan.removes.iter().map(String::as_str))
+        .filter_map(|p| (cx.path_problem)(p))
+        .collect();
+    if why.is_empty() {
+        return Ok(());
+    }
+    stop(step, why.join("; "), Vec::new())
+}
+
+/// After the writes, the only requirements that the head has and the result has
+/// not are those of the `REMOVE` lines. Another loss is a defect of the edit,
+/// so `finish` stops and writes nothing. The documents of the folder are not
+/// part of the check.
+fn dropped_keys(
+    cx: &Ctx,
+    ch: &Change,
+    todo: &[&Delta],
+    removed: &HashSet<String>,
+    rebuilt: &Corpus,
+) -> Result<(), Failure> {
+    let keys = |c: &Corpus, skip: &HashSet<String>| -> HashSet<(String, String)> {
+        c.docs
+            .iter()
+            .filter(|d| !skip.contains(&d.path))
+            .flat_map(|d| {
+                d.reqs
+                    .iter()
+                    .map(|&i| (d.path.clone(), d.parsed.reqs[i].key.clone()))
+            })
+            .collect()
+    };
+    let none = HashSet::new();
+    let after = keys(rebuilt, &none);
+    let named: HashSet<(String, String)> = todo
+        .iter()
+        .filter(|d| d.verb == Verb::Remove)
+        .map(|d| (target_path(cx, ch, d), d.key.clone()))
+        .collect();
+    let mut lost: Vec<String> = keys(cx.head, removed)
+        .into_iter()
+        .filter(|k| !after.contains(k) && !named.contains(k))
+        .map(|(p, k)| format!("`{p}#{k}`"))
+        .collect();
+    if lost.is_empty() {
+        return Ok(());
+    }
+    lost.sort();
+    stop(
+        4,
+        format!(
+            "the result would drop the requirement {} that no `REMOVE` line names",
+            lost.join(", ")
+        ),
+        Vec::new(),
+    )
 }
 
 fn sorted(paths: &[String]) -> Vec<String> {
@@ -438,7 +558,7 @@ fn new_type(cx: &Ctx, root: usize, path: &str) -> (DocType, bool) {
 }
 
 /// The problem of a line whose target is a file of the folder that `finish`
-/// deletes: the edit would go away with the folder.
+/// deletes: the deletion of the folder removes the edit.
 fn target_in_folder_problem(cx: &Ctx, ch: &Change, d: &Delta) -> Option<String> {
     let path = target_path(cx, ch, d);
     in_folder(cx.folder, &path).then(|| {
@@ -579,6 +699,7 @@ fn link_into(c: &Corpus, from: &str, target: &str, folder: &str) -> bool {
 
 /// One edit of a text: the byte range to replace, and the new text. An insert
 /// has an empty range.
+#[derive(Clone)]
 struct Edit {
     start: usize,
     end: usize,
@@ -679,6 +800,8 @@ fn edit_document(
             .find(|r| r.key == key && valid.contains(key))
     };
     let mut edits: Vec<Edit> = Vec::new();
+    // The removals, each with its item span before the blank line.
+    let mut removals: Vec<((usize, usize), Edit)> = Vec::new();
     let mut adds: Vec<String> = Vec::new();
     for d in lines {
         match d.verb {
@@ -714,38 +837,91 @@ fn edit_document(
                     });
                 } else {
                     let (a, mut b) = split::item_span(text, r.start as usize, r.end as usize);
+                    let core = (a, b);
+                    // The removal drops each requirement in the span. The
+                    // delta must name each of them.
+                    let mut open: Vec<(u32, &str)> = fresh
+                        .reqs
+                        .iter()
+                        .filter(|o| (a..b).contains(&(o.start as usize)) && o.start != r.start)
+                        .filter(|o| valid.contains(o.key.as_str()))
+                        .filter(|o| {
+                            !lines
+                                .iter()
+                                .any(|l| l.verb == Verb::Remove && l.key == o.key)
+                        })
+                        .map(|o| (o.start, o.key.as_str()))
+                        .collect();
+                    if !open.is_empty() {
+                        open.sort();
+                        let keys: Vec<String> =
+                            open.iter().map(|(_, k)| format!("`{k}`")).collect();
+                        return Err(format!(
+                            "the requirement `{}` has the nested requirement {}, and `REMOVE` drops them too; add a `REMOVE` line for each of them to the delta",
+                            d.key,
+                            keys.join(", ")
+                        ));
+                    }
                     let before_blank = text[..a].ends_with("\n\n") || text[..a].ends_with("\n\r\n");
                     let after = &text[b..];
                     if before_blank && (after.starts_with('\n') || after.starts_with("\r\n")) {
                         b += if after.starts_with("\r\n") { 2 } else { 1 };
                     }
-                    edits.push(Edit {
-                        start: a,
-                        end: b,
-                        text: String::new(),
-                    });
+                    removals.push((
+                        core,
+                        Edit {
+                            start: a,
+                            end: b,
+                            text: String::new(),
+                        },
+                    ));
                 }
             }
         }
     }
-    if !adds.is_empty() {
-        let removals: Vec<(usize, usize)> = edits
+    // A removal inside another removal is part of it: the span of the outer
+    // item holds it already.
+    let cores: Vec<(usize, usize)> = removals.iter().map(|r| r.0).collect();
+    // Each removal that stays: its range, and the end of its item.
+    let mut spans: Vec<(usize, usize, usize)> = Vec::new();
+    for (core, e) in removals {
+        let inner = cores
             .iter()
-            .filter(|e| e.text.is_empty() && e.end > e.start)
-            .map(|e| (e.start, e.end))
-            .collect();
-        let (mut pos, ins) = add_items(text, &fresh, &valid, doc.ty, &adds);
-        // An insert inside a removed item goes behind the removed lines.
-        if let Some(&(_, end)) = removals.iter().find(|&&(s, e)| s < pos && pos <= e) {
-            pos = end;
+            .any(|&c| c != core && c.0 <= core.0 && core.1 <= c.1);
+        if !inner {
+            spans.push((e.start, e.end, core.1));
+            edits.push(e);
         }
-        edits.push(Edit {
-            start: pos,
-            end: pos,
-            text: ins,
-        });
     }
-    apply_edits(text, edits)
+    let mut result = apply_edits(text, edits.clone())?;
+    if !adds.is_empty() {
+        let after = parse(&result);
+        let survives = after.reqs.iter().any(|r| valid.contains(r.key.as_str()));
+        if survives || spans.is_empty() {
+            // The new items go by the list that the edits leave: the place
+            // and the number do not depend on a removed item.
+            let (pos, ins) = add_items(&result, &after, &valid, doc.ty, &adds, false);
+            result.insert_str(pos, &ins);
+        } else {
+            // The edits remove each requirement item. The new items take the
+            // place and the marker of the last of them.
+            let (mut pos, mut ins) = add_items(text, &fresh, &valid, doc.ty, &adds, true);
+            if let Some(&(_, end, item_end)) = spans.iter().find(|&&(s, e, _)| s < pos && pos <= e)
+            {
+                // The removal took one blank line after the item: it goes back
+                // behind the new items.
+                ins.push_str(&text[item_end..end]);
+                pos = end;
+            }
+            edits.push(Edit {
+                start: pos,
+                end: pos,
+                text: ins,
+            });
+            result = apply_edits(text, edits)?;
+        }
+    }
+    Ok(result)
 }
 
 /// The markers `<!-- aliases: ... -->` and `<!-- verified-by: ... -->` in a
@@ -798,17 +974,19 @@ fn eol_at(text: &str, pos: usize) -> &'static str {
 }
 
 /// The insert of the new items of a document: the position and the text. The
-/// items (`**key**: sentence`) go after the last requirement item, with its
-/// indent and list marker, and with the next number in an ordered list. If the
-/// document has no requirement item, they go to the end of the section
-/// `Requirements` (`Rules` for a rule). The command adds that section at the
-/// end of the file if it is not there.
+/// items (`**key**: sentence`) go after the outermost requirement item that
+/// holds the last requirement item, as its siblings. They have its indent and
+/// list marker, and the next number in an ordered list (with `restart`, the
+/// number of the first item). If the document has no requirement item, they go
+/// to the end of the section `Requirements` (`Rules` for a rule). The command
+/// adds that section at the end of the file if it is not there.
 fn add_items(
     text: &str,
     fresh: &ParsedDoc,
     valid: &HashSet<&str>,
     ty: DocType,
     items: &[String],
+    restart: bool,
 ) -> (usize, String) {
     let last = fresh
         .reqs
@@ -816,13 +994,37 @@ fn add_items(
         .filter(|r| valid.contains(r.key.as_str()))
         .max_by_key(|r| r.start);
     if let Some(last) = last {
+        // The last requirement can be nested. The new items go after the
+        // outermost requirement item that holds it, as its siblings.
+        let last_end = split::item_span(text, last.start as usize, last.end as usize).1;
+        let last = fresh
+            .reqs
+            .iter()
+            .filter(|r| valid.contains(r.key.as_str()) && r.start <= last.start)
+            .filter(|r| split::item_span(text, r.start as usize, r.end as usize).1 >= last_end)
+            .min_by_key(|r| r.start)
+            .unwrap_or(last);
         let (a, b) = split::item_span(text, last.start as usize, last.end as usize);
         let eol = eol_at(text, a);
         let start = last.start as usize;
         let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
         let prefix = &text[line_start..start];
         let item = &text[start..];
-        let (bullet, number) = marker_of(item);
+        let (bullet, mut number) = marker_of(item);
+        if restart {
+            // The list has no item left: it starts again at its first number.
+            let first = fresh
+                .reqs
+                .iter()
+                .filter(|r| valid.contains(r.key.as_str()))
+                .min_by_key(|r| r.start);
+            if let (Some(f), Some((_, delim))) = (first, number)
+                && let (_, Some((n, _))) = marker_of(&text[f.start as usize..])
+                && n > 0
+            {
+                number = Some((n - 1, delim));
+            }
+        }
         let (mlen, glen) = (marker_len(item), gap_len(item));
         let gap = if glen == 0 {
             " "
@@ -1075,8 +1277,8 @@ pub struct WriteError {
 /// Writes the plan: all the files, then the deletion of the folder, then
 /// `git add -A` of each path. Each file goes to a temporary file first, and a
 /// rename puts it in place. If a temporary file cannot be written, nothing has
-/// changed. If a rename fails, the files that were renamed go back to their old
-/// text, and the message lists the files.
+/// changed. If a rename fails, the files that were renamed get their old text
+/// again, and the message lists the files.
 pub fn write_plan(
     root: &std::path::Path,
     git: &crate::git::Git,
@@ -1277,6 +1479,7 @@ mod tests {
             folder_files: &folder_files,
             read: &read,
             exists: &exists,
+            path_problem: &|_| None,
         })
     }
 
@@ -1474,6 +1677,106 @@ mod tests {
             write_of(&p, VALVES_PATH).new,
             "---\nstatus: active\n---\n# V\n\n## Requirements\n\n- **a**: The valve SHALL open.\n- **c**: The valve SHALL drain.\n"
         );
+    }
+
+    #[test]
+    fn a_new_item_takes_the_place_of_the_only_item_that_a_remove_drops() {
+        let cfg = config("");
+        let head = "---\nstatus: active\n---\n# V\n\n## Requirements\n\n";
+        let covers = ["requirements/valves#c"];
+        let add = "- ADD requirements/valves#c: The valve SHALL drain.".to_string();
+        for (old, new) in [
+            (
+                "- **a**: The valve SHALL open.\n",
+                "- **c**: The valve SHALL drain.\n",
+            ),
+            (
+                "7. **a**: The valve SHALL open.\n",
+                "7. **c**: The valve SHALL drain.\n",
+            ),
+            (
+                "- **a**: The valve SHALL open.\n\n## Notes\n\nText.\n",
+                "- **c**: The valve SHALL drain.\n\n## Notes\n\nText.\n",
+            ),
+            (
+                "1. **a**: The valve SHALL open.\n2. **b**: The valve SHALL close.\n",
+                "1. **c**: The valve SHALL drain.\n",
+            ),
+        ] {
+            let valves = format!("{head}{old}");
+            let mut lines = vec![format!(
+                "- REMOVE requirements/valves#a@{}",
+                hash_of(&cfg, &valves, "a")
+            )];
+            if old.contains("**b**") {
+                lines.push(format!(
+                    "- REMOVE requirements/valves#b@{}",
+                    hash_of(&cfg, &valves, "b")
+                ));
+            }
+            lines.push(add.clone());
+            let p = run(&cfg, &valves, &spec(&lines), &covers).unwrap();
+            assert_eq!(write_of(&p, VALVES_PATH).new, format!("{head}{new}"));
+        }
+    }
+
+    #[test]
+    fn a_remove_with_nested_requirements_needs_a_line_for_each_of_them() {
+        let cfg = config("");
+        let valves = "---\nstatus: active\n---\n# V\n\n## Requirements\n\n- **a**: The valve SHALL open.\n  - **a1**: The valve SHALL report.\n    - **a2**: The valve SHALL log.\n\n- **b**: The valve SHALL close.\n";
+        let line = |k: &str| {
+            format!(
+                "- REMOVE requirements/valves#{k}@{}",
+                hash_of(&cfg, valves, k)
+            )
+        };
+        let st = stopped(run(&cfg, valves, &spec(&[line("a")]), &[]));
+        assert_eq!(st.step, 4);
+        assert!(st.reason.contains("`a1`, `a2`"), "{}", st.reason);
+        // Each key has a line: the nested lines are part of the outer span.
+        let all = spec(&[line("a2"), line("a"), line("a1")]);
+        let p = run(&cfg, valves, &all, &[]).unwrap();
+        assert_eq!(
+            write_of(&p, VALVES_PATH).new,
+            "---\nstatus: active\n---\n# V\n\n## Requirements\n\n- **b**: The valve SHALL close.\n"
+        );
+        assert_eq!(p.applied, (0, 0, 3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_with_a_link_or_outside_the_root_is_a_problem() {
+        use std::os::unix::fs::symlink;
+        let dir =
+            std::env::temp_dir().join(format!("spec-dna-finish-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (root, outside) = (dir.join("repo"), dir.join("outside"));
+        std::fs::create_dir_all(root.join("docs/real")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(root.join("docs/real/a.md"), "x").unwrap();
+        symlink(&outside, root.join("docs/out")).unwrap();
+        symlink(root.join("docs/real/a.md"), root.join("docs/link.md")).unwrap();
+        // The root can be behind a link, as a temporary folder is on macOS.
+        symlink(&root, dir.join("alias")).unwrap();
+        for ok in ["docs/real/a.md", "docs/real/new.md", "docs/new/deep/x.md"] {
+            for base in [&root, &dir.join("alias")] {
+                assert_eq!(path_problem(base, ok), None, "{ok}");
+            }
+        }
+        for bad in [
+            "docs/out/x.md",
+            "docs/out",
+            "docs/link.md",
+            "docs/out/deep/x.md",
+            "docs/../x.md",
+            "/etc/x.md",
+            "",
+        ] {
+            assert!(path_problem(&root, bad).is_some(), "{bad}");
+        }
+        let why = path_problem(&root, "docs/out/x.md").unwrap();
+        assert!(why.contains("symbolic link `docs/out`"), "{why}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

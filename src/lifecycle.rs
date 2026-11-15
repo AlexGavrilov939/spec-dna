@@ -5,7 +5,7 @@
 //! the staleness of a started change (`stale_changes`, SD911).
 //!
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`) with
-//! `HEAD`. It is never the tip of `--base`: a branch that was cut from an old
+//! `HEAD`. It is never the tip of `--base`: a branch that started from an old
 //! commit is not behind the default branch because of that.
 
 use crate::change::{self, Change, Delta, Verb};
@@ -412,6 +412,11 @@ pub(crate) fn delta_problem(
         if d.verb != Verb::Add {
             return Some(format!("`{id}` names no document"));
         }
+        if id.ends_with(".md") {
+            return Some(format!(
+                "`{id}` ends in `.md`, and `finish` adds `.md` to the id of a new document; write the id without `.md`"
+            ));
+        }
         // A new document: `finish` writes it at the place of its id.
         let rel = format!("{id}.md");
         let ty = config
@@ -501,9 +506,10 @@ pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
 /// pull request must change the interface document, or one file that it cites.
 /// `changed` tells if a path (from the repository root) is in the diff. An item
 /// that `interfaces` reports (a bad form, an absent document, a document that
-/// is not an interface) gives nothing here. `check` can call this function
-/// with the diff against the lifecycle base, and `finish` calls it with the
-/// diff and the documents that its own edits change.
+/// is not an interface) gives nothing here. `check` calls this function for a
+/// deleted change, with the spec of the base tree and the diff against the
+/// lifecycle base. `finish` calls it with the diff and the documents that its
+/// own edits change.
 pub fn interfaces_unchanged(c: &Corpus, spec: &Doc, changed: &dyn Fn(&str) -> bool) -> Vec<Diag> {
     let mut out = Vec::new();
     let mut cits: Option<crate::cite::Citations> = None;
@@ -877,8 +883,9 @@ impl<'a> Ctx<'a> {
 }
 
 /// Runs the checks of the diff against the lifecycle base: SD905 (the part for
-/// a change with no delta), SD910, SD913, SD915, SD916, SD917 and SD920 (the
-/// decision that is not `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
+/// a change with no delta), SD910, SD913, SD914 (the interface that the diff
+/// does not change), SD915, SD916, SD917 and SD920 (the decision that is not
+/// `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
 /// diff of the head against it. The checks read the artifacts of a change from
 /// the head tree, and from the base tree if the diff deletes the folder. They
 /// read approvals from the base tree only, so an approval in the same pull
@@ -902,6 +909,7 @@ pub fn base_checks(
             Code::FinishIncomplete,
             Code::DeltaEvidenceMissing,
             Code::DecisionNeededUnaccepted,
+            Code::DeltaInvalid,
         ]
         .iter()
         .any(|&k| on(k))
@@ -1428,8 +1436,9 @@ fn routine_fan_out(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
     out
 }
 
-/// The checks of a finished change: SD915, SD916 and SD920 (a decision that is
-/// not `accepted`). They apply to a change that the diff deletes: the base tree
+/// The checks of a finished change: SD914 (the interface of `Interfaces` that
+/// the diff does not change), SD915, SD916 and SD920 (a decision that is not
+/// `accepted`). They apply to a change that the diff deletes: the base tree
 /// has its folder, and the head tree has not. A change whose base status is
 /// `closed` gives none of them. A branch-born change gives none, because the
 /// base tree has no folder. The checks read the spec and the plan from the base
@@ -1457,6 +1466,15 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         }
         if on(Code::DecisionNeededUnaccepted) {
             out.extend(decisions_unaccepted(ctx.head, ctx.base, &ch.change));
+        }
+        // The spec of the base lists the interfaces. The diff must change each
+        // one, or a file that it cites.
+        if on(Code::DeltaInvalid)
+            && let Some(a) = &ch.change.spec
+        {
+            let spec = &ctx.base.docs[a.doc as usize];
+            let changed = |p: &str| ctx.diff.kind(p).is_some();
+            out.extend(interfaces_unchanged(ctx.base, spec, &changed));
         }
     }
     out

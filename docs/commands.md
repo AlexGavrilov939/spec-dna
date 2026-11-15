@@ -60,7 +60,7 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 - the vendored, generated and large reference directories;
 - the budgets, the stack, the tests, the agent files, CI, the hooks and the default branch.
 
-Then `init` asks at most 14 questions, with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. With a change policy other than `none`, the preview has a note with the `CODEOWNERS` line for the specs, and `--json` has the field `codeowners`. `init` never writes the `CODEOWNERS` file. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+Then `init` asks at most 14 questions (13 in this version, 14 after step 4), with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. With a change policy other than `none`, the preview has a note with the `CODEOWNERS` line for the specs. `--json` has the field `codeowners`. `init` never writes the `CODEOWNERS` file. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
 
 `init` writes these adapters:
 
@@ -92,9 +92,11 @@ spec-dna check [--base <rev>] [--all] [--lint] [--staged]
 
 The hook that `init` writes runs `spec-dna check --staged`. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101).
 
-`check` also compares the requirements of the lifecycle base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder changed, it gives SD921. It runs only with a `[change] policy` other than `none`, and only if git can name the lifecycle base.
+`check` also compares the requirements of the lifecycle base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder changed, it gives SD921. This check runs only with a `[change] policy` other than `none`, and only if git can name the lifecycle base.
 
-With a `[change] policy` other than `none`, `check` finds the lifecycle base: the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`. Without `--base`, the base that decides which diagnostics are new stays `HEAD`, and the lifecycle base is only for the codes SD905 (a change with no delta), SD910, SD913, SD917 and SD921 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). Their diagnostics are always new. With `--staged`, they diff the git index against the lifecycle base.
+With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`.
+
+Without `--base`, the base that decides which diagnostics are new stays `HEAD`. The lifecycle base is only for the codes SD905 (a change with no delta), SD910, SD913, SD917 and SD921 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). Their diagnostics are always new. With `--staged`, they diff the git index against the lifecycle base.
 
 `--json` has the field `change_base`, the commit id of this base, or `null` if git cannot name it. With `none`, the field is not in the output, and `check` reads no second tree and no history for it. If there is no base, the text output prints this note on stderr: `no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>`. Then `check` runs only the checks of one tree. `origin/HEAD` is the only ref that `check` reads for this base. It does not use a local `main` or `master`. A shallow clone can fail to find the merge base. Then `change_base` is `null`. For a stacked pull request, pass the branch below it as `--base`. SD910 trusts `--base`.
 
@@ -304,16 +306,16 @@ spec-dna index <dir or file> [--replace]
 spec-dna finish <slug> [--dry-run] [--base <rev>]
 ```
 
-`finish` ends a change ([Finish](design/0.6.0.md#finish)). It applies the delta of the spec of `<intent folder>/<slug>/` to the requirements, checks the evidence, and deletes the folder. The author runs it in the pull request of the code, so the review sees the code and the new current truth in one diff. It stops at the first step that fails. A stop writes nothing.
+`finish` ends a change ([Finish](design/0.6.0.md#finish)). It applies the delta of the spec of `<intent folder>/<slug>/` to the requirements, checks the evidence, and deletes the folder. The author runs it in the pull request of the code. The review then sees the code and the new current truth in one diff. It stops at the first step that fails. A stop writes nothing.
 
 1. Step 0: no document outside the folder links into it. It reads a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` and `from`. It skips a stub, a generated index and the locked text of an accepted decision. It lists each reference and stops, also in the profile `lite`.
 2. Step 1: the intent is `accepted`, the plan is `approved`, and (for a `higher-risk` change) the spec is `approved`. An intent with the status `closed` runs steps 0 and 1, and then `finish` deletes the folder. It applies no delta.
 3. Step 2: no open concern (SD919), no open question (SD922), and each decision of `Decisions` is `accepted` (SD920).
 4. Step 3: each delta line is valid against the tree (SD914). A `CHANGE` or `REMOVE` hash is the hash of the requirement now. The delta is the delta of the base tree: an approved delta must not change. The pull request changes each interface document of `Interfaces`, or a file that it cites.
-5. Step 4: it applies the delta in memory. `ADD` writes a list item after the last requirement item of the document, with its indent and marker (an ordered list gets the next number). With no item, it writes into the section `Requirements` (`Rules` for a rule), and it adds the section if needed. A document that does not exist is written at `<root>/<id>.md` with the status `active`, the line `type: requirements` only where the place gives no type, the H1 from the id, a `Requirements` section (`Rules` for a rule) and the items. `CHANGE` replaces the sentence on one line, and it keeps the key, the nested lists and the `aliases` and `verified-by` markers (also a marker inside a sentence that wraps). `REMOVE` deletes the lines of the item. A relative link of a delta line moves to the path of the target document. The result keeps CRLF, a BOM and the final newline of each file. A line that the tree applies already is skipped, so a second run changes nothing.
+5. Step 4: it applies the delta in memory. `ADD` writes a list item after the outermost requirement item that holds the last requirement item, so a nested last requirement gives a sibling of the top-level items. The item has the indent and the marker of that item (an ordered list gets the next number, counted after the removals). With no item, it writes into the section `Requirements` (`Rules` for a rule), and it adds the section if needed. `finish` writes a document that does not exist at `<root>/<id>.md`. The document has the status `active`, the H1 from the id, a `Requirements` section (`Rules` for a rule) and the items. It has the line `type: requirements` only where the place gives no type. `CHANGE` replaces the sentence on one line. It keeps the key, the nested lists and the `aliases` and `verified-by` markers (also a marker inside a sentence that wraps). `REMOVE` deletes the lines of the item. If the item holds a nested requirement, the delta must have a `REMOVE` line for each nested key too, or `finish` stops at step 4 and names the key. `finish` stops at step 4 if the result would drop a requirement that no `REMOVE` line names. A document id that ends in `.md` gives SD914: write the id without `.md`. A relative link of a delta line moves to the path of the target document. The result keeps CRLF, a BOM and the final newline of each file. A line that the tree applies already is skipped, so a second run changes nothing.
 6. Step 5: each requirement that the delta adds or changes has evidence (SD916). For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
 
-If no step stops, `finish` writes all the files in one pass, deletes the tracked files of the folder, and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code. A generated index that lists a deleted file is written again, so `check` gives no SD610. `finish` also needs the folder to be tracked and equal to `HEAD`: an untracked file in the folder, or an edit that is not committed, stops it.
+If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code. `finish` writes a generated index again if it lists a deleted file, so `check` gives no SD610. `finish` also needs the folder to be tracked and equal to `HEAD`. An untracked file in the folder, or an edit that is not committed, stops it. It also stops if it must write a file that has an edit that is not committed, because it stages each file that it writes. `finish` writes and deletes no path that has a symbolic link, also as the last part of the path, and no path outside the repository. It checks all the paths before it writes the first file, in `--dry-run` too.
 
 The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. An `accepted` change needs it. A `closed` change needs none. The base of step 3 does not depend on `[change] policy`, and the stops do not follow the profile or a `[rules]` entry.
 
@@ -358,13 +360,13 @@ A change has no stage field. The stage is the first row of this table that match
 | `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
-- A file of `Files` differs from the base when the diff of the working tree against the base has a path that a `Files` item matches. A file of the folder of the change does not count. With no base, the diff is unknown, so a change with an approved plan stays in `build`.
-- A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If another change has a changed file in the diff, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
+- A file of `Files` differs from the base when the diff of the working tree against the base has a path that a `Files` item matches. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
+- A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
 - The change that the default branch finished is no longer in the tree, so it has no stage. `spec-dna log` lists it.
 - The stage Maintain is not the stage of a change. `status` lists an open follow-up of an incident ([status](#status)).
 
-In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft: its id, text, files and verification. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done, and the first task that is open is the next task.
+In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done. The first open task is the next task.
 
 ### Skills
 
@@ -404,7 +406,9 @@ Exit codes: 0 done; 2 usage; 3 configuration, or a `--base` that is not a commit
 spec-dna status [--group <name>] [--base <rev>]
 ```
 
-`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the progress of the tasks (`done/total` and the id of the next open task), the areas, and the next gate. A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`. Then it lists each open follow-up of an incident: an item `- [ ]` in the `Follow-ups` section, with the incident id, the path, the line and the text. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
+`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total` and the id of the next open task). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
+
+Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
 
 ```text
 policy three-class, base 3f2a9c1b7e0d, 1 started (max 3)
@@ -413,7 +417,7 @@ dose-limit routine build intent accepted spec - plan approved tasks 1/3 next-tas
 follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm for a stuck valve.
 ```
 
-`--group <name>` lists only the changes that are in the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target. The area of a delta target is the first folder under the folder of the layer of `requirements`: the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). `context --group` is not in this version.
+`--group <name>` lists only the changes that are in the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target. The area of a delta target is the first folder under the folder of the layer of `requirements`. For example, the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). `context --group` is not in this version.
 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 
@@ -440,16 +444,16 @@ The status of the intent in the parent of that commit gives the result:
 | `accepted` | `finished` |
 | any other status, also `draft` | `closed` |
 
-For each change, `log` gives the date of the commit (UTC), the result, the slug, the class, the counts of the delta lines of its spec (`add`, `change` and `remove`), the commit and the title. The counts and the class come from the parent tree too. A line that has no valid form is not counted. The newest change comes first.
+For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the commit and the title. The counts and the class come from the parent tree too. A line that has no valid form is not counted. The newest change comes first.
 
 ```text
 2024-04-05 finished dose-limit higher-risk add 1 change 2 remove 0 3f2a9c1b7e0d Dose limit
 2024-03-18 closed old-idea routine add 0 change 0 remove 0 91be40d27c5a Old idea
 ```
 
-`--since <rev>` limits the walk to the commits after `<rev>` (`<rev>..HEAD`). A `<rev>` that is not a commit is exit code 3.
+`--since <rev>` limits `log` to the commits after `<rev>` (`<rev>..HEAD`). A `<rev>` that is not a commit is exit code 3.
 
-A change has an entry only if the folder came to the default branch in an earlier commit. A pull request that holds the intent, the approval and the code together, and that a squash merge brings to the default branch, never had the folder there, so it has no entry. A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion: the entry comes later, under the new name.
+A change has an entry only if the folder came to the default branch in an earlier commit. If a pull request holds the intent, the approval and the code together, and a squash merge brings it to the default branch, the default branch never had the folder. Then the change has no entry. A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion. The entry comes later, under the new name.
 
 In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
 
@@ -488,9 +492,9 @@ The command rebuilds the life of each change from the commits that touched its `
 | Maintain | lagging | Repeat incidents of the same class | `n/a`: an incident has no class field. |
 | Deploy | both | The other indicators of the playbook | `n/a`: they need CI logs, telemetry or an incident tracker. |
 
-The commit that "deleted the folder" is the first-parent commit of the deletion: for a merge commit it is the merge commit, and for a squash merge it is the squash commit. A rebase merge shows only its last commit, so for such a change the time and the diff can be smaller than the real ones.
+The commit that "deleted the folder" is the first-parent commit of the deletion. For a merge commit it is the merge commit, and for a squash merge it is the squash commit. A rebase merge shows only its last commit. For such a change the time and the diff can be smaller than the real ones.
 
-The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree: the folder, the `Files` patterns, and the documents that the delta and `Interfaces` name. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
+The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree. It has the folder, the `Files` patterns, and the documents that the delta and `Interfaces` name. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
 
 A shallow clone can miss old changes, so each indicator that it computes has this note in `reason`. An indicator with no data has no value, and the reason says what is missing.
 
@@ -561,7 +565,7 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, or a step of `finish` stopped |
-| 2 | Usage error. Also a refusal of `layer add`: it changes nothing, an unknown `--group` of `status` or `stats`, and `stats` without `--sdlc` |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status` or `stats`, and `stats` without `--sdlc` |
 | 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `finish`: also an `accepted` change with no base |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files |
 | 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |

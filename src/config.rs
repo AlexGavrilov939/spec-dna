@@ -67,7 +67,6 @@ pub struct Config {
     #[allow(dead_code)]
     pub areas: Vec<String>,
     /// `[groups]`: a name and its areas, in the order of the name.
-    #[allow(dead_code)]
     pub groups: Vec<(String, Vec<String>)>,
     /// `[templates] dir`: the folder of the project templates, relative to the
     /// repository root, with no `./` and no final `/`. It is never part of a

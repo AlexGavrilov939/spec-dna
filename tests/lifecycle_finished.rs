@@ -311,7 +311,7 @@ fn an_add_line_needs_the_text_in_the_head() {
 
 #[test]
 fn a_routine_change_needs_a_changed_files_path_or_a_changed_hash() {
-    // The folder goes, and nothing else changes.
+    // The test deletes the folder, and nothing else changes.
     let r = Fx::default().start();
     finish(&r);
     let (code, out) = check(&r);

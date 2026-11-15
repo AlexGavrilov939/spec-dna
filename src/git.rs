@@ -330,25 +330,6 @@ impl Git {
         self.commit("refs/remotes/origin/HEAD")
     }
 
-    /// Returns true if `a` is `b` or an ancestor of `b`. An error means that
-    /// a commit is absent, as in a shallow clone.
-    #[allow(dead_code)] // reader: S5
-    pub fn is_ancestor(&self, a: &str, b: &str) -> Result<bool, String> {
-        let out = self
-            .cmd(&["merge-base", "--is-ancestor", a, b])
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| format!("cannot run git: {e}"))?;
-        match out.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            _ => Err(format!(
-                "git merge-base --is-ancestor failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )),
-        }
-    }
-
     /// Returns the committer date of a commit, in seconds. It never reads the
     /// clock.
     pub fn commit_time(&self, rev: &str) -> Result<i64, String> {
@@ -366,7 +347,7 @@ impl Git {
     }
 
     /// Returns, for each file under `specs` that a commit touched, the newest
-    /// committer date (seconds) of such a commit. It walks the history of
+    /// committer date (seconds) of such a commit. It reads the history of
     /// `rev` once. A spec is a path or a glob from the repository root. A
     /// folder covers all files under it. A touch is an addition, a change, a
     /// deletion or a rename of the file. Without a spec it returns an empty
@@ -448,7 +429,7 @@ impl Git {
 
     /// Returns the folders (without `/intent.md`) under `dir` whose
     /// `intent.md` a commit of `<base>..<head>` adds, and that are in neither
-    /// the tree of `base` nor the tree of `head`. Such a change was born and
+    /// the tree of `base` nor the tree of `head`. Such a change was added and
     /// finished (or removed) in the branch. `dir` is the folder of the
     /// `intent` layer, from the repository root, with no final `/`. The
     /// result is sorted.
@@ -506,8 +487,8 @@ impl Git {
     /// Returns the commits of the history of `HEAD` that deleted an
     /// `intent.md` under `dir` (the folder of the `intent` layer, from the
     /// repository root, with no final `/`), the newest first. With `since`,
-    /// only the commits of `<since>..HEAD`. A move is not a deletion. The walk
-    /// follows every parent and shows no merge commit: a squash, a merge
+    /// only the commits of `<since>..HEAD`. A move is not a deletion. The
+    /// command `git log` follows every parent and shows no merge commit: a squash, a merge
     /// commit and a rebase merge each give one entry for a deleted file. An
     /// entry is the non-merge commit that deleted the file. Its parent gives
     /// the status of the intent before the deletion.

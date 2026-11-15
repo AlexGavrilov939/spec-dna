@@ -104,7 +104,7 @@ impl Change {
 
     /// The patterns of the `Files` section of the plan, in the order of the
     /// file. A `Files` item is its first code span (`Files` list of the
-    /// design, T8). An item with no code span counts for nothing.
+    /// design, T8). An item with no code span gives no pattern.
     pub fn files(&self, corpus: &Corpus) -> Vec<String> {
         let Some(a) = &self.plan else {
             return Vec::new();

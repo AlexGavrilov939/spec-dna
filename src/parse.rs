@@ -55,7 +55,7 @@ pub struct ParsedDoc {
 }
 
 /// The sections whose list items the parser keeps. The heading text must be
-/// exactly the name, without regard to case, at any heading level.
+/// the name. The case and the heading level do not matter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemSection {
     Delta = 0,

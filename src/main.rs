@@ -2310,14 +2310,15 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "git tracks no file of the folder `{folder}`; commit the change first"
         )));
     }
-    let dirty: Vec<String> = repo
+    // Each path that differs from HEAD, tracked or not.
+    let differs: Vec<String> = repo
         .git
         .diff_paths("HEAD", true)
         .map_err(Fatal::Io)?
         .into_iter()
         .map(|(p, _)| p)
-        .filter(|p| p.starts_with(&prefix))
         .collect();
+    let dirty: Vec<&String> = differs.iter().filter(|p| p.starts_with(&prefix)).collect();
     if !dirty.is_empty() {
         return Ok(precondition(format!(
             "the folder `{folder}` differs from HEAD (an edit that is not committed, or a file that git does not track): {}; commit or remove them first",
@@ -2351,6 +2352,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .map_err(Fatal::Io)?;
     let read = |p: &str| mv::read(repo, p).map_err(|e| e.message().to_string());
     let exists = |p: &str| repo.root.join(p).exists();
+    let path_problem = |p: &str| finish::path_problem(&repo.root, p);
     let cx = finish::Ctx {
         config: &cfg,
         head: &head,
@@ -2360,6 +2362,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         folder_files: &tracked,
         read: &read,
         exists: &exists,
+        path_problem: &path_problem,
     };
     let plan = match finish::plan(&cx) {
         Ok(p) => p,
@@ -2372,6 +2375,24 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         Err(finish::Failure::Io(m)) => return Err(Fatal::Io(m)),
     };
+    // `finish` stages each file that it writes. An edit of the author in such a
+    // file, not committed, would go into the same stage.
+    let edited: Vec<&str> = plan
+        .writes
+        .iter()
+        .filter(|w| w.old.is_some() && differs.contains(&w.path))
+        .map(|w| w.path.as_str())
+        .collect();
+    if !edited.is_empty() {
+        return Ok(precondition(format!(
+            "`finish` would write {}, and the file has an edit that is not committed; `finish` stages the file, so commit or stash the edit first",
+            edited
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
     if !a.dry_run {
         finish::write_plan(&repo.root, &repo.git, &plan).map_err(|e| Fatal::Io(e.message))?;
     }
@@ -2430,7 +2451,7 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
         );
     } else {
         println!(
-            "spec-dna finish `{slug}`: applied {lines}, wrote {} files and deleted the folder `{folder}` ({} files). The paths are staged with `git add`; read the diff, then commit it with the code",
+            "spec-dna finish `{slug}`: applied {lines}, wrote {} files and deleted the folder `{folder}` ({} files). `finish` staged the paths with `git add`. Read the diff, then commit it with the code",
             plan.writes.len(),
             plan.removes.len()
         );

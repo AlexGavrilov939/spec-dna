@@ -329,7 +329,7 @@ impl Plan {
 /// The note that gives the `CODEOWNERS` line. `init` never writes the file.
 fn codeowners_note(line: &str) -> String {
     format!(
-        "CODEOWNERS: add the line `{line}` to your CODEOWNERS file, and replace `@OWNER` with the owner. `init` does not write that file. Only a higher-risk change has a spec, so the line protects its approval. A higher-risk plan has the same path as a routine plan, so a path rule cannot select it: the process of your repository (for example branch protection) must require the owner for it"
+        "CODEOWNERS: add the line `{line}` to your CODEOWNERS file, and replace `@OWNER` with the owner. `init` does not write that file. Only a higher-risk change has a spec, so the line protects its approval. A higher-risk plan has the same path as a routine plan, so a path rule cannot select it. The process of your repository (for example branch protection) must require the owner for it"
     )
 }
 

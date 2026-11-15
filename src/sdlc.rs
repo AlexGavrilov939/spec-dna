@@ -8,7 +8,7 @@
 //! `finished`, and any other status is `closed`. `stats --sdlc` rebuilds the
 //! life of each change from the commits that touched its 3 files, and gives the
 //! indicators of the playbook that git can give. One function (`Outcome::of`)
-//! decides the result for both commands. Both walks use the same rename
+//! decides the result for both commands. Both commands use the same rename
 //! detection (`-M`), so a rename of a folder inside the intent folder is not a
 //! deletion for either command.
 
@@ -347,8 +347,8 @@ struct End {
 }
 
 /// One life of a change folder in the history: from its first commit to the
-/// commit that deleted its `intent.md`, or to `HEAD`. A folder name that comes
-/// back after a deletion is a new life.
+/// commit that deleted its `intent.md`, or to `HEAD`. A folder name that
+/// appears again after a deletion is a new life.
 #[derive(Default)]
 struct Life {
     folder: String,
@@ -404,8 +404,8 @@ fn lives(git: &Git, dirs: &[String]) -> Result<Vec<Life>, Fatal> {
         .collect();
     // A rename of a folder inside the intent folder keeps the life: a touch
     // of the old folder, older than the rename, belongs to the new folder. The
-    // walk goes from the newest touch to the oldest, so the alias is set before
-    // the older touches come.
+    // code reads the touches from the newest to the oldest, so it sets the
+    // alias before the older touches.
     let mut alias: HashMap<&str, String> = HashMap::new();
     let mut by_folder: BTreeMap<String, Vec<&ArtifactTouch>> = BTreeMap::new();
     for t in &touches {
@@ -493,7 +493,7 @@ struct Measured {
     facts: Facts,
     outcome: Option<Outcome>,
     /// The commit that reached the default branch (the first-parent commit of
-    /// the deletion), its first parent and its time. It falls back to the
+    /// the deletion), its first parent and its time. If there is no such commit, it is the
     /// deleting commit.
     merged: Option<(String, Option<String>, i64)>,
 }

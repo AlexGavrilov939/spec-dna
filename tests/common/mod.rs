@@ -1,6 +1,6 @@
 //! Shared helpers for the tests that need a git repository. A test file uses
 //! them with `mod common;`. The helpers read no clock, no user config and no
-//! network. The git calls set the author, switch off signing and ignore the
+//! network. The git calls set the author, disable signing and ignore the
 //! global and system config. `git_at` sets the dates, so a test can set the
 //! age of a commit.
 

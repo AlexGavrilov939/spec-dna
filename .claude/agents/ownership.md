@@ -151,6 +151,11 @@ src/glob.rs, src/repo.rs             COR
 src/git.rs, src/index.rs             COR
 src/templates.rs                     COR
 src/layer.rs                         COR: the layer graph, its levels, the file order and `layer add`/`layer list`
+src/change.rs                        COR: the change model, the delta lines, the tasks of a plan
+src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 to SD917, SD919 to SD922) and the lifecycle base
+src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
+src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
+src/sdlc.rs                          COR: `log` and `stats --sdlc`
 src/json.rs                          COR: the writer. TRN: the transcript reader
 src/check.rs, src/diag.rs            DIA
 src/drift.rs, src/cite.rs            DIA. CTX is C for src/cite.rs
@@ -176,6 +181,11 @@ docs/research/                       ARC
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA
+tests/layers_checks.rs, tests/sd921.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
+tests/finish.rs                      HYG
+tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
+tests/common/mod.rs, tests/common_helpers.rs   TST: the shared git fixtures. Every agent uses them
+tests/init_change.rs, tests/init_language.rs   INI
 tests/init_graph.rs                  INI
 tests/context_layers.rs              CTX
 tests/golden/                        The agent of the command

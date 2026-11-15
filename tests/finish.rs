@@ -1166,7 +1166,7 @@ fn a_write_error_exits_with_4_and_changes_nothing() {
     let dir = r.dir.join("docs/requirements");
     let _restore = Restore(dir.clone());
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
-    // A user that can write there anyway (root) has nothing to test.
+    // The test has no purpose for a user that can write there (root).
     if fs::write(dir.join("probe"), "").is_ok() {
         return;
     }

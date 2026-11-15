@@ -32,8 +32,8 @@ macro_rules! codes {
             pub fn severity(self) -> Severity { match self { $(Code::$variant => Severity::$sev),* } }
             pub fn fix(self) -> &'static str { match self { $(Code::$variant => $fix),* } }
             /// A state code reports the state of the tree, not a change of
-            /// the diff. It is never "new" against the base, and `check --all`,
-            /// `status` and `next` show it (design 0.6.0, K4).
+            /// the diff. It is never "new" against the base, and `check --all`
+            /// and `status` show it (design 0.6.0, K4, D35).
             pub fn is_state(self) -> bool {
                 matches!(self.code(), "SD911")
             }

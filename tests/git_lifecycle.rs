@@ -1,5 +1,5 @@
 //! Tests of the git access of the change lifecycle (step 3 of 0.6.0, slice S2):
-//! `remote_head`, `is_ancestor`, `commit_time`, `last_touch`, `file_log`,
+//! `remote_head`, `commit_time`, `last_touch`, `file_log`,
 //! `added_intents`, `deleted_intents` and `is_shallow`.
 //!
 //! The binary has no library, and `src/git.rs` uses only `std`. Thus this file
@@ -81,7 +81,7 @@ fn sha_of(r: &Repo) -> String {
 }
 
 #[test]
-fn merge_base_ancestor_and_commit_time() {
+fn merge_base_and_commit_time() {
     let r = with_intent();
     let first = sha_of(&r);
     r.write("a.txt", "a\n");
@@ -93,11 +93,6 @@ fn merge_base_ancestor_and_commit_time() {
     let side = sha_of(&r);
     let git = git_of(&r);
     assert_eq!(git.merge_base(&second, &side), Some(first.clone()));
-    assert_eq!(git.is_ancestor(&first, &side), Ok(true));
-    assert_eq!(git.is_ancestor(&side, &first), Ok(false));
-    assert_eq!(git.is_ancestor(&first, &first), Ok(true));
-    assert_eq!(git.is_ancestor(&second, &side), Ok(false));
-    assert!(git.is_ancestor("no-such-rev", &side).is_err());
     assert_eq!(git.commit_time(&second), Ok(T2));
     assert_eq!(git.commit_time(&side), Ok(T3));
     assert!(git.commit_time("no-such-rev").is_err());
