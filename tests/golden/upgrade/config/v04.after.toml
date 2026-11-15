@@ -12,13 +12,13 @@ default-type = "requirements"
 status = "active"
 legacy-keys = ["R-{n}"]
 required-sections = { intent = [] }
-live-sections = {}
+live-sections = { decision = [] }
 
 [[roots]]
 path = "docs/decisions"
 type = "decision"
 legacy-ids = ["ADR-{n}"]
-live-sections = {}
+live-sections = { decision = [] }
 
 [budgets.research]
 soft = 300

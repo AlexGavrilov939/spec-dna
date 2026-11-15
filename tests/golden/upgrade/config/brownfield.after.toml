@@ -7,7 +7,7 @@ type = "decision"
 status = "accepted"
 legacy-ids = ["ADR-{n}"]
 required-sections = { decision = ["Decisión", "Decision"] }
-live-sections = {}
+live-sections = { decision = [] }
 
 [[roots]]
 path = "docs/specs"
@@ -15,39 +15,35 @@ type = "requirements"
 status = "active"
 legacy-keys = ["R-{n}"]
 status-map = { shipped = "active" }
-live-sections = {}
 
 [[roots]]
 path = "docs/ops"
 type = "procedure"
 status = "active"
 required-sections = { procedure = ["Restart"] }
-live-sections = {}
 
 [[roots]]
 path = "docs/guides"
 type = "procedure"
 status = "active"
 exclude = ["vendor-*/**"]
-live-sections = {}
 
 [[roots]]
 path = "docs/rfcs"
 type = "mixed"
 default-type = "research"
 required-sections = { intent = [] }
-live-sections = {}
+live-sections = { decision = [] }
 
 [[roots]]
 path = "docs/meetings"
 type = "mixed"
 default-type = "research"
-live-sections = {}
+live-sections = { decision = [] }
 
 [[roots]]
 path = "docs/vendor"
 type = "research"
-live-sections = {}
 
 [layers.requirements]
 types = ["requirements"]

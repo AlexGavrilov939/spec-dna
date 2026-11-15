@@ -12,28 +12,28 @@ default-type = "requirements"
 status = "active"
 legacy-keys = ["R-{n}"]
 required-sections = { intent = [] }
-live-sections = {}
+live-sections = { decision = [] }
 
 # Each file name gives an alias: ADR-1, and DR-4 for 4-drain-timing.md.
 [[roots]]
 path = "docs/decisions"
 type = "decision"
 legacy-ids = ["ADR-{n}", { alias = "DR-{n}", file = "{n}-*" }]
-live-sections = {}
+live-sections = { decision = [] }
 
 # A root of one type: each file is a note.
 [[roots]]
 path = "docs/field-notes"
 type = "mixed"
 default-type = "research"
-live-sections = {}
+live-sections = { decision = [] }
 
 # A mixed root with no default type: a document with no type is a note.
 [[roots]]
 path = "docs/lab"
 type = "mixed"
 default-type = "research"
-live-sections = {}
+live-sections = { decision = [] }
 
 [budgets.procedure]
 soft = 3000

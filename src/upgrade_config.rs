@@ -873,8 +873,13 @@ fn add_root_keys(text: &str, i: usize, r: &OldRoot, facts: &Facts) -> Result<Str
             None => entries.push(("required-sections", Value::Table(want))),
         }
     }
-    if !root.contains_key("live-sections") {
-        entries.push(("live-sections", Value::Table(Table::new())));
+    // The 0.6 default `{ decision = ["Status"] }` is for a decision. A root
+    // that can hold a decision turns it off (D188). `{}` would keep it.
+    let decision_root = root.get("type").and_then(Value::as_str) == Some("decision");
+    if !root.contains_key("live-sections") && (mixed || decision_root) {
+        let mut off = Table::new();
+        off.insert("decision".into(), Value::Array(Vec::new()));
+        entries.push(("live-sections", Value::Table(off)));
     }
     if !entries.is_empty() {
         t = insert_keys(&t, &path, &entries)?;
@@ -1103,11 +1108,9 @@ mod tests {
         }
     }
 
-    /// What `live-sections = {}` is for (D139): no live section for a 0.5
-    /// decision. The 0.6 loader keeps the default `Status` for an empty table,
-    /// so the test fails until D188 is settled.
+    /// What the key `live-sections` is for (D139, D188): no live section for a
+    /// 0.5 decision. A root that cannot hold a decision has no key.
     #[test]
-    #[ignore = "D188: the key `live-sections = {}` does not turn off the default live section"]
     fn the_plan_gives_no_live_section_to_a_decision() {
         let dir = tests_dir().join("golden/upgrade/config");
         let before = read(dir.join("v05.before.toml"));
@@ -1173,10 +1176,14 @@ mod tests {
                     l.name
                 );
             }
-            // Each root has the key `live-sections` (D139).
+            // A root that can hold a decision has the key `live-sections`, and
+            // it has no live section (D139, D188).
             let table = parse_table(&got.text).unwrap();
             for (i, r) in table["roots"].as_array().unwrap().iter().enumerate() {
-                assert!(r.get("live-sections").is_some(), "{name}: root {i}");
+                let can = c.roots[i]
+                    .single_type
+                    .is_none_or(|t| t == DocType::Decision);
+                assert_eq!(r.get("live-sections").is_some(), can, "{name}: root {i}");
             }
             if let Some(h) = &c.harness {
                 assert!(h.skills.is_empty() && !h.review_md, "{name}");
@@ -1453,7 +1460,7 @@ mod tests {
         let got = go(t, &facts(&["spec", "change"], &["docs", "rfcs"]));
         let c = cfg(&got.text);
         assert!(got.text.contains(
-            "path = \"docs\"\ndefault-type = \"requirements\"\nrequired-sections = { intent = [] }\nlive-sections = {}\n"
+            "path = \"docs\"\ndefault-type = \"requirements\"\nrequired-sections = { intent = [] }\nlive-sections = { decision = [] }\n"
         ), "{}", got.text);
         assert!(
             got.text
@@ -1466,6 +1473,34 @@ mod tests {
         assert!(c.roots[2].required_sections[DocType::Intent as usize].is_empty());
         assert!(c.roots[0].required_sections[DocType::Intent as usize].is_empty());
         assert!(!c.roots[1].required_sections[DocType::Intent as usize].is_empty());
+    }
+
+    #[test]
+    fn only_a_root_that_can_hold_a_decision_gets_live_sections() {
+        let t = "spec-dna = \"0.5.0\"\n\
+[[roots]]\npath = \"adr\"\ntype = \"decision\"\n\
+[[roots]]\npath = \"mix\"\n\
+[[roots]]\npath = \"specs\"\ntype = \"spec\"\n\
+[[roots]]\npath = \"ops\"\ntype = \"runbook\"\n\
+[[roots]]\npath = \"notes\"\ntype = \"note\"\n\
+[[roots]]\npath = \"refs\"\ntype = \"reference\"\n";
+        let got = go(t, &facts(&["decision", "spec"], &[]));
+        let table = parse_table(&got.text).unwrap();
+        let has: Vec<bool> = table["roots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.get("live-sections").is_some())
+            .collect();
+        // A decision root, and the mixed roots (`notes` is mixed now).
+        assert_eq!(has, [true, true, false, false, true, false]);
+        assert!(got.text.contains("live-sections = { decision = [] }\n"));
+        assert!(!got.text.contains("live-sections = {}"), "{}", got.text);
+        // Each live section of a decision is off in a root that has the key.
+        let c = cfg(&got.text);
+        for i in [0, 1, 4] {
+            assert!(c.roots[i].live_sections.iter().all(Vec::is_empty), "{i}");
+        }
     }
 
     #[test]
@@ -1811,8 +1846,8 @@ mod tests {
 
     #[test]
     fn a_text_that_cannot_be_edited_stops_with_exit_code_3() {
-        // The key `type` of a root in a form that no splice covers.
-        let t = "spec-dna = \"0.5.0\"\nroots = [{ path = \"d\", type = \"guide\" }]\n";
+        // A root in a form that no splice covers: it needs new keys.
+        let t = "spec-dna = \"0.5.0\"\nroots = [{ path = \"d\", type = \"mixed\" }]\n";
         let old = OldConfig::read(t).unwrap();
         let e = plan(t, &old, &facts(&["guide"], &[]), &opts()).unwrap_err();
         assert_eq!(e.exit_code(), 3, "{}", message(&e));
