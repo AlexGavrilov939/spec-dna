@@ -144,7 +144,7 @@ fn the_last_sentence_follows_the_class_of_the_pin() {
     let (code, _, err) = repo.run(&["check"]);
     assert_eq!(code, 3, "{err}");
     assert!(
-        err.ends_with(&format!("  To move the project to {VERSION}, download https://github.com/AlexGavrilov939/spec-dna/releases/download/v{VERSION}/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`.\n")),
+        err.ends_with(&format!("  To move the project to {VERSION}, download https://github.com/AlexGavrilov939/spec-dna/releases/download/v{VERSION}/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml` in the root folder of the repository.\n")),
         "{err}"
     );
     // After the binary: no sentence to move the project.

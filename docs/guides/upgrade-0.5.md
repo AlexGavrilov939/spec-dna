@@ -45,7 +45,7 @@ The folders of the other types stay where they are. A root maps each folder to i
 
 `upgrade` stops before it writes. Each stop names the cause:
 
-- A hand edit (exit code 3). `spec-dna.toml` has a form that `upgrade` cannot edit without a loss of text, such as a budget with dotted keys. The message gives the form to write. Edit the file with the 0.5 names, commit the change, and run `upgrade` again.
+- A hand edit (exit code 3). `spec-dna.toml` has a form that `upgrade` cannot edit without a loss of text, such as a budget with dotted keys. The message gives the form to write. Edit the file with the 0.5 names, commit the change, and run `upgrade` again. If the default branch has the same form, make this edit in a pull request of its own first and merge it. The first pull request after the upgrade plans the upgrade of its base, so a form that `upgrade` cannot edit in the base stops `check --base` with exit code 3. The same rule holds for a move stop of a change in the base.
 - A move (exit code 1). Two changes have one slug, or a target path exists. The message names each path. Rename a file, commit the change, and run `upgrade` again.
 - A file in the place of a folder, or a symbolic link in a path (exit code 1). Move or delete it, commit the change, and run `upgrade` again.
 - A failed proof (exit code 1). The message names each failure. A pointer of `[conventions]` that names a document by its path breaks with `--layout`. Write the pointer as an id, and commit the change.
