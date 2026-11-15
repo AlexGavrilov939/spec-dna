@@ -1096,14 +1096,29 @@ impl Change {
     }
 }
 
+/// A reader of the text files of a tree: the text of a path, or `None` if the
+/// tree has no such file. `init` reads the disk. `upgrade` reads a tree in
+/// memory (D148).
+pub(crate) type ReadText<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+/// The reader of the work directory. A file that exists but cannot be read
+/// gives an empty text, as before.
+fn disk(repo: &Repo) -> impl Fn(&str) -> Option<String> + '_ {
+    move |p| {
+        let path = repo.root.join(p);
+        path.exists()
+            .then(|| std::fs::read_to_string(path).unwrap_or_default())
+    }
+}
+
 /// The adapter files for a set of adapters.
-fn adapter_changes(
-    repo: &Repo,
+pub(crate) fn adapter_changes(
+    src: &ReadText,
     chosen: &[Adapter],
     types: &[DocType],
 ) -> Result<Vec<Change>, Fatal> {
-    let read = |p: &str| std::fs::read_to_string(repo.root.join(p)).unwrap_or_default();
-    let exists = |p: &str| repo.root.join(p).exists();
+    let read = |p: &str| src(p).unwrap_or_default();
+    let exists = |p: &str| src(p).is_some();
     let mut out = Vec::new();
     // An older version wrote a `claude` block that imported AGENTS.md. If
     // AGENTS.md has text of its own, the import stays as a plain line.
@@ -1264,8 +1279,8 @@ pub const HOOK_FILES: [&str; 2] = [".pre-commit-config.yaml", ".husky/pre-commit
 /// version runs `spec-dna check --staged`, which reads the index. This
 /// function changes the old line of a hook file in place. It changes only the
 /// exact line that 0.4.1 wrote. Any other text stays the same.
-fn hook_upgrade(repo: &Repo, path: &str) -> Option<Change> {
-    let old = std::fs::read_to_string(repo.root.join(path)).ok()?;
+pub(crate) fn hook_upgrade(src: &ReadText, path: &str) -> Option<Change> {
+    let old = src(path)?;
     let (is_old, new_line): (fn(&str) -> bool, &str) = if path == ".husky/pre-commit" {
         (|l| l == "spec-dna check", "spec-dna check --staged")
     } else {
@@ -1367,7 +1382,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
             let path = ".pre-commit-config.yaml";
             let old = read(path).unwrap_or_default();
             if old.contains("entry: spec-dna check") {
-                out.extend(hook_upgrade(repo, path));
+                out.extend(hook_upgrade(&disk(repo), path));
             } else if old.is_empty() {
                 out.push(Change {
                     path: path.into(),
@@ -1395,7 +1410,7 @@ fn ci_changes(repo: &Repo, plan: &Plan) -> (Vec<Change>, Vec<String>) {
             let path = ".husky/pre-commit";
             let old = read(path).unwrap_or_default();
             if old.lines().any(|l| l.trim() == "spec-dna check") {
-                out.extend(hook_upgrade(repo, path));
+                out.extend(hook_upgrade(&disk(repo), path));
             } else if !old.lines().any(|l| l.trim() == "spec-dna check --staged") {
                 let mut t = old.clone();
                 if !t.is_empty() && !t.ends_with('\n') {
@@ -1894,7 +1909,7 @@ fn harness_defaults(repo: &Repo, existing: &[(String, String)]) -> (Harness, Vec
 
 /// Refuses the harness if git ignores a file that it writes: each generated
 /// file, `CLAUDE.md` and the settings file. A team could not commit it.
-fn refuse_ignored(repo: &Repo, h: &Harness) -> Result<(), Fatal> {
+pub(crate) fn refuse_ignored(repo: &Repo, h: &Harness) -> Result<(), Fatal> {
     let mut paths: Vec<String> = harness::generated_files(h)
         .into_iter()
         .map(|g| g.path)
@@ -1912,11 +1927,11 @@ fn refuse_ignored(repo: &Repo, h: &Harness) -> Result<(), Fatal> {
 }
 
 /// The harness plan of `init`, merged into the list of changes.
-struct HarnessRun {
+pub(crate) struct HarnessRun {
     level: Level,
     /// The first version of spec-dna that has the hooks of the configuration.
     hooks_version: &'static str,
-    plan: harness::Plan,
+    pub(crate) plan: harness::Plan,
     notes: Vec<String>,
 }
 
@@ -1932,7 +1947,7 @@ fn plan_harness(
     mode: harness::Mode,
     changes: &mut Vec<Change>,
 ) -> Result<Option<HarnessRun>, Fatal> {
-    let mut existing = harness_existing(repo);
+    let existing = harness_existing(repo);
     let installed = harness::is_installed(&existing);
     if new.level == Level::None && !(mode == harness::Mode::Reconfigure && installed) {
         return Ok(None);
@@ -1940,6 +1955,20 @@ fn plan_harness(
     if new.level != Level::None {
         refuse_ignored(repo, new)?;
     }
+    harness_run(existing, new, old, notes, mode, changes).map(Some)
+}
+
+/// The part of `plan_harness` that reads no disk and no git: the files in
+/// `existing` and the changes of the adapter step give the plan of the harness.
+/// `upgrade` calls it with the files of a tree.
+pub(crate) fn harness_run(
+    mut existing: Vec<(String, String)>,
+    new: &Harness,
+    old: Option<&Harness>,
+    notes: &[String],
+    mode: harness::Mode,
+    changes: &mut Vec<Change>,
+) -> Result<HarnessRun, Fatal> {
     if let Some(c) = changes.iter().find(|c| c.path == harness::CLAUDE) {
         existing.retain(|e| e.0 != harness::CLAUDE);
         existing.push((harness::CLAUDE.to_string(), c.text.clone()));
@@ -1987,12 +2016,12 @@ fn plan_harness(
     {
         notes.push(EXPLORE_NOTE.to_string());
     }
-    Ok(Some(HarnessRun {
+    Ok(HarnessRun {
         level: new.level,
         hooks_version: harness::hooks_version(new),
         plan,
         notes,
-    }))
+    })
 }
 
 /// Computes the parts that follow a default, from the final answers: the
@@ -3213,7 +3242,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         });
     }
     let types = adapters::project_types(&plan.layers(), &plan.kept_types);
-    changes.extend(adapter_changes(repo, &plan.adapters, &types)?);
+    changes.extend(adapter_changes(&disk(repo), &plan.adapters, &types)?);
     let (ci, manual) = ci_changes(repo, &plan);
     changes.extend(ci);
     // A new configuration and `--reconfigure` both replace the harness.
@@ -3896,22 +3925,34 @@ fn report_harness(h: Option<&HarnessRun>, written: &[String]) {
     }
 }
 
-/// `init` with an existing `spec-dna.toml`: the adapters, and the harness
-/// files if the configuration has a `[harness]` table. It writes and never
-/// removes.
-fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
-    let exists = |p: &str| repo.root.join(p).exists();
+/// The adapters of a project with a configuration and no new answer: which
+/// adapters, and the files that change. `AGENTS.md` is a target if it exists or
+/// if `CLAUDE.md` does not. The skill lists the types of the layers. A hook of
+/// 0.4.1 reads the working tree, and the hook of this version reads the index.
+/// `init` with an existing configuration and `upgrade` both use it, so the
+/// planned base gives the findings of the head (D148).
+pub(crate) fn adapters_of(
+    src: &ReadText,
+    cfg: &Config,
+) -> Result<(Vec<Adapter>, Vec<Change>), Fatal> {
+    let exists = |p: &str| src(p).is_some();
     let mut chosen = vec![Adapter::ClaudeMd, Adapter::Skill];
     if exists(adapters::AGENTS) || !exists(adapters::CLAUDE) {
         chosen.insert(0, Adapter::AgentsMd);
     }
     let types = adapters::project_types(&cfg.layers, &cfg.types);
-    let mut changes = adapter_changes(repo, &chosen, &types)?;
-    // A hook of 0.4.1 reads the working tree. The hook of this version reads
-    // the index.
+    let mut changes = adapter_changes(src, &chosen, &types)?;
     for path in HOOK_FILES {
-        changes.extend(hook_upgrade(repo, path));
+        changes.extend(hook_upgrade(src, path));
     }
+    Ok((chosen, changes))
+}
+
+/// `init` with an existing `spec-dna.toml`: the adapters, and the harness
+/// files if the configuration has a `[harness]` table. It writes and never
+/// removes.
+fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
+    let (chosen, mut changes) = adapters_of(&disk(repo), cfg)?;
     let hrun = match &cfg.harness {
         Some(h) => plan_harness(repo, h, Some(h), &[], harness::Mode::Upgrade, &mut changes)?,
         None => None,

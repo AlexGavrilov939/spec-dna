@@ -57,6 +57,7 @@ mod split;
 mod stage;
 mod templates;
 mod transcript;
+mod upgrade;
 mod upgrade_config;
 mod upgrade_docs;
 mod upgrade_old;
