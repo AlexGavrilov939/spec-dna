@@ -11,9 +11,9 @@
 
 use crate::config::Config;
 use crate::diag::{Code, Diag};
-use crate::model::{Corpus, Doc, Res};
+use crate::model::{Corpus, Doc, Res, canonical};
 use crate::repo::{Fatal, Repo};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The text that starts a tag in a test file.
 pub const TAG: &str = "covers:";
@@ -101,10 +101,14 @@ pub struct Evidence {
 
 impl Evidence {
     /// Resolves the `covers:` tags of a tree. Returns the evidence and a
-    /// diagnostic (SD105) for each tag that names no requirement.
+    /// diagnostic (SD105) for each tag that names no requirement. A tag that
+    /// names the requirement of an `ADD` line of an `accepted` change is not
+    /// reported: `finish` writes the requirement later.
     pub fn build(c: &Corpus) -> (Evidence, Vec<Diag>) {
         let mut ev = Evidence::default();
         let mut diags = Vec::new();
+        // Read the changes only for the first tag that names no requirement.
+        let mut pending: Option<HashSet<String>> = None;
         for cv in &c.covers {
             let problem = match c.resolve(&cv.target) {
                 Res::Found(d, Some(key), true) => match c.docs[d as usize].req(&key) {
@@ -130,6 +134,15 @@ impl Evidence {
                     format!("`{}` names no document", cv.target)
                 }
             };
+            let pending = pending.get_or_insert_with(|| {
+                crate::change::pending_adds(c)
+                    .iter()
+                    .map(|t| same_target(c, t))
+                    .collect()
+            });
+            if pending.contains(&same_target(c, &cv.target)) {
+                continue;
+            }
             diags.push(Diag {
                 path: cv.path.clone(),
                 line: cv.line,
@@ -154,6 +167,18 @@ impl Evidence {
             out.extend(v.iter().cloned());
         }
         out
+    }
+}
+
+/// A requirement id in a form that two spellings of one document share: the
+/// id of the document that the name resolves to, or the canonical name.
+fn same_target(c: &Corpus, target: &str) -> String {
+    let Some((id, key)) = target.split_once('#') else {
+        return canonical(target);
+    };
+    match c.resolve(id) {
+        Res::Found(d, None, _) => format!("{}#{key}", c.docs[d as usize].id),
+        _ => format!("{}#{key}", canonical(id)),
     }
 }
 

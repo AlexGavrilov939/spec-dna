@@ -1,0 +1,85 @@
+{
+  "measure": "skills-cost",
+  "step": "0.6.0 step 4, slice S8",
+  "date": "2026-11-15",
+  "claude_version": "2.1.325 (Claude Code)",
+  "spec_dna_commit": "912e0bc",
+  "spec_dna_version": "spec-dna 0.5.0",
+  "prompt_word": "ok",
+  "isolation": "unset the nested-session and plugin variables; --setting-sources project; --strict-mcp-config; CLAUDE_CONFIG_DIR kept for the login",
+  "runs_per_arm": 3,
+  "order": "on, off, on, off, ...",
+  "listing_bytes": 588,
+  "listing_bytes_per_skill": [
+    149,
+    145,
+    148,
+    146
+  ],
+  "threshold_tokens": 600,
+  "runs": {
+    "skills_on": [
+      {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 8426,
+        "cache_read_input_tokens": 11542,
+        "total_tokens": 19970,
+        "cost_usd": 0.0698
+      },
+      {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 19968,
+        "total_tokens": 19970,
+        "cost_usd": 0.0041
+      },
+      {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 19968,
+        "total_tokens": 19970,
+        "cost_usd": 0.0041
+      }
+    ],
+    "skills_off": [
+      {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 6194,
+        "cache_read_input_tokens": 13561,
+        "total_tokens": 19757,
+        "cost_usd": 0.0524
+      },
+      {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 19755,
+        "total_tokens": 19757,
+        "cost_usd": 0.004
+      },
+      {
+        "input_tokens": 2,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 19755,
+        "total_tokens": 19757,
+        "cost_usd": 0.004
+      }
+    ]
+  },
+  "median_tokens_skills_on": 19970,
+  "median_tokens_skills_off": 19757,
+  "median_difference_tokens": 213,
+  "above_threshold": false,
+  "init_lists_stable_in_each_arm": true,
+  "init_lists_that_differ_between_arms": {
+    "skills": {
+      "only_on": [
+        "spec-dna-intent",
+        "spec-dna-plan",
+        "spec-dna-review",
+        "spec-dna-spec"
+      ],
+      "only_off": []
+    }
+  },
+  "total_cost_usd": 0.1384
+}

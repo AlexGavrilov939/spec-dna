@@ -10,7 +10,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | amendment section | A section of an accepted decision that can grow after the acceptance. The default name is `Amendments` | | [config](config.md) |
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
-| base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD` | | [concepts](concepts.md#the-gate) |
+| base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, or of `origin/HEAD`, with `HEAD` | | [concepts](concepts.md#the-gate) |
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree | | [concepts](concepts.md#the-change-lifecycle) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
@@ -67,13 +67,13 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | skill | A `SKILL.md` folder that gives a procedure to the agent | | [harness](harness.md) |
 | slug | The name of a change or a document in an id, in lowercase words with hyphens, such as `sensor-timeout` | | [change guide](guides/change.md) |
 | `small-fix` | A change class with no intent: a pull request only | | [change guide](guides/change.md#choose-the-class) |
-| spec | `spec.md`: the delta, the interfaces, the decisions and the concerns of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
+| spec | `spec.md`: the delta, the interfaces, the decisions, the concerns and the open questions of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
 | stable layer | A layer of level 0, such as `rules` or `decisions`. The current truth is in stable layers | | [concepts](concepts.md#layers-and-the-graph) |
-| stage | One of Plan, Design, Build, Test, Deploy and Maintain. spec-dna derives the stage of a change from its files and git | | [change guide](guides/change.md) |
+| stage | One of Plan, Design, Build, Test, Deploy and Closed. spec-dna derives the stage of a change from its files and git | | [change guide](guides/change.md) |
 | standard document | A document form that a team already knows, such as an ADR or a PRD | | [types](types.md) |
 | subagent | An agent with its own context, which the main agent starts. The Claude Code adapter defines them in `.claude/agents/` | | [harness](harness.md) |
 | template | The text that `spec-dna new` writes for a new document | | [types](types.md#templates) |
 | `terms` | The type of `terms.md`: a table of terms, meanings and forbidden synonyms. SD904 reads it | | [types](types.md) |
 | top file | A document of a layer that has a fixed file name, such as `terms.md` or `roadmap.md` | | [types](types.md#place-gives-the-type) |
 | `verified-by` | A front matter field with the paths of the tests or verification records of a document | | [config](config.md#evidence) |
-| `verifier` | The subagent that runs the work and reports. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |
+| `verifier` | The subagent that checks finished work. It runs the tests, reads the diff and reports each defect. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |

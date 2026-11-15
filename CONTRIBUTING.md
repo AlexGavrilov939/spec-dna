@@ -86,10 +86,10 @@ Each page follows this form:
 2. The first paragraph says what the page gives and who needs it, in 3 sentences or fewer.
 3. The sections go from the frequent task to the rare detail.
 4. A reference page gives keys, options, codes and statuses in tables.
-5. Each code block has a language tag: `sh`, `console`, `toml`, `md`, `json` or `text`. A `console` block shows real output of the current version.
+5. Each code block has a language tag, for example `sh`, `console`, `toml`, `md`, `json` or `text`. A `console` block shows real output of the current version.
 6. The page ends with its last section. It has no summary and no "see also" list, because the map links all pages.
 
-spec-dna works with any coding agent. Write "the agent" or "an agent" for the core behavior. Name a specific agent, such as Claude Code or Codex, only in the text of its adapter: [docs/agents.md](docs/agents.md), [docs/harness.md](docs/harness.md), the evals and the transcript adapters. In other pages, link to that text.
+spec-dna works with any coding agent. Write "the agent" or "an agent" for the core behavior. Name a specific agent, such as Claude Code or Codex, only in the text of its adapter: [docs/agents.md](docs/agents.md), [docs/harness.md](docs/harness.md), the evals and the transcript adapters. In other pages, link to that text. The one exception is the short summary of the agents in `README.md` and `docs/concepts.md`.
 
 ## Branches
 

@@ -17,6 +17,7 @@ macro_rules! eprintln {
 }
 
 mod adapters;
+mod change;
 mod check;
 mod cite;
 mod config;
@@ -24,17 +25,22 @@ mod context;
 mod detect;
 mod diag;
 mod drift;
+mod eval_run;
+mod evals;
 mod evidence;
+mod finish;
 mod frontmatter;
 mod git;
 mod glob;
 mod harness;
+mod harness_text;
 mod hash;
 mod hook;
 mod index;
 mod init;
 mod json;
 mod layer;
+mod lifecycle;
 mod lint;
 mod model;
 mod mv;
@@ -44,7 +50,10 @@ mod rank;
 mod registry;
 mod release;
 mod repo;
+mod sdlc;
+mod skeleton;
 mod split;
+mod stage;
 mod templates;
 mod transcript;
 
@@ -82,7 +91,10 @@ in a profile that has it off, as a report: its warnings never fail the
 gate. Without --all, --lint lists the new findings only. --staged checks the
 git index (the tree that the next commit records) in place of the working
 tree. Untracked and unstaged files do not count. The hook that `init`
-writes uses it. --json lists all diagnostics.",
+writes uses it. With a [change] policy, the change checks (SD905, SD910,
+SD913, SD917, SD921) compare with the merge base of --base (default:
+origin/HEAD) and HEAD, and they print a note if there is none. --json
+lists all diagnostics.",
     ),
     (
         "context",
@@ -153,6 +165,106 @@ file: <dir>/README.md). --replace replaces a hand-kept file. `check`
 reports a stale index (SD610).",
     ),
     (
+        "finish",
+        "finish <slug> [--dry-run] [--base <rev>]",
+        "Finishes the change <slug>: it applies the delta of its spec to the
+requirements, checks the evidence of each requirement that it adds or
+changes, and deletes the folder of the change. It stops at the first failed
+step, and then it changes nothing. A stop is a reference to the folder from
+another document, a status that is not accepted (intent) or approved (plan,
+spec), an open concern or question, a decision that is not accepted, a delta
+line that does not match the tree (SD914), a delta that differs from the
+approved delta of the base tree, an interface that the diff does not change,
+a requirement with no evidence (SD916), or a new error. The base is the merge
+base of --base (default: origin/HEAD) and HEAD. An intent with the status
+closed runs the first two steps and deletes the folder. The folder must be
+tracked and clean. --dry-run prints the diff of each file and `remove <path>`
+for each deleted file, and writes nothing. Without it, the command writes the
+files, deletes the folder, and stages the paths with `git add`. It makes no
+commit. It is the only command that deletes documents. Exit codes: 1 a stop,
+3 pin, base or configuration, 4 write error, 5 no folder.",
+    ),
+    (
+        "next",
+        "next <slug> [--base <rev>]",
+        "Prints the checklist to the next gate of the change <slug>. The stage
+comes from the files of the folder, their statuses, the diff against the
+base and the evidence of the requirements: plan, design, build, test,
+deploy or closed. Each line says done ([x]) or open ([ ]). The last line
+gives the edit or the command that ends the stage. In the build stage, it
+names the next open task of the plan. Each line has the name of the skill for
+its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
+verify or finish. The skills come in 0.7.0, and the names are fixed. The
+output has at most 12 lines. The base is the merge base of --base (default:
+origin/HEAD) and HEAD. Without a base, the stage stops at build, and the
+output has a note. With the policy none, it says that the change process is
+off. Exit codes: 2 usage, 3 base or configuration, 4 git, 5 no folder.",
+    ),
+    (
+        "status",
+        "status [--group <name>] [--base <rev>]",
+        "Lists each change of the working tree with its class, its stage, the
+statuses of its intent, spec and plan, its task progress, its areas, and its
+next gate. It marks a started change that is stale (SD911). It prints the
+number of started changes and the limit max-started, and the open follow-ups
+(`- [ ]` in Follow-ups) of the incidents. With --group, it lists only the
+changes that have an area of the group, in the areas of the intent or in the
+folder of a delta target; an unknown group is a usage error. The base is the
+merge base of --base (default: origin/HEAD) and HEAD, and a note says when
+there is none. With the policy none, it says that the change process is off
+and lists nothing. Exit codes: 2 usage or unknown group, 3 base or configuration,
+4 git.",
+    ),
+    (
+        "log",
+        "log [--since <rev>]",
+        "Lists the finished and the closed changes, the newest first, from the
+history of git. It reads each commit that deleted an intent.md. The status of
+the intent in the parent of that commit gives the result: accepted is
+finished, and any other status is closed. For each change it prints the date,
+the result, the slug, the class, the counts of the delta lines (add, change,
+remove) of its spec, the commit and the title. A change that one pull request
+held with its approval and its code, and that a squash merge brought to the
+default branch, has no entry. A move of the folder out of the intent folder
+reads as a deletion. --since limits the walk to the commits after <rev>. In a
+shallow clone, a note says that older changes can be missing, and --json has
+shallow: true. With the policy none, it says that the change process is off
+and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
+not a commit, 4 git.",
+    ),
+    (
+        "stats",
+        "stats --sdlc [--group <name>]",
+        "Prints the leading and the lagging indicators of the playbook under the
+playbook names. It reads git and the committed files only: the plan and
+design times, the survival rate of the intents, the spec commits after the
+first plan commit, the time from plan approval to the merged pull request,
+and how often the merged diff stays inside the plan (SD913). An indicator
+that git cannot give prints n/a with the reason, and --json has value null
+and a reason. With --group, it counts only the changes that have an area of
+the group. An unknown group is a usage error, and so is stats without --sdlc.
+With the policy none, it says that the change process is off and gives no
+indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
+4 git.",
+    ),
+    (
+        "eval",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]",
+        "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
+each run, it copies the fixture and the harness files into a temporary git
+repository, starts `claude -p` in it, and runs the checks of the eval. It
+sources <dir>/check.sh of the project, never the copy. An eval passes when at
+least pass-at of its runs pass. The suite passes when the share of evals that
+pass is at least min-pass-rate. It refuses to start when runs x
+max-budget-usd is above max-total-usd, and it stops when the spend is above
+it. --runs, --min-pass-rate and --max-total-usd replace the values of the
+files and of the table. --out writes the result to <dir>/eval-<time>.json
+(counts, costs and check names only). --dry-run starts no process. --isolate
+adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
+does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
+a stop by the cap or no `claude`, 4 git or file error.",
+    ),
+    (
         "transcript",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
@@ -160,7 +272,7 @@ episode of agent transcripts. It prints counts and ids only.",
     ),
     (
         "hook",
-        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]",
+        "hook context-meter [--levels <a,b>] [--subagent <n>]\nhook fanout-cap [--cap <n>]\nhook protect-tests [--mode <fix-branches|always>] [--test <glob>]...",
         "Runs a hook of a coding agent. It reads one JSON object from stdin,
 prints JSON only when the agent must see a message, and exits with 0.
 It reads no configuration.",
@@ -173,8 +285,8 @@ const OPTIONS: &str = "Options:
     -h, --help    Prints this help; `spec-dna <command> --help` prints the help of one command
     -V, --version Prints the version
 
-Exit codes: 0 ok, 1 check found new errors, 2 usage, 3 configuration,
-4 git or I/O, 5 not found.";
+Exit codes: 0 ok, 1 check found new errors or an eval run failed, 2 usage,
+3 configuration, 4 git or I/O, 5 not found.";
 
 fn indent(text: &str, by: &str) -> String {
     text.lines()
@@ -239,6 +351,14 @@ struct Args {
     conventions: Option<String>,
     template: Option<String>,
     layer: LayerFlags,
+    group: Option<String>,
+    since: Option<String>,
+    sdlc: bool,
+    runs: Option<u32>,
+    min_pass_rate: Option<f64>,
+    max_total_usd: Option<f64>,
+    out: Option<String>,
+    isolate: bool,
 }
 
 /// The options of `layer add`.
@@ -306,6 +426,14 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         conventions: None,
         template: None,
         layer: LayerFlags::default(),
+        group: None,
+        since: None,
+        sdlc: false,
+        runs: None,
+        min_pass_rate: None,
+        max_total_usd: None,
+        out: None,
+        isolate: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -338,6 +466,46 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--template" => a.template = Some(value("--template")?),
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
+            "--group" => a.group = Some(value("--group")?),
+            "--since" => a.since = Some(value("--since")?),
+            "--sdlc" => a.sdlc = true,
+            "--isolate" => a.isolate = true,
+            "--out" => a.out = Some(value("--out")?),
+            "--runs" => {
+                let v = value("--runs")?;
+                a.runs = Some(
+                    v.parse::<u32>()
+                        .ok()
+                        .filter(|n| (1..=100).contains(n))
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!("--runs: `{v}` is not an integer from 1 to 100"))
+                        })?,
+                );
+            }
+            "--min-pass-rate" => {
+                let v = value("--min-pass-rate")?;
+                a.min_pass_rate = Some(
+                    v.parse::<f64>()
+                        .ok()
+                        .filter(|n| (0.0..=1.0).contains(n))
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!(
+                                "--min-pass-rate: `{v}` is not a number from 0 to 1"
+                            ))
+                        })?,
+                );
+            }
+            "--max-total-usd" => {
+                let v = value("--max-total-usd")?;
+                a.max_total_usd = Some(
+                    v.parse::<f64>()
+                        .ok()
+                        .filter(|n| n.is_finite() && *n > 0.0)
+                        .ok_or_else(|| {
+                            Fatal::Usage(format!("--max-total-usd: `{v}` is not a number above 0"))
+                        })?,
+                );
+            }
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
@@ -447,6 +615,25 @@ fn run(a: Args) -> Result<u8, Fatal> {
             None => Err(Fatal::Usage(format!("unknown command `{name}`"))),
         };
     }
+    if a.since.is_some() && a.command != "log" {
+        return Err(Fatal::Usage("--since is an option of `log`".into()));
+    }
+    if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
+        return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
+    }
+    if a.command != "eval" {
+        for (given, name) in [
+            (a.runs.is_some(), "--runs"),
+            (a.min_pass_rate.is_some(), "--min-pass-rate"),
+            (a.max_total_usd.is_some(), "--max-total-usd"),
+            (a.out.is_some(), "--out"),
+            (a.isolate, "--isolate"),
+        ] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
+            }
+        }
+    }
     match a.command.as_str() {
         "" => {
             println!("{}", usage());
@@ -465,6 +652,12 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "mv" => mv(&Repo::discover(&cwd)?, &a),
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
+        "finish" => finish(&Repo::discover(&cwd)?, &a),
+        "next" => next(&Repo::discover(&cwd)?, &a),
+        "status" => status(&Repo::discover(&cwd)?, &a),
+        "log" => log(&Repo::discover(&cwd)?, &a),
+        "stats" => stats(&Repo::discover(&cwd)?, &a),
+        "eval" => eval(&cwd, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -576,6 +769,7 @@ fn harness_texts(
                 .status(
                     &[
                         format!(":(literal){}", harness::CLAUDE),
+                        format!(":(literal){}", harness::REVIEW),
                         ":(literal).claude".to_string(),
                     ],
                     true,
@@ -612,10 +806,9 @@ fn harness_texts(
     Ok(out)
 }
 
-/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
-/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
-/// configuration that does not parse.
-fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+/// Reads the configuration of the base snapshot. Returns `None` if the base
+/// has no `spec-dna.toml`, or a configuration that does not parse.
+fn base_config(repo: &Repo, snap: &Snapshot) -> Result<Option<config::Config>, Fatal> {
     let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
         return Ok(None);
     };
@@ -625,8 +818,81 @@ fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>
         .map_err(Fatal::Io)?;
     Ok(blobs
         .get(&blob)
-        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok())
-        .and_then(|c| c.harness))
+        .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok()))
+}
+
+/// Reads the `[harness]` configuration of the base snapshot. Returns `None`
+/// if the base has no `spec-dna.toml`, no `[harness]` table, or a
+/// configuration that does not parse.
+fn base_harness(repo: &Repo, snap: &Snapshot) -> Result<Option<harness::Harness>, Fatal> {
+    Ok(base_config(repo, snap)?.and_then(|c| c.harness))
+}
+
+/// The files of a tree under `[evals] dir`, for SD506. In the working tree,
+/// the paths are the tracked files and, with `untracked`, the untracked files
+/// that git does not ignore (the folder is outside the document roots, so the
+/// snapshot does not list its untracked files). A path that is absent on disk
+/// is no file. The bytes of each `*.json` file directly in the folder are read
+/// from the disk, or from the tree.
+fn eval_tree(
+    repo: &Repo,
+    snap: &Snapshot,
+    dir: &str,
+    untracked: bool,
+) -> Result<check::EvalTree, Fatal> {
+    use std::io::Read;
+    let prefix = format!("{dir}/");
+    let mut paths: Vec<String> = snap
+        .files
+        .iter()
+        .filter(|e| e.path.starts_with(&prefix))
+        .map(|e| e.path.clone())
+        .collect();
+    if snap.worktree {
+        if untracked {
+            let st = repo
+                .git
+                .status(&[format!(":(literal){dir}")], true)
+                .map_err(Fatal::Io)?;
+            paths.extend(st.untracked.into_iter().filter(|p| p.starts_with(&prefix)));
+        }
+        paths.retain(|p| std::fs::symlink_metadata(repo.root.join(p)).is_ok());
+    }
+    paths.sort();
+    paths.dedup();
+    let direct =
+        |p: &&String| p[prefix.len()..].ends_with(".json") && !p[prefix.len()..].contains('/');
+    let mut json = Vec::new();
+    if snap.worktree {
+        for p in paths.iter().filter(direct) {
+            let mut bytes = Vec::new();
+            let read = std::fs::File::open(repo.root.join(p))
+                .and_then(|f| f.take(evals::MAX_BYTES as u64 + 1).read_to_end(&mut bytes));
+            if read.is_ok() {
+                json.push((p.clone(), bytes));
+            }
+        }
+    } else {
+        let ids: Vec<(String, String)> = paths
+            .iter()
+            .filter(direct)
+            .filter_map(|p| {
+                snap.blob_of(p)
+                    .and_then(|e| e.blob.clone())
+                    .map(|b| (p.clone(), b))
+            })
+            .collect();
+        let blobs = repo
+            .git
+            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
+            .map_err(Fatal::Io)?;
+        for (p, b) in ids {
+            if let Some(bytes) = blobs.get(&b) {
+                json.push((p, bytes.clone()));
+            }
+        }
+    }
+    Ok(check::EvalTree { paths, json })
 }
 
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
@@ -670,14 +936,24 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         None => repo.head_commit(),
     };
+    // The lifecycle base for the change checks. With the policy `none` it
+    // reads nothing.
+    let change_base =
+        lifecycle::change_base(&cfg, &repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
-    let (head_snap, base_snap) = std::thread::scope(|s| {
+    // The lifecycle tree is a third tree only if the lifecycle base is not the
+    // base of the gate.
+    let extra_commit = change_base
+        .as_ref()
+        .filter(|c| Some(*c) != base_commit.as_ref());
+    let (head_snap, base_snap, extra_snap) = std::thread::scope(|s| {
         let base = s.spawn(|| match &base_commit {
             Some(c) => Snapshot::at(repo, c),
             None => Ok(Snapshot::empty()),
         });
+        let extra = s.spawn(|| extra_commit.map(|c| Snapshot::at(repo, c)).transpose());
         // A gate against `--base` reads tracked files only, as CI does
         // (ADR 0001, amendments).
         let head = if a.staged {
@@ -689,19 +965,27 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             head,
             base.join()
                 .unwrap_or_else(|_| Err(Fatal::Io("listing the base tree failed".into()))),
+            extra
+                .join()
+                .unwrap_or_else(|_| Err(Fatal::Io("listing the lifecycle tree failed".into()))),
         )
     });
-    let (head_snap, base_snap) = (head_snap?, base_snap?);
+    let (head_snap, base_snap, extra_snap) = (head_snap?, base_snap?, extra_snap?);
     let use_base = base_commit.is_some();
-    let snaps: Vec<&Snapshot> = if use_base {
+    let mut snaps: Vec<&Snapshot> = if use_base {
         vec![&head_snap, &base_snap]
     } else {
         vec![&head_snap]
     };
+    if let Some(x) = &extra_snap {
+        snaps.push(x);
+    }
     repo::trace("git base tree", &mut t);
     let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
     // The `covers:` tags of the test files, for the evidence checks.
-    if !(cfg.is_off(diag::Code::CoversUnresolved) && cfg.is_off(diag::Code::RequirementUnverified))
+    if !(cfg.is_off(diag::Code::CoversUnresolved)
+        && cfg.is_off(diag::Code::RequirementUnverified)
+        && cfg.is_off(diag::Code::DeltaEvidenceMissing))
     {
         // The working tree and the base, in parallel. The snapshots do not
         // tell whether a test file outside the document roots changed, so the
@@ -727,7 +1011,49 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     t = std::time::Instant::now();
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
-    let mut outcome = check::gate(&cfg, base, head);
+    // The lifecycle tree: the base of the gate, or the third tree.
+    let (life, life_snap): (Option<&model::Corpus>, &Snapshot) =
+        match (&change_base, extra_snap.as_ref()) {
+            (Some(_), Some(x)) => (loaded.corpora.get(2), x),
+            (Some(_), None) => (base, &base_snap),
+            _ => (None, &base_snap),
+        };
+    // The diff against the lifecycle base, read once.
+    let diff = match &change_base {
+        Some(b) => Some(lifecycle::Diff::read(&repo.git, b, untracked).map_err(Fatal::Io)?),
+        None => None,
+    };
+    let mut outcome = check::gate(&cfg, base, life, head);
+    // SD914 is an error only for a spec that the diff touches (design, K3).
+    // With no lifecycle base, no spec is touched.
+    if outcome
+        .head
+        .iter()
+        .any(|d| d.code == diag::Code::DeltaInvalid && d.severity == Severity::Error)
+    {
+        let touched: Vec<&str> = diff
+            .iter()
+            .flat_map(|d| d.files.iter().map(|(p, _)| p.as_str()))
+            .collect();
+        for d in &mut outcome.head {
+            if d.code == diag::Code::DeltaInvalid && !touched.contains(&d.path.as_str()) {
+                d.severity = Severity::Warning;
+            }
+        }
+    }
+    // SD912 is new when the head has more started changes than the lifecycle
+    // base has (K5).
+    if let Some(life) = life {
+        let (now, before) = (
+            lifecycle::started_count(head),
+            lifecycle::started_count(life),
+        );
+        for (d, new) in outcome.head.iter().zip(outcome.new.iter_mut()) {
+            if d.code == diag::Code::StartedLimit {
+                *new = now > before;
+            }
+        }
+    }
     repo::trace("diagnose", &mut t);
     if let Some(base) = base {
         let drift = drift::check(
@@ -740,13 +1066,41 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.new.extend(std::iter::repeat_n(true, drift.len()));
         outcome.head.extend(drift);
         repo::trace("drift", &mut t);
-        // SD921 runs only with `--base` (D16).
-        if a.base.is_some() {
-            let truth = check::truth_changed(&cfg, (base, &base_snap), (head, &head_snap));
-            outcome.new.extend(std::iter::repeat_n(true, truth.len()));
-            outcome.head.extend(truth);
-        }
     }
+    // The checks of the diff against the lifecycle base: SD905 (a change with
+    // no delta), SD910, SD913, SD915, SD916, SD917, SD918, SD920 (a decision
+    // that is not `accepted`) and SD921. With `--base` and no merge base,
+    // SD921 compares with the base of the gate.
+    let mut report = lifecycle::BaseReport::default();
+    if let (Some(life), Some(diff), Some(rev)) = (life, &diff, &change_base) {
+        report =
+            lifecycle::base_checks(&cfg, &repo.git, head, life, rev, diff).map_err(Fatal::Io)?;
+        outcome
+            .new
+            .extend(std::iter::repeat_n(true, report.diags.len()));
+        outcome.head.append(&mut report.diags);
+    }
+    // SD911 is a state code: it reports the tree, so it is never new. It needs
+    // a real merge base, and it is silent with the tip fallback.
+    if let Some(rev) = &change_base {
+        let stale = lifecycle::stale_changes(&cfg, &repo.git, head, rev).map_err(Fatal::Io)?;
+        let diags = lifecycle::stale_diags(&cfg, head, &stale);
+        outcome.new.extend(std::iter::repeat_n(true, diags.len()));
+        outcome.head.extend(diags);
+    }
+    let truth_base = match (life, base) {
+        (Some(l), _) => Some((l, life_snap)),
+        (None, Some(b)) if a.base.is_some() => Some((b, &base_snap)),
+        _ => None,
+    };
+    if let Some(tb) = truth_base
+        && !report.born
+    {
+        let truth = check::truth_changed(&cfg, tb, (head, &head_snap), &report.exempt);
+        outcome.new.extend(std::iter::repeat_n(true, truth.len()));
+        outcome.head.extend(truth);
+    }
+    repo::trace("lifecycle", &mut t);
     let head_ad = check::apply_severity(
         &cfg,
         adapters::check(
@@ -800,11 +1154,41 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             outcome.new.push(is_new);
         }
     }
+    // SD506: the eval files, only for a project with `[evals]`. The base
+    // findings use the `[evals]` table of the base, so only a new finding
+    // fails the gate. A base with no table has no findings.
+    if let Some(ev) = cfg
+        .evals
+        .as_ref()
+        .filter(|_| !cfg.is_off(diag::Code::EvalsInvalid))
+    {
+        let tree = eval_tree(repo, &head_snap, &ev.dir, untracked)?;
+        let head_ev = check::apply_severity(&cfg, check::evals_invalid(ev, &tree));
+        let base_ev: Vec<_> = match base_config(repo, &base_snap)?.and_then(|c| c.evals) {
+            Some(bev) if use_base => {
+                let tree = eval_tree(repo, &base_snap, &bev.dir, false)?;
+                check::apply_severity(&cfg, check::evals_invalid(&bev, &tree))
+            }
+            _ => Vec::new(),
+        };
+        for d in head_ev {
+            let is_new = !base_ev.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
     if let Some(c) = &base_commit
         && let Some(d) = config_not_alone(repo, &cfg, c, untracked)?
     {
         outcome.head.push(d);
         outcome.new.push(true);
+    }
+
+    // A state code is never new, whichever check made it.
+    for (d, new) in outcome.head.iter().zip(outcome.new.iter_mut()) {
+        if d.code.is_state() {
+            *new = false;
+        }
     }
 
     let count = |sev: Severity, only_new: bool| {
@@ -851,13 +1235,18 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .num("requirements", d.reqs.len())
                 .end()
         });
+        let mut obj = Obj::new()
+            .str("version", VERSION)
+            .str("mode", if a.all { "all" } else { "base" })
+            .opt_str("base", base_commit.as_deref());
+        // The lifecycle base: a SHA, or null if git cannot name it. The field
+        // is absent when the policy is `none`.
+        if cfg.change_policy != config::ChangePolicy::None {
+            obj = obj.opt_str("change_base", change_base.as_deref());
+        }
         println!(
             "{}",
-            Obj::new()
-                .str("version", VERSION)
-                .str("mode", if a.all { "all" } else { "base" })
-                .opt_str("base", base_commit.as_deref())
-                .bool("ok", !failed)
+            obj.bool("ok", !failed)
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
                 .raw("documents", &json::array(docs))
@@ -887,6 +1276,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             (None, false) => format!("{total} (no base commit, so all are new)"),
         };
         println!("spec-dna check: {} documents; {counts}", head.docs.len());
+        if cfg.change_policy != config::ChangePolicy::None && change_base.is_none() {
+            eprintln!("note: {}", lifecycle::NO_BASE_NOTE);
+        }
     }
     Ok(if failed { 1 } else { 0 })
 }
@@ -894,7 +1286,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
 /// `init` writes with it (the adapters, the harness files, the hook files
-/// that `init` writes or upgrades, and files named `spec-dna*`) do not count,
+/// that `init` writes or upgrades, the starter files of the evals, and files
+/// named `spec-dna*`) do not count,
 /// and a new `spec-dna.toml` (the adoption) is not checked.
 fn config_not_alone(
     repo: &Repo,
@@ -909,6 +1302,12 @@ fn config_not_alone(
     if *added {
         return Ok(None);
     }
+    // The starter files of `skeleton` come with the table `[evals]`.
+    let starter: Vec<String> = cfg
+        .evals
+        .as_ref()
+        .map(|e| evals::skeleton_paths(&e.dir).to_vec())
+        .unwrap_or_default();
     let others: Vec<&str> = changed
         .iter()
         .map(|(p, _)| p.as_str())
@@ -916,6 +1315,7 @@ fn config_not_alone(
             *p != config::FILE_NAME
                 && !adapters::PATHS.contains(p)
                 && !harness::is_output_path(p)
+                && !starter.iter().any(|s| s == p)
                 && !init::HOOK_FILES.contains(p)
                 && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
         })
@@ -1914,6 +2314,366 @@ fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
     }
     Ok(0)
+}
+
+/// A stop of `finish`, printed as text or as one JSON object. The exit code is
+/// 1.
+fn report_stop(slug: &str, a: &Args, stop: &finish::Stop) -> u8 {
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("slug", slug)
+                .bool("ok", false)
+                .bool("dry_run", a.dry_run)
+                .num("step", stop.step)
+                .str("reason", &stop.reason)
+                .raw(
+                    "diagnostics",
+                    &json::array(stop.diags.iter().map(|d| d.json(true)))
+                )
+                .raw("files", "[]")
+                .end()
+        );
+    } else {
+        let shown: Vec<&diag::Diag> = stop.diags.iter().collect();
+        for line in human_lines(&shown, false) {
+            println!("{line}");
+        }
+        eprintln!(
+            "spec-dna: finish `{slug}` stopped at step {}: {}; nothing changed",
+            stop.step, stop.reason
+        );
+    }
+    1
+}
+
+/// `next <slug>`: the checklist to the next gate (`stage.rs`).
+fn next(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    let slug = a.positional[0].as_str();
+    if !finish::valid_slug(slug) {
+        return Err(Fatal::Usage(format!(
+            "`{slug}` is not the name of a change; give the folder name of the change, with no `/`"
+        )));
+    }
+    if a.group.is_some() {
+        return Err(Fatal::Usage(
+            "`next` has no --group option; `status --group <name>` lists the changes of a group"
+                .into(),
+        ));
+    }
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    stage::next(repo, &cfg, slug, a.base.as_deref(), a.json, !a.no_cache)
+}
+
+/// The areas of the group `name` of `spec-dna.toml`. An unknown group is a
+/// usage error.
+fn group_areas<'a>(cfg: &'a config::Config, name: &str) -> Result<&'a [String], Fatal> {
+    match cfg.groups.iter().find(|(n, _)| n == name) {
+        Some((_, areas)) => Ok(areas.as_slice()),
+        None => {
+            let names: Vec<&str> = cfg.groups.iter().map(|(n, _)| n.as_str()).collect();
+            Err(Fatal::Usage(if names.is_empty() {
+                format!("`--group {name}`: spec-dna.toml has no [groups] table")
+            } else {
+                format!(
+                    "`--group {name}` is not a group of spec-dna.toml; the groups are: {}",
+                    names.join(", ")
+                )
+            }))
+        }
+    }
+}
+
+/// `status [--group <name>]`: each change and its stage (`stage.rs`).
+fn status(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    let areas = a
+        .group
+        .as_deref()
+        .map(|g| group_areas(&cfg, g))
+        .transpose()?;
+    stage::status(repo, &cfg, areas, a.base.as_deref(), a.json, !a.no_cache)
+}
+
+/// `log [--since <rev>]`: the finished and the closed changes (`sdlc.rs`).
+fn log(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    for (given, name) in [
+        (a.group.is_some(), "--group"),
+        (a.base.is_some(), "--base"),
+        (a.sdlc, "--sdlc"),
+    ] {
+        if given {
+            return Err(Fatal::Usage(format!("`log` has no {name} option")));
+        }
+    }
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    sdlc::log(repo, &cfg, a.since.as_deref(), a.json)
+}
+
+/// `eval run [<id>...]`: the runner of the evals (`eval_run.rs`). `eval run`
+/// spends money and runs the checks of the project, so a pin mismatch stops
+/// it, as it stops `check` and `finish`.
+fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    if a.positional.first().map(String::as_str) != Some("run") {
+        return Err(Fatal::Usage(
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`".into(),
+        ));
+    }
+    let repo = Repo::discover(cwd)?;
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    let mut ids = a.positional[1..].to_vec();
+    ids.dedup();
+    eval_run::run(
+        &repo,
+        &cfg,
+        &eval_run::Opts {
+            ids,
+            runs: a.runs,
+            min_pass_rate: a.min_pass_rate,
+            max_total_usd: a.max_total_usd,
+            out: a.out.clone(),
+            dry_run: a.dry_run,
+            isolate: a.isolate,
+            json: a.json,
+        },
+    )
+}
+
+/// `stats --sdlc [--group <name>]`: the indicators of the playbook
+/// (`sdlc.rs`).
+fn stats(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    if !a.sdlc {
+        return Err(Fatal::Usage(
+            "`stats` needs --sdlc: `spec-dna stats --sdlc [--group <name>]` prints the indicators of the playbook"
+                .into(),
+        ));
+    }
+    for (given, name) in [(a.since.is_some(), "--since"), (a.base.is_some(), "--base")] {
+        if given {
+            return Err(Fatal::Usage(format!("`stats` has no {name} option")));
+        }
+    }
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    let group = a
+        .group
+        .as_deref()
+        .map(|g| group_areas(&cfg, g).map(|areas| (g, areas)))
+        .transpose()?;
+    sdlc::stats(repo, &cfg, group, a.json)
+}
+
+/// Finishes a change: the plan, then the write (`finish.rs`).
+fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    let slug = a.positional[0].as_str();
+    if !finish::valid_slug(slug) {
+        return Err(Fatal::Usage(format!(
+            "`{slug}` is not the name of a change; give the folder name of the change, with no `/`"
+        )));
+    }
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    // The base needs no policy: `finish` stops whatever the policy is.
+    let base_rev = lifecycle::merge_base_of(&repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let folder = lifecycle::intent_dirs(&cfg)
+        .iter()
+        .map(|d| format!("{d}/{slug}"))
+        .find(|f| repo.root.join(f).is_dir())
+        .ok_or_else(|| {
+            Fatal::NotFound(format!(
+                "no folder `<intent folder>/{slug}` for the change `{slug}`"
+            ))
+        })?;
+    // The folder must be tracked and equal to HEAD: `finish` deletes it, and
+    // git must keep what it deletes.
+    let precondition = |reason: String| {
+        report_stop(
+            slug,
+            a,
+            &finish::Stop {
+                step: 0,
+                reason,
+                diags: Vec::new(),
+            },
+        )
+    };
+    let prefix = format!("{folder}/");
+    if repo.head_commit().is_none() {
+        return Ok(precondition("the repository has no commit".to_string()));
+    }
+    let tracked: Vec<String> = repo
+        .git
+        .ls_files()
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .map(|e| e.0)
+        .filter(|p| p.starts_with(&prefix))
+        .collect();
+    if tracked.is_empty() {
+        return Ok(precondition(format!(
+            "git tracks no file of the folder `{folder}`; commit the change first"
+        )));
+    }
+    // Each path that differs from HEAD, tracked or not.
+    let differs: Vec<String> = repo
+        .git
+        .diff_paths("HEAD", true)
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    let dirty: Vec<&String> = differs.iter().filter(|p| p.starts_with(&prefix)).collect();
+    if !dirty.is_empty() {
+        return Ok(precondition(format!(
+            "the folder `{folder}` differs from HEAD (an edit that is not committed, or a file that git does not track): {}; commit or remove them first",
+            dirty
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    // The trees: the working tree, and the lifecycle base if git names it.
+    let head_snap = Snapshot::worktree(repo, &repo::root_paths(&cfg), true)?;
+    let base_snap = base_rev
+        .as_deref()
+        .map(|r| Snapshot::at(repo, r))
+        .transpose()?;
+    let mut snaps: Vec<&Snapshot> = vec![&head_snap];
+    snaps.extend(base_snap.as_ref());
+    let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, false)?;
+    let base = if base_snap.is_some() {
+        Some(loaded.corpora.remove(1))
+    } else {
+        None
+    };
+    let mut head = loaded.corpora.remove(0);
+    head.covers = evidence::load(repo, &cfg, None, true)?;
+    let diff = base_rev
+        .as_deref()
+        .map(|r| lifecycle::Diff::read(&repo.git, r, true))
+        .transpose()
+        .map_err(Fatal::Io)?;
+    let read = |p: &str| mv::read(repo, p).map_err(|e| e.message().to_string());
+    let exists = |p: &str| repo.root.join(p).exists();
+    let path_problem = |p: &str| finish::path_problem(&repo.root, p);
+    let cx = finish::Ctx {
+        config: &cfg,
+        head: &head,
+        base: base.as_ref(),
+        diff: diff.as_ref(),
+        folder: &folder,
+        folder_files: &tracked,
+        read: &read,
+        exists: &exists,
+        path_problem: &path_problem,
+    };
+    let plan = match finish::plan(&cx) {
+        Ok(p) => p,
+        Err(finish::Failure::Stop(s)) => return Ok(report_stop(slug, a, &s)),
+        Err(finish::Failure::NoBase) => {
+            return Err(Fatal::Config(format!(
+                "the change `{slug}` is `accepted`, and `finish` compares its delta with the base tree; {}",
+                lifecycle::NO_BASE_NOTE
+            )));
+        }
+        Err(finish::Failure::Io(m)) => return Err(Fatal::Io(m)),
+    };
+    // `finish` stages each file that it writes. An edit of the author in such a
+    // file, not committed, would go into the same stage.
+    let edited: Vec<&str> = plan
+        .writes
+        .iter()
+        .filter(|w| w.old.is_some() && differs.contains(&w.path))
+        .map(|w| w.path.as_str())
+        .collect();
+    if !edited.is_empty() {
+        return Ok(precondition(format!(
+            "`finish` would write {}, and the file has an edit that is not committed; `finish` stages the file, so commit or stash the edit first",
+            edited
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    if !a.dry_run {
+        finish::write_plan(&repo.root, &repo.git, &plan).map_err(|e| Fatal::Io(e.message))?;
+    }
+    report_finish(slug, &folder, a, &plan);
+    Ok(0)
+}
+
+/// The report of a plan that no step stopped, written or not (`--dry-run`).
+fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
+    let diff_of = |w: &finish::Write| init::unified_diff(&w.path, w.old.as_deref(), &w.new, false);
+    if a.json {
+        let writes = plan.writes.iter().map(|w| {
+            Obj::new()
+                .str("path", &w.path)
+                .str("action", "write")
+                .str("diff", &diff_of(w))
+                .end()
+        });
+        let removes = plan.removes.iter().map(|p| {
+            Obj::new()
+                .str("path", p)
+                .str("action", "remove")
+                .str("diff", "")
+                .end()
+        });
+        println!(
+            "{}",
+            Obj::new()
+                .str("slug", slug)
+                .bool("ok", true)
+                .bool("dry_run", a.dry_run)
+                .num("step", 6)
+                .raw("diagnostics", "[]")
+                .raw("files", &json::array(writes.chain(removes)))
+                .end()
+        );
+        return;
+    }
+    let (add, change, remove) = plan.applied;
+    for w in &plan.writes {
+        if a.dry_run {
+            print!("{}", diff_of(w));
+        } else {
+            println!("wrote {}", w.path);
+        }
+    }
+    for p in &plan.removes {
+        println!("{} {p}", if a.dry_run { "remove" } else { "removed" });
+    }
+    let lines = format!("{add} ADD, {change} CHANGE and {remove} REMOVE delta lines");
+    if a.dry_run {
+        println!(
+            "spec-dna finish `{slug}` (dry run): it would apply {lines}, write {} files and delete the folder `{folder}` ({} files); nothing changed",
+            plan.writes.len(),
+            plan.removes.len()
+        );
+    } else {
+        println!(
+            "spec-dna finish `{slug}`: applied {lines}, wrote {} files and deleted the folder `{folder}` ({} files). `finish` staged the paths with `git add`. Read the diff, then commit it with the code",
+            plan.writes.len(),
+            plan.removes.len()
+        );
+    }
 }
 
 fn report_move(m: &mv::Moved, json: bool) {

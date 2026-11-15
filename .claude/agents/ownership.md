@@ -86,9 +86,13 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Move, split or generated index | `src/mv.rs`, `src/split.rs` and `src/registry.rs`; the `mv`, `history` and `index` sections of `docs/commands.md` | ARC | HYG | COR, DIA, TST | REL |
 | Transcript format or output | `src/transcript.rs` and the reader in `src/json.rs`; `docs/transcript.md`; `tests/fixtures/transcripts*/` | ARC | TRN | COR, TST | REL |
 | Git access | `src/git.rs` | ARC | COR | TST | REL |
+| Harness role or generated file | `src/harness.rs` and `src/harness_text.rs`; `docs/harness.md`; `tests/golden/harness/`; the harness tests; `CHANGELOG.md` | ARC | INI, and DIA for the function `check` | COR, TST, DOC | REL |
+| Hook | `src/hook.rs`; the `hook` section of `docs/commands.md`; the hooks section of `docs/harness.md`; `tests/hook*.rs` | ARC | INI | TST | REL |
+| Eval file form or runner | `src/evals.rs` and `src/eval_run.rs`; the `eval` section and the exit codes of `docs/commands.md`; `docs/evals.md`; `tests/eval_run.rs`; SD506 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
+| Eval skeleton or workflow | `src/skeleton.rs`; question 14 in `src/init.rs`; `tests/golden/evals/`; `docs/init.md` | ARC | INI | COR, DIA, REL | DOC |
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
 | Convention | `AGENTS.md`, `CONTRIBUTING.md`, `README.md` and `.github/pull_request_template.md`; lint and editor configs | OWN | ARC | DOC, REL | All |
-| Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the tag | OWN | REL | ARC, TST | All |
+| Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the checkout SHA and the Claude Code version that `init` writes into a workflow (`src/init.rs`, `src/skeleton.rs`); the tag | OWN | REL | ARC, TST | All |
 | CI or hooks | `.github/` except the PR template, `.pre-commit-config.yaml`, `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh` and `src/release.rs` | ARC | REL | TST | OWN |
 | Agent team | `.claude/` and `CLAUDE.md`; the pointers in `AGENTS.md` and `CONTRIBUTING.md` | OWN | ARC | DOC | All |
 
@@ -151,6 +155,17 @@ src/glob.rs, src/repo.rs             COR
 src/git.rs, src/index.rs             COR
 src/templates.rs                     COR
 src/layer.rs                         COR: the layer graph, its levels, the file order and `layer add`/`layer list`
+src/change.rs                        COR: the change model, the delta lines, the tasks of a plan
+src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 to SD917, SD919 to SD922) and the lifecycle base
+src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
+src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
+src/sdlc.rs                          COR: `log` and `stats --sdlc`
+src/evals.rs                         COR: the eval file form and its rules, which SD506 and `eval run` share
+src/eval_run.rs                      COR: `eval run`
+src/harness.rs                       INI: the roles, the generated files, the settings merge. DIA: the function `check` (SD501, SD502, SD504, SD505)
+src/harness_text.rs                  INI: the texts of the stage skills and `REVIEW.md`
+src/hook.rs                          INI
+src/skeleton.rs                      INI: the starter files of the evals and the eval workflow
 src/json.rs                          COR: the writer. TRN: the transcript reader
 src/check.rs, src/diag.rs            DIA
 src/drift.rs, src/cite.rs            DIA. CTX is C for src/cite.rs
@@ -168,6 +183,9 @@ docs/commands.md                     The agent of each command: its section. COR
 docs/diagnostics.md                  DIA
 docs/profiles.md                     DIA
 docs/init.md, docs/quickstart.md     INI. REL: the version in docs/quickstart.md
+docs/harness.md                      INI. DIA: the section "Check"
+docs/agents.md                       INI
+docs/evals.md                        COR. INI: the starter files and the CI job
 docs/demo.md                         INI
 docs/transcript.md                   TRN
 docs/evidence.md                     ARC (OWN)
@@ -180,9 +198,18 @@ docs/assets/                         ARC (OWN)
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA
+tests/layers_checks.rs, tests/sd921.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
+tests/finish.rs                      HYG
+tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
+tests/common/mod.rs, tests/common_helpers.rs   TST: the shared git fixtures. Every agent uses them
+tests/init_change.rs, tests/init_language.rs   INI
 tests/init_graph.rs                  INI
+tests/harness.rs, tests/hook.rs      INI
+tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/init_evals.rs   INI
+tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
+tests/config_step4.rs, tests/eval_run.rs, tests/stats_evals.rs   COR
 tests/context_layers.rs              CTX
-tests/golden/                        The agent of the command
+tests/golden/                        The agent of the command. INI: tests/golden/harness/ and tests/golden/evals/
 tests/fixtures/corpus/               TST
 tests/fixtures/brownfield/           INI
 tests/fixtures/layouts/              INI
@@ -190,7 +217,9 @@ tests/fixtures/demo/                 INI
 tests/fixtures/transcripts*/         TRN
 bench/tool/                          TST
 bench/retrieval/                     CTX
+bench/harness/                       TST
 bench/results/tool-*.json            TST
+bench/results/harness-*.json         TST
 bench/results/retrieval-*.json       CTX
 bench/results/ (other files)         ARC: the evidence of ADR 0002
 bench/go/, bench/rust/, bench/gen/   ARC

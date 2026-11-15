@@ -1,0 +1,16 @@
+0 changes in the history: 0 finished, 0 closed, 0 open
+Plan leading: Time from first conversation to a committed intent.md: n/a (no change has an `accepted` intent in the history yet)
+Plan lagging: Survival rate: the share of intent.md files that are accepted rather than closed: n/a (no intent is `accepted` or `closed` yet)
+Design leading: Elapsed time between the intent.md commit and the spec.md commit: n/a (no change has a spec in the history yet)
+Design lagging: Requirements rework after build starts: spec.md commits after the first plan.md commit: n/a (no change has a spec and a plan in the history yet)
+Build leading: Time from plan approval to the merged pull request: n/a (no finished change has an approved plan in the history yet)
+Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
+Build lagging: How often the merged diff still matches the committed plan.md: n/a (no finished change has a plan and a readable diff in the history yet)
+Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
+Test leading: The eval pass rate over time: 80.0 percent (2 result files)
+  note: the value is the pass rate of the newest result file (2026-02-20T10:00:00Z); the committed files hold the history; 1 file skipped: not a complete result
+Test leading: How long a production incident takes to become a permanent eval: 4.5 days (2 incidents)
+Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
+Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
+Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)
+Deploy both: The other indicators of the playbook: n/a (they need CI logs, telemetry or an incident tracker)

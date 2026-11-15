@@ -1,6 +1,6 @@
 # `spec-dna init`
 
-This page describes `spec-dna init`: what it detects, the 14 questions that it asks, and the files that it writes. Read it before you adopt spec-dna in a repository, or when you change the setup of one. `init` shows a preview and writes only after a confirmation.
+This page describes `spec-dna init`: what it detects, the questions that it asks (at most 14), and the files that it writes. Read it before you adopt spec-dna in a repository, or when you change the setup of one. `init` shows a preview and writes only after a confirmation.
 
 `init` never edits a document. In an instruction file (`AGENTS.md`, `CLAUDE.md`), it changes only its own generated lines: the spec-dna line, and the model-team line of the [Claude Code harness](harness.md). Each generated line carries the version of the generator and a hash of its text, so `check` finds a manual edit.
 
@@ -41,7 +41,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | Agent files | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/skills`, `.cursor/rules` and other agent files |
 | CI and hooks | `.github/workflows`, `.gitlab-ci.yml` and other CI files; pre-commit, husky and lefthook |
 | Default branch | `origin/HEAD`. If it is absent, a local `main` or `master`. If both are absent, the current branch |
-| Harness defaults (Claude Code adapter) | The `model` and the `advisorModel` of an existing `.claude/settings.json` become the main model and the advisor. `init` adds `NotebookEdit` to `deny` if git tracks no `*.ipynb` file. A file in `.claude/agents` that is not generated and has the name of a role file makes that role `none`. The name is the `name` of the front matter, or the file name |
+| Harness defaults (Claude Code adapter) | The `model` and the `advisorModel` of a current `.claude/settings.json` become the main model and the advisor. `init` adds `NotebookEdit` to `deny` if git tracks no `*.ipynb` file. A file in `.claude/agents` that is not generated and has the name of a role file makes that role `none`. The name is the `name` of the front matter, or the file name |
 
 Detection skips vendored, generated and test fixture directories (`fixtures`, `testdata`, `__snapshots__`, `golden`). In a root `.`, it excludes the root files of the repository (such as `README.md`, `AGENTS.md`, `CLAUDE.md` and `CHANGELOG.md`). In a root that holds `.claude/skills`, it excludes the generated skill `spec-dna/`. Detection only reads files. It does not use the network.
 
@@ -91,41 +91,38 @@ If the files show no type, the type is the type of the root that contains the fo
 
 `init` asks the questions in this order. It skips a question that does not apply. Questions 12, 13 and 14 configure the Claude Code adapter: the [harness](harness.md) and the [evals](evals.md). They write files for Claude Code only. For another agent, answer `none` to question 12. Then `init` does not ask the questions 13 and 14.
 
+Question 12 has 2 prompts: the level and the parts.
+
 | # | Question | Default |
 | --- | --- | --- |
 | 1 | The profile: `lite`, `standard` or `strict` ([profiles.md](profiles.md)) | `standard` |
 | 2 | The layer graph: `small`, `default` or `custom`. The question shows the number of documents and the types that the small graph has no layer for. `custom` keeps the `[layers]` tables of the current `spec-dna.toml`, so it is only for `--reconfigure` | By the number of documents: fewer than 30 gives `small`, 30 or more gives `default`. In `--reconfigure`, `custom` |
 | 3 | The areas of `requirements/`: folder names, or `none` for one folder. The question shows the detected areas | The detected areas, at most 8. `none` if fewer than 2 are detected |
-| 4 | The change policy: `three-class`, `two-class` or `none` ([change guide](guides/change.md#choose-the-class)) | `three-class` in a new project, `none` in an upgraded one |
-| 5 | The gate of the change lifecycle: `block`, `warn` or `off` | `block` |
+| 4 | The change policy: `three-class`, `two-class` or `none` ([config.md](config.md#the-table-change)) | `three-class` in a new project. In `--reconfigure`, the current policy; `none` for a file with no `[change]` table |
+| 5 | The gate: `block`, `warn` or `off`. It sets the severity of SD910. `init` does not ask the question if the policy is `none` | `block`. In `--reconfigure`, the current gate |
 | 6 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 7 | The language of normative text, as a BCP 47 tag, and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected language and aliases. `en` if detection finds none |
 | 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
 | 9 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
 | 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none`. `agents-md` writes the line into `AGENTS.md`, which Codex, Cursor and many other agents read. `claude-md` writes it into `CLAUDE.md`, which Claude Code reads. `skill` writes the skill for Claude Code | `claude-md` and `skill`, and `agents-md` when `AGENTS.md` exists or `CLAUDE.md` does not exist |
 | 11 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
-| 12 | The Claude Code harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean` |
-| 13 | The models: `role=model[:effort]` words, such as `verifier=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high code-simplifier=sonnet:high`. The detected values replace the main model and the advisor |
-| 14 | The evals: `none` or `skeleton` ([evals.md](evals.md)). The question is not asked if the level is `none`, which gives `none` | `skeleton` in a new project, `none` in an upgraded one. In `--reconfigure`, the current state |
+| 12 | The Claude Code harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code. Then the parts, as words `skills=<names or none>`, `review-md=<true or false>` and `protect-tests=<fix-branches, always or off>`, in any order. A word that you omit keeps its default | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean`. For the parts, see [Parts of the harness](#parts-of-the-harness) |
+| 13 | The models: `role=model[:effort]` words, such as `verifier=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high code-simplifier=sonnet:high`. The words `reviewer=` and `spec-writer=` of spec-dna 0.5 give exit code 3: the role `reviewer` is now `verifier`, and the role `spec-writer` ended. The detected values replace the main model and the advisor |
+| 14 | The evals: `none` or `skeleton` ([Evals](#evals)). The question says what `skeleton` writes. It is not asked for the harness level `none`. The answer is then `none` in a new project, and the current state in `--reconfigure` | `skeleton` in a new project, and `none` for the level `none`. In `--reconfigure`, `skeleton` if the file has the table `[evals]`, else `none`, also for the level `none` |
 
 The numbers are the numbers of the question in the `--json` output.
 
 Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the types of the project, so `init` writes no `types` key. Question 3 writes `areas = [...]`, if the answer has a name. `init` never proposes a group: add a `[groups]` table manually.
 
-Questions 4 and 5 write `[change] policy` and `[change] gate`. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. `init` writes the table for a new project. It writes a layer of `[change] high-risk-layers` only if the graph has it.
+Questions 4 and 5 write the table `[change]` with 5 keys: `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`) and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
 
-The policy also decides the value of `[harness] skills`: all 4 stage skills if the policy is not `none`, and none if it is `none`. `init` prints a `CODEOWNERS` line for `docs/intent/*/spec.md`, so that the owner approves a higher-risk change. It does not write the file.
+A file that has no `[change]` table has the policy `none`. For it, the answer `none` writes no table, and another policy writes the table. With `--reconfigure`, the current values are the defaults. `init` keeps `high-risk-paths`, `max-fanout` and the layers of `high-risk-layers` that the graph has. If the file has a `[change]` table with no `gate`, the profile sets SD910. Question 5 then proposes the gate with the same severity: `warn` for `lite`, `block` for the other profiles.
 
-Question 14 writes the files below when the answer is `skeleton`. It starts no run. It adds no root and no text to an agent request, so the output of `context` does not change.
+A policy other than `none` needs the `intent` layer, because a change is the folder `intent/<slug>/`. The graphs `small` and `default` have it. If the layers of `custom` have no `intent` layer, the preview says so, and `init` writes the policy `none`.
 
-| File | Purpose |
-| --- | --- |
-| `[evals]` in `spec-dna.toml` | Enables `spec-dna eval run`, SD506 and SD918 |
-| `evals/check.sh` | The shell functions that the checks of an eval call. `init` writes it once and never again |
-| `evals/` | An example eval with a fixture of one text file. It needs no build tool |
-| `.github/workflows/agent-evals.yml` | The CI run of the evals. `init` does not write it if the CI answer of question 11 is `gitlab` or `none`. CI runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS` |
+With a policy other than `none`, `init` prints the `CODEOWNERS` line `docs/intent/*/spec.md @OWNER` in a note of the preview. The path follows the first mixed root and the folder of the `intent` layer. With `--json`, the field `codeowners` has the line, or `null` for the policy `none`. `init` never writes the `CODEOWNERS` file.
 
-The folder is `[evals] dir`, which is `evals` by default. For a root `.`, `init` writes an `exclude` for it, because a later fixture can hold Markdown files. After the write, `init` prints the 2 commands that enable the CI runs. [evals.md](evals.md) gives the form of an eval and the workflow.
+Only a higher-risk change has a spec, so the line protects its approval. A higher-risk plan has the same path as a routine plan, so a path rule cannot select it. The repository process must require the owner for a higher-risk plan, for example with branch protection.
 
 Question 7 writes the top key `language = "<tag>"`. The answer `en` writes nothing, because `en` is the default. A tag that is not a BCP 47 tag, such as `German`, stops `init` with exit code 2, and `init` writes no file. The word lists of the lint are English ([config.md](config.md)). When `language` is not English, the checks that use them are off for the whole project (SD801 to SD805 and SD904).
 
@@ -137,32 +134,67 @@ Latin headings with no alias give `en`. If a script has no tag, or the aliases b
 
 A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) with no `default-type`. The folder of a layer gives the type of a document there. For example, `docs/requirements/loans.md` is a `requirements` document. `spec-dna new <type> <id>` writes a document into the folder of its layer. A document with no type and no layer folder gives SD303.
 
+### Parts of the harness
+
+The second prompt of question 12 sets 3 keys of `[harness]`. An omitted word keeps the default below.
+
+| Part | Writes | Default of a new project |
+| --- | --- | --- |
+| `skills` | The stage skills `.claude/skills/spec-dna-<name>/SKILL.md`, for the names `intent`, `spec`, `plan` and `review` | All 4 skills if the answer to question 4 is not `none`, else `none` |
+| `review-md` | `REVIEW.md` | `true` |
+| `protect-tests` | The hook `protect-tests` in `.claude/settings.json` | `fix-branches`. `off` if `[evidence] tests` is empty, which is the link style `verified-by` |
+
+- The defaults follow the final answers, so a later answer to question 4 or 6 changes them.
+- The 4 skill descriptions add 588 bytes to each request. `REVIEW.md` adds none. `init` prints the total bytes that the harness adds.
+- In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of a new project. So `init --reconfigure` offers the new parts to a project that has none of them.
+- A `REVIEW.md` with no harness marker gives `review-md=false`. A skill file with no marker leaves that skill out of the default. A note names each such file, and `init` does not change it. An answer that asks for such a file stops `init` with exit code 2.
+- The answer keys are `harness-skills` (an array of names, `[]` for none), `harness-review-md` (`true` or `false`) and `harness-protect-tests`. They need a harness level other than `none`.
+
+### Evals
+
+The answer `skeleton` of question 14 writes the starter files of the evals. [evals.md](evals.md#start) lists them. `init` starts no run. It adds no root and no text to an agent request, so the output of `context` does not change.
+
+- `init` writes each starter file once and never again. A file that exists stays, and a note names it. You can edit each file.
+- The folder is `evals`. If git lists a file under `evals/`, the folder is `.spec-dna/evals`, and a note says so.
+- `skeleton` with a current `[evals]` table keeps the table as it is and writes no file. `none` with a current table removes the table and keeps the files, and a note says so.
+- No starter file is Markdown. The folder of the evals is never part of a root, so a later fixture can hold Markdown files.
+- `init` writes the workflow only for the CI answer `github` of question 11. CI runs no eval until you set the repository variable `SPEC_DNA_EVALS` ([evals.md](evals.md#the-ci-job)).
+- After a write that created the workflow, `init` prints "To run the evals in CI, set the secret and the variable:". Then it prints `gh secret set ANTHROPIC_API_KEY` and `gh variable set SPEC_DNA_EVALS --body true`.
+- `init --json` has the field `evals_commands` with these 2 commands, or an empty array.
+- The check SD918 (each incident needs an eval) needs the table `[evals]`.
+
 ## Preview and files
 
-The preview starts with the answers and how `init` applied each one. A line gives the number of the question, the value, and what it writes. It also says if the value is the default of the question or a change. An answer that equals the default and writes no key or file says `writes nothing`. For example, answer 3 (`none`) writes no `areas` key.
+The preview starts with the 14 answers and how `init` applied each one. A line gives the number of the question, the value, and what it writes. It also says if the value is the default of the question or a change. An answer that equals the default and writes no key or file says `writes nothing`. For example, answer 3 (`none`) writes no `areas` key.
 
-Answer 2 writes the `[layers.<name>]` tables. Answer 12 (the harness level) writes the `[harness]` table and the harness files. Answer 13 (the models) writes the `[harness.roles]` table. Answer 14 (`skeleton`) writes `[evals]` and the files of question 14. If the level is `none`, answer 13 shows `-` and says `writes nothing`. A `note:` line follows the answers for each root that `init` did not write, and for a folder of proposals.
+Answer 2 writes the `[layers.<name>]` tables. Answers 4 and 5 write the `[change]` table. Answer 12 (the harness level) writes the `[harness]` table and the harness files. Answer 13 (the models) writes the `[harness.roles]` table. Answer 14 (the evals) writes the table `[evals]` and the starter files.
+
+If the level is `none`, answer 13 shows `-` and says `writes nothing`. A `note:` line follows the answers for each root that `init` did not write, and for a folder of proposals.
 
 Then the preview shows the full `spec-dna.toml` and each file to create or change:
 
 - `spec-dna.toml`
 - the generated line in `AGENTS.md` and `CLAUDE.md`, and the skill `.claude/skills/spec-dna/SKILL.md`. The line is the same for each agent. It never imports another file
 - for `github`: `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)). If the file exists, `init` does not change it.
-- a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`. The hook runs `spec-dna check --staged`, which checks the git index: a commit records the index, not the working tree. A hook that 0.4.1 wrote (`spec-dna check`) reads the working tree. `init` changes that exact line in place when it runs again (also with an existing `spec-dna.toml`), and the preview shows the diff. It does not change any other text of a hook.
+- for the answer `skeleton`: the starter files of the [evals](#evals), and for `github` also `.github/workflows/agent-evals.yml`
+- a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`. The hook runs `spec-dna check --staged`, which checks the git index: a commit records the index, not the working tree. A hook that 0.4.1 wrote (`spec-dna check`) reads the working tree. `init` changes that exact line in place when it runs again (also when `spec-dna.toml` exists), and the preview shows the diff. It does not change any other text of a hook.
 - the harness files of the Claude Code adapter, if the level is not `none`. They are `.claude/agents/*.md`, `.claude/agents/model-team.md`, the stage skills `.claude/skills/spec-dna-<stage>/SKILL.md`, `REVIEW.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`
-- the evals files, if the answer to question 14 is `skeleton`: `evals/` and `.github/workflows/agent-evals.yml`. If the workflow exists, `init` does not change it.
 
-The harness block of the preview shows each harness file with `create`, `change` or `remove` and a note. It also shows the warnings, the reasons for disabled roles and a note that each teammate needs spec-dna on `PATH` for the hooks. It shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code.
+The harness block of the preview shows each harness file with `create`, `change` or `remove` and a note. It also shows the warnings and the reasons for disabled roles. When `init` creates or changes `.claude/agents/Explore.md`, a note says that the file replaces the built-in `Explore` subagent of Claude Code. The note also says how to remove it: `researcher = { claude-code = "none" }` and `init --reconfigure`.
 
-A file of yours with no marker at the path of a stage skill or of `REVIEW.md` stays. `init` names it. It removes the skill from `[harness] skills`, or sets `review-md = false`.
+The block shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code. The block also has a note on the hooks. The note names 0.6.0 if `protect-tests` writes its hook entry, which is the default of a new project. Otherwise, the note is `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.`
 
 After the list, the preview gives the diff of each file other than `spec-dna.toml`. This includes the harness files and the files that `init` removes. A new file shows as a diff against `/dev/null`. A file that `init` removes shows as a diff to `/dev/null`.
 
-`--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`. A new project and `--reconfigure` also give `answers` with the answers (the field `number` is the number of the question) and `notes`. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With an existing `spec-dna.toml`, `--dry-run --json` gives `files` with the same entries, and `harness`.
+`--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`.
 
-The skill lists the types of the project: the types that a layer has. If `spec-dna.toml` has the key `types`, the skill lists only the types of that key. If you change the layers later (for example with `spec-dna layer add`), run `spec-dna init` to update the skill, or `check` reports SD502.
+A new project and `--reconfigure` also give `notes`, `codeowners` and `answers` with the 14 answers. The field `number` of an answer is the number of the question. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With a `spec-dna.toml` that exists, `--dry-run --json` gives `files` with the same entries, and `harness`.
 
-For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file. `--json` has a `harness` object with the level, the files (path, action and note), the kept notes, the warnings and the bytes.
+The skill lists the types of the project: the types that a layer has. If `spec-dna.toml` has the key `types`, the skill lists only the types of that key. If you change the layers later, for example with `spec-dna layer add`, run `spec-dna init` to update the skill. Otherwise `check` reports SD502.
+
+For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file.
+
+`--json` has a `harness` object. Its fields, in this order, are `level`, `files` (each has `path`, `action` and `note`), `kept` (the `kept` lines), `warnings`, `notes` and `request_bytes`. `notes` is a list of text. It holds the notes of the harness block, for example the note that `.claude/agents/Explore.md` replaces the built-in `Explore` subagent. The list is empty if `init` has no note to give.
 
 `init` writes the harness files as [harness.md](harness.md) says. It changes `.claude/settings.json` by a merge, and it keeps each key that it does not set. It does not replace a file that it did not generate.
 
@@ -180,6 +212,8 @@ An answers file is TOML. Each key is optional. An absent key keeps its default.
 profile = "standard"
 graph = "default"               # "small", "default" or "custom"
 areas = ["valves", "sensors"]   # folders of requirements/; [] or "none": one folder
+change-policy = "three-class"   # "three-class", "two-class" or "none"
+gate = "block"                  # "block", "warn" or "off"; not used with the policy "none"
 evidence = "warning"            # "profile", "off", "warning" or "error"
 evidence-style = "both"         # "covers", "verified-by" or "both"
 language = "en"
@@ -195,6 +229,10 @@ base = "main"
 harness = "lean"                # "none", "lean" or "full"
 harness-models = ["orchestrator=opus:xhigh", "verifier=sonnet:medium", "advisor=fable/opus"]
 harness-deny = ["NotebookEdit"] # tools that no agent gets; replaces the default
+harness-skills = ["intent", "spec", "plan", "review"]  # [] for none; the default follows the policy
+harness-review-md = true
+harness-protect-tests = "fix-branches"  # "fix-branches", "always" or "off"
+evals = "skeleton"              # "none" or "skeleton"
 write = true                    # false: the preview only
 
 [[roots]]                       # optional: these roots replace the mapping
@@ -222,7 +260,8 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 `init` does not change the keys that no question asks for:
 
 - `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[context]`, `[groups]` and `[templates]`
-- the keys of `[change]` that questions 4 and 5 do not ask for
+- the table `[evals]`, as question 14 says: `skeleton` keeps it as it is
+- the keys of `[change]` that no question asks for: `high-risk-layers` (only the layers that the graph has), `high-risk-paths` and `max-fanout`. The answers of questions 4 and 5 replace `policy` and `gate`
 - `language`: it is the default of question 7. The answer `en` removes the key
 - every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs
@@ -238,11 +277,11 @@ A smaller level removes the generated files that it no longer produces, if you d
 
 ## Upgrade
 
-`init` with an existing `spec-dna.toml` and no `--reconfigure` is the upgrade path:
+`init` with a `spec-dna.toml` that exists and no `--reconfigure` is the upgrade path:
 
 - `init` updates the adapters and the skill. The skill lists the types of the layers of the project. `init` also changes the exact hook line that 0.4.1 wrote, `spec-dna check`, to `spec-dna check --staged`. The harness upgrade below comes after these changes.
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
-- `init` regenerates the harness files of a configuration with a `[harness]` table. These are the agent files, the stage skills of `[harness] skills`, and `REVIEW.md` if `review-md` is `true`. It writes each generated file that you did not edit, and each file that is missing. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
+- `init` regenerates the harness files of a configuration with a `[harness]` table. These are the agent files, the stage skills of `[harness] skills`, and `REVIEW.md` if `review-md` is `true`. It writes each generated file that you did not edit, and each file that is absent. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
 - `init` keeps a generated file that you edited, or that has text after its marker, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it. Then run `init` to generate it again.
 - `init` never removes a file on this path. Only `--reconfigure` removes files.
 - `init --dry-run` on this path shows the diff of each file, also of the harness files. With `--json`, `files` has a `diff` for each file.

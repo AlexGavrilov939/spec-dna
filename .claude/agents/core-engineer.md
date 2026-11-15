@@ -16,6 +16,7 @@ Read first: `.claude/agents/ownership.md`, `docs/adr/0001-information-model.md` 
 - The `new` handler in `src/main.rs`, and the `new` cases in `tests/cli.rs`
 - `src/config.rs`, `src/model.rs`, `src/parse.rs`, `src/frontmatter.rs`, `src/hash.rs`, `src/glob.rs`, `src/repo.rs`, `src/git.rs`, `src/index.rs`, `src/templates.rs`
 - `src/json.rs`, the writer. `transcript-engineer` owns the transcript reader in the same file.
+- `src/evals.rs` and `src/eval_run.rs`: the eval file form and `eval run`
 - `schema/spec-dna.schema.json`, `docs/config.md` and `docs/types.md`
 - `Cargo.toml` and `Cargo.lock`, for a dependency that the owner approved. `release-engineer` sets the version.
 

@@ -113,6 +113,79 @@ Use it for large material that agents read only on request. `spec-dna history` m
 
 An intent holds the request for one change. A spec holds the delta that the change makes to the requirements, and a plan holds the files and the order of the work. An intent has the statuses draft, accepted and closed. A spec and a plan have the statuses draft and approved. These documents describe work that is not done. Thus they give no drift warning (a plan names files that do not exist yet), and `context` only counts them, unless a target names them.
 
+### Fields of an intent
+
+An intent has these front matter fields, in addition to `status`. spec-dna reads them only in an `intent`. In another type, they have no meaning and give no diagnostic.
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `class` | `routine` or `higher-risk` | The class of the change ([Change classes](design/0.6.0.md#change-classes)). No `class`, or an empty value, is `routine`. Another value, such as `small-fix`, gives SD302 and counts as `routine`. A small fix has no intent |
+| `areas` | a list of area names | The areas that the change touches. The groups of `[groups]` use them |
+| `from` | one id | The id of the incident that the change answers. It is a reference: SD101 reports an id that names no document, and SD901 checks its direction |
+
+The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new intent <slug>` writes it. A project template of an intent keeps its own front matter.
+
+### Sections that carry list items
+
+The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level.
+
+| Section | Document | Items |
+| --- | --- | --- |
+| `Delta` | spec | One delta line each: `ADD <id>#<key>: <text>`, `CHANGE <id>#<key>@<hash>: <text>` or `REMOVE <id>#<key>@<hash>` |
+| `Interfaces` | spec | `CHANGE <interface id>: <text>` |
+| `Decisions` | spec | Links `[[decisions/<slug>]]` |
+| `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved |
+| `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922) |
+| `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect |
+| `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
+| `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
+
+Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range. It keeps the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
+
+A delta line is one list item with one paragraph and no nested list. The key is a slug. The hash is 16 hexadecimal digits, as `show` prints them. A line can wrap. Each key has one line in the delta. An item in another form is an invalid line: the parser keeps it with its reason, and a check reports it later (SD914).
+
+A requirement also has the byte range of its sentence. The sentence is the text after the bold key and its colon. It has no markers `aliases` and `verified-by` at its end, and no space at its start or at its end. The hash of a requirement is the hash of this text.
+
+### Tasks of a plan
+
+The `Order` section of a plan holds a task list. A task is one top-level list item with a task box and a task id:
+
+```md
+- [ ] t1: Add the timer to the valve loop. Files: `src/valve.py`, `tests/`. Verify: `cargo test valve`.
+- [x] t2: Write the sensor driver. Files: `src/sensor.py`. Verify: run the driver on the bench.
+```
+
+- The box `[ ]` is an open task. The box `[x]` (or `[X]`) is a done task.
+- The id is a letter or a digit, then letters, digits, `_` or `-`. The colon follows the id, and then a space or the end of the line. The id is stable: do not renumber the tasks of a started change. The id is case-sensitive.
+- The text is what follows the colon, up to the first label. spec-dna joins the lines of the item into one line. It removes one final `.`.
+- `Files:` and `Verify:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the 2 labels does not matter. The first label of each kind counts.
+- The files of a task are the entries after `Files:`. spec-dna removes one final `.` or `;` of the text, and the parentheses that wrap it. An entry is a part of the text up to a comma that is not in a code span and not in a link (`[text](destination)`). An entry gives its code spans, or, if it has no code span, its text if the text is a plain path. They are paths or globs from the repository root.
+- The `Verify:` text is a check: a sentence or a command in a code span. An empty text counts as no text.
+- A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
+- If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
+
+The next task is the first task that is open and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it ([commands.md](commands.md#next)).
+
+### Files and paths
+
+A `Files` item of a plan, and an entry of the label `Files:` of a task, gives paths and globs. The code span is the first choice. Write each path in a code span, as `` `src/valve.py` ``.
+
+An item that has no code span, or an entry that has none, is a plain path if it follows these rules:
+
+- The text is one token: it has no white space. A link `[text](destination)` gives its text. A destination is not read.
+- Before this check, spec-dna removes the white space at the ends of the text. It also removes one final `.`, `,`, `:` or `;` (a mark of the sentence), and the parentheses that wrap the text.
+- The token has a `/`, a `.` or a `*`, and a letter, a digit or a `*`. Thus `src/dose.py`, `tests/*.py`, `README.md` and `docs/` are plain paths. `Makefile`, `LICENSE` and `none` are words, and not paths: write a file with no `/` and no `.` in a code span.
+- The token has no backtick, no `<`, no `>`, no `"`, no `|`, no `{{` and no `://`. A URL, a tag and a template placeholder are not paths.
+- `src/a.py and src/b.py`, `no code here` and `src/a.py: the main file` are prose, and they are not paths. An item or an entry that is not a path has no effect. A code span that holds a template placeholder (`` `{{path}}` ``) is not a path either.
+
+The rules are about the form only. A token such as `n/a` or `**src/a.py**` passes them, and it is then a pattern that matches no file. Write a path in a code span if it has a form that these rules do not take.
+
+A plain path has the same meaning as the same text in a code span. A final `/` matches the folder and all files in it.
+
+The patterns of a plan are the paths of its section `Files`, then the `Files:` paths of its tasks of `Order`, with no repeat. Each reader of the scope uses this list: the checks SD905, SD910, SD911, SD913, SD915, SD916, SD917 and SD921, `finish`, `stats --sdlc`, `status` and `next`. A plan can list its paths only in its tasks.
+
+Assume that the items of `Files` are not paths, and the plan lists no path in `Files` or in its tasks. Then `next` and `status` say so and show the first such item. The messages of SD913 and SD915 do the same ([diagnostics](diagnostics.md)). If the plan lists a path, they do not name an item, because the item is not the reason for the diagnostic.
+
 ## Templates
 
 `spec-dna new <type> [<id>] [--template <name>]` writes a template at the place of its type. spec-dna embeds the templates below. A project can add its own in `[templates] dir` ([config.md](config.md#the-table-templates)). A file there with the name of an embedded template replaces it.
@@ -121,9 +194,9 @@ An intent holds the request for one change. A spec holds the delta that the chan
 | --- | --- | --- | --- |
 | `prd` | `intent` | `new intent <slug> --template prd` | Problem, Users, Goals, Non-goals, Success measures, Open questions |
 | `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
-| `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope |
-| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns |
-| `plan` (default) | `plan` | `new plan <slug>` | Files, Order, Risks, Proof |
+| `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope. The 3 intent templates have `class: routine` |
+| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns, Open questions |
+| `plan` (default) | `plan` | `new plan <slug>` | Files (the item `` `{{path}}` ``), Order (2 example tasks, each with `` Files: `{{path}}` ``), Risks, Proof |
 | `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |
 | `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |
 | `runbook` | `procedure` | `new procedure <slug> --template runbook` | When to use, Steps, Verify, Rollback |
@@ -137,11 +210,11 @@ The `Status` section of a decision is a live section: its text can change after 
 
 A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template and writes the H1 from the id. It sets the first status of the type.
 
-It removes `was-type`, and it removes `type` where the place gives the type. `check` reads no file of the folder as a document.
+`new` also removes `was-type`, and it removes `type` where the place gives the type. `check` reads no file of the folder as a document.
 
 `spec-dna new <type> [<id>]` writes the template of a type at the place of its layer. [commands.md](commands.md#new) gives each place and the exit codes.
 
-`spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root. It writes no `type:` line where the place gives the type, and it writes the line where the place gives none. In a template that has the field `was-type`, it removes the field from the copy.
+`spec-dna new` uses this root: `--root <dir>`, or the first root of that single type, or the first mixed root. It writes the `type:` line only where the place gives no type.
 
 A placeholder of a template has the form `{{text}}`, such as `{{key}}` or `{{The cause.}}`. `check` reports each placeholder that remains in a document (SD306, an error). Thus a template cannot pass the gate before an author replaces each placeholder. `${{ ... }}` and `{{ ... }}` with spaces inside the braces (GitHub Actions and Jinja syntax) are not placeholders.
 
@@ -199,7 +272,7 @@ A team can already know a document form, such as an ADR, a PRD or a runbook. The
 | Change folder of a spec framework | The intent folder. A task list goes to the `Order` section of a `plan` | |
 | Release notes, changelog | Outside spec-dna. `CHANGELOG.md` stays | |
 | README, onboarding | Outside spec-dna, or `procedure` | |
-| `AGENTS.md`, `CLAUDE.md`, skills | Outside spec-dna. The harness writes them | |
+| `AGENTS.md`, `CLAUDE.md`, skills | Outside spec-dna. `init` writes its adapter lines and skills | |
 | `SECURITY.md` | Outside spec-dna | |
 
 ## Project types

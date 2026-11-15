@@ -1,0 +1,969 @@
+//! Integration tests of `spec-dna next` and `spec-dna status` (step 3, slice
+//! S7): the stage of a change, the checklist, the skill names, the task
+//! progress, the groups, the base and the exit codes.
+//!
+//! Each fixture has a `main` branch with the base commit, a
+//! `refs/remotes/origin/HEAD` that names it, and a `feature` branch. A test
+//! commits the files of a stage on `feature`, and then it runs the commands.
+
+mod common;
+
+use common::*;
+
+const VALVES: &str = "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close**: The controller SHALL close the valve in 5 seconds.\n- **open**: The controller SHALL open the valve in 5 seconds.\n";
+const SENSORS: &str = "---\nstatus: active\n---\n# Timeouts\n\n## Requirements\n\n- **timeout**: The controller SHALL report a sensor timeout.\n";
+
+const INTENT: &str = "docs/intent/dose/intent.md";
+const SPEC: &str = "docs/intent/dose/spec.md";
+const PLAN: &str = "docs/intent/dose/plan.md";
+const CLOSING: &str = "docs/requirements/valves/closing.md";
+
+/// The exact list of the skill names (the owner text, 0.7.0).
+const SKILLS: [&str; 9] = [
+    "brainstorm",
+    "specify",
+    "clarify",
+    "write-plan",
+    "execute",
+    "tdd",
+    "review",
+    "verify",
+    "finish",
+];
+
+fn config(change: &str, extra: &str) -> String {
+    format!(
+        "profile = \"standard\"\nareas = [\"valves\", \"sensors\"]\n\n[groups]\noperations = [\"valves\"]\nreporting = [\"sensors\"]\n\n[change]\n{change}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.incidents]\ntypes = [\"incident\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\nmax-started = 3\n{extra}"
+    )
+}
+
+fn intent(status: &str, class: &str, extra: &str) -> String {
+    format!(
+        "---\nstatus: {status}\nclass: {class}\n{extra}---\n# Dose limit\n\n## Intent\n\nThe dose is too high.\n"
+    )
+}
+
+fn spec(status: &str, body: &str) -> String {
+    format!("---\nstatus: {status}\n---\n# Spec\n\n{body}")
+}
+
+const ADD_FLUSH: &str = "## Delta\n\n- ADD requirements/valves/closing#flush: The controller SHALL flush the line before it closes.\n";
+
+fn plan(status: &str, files: &[&str], order: &str) -> String {
+    let items: Vec<String> = files.iter().map(|f| format!("- `{f}`")).collect();
+    format!(
+        "---\nstatus: {status}\n---\n# Plan\n\n## Files\n\n{}\n\n## Order\n\n{order}\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+        items.join("\n")
+    )
+}
+
+/// The base commit on `main`, `origin/HEAD` on it (if `origin`), and the branch
+/// `feature`.
+fn start_with(change: &str, origin: bool) -> Repo {
+    let r = Repo::with_config(&config(change, ""));
+    r.write(CLOSING, VALVES);
+    r.write("docs/requirements/sensors/timeouts.md", SENSORS);
+    r.write("src/dose.py", "x = 1\n");
+    r.write("tests/test_other.py", "# nothing\n");
+    r.commit("base");
+    if origin {
+        origin_head(&r.dir, "main");
+    }
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r
+}
+
+fn start() -> Repo {
+    start_with("policy = \"three-class\"\ngate = \"block\"\n", true)
+}
+
+/// Commits a change of one stage on `feature`.
+fn stage(r: &Repo, files: &[(&str, &str)]) {
+    for (p, t) in files {
+        r.write(p, t);
+    }
+    r.commit("stage");
+}
+
+fn next_json(r: &Repo) -> String {
+    let (code, out, err) = r.run(&["next", "dose", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out
+}
+
+fn next_text(r: &Repo) -> String {
+    let (code, out, err) = r.run(&["next", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out
+}
+
+/// The value of a string field of the first object that has it.
+fn field<'a>(json: &'a str, name: &str) -> &'a str {
+    let key = format!("\"{name}\":\"");
+    let rest = json
+        .split(&key)
+        .nth(1)
+        .unwrap_or_else(|| panic!("no `{name}` in {json}"));
+    rest.split('"').next().unwrap()
+}
+
+/// The stage from `next --json`. `status --json` must give the same stage.
+fn stage_of(r: &Repo) -> String {
+    let stage = field(&next_json(r), "stage").to_string();
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "stage"), stage, "status and next differ: {out}");
+    stage
+}
+
+/// Asserts the stage of the only change, through both commands.
+fn assert_stage(r: &Repo, want: &str) {
+    assert_eq!(stage_of(r), want);
+}
+
+/// The skill names of the items of a `next --json` output.
+fn skills(json: &str) -> Vec<&str> {
+    json.split("\"skill\":\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect()
+}
+
+/// The text lines of a `next` output without the 2 header lines.
+fn items(text: &str) -> Vec<&str> {
+    text.lines().skip(2).collect()
+}
+
+fn assert_in_order(text: &str, keys: &[&str]) {
+    let mut at = 0;
+    for k in keys {
+        let p = text[at..]
+            .find(k)
+            .unwrap_or_else(|| panic!("`{k}` is missing or out of order in {text}"));
+        at += p + k.len();
+    }
+}
+
+// The stages
+
+#[test]
+fn a_closed_intent_is_in_the_stage_closed_and_the_next_step_is_finish() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("closed", "routine", ""))]);
+    let text = next_text(&r);
+    assert_stage(&r, "closed");
+    assert!(
+        text.starts_with("change dose (routine), stage closed\nbase "),
+        "{text}"
+    );
+    let last = items(&text).last().copied().unwrap();
+    assert!(
+        last.contains("spec-dna finish dose") && last.ends_with("[skill: finish]"),
+        "{text}"
+    );
+    let json = next_json(&r);
+    assert_eq!(field(&json, "stage"), "closed");
+    assert!(field(&json, "next").contains("spec-dna finish dose"));
+}
+
+#[test]
+fn a_draft_intent_is_in_the_stage_plan() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "routine", ""))]);
+    let text = next_text(&r);
+    assert_stage(&r, "plan");
+    assert!(text.contains("stage plan"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert_eq!(
+        last,
+        "[ ] set `status: accepted` in docs/intent/dose/intent.md [skill: brainstorm]"
+    );
+    assert_eq!(skills(&next_json(&r)), ["brainstorm"]);
+}
+
+#[test]
+fn an_open_concern_or_question_of_a_spec_gives_the_skill_clarify_in_the_stage_plan() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("draft", "higher-risk", "")),
+            (
+                SPEC,
+                &spec(
+                    "draft",
+                    "## Concerns\n\n- [ ] Is 5 seconds too long?\n\n## Open questions\n\n- [ ] Who owns the valve?\n",
+                ),
+            ),
+        ],
+    );
+    assert_stage(&r, "plan");
+    let json = next_json(&r);
+    assert_eq!(skills(&json), ["clarify", "clarify", "brainstorm"]);
+    let text = next_text(&r);
+    assert!(text.contains("resolve 1 open concern(s)"), "{text}");
+    assert!(text.contains("resolve 1 open question(s)"), "{text}");
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with("[ ] set `status: accepted`"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_higher_risk_change_with_no_approved_spec_is_in_the_stage_design() {
+    let r = start();
+    // No spec yet.
+    stage(&r, &[(INTENT, &intent("accepted", "higher-risk", ""))]);
+    let text = next_text(&r);
+    assert_stage(&r, "design");
+    assert!(text.contains("stage design"), "{text}");
+    assert!(text.contains("spec-dna new spec dose"), "{text}");
+    assert!(text.contains("[skill: specify]"), "{text}");
+    // A draft spec with an open question and an open concern: clarify.
+    stage(
+        &r,
+        &[(
+            SPEC,
+            &spec(
+                "draft",
+                &format!(
+                    "{ADD_FLUSH}\n## Concerns\n\n- [ ] Is 5 seconds too long?\n\n## Open questions\n\n- [ ] Who owns the valve?\n"
+                ),
+            ),
+        )],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "design");
+    assert!(text.contains("stage design"), "{text}");
+    assert!(text.contains("resolve 1 open concern(s)"), "{text}");
+    assert!(text.contains("resolve 1 open question(s)"), "{text}");
+    assert!(text.contains("the `Delta` section has 1 line(s)"), "{text}");
+    let json = next_json(&r);
+    assert_eq!(
+        skills(&json),
+        ["brainstorm", "specify", "clarify", "clarify", "specify"]
+    );
+    let last = items(&text).last().copied().unwrap();
+    assert_eq!(
+        last,
+        "[ ] set `status: approved` in docs/intent/dose/spec.md [skill: specify]"
+    );
+}
+
+#[test]
+fn the_stage_build_has_3_sub_cases() {
+    let r = start();
+    // No plan.
+    stage(&r, &[(INTENT, &intent("accepted", "routine", ""))]);
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(text.contains("stage build"), "{text}");
+    assert!(text.contains("spec-dna new plan dose"), "{text}");
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with("[ ] set `status: approved` in docs/intent/dose/plan.md"),
+        "{text}"
+    );
+    assert!(skills(&next_json(&r)).contains(&"write-plan"));
+    // A draft plan, and code that changed.
+    stage(
+        &r,
+        &[
+            (
+                PLAN,
+                &plan("draft", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+            ("src/dose.py", "x = 2\n"),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(text.contains("stage build"), "{text}");
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with("[ ] set `status: approved` in docs/intent/dose/plan.md"),
+        "{text}"
+    );
+    let json = next_json(&r);
+    assert!(json.contains("\"next_task\":{\"id\":\"t1\""), "{json}");
+    // An approved plan, and no file of `Files` that changed against the base.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(text.contains("stage build"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert_eq!(
+        last,
+        "[ ] change a file that `Files` of docs/intent/dose/plan.md lists: none differs from the base [skill: execute]"
+    );
+    assert!(skills(&next_json(&r)).contains(&"execute"));
+    // A change of a file outside `Files` does not move the stage.
+    stage(&r, &[("tests/test_other.py", "# changed\n")]);
+    assert_eq!(stage_of(&r), "build");
+    // A change of a file of `Files` does.
+    stage(&r, &[("src/dose.py", "x = 2\n")]);
+    assert_eq!(stage_of(&r), "deploy");
+}
+
+#[test]
+fn an_add_line_without_evidence_is_in_the_stage_test_until_a_tag_names_it() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+        ],
+    );
+    assert_eq!(stage_of(&r), "build");
+    stage(&r, &[("src/dose.py", "x = 2\n")]);
+    let text = next_text(&r);
+    assert_stage(&r, "test");
+    assert!(text.contains("stage test"), "{text}");
+    assert!(text.contains("1 of 1 requirement(s)"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert_eq!(
+        last,
+        "[ ] add `covers: requirements/valves/closing#flush` in a test file [skill: tdd]"
+    );
+    // The tag names the requirement before `finish` writes it.
+    stage(
+        &r,
+        &[(
+            "tests/test_valves.py",
+            "# covers: requirements/valves/closing#flush\n",
+        )],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "deploy");
+    assert!(text.contains("stage deploy"), "{text}");
+    assert!(text.contains("each of the 1 requirement(s)"), "{text}");
+}
+
+#[test]
+fn a_routine_requirement_with_a_new_hash_and_no_evidence_is_in_the_stage_test() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan(
+                    "approved",
+                    &["src/dose.py", CLOSING],
+                    "- [ ] t1: Edit the code.",
+                ),
+            ),
+        ],
+    );
+    // The code changed, and no requirement changed: nothing to prove.
+    stage(&r, &[("src/dose.py", "x = 2\n")]);
+    let text = next_text(&r);
+    assert_stage(&r, "deploy");
+    assert!(text.contains("stage deploy"), "{text}");
+    assert!(text.contains("adds or changes no requirement"), "{text}");
+    // A requirement text changed.
+    stage(
+        &r,
+        &[(
+            CLOSING,
+            &VALVES.replace("in 5 seconds.\n- **open", "in 4 seconds.\n- **open"),
+        )],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "test");
+    assert!(text.contains("stage test"), "{text}");
+    assert!(
+        text.contains(
+            "[ ] add `covers: requirements/valves/closing#close` in a test file [skill: tdd]"
+        ),
+        "{text}"
+    );
+    // The same text edit with a tag.
+    stage(
+        &r,
+        &[(
+            "tests/test_valves.py",
+            "# covers: requirements/valves/closing#close\n",
+        )],
+    );
+    assert_eq!(stage_of(&r), "deploy");
+}
+
+#[test]
+fn the_stage_deploy_names_the_skills_of_its_steps_in_order() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [x] t1: Edit the code."),
+            ),
+            ("src/dose.py", "x = 2\n"),
+        ],
+    );
+    let json = next_json(&r);
+    assert_eq!(field(&json, "stage"), "deploy");
+    let s = skills(&json);
+    assert_eq!(s[s.len() - 3..], ["verify", "review", "finish"]);
+    let text = next_text(&r);
+    assert_in_order(
+        &text,
+        &[
+            "run the proof of docs/intent/dose/plan.md",
+            "review the diff",
+            "spec-dna finish dose --dry-run",
+        ],
+    );
+    assert!(items(&text).last().unwrap().ends_with("[skill: finish]"));
+}
+
+#[test]
+fn an_incident_with_an_open_follow_up_is_listed_by_status() {
+    let r = start();
+    r.write(
+        "docs/incidents/valve-stuck.md",
+        "---\nstatus: active\n---\n# Valve stuck\n\n## Summary\n\nA valve stuck.\n\n## Follow-ups\n\n- [x] Replace the valve.\n- [ ] Add an alarm for a stuck valve.\n  It must page the owner.\n",
+    );
+    r.commit("incident");
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let follow = out.split("\"follow_ups\":").nth(1).unwrap();
+    assert!(
+        follow.starts_with("[{\"incident\":\"incidents/valve-stuck\",\"path\":\"docs/incidents/valve-stuck.md\",\"line\":13,\"text\":\"Add an alarm for a stuck valve. It must page the owner.\"}]"),
+        "{follow}"
+    );
+    assert!(!follow.contains("Replace the valve"), "{follow}");
+    let (_, text, _) = r.run(&["status"]);
+    assert!(
+        text.contains(
+            "follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm"
+        ),
+        "{text}"
+    );
+}
+
+// The tasks
+
+const TASKS: &str = "- [x] t1: Write the test. Files: `tests/test_valves.py`. Verify: the test fails.\n- [ ] t2: Close the valve. Files: `src/dose.py`, `src/valve.py`. Verify: `pytest tests/test_valves.py`.\n- [ ] t3: Update the doc.\n- A note, not a task.";
+
+#[test]
+fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], TASKS)),
+        ],
+    );
+    let json = next_json(&r);
+    assert_eq!(field(&json, "stage"), "build");
+    assert!(
+        json.contains("\"next_task\":{\"id\":\"t2\",\"text\":\"Close the valve\",\"files\":[\"src/dose.py\",\"src/valve.py\"],\"verify\":\"`pytest tests/test_valves.py`\"}"),
+        "{json}"
+    );
+    let text = next_text(&r);
+    assert!(text.contains("tasks of `Order`: 1 of 3 done"), "{text}");
+    assert!(
+        text.contains("[ ] task t2: Close the valve. Files: `src/dose.py`, `src/valve.py`. Verify: `pytest tests/test_valves.py` [skill: execute]"),
+        "{text}"
+    );
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"tasks\":{\"done\":1,\"total\":3,\"next_task\":{\"id\":\"t2\""),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["status"]);
+    assert!(text.contains("tasks 1/3 next-task t2"), "{text}");
+    // A plan with no task has a progress of 0 of 0, and no next task.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan("approved", &["src/dose.py"], "- Edit the code."),
+        )],
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains("\"tasks\":{\"done\":0,\"total\":0,\"next_task\":null}"),
+        "{out}"
+    );
+    // The task of a done plan is not the next task: a duplicate id does not
+    // count, and a plan with all tasks done has none.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [x] a: One.\n- [ ] a: Duplicate.\n- [x] b: Two.",
+            ),
+        )],
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains("\"tasks\":{\"done\":2,\"total\":2,\"next_task\":null}"),
+        "{out}"
+    );
+}
+
+// The skill names
+
+#[test]
+fn the_skills_of_all_the_stages_are_exactly_the_list_of_the_9_names() {
+    let mut seen: Vec<String> = Vec::new();
+    let mut take = |json: &str| {
+        for s in skills(json) {
+            assert!(SKILLS.contains(&s), "`{s}` is not a skill name");
+            if !seen.iter().any(|x| x == s) {
+                seen.push(s.to_string());
+            }
+        }
+    };
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "higher-risk", ""))]);
+    take(&next_json(&r));
+    stage(&r, &[(INTENT, &intent("accepted", "higher-risk", ""))]);
+    take(&next_json(&r));
+    stage(
+        &r,
+        &[(
+            SPEC,
+            &spec(
+                "draft",
+                &format!("{ADD_FLUSH}\n## Open questions\n\n- [ ] Q?\n"),
+            ),
+        )],
+    );
+    take(&next_json(&r));
+    stage(&r, &[(SPEC, &spec("approved", ADD_FLUSH))]);
+    take(&next_json(&r));
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+        )],
+    );
+    take(&next_json(&r));
+    stage(&r, &[("src/dose.py", "x = 2\n")]);
+    take(&next_json(&r));
+    stage(
+        &r,
+        &[(
+            "tests/test_valves.py",
+            "# covers: requirements/valves/closing#flush\n",
+        )],
+    );
+    take(&next_json(&r));
+    stage(&r, &[(INTENT, &intent("closed", "higher-risk", ""))]);
+    take(&next_json(&r));
+    seen.sort();
+    let mut want: Vec<String> = SKILLS.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(seen, want);
+}
+
+#[test]
+fn the_text_output_marks_each_line_with_its_skill() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "routine", ""))]);
+    for line in items(&next_text(&r)) {
+        assert!(
+            line.starts_with("[x] ") || line.starts_with("[ ] "),
+            "{line}"
+        );
+        assert!(line.ends_with(']') && line.contains(" [skill: "), "{line}");
+    }
+}
+
+// The limit of the lines
+
+#[test]
+fn the_output_has_at_most_12_lines_and_the_last_line_is_an_edit() {
+    let r = start();
+    let reqs: String = (1..=8)
+        .map(|n| format!("- **req-{n}**: The controller SHALL do the thing {n}.\n"))
+        .collect();
+    let valves = format!("---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n{reqs}");
+    r.write(CLOSING, &valves);
+    r.commit("more requirements");
+    r.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    r.git(&["checkout", "-q", "-b", "work"]);
+    let changed: String = (1..=8)
+        .map(|n| format!("- **req-{n}**: The controller SHALL do the new thing {n}.\n"))
+        .collect();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan(
+                    "approved",
+                    &["src/dose.py", CLOSING],
+                    "- [ ] t1: Edit the code.",
+                ),
+            ),
+            ("src/dose.py", "x = 2\n"),
+            (
+                CLOSING,
+                &format!("---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n{changed}"),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "test");
+    assert!(text.contains("stage test"), "{text}");
+    assert!(text.contains("8 of 8 requirement(s)"), "{text}");
+    assert!(text.lines().count() <= 12, "{text}");
+    let last = text.lines().last().unwrap();
+    assert!(
+        last.starts_with("[ ] add `covers: requirements/valves/closing#req-5`"),
+        "{text}"
+    );
+}
+
+// The JSON shape
+
+#[test]
+fn the_json_of_next_has_the_fields_in_order() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("accepted", "routine", ""))]);
+    let json = next_json(&r);
+    assert_in_order(
+        &json,
+        &[
+            "{\"slug\":\"dose\"",
+            "\"class\":\"routine\"",
+            "\"stage\":\"build\"",
+            "\"base\":\"",
+            "\"items\":[{\"done\":true,\"text\":\"the intent is accepted\",\"skill\":\"brainstorm\"}",
+            "\"next_task\":null",
+            "\"next\":\"set `status: approved` in docs/intent/dose/plan.md\"",
+            "\"notes\":[]}",
+        ],
+    );
+    let sha = r.git_out(&["rev-parse", "main"]);
+    assert_eq!(field(&json, "base"), sha);
+}
+
+#[test]
+fn the_json_of_status_has_the_fields_in_order() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "areas: [valves]\n")),
+            (
+                PLAN,
+                &plan("draft", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+        ],
+    );
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let sha = r.git_out(&["rev-parse", "main"]);
+    assert_in_order(
+        &out,
+        &[
+            "{\"version\":\"",
+            "\"policy\":\"three-class\"",
+            &format!("\"base\":\"{sha}\""),
+            "\"started\":1",
+            "\"max_started\":3",
+            "\"notes\":[]",
+            "\"changes\":[{\"slug\":\"dose\"",
+            "\"path\":\"docs/intent/dose\"",
+            "\"title\":\"Dose limit\"",
+            "\"class\":\"routine\"",
+            "\"statuses\":{\"intent\":\"accepted\",\"spec\":null,\"plan\":\"draft\"}",
+            "\"stage\":\"build\"",
+            "\"next\":\"set `status: approved` in docs/intent/dose/plan.md\"",
+            "\"stale\":false",
+            "\"areas\":[\"valves\"]",
+            "\"tasks\":{\"done\":0,\"total\":1,\"next_task\":{\"id\":\"t1\"",
+            "\"follow_ups\":[]}",
+        ],
+    );
+    let (_, text, _) = r.run(&["status"]);
+    assert!(text.starts_with("policy three-class, base "), "{text}");
+    assert!(
+        text.contains("\ndose routine build intent accepted spec - plan draft tasks 0/1 next-task t1 areas valves\n  next: set `status: approved` in docs/intent/dose/plan.md\n"),
+        "{text}"
+    );
+    assert!(text.contains("1 started (max 3)"), "{text}");
+}
+
+// The groups
+
+fn two_changes(r: &Repo) {
+    // `dose` is in the area `valves` through its intent. `leak` has a delta
+    // that targets a requirement of the area `sensors`.
+    stage(
+        r,
+        &[
+            (INTENT, &intent("accepted", "routine", "areas: [valves]\n")),
+            (
+                "docs/intent/leak/intent.md",
+                &intent("accepted", "higher-risk", ""),
+            ),
+            (
+                "docs/intent/leak/spec.md",
+                &spec(
+                    "draft",
+                    "## Delta\n\n- ADD requirements/sensors/timeouts#alarm: The controller SHALL sound an alarm.\n",
+                ),
+            ),
+            (
+                "docs/intent/misc/intent.md",
+                &intent("draft", "routine", ""),
+            ),
+        ],
+    );
+}
+
+fn slugs(json: &str) -> Vec<&str> {
+    json.split("{\"slug\":\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_group_lists_the_changes_that_have_one_of_its_areas() {
+    let r = start();
+    two_changes(&r);
+    let (code, all, _) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{all}");
+    assert_eq!(slugs(&all), ["dose", "leak", "misc"]);
+    assert!(all.contains("\"areas\":[\"sensors\"]"), "{all}");
+    let (_, ops, _) = r.run(&["status", "--group", "operations", "--json"]);
+    assert_eq!(slugs(&ops), ["dose"]);
+    let (_, rep, _) = r.run(&["status", "--group", "reporting", "--json"]);
+    assert_eq!(slugs(&rep), ["leak"]);
+    // The counts are the counts of the project.
+    assert!(rep.contains("\"started\":2"), "{rep}");
+    let (code, text, _) = r.run(&["status", "--group=reporting"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("leak higher-risk design"), "{text}");
+    assert!(!text.contains("dose "), "{text}");
+}
+
+#[test]
+fn an_unknown_group_is_a_usage_error() {
+    let r = start();
+    two_changes(&r);
+    let (code, out, err) = r.run(&["status", "--group", "nothing"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("not a group") && err.contains("operations, reporting"),
+        "{err}"
+    );
+    // A project with no `[groups]` table.
+    let r = Repo::with_config(
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n[change]\npolicy = \"three-class\"\n",
+    );
+    let (code, _, err) = r.run(&["status", "--group", "x"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no [groups] table"), "{err}");
+    // `next` has no such option.
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "routine", ""))]);
+    let (code, _, err) = r.run(&["next", "dose", "--group", "operations"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+// The base
+
+#[test]
+fn without_a_base_the_commands_print_a_note_and_the_stage_stops_at_build() {
+    let r = start_with("policy = \"three-class\"\ngate = \"block\"\n", false);
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+            ("src/dose.py", "x = 2\n"),
+        ],
+    );
+    let note = "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>";
+    let json = next_json(&r);
+    assert_eq!(field(&json, "stage"), "build");
+    assert!(json.contains("\"base\":null"), "{json}");
+    assert!(json.contains(&format!("\"notes\":[\"{note}\"]")), "{json}");
+    let text = next_text(&r);
+    assert!(text.contains(&format!("base none: {note}")), "{text}");
+    assert!(
+        text.contains("the base is unknown, so pass --base <rev>"),
+        "{text}"
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(out.contains("\"base\":null") && out.contains(note), "{out}");
+    assert!(out.contains("\"stale\":false"), "{out}");
+    let (_, out, _) = r.run(&["status"]);
+    assert!(out.contains(&format!("note: {note}")), "{out}");
+    // `--base` gives the base.
+    let (code, out, err) = r.run(&["next", "dose", "--base", "main", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "stage"), "deploy");
+    assert!(out.contains("\"notes\":[]"), "{out}");
+}
+
+#[test]
+fn a_started_change_with_no_commit_for_a_long_time_is_stale() {
+    let r = Repo::with_config(&config(
+        "policy = \"three-class\"\ngate = \"warn\"\n",
+        "stale-days = 10\n",
+    ));
+    r.write(CLOSING, VALVES);
+    r.write(INTENT, &intent("accepted", "routine", ""));
+    r.commit_at("change", "2001-01-01T12:00:00+00:00");
+    r.write("src/other.py", "y = 1\n");
+    r.commit_at("later", "2001-06-01T12:00:00+00:00");
+    origin_head(&r.dir, "main");
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"stale\":true"), "{out}");
+    let (_, text, _) = r.run(&["status"]);
+    assert!(text.contains(" stale\n"), "{text}");
+}
+
+#[test]
+fn an_unknown_base_is_a_configuration_error() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "routine", ""))]);
+    for cmd in [&["next", "dose"][..], &["status"]] {
+        let mut args = cmd.to_vec();
+        args.extend(["--base", "no-such-branch"]);
+        let (code, _, err) = r.run(&args);
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("not a commit"), "{err}");
+    }
+}
+
+// The policy none, the exit codes and the pin
+
+#[test]
+fn the_policy_none_says_that_the_change_process_is_off() {
+    // No commit, no `origin/HEAD`: the commands read no git data.
+    let r = Repo::with_config("[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n");
+    r.write(INTENT, &intent("accepted", "routine", ""));
+    let (code, out, err) = r.run(&["status"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "the change process is off: `[change] policy` is `none`; no change is listed\n"
+    );
+    let (code, out, err) = r.run(&["next", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "the change process is off: `[change] policy` is `none`\n"
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains("\"policy\":\"none\",\"base\":null,\"started\":0,\"max_started\":null")
+            && out.contains("\"changes\":[],\"follow_ups\":[]}"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["next", "dose", "--json"]);
+    assert!(
+        out.contains("\"items\":[],\"next_task\":null,\"next\":null"),
+        "{out}"
+    );
+    // A policy that is `none` still has a usage error for a bad slug.
+    let (code, _, err) = r.run(&["next", "a/b"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn the_exit_codes() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "routine", ""))]);
+    // No folder.
+    let (code, _, err) = r.run(&["next", "nothing"]);
+    assert_eq!(code, 5, "{err}");
+    assert!(err.contains("no folder"), "{err}");
+    // A slug that is not a name.
+    for args in [&["next", "a/b"][..], &["next"], &["status", "extra"]] {
+        let (code, _, err) = r.run(args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+    }
+    // A change that exists, and a repository that has none.
+    let (code, out, _) = r.run(&["next", "dose"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out, _) = r.run(&["status"]);
+    assert_eq!(code, 0, "{out}");
+    let empty = start();
+    let (code, out, _) = empty.run(&["status"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("no change\n"), "{out}");
+    // No configuration.
+    let bare = Repo::new();
+    let (code, _, err) = bare.run(&["status"]);
+    assert_eq!(code, 3, "{err}");
+}
+
+#[test]
+fn a_pin_mismatch_is_a_warning() {
+    let r = start();
+    stage(&r, &[(INTENT, &intent("draft", "routine", ""))]);
+    let cfg = r.read("spec-dna.toml").replacen(VERSION, "0.0.1", 1);
+    r.write("spec-dna.toml", &cfg);
+    for args in [&["next", "dose"][..], &["status"]] {
+        let (code, out, err) = r.run(args);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(err.contains("warning: spec-dna.toml pins 0.0.1"), "{err}");
+    }
+}
+
+#[test]
+fn the_help_of_the_commands_names_the_skills_and_the_exit_codes() {
+    let r = Repo::new();
+    let (code, out, _) = r.run(&["next", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.starts_with("usage: spec-dna next <slug> [--base <rev>]\n"),
+        "{out}"
+    );
+    for s in SKILLS {
+        assert!(out.contains(s), "`{s}` is not in the help of `next`");
+    }
+    let (code, out, _) = r.run(&["status", "--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.starts_with("usage: spec-dna status [--group <name>] [--base <rev>]\n"),
+        "{out}"
+    );
+}

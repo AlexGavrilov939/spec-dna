@@ -1815,17 +1815,17 @@ mod tests {
 
     #[test]
     fn a_generated_harness_file_is_not_a_document() {
-        let generated = "---\nname: checker\n---\n\nText.\n\n<!-- spec-dna harness v0.5.0 h:0123456789abcdef -->\n";
+        let generated = "---\nname: verifier\n---\n\nText.\n\n<!-- spec-dna harness v0.5.0 h:0123456789abcdef -->\n";
         let own = "---\nname: other\n---\n\nText.\n";
-        let with = |checker: &str| {
+        let with = |verifier: &str| {
             facts(&[
-                (".claude/agents/checker.md", checker),
+                (".claude/agents/verifier.md", verifier),
                 (".claude/agents/other.md", own),
             ])
             .markdown
         };
         assert_eq!(with(generated), 1, "the generated agent file is skipped");
-        assert_eq!(with("---\nname: checker\n---\n\nText.\n"), 2);
+        assert_eq!(with("---\nname: verifier\n---\n\nText.\n"), 2);
     }
 
     #[test]

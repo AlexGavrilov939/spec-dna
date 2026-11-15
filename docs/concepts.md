@@ -26,7 +26,7 @@ The documents are plain Markdown files in git. spec-dna reads their front matter
 
 Each document has 1 of 15 types. The place of a file gives its type: a file under `rules/` is a `rule`, and `terms.md` is the `terms` document. A `type:` field in the front matter is necessary only where the place gives no type.
 
-| Type | Content | Place in a new project |
+| Type | Content | Place in the default graph |
 | --- | --- | --- |
 | `product`, `system`, `terms` | What the product is, how the system works, the terms of the project | `docs/product.md`, `docs/system.md`, `docs/terms.md` |
 | `roadmap`, `questions` | Planned work and open questions | `docs/roadmap.md`, `docs/questions.md` |
@@ -38,6 +38,8 @@ Each document has 1 of 15 types. The place of a file gives its type: a file unde
 | `incident` | A post-mortem record of one event | `docs/incidents/` |
 | `research` | Material that agents read only on request | `docs/research/` |
 | `intent`, `spec`, `plan` | The documents of one change | `docs/intent/<slug>/` |
+
+A new project with fewer than 30 documents gets the small graph. It has no layer for `interface`, `procedure` and `research`, and `spec-dna layer add` adds one.
 
 A `status` field gives the lifecycle of a document, for example `draft`, `active` and `retired`. A status moves forward only. After a decision is `accepted`, its text is locked. A new fact goes into an amendment section, or into a new decision that supersedes the old one. Only a live section, such as `Status`, can change without an amendment.
 
@@ -95,7 +97,7 @@ Reference: [config.md](config.md#the-table-layers), [commands.md](commands.md#la
 
 ## The gate
 
-`spec-dna check` compares the head with a base and reports only the problems that the change adds. Without `--base`, the base is `HEAD`, so `check` reads the edits that are not committed. In CI, `--base origin/<main branch>` makes the base the merge base with the target branch. The checks of the change lifecycle need the base of the pull request. Without `--base`, they use the merge base with the default branch.
+`spec-dna check` compares the head with a base and reports only the problems that the change adds. Without `--base`, the base is `HEAD`, so `check` reads the edits that are not committed. In CI, `--base origin/<main branch>` makes the base the merge base with the target branch. The checks of the change lifecycle need the base of the pull request. Without `--base`, they use the merge base of `origin/HEAD` and `HEAD`. If git has no `origin/HEAD`, `check` prints a note and runs only the change checks that need one tree.
 
 Thus a mature repository can adopt spec-dna before it fixes the old problems. `check --all` shows each problem once. The gate fails only on a new error.
 
@@ -121,13 +123,13 @@ A change is a folder `docs/intent/<slug>/`. It holds these documents:
 - `spec.md`: the delta of the requirements.
 - `plan.md`: the files, the order, the risks and the proof.
 
-The folder stays on the default branch while the work continues. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished changes.
+The folder stays on the default branch while the work continues. When the work is complete, `finish` applies the delta to the requirements and deletes the folder. Git keeps the history, and `spec-dna log` lists the finished and the closed changes.
 
 A change has a class: `small-fix` (a pull request only), `routine` (an intent and a plan) or `higher-risk` (an intent, a spec and a plan). [The change guide](guides/change.md#choose-the-class) gives the documents, the approver and the minimum class of each change.
 
 To approve a document is to set its status (`accepted` or `approved`) in a commit that a pull request merges. spec-dna reads the approval from the base tree, and the branch protection of the repository decides who can merge. Each document of a change needs the approval of the document before it (SD910). `[change] gate` makes this rule an error (`block`), a warning (`warn`) or nothing (`off`).
 
-A change has no stage field. spec-dna derives the stage (Plan, Design, Build, Test, Deploy or Maintain) from the files, their statuses and git. `spec-dna status` shows each change and its stage. `spec-dna next <slug>` prints the checklist to the next gate. `spec-dna stats --sdlc` prints the indicators of each stage that git can give.
+A change has no stage field. spec-dna derives the stage (Plan, Design, Build, Test, Deploy or Closed) from the files, their statuses and git. `spec-dna status` shows each change and its stage. It also lists the open follow-ups of the incidents, which are the Maintain stage of the playbook. `spec-dna next <slug>` prints the checklist to the next gate. `spec-dna stats --sdlc` prints the indicators of each stage that git can give.
 
 `[change] policy` sets the classes that a project uses: `three-class`, `two-class` or `none`. A new project has `three-class`. An upgraded project has `none`: it has the layers and their checks, but no change process.
 

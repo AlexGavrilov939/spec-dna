@@ -232,7 +232,12 @@ fn reconfigure_keeps_language_the_change_table_and_the_lint_rule() {
     let (code, out, err) = r.init_with("language = \"de\"\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
     // A project edits the file by hand: a rule and the change policy.
-    let mut cfg = r.read("spec-dna.toml");
+    // The file of an older version has no `[change]` table, so the test
+    // writes the table with the key `policy` only.
+    let cfg = r.read("spec-dna.toml");
+    let start = cfg.find("\n[change]").unwrap();
+    let end = cfg.find("\n[harness]").unwrap();
+    let mut cfg = format!("{}{}", &cfg[..start], &cfg[end..]);
     cfg.push_str("\n[rules]\nlint = \"warning\"\n\n[change]\npolicy = \"two-class\"\n");
     r.write("spec-dna.toml", &cfg);
     r.commit("init and edits");
@@ -240,7 +245,10 @@ fn reconfigure_keeps_language_the_change_table_and_the_lint_rule() {
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(top_keys(&cfg).contains("\nlanguage = \"de\""), "{cfg}");
-    assert!(cfg.contains("[change]\npolicy = \"two-class\"\n"), "{cfg}");
+    assert!(
+        cfg.contains("[change]  # the change process (docs/config.md)\npolicy = \"two-class\"  #"),
+        "{cfg}"
+    );
     assert!(cfg.contains("lint = \"warning\""), "{cfg}");
     r.commit("reconfigure");
     let (code, out, _) = r.run(&["check"]);
@@ -250,14 +258,9 @@ fn reconfigure_keeps_language_the_change_table_and_the_lint_rule() {
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(!cfg.contains("language"), "{cfg}");
-    assert!(cfg.contains("[change]\npolicy = \"two-class\"\n"), "{cfg}");
+    assert!(
+        cfg.contains("[change]  # the change process (docs/config.md)\npolicy = \"two-class\"  #"),
+        "{cfg}"
+    );
     assert!(cfg.contains("lint = \"warning\""), "{cfg}");
-}
-
-#[test]
-fn a_new_project_has_no_change_table() {
-    let r = Repo::empty();
-    let (code, out, err) = r.run(&["init", "--non-interactive"]);
-    assert_eq!(code, 0, "{out}{err}");
-    assert!(!r.read("spec-dna.toml").contains("[change]"));
 }

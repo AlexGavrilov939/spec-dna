@@ -37,7 +37,7 @@
       "default": "en"
     },
     "change": {
-      "description": "The change process. Without this table the policy is `none`. In 0.6.0 step 2 the table has only the key `policy`.",
+      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD922 are off, and no rule can turn them on).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -45,12 +45,43 @@
       ],
       "properties": {
         "policy": {
-          "description": "The change classes. With `none`, SD921 is off and no rule can turn it on.",
+          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD922 are off and no rule can turn them on.",
           "enum": [
             "three-class",
             "two-class",
             "none"
           ]
+        },
+        "gate": {
+          "description": "The strictness of SD910. `block`: SD910 is an error. `warn`: SD910 is a warning. `off`: SD910 is off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority over the gate.",
+          "enum": [
+            "block",
+            "warn",
+            "off"
+          ]
+        },
+        "high-risk-layers": {
+          "description": "The names of layers of the graph. A delta line that targets a document of one of these layers makes the change higher-risk. Each name must be a layer of the graph. Default: `interfaces` and `rules`, without the names that the graph does not have.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "high-risk-paths": {
+          "description": "Globs from the repository root. A plan or a diff that has a path that matches one of them makes the change higher-risk. Default: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "max-fanout": {
+          "description": "The most requirement documents that one change can touch before SD905. Default 8.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 8
         }
       }
     },
@@ -93,6 +124,39 @@
           "type": "string",
           "pattern": "^[^/\\\\:][^\\\\:]*$",
           "default": ".spec-dna/templates"
+        }
+      }
+    },
+    "evals": {
+      "description": "The agent evals (ADR 0008): `spec-dna eval run` and the checks SD506 and SD918. No table means no evals. An eval is a file `<dir>/<id>.json`. See docs/config.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "description": "The folder of the evals, relative to the repository root. It follows the rules of `templates.dir`. The folder cannot be the folder of `templates.dir`, hold it or be inside it. The folder is never part of a root. Default: `evals`.",
+          "type": "string",
+          "pattern": "^[^/\\\\:][^\\\\:]*$",
+          "default": "evals"
+        },
+        "min-pass-rate": {
+          "description": "The share of evals that must pass, from 0 to 1. Default 0.8.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.8
+        },
+        "runs": {
+          "description": "The runs of an eval that sets no `runs`, from 1 to 100. Default 3.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 3
+        },
+        "max-total-usd": {
+          "description": "The maximum spend of `eval run`, in USD, above 0. The command refuses a run with a higher estimate. It stops when the spend is above this value. Default 20.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 20
         }
       }
     },
@@ -260,7 +324,7 @@
       ],
       "properties": {
         "level": {
-          "description": "`none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them.",
+          "description": "`none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper. `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them.",
           "enum": [
             "none",
             "lean",
@@ -295,6 +359,31 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 4294967295
+        },
+        "skills": {
+          "description": "The stage skills that `init` writes, each once. They are written in the order intent, spec, plan, review. Default: none.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "intent",
+              "spec",
+              "plan",
+              "review"
+            ]
+          }
+        },
+        "review-md": {
+          "description": "If true, `init` writes `REVIEW.md`, the review policy. Default false.",
+          "type": "boolean"
+        },
+        "protect-tests": {
+          "description": "When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `fix-branches` (on a branch whose name starts with `fix/`), `always` or `off`. Default `off`.",
+          "enum": [
+            "fix-branches",
+            "always",
+            "off"
+          ]
         },
         "roles": {
           "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",
@@ -354,7 +443,7 @@
                 }
               }
             },
-            "reviewer": {
+            "verifier": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -393,7 +482,7 @@
                 }
               }
             },
-            "spec-writer": {
+            "code-simplifier": {
               "type": "object",
               "additionalProperties": false,
               "properties": {

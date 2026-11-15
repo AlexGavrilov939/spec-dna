@@ -37,7 +37,7 @@ use std::sync::Arc;
 /// lines after it. The range of a list item can end after a blank line. A
 /// cut or an insert at that end would join the next paragraph to an item as
 /// a lazy continuation line, and change its text.
-fn item_span(text: &str, start: usize, end: usize) -> (usize, usize) {
+pub(crate) fn item_span(text: &str, start: usize, end: usize) -> (usize, usize) {
     let (a, mut b) = line_span(text, start, end);
     while b > a + 1 && text[..b].ends_with("\n\n") {
         b -= 1;
@@ -939,7 +939,7 @@ fn check_names(
 
 /// The title of a new document: its slug with spaces, first letter in
 /// uppercase.
-fn title_of(id: &str) -> String {
+pub(crate) fn title_of(id: &str) -> String {
     let slug = id.rsplit('/').next().unwrap_or(id).replace(['-', '_'], " ");
     let mut ch = slug.chars();
     match ch.next() {
@@ -1127,7 +1127,7 @@ pub fn map_links(text: &str, f: &dyn Fn(&str) -> Option<String>) -> String {
 /// Returns the new destination of a link in text that was in the document
 /// at `orig` and is now in the document at `now`. A link to a moved key or
 /// section goes to `target`. Returns `None` if the destination stays.
-fn retarget(
+pub(crate) fn retarget(
     dest: &str,
     orig: &str,
     now: &str,

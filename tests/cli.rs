@@ -815,7 +815,7 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/checker.md\nwrote .claude/agents/Explore.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nper-request prefix: "
+            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/Explore.md\nwrote .claude/skills/spec-dna-intent/SKILL.md\nwrote .claude/skills/spec-dna-spec/SKILL.md\nwrote .claude/skills/spec-dna-plan/SKILL.md\nwrote .claude/skills/spec-dna-review/SKILL.md\nwrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: "
         ),
         "{out}"
     );
@@ -864,10 +864,11 @@ fn fresh_project_init_check_uninstall() {
         "{out}"
     );
     // Uninstall: delete the configuration, the adapters and the cache.
-    for p in ["spec-dna.toml", "AGENTS.md", "CLAUDE.md"] {
+    for p in ["spec-dna.toml", "AGENTS.md", "CLAUDE.md", "REVIEW.md"] {
         fs::remove_file(r.dir.join(p)).unwrap();
     }
     fs::remove_dir_all(r.dir.join(".claude")).unwrap();
+    fs::remove_dir_all(r.dir.join("evals")).unwrap();
     fs::remove_dir_all(r.dir.join(".git/spec-dna")).unwrap();
     for (p, t) in docs {
         assert_eq!(r.read(p), t, "{p} is unchanged");
@@ -875,7 +876,7 @@ fn fresh_project_init_check_uninstall() {
     let status = git(&r.dir, &["status", "--porcelain"]);
     assert_eq!(
         status,
-        " D .claude/agents/Explore.md\n D .claude/agents/checker.md\n D .claude/agents/fallback-advisor.md\n D .claude/agents/model-team.md\n D .claude/settings.json\n D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D spec-dna.toml\n"
+        " D .claude/agents/Explore.md\n D .claude/agents/fallback-advisor.md\n D .claude/agents/model-team.md\n D .claude/agents/verifier.md\n D .claude/settings.json\n D .claude/skills/spec-dna-intent/SKILL.md\n D .claude/skills/spec-dna-plan/SKILL.md\n D .claude/skills/spec-dna-review/SKILL.md\n D .claude/skills/spec-dna-spec/SKILL.md\n D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D REVIEW.md\n D evals/check.sh\n D evals/example.json\n D evals/fixtures/example/notes.txt\n D spec-dna.toml\n"
     );
 }
 
@@ -3033,9 +3034,10 @@ fn on_terminal(dir: &Path, args: &[&str], answers: &str) -> (i32, String) {
 fn init_asks_on_a_terminal() {
     let r = Repo::fixture("brownfield");
     // The numbers are the numbers of the design: 1 profile, 2 graph, 3 areas,
-    // 6 evidence, 7 language, 8 mapping (4 roots), 9 budgets, 10 adapters, 11
-    // CI, hook and base, 12 harness, 13 models, then the confirmation.
-    let answers = "strict\ndefault\n\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
+    // 4 change policy, 5 gate, 6 evidence, 7 language, 8 mapping (4 roots), 9
+    // budgets, 10 adapters, 11 CI, hook and base, 12 harness and its parts, 13
+    // models, 14 evals, then the confirmation.
+    let answers = "strict\ndefault\n\ntwo-class\nwarn\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\n\nverifier=sonnet:medium implementer=none\n\ny\n";
     let (code, out) = on_terminal(&r.dir, &["init"], answers);
     assert_eq!(code, 0, "{out}");
     for want in [
@@ -3045,16 +3047,20 @@ fn init_asks_on_a_terminal() {
         "2. Layer graph (small, default, custom) [small]: ",
         "    Areas found: none. An area is a folder of requirements/.",
         "3. Areas of requirements/ (names, or none) [none]: ",
+        "4. Change policy (three-class, two-class, none) [three-class]: ",
+        "5. Gate (block, warn, off) [block]: ",
         "6. Evidence policy (profile, off, warning, error) and link style (covers, verified-by, both) [profile, both]: ",
         "8. Mapping: 4 roots.",
         "    docs/adr (decision; 3 documents; status proposed; ids ADR-{n}; exclude ADR-*-notes.md, README.md) [accept]: ",
         "9. Budget level (default, relaxed, tight, off) [default]: ",
         "11. CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
         "12. Agent harness (none, lean, full) [lean]: ",
-        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high spec-writer=sonnet:high]: ",
+        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=intent,spec,plan,review review-md=true protect-tests=fix-branches]: ",
+        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high code-simplifier=sonnet:high]: ",
+        "14. Evals (none, skeleton) [skeleton]: ",
         "Agent harness: full (for Claude Code)",
-        "  create .claude/agents/checker.md (agent checker: sonnet, medium)",
-        "Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.",
+        "  create .claude/agents/verifier.md (agent verifier: sonnet, medium)",
+        "Each teammate needs spec-dna 0.6.0 or later on PATH for the hooks.",
         "Restart Claude Code. Then check:",
         "--- spec-dna.toml ---",
         "Write these files? [y/N]: ",
@@ -3068,6 +3074,11 @@ fn init_asks_on_a_terminal() {
         cfg.contains("evidence = \"error\"\nbudgets = \"off\"\n"),
         "{cfg}"
     );
+    assert!(
+        cfg.contains("[change]  # the change process (docs/config.md)\npolicy = \"two-class\"  #"),
+        "{cfg}"
+    );
+    assert!(cfg.contains("\ngate = \"warn\"  #"), "{cfg}");
     assert!(!cfg.contains("path = \"docs/adr\""), "{cfg}");
     assert!(
         cfg.contains("path = \"docs/specs\"\ntype = \"requirements\""),
@@ -3083,20 +3094,20 @@ fn init_asks_on_a_terminal() {
     let cfg = r.read("spec-dna.toml");
     assert!(cfg.contains("[harness]\nlevel = \"full\"\n"), "{cfg}");
     assert!(
-        cfg.contains("reviewer = { claude-code = \"sonnet\", effort = \"medium\" }"),
+        cfg.contains("verifier = { claude-code = \"sonnet\", effort = \"medium\" }"),
         "{cfg}"
     );
     assert!(
-        r.read(".claude/agents/checker.md")
+        r.read(".claude/agents/verifier.md")
             .contains("model: sonnet\neffort: medium\n")
     );
-    assert!(r.dir.join(".claude/agents/spec-writer.md").exists());
+    assert!(r.dir.join(".claude/agents/code-simplifier.md").exists());
     assert!(!r.dir.join(".claude/agents/implementer.md").exists());
     assert!(!r.read(".pre-commit-config.yaml").contains("spec-dna"));
 
     // A "no" at the confirmation writes nothing.
     let r = Repo::empty();
-    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\nn\n");
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nn\n");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("nothing written"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());

@@ -67,12 +67,13 @@ pub struct Config {
     #[allow(dead_code)]
     pub areas: Vec<String>,
     /// `[groups]`: a name and its areas, in the order of the name.
-    #[allow(dead_code)]
     pub groups: Vec<(String, Vec<String>)>,
     /// `[templates] dir`: the folder of the project templates, relative to the
     /// repository root, with no `./` and no final `/`. It is never part of a
     /// root: `is_excluded` is true for each path in it.
     pub templates_dir: String,
+    /// `[evals]`. `None`: no table, so there are no evals.
+    pub evals: Option<Evals>,
     /// The language of the normative text: a BCP 47 tag (`language`). The
     /// default is `en`. A primary subtag other than `en` turns off the checks
     /// that read English word lists (SD801 to SD805 and SD904).
@@ -83,6 +84,246 @@ pub struct Config {
     pub history_terms: Option<Vec<String>>,
     /// `[change] policy`. With no `[change]` table it is `None`.
     pub change_policy: ChangePolicy,
+    /// `[change] gate`. `None`: the key is absent, so SD910 takes the
+    /// severity of the profile.
+    pub change_gate: Option<Gate>,
+    /// `[change] high-risk-layers`: names of layers of the graph. The default
+    /// is `interfaces` and `rules`, without the names that the graph does not
+    /// have.
+    pub high_risk_layers: Vec<String>,
+    /// `[change] high-risk-paths`: globs from the repository root. The
+    /// default is none.
+    pub high_risk_paths: Vec<String>,
+    /// `[change] max-fanout`: the most requirement documents that one change
+    /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
+    pub max_fanout: u32,
+}
+
+/// The default folder of the evals.
+pub const DEFAULT_EVALS_DIR: &str = "evals";
+pub const DEFAULT_EVALS_MIN_PASS_RATE: f64 = 0.8;
+pub const DEFAULT_EVALS_RUNS: u32 = 3;
+pub const DEFAULT_EVALS_MAX_TOTAL_USD: f64 = 20.0;
+
+/// The table `[evals]` (ADR 0008).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Evals {
+    /// The folder of the evals, relative to the repository root, with no `./`
+    /// and no final `/`. It is never part of a root: `is_excluded` is true
+    /// for each path in it.
+    pub dir: String,
+    /// The share of evals that must pass, from 0 to 1.
+    pub min_pass_rate: f64,
+    /// The runs of an eval that sets no `runs`, from 1 to 100.
+    pub runs: u32,
+    /// The most that `eval run` can spend, in USD. Above 0.
+    pub max_total_usd: f64,
+}
+
+impl Evals {
+    fn parse(v: &Value, templates_dir: &str) -> Result<Evals, String> {
+        let tbl = v.as_table().ok_or("`evals` must be a table")?;
+        let mut f = Fields::new(tbl, "evals.");
+        let dir = match f.opt_str("dir")? {
+            Some(d) => dir_value("evals.dir", &d, "evals")?,
+            None => DEFAULT_EVALS_DIR.to_string(),
+        };
+        if dir == templates_dir
+            || dir.starts_with(&format!("{templates_dir}/"))
+            || templates_dir.starts_with(&format!("{dir}/"))
+        {
+            return Err(format!(
+                "`evals.dir` and `templates.dir` overlap (`{dir}` and `{templates_dir}`); write 2 folders, none inside the other"
+            ));
+        }
+        let min_pass_rate = match f.take("min-pass-rate") {
+            None => DEFAULT_EVALS_MIN_PASS_RATE,
+            Some(v) => number(v)
+                .filter(|n| (0.0..=1.0).contains(n))
+                .ok_or("`evals.min-pass-rate` must be a number from 0 to 1")?,
+        };
+        let runs = match f.take("runs") {
+            None => DEFAULT_EVALS_RUNS,
+            Some(Value::Integer(n)) if (1..=100).contains(n) => *n as u32,
+            Some(_) => return Err("`evals.runs` must be an integer from 1 to 100".into()),
+        };
+        let max_total_usd = match f.take("max-total-usd") {
+            None => DEFAULT_EVALS_MAX_TOTAL_USD,
+            Some(v) => number(v)
+                .filter(|n| n.is_finite() && *n > 0.0)
+                .ok_or("`evals.max-total-usd` must be a number above 0")?,
+        };
+        f.done()?;
+        Ok(Evals {
+            dir,
+            min_pass_rate,
+            runs,
+            max_total_usd,
+        })
+    }
+}
+
+/// Returns a TOML integer or float as a number.
+fn number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Integer(n) => Some(*n as f64),
+        Value::Float(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// The gate of the change process (`[change] gate`, design 0.6.0, "Gates").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gate {
+    Block,
+    Warn,
+    Off,
+}
+
+impl Gate {
+    pub fn name(self) -> &'static str {
+        match self {
+            Gate::Block => "block",
+            Gate::Warn => "warn",
+            Gate::Off => "off",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<Gate> {
+        [Gate::Block, Gate::Warn, Gate::Off]
+            .into_iter()
+            .find(|g| g.name() == s)
+    }
+
+    /// The severity of SD910 for this gate.
+    fn severity(self) -> Option<Severity> {
+        match self {
+            Gate::Block => Some(Severity::Error),
+            Gate::Warn => Some(Severity::Warning),
+            Gate::Off => None,
+        }
+    }
+}
+
+/// The default of `[change] max-fanout`.
+pub const DEFAULT_MAX_FANOUT: u32 = 8;
+
+/// The default of `[change] high-risk-layers`. A layer that the graph does
+/// not have is dropped.
+pub const DEFAULT_HIGH_RISK_LAYERS: [&str; 2] = ["interfaces", "rules"];
+
+/// The values of the table `[change]`.
+struct ChangeTable {
+    policy: ChangePolicy,
+    gate: Option<Gate>,
+    high_risk_layers: Vec<String>,
+    high_risk_paths: Vec<String>,
+    max_fanout: u32,
+}
+
+impl ChangeTable {
+    /// No table: the policy is `none`.
+    fn absent(graph: &Graph) -> ChangeTable {
+        ChangeTable {
+            policy: ChangePolicy::None,
+            gate: None,
+            high_risk_layers: default_high_risk_layers(graph),
+            high_risk_paths: Vec::new(),
+            max_fanout: DEFAULT_MAX_FANOUT,
+        }
+    }
+}
+
+fn default_high_risk_layers(graph: &Graph) -> Vec<String> {
+    DEFAULT_HIGH_RISK_LAYERS
+        .iter()
+        .filter(|n| graph.index(n).is_some())
+        .map(|n| n.to_string())
+        .collect()
+}
+
+impl ChangeTable {
+    fn parse(tbl: &Table, graph: &Graph) -> Result<ChangeTable, String> {
+        let mut f = Fields::new(tbl, "change.");
+        let policy = f.req_str("policy")?;
+        let policy = ChangePolicy::from_name(&policy).ok_or_else(|| {
+            format!(
+                "`change.policy` must be \"three-class\", \"two-class\" or \"none\", not `{policy}`"
+            )
+        })?;
+        let gate = match f.opt_str("gate")? {
+            None => None,
+            Some(g) => Some(Gate::from_name(&g).ok_or_else(|| {
+                format!("`change.gate` must be \"block\", \"warn\" or \"off\", not `{g}`")
+            })?),
+        };
+        let high_risk_layers = match f.take("high-risk-layers") {
+            None => default_high_risk_layers(graph),
+            Some(_) => {
+                let names = f.opt_strs("high-risk-layers")?;
+                let mut out: Vec<String> = Vec::new();
+                for n in names {
+                    if graph.index(&n).is_none() {
+                        let have: Vec<&str> =
+                            graph.layers().iter().map(|l| l.name.as_str()).collect();
+                        return Err(format!(
+                            "`change.high-risk-layers`: `{n}` is not a layer of the graph ({})",
+                            have.join(", ")
+                        ));
+                    }
+                    if out.contains(&n) {
+                        return Err(format!(
+                            "`change.high-risk-layers` lists `{n}` more than once"
+                        ));
+                    }
+                    out.push(n);
+                }
+                out
+            }
+        };
+        let high_risk_paths = high_risk_paths_value(&f.opt_strs("high-risk-paths")?)?;
+        let max_fanout = f.opt_u32("max-fanout")?.unwrap_or(DEFAULT_MAX_FANOUT);
+        f.done()?;
+        Ok(ChangeTable {
+            policy,
+            gate,
+            high_risk_layers,
+            high_risk_paths,
+            max_fanout,
+        })
+    }
+}
+
+/// Checks `[change] high-risk-paths`: globs from the repository root. A glob
+/// is not empty, has no `\`, is not absolute, has no `.` or `..` segment,
+/// and is listed once. A leading `./` is removed.
+fn high_risk_paths_value(globs: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for g in globs {
+        let bad = |why: &str| {
+            Err(format!(
+                "`change.high-risk-paths`: `{g}` {why}; write a glob from the repository root, such as `src/api/**`"
+            ))
+        };
+        let mut v = g.trim();
+        while let Some(rest) = v.strip_prefix("./") {
+            v = rest;
+        }
+        if v.trim_matches('/').is_empty() {
+            return bad("is empty");
+        }
+        if v.starts_with('/') || v.contains('\\') {
+            return bad("is not a relative path with `/` separators");
+        }
+        if v.split('/').any(|s| s == "." || s == "..") {
+            return bad("has a `.` or `..` segment");
+        }
+        if out.iter().any(|o| o == v) {
+            return bad("is listed more than once");
+        }
+        out.push(v.to_string());
+    }
+    Ok(out)
 }
 
 /// The change policy (`[change] policy`, design 0.6.0, "Change classes").
@@ -333,7 +574,14 @@ impl Profile {
             "SD606" | "SD607" | "SD608" => (None, Some(W), Some(E)),
             "SD801" | "SD802" | "SD803" | "SD804" | "SD805" => (None, None, Some(W)),
             "SD901" | "SD902" | "SD903" | "SD904" => (None, Some(W), Some(W)),
-            "SD921" => (None, Some(W), Some(E)),
+            "SD905" => (None, Some(W), Some(W)),
+            "SD910" | "SD914" | "SD915" | "SD916" | "SD919" | "SD920" | "SD922" => {
+                (Some(W), Some(E), Some(E))
+            }
+            "SD911" | "SD913" => (None, Some(W), Some(W)),
+            "SD912" => (None, Some(W), Some(E)),
+            "SD917" | "SD921" => (None, Some(W), Some(E)),
+            "SD918" => (None, Some(W), Some(W)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -357,9 +605,21 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
-    // SD905 and SD910 to SD920 have no code before step 3.
-    ("changes", &["SD921"]),
+    (
+        "changes",
+        &[
+            "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
+            "SD918", "SD919", "SD920", "SD921", "SD922",
+        ],
+    ),
 ];
+
+/// True for a code of the group `changes`: SD905 and SD910 to SD922.
+fn is_change_code(code: Code) -> bool {
+    GROUPS
+        .iter()
+        .any(|g| g.0 == "changes" && g.1.contains(&code.code()))
+}
 
 /// Reads a severity value: `"off"` (`None`), `"warning"` or `"error"`.
 fn severity_value(v: &Value, key: &str) -> Result<Option<Severity>, String> {
@@ -785,6 +1045,10 @@ impl Config {
             }
             None => DEFAULT_TEMPLATES_DIR.to_string(),
         };
+        let evals = match t.take("evals") {
+            Some(v) => Some(Evals::parse(v, &templates_dir)?),
+            None => None,
+        };
         let language = match t.opt_str("language")? {
             None => DEFAULT_LANGUAGE.to_string(),
             Some(l) if is_language_tag(&l) => l,
@@ -794,27 +1058,20 @@ impl Config {
                 ));
             }
         };
-        let change_policy = match t.take("change") {
-            None => ChangePolicy::None,
+        let change = match t.take("change") {
+            None => ChangeTable::absent(&layers),
             Some(v) => {
                 let tbl = v.as_table().ok_or("`change` must be a table")?;
-                let mut f = Fields::new(tbl, "change.");
-                let policy = f.req_str("policy")?;
-                let policy = ChangePolicy::from_name(&policy).ok_or_else(|| {
-                    format!(
-                        "`change.policy` must be \"three-class\", \"two-class\" or \"none\", not `{policy}`"
-                    )
-                })?;
-                if let Some(k) = tbl.keys().find(|k| k.as_str() != "policy") {
-                    return Err(format!(
-                        "unknown key `change.{k}`: spec-dna 0.6.0 reads only `change.policy` in this step, and the other keys of `[change]` come in a later step"
-                    ));
-                }
-                f.done()?;
-                policy
+                ChangeTable::parse(tbl, &layers)?
             }
         };
         t.done()?;
+        // The hook `protect-tests` reads the globs of the base, so the
+        // harness keeps them.
+        let harness = harness.map(|mut h| {
+            h.tests = evidence_tests.clone();
+            h
+        });
         Ok(Config {
             pin,
             force_lint: false,
@@ -839,9 +1096,14 @@ impl Config {
             areas,
             groups,
             templates_dir,
+            evals,
             language,
             history_terms,
-            change_policy,
+            change_policy: change.policy,
+            change_gate: change.gate,
+            high_risk_layers: change.high_risk_layers,
+            high_risk_paths: change.high_risk_paths,
+            max_fanout: change.max_fanout,
         })
     }
 
@@ -867,9 +1129,9 @@ impl Config {
     }
 
     fn configured_severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
-        // With no change policy, SD921 has no meaning. No rule of the file can
-        // turn it on.
-        if code.code() == "SD921" && self.change_policy == ChangePolicy::None {
+        // With no change policy, the codes of the group `changes` have no
+        // meaning. No rule of the file can turn them on.
+        if is_change_code(code) && self.change_policy == ChangePolicy::None {
             return None;
         }
         let root = root.map(|r| &self.roots[r]);
@@ -878,6 +1140,12 @@ impl Config {
         }
         if let Some(s) = rule_for(&self.rules, code) {
             return s;
+        }
+        // SD910 follows the gate, and the gate follows no profile.
+        if code.code() == "SD910"
+            && let Some(g) = self.change_gate
+        {
+            return g.severity();
         }
         root.and_then(|r| r.profile)
             .unwrap_or(self.profile)
@@ -922,9 +1190,25 @@ impl Config {
             .is_some_and(|rest| rest.starts_with('/'))
     }
 
+    /// Returns true if a path is in `[evals] dir`.
+    pub fn in_evals_dir(&self, path: &str) -> bool {
+        self.evals.as_ref().is_some_and(|e| {
+            path.strip_prefix(&e.dir)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
+    /// True for a document that the harness configuration writes: `REVIEW.md`
+    /// and a stage skill (step 4, D44).
+    fn is_harness_doc(&self, path: &str) -> bool {
+        self.harness.as_ref().is_some_and(|h| h.writes_doc(path))
+    }
+
     pub fn is_excluded(&self, root: usize, path: &str) -> bool {
         let rel = self.roots[root].rel(path);
         self.in_templates_dir(path)
+            || self.in_evals_dir(path)
+            || self.is_harness_doc(path)
             || self.exclude.iter().any(|g| crate::glob::matches(g, path))
             || self.roots[root]
                 .exclude
@@ -1196,12 +1480,18 @@ impl Root {
     }
 }
 
-/// Checks the value of `[templates] dir` and returns it in the form that the
-/// code compares: no `./` at the start, no `/` at the end.
+/// Checks the value of `[templates] dir`.
 fn templates_dir_value(d: &str) -> Result<String, String> {
+    dir_value("templates.dir", d, ".spec-dna/templates")
+}
+
+/// Checks the value of a key that names a folder (`[templates] dir`,
+/// `[evals] dir`) and returns it in the form that the code compares: no `./`
+/// at the start, no `/` at the end.
+fn dir_value(key: &str, d: &str, example: &str) -> Result<String, String> {
     let bad = |why: &str| {
         Err(format!(
-            "`templates.dir`: `{d}` {why}; write a folder inside the repository, such as `.spec-dna/templates`"
+            "`{key}`: `{d}` {why}; write a folder inside the repository, such as `{example}`"
         ))
     };
     let mut dir = d.trim();
@@ -2042,12 +2332,92 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
     #[test]
     fn a_later_step_key_is_still_unknown() {
-        // `language`, `[lint] history-terms` and `[change] policy` come in
-        // step 2. `[evals]` comes in step 4.
-        let e =
-            Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"d\"\n[evals]\ndir = \"e\"\n")
-                .unwrap_err();
-        assert!(e.contains("unknown key"), "{e}");
+        // `[evals]` and the 3 new keys of `[harness]` come in step 4. A key
+        // of step 5 or later is unknown.
+        let e = with("", "[evals]\nlist = true\n").unwrap_err();
+        assert!(e.contains("unknown key `evals.list`"), "{e}");
+        let e = with("", "[harness]\nlevel = \"lean\"\nupgrade = true\n").unwrap_err();
+        assert!(e.contains("unknown key `harness.upgrade`"), "{e}");
+        let e = with("upgrade = true", "").unwrap_err();
+        assert!(e.contains("unknown key `upgrade`"), "{e}");
+    }
+
+    #[test]
+    fn evals_has_defaults_and_limits() {
+        assert!(Config::parse(BASE).unwrap().evals.is_none());
+        let e = with("", "[evals]\n").unwrap().evals.unwrap();
+        assert_eq!(
+            e,
+            Evals {
+                dir: "evals".into(),
+                min_pass_rate: 0.8,
+                runs: 3,
+                max_total_usd: 20.0
+            }
+        );
+        let e = with(
+            "",
+            "[evals]\ndir = \"./q/e/\"\nmin-pass-rate = 1\nruns = 100\nmax-total-usd = 0.25\n",
+        )
+        .unwrap()
+        .evals
+        .unwrap();
+        assert_eq!(e.dir, "q/e");
+        assert_eq!((e.min_pass_rate, e.runs, e.max_total_usd), (1.0, 100, 0.25));
+        assert_eq!(
+            with("", "[evals]\nmin-pass-rate = 0\n")
+                .unwrap()
+                .evals
+                .unwrap()
+                .min_pass_rate,
+            0.0
+        );
+        for bad in [
+            "min-pass-rate = 1.01",
+            "runs = 0",
+            "runs = 101",
+            "max-total-usd = 0",
+            "max-total-usd = inf",
+            "pass-at = 1",
+        ] {
+            assert!(with("", &format!("[evals]\n{bad}\n")).is_err(), "{bad}");
+        }
+        let e = with("", "[evals]\ndir = \"..\"\n").unwrap_err();
+        assert!(e.contains("`evals.dir`") && e.contains("`evals`"), "{e}");
+    }
+
+    #[test]
+    fn the_evals_dir_and_the_harness_files_are_never_part_of_a_root() {
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n[evals]\ndir = \"q/evals/\"\n[harness]\nlevel = \"lean\"\nskills = [\"spec\"]\nreview-md = true\n",
+        )
+        .unwrap();
+        assert!(c.is_excluded(0, "q/evals/fixtures/a/notes.md"));
+        assert!(!c.is_excluded(0, "q/evals.md"));
+        assert!(!c.is_excluded(0, "q/evalsx/a.md"));
+        assert!(c.is_excluded(0, "REVIEW.md"));
+        assert!(c.is_excluded(0, ".claude/skills/spec-dna-spec/SKILL.md"));
+        // A skill that the configuration does not write stays a file of the root.
+        assert!(!c.is_excluded(0, ".claude/skills/spec-dna-plan/SKILL.md"));
+        assert!(!c.is_excluded(0, "docs/a.md"));
+        // With `review-md = false`, and at level `none`, `REVIEW.md` is a document.
+        for h in [
+            "[harness]\nlevel = \"lean\"\n",
+            "[harness]\nlevel = \"none\"\nreview-md = true\nskills = [\"spec\"]\n",
+        ] {
+            let c = Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n{h}"
+            ))
+            .unwrap();
+            assert!(!c.is_excluded(0, "REVIEW.md"), "{h}");
+            assert!(
+                !c.is_excluded(0, ".claude/skills/spec-dna-spec/SKILL.md"),
+                "{h}"
+            );
+        }
+        // No `[evals]` table: no folder.
+        let c = Config::parse(BASE).unwrap();
+        assert!(!c.in_evals_dir("evals/a.md"));
     }
 
     #[test]
@@ -2126,12 +2496,13 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
-    fn the_change_table_has_only_the_policy() {
-        // No table: the policy is `none`.
-        assert_eq!(
-            Config::parse(BASE).unwrap().change_policy,
-            ChangePolicy::None
-        );
+    fn the_change_table_keys_and_their_defaults() {
+        // No table: the policy is `none`, and the keys have their defaults.
+        let c = Config::parse(BASE).unwrap();
+        assert_eq!(c.change_policy, ChangePolicy::None);
+        assert_eq!(c.change_gate, None);
+        assert_eq!(c.max_fanout, 8);
+        assert!(c.high_risk_paths.is_empty());
         for (value, want) in [
             ("three-class", ChangePolicy::ThreeClass),
             ("two-class", ChangePolicy::TwoClass),
@@ -2140,6 +2511,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             let c = with("", &format!("[change]\npolicy = \"{value}\"\n")).unwrap();
             assert_eq!(c.change_policy, want);
             assert_eq!(want.name(), value);
+            // The other keys keep their defaults.
+            assert_eq!(c.change_gate, None);
+            assert_eq!(c.max_fanout, DEFAULT_MAX_FANOUT);
         }
         for (tail, want) in [
             ("[change]\n", "`change.policy` is required"),
@@ -2159,22 +2533,92 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         }
         let e = with("change = true", "").unwrap_err();
         assert!(e.contains("`change` must be a table"), "{e}");
-        // Each other key of the design, and an invented key, is an error that
-        // says that it comes in a later step.
-        for key in [
-            "gate = \"block\"",
-            "high-risk-layers = []",
-            "high-risk-paths = []",
-            "max-fanout = 8",
-            "invented = 1",
+        // An invented key is still an unknown key.
+        let e = with("", "[change]\npolicy = \"none\"\ninvented = 1\n").unwrap_err();
+        assert!(e.contains("unknown key `change.invented`"), "{e}");
+        assert!(!e.contains("later step"), "{e}");
+    }
+
+    #[test]
+    fn each_change_key_has_valid_and_invalid_values() {
+        let table = |keys: &str| format!("[change]\npolicy = \"three-class\"\n{keys}\n");
+        let ok = |keys: &str| with("", &table(keys)).unwrap();
+        let err = |keys: &str| with("", &table(keys)).unwrap_err();
+        // gate
+        for (v, want) in [
+            ("block", Gate::Block),
+            ("warn", Gate::Warn),
+            ("off", Gate::Off),
         ] {
-            let e = with("", &format!("[change]\npolicy = \"none\"\n{key}\n")).unwrap_err();
-            let name = key.split(' ').next().unwrap();
+            let c = ok(&format!("gate = \"{v}\""));
+            assert_eq!(c.change_gate, Some(want));
+            assert_eq!(want.name(), v);
+        }
+        for bad in ["gate = \"error\"", "gate = \"\"", "gate = \"Block\""] {
+            let e = err(bad);
+            assert!(e.contains("`change.gate` must be"), "{bad}: {e}");
+        }
+        assert!(err("gate = true").contains("`change.gate` must be a string"));
+        // max-fanout
+        assert_eq!(ok("max-fanout = 3").max_fanout, 3);
+        assert_eq!(ok("max-fanout = 0").max_fanout, 0);
+        for bad in ["max-fanout = -1", "max-fanout = \"8\"", "max-fanout = 1.5"] {
+            let e = err(bad);
             assert!(
-                e.contains(&format!("unknown key `change.{name}`")) && e.contains("later step"),
-                "{key}: {e}"
+                e.contains("`change.max-fanout` must be a non-negative integer"),
+                "{bad}: {e}"
             );
         }
+        // high-risk-paths
+        assert_eq!(
+            ok("high-risk-paths = [\"src/api/**\", \"./db/*.sql\"]").high_risk_paths,
+            ["src/api/**", "db/*.sql"]
+        );
+        assert!(ok("high-risk-paths = []").high_risk_paths.is_empty());
+        for (bad, want) in [
+            ("high-risk-paths = [\"\"]", "is empty"),
+            ("high-risk-paths = [\"/abs/**\"]", "relative path"),
+            ("high-risk-paths = [\"a\\\\b\"]", "relative path"),
+            ("high-risk-paths = [\"../up/**\"]", "`.` or `..` segment"),
+            ("high-risk-paths = [\"a/**\", \"./a/**\"]", "more than once"),
+            ("high-risk-paths = [1]", "must hold strings"),
+            ("high-risk-paths = \"src\"", "must be an array of strings"),
+        ] {
+            let e = err(bad);
+            assert!(e.contains("`change.high-risk-paths`"), "{bad}: {e}");
+            assert!(e.contains(want), "{bad}: {e}");
+        }
+        // high-risk-layers: the default graph has both layers of the default.
+        let layers = "[layers.rules]\ntypes = [\"rule\"]\n[layers.other]\ntypes = [\"decision\"]\n";
+        let c = with("", &format!("{layers}{}", table(""))).unwrap();
+        // The default names only the layers that exist: `rules` here.
+        assert_eq!(c.high_risk_layers, ["rules"]);
+        let c = with("", &table("")).unwrap();
+        assert_eq!(c.high_risk_layers, ["interfaces", "rules"]);
+        let c = with(
+            "",
+            &format!("{layers}{}", table("high-risk-layers = [\"other\"]")),
+        )
+        .unwrap();
+        assert_eq!(c.high_risk_layers, ["other"]);
+        assert!(ok("high-risk-layers = []").high_risk_layers.is_empty());
+        let e = with(
+            "",
+            &format!("{layers}{}", table("high-risk-layers = [\"nope\"]")),
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("`change.high-risk-layers`: `nope` is not a layer of the graph"),
+            "{e}"
+        );
+        assert!(e.contains("rules, other"), "{e}");
+        let e = err("high-risk-layers = [\"rules\", \"rules\"]");
+        assert!(e.contains("lists `rules` more than once"), "{e}");
+        assert!(err("high-risk-layers = 3").contains("must be an array of strings"));
+        // A project with no `[change]` table has the default layers of the
+        // graph.
+        let c = with("", layers).unwrap();
+        assert_eq!(c.high_risk_layers, ["rules"]);
     }
 
     #[test]
@@ -2210,12 +2654,13 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 Code::TruthChangedWithoutChange,
                 "truth-changed-without-change",
             ),
+            (Code::QuestionOpen, "question-open"),
         ] {
             assert_eq!(code.name(), name);
             assert_eq!(Code::from_code(code.code()), Some(code));
         }
         // The group `layers` holds SD901 to SD904. The group `changes` holds
-        // SD921 (SD905 and SD910 to SD920 have no code before step 3).
+        // SD905 and SD910 to SD922.
         let c = with(
             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
             "[change]\npolicy = \"two-class\"\n",
@@ -2228,6 +2673,185 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             c.severity(Code::TruthChangedWithoutChange, Some(0)),
             Some(W)
         );
+    }
+
+    #[test]
+    fn the_profile_rows_of_the_change_codes() {
+        use Severity::{Error as E, Warning as W};
+        // The design table: code, lite, standard, strict.
+        type Sev = Option<Severity>;
+        let rows: [(Code, Sev, Sev, Sev); 13] = [
+            (Code::FanOut, None, Some(W), Some(W)),
+            (Code::GateApprovalMissing, Some(W), Some(E), Some(E)),
+            (Code::ChangeStale, None, Some(W), Some(W)),
+            (Code::StartedLimit, None, Some(W), Some(E)),
+            (Code::OutsidePlan, None, Some(W), Some(W)),
+            (Code::DeltaInvalid, Some(W), Some(E), Some(E)),
+            (Code::FinishIncomplete, Some(W), Some(E), Some(E)),
+            (Code::DeltaEvidenceMissing, Some(W), Some(E), Some(E)),
+            (Code::ClassTooLow, None, Some(W), Some(E)),
+            (Code::ConcernOpen, Some(W), Some(E), Some(E)),
+            (Code::QuestionOpen, Some(W), Some(E), Some(E)),
+            (Code::DecisionNeededUnaccepted, Some(W), Some(E), Some(E)),
+            (Code::IncidentEvalMissing, None, Some(W), Some(W)),
+        ];
+        for (code, lite, standard, strict) in rows {
+            for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
+                let c = with(
+                    &format!("profile = \"{profile}\""),
+                    "[change]\npolicy = \"three-class\"\n",
+                )
+                .unwrap();
+                assert_eq!(c.severity(code, Some(0)), want, "{} {profile}", code.code());
+                assert_eq!(c.severity(code, None), want, "{} {profile}", code.code());
+            }
+            assert!(
+                GROUPS
+                    .iter()
+                    .any(|g| g.0 == "changes" && g.1.contains(&code.code()))
+            );
+        }
+        // SD918 (step 4) is in the group `changes`, and it needs `[evals]`.
+        assert_eq!(Code::from_code("SD918"), Some(Code::IncidentEvalMissing));
+        assert_eq!(Code::IncidentEvalMissing.name(), "incident-eval-missing");
+        // SD506 (step 4) is in no group, and it keeps its severity in each
+        // profile.
+        assert_eq!(Code::from_code("SD506"), Some(Code::EvalsInvalid));
+        assert_eq!(Code::EvalsInvalid.name(), "evals-invalid");
+        assert!(!GROUPS.iter().any(|g| g.1.contains(&"SD506")));
+        for profile in ["lite", "standard", "strict"] {
+            let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+            assert_eq!(
+                c.severity(Code::EvalsInvalid, Some(0)),
+                Some(E),
+                "{profile}"
+            );
+        }
+        // SD911 is a state code: it is never new against the base (K4).
+        assert!(Code::ChangeStale.is_state());
+        assert!(!Code::GateApprovalMissing.is_state());
+        assert!(!Code::TruthChangedWithoutChange.is_state());
+        assert_eq!(Code::ChangeStale.name(), "change-stale");
+        assert_eq!(Code::GateApprovalMissing.name(), "gate-approval-missing");
+    }
+
+    #[test]
+    fn sd910_follows_the_gate_the_profile_and_the_rules() {
+        use Severity::{Error as E, Warning as W};
+        // The expected severity by the order of the design: the policy, the
+        // rules, the gate, the profile.
+        let profile_col = |p: &str| match p {
+            "lite" => Some(W),
+            _ => Some(E),
+        };
+        let gate_col = |g: &str| match g {
+            "block" => Some(E),
+            "warn" => Some(W),
+            "off" => None,
+            _ => unreachable!(),
+        };
+        // The rule text, the rule that SD910 gets, the rule that another code
+        // of the group `changes` gets.
+        type Rule = Option<Option<Severity>>;
+        let rule_sets: [(&str, Rule, Rule); 7] = [
+            ("", None, None),
+            ("SD910 = \"off\"\n", Some(None), None),
+            ("SD910 = \"warning\"\n", Some(Some(W)), None),
+            ("SD910 = \"error\"\n", Some(Some(E)), None),
+            ("changes = \"off\"\n", Some(None), Some(None)),
+            ("changes = \"error\"\n", Some(Some(E)), Some(Some(E))),
+            // A code rule has priority over a group rule.
+            (
+                "changes = \"error\"\nSD910 = \"warning\"\n",
+                Some(Some(W)),
+                Some(Some(E)),
+            ),
+        ];
+        for profile in ["lite", "standard", "strict"] {
+            for gate in [None, Some("block"), Some("warn"), Some("off")] {
+                for (rules, rule, group_rule) in &rule_sets {
+                    let gate_line = gate.map_or(String::new(), |g| format!("gate = \"{g}\"\n"));
+                    let text = format!(
+                        "spec-dna = \"0.1.0\"\nprofile = \"{profile}\"\n[change]\npolicy = \"three-class\"\n{gate_line}[rules]\n{rules}[[roots]]\npath = \"docs\"\n"
+                    );
+                    let c = Config::parse(&text).unwrap();
+                    let want = match (rule, gate) {
+                        (Some(r), _) => *r,
+                        (None, Some(g)) => gate_col(g),
+                        (None, None) => profile_col(profile),
+                    };
+                    assert_eq!(
+                        c.severity(Code::GateApprovalMissing, Some(0)),
+                        want,
+                        "{profile} gate={gate:?} rules={rules:?}"
+                    );
+                    // The gate does not change any other code.
+                    assert_eq!(
+                        c.severity(Code::DeltaInvalid, Some(0)),
+                        group_rule.unwrap_or_else(|| profile_col(profile)),
+                        "{profile} gate={gate:?} rules={rules:?}"
+                    );
+                }
+            }
+        }
+        // A rule of a root has priority over `[rules]` and over the gate.
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n[rules]\nSD910 = \"error\"\n[[roots]]\npath = \"docs\"\nrules = { SD910 = \"off\" }\n",
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::GateApprovalMissing, Some(0)), None);
+        assert_eq!(c.severity(Code::GateApprovalMissing, None), Some(E));
+    }
+
+    #[test]
+    fn the_policy_none_turns_off_every_change_code_before_the_rules() {
+        let codes = [
+            Code::FanOut,
+            Code::GateApprovalMissing,
+            Code::ChangeStale,
+            Code::StartedLimit,
+            Code::OutsidePlan,
+            Code::DeltaInvalid,
+            Code::FinishIncomplete,
+            Code::DeltaEvidenceMissing,
+            Code::ClassTooLow,
+            Code::ConcernOpen,
+            Code::QuestionOpen,
+            Code::DecisionNeededUnaccepted,
+            Code::TruthChangedWithoutChange,
+        ];
+        for change in [
+            "",
+            "[change]\npolicy = \"none\"\n",
+            "[change]\npolicy = \"none\"\ngate = \"block\"\n",
+        ] {
+            for rules in [
+                "",
+                "[rules]\nchanges = \"error\"\n",
+                "[rules]\nSD910 = \"error\"\nSD914 = \"error\"\nSD905 = \"error\"\n",
+            ] {
+                let text = format!(
+                    "spec-dna = \"0.1.0\"\nprofile = \"strict\"\n{change}{rules}[[roots]]\npath = \"docs\"\nrules = {{ changes = \"error\", SD911 = \"error\" }}\n"
+                );
+                let c = Config::parse(&text).unwrap();
+                for code in codes {
+                    assert_eq!(
+                        c.severity(code, Some(0)),
+                        None,
+                        "{} {change:?}",
+                        code.code()
+                    );
+                    assert_eq!(c.severity(code, None), None, "{} {change:?}", code.code());
+                    assert!(c.is_off(code));
+                }
+            }
+        }
+        // The other codes keep their rules.
+        let c = Config::parse(
+            "spec-dna = \"0.1.0\"\n[rules]\nSD701 = \"error\"\n[[roots]]\npath = \"docs\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::BudgetSoft, Some(0)), Some(Severity::Error));
     }
 
     #[test]
@@ -2323,7 +2947,30 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
         // The keys of `[change]` and `[lint]` that step 2 adds.
         let change = schema.get("properties").get("change");
-        assert_eq!(keys(change), ["policy"]);
+        let mut ckeys = keys(change);
+        ckeys.sort();
+        assert_eq!(
+            ckeys,
+            [
+                "gate",
+                "high-risk-layers",
+                "high-risk-paths",
+                "max-fanout",
+                "policy"
+            ]
+        );
+        for (k, bad) in [
+            ("gate", "1"),
+            ("high-risk-layers", "1"),
+            ("high-risk-paths", "1"),
+            ("max-fanout", "\"x\""),
+        ] {
+            let e = with("", &format!("[change]\npolicy = \"none\"\n{k} = {bad}\n")).unwrap_err();
+            assert!(
+                !is_unknown(&e),
+                "the parser does not know `change.{k}`: {e}"
+            );
+        }
         assert_eq!(
             change.get("additionalProperties"),
             &crate::json::Value::Bool(false)
@@ -2342,6 +2989,68 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             !is_unknown(&e),
             "the parser does not know `lint.history-terms`: {e}"
         );
+        // The keys of `[evals]`: exactly the 4 keys of step 4.
+        let evals = schema.get("properties").get("evals");
+        let mut ekeys = keys(evals);
+        ekeys.sort();
+        assert_eq!(ekeys, ["dir", "max-total-usd", "min-pass-rate", "runs"]);
+        for k in &ekeys {
+            let e = with("", &format!("[evals]\n{k} = true\n")).unwrap_err();
+            assert!(!is_unknown(&e), "the parser does not know `evals.{k}`: {e}");
+        }
+        assert_eq!(
+            evals.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
+        );
+        let e = with("", "[evals]\ninvented = true\n").unwrap_err();
+        assert!(is_unknown(&e), "{e}");
+        // The keys of `[harness]`.
+        let harness = schema.get("properties").get("harness");
+        let mut hkeys = keys(harness);
+        hkeys.sort();
+        assert_eq!(
+            hkeys,
+            [
+                "context-meter",
+                "deny",
+                "efforts",
+                "fanout-cap",
+                "level",
+                "protect-tests",
+                "review-md",
+                "roles",
+                "skills",
+                "subagent-meter",
+            ]
+        );
+        for k in &hkeys {
+            let e = with("", &format!("[harness]\nlevel = \"lean\"\n{k} = \"x\"\n")).unwrap_err();
+            assert!(
+                !is_unknown(&e),
+                "the parser does not know `harness.{k}`: {e}"
+            );
+        }
+        assert_eq!(
+            harness.get("additionalProperties"),
+            &crate::json::Value::Bool(false)
+        );
+        // The roles of `[harness.roles]`. The roles of 0.5 that ended are not
+        // in the schema, and the parser gives an error that is not "unknown".
+        let mut rkeys = keys(harness.get("properties").get("roles"));
+        rkeys.sort();
+        let mut roles: Vec<&str> = crate::harness::Role::ALL.iter().map(|r| r.key()).collect();
+        roles.sort();
+        assert_eq!(rkeys, roles);
+        for gone in ["reviewer", "spec-writer"] {
+            assert!(!rkeys.iter().any(|k| k == gone), "{gone}");
+            let toml = format!("[harness]\nlevel = \"lean\"\n[harness.roles]\n{gone} = {{}}\n");
+            let e = with("", &toml).unwrap_err();
+            assert!(!is_unknown(&e), "{gone}: {e}");
+            assert!(
+                e.contains(&format!("`harness.roles.{gone}`")),
+                "{gone}: {e}"
+            );
+        }
         // The rule groups of the schema are the groups of the parser.
         let pattern = match schema
             .get("$defs")

@@ -6,7 +6,7 @@
 
 **Engineering specifications that stay small, linked and checked, for AI coding agents.**
 
-spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives a coding agent only the parts of the documents that its task needs. It works in any repository, with any language and with any agent that can run a shell command. spec-dna itself makes no network call and uses no language model.
+spec-dna is a command-line tool for the specifications that a team keeps as Markdown files in its git repository. It checks each change of these documents, as a linter checks code. It gives a coding agent only the parts of the documents that its task needs. It works in any repository, with any language and with any agent that can run a shell command. spec-dna itself makes no network call and uses no language model. The one exception is `spec-dna eval run`, which starts an agent.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
@@ -15,7 +15,7 @@ spec-dna is a command-line tool for the specifications that a team keeps as Mark
 
 ## See it in action
 
-One task, from the request to the merge. The agent runs spec-dna itself, because `init` wrote the steps into the instruction file of the agent. The output is real, and `(2 more sections)` marks a cut.
+One task, from the request to the merge. The agent runs spec-dna itself, because `init` wrote the steps into the instruction file of the agent. The output is real. Blank lines are removed, and `...` marks a cut.
 
 ```text
 You:    When a moisture sensor times out, close the valve of its bed.
@@ -23,33 +23,48 @@ You:    When a moisture sensor times out, close the valve of its bed.
 Agent:  $ spec-dna context src/valves.rs
         <!-- spec-dna context 0.6.0: src/valves.rs; 4 sections in full, 0 listed; 557 of 8000 characters; about 140 tokens (estimated) -->
         <!-- rules/safety#rules h:890c76437219354e rule/active rule -->
+        ## Rules
         - **fail-closed**: A valve SHALL close when the controller loses power.
+        ...
         <!-- requirements/valves/closing#requirements h:c6fb31aaba81ab80 requirements/active cites -->
-        - **overflow**: When a tray overflows, the controller SHALL close the valve of that tray.
-        (2 more sections)
-
+        ## Requirements
+        - **overflow**: When a tray overflows, the controller SHALL close the valve of that tray. The check is in `src/valves.rs`.
+        ...
         The task adds a requirement, so I start a routine change.
         $ spec-dna new intent sensor-timeout
         wrote docs/intent/sensor-timeout/intent.md (intent template); replace each {{...}} placeholder
         $ spec-dna check
-        docs/intent/sensor-timeout/intent.md:8: error SD306 placeholder-left: the template placeholder `{{What this change gives, and for whom.}}` is still in the document
+        docs/intent/sensor-timeout/intent.md:9: error SD306 placeholder-left: the template placeholder `{{What this change gives, and for whom.}}` is still in the document
+        ...
+        spec-dna check: 3 documents; 3 new errors and 0 new warnings against bfce45d2e9c2 (3 errors and 2 warnings in total)
         I replaced the placeholders. Please accept the intent.
 
 You:    Accepted and merged.
 
-Agent:  $ spec-dna new plan sensor-timeout
+Agent:  $ spec-dna next sensor-timeout
+        change sensor-timeout (routine), stage build
+        base b8a446c30e6a
+        [x] the intent is accepted [skill: brainstorm]
+        [ ] write `docs/intent/sensor-timeout/plan.md` with `spec-dna new plan sensor-timeout`: `Files`, the task list of `Order`, `Risks` and `Proof` [skill: write-plan]
+        [ ] set `status: approved` in docs/intent/sensor-timeout/plan.md [skill: write-plan]
+        $ spec-dna new plan sensor-timeout
         wrote docs/intent/sensor-timeout/plan.md (plan template); replace each {{...}} placeholder
-        I wrote the files, the order, the risks and the proof, and I approved the plan.
+        I wrote the files, the tasks, the risks and the proof, and I approved the plan.
 
 You:    Merged.
 
-Agent:  I wrote the code and the requirement sensor-timeout.
+Agent:  I added the requirement sensor-timeout and wrote the code.
         $ spec-dna finish sensor-timeout
-        docs/requirements/valves/closing.md:10: error SD916 delta-evidence-missing: the requirement has no `covers:` tag and no `verified-by`
-        I added a test with "covers: requirements/valves/closing#sensor-timeout".
+        docs/requirements/valves/closing.md:9: error SD916 delta-evidence-missing: the change `sensor-timeout` adds or changes the requirement `requirements/valves/closing#sensor-timeout`, and it has no `covers:` tag and no `verified-by`
+        ...
+        spec-dna: finish `sensor-timeout` stopped at step 5: a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`); nothing changed
+        I added a test with `covers: requirements/valves/closing#sensor-timeout` and committed it.
         $ spec-dna finish sensor-timeout
+        removed docs/intent/sensor-timeout/intent.md
+        removed docs/intent/sensor-timeout/plan.md
+        spec-dna finish `sensor-timeout`: applied 0 ADD, 0 CHANGE and 0 REMOVE delta lines, wrote 0 files and deleted the folder `docs/intent/sensor-timeout` (2 files). `finish` staged the paths with `git add`. Read the diff, then commit it with the code
         $ spec-dna check --base origin/main
-        spec-dna check: 4 documents; 0 new errors and 0 new warnings against c469adb3b955 (0 errors and 2 warnings in total)
+        spec-dna check: 2 documents; 0 new errors and 0 new warnings against d7af8531cffe (0 errors and 2 warnings in total)
 ```
 
 When an agent edits an accepted decision, `check` stops the change:

@@ -77,11 +77,11 @@ Run these commands in the root of your git repository:
 ```sh
 spec-dna init                # asks the questions with the detected defaults, shows a preview, then asks for a confirmation
 spec-dna check
-git add spec-dna.toml CLAUDE.md .claude   # `init` prints the full `git add` command
+git add spec-dna.toml CLAUDE.md REVIEW.md .claude evals   # `init` prints the full `git add` command
 git commit -m "build: adopt spec-dna"
 ```
 
-`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph, the change policy and the agent harness. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
+`init` detects the facts of the repository, for example the document directories, their types, the tests, the agent files, CI and hooks. [docs/init.md](init.md) lists all of them. `init` asks at most 14 questions, for example the profile, the layer graph, the change policy, the agent harness and the evals. Press Enter to keep a detected default. It shows the full `spec-dna.toml` and the files to create or change. It writes them only after you confirm.
 
 `init` never edits a document. Without a terminal, or with `--non-interactive`, it uses the detected defaults. `--dry-run` shows the preview only.
 
@@ -91,10 +91,12 @@ git commit -m "build: adopt spec-dna"
 - One line in `CLAUDE.md`, and in `AGENTS.md` when `AGENTS.md` exists or `CLAUDE.md` does not exist. Codex, Cursor and many other agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or documents. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md` for Claude Code, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
-- The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the stage skills in `.claude/skills/`, `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. [docs/harness.md](harness.md) describes the roles, the models and the hooks. Each teammate needs spec-dna on `PATH` for the hooks.
-- For a new project, the evals skeleton: the folder `evals/` and the workflow `.github/workflows/agent-evals.yml`. [docs/evals.md](evals.md) describes the evals. The workflow runs nothing until the owner sets the repository variable `SPEC_DNA_EVALS`.
+- The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the stage skills in `.claude/skills/spec-dna-*`, `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. The file `.claude/agents/Explore.md` replaces the built-in `Explore` subagent. [docs/harness.md](harness.md) describes the roles, the models, the hooks and how to remove that file. Each teammate needs spec-dna on `PATH` for the hooks.
+- The starter files of the evals: the table `[evals]` in `spec-dna.toml`, and `evals/check.sh`, an example eval and its fixture in `evals/`. Question 14 writes them with the answer `skeleton`, the default of a new project, and writes nothing with the answer `none`. For the CI answer `github`, `init` also writes `.github/workflows/agent-evals.yml`. `init` starts no run, and the CI job runs only after you set the repository variable `SPEC_DNA_EVALS`. `init` prints the 2 commands for it. [docs/evals.md](evals.md) describes the evals.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
+
+A new project gets the change process. Questions 4 and 5 propose the policy `three-class` and the gate `block`, and `init` writes the table `[change]`. Answer `none` to question 4 if you do not want the change process. `init` prints the line `docs/intent/*/spec.md @OWNER` for your `CODEOWNERS` file. It does not write that file. [docs/init.md](init.md) gives the details.
 
 The profile sets which diagnostics fail `check`. The profiles are `lite` (only warnings, for adoption), `standard` (the default) and `strict`. [docs/profiles.md](profiles.md) gives the table.
 
@@ -268,11 +270,12 @@ A change applies when you upgrade from 0.1 to 0.2. A configuration without `prof
 
 ## Uninstall
 
-If the project has the agent harness, first run `spec-dna init --reconfigure`. Choose `none`. `init` removes the generated agent files, the stage skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers.
+If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files, the stage skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers. It keeps the table `[evals]` and the files of the evals.
 
 ```sh
 rm spec-dna.toml
 rm -r .claude/skills/spec-dna "$(git rev-parse --git-dir)/spec-dna"
+rmdir .claude/skills/spec-dna-* 2>/dev/null || true
 rmdir -p .claude/skills 2>/dev/null || true
 for f in AGENTS.md CLAUDE.md; do
   [ -f "$f" ] || continue
@@ -284,4 +287,4 @@ done
 cargo uninstall spec-dna
 ```
 
-The loop removes the generated line and the blank line before it. It deletes a file that has no other text. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. If `init` wrote the evals skeleton, also remove `evals/` and `.github/workflows/agent-evals.yml`. Your documents are Markdown files. They do not change.
+The loop removes the generated line and the blank line before it. It deletes a file that has no other text. If `init` wrote the CI job or a hook, also remove `.github/workflows/spec-dna.yml` and the `spec-dna` hook in `.pre-commit-config.yaml` or `.husky/pre-commit`. If `init` wrote the evals, also remove the folder `evals` (the value of `[evals] dir`) and `.github/workflows/agent-evals.yml`. `init --reconfigure` keeps these files, because it never deletes a file that you can edit. Your documents are Markdown files, and they do not change.

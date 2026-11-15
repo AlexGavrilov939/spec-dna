@@ -6,7 +6,36 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Changed
 
+- BREAKING: the roles of `[harness.roles]` have new names. The role `reviewer` is now `verifier`, and its file `.claude/agents/checker.md` is now `verifier.md`. The tools of the agent are `Read` and `Bash`, and its text says "Do not fix anything; report only."
+  - The role `spec-writer` ended. The role `code-simplifier` is new at level `full`. It writes `.claude/agents/code-simplifier.md` and removes needless complexity from the diff of a task. The default is `sonnet` at effort `high`.
+  - The key `reviewer` or `spec-writer` in `spec-dna.toml` gives exit code 3. The message says to rename the key or to remove it. The word `reviewer=` or `spec-writer=` in the answer to question 13 gives exit code 3 too. A role in the wrong level is still a usage error (exit code 2) at question 13.
+  - Rename the key, then run `spec-dna init --reconfigure`. The command writes `verifier.md` and removes an unedited `checker.md` and `spec-writer.md`. It keeps an edited file, and `check` reports SD501. Before `--reconfigure`, `check` reports SD502 for an unedited old file. Plain `spec-dna init` removes no file.
+  - The model-team line of `CLAUDE.md` and the team page name `verifier` and `code-simplifier`. spec-dna removes the 2 sentences about `spec-writer`. At level `full` the line says: "After the checks pass, give the diff to `code-simplifier`."
+  - `schema/spec-dna.schema.json` has the new role keys.
+  - The bytes that the harness adds to each request: `lean` 1,595 to 1,601, `full` 2,022 to 2,067.
+- CHANGE OF BEHAVIOR: `check` gives SD501, not SD502, for a file with a harness marker that the configuration does not generate and that has an edit.
+  - This covers an old `checker.md` or `spec-writer.md`. It covers a stage skill that you removed from `skills`, and `REVIEW.md` with `review-md = false`. It also covers an agent file of a role that you turned off.
+  - The message says to delete the file, or to delete its marker line to keep it as a file of the project. `init --reconfigure` keeps such a file, so the advice of SD502 was wrong for it.
+  - An unedited file of these kinds still gives SD502.
+  - The scan now covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, and it skips the adapter skill `.claude/skills/spec-dna/SKILL.md`.
+  - The SD504 message for a file with no marker gives the ways to fix it (`skills`, `review-md` or the role). The fix texts of SD501, SD502 and SD504 say the same.
+  - The codes keep their number, name and purpose.
+- `spec-dna init` says, in a `note:` line, that `.claude/agents/Explore.md` replaces the built-in `Explore` subagent of Claude Code, and how to remove it (`researcher = { claude-code = "none" }` in `[harness.roles]`, then `init --reconfigure`). It says so only when it creates or changes the file. The team page `model-team.md` has the same clause in the `researcher` row, and [docs/harness.md](docs/harness.md) explains the override. A project that an earlier `init` set up gets SD502 on `.claude/agents/model-team.md` after the update, because the `researcher` row of the team page changed. Run `spec-dna init` again. It writes the file, and the error goes away.
 - `spec-dna init` question 7 writes the top key `language = "<tag>"` instead of `[rules] lint = "off"`. The answer `en` writes nothing, and a value that is not a BCP 47 tag is a usage error (exit code 2). Detection proposes a tag from the heading aliases and from the script of the headings (`Entscheidung` gives `de`). If it cannot map them, it proposes `en` with a note. `init --reconfigure` keeps `language`, a `[change]` table and a `[rules] lint` rule as they are. A new project gets no `[change]` table ([docs/init.md](docs/init.md)).
+- `spec-dna init` asks 14 questions. Question 12 has a second prompt for the parts of the harness, and question 14 is new.
+  - Question 12, parts: `skills=<names or none>`, `review-md=<true or false>` and `protect-tests=<fix-branches, always or off>`. The answers file has the keys `harness-skills`, `harness-review-md` and `harness-protect-tests`.
+  - CHANGE OF BEHAVIOR: a new project gets the 4 stage skills (if the change policy is not `none`), `REVIEW.md` and the hook `protect-tests` (`fix-branches`, or `off` for the link style `verified-by`). A `REVIEW.md` or a skill file with no marker is not replaced: the default leaves it out, and a note names the file. The default `lean` harness adds 2,189 bytes to each request (1,601 before the skills). The adapters still add 267 bytes.
+  - `init --reconfigure` keeps a part that the file sets. A part with no key in `[harness]` gets the default of a new project.
+  - Question 14, evals: `none` or `skeleton`. A new project gets `skeleton`, and an upgraded project keeps `none`. `skeleton` writes the table `[evals]`, `evals/check.sh`, `evals/example.json` with its fixture and, for the CI answer `github`, `.github/workflows/agent-evals.yml`. `init` writes each file once and starts no run. It prints the commands `gh secret set ANTHROPIC_API_KEY` and `gh variable set SPEC_DNA_EVALS --body true`. CI runs nothing until the repository variable is set. `init --json` has the field `evals_commands`. The answers key is `evals`.
+  - The level `none` asks neither the parts nor questions 13 and 14. In a new project, the evals answer is then `none`. With `--reconfigure`, a file that has the table `[evals]` keeps it. An answers file that sets a part for the level `none`, or `evals = "skeleton"` for it with no current table, gives exit code 2.
+  - Question 4 is the change policy (`three-class`, `two-class` or `none`). Question 5 is the gate (`block`, `warn` or `off`). `init` does not ask question 5 for the policy `none`.
+  - The answers file has the keys `change-policy` and `gate`. The 2 questions write the table `[change]` with 5 keys: `policy`, `gate`, `high-risk-layers` (only the layers that the graph has), `high-risk-paths` and `max-fanout`.
+  - CHANGE OF BEHAVIOR: a new project gets the policy `three-class` and the gate `block`.
+  - `init --reconfigure` keeps the current `[change]` values as defaults. A file with no `[change]` table gets the policy `none`.
+  - If the layers of `custom` have no `intent` layer, `init` writes the policy `none` and says so.
+- With a policy other than `none`, `init` prints a note with the `CODEOWNERS` line `docs/intent/*/spec.md @OWNER`. `init --json` has the field `codeowners` (`null` for `none`). `init` never writes the `CODEOWNERS` file.
+  - The note says that a higher-risk plan and a routine plan have the same path.
+  - The process of the repository must require the owner for a higher-risk plan.
 - `history`, and `mv` to a new document of a type that no layer has, stop with exit code 2 and change nothing. The message names the command to run, such as `spec-dna layer add research --types research`: the small graph of a new project has no `research` layer.
 - The default of `roots.live-sections` is `{ decision = ["Status"] }`. SD405 does not report a change to the `Status` section of an accepted decision, and `show --conventions decision` lists `Status`. Set `live-sections = { decision = [] }` to keep the 0.5 behavior.
 - The document types of 0.6: 15 types. `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, `note` and `reference` are `research`, and `change` is `intent`. A type name of 0.5 in `spec-dna.toml` is an error (exit code 3), and in a front matter it gives SD303. The message names the new type. The tier label `invariant` of `context` is now `rule`.
@@ -31,9 +60,82 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - CHANGE OF BEHAVIOR: a layer with `context = "on-request"` (in the default graph: `research`, `intent`, `incidents` and `pending`) does not serve its documents, unless a target names them. `show` reads them. `context` counts these documents in one line and lists no file. In 0.5 it listed the intents, the incidents and the roadmaps that cite a file. The `--json` output has no count.
 - SD405 is `decision-locked` and SD611 is `decision-links-intent`. The codes stay. In `--json`, read `code`: the field `name` changed. The text output shows the new names. The fingerprint and the keys of `[rules]` do not change. The messages and the fix texts say "locked", where 0.5 said "frozen". The fix of SD611 tells the author to name the intent as plain text, not as a link. SD901 and `finish` would stop on a link.
 - The requirement lint (SD801 to SD805) is off when `language` has a primary subtag other than `en`, also with `check --lint`.
+- SD101 and SD102 give no diagnostic for a reference in the locked text of an accepted decision. This text is the body outside the amendment, history and live sections. The author cannot change it, and a finished intent leaves no document to link.
+- The plan template (`spec-dna new plan`) writes a code span in its `Files` item and in the `Files:` label of its example tasks. The span holds the placeholder `{{path}}`. A placeholder is no path, so an untouched plan lists no path.
 
 ### Added
 
+- The configuration has the table `[evals]` with 4 keys: `dir` (default `evals`), `min-pass-rate` (default 0.8), `runs` (default 3) and `max-total-usd` (default 20). Without the table, there are no evals. A bad value is an error (exit code 3). `evals.dir` follows the rules of `templates.dir`, and it cannot overlap `templates.dir`. The folder is never part of a root. `pass-at` is a key of an eval file only, so it is unknown in `[evals]` ([docs/config.md](docs/config.md)).
+- `[harness]` has 3 new keys: `skills` (a list of `intent`, `spec`, `plan` and `review`, default `[]`), `review-md` (default `false`) and `protect-tests` (`fix-branches`, `always` or `off`, default `off`). A file that has none of them behaves as in 0.5. `REVIEW.md` and the stage skills that the configuration writes are never part of a root. A new configuration from `spec-dna init` has other defaults (see the entry on the 14 questions).
+- `spec-dna init` writes the 4 stage skills and `REVIEW.md`, when `[harness] skills` and `review-md` select them ([docs/harness.md](docs/harness.md#stage-skills-and-reviewmd)). The defaults of a new project are in the entry on the 14 questions.
+  - The skills are `.claude/skills/spec-dna-intent/SKILL.md`, `spec-dna-spec`, `spec-dna-plan` and `spec-dna-review`. Each is a whole file with the harness marker, and its text is the same in each project. Each skill runs spec-dna commands (`new intent`, `new spec`, `new plan`, `show`, `check` and `next`) and never sets `accepted` or `approved`.
+  - `REVIEW.md` has 3 passes (Bugs, Security and Compliance), the severities Important and Nit with at most 5 Nits, and a list "Do not report". `spec-dna-review` holds the same text, because the local review command does not read `REVIEW.md`.
+  - `init --reconfigure` removes an unedited skill file or `REVIEW.md` that the configuration no longer generates. It keeps an edited file and names it. Plain `init` removes no file. A file with no marker at a generated path stops `init` with exit code 2. The adapter skill `.claude/skills/spec-dna/SKILL.md` is not part of the harness.
+  - The model-team page has a section "Skills" and a section "Review policy" when the keys select them. The `CLAUDE.md` line is the same.
+  - The bytes that the harness adds to each request: the 4 skill descriptions add 588 bytes (`lean` 1,601 to 2,189, `full` 2,067 to 2,655, with the default models). `REVIEW.md` adds none. `init` counts the skill descriptions in the sum.
+  - For a file that the configuration generates, `check` reports SD504 (absent or no marker), SD501 (edited) and SD502 (old text). SD503 accepts these files with a change of `spec-dna.toml`.
+
+- The hook `spec-dna hook protect-tests` asks the person before an edit of a test file that git tracks ([docs/harness.md](docs/harness.md#spec-dna-hook-protect-tests)). A file with no `protect-tests` key has the same effect as `off`, and a new project gets `fix-branches`. `protect-tests = "fix-branches"` in `[harness]` makes `init` write the entry (matcher `Edit|Write`, event `PreToolUse`) into `.claude/settings.json`, and `"always"` removes the branch test.
+  - The hook answers `permissionDecision: "ask"` with a reason in this case: the file matches a glob of `[evidence] tests`, git tracks the file, and (for `fix-branches`) the branch starts with `fix/`. A new test file does not trigger it. In a run with `claude -p` that cannot ask, Claude Code denies the edit, and the model reads the reason.
+  - The generated command holds the globs and the mode, so the hook reads no configuration: `spec-dna hook protect-tests --mode fix-branches --test '**/tests/**' ... 2>/dev/null || true`. The hook runs `git` at most 2 times, and only for a path that matches a glob. An error gives no output and exit code 0.
+  - There is no entry for `off`, for an empty `[evidence] tests` (`verified-by`), or for level `none`. A change of `[evidence] tests` gives SD502 for the entry until `init` runs. `init --reconfigure` removes the handler by its command prefix and keeps the other handlers.
+  - A teammate needs spec-dna 0.6.0 or later on `PATH` for this hook. `init` and the team page say so when the hook is on.
+  - The bytes that the harness adds to each request do not change: the hook adds no text to a request.
+
+- The command `spec-dna eval run [<id>...]` runs the evals of `[evals] dir` with headless Claude Code ([docs/commands.md](docs/commands.md#eval)). An eval is a JSON file `<dir>/<id>.json` with a task, a fixture, checks and a budget. It needs the table `[evals]`, and the file `<dir>/check.sh` of the project.
+  - For each run, it copies the fixture and the harness files (`CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `.claude/`, but not `.claude/settings.local.json`) into a temporary git repository. Then it switches to the `branch` of the eval, starts `claude -p` and runs each check with `sh -c`. The checks source the `check.sh` of the project, never the copy. It never passes `--bare`, so an eval loads `CLAUDE.md`, the skills and the hooks.
+  - An eval passes when at least `pass-at` of its runs pass. The suite passes when the share of evals that pass is at least `min-pass-rate`. Exit code 0 is a pass and 1 is a fail. The options are `--runs`, `--min-pass-rate`, `--max-total-usd`, `--out`, `--dry-run`, `--isolate` and `--json`.
+  - Cost cap: the command refuses to start (exit code 3) when `runs x max-budget-usd` is above `max-total-usd`. It adds the `total_cost_usd` of each run, and stops (exit code 3) when the spend is above the cap and a run remains. A `claude` that is absent gives exit code 3. A git or file error of the runner gives exit code 4.
+  - `--out <dir>` writes the result as `eval-<time>.json`: counts, costs, check names and versions. The result has no task text, no check command and no output text of `claude`.
+  - The output of `claude --output-format json` is one object, or a list of events (one run with Claude Code 2.1.325 gave a list). The runner reads `total_cost_usd` and `subtype` from the `result` object of either form.
+  - spec-dna makes no network call. `claude` makes network calls, and each run costs money. The check SD506 reads the same eval files (see below).
+
+- The checks SD506 and SD918 for the evals ([docs/diagnostics.md](docs/diagnostics.md#checks-of-the-evals)). Both need the table `[evals]` in `spec-dna.toml`, so no project of 0.5 gets them.
+  - SD506 (`evals-invalid`) is an error in each profile, and it does not depend on `[change] policy`. It reports each `*.json` file directly in `[evals] dir` that `spec-dna eval run` rejects, with the key of the broken rule as the target, and an absent `<dir>/check.sh`. It reads no text of `check.sh` or of a fixture, and no file in a subfolder. A rule for SD506 in `[rules]` changes its severity. A finding of the base is not new. The base findings use the `[evals]` table of the base.
+  - SD918 (`incident-eval-missing`) is a warning in `standard` and `strict`, and off in `lite`. It is in the rule group `changes`, so `policy = "none"` turns it off. It reports each incident that the diff adds, if the diff adds or changes no `*.json` file directly in `[evals] dir`. A move of an incident, also with an edit, is not an add. It is always new, and it needs the lifecycle base.
+  - SD503 does not count the starter files of `skeleton` (`<dir>/check.sh`, `<dir>/example.json`, `<dir>/fixtures/example/notes.txt` and `.github/workflows/agent-evals.yml`) when the head configuration has `[evals]`.
+
+- The commands `spec-dna next <slug> [--base <rev>]` and `spec-dna status [--group <name>] [--base <rev>]` ([docs/commands.md](docs/commands.md#next)).
+  - The stage of a change comes from its files, their statuses, the diff against the lifecycle base and the evidence. The stages are `closed`, `plan`, `design`, `build`, `test` and `deploy`.
+  - `next` prints a checklist of at most 12 lines to the next gate. Each line says done or open. The last line gives the edit that approves the artifact.
+  - In the `build` stage, `next` names the next open task of the plan (id, text, files and verification).
+  - `status` lists each change with its class, stage, next gate, task progress, areas and staleness (SD911). It also gives the number of started changes and the open follow-ups of the incidents.
+  - `--group` lists the changes of a group of `areas`. An unknown group is exit code 2. `next` gives exit code 5 for a slug with no folder.
+  - Without a base, both commands print a note, and the stage stops at `build`.
+  - With `[change] policy = "none"`, both commands say that the change process is off.
+  - `--json` gives the fields of both commands. `context --group` is not in this version.
+- The command `spec-dna log [--since <rev>]` ([docs/commands.md](docs/commands.md#log)). It lists the finished and the closed changes from the history of git, the newest first.
+  - It reads each commit that deleted an `intent.md`. The status of the intent in the parent of that commit gives the result: `accepted` is `finished`, and any other status is `closed`.
+  - For each change it prints the date, the result, the slug and the class. It also prints the counts of the delta lines (`add`, `change`, `remove`), the commit and the title.
+  - A squash merge, a merge commit and a rebase merge each give one entry.
+  - A change that one pull request held with its approval and its code has no entry. The default branch never had its folder.
+  - A rename of the folder out of the `intent` folder reads as a deletion.
+  - `--since` limits the commits that `log` reads. `--since` with a revision that is not a commit is exit code 3.
+  - A shallow clone sets `shallow` in `--json` and prints a note.
+- The command `spec-dna stats --sdlc [--group <name>]` ([docs/commands.md](docs/commands.md#stats)). It prints the leading and the lagging indicators of the playbook under the playbook names, from git and the committed files.
+  - The indicators with a value are: the time from the first commit of the folder to `accepted`, the survival rate of the intents, and the time between the intent and the spec.
+  - The others with a value are: the spec commits after the first plan commit, the time from plan approval to the merged pull request, and how often the merged diff stays inside the plan (SD913).
+  - An indicator that git cannot give prints `n/a` with the reason. `--json` has `value: null` and a `reason`.
+  - `--group` counts only the changes of a group of `areas`. An unknown group, and `stats` without `--sdlc`, are exit code 2.
+  - With `[change] policy = "none"`, both commands say that the change process is off and list nothing.
+  - With `[evals]` in the configuration, the 2 Test indicators have values. Without `[evals]`, they are `n/a`.
+    - The eval pass rate is the percent of the newest result file in `<[evals] dir>/results` of `HEAD`. The newest file is the file with the latest `started`. A file that `eval run --out` wrote and that the project committed counts. The indicator skips a file with no `started`, with no `pass_rate` from 0 to 1, or with a stop, and the note counts it.
+    - The time from an incident to its eval is the median of the days between 2 commits. The first commit added an incident. The second commit added the first eval file that the `Eval` section of the incident names. The path is `<[evals] dir>/<id>.json`. A span below 0 does not count.
+    - `--group` does not change these 2 rows. In text, the count word of the 2 rows is "result files" and "incidents". `--json` has the same fields.
+- Each line of `next`, and each item of its `--json`, has the name of a skill. The names are `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. The skills come in 0.7.0. The names stay fixed until then.
+- The code SD922 (`question-open`): a spec with the status `approved` has an open question, a `- [ ]` item in its `Open questions` section.
+  - It is a warning in `lite` and an error in `standard` and `strict`, as SD919.
+  - It is in the rule group `changes`, and the policy `none` turns it off.
+  - The `spec` template has an `Open questions` section after `Concerns`. `Concerns` and SD919 stay.
+- The parser keeps the list items of the sections `Order` and `Open questions`.
+  - A task of a plan is an item of `Order` with a task box and a task id: ``- [ ] t1: <text>. Files: `path`. Verify: <text>.``
+  - The model has the tasks of a plan, the first open task, and the open questions of a spec. The model marks a duplicate task id and gives no diagnostic.
+  - The `plan` template shows 2 example tasks ([docs/types.md](docs/types.md#tasks-of-a-plan)).
+  - `PARSER_VERSION` is 13, so the cache is rebuilt once.
+- The parser keeps the list items of the sections `Delta`, `Interfaces`, `Decisions`, `Concerns`, `Files` and `Follow-ups`. It keeps the byte range of each item and the byte range of the sentence of each requirement. The cache is rebuilt once (see the entry above for the parser version).
+- The intent fields `class`, `areas` and `from`.
+  - `class` is `routine` or `higher-risk`. No value is `routine`. Another value, such as `small-fix`, gives SD302.
+  - The templates `intent`, `prd` and `rfc` have `class: routine` ([docs/types.md](docs/types.md#intent-spec-and-plan)).
 - The embedded templates `prd`, `rfc`, `madr`, `post-mortem` and `runbook`, and `spec-dna new <type> <id> --template <name>` ([docs/types.md](docs/types.md#templates), [docs/commands.md](docs/commands.md#new)). `madr` is the default template of a `decision`, and `post-mortem` is the default of an `incident`. A decision has the sections Considered Options, Status and Amendments, and an incident has the sections Timeline, Links, Follow-ups (a task list) and Eval.
 - The table `[templates]` with the key `dir` (default `.spec-dna/templates`) holds the project templates. A file `<name>.md` there, with a `type` in its front matter, replaces the embedded template of that name. `new` stops with exit code 2 for an unknown template and for a template of another type. The folder is never part of a root, also for a root `.`, so it needs no `exclude` ([docs/config.md](docs/config.md#the-table-templates)).
 - `spec-dna layer add <name>` writes a layer into `spec-dna.toml`, and `spec-dna layer list` shows each layer, its level, its edges, its limits and the number of documents that each rule put in it. `--moved-from` adds the new layer to the `moves-to` list of the named layers and keeps each comment of the file. `layer add` stops with exit code 2 and does not change the file for each of these: a cycle, a name that exists, a type of another layer, an unknown layer in an edge and a bad value, and a `files` entry that is not a relative path inside the root or that another layer has. It keeps the line endings of the file (CRLF stays CRLF). It first writes the default graph if the file has no `[layers]` table ([docs/commands.md](docs/commands.md#layer)). `layer list --json` gives the rule that put each document in its layer. A document with no type is in no layer.
@@ -45,15 +147,74 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - `init` says in a note that a flat folder of proposals (`rfcs`, `proposals`, `changes`, `tasks`, `plans`, `enhancements`, or the prefixes `RFC` and `KEP`) is a `research` root. To start an open proposal, run `spec-dna new intent <slug>`. `init --json` has the field `notes`, and `default_type` is `null` for a mixed root with no `default-type`.
 - The configuration key `language`, a BCP 47 language tag (default `en`, top level only). A primary subtag other than `en` turns off the checks that read English word lists ([docs/config.md](docs/config.md)).
 - The configuration key `[lint] history-terms`, a list of unique phrases. It replaces the default phrases of the check for history in requirements. An absent key and an empty list are different.
-- The table `[change]` with the key `policy` (`three-class`, `two-class` or `none`). The key is required in the table. Any other key of `[change]` is an error (exit code 3), because a later step adds the other keys. Without the table the policy is `none`. With `none`, the diagnostic SD921 is off, and no rule in `spec-dna.toml` can turn it on.
-- The rule groups `layers` (SD901 to SD904) and `changes` (SD921) for `[rules]`. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table.
+- The table `[change]` with the keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` ([docs/config.md](docs/config.md)).
+  - `policy` (`three-class`, `two-class` or `none`) is required in the table.
+  - `gate` (`block`, `warn` or `off`) sets the severity of SD910.
+  - `high-risk-layers` names layers of the graph. The default is `interfaces` and `rules`, without the names that the graph does not have.
+  - `high-risk-paths` has globs from the repository root (default none). `max-fanout` is an integer (default 8).
+  - An unknown key of `[change]` is an error (exit code 3).
+  - Without the table the policy is `none`. With `none`, the codes SD905 and SD910 to SD922 are off, and no rule in `spec-dna.toml` can turn them on.
+- The rule groups `layers` (SD901 to SD904) and `changes` (SD905 and SD910 to SD922) for `[rules]`. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table.
+- The codes SD905, SD910 to SD917, SD919 and SD920 of the change lifecycle, with their names, their profile severities and their fix texts. SD910 follows `[change] gate`, and a rule for SD910 in `[rules]` has priority over it.
+- `check --json` has the field `change_base` when `[change] policy` is not `none`. The field is the merge base of `--base` (or of `origin/HEAD`) with `HEAD`, or `null`.
+  - The text output prints a note on stderr if there is no base.
+  - The base reads only `refs/remotes/origin/HEAD`, never a local branch.
+- The lifecycle checks that read one tree, with a `[change] policy` other than `none` ([docs/diagnostics.md](docs/diagnostics.md#checks-of-the-change-lifecycle)). A closed change gives none of them.
+  - SD914 reports an invalid delta line. The causes are a wrong form, an absent target, a layer that `moves-to` of the `intent` layer does not allow, a document of a type with no requirements, a hash that does not match, and an `Interfaces` item that names no interface document.
+  - SD914 skips a line that the head already applies. `check` reports it as an error only for a spec that the diff touches.
+  - SD919 reports an open concern in an `approved` spec.
+  - SD920 reports a decision of `Decisions` that does not exist, in an `approved` spec.
+  - SD912 reports more `accepted` intents than `max-started` of the `intent` layer.
+  - SD905 reports a delta that touches more documents than `max-fanout`.
+- The checks of the diff against the lifecycle base, with a `[change] policy` other than `none` ([docs/diagnostics.md](docs/diagnostics.md#checks-of-the-change-lifecycle)). `check --staged` diffs the index.
+  - SD910 reports an artifact that changes while the base tree has no approval of the artifact before it (`intent.md`, `spec.md`, `plan.md`, then code). It also reports code under the `Files` of a plan that the base tree does not approve. An approval in the same pull request does not count.
+  - A change that a commit of the branch added and finished gives SD910 with `gate = "block"`, and it passes with `warn`.
+  - SD913 reports a path of the diff that no `Files` item of a change matches.
+  - SD917 reports a `routine` intent in 3 cases: a delta line targets a layer of `high-risk-layers`, the diff changes a requirement of such a layer, or a path matches `high-risk-paths`.
+  - SD905 also counts the requirement documents of a change with no delta line.
+  - SD912 is new when the head has more started changes than the lifecycle base.
+  - A diff with no change is a small fix, and only SD917 and SD921 apply to it.
+- The checks of a finished change and of staleness, with a `[change] policy` other than `none` ([docs/diagnostics.md](docs/diagnostics.md#checks-of-the-change-lifecycle)). They apply when the diff deletes an intent folder. They read the spec and the plan from the base tree, so a correction in the same pull request has no effect. A change with the base status `closed` gives none of them.
+  - SD915 reports a delta line that the head does not apply: an `ADD` or `CHANGE` requirement with another text, or a `REMOVE` key that is still there. For a change with no delta, it reports a diff that changes no `Files` path and no requirement hash.
+  - A pull request that sets `closed` and deletes the folder gives SD915, because the base status is `accepted`.
+  - SD916 reports an `ADD` or `CHANGE` requirement with no `covers:` tag and no `verified-by`. For a change with no delta, it checks each requirement whose hash differs from the base.
+  - SD920 also reports a decision of `Decisions` that is absent or is not `accepted`.
+  - SD911 (`change-stale`) reports an `accepted` change that has had no commit for more than `stale-days` of the `intent` layer. It compares the committer dates of the merge base and of the newest commit that touched the folder or a `Files` path. It never reads the clock or the time zone.
+  - SD911 is a state code: `check --all` shows it, and it is never new. It needs a real merge base. A shallow clone can hide a stale change, and it never reports a false one.
+  - `check` reads the `covers:` tags also when only SD916 needs them.
+- `spec-dna finish <slug> [--dry-run] [--base <rev>]` ends a change ([docs/commands.md](docs/commands.md#finish)). It runs 6 steps in memory and stops at the first step that fails. A stop writes nothing.
+  - Step 0: a document outside the folder links into it (a Markdown link, `[[id]]`, `depends-on`, `supersedes` or `from`). The locked text of an accepted decision, a stub and a generated index do not count. This stop also applies in the profile `lite`.
+  - Step 1: the statuses (`accepted` intent, `approved` plan, and `approved` spec for a `higher-risk` change). An intent with the status `closed` runs steps 0 and 1, and then `finish` deletes the folder.
+  - Steps 2 and 3: SD919, SD922, SD920 and SD914, whatever the profile, the rules and the policy. SD914 also covers a delta that differs from the approved delta of the base tree. It also covers an interface of `Interfaces` that the diff does not change.
+  - Steps 4 and 5: `finish` applies `ADD`, `CHANGE` and `REMOVE` by byte range and keeps CRLF, a BOM, markers and nested lists. Then it checks the evidence (SD916). The result may add no error, except SD305 for a new document.
+  - The write is one pass: the files, then the deletion of the tracked files of the folder, then `git add -A` of each path. `finish` writes a generated index again if it lists a deleted file. `finish` makes no commit.
+  - `finish` refuses a path that has a symbolic link, or that leaves the repository, before it writes the first file. It stops if it must write a file that has an edit that is not committed. A `REMOVE` of an item that holds a nested requirement needs a `REMOVE` line for each nested key. A document id that ends in `.md` gives SD914.
+  - `check` reports SD914 for an interface of `Interfaces` that the diff of a deleted change does not change.
+  - `--dry-run` prints the diff of each file and `remove <path>`. `--json` has `slug`, `ok`, `dry_run`, `step`, `diagnostics` and `files`.
+  - Exit codes: 1 a stop, 2 usage, 3 pin, base or configuration, 4 a write error, 5 no folder.
+  - `finish` is the one command that deletes documents. It deletes only the files of the intent folder.
+- A `covers:` tag that names the requirement of an `ADD` line of an `accepted` change gives no SD105.
+- The field `from` of an intent is a reference. It gives SD101 if it names no document, and SD901 follows the layers.
 - The check SD901 (`link-direction`, warning). A document of a layer X references a document of a layer Y, X is more stable than Y, and Y does not list X in `linked-from`. A reference is a Markdown link, `[[id]]`, `depends-on` or `supersedes`. A link of a locked decision that gives SD611 does not give SD901.
 - The check SD902 (`layer-limit`, warning). A layer has more documents than `max-docs`, or more body characters than `max-chars`. The diagnostic is on `spec-dna.toml`. The default graph has limits. Thus a project with no `[layers]` table gets SD902 when a layer is over its limit, for example with more than 30 documents of the type `rule`.
 - The check SD903 (`history-in-requirements`, warning). A requirement of a `rule`, `requirements` or `interface` document has a date, `round <n>`, `iteration <n>`, or a history phrase ("previously", "formerly", "no longer", "used to", "was changed", "before this change", "after this change"). `[lint] history-terms` replaces the phrases. `language` does not turn it off.
 - The check SD904 (`term-forbidden`, warning). A requirement uses a forbidden synonym of the table of a `terms` document.
-- The check SD921 (`truth-changed-without-change`, warning in `standard` and error in `strict`). A requirement of a `forever` layer changed, and no file of the `intent` folder did. It runs only with `check --base`, and only with a `[change] policy` other than `none`. A move that keeps the text of each requirement gives nothing.
+- The check SD921 (`truth-changed-without-change`, warning in `standard` and error in `strict`). A requirement of a `forever` layer changed, and no file of the `intent` folder did. It runs on the lifecycle base (the merge base of `--base`, or of `origin/HEAD`, with `HEAD`), and only with a `[change] policy` other than `none`. A move that keeps the text of each requirement gives nothing.
+  - A document that the `Files` of a plan lists gives nothing in 2 cases: the change is in the diff, or the base tree has the change with an `accepted` intent and an `approved` plan.
 - The profiles `lite`, `standard` and `strict` set SD901 to SD904 to off, warning and warning, and SD921 to off, warning and error. The rule groups are `layers` and `changes`. A 0.5 project gets the new warnings SD901 to SD904 at the first `check` after the update. The gate against the base reports only the new warnings.
 - The parser stores the rows of each table with the header cells `Term` and `Forbidden synonyms`. spec-dna rebuilds the index once after the update, because the parsed data changed.
+
+### Fixed
+
+- A plan whose `Files` section lists plain paths (`- src/dose.py`) had an empty `Files`, because spec-dna read only a code span. Before `finish` no change was in the diff, and SD913 was silent. After `finish` the deleted folder made the change part of the diff with a scope of only its folder, so each implementation file gave SD913. Now an item of `Files`, and an entry of the label `Files:` of a task, can be a plain path ([docs/types.md](docs/types.md#files-and-paths)).
+  - A plain path is one token that has no white space and has a `/`, a `.` or a `*`: `src/dose.py`, `tests/*.py`, `docs/`. One final `.`, `,`, `:` or `;` is dropped, the parentheses that wrap the text are dropped, and a link `[text](destination)` gives its text. A code span is still the first choice. A URL, a tag, a placeholder `{{...}}` and a word with none of `/`, `.` and `*` (`Makefile`) are not paths: write them in a code span. Prose such as `no code here` is not a path.
+  - In a task line, each entry of `Files:` (split at the commas outside code spans) gives its code spans, or its plain path if it has no code span. A task line with a code span and a plain path in 2 entries gives both.
+  - CHANGE OF BEHAVIOR: a plan with plain paths now has real patterns. These readers use them: SD905 (the documents of a change in a diff with more than one change), SD910, SD911, SD913, SD915, SD916 (the documents that the evidence check reads), SD917, SD921, `finish` (step 5, the documents that the evidence check reads when another change is in the diff), `stats --sdlc` (the indicator of SD913), `status` and `next`. A project can see new results from the same files. A plan that lists only prose gives no new result.
+  - `PARSER_VERSION` and `FORMAT` do not change: the reader uses the item text that the index already keeps.
+  - When the items of `Files` are not paths, and the plan lists no path in `Files` and none in its tasks, the last line of `next` and `status` says so and shows the first such item, instead of "it lists none". SD913 and SD915 name the first such item in their message, also only if the plan lists no path. The fix text of SD913 gives the rule. No new code.
+  - In a task line, a comma in a code span or in a link (`[text](destination)`) does not split the entries. One final `.` or `;`, and the parentheses that wrap the entries, are removed.
+  - The patterns of a plan are the paths of its `Files` section, then the `Files:` paths of its tasks, with no repeat. Each reader of `Files` uses this list: SD905, SD910, SD911, SD913, SD915, SD916, SD917, SD921, `finish` step 5, `stats --sdlc`, `status` and `next`. A plan with `Files` = `- None.` and the paths in its task lines is a plan with paths.
+  - If the diff deletes the folder of a change (the pull request of `finish`), the scope of SD913 has the paths of the base tree and of the newest plan and spec of the branch before the deletion. A plan that the pull request adds or edits no longer gives SD913 on its own files. SD915 still reads the delta and `Files` of the base tree only.
 
 ## 0.5.0 - 2026-11-14
 
@@ -98,7 +259,7 @@ Fixes from the use of 0.4.1 in a second real project.
 - `check --lint` runs the prose lint (SD801 to SD805) in every profile, even when `lint` is off. The findings are warnings, so they never fail the gate. Without `--lint`, nothing changes.
 - A requirement key that is a template placeholder (`{{key}}`) gives SD306 only. It no longer gives SD203 too.
 - SD804 does not report "many" after "how" ("how many").
-- SD304 for `proposed` on a spec, a contract or an invariant names `draft`. `draft` is the proposal state of these types, and `proposed` is for a decision and a change. The namespace `reference/` stays singular. [docs/types.md](docs/types.md#statuses-and-namespaces) gives the reason and the namespace of each type.
+- SD304 for `proposed` on a spec, a contract or an invariant names `draft`. `draft` is the proposal state of these types, and `proposed` is for a decision and a change. The namespace `reference/` stays singular. [docs/types.md](docs/types.md#statuses) gives the reason and the namespace of each type.
 - `spec-dna new` says "replace each {{...}} placeholder". The templates use that form.
 - A command that writes to a closed pipe (`spec-dna check --json | head -1`) ends with its own exit code, with no panic. A non-interactive `init` with a closed stdout now writes its files.
 

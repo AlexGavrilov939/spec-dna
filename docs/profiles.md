@@ -23,11 +23,11 @@ An error fails `check` when the error is new against the base. A warning never f
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
-| `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted) | warning | error | error |
-| `changes` | SD912 (too many started changes), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
-| `changes` | SD905 (fan-out), SD911 (stale change), SD913 (file outside the plan), SD918 (incident with no eval) | off | warning | warning |
+| `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan), SD918 (incident with no eval) | off | warning | warning |
+| `changes` | SD912 (started limit), SD917 (class too low), SD921 (truth changed without a change) | off | warning | error |
+| `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted), SD922 (question open) | warning | error | error |
 
-The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) and SD506 (an invalid eval) are always errors.
+The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) is always an error. SD506 (an eval file that is not valid, or an absent `check.sh`) is in no group, so it is an error in every profile. Only a rule for SD506 in `[rules]` can change it.
 
 The rule groups `layers` and `changes` are new in 0.6.0. The word `rules` still names the severity table of the file. A layer named `rules` is not that table: `[rules]` is the severity table, and `[layers.rules]` is the layer.
 
@@ -35,11 +35,18 @@ The rule groups `layers` and `changes` are new in 0.6.0. The word `rules` still 
 
 The codes of the group `changes` depend on the `[change]` table:
 
-- With `policy = "none"`, SD905 and SD910 to SD921 are off. No `[rules]` entry enables SD921 under `none`.
-- Without a `[change]` table, the policy is `none`.
-- SD910 follows `[change] gate`. `block` makes it an error, `warn` makes it a warning, and `off` disables it. If `gate` is absent, SD910 takes the severity of its profile column. `init` always writes `gate`.
-- Without `--base`, the change codes use the merge base with the default branch.
-- `[rules]` can override SD910 and SD921, as it overrides each code.
+- Without a `[change]` table, the policy is `none`. With `policy = "none"`, each code of the group is off, and no rule enables it.
+- SD918 also needs the table `[evals]`.
+- SD910 follows `[change] gate` when the key is present. `block` makes it an error, `warn` makes it a warning, and `off` disables it. Then the profile column does not apply. If `gate` is absent, SD910 takes the severity of its profile column. When `init` writes the `[change]` table, it also writes `gate`.
+- A rule for SD910 in `[rules]` has priority over the gate. `[rules]` can also override SD921, as it overrides each code.
+
+These codes compare with the lifecycle base: SD905 for a change with no delta, SD910, SD913, SD915, SD916, SD917 and SD918. SD920 for a decision that is not `accepted` and SD921 do the same. This base is the merge base of `--base`, or of `origin/HEAD`, with `HEAD`. These codes do not run if git cannot name it.
+
+SD911 reads the base and the history. It is silent without a base. SD911 is a state code: it is never new, and `check` shows it only with `--all`.
+
+SD914 has one exception to the profile column. `check` lowers an error of SD914 to a warning when the diff does not touch the spec. It does the same when git cannot name the lifecycle base.
+
+SD912 is on `spec-dna.toml`, so the profile and the rules of a root do not apply to it, as for SD902 ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
 
 Choose a profile for the stage of the project:
 
