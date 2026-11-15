@@ -26,6 +26,9 @@ spec-dna mv irrigation/valves#drip irrigation/drip-lines  # a whole section into
 spec-dna mv guides/deploy#rollback runbooks/rollback --type runbook   # a section of a guide into a new runbook
 spec-dna history decisions/cache docs/history/cache.md   # the amendment and history sections into a research document
 spec-dna index docs/incidents --replace         # a generated index in place of a hand-kept list
+spec-dna next dose-limit                        # the checklist to the next gate of a change
+spec-dna status                                 # each change, its stage and its next gate
+spec-dna status --group operations              # the changes of a group of areas
 spec-dna finish dose-limit --dry-run            # the diff of the finish of a change, and nothing written
 spec-dna finish dose-limit                      # apply the delta, delete the folder, stage the paths
 spec-dna mv guides/old guides/new --stub        # a stub at the old path for tools that read by path
@@ -320,6 +323,104 @@ A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostic
 
 `finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
 
+## next
+
+```text
+spec-dna next <slug> [--base <rev>]
+```
+
+`next` prints the checklist to the next gate of the change `<slug>`, the folder `<intent folder>/<slug>/`. The first 2 lines give the change, its class, its stage and its base. The other lines are the checklist, at most 10. Each line says done (`[x]`) or open (`[ ]`), and ends with `[skill: <name>]`. The last line is the edit or the command that ends the stage, for example ``set `status: accepted` in docs/intent/dose-limit/intent.md``. The output has at most 12 lines.
+
+```text
+change dose-limit (routine), stage build
+base 3f2a9c1b7e0d
+[x] the intent is accepted [skill: brainstorm]
+[x] the plan is approved [skill: write-plan]
+[ ] tasks of `Order`: 1 of 3 done [skill: execute]
+[ ] task t2: Close the valve. Files: `src/valve.py`. Verify: `pytest` [skill: execute]
+[ ] change a file that `Files` of docs/intent/dose-limit/plan.md lists: none differs from the base [skill: execute]
+```
+
+### Stages
+
+A change has no stage field. The stage is the first row of this table that matches. [Stage derivation](design/0.6.0.md#stage-derivation) gives the reason for each row.
+
+| Stage | The change is in this stage when | The last line of `next` |
+| --- | --- | --- |
+| `closed` | `intent.md` is `closed` | Run `spec-dna finish <slug>` |
+| `plan` | `intent.md` is absent, or its status is not `accepted` | Set `status: accepted` in `intent.md` |
+| `design` | The class is `higher-risk`, and `spec.md` is absent or not `approved` | Set `status: approved` in `spec.md` |
+| `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base | Set `status: approved` in `plan.md`, or change a file of `Files` |
+| `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
+| `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
+
+- A file of `Files` differs from the base when the diff of the working tree against the base has a path that a `Files` item matches. A file of the folder of the change does not count. With no base, the diff is unknown, so a change with an approved plan stays in `build`.
+- A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If another change has a changed file in the diff, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
+- A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
+- The change that the default branch finished is no longer in the tree, so it has no stage. `spec-dna log` lists it.
+- The stage Maintain is not the stage of a change. `status` lists an open follow-up of an incident ([status](#status)).
+
+In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft: its id, text, files and verification. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done, and the first task that is open is the next task.
+
+### Skills
+
+Each line of `next` has the name of the skill for its step. The skills come in 0.7.0. Until then, `next` prints the names only, as data: a fixed list of 9 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. With `--json`, each item has the field `skill`.
+
+| Step | Skill |
+| --- | --- |
+| The stage `plan` | `brainstorm` |
+| The stage `design`, a spec to write or to approve | `specify` |
+| An open concern (SD919) or an open question (SD922) | `clarify` |
+| The stage `build`, a plan to write or to approve | `write-plan` |
+| The stage `build`, an open task or a change of the code | `execute` |
+| The stage `test`, a requirement with no evidence | `tdd` |
+| The stage `deploy`, run the proof of the plan | `verify` |
+| The stage `deploy`, review the diff | `review` |
+| The stage `closed`, or a change that is ready for `finish` | `finish` |
+
+A line that is done has the skill of its own step.
+
+### Base and output
+
+The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. `next` prints it. If git cannot name a base, `next` prints the note `no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>`. The stage then stops at `build`, because the diff against the base is unknown. With `[change] policy = "none"`, `next` says that the change process is off and reads no git data. It exits with 0.
+
+With `--json`, the output is one object:
+
+```json
+{"slug":"dose-limit","class":"routine","stage":"build","base":"3f2a9c1b7e0d4a11...","items":[{"done":true,"text":"the intent is accepted","skill":"brainstorm"}],"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"},"next":"change a file that `Files` of ...","notes":[]}
+```
+
+`base` is a SHA, or `null`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
+
+Exit codes: 0 done; 2 usage; 3 configuration, or a `--base` that is not a commit; 4 git; 5 no folder for the slug.
+
+## status
+
+```text
+spec-dna status [--group <name>] [--base <rev>]
+```
+
+`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the progress of the tasks (`done/total` and the id of the next open task), the areas, and the next gate. A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`. Then it lists each open follow-up of an incident: an item `- [ ]` in the `Follow-ups` section, with the incident id, the path, the line and the text. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
+
+```text
+policy three-class, base 3f2a9c1b7e0d, 1 started (max 3)
+dose-limit routine build intent accepted spec - plan approved tasks 1/3 next-task t2 areas valves
+  next: change a file that `Files` of docs/intent/dose-limit/plan.md lists: none differs from the base
+follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm for a stuck valve.
+```
+
+`--group <name>` lists only the changes that are in the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target. The area of a delta target is the first folder under the folder of the layer of `requirements`: the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). `context --group` is not in this version.
+
+The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
+
+```json
+{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve."}]}
+```
+
+A status is `null` if the file is absent. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
+
+Exit codes: 0 done; 2 usage, or an unknown group; 3 configuration, or a `--base` that is not a commit; 4 git.
+
 ## transcript
 
 ```text
@@ -367,10 +468,10 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, or a step of `finish` stopped |
-| 2 | Usage error. Also a refusal of `layer add`: it changes nothing |
+| 2 | Usage error. Also a refusal of `layer add`: it changes nothing, and an unknown `--group` of `status` |
 | 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision, or no git repository. For `finish`: also an `accepted` change with no base |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files |
-| 5 | A target names no document, section or requirement. For `finish`: no folder for the slug |
+| 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
 
 A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.
 

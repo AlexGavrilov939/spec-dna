@@ -89,7 +89,6 @@ pub fn collect(corpus: &Corpus) -> Vec<Change> {
 impl Change {
     /// The status of the intent, or an empty string if the change has no
     /// intent.
-    #[allow(dead_code)] // reader: S7
     pub fn intent_status(&self) -> &str {
         self.intent.as_ref().map_or("", |a| &a.status)
     }
@@ -523,7 +522,6 @@ pub fn next_open_task(tasks: &[PlanTask]) -> Option<&PlanTask> {
 impl Change {
     /// The tasks of the plan, in the order of the file. A change with no plan
     /// has none.
-    #[allow(dead_code)] // reader: S7
     pub fn tasks(&self, corpus: &Corpus) -> Vec<PlanTask> {
         match &self.plan {
             Some(a) => plan_tasks(&corpus.docs[a.doc as usize]),
@@ -532,7 +530,6 @@ impl Change {
     }
 
     /// The first open task of the plan, in the order of the file.
-    #[allow(dead_code)] // reader: S7
     pub fn next_open_task(&self, corpus: &Corpus) -> Option<PlanTask> {
         next_open_task(&self.tasks(corpus)).cloned()
     }

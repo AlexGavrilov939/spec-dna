@@ -199,7 +199,6 @@ pub enum Class {
 }
 
 impl Class {
-    #[allow(dead_code)] // reader: S7
     pub fn name(self) -> &'static str {
         match self {
             Class::Routine => "routine",

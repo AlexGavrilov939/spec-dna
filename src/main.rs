@@ -48,6 +48,7 @@ mod registry;
 mod release;
 mod repo;
 mod split;
+mod stage;
 mod templates;
 mod transcript;
 
@@ -179,6 +180,37 @@ commit. It is the only command that deletes documents. Exit codes: 1 a stop,
 3 pin, base or configuration, 4 write error, 5 no folder.",
     ),
     (
+        "next",
+        "next <slug> [--base <rev>]",
+        "Prints the checklist to the next gate of the change <slug>. The stage
+comes from the files of the folder, their statuses, the diff against the
+base and the evidence of the requirements: plan, design, build, test,
+deploy or closed. Each line says done ([x]) or open ([ ]). The last line
+gives the edit or the command that ends the stage. In the build stage, it
+names the next open task of the plan. Each line has the name of the skill for
+its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
+verify or finish. The skills come in 0.7.0, and the names are fixed. The
+output has at most 12 lines. The base is the merge base of --base (default:
+origin/HEAD) and HEAD. Without a base, the stage stops at build, and the
+output has a note. With the policy none, it says that the change process is
+off. Exit codes: 2 usage, 3 base or configuration, 4 git, 5 no folder.",
+    ),
+    (
+        "status",
+        "status [--group <name>] [--base <rev>]",
+        "Lists each change of the working tree with its class, its stage, the
+statuses of its intent, spec and plan, its task progress, its areas, and its
+next gate. It marks a started change that is stale (SD911). It prints the
+number of started changes and the limit max-started, and the open follow-ups
+(`- [ ]` in Follow-ups) of the incidents. With --group, it lists only the
+changes that have an area of the group, in the areas of the intent or in the
+folder of a delta target; an unknown group is a usage error. The base is the
+merge base of --base (default: origin/HEAD) and HEAD, and a note says when
+there is none. With the policy none, it says that the change process is off
+and lists nothing. Exit codes: 2 usage or unknown group, 3 base or configuration,
+4 git.",
+    ),
+    (
         "transcript",
         "transcript <file or dir>... [--expect <id>]... [--format claude-code]",
         "Reports token usage, tool calls and document reads per session and
@@ -265,6 +297,7 @@ struct Args {
     conventions: Option<String>,
     template: Option<String>,
     layer: LayerFlags,
+    group: Option<String>,
 }
 
 /// The options of `layer add`.
@@ -332,6 +365,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         conventions: None,
         template: None,
         layer: LayerFlags::default(),
+        group: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -364,6 +398,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--template" => a.template = Some(value("--template")?),
             "--answers" => a.answers = Some(value("--answers")?),
             "--base" => a.base = Some(value("--base")?),
+            "--group" => a.group = Some(value("--group")?),
             "--path" => a.paths.push(value("--path")?),
             "--root" => a.root = Some(value("--root")?),
             "--query" => a.query = Some(value("--query")?),
@@ -492,6 +527,8 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
         "finish" => finish(&Repo::discover(&cwd)?, &a),
+        "next" => next(&Repo::discover(&cwd)?, &a),
+        "status" => status(&Repo::discover(&cwd)?, &a),
         "transcript" => transcript(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
@@ -2076,6 +2113,51 @@ fn report_stop(slug: &str, a: &Args, stop: &finish::Stop) -> u8 {
         );
     }
     1
+}
+
+/// `next <slug>`: the checklist to the next gate (`stage.rs`).
+fn next(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    let slug = a.positional[0].as_str();
+    if !finish::valid_slug(slug) {
+        return Err(Fatal::Usage(format!(
+            "`{slug}` is not the name of a change; give the folder name of the change, with no `/`"
+        )));
+    }
+    if a.group.is_some() {
+        return Err(Fatal::Usage(
+            "`next` has no --group option; `status --group <name>` lists the changes of a group"
+                .into(),
+        ));
+    }
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    stage::next(repo, &cfg, slug, a.base.as_deref(), a.json, !a.no_cache)
+}
+
+/// `status [--group <name>]`: each change and its stage (`stage.rs`).
+fn status(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    let cfg = repo.load_config()?;
+    warn_pin(&cfg);
+    let areas = match &a.group {
+        None => None,
+        Some(g) => match cfg.groups.iter().find(|(n, _)| n == g) {
+            Some((_, areas)) => Some(areas.as_slice()),
+            None => {
+                let names: Vec<&str> = cfg.groups.iter().map(|(n, _)| n.as_str()).collect();
+                return Err(Fatal::Usage(if names.is_empty() {
+                    format!("`--group {g}`: spec-dna.toml has no [groups] table")
+                } else {
+                    format!(
+                        "`--group {g}` is not a group of spec-dna.toml; the groups are: {}",
+                        names.join(", ")
+                    )
+                }));
+            }
+        },
+    };
+    stage::status(repo, &cfg, areas, a.base.as_deref(), a.json, !a.no_cache)
 }
 
 /// Finishes a change: the plan, then the write (`finish.rs`).

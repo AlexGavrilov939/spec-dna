@@ -164,7 +164,7 @@ The `Order` section of a plan holds a task list. A task is one top-level list it
 - A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
 - If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
 
-The next task is the first task that is open and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it. They are not in this version: it has the parser and the model of the tasks only.
+The next task is the first task that is open and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it ([commands.md](commands.md#next)).
 
 ## Templates
 
