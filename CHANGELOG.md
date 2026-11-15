@@ -46,6 +46,9 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Added
 
+- The configuration has the table `[evals]` with 4 keys: `dir` (default `evals`), `min-pass-rate` (default 0.8), `runs` (default 3) and `max-total-usd` (default 20). Without the table, there are no evals. A bad value is an error (exit code 3). `evals.dir` follows the rules of `templates.dir`, and it cannot overlap `templates.dir`. The folder is never part of a root. `pass-at` is a key of an eval file only, so it is unknown in `[evals]` ([docs/config.md](docs/config.md)).
+- `[harness]` has 3 new keys: `skills` (a list of `intent`, `spec`, `plan` and `review`, default `[]`), `review-md` (default `false`) and `protect-tests` (`fix-branches`, `always` or `off`, default `off`). A file that has none of them behaves as in 0.5. `REVIEW.md` and the stage skills that the configuration writes are never part of a root. `spec-dna init` writes the 3 keys with these defaults. The files, the hook and the `init` questions that use them come in later changes of this release.
+
 - The commands `spec-dna next <slug> [--base <rev>]` and `spec-dna status [--group <name>] [--base <rev>]` ([docs/commands.md](docs/commands.md#next)).
   - The stage of a change comes from its files, their statuses, the diff against the lifecycle base and the evidence. The stages are `closed`, `plan`, `design`, `build`, `test` and `deploy`.
   - `next` prints a checklist of at most 12 lines to the next gate. Each line says done or open. The last line gives the edit that approves the artifact.

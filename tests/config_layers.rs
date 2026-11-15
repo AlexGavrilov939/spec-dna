@@ -191,8 +191,14 @@ fn a_group_area_that_is_not_in_areas_is_an_error() {
 
 #[test]
 fn a_key_of_a_later_step_is_still_unknown() {
-    // `language` and `[change]` came in step 2. `[evals]` comes in step 4.
-    rejects("", "[evals]\ndir = \"e\"\n", &["unknown key", "evals"]);
+    // `language` and `[change]` came in step 2, and `[evals]` came in step 4.
+    // A key of a later step is unknown.
+    rejects(
+        "",
+        "[evals]\nrunner = \"e\"\n",
+        &["unknown key", "evals.runner"],
+    );
+    rejects("upgrade = true\n", "", &["unknown key", "`upgrade`"]);
 }
 
 #[test]

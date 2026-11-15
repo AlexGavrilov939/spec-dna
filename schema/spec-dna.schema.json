@@ -127,6 +127,39 @@
         }
       }
     },
+    "evals": {
+      "description": "The agent evals (ADR 0008): `spec-dna eval run` and the checks SD506 and SD918. No table means no evals. An eval is a file `<dir>/<id>.json`. See docs/config.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "description": "The folder of the evals, relative to the repository root. It follows the rules of `templates.dir` and cannot be, or hold, or be inside, the folder of `templates.dir`. The folder is never part of a root. Default: `evals`.",
+          "type": "string",
+          "pattern": "^[^/\\\\:][^\\\\:]*$",
+          "default": "evals"
+        },
+        "min-pass-rate": {
+          "description": "The share of evals that must pass, from 0 to 1. Default 0.8.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.8
+        },
+        "runs": {
+          "description": "The runs of an eval that sets no `runs`, from 1 to 100. Default 3.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 3
+        },
+        "max-total-usd": {
+          "description": "The most that `eval run` can spend, in USD. The command refuses a run with a higher estimate and stops above this spend. Above 0. Default 20.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 20
+        }
+      }
+    },
     "evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -326,6 +359,31 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 4294967295
+        },
+        "skills": {
+          "description": "The stage skills that `init` writes, each once. They are written in the order intent, spec, plan, review. Default: none.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "intent",
+              "spec",
+              "plan",
+              "review"
+            ]
+          }
+        },
+        "review-md": {
+          "description": "True: `init` writes `REVIEW.md`, the review policy. Default false.",
+          "type": "boolean"
+        },
+        "protect-tests": {
+          "description": "When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `fix-branches` (on a branch whose name starts with `fix/`), `always` or `off`. Default `off`.",
+          "enum": [
+            "fix-branches",
+            "always",
+            "off"
+          ]
         },
         "roles": {
           "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",

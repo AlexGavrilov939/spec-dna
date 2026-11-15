@@ -221,6 +221,71 @@ impl RoleCfg {
     }
 }
 
+/// A stage skill that `init` writes (`[harness] skills`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Skill {
+    Intent,
+    Spec,
+    Plan,
+    Review,
+}
+
+impl Skill {
+    pub const ALL: [Skill; 4] = [Skill::Intent, Skill::Spec, Skill::Plan, Skill::Review];
+
+    /// The value in `skills`: `intent`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Skill::Intent => "intent",
+            Skill::Spec => "spec",
+            Skill::Plan => "plan",
+            Skill::Review => "review",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<Skill> {
+        Skill::ALL.into_iter().find(|k| k.key() == s)
+    }
+
+    /// The name of the skill: `spec-dna-intent`.
+    #[allow(dead_code)] // The text of the skills (step 4, S3) reads it.
+    pub fn name(self) -> String {
+        format!("spec-dna-{}", self.key())
+    }
+
+    /// The path of the file: `.claude/skills/spec-dna-intent/SKILL.md`.
+    pub fn path(self) -> String {
+        format!(".claude/skills/{}/SKILL.md", self.name())
+    }
+}
+
+/// `[harness] protect-tests`: when the hook asks before an edit of a test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protect {
+    FixBranches,
+    Always,
+    Off,
+}
+
+impl Protect {
+    pub fn name(self) -> &'static str {
+        match self {
+            Protect::FixBranches => "fix-branches",
+            Protect::Always => "always",
+            Protect::Off => "off",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<Protect> {
+        [Protect::FixBranches, Protect::Always, Protect::Off]
+            .into_iter()
+            .find(|p| p.name() == s)
+    }
+}
+
+/// The path of the review policy file (`[harness] review-md`).
+pub const REVIEW: &str = "REVIEW.md";
+
 /// The `[harness]` table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Harness {
@@ -233,6 +298,16 @@ pub struct Harness {
     pub roles: Vec<RoleCfg>,
     /// The effort for each model alias, for a switch with `/model`.
     pub efforts: Vec<(String, Effort)>,
+    /// The stage skills to write, in the order of `Skill`.
+    pub skills: Vec<Skill>,
+    /// True: write `REVIEW.md`.
+    pub review_md: bool,
+    pub protect_tests: Protect,
+    /// The globs of `[evidence] tests`. `Config::parse` sets them, so the
+    /// harness of a base commit has the globs of that base. `parse` leaves
+    /// the list empty, and `toml_section` does not write it.
+    #[allow(dead_code)] // The hook `protect-tests` (step 4, S4) reads it.
+    pub tests: Vec<String>,
 }
 
 pub const DEFAULT_CONTEXT_METER: [u32; 2] = [300_000, 600_000];
@@ -310,7 +385,18 @@ impl Harness {
             fanout_cap: DEFAULT_FANOUT_CAP,
             roles: Role::ALL.iter().map(|r| RoleCfg::new(*r)).collect(),
             efforts: vec![("sonnet".into(), Effort::High)],
+            skills: Vec::new(),
+            review_md: false,
+            protect_tests: Protect::Off,
+            tests: Vec::new(),
         }
+    }
+
+    /// True if the configuration writes the document at `path`: `REVIEW.md`
+    /// or a stage skill. At level `none`, `init` writes nothing.
+    pub fn writes_doc(&self, path: &str) -> bool {
+        self.level != Level::None
+            && ((self.review_md && path == REVIEW) || self.skills.iter().any(|s| s.path() == path))
     }
 
     pub fn cfg(&self, role: Role) -> &RoleCfg {
@@ -374,6 +460,41 @@ impl Harness {
         }
         if let Some(n) = f.opt_u32("fanout-cap")? {
             h.fanout_cap = n;
+        }
+        let mut skills: Vec<Skill> = Vec::new();
+        for name in f.opt_strs("skills")? {
+            let skill = Skill::from_key(&name).ok_or_else(|| {
+                let keys: Vec<&str> = Skill::ALL.iter().map(|s| s.key()).collect();
+                format!(
+                    "`harness.skills`: unknown skill `{name}`; use {}",
+                    keys.join(", ")
+                )
+            })?;
+            if skills.contains(&skill) {
+                return Err(format!("`harness.skills` lists `{name}` more than once"));
+            }
+            skills.push(skill);
+        }
+        skills.sort();
+        h.skills = skills;
+        match f.take("review-md") {
+            None => {}
+            Some(Toml::Boolean(b)) => h.review_md = *b,
+            Some(_) => return Err("`harness.review-md` must be true or false".into()),
+        }
+        match f.take("protect-tests") {
+            None => {}
+            Some(v) => {
+                h.protect_tests = v.as_str().and_then(Protect::from_name).ok_or_else(|| {
+                    let got = match v {
+                        Toml::String(s) => format!("`{s}`"),
+                        other => format!("a {}", other.type_str()),
+                    };
+                    format!(
+                        "`harness.protect-tests` must be \"fix-branches\", \"always\" or \"off\", not {got}"
+                    )
+                })?;
+            }
         }
         if let Some(v) = f.take("roles") {
             let roles = v.as_table().ok_or("`harness.roles` must be a table")?;
@@ -479,7 +600,12 @@ impl Harness {
         s += &format!("deny = [{}]\n", strs(&self.deny));
         s += &format!("context-meter = [{}]\n", nums(&self.context_meter));
         s += &format!("subagent-meter = {}\n", self.subagent_meter);
-        s += &format!("fanout-cap = {}\n\n[harness.roles]\n", self.fanout_cap);
+        s += &format!("fanout-cap = {}\n", self.fanout_cap);
+        let skills: Vec<String> = self.skills.iter().map(|k| quote(k.key())).collect();
+        s += &format!("skills = [{}]\n", skills.join(", "));
+        s += &format!("review-md = {}\n", self.review_md);
+        s += &format!("protect-tests = {}\n", quote(self.protect_tests.name()));
+        s += "\n[harness.roles]\n";
         for r in Role::ALL.into_iter().filter(|r| self.level.includes(*r)) {
             let c = self.cfg(r);
             let mut parts = vec![format!("claude-code = {}", quote(c.model.name()))];
@@ -2159,24 +2285,98 @@ opus = "xhigh"
         );
         let c =
             crate::config::Config::parse(&format!("{base}[harness]\nlevel = \"full\"\n")).unwrap();
-        assert_eq!(c.harness, Some(full()));
+        // `Config::parse` also sets the test globs.
+        let mut want = full();
+        want.tests = crate::config::DEFAULT_TEST_GLOBS
+            .map(str::to_string)
+            .to_vec();
+        assert_eq!(c.harness, Some(want));
         let e =
             crate::config::Config::parse(&format!("{base}[harness]\nlevel = \"x\"\n")).unwrap_err();
         assert!(e.contains("harness.level"), "{e}");
     }
 
     #[test]
+    fn the_harness_gets_the_test_globs_of_evidence() {
+        let base = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n";
+        let tests = |extra: &str| {
+            crate::config::Config::parse(&format!("{base}{extra}[harness]\nlevel = \"lean\"\n"))
+                .unwrap()
+                .harness
+                .unwrap()
+                .tests
+        };
+        assert_eq!(
+            tests("[evidence]\ntests = [\"t/**\", \"**/*_t.*\"]\n"),
+            ["t/**", "**/*_t.*"]
+        );
+        assert!(tests("[evidence]\ntests = []\n").is_empty());
+        assert_eq!(tests("").len(), crate::config::DEFAULT_TEST_GLOBS.len());
+    }
+
+    #[test]
+    fn the_new_keys_have_defaults_and_an_order() {
+        let h = parse("level = \"lean\"").unwrap();
+        assert!(h.skills.is_empty() && !h.review_md && h.protect_tests == Protect::Off);
+        // The list is in the order of `Skill`, not the order of the file.
+        let h = parse("level = \"full\"\nskills = [\"review\", \"intent\", \"plan\"]").unwrap();
+        assert_eq!(h.skills, [Skill::Intent, Skill::Plan, Skill::Review]);
+        assert_eq!(Skill::Spec.path(), ".claude/skills/spec-dna-spec/SKILL.md");
+        let text = h.toml_section();
+        assert!(
+            text.contains(
+                "fanout-cap = 10\nskills = [\"intent\", \"plan\", \"review\"]\nreview-md = false\nprotect-tests = \"off\"\n\n[harness.roles]"
+            ),
+            "{text}"
+        );
+        // Level `none` writes no key but `level`.
+        assert_eq!(
+            Harness::new(Level::None).toml_section(),
+            "[harness]\nlevel = \"none\"\n"
+        );
+    }
+
+    #[test]
+    fn writes_doc_names_the_files_of_the_new_keys() {
+        let mut h = parse("level = \"lean\"\nskills = [\"spec\"]\nreview-md = true").unwrap();
+        assert!(h.writes_doc("REVIEW.md"));
+        assert!(h.writes_doc(".claude/skills/spec-dna-spec/SKILL.md"));
+        assert!(!h.writes_doc(".claude/skills/spec-dna-plan/SKILL.md"));
+        assert!(!h.writes_doc(".claude/skills/spec-dna/SKILL.md"));
+        h.level = Level::None;
+        assert!(!h.writes_doc("REVIEW.md"));
+    }
+
+    #[test]
     fn toml_section_round_trips() {
-        for h in [lean(), full(), Harness::new(Level::None), {
-            let mut h = full();
-            h.deny = vec!["NotebookEdit".into()];
-            h.context_meter.clear();
-            h.cfg_mut(Role::Reviewer).model = Model::None;
-            h.cfg_mut(Role::Advisor).agent = Model::None;
-            h.cfg_mut(Role::Orchestrator).fallback.clear();
-            h.efforts.clear();
-            h
-        }] {
+        for h in [
+            lean(),
+            full(),
+            Harness::new(Level::None),
+            {
+                let mut h = full();
+                h.deny = vec!["NotebookEdit".into()];
+                h.context_meter.clear();
+                h.cfg_mut(Role::Reviewer).model = Model::None;
+                h.cfg_mut(Role::Advisor).agent = Model::None;
+                h.cfg_mut(Role::Orchestrator).fallback.clear();
+                h.efforts.clear();
+                h
+            },
+            {
+                let mut h = full();
+                h.skills = Skill::ALL.to_vec();
+                h.review_md = true;
+                h.protect_tests = Protect::Always;
+                h
+            },
+            {
+                let mut h = lean();
+                h.skills = vec![Skill::Plan];
+                h.protect_tests = Protect::FixBranches;
+                h
+            },
+        ] {
             let text = h.toml_section();
             let t: toml::Table = text.parse().unwrap_or_else(|e| panic!("{e}\n{text}"));
             assert_eq!(Harness::parse(&t["harness"]).unwrap(), h, "{text}");
