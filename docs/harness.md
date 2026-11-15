@@ -27,7 +27,8 @@ A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or
 
 Notes:
 
-- `Explore.md` replaces the built-in Explore subagent of Claude Code. The built-in Explore uses the model of the main session. The replacement uses `haiku`, has 6 tools and does not load `CLAUDE.md`, so its first request is small.
+- `.claude/agents/Explore.md` replaces the built-in `Explore` subagent of Claude Code, with its model, tools and text. This is on purpose: only an agent with the name `Explore` replaces the built-in one. The built-in `Explore` uses the model of the main session. The replacement uses `haiku`, has 6 tools and does not load `CLAUDE.md`, so its first request is small. `init` says this when it writes the file.
+- To keep the built-in `Explore`, set `researcher = { claude-code = "none" }` in `[harness.roles]` and run `spec-dna init --reconfigure`. `init` removes the file if you did not edit it. To use an agent of your own with the name `Explore`, set the same value and write your file. Without it, `init` refuses to replace your file.
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
 - The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
 

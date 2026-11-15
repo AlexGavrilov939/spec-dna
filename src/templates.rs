@@ -246,12 +246,12 @@ Chosen option: {{option}}, because {{reason}}.
         DocType::Plan,
         "## Files
 
-- {{A path that this change touches.}}
+- `{{path}}` {{Why this change touches the path.}}
 
 ## Order
 
-- [ ] t1: {{The first step.}} Files: {{The paths of the step.}} Verify: {{The check of the step.}}
-- [ ] t2: {{The next step.}} Files: {{The paths of the step.}} Verify: {{The check of the step.}}
+- [ ] t1: {{The first step.}} Files: `{{path}}`. Verify: {{The check of the step.}}
+- [ ] t2: {{The next step.}} Files: `{{path}}`. Verify: {{The check of the step.}}
 
 ## Risks
 
@@ -581,6 +581,20 @@ mod tests {
             corpus_of(&cfg, &place_of(ty), &text)
         };
         let c = build("plan", DocType::Plan);
+        // The code spans of the template hold a placeholder. It is no path, so
+        // an untouched plan lists no path, and `next` says why.
+        let change = &crate::change::collect(&c)[0];
+        assert!(change.files(&c).is_empty());
+        assert_eq!(
+            change.files_not_paths(&c),
+            ["`{{path}}` {{Why this change touches the path.}}"]
+        );
+        assert!(change.tasks(&c).iter().all(|t| t.files.is_empty()));
+        let text = {
+            let (_, raw) = embedded("plan").unwrap();
+            instantiate(&raw, DocType::Plan, "Example", true)
+        };
+        assert!(text.contains("Files: `{{path}}`. Verify:"), "{text}");
         let tasks = plan_tasks(&c.docs[0]);
         let got: Vec<_> = tasks
             .iter()

@@ -6,6 +6,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Changed
 
+- `spec-dna init` says, in a `note:` line, that `.claude/agents/Explore.md` replaces the built-in `Explore` subagent of Claude Code, and how to remove it (`researcher = { claude-code = "none" }` in `[harness.roles]`, then `init --reconfigure`). It says so only when it creates or changes the file. The team page `model-team.md` has the same clause in the `researcher` row, and [docs/harness.md](docs/harness.md) explains the override. A project that an earlier `init` set up gets SD502 on `.claude/agents/model-team.md` after the update, because the `researcher` row of the team page changed. Run `spec-dna init` again. It writes the file, and the error goes away.
 - `spec-dna init` question 7 writes the top key `language = "<tag>"` instead of `[rules] lint = "off"`. The answer `en` writes nothing, and a value that is not a BCP 47 tag is a usage error (exit code 2). Detection proposes a tag from the heading aliases and from the script of the headings (`Entscheidung` gives `de`). If it cannot map them, it proposes `en` with a note. `init --reconfigure` keeps `language`, a `[change]` table and a `[rules] lint` rule as they are. A new project gets no `[change]` table ([docs/init.md](docs/init.md)).
 - `spec-dna init` asks 13 questions.
   - Question 4 is the change policy (`three-class`, `two-class` or `none`). Question 5 is the gate (`block`, `warn` or `off`). `init` does not ask question 5 for the policy `none`.
@@ -41,6 +42,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - SD405 is `decision-locked` and SD611 is `decision-links-intent`. The codes stay. In `--json`, read `code`: the field `name` changed. The text output shows the new names. The fingerprint and the keys of `[rules]` do not change. The messages and the fix texts say "locked", where 0.5 said "frozen". The fix of SD611 tells the author to name the intent as plain text, not as a link. SD901 and `finish` would stop on a link.
 - The requirement lint (SD801 to SD805) is off when `language` has a primary subtag other than `en`, also with `check --lint`.
 - SD101 and SD102 give no diagnostic for a reference in the locked text of an accepted decision. This text is the body outside the amendment, history and live sections. The author cannot change it, and a finished intent leaves no document to link.
+- The plan template (`spec-dna new plan`) writes a code span in its `Files` item and in the `Files:` label of its example tasks. The span holds the placeholder `{{path}}`. A placeholder is no path, so an untouched plan lists no path.
 
 ### Added
 
@@ -148,6 +150,18 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - A document that the `Files` of a plan lists gives nothing in 2 cases: the change is in the diff, or the base tree has the change with an `accepted` intent and an `approved` plan.
 - The profiles `lite`, `standard` and `strict` set SD901 to SD904 to off, warning and warning, and SD921 to off, warning and error. The rule groups are `layers` and `changes`. A 0.5 project gets the new warnings SD901 to SD904 at the first `check` after the update. The gate against the base reports only the new warnings.
 - The parser stores the rows of each table with the header cells `Term` and `Forbidden synonyms`. spec-dna rebuilds the index once after the update, because the parsed data changed.
+
+### Fixed
+
+- A plan whose `Files` section lists plain paths (`- src/dose.py`) had an empty `Files`, because spec-dna read only a code span. Before `finish` no change was in the diff, and SD913 was silent. After `finish` the deleted folder made the change part of the diff with a scope of only its folder, so each implementation file gave SD913. Now an item of `Files`, and an entry of the label `Files:` of a task, can be a plain path ([docs/types.md](docs/types.md#files-and-paths)).
+  - A plain path is one token that has no white space and has a `/`, a `.` or a `*`: `src/dose.py`, `tests/*.py`, `docs/`. One final `.`, `,`, `:` or `;` is dropped, the parentheses that wrap the text are dropped, and a link `[text](destination)` gives its text. A code span is still the first choice. A URL, a tag, a placeholder `{{...}}` and a word with none of `/`, `.` and `*` (`Makefile`) are not paths: write them in a code span. Prose such as `no code here` is not a path.
+  - In a task line, each entry of `Files:` (split at the commas outside code spans) gives its code spans, or its plain path if it has no code span. A task line with a code span and a plain path in 2 entries gives both.
+  - CHANGE OF BEHAVIOR: a plan with plain paths now has real patterns. These readers use them: SD905 (the documents of a change in a diff with more than one change), SD910, SD911, SD913, SD915, SD916 (the documents that the evidence check reads), SD917, SD921, `finish` (step 5, the documents that the evidence check reads when another change is in the diff), `stats --sdlc` (the indicator of SD913), `status` and `next`. A project can see new results from the same files. A plan that lists only prose gives no new result.
+  - `PARSER_VERSION` and `FORMAT` do not change: the reader uses the item text that the index already keeps.
+  - When the items of `Files` are not paths, and the plan lists no path in `Files` and none in its tasks, the last line of `next` and `status` says so and shows the first such item, instead of "it lists none". SD913 and SD915 name the first such item in their message, also only if the plan lists no path. The fix text of SD913 gives the rule. No new code.
+  - In a task line, a comma in a code span or in a link (`[text](destination)`) does not split the entries. One final `.` or `;`, and the parentheses that wrap the entries, are removed.
+  - The patterns of a plan are the paths of its `Files` section, then the `Files:` paths of its tasks, with no repeat. Each reader of `Files` uses this list: SD905, SD910, SD911, SD913, SD915, SD916, SD917, SD921, `finish` step 5, `stats --sdlc`, `status` and `next`. A plan with `Files` = `- None.` and the paths in its task lines is a plan with paths.
+  - If the diff deletes the folder of a change (the pull request of `finish`), the scope of SD913 has the paths of the base tree and of the newest plan and spec of the branch before the deletion. A plan that the pull request adds or edits no longer gives SD913 on its own files. SD915 still reads the delta and `Files` of the base tree only.
 
 ## 0.5.0 - 2026-11-14
 

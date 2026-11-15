@@ -488,7 +488,14 @@ impl<'a> Ctx<'a> {
                     false,
                     Step::Execute,
                     if files.is_empty() {
-                        format!("add the paths of the work to `Files` in {dir}/plan.md: it lists none")
+                        match ch.files_not_paths(head).first() {
+                            Some(item) => format!(
+                                "the items of `Files` in {dir}/plan.md are not paths, so it lists no path (the first is \"{item}\"); write each path or glob in a code span, as `src/valve.py`"
+                            ),
+                            None => format!(
+                                "add the paths of the work to `Files` in {dir}/plan.md: it lists none"
+                            ),
+                        }
                     } else if changed.is_none() {
                         "change a file of `Files`; the base is unknown, so pass --base <rev>"
                             .to_string()

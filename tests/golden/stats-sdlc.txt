@@ -10,7 +10,7 @@ Build leading: Time from plan approval to the merged pull request: 5.0 days (2 c
   note: the value is the median time from the commit that sets the plan `approved` to the first-parent commit that deletes the folder; a rebase merge shows only its last commit
 Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
 Build lagging: How often the merged diff still matches the committed plan.md: 50.0 percent (2 changes)
-  note: the value is the share of finished changes whose merged diff has no path outside the folder, `Files` and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit
+  note: the value is the share of finished changes whose merged diff has no path outside the folder, `Files`, the `Files:` paths of the tasks and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit
 Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
 Test leading: The eval pass rate over time: n/a (evals come in step 4 of 0.6.0, with the files of `eval run --out`)
 Test leading: How long a production incident takes to become a permanent eval: n/a (evals come in step 4 of 0.6.0)

@@ -360,6 +360,7 @@ A change has no stage field. The stage is the first row of this table that match
 | `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
+- If the plan lists no path because the items of `Files` are not paths, the last line says so and shows the first such item. A path is a code span, or a plain path ([Files and paths](types.md#files-and-paths)).
 - A file of `Files` differs from the base when the diff of the working tree against the base has a path that a `Files` item matches. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
 - A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
@@ -494,7 +495,7 @@ The command rebuilds the life of each change from the commits that touched its `
 
 The commit that "deleted the folder" is the first-parent commit of the deletion. For a merge commit it is the merge commit, and for a squash merge it is the squash commit. A rebase merge shows only its last commit. For such a change the time and the diff can be smaller than the real ones.
 
-The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree. It has the folder, the `Files` patterns, and the documents that the delta and `Interfaces` name. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
+The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree. It has the folder, the `Files` patterns, the `Files:` paths of the tasks, and the documents that the delta and `Interfaces` name. `stats` reads the last tree of the life in the history. A squash merge keeps no commit of the branch, so `stats` cannot see a plan that the pull request added or edited. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
 
 A shallow clone can miss old changes, so each indicator that it computes has this note in `reason`. An indicator with no data has no value, and the reason says what is missing.
 
