@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::frontmatter::{self, Value};
 use crate::model::{Corpus, is_doc_path};
 use crate::repo::{Fatal, Repo};
+use std::collections::HashMap;
 use std::path::Path;
 
 pub struct Moved {
@@ -123,12 +124,12 @@ fn move_document(
     );
     let text = read(repo, &doc.path)?;
     let old_dir = parent(&doc.path);
+    let one: HashMap<String, String> = HashMap::from([(doc.path.clone(), to_path.clone())]);
     let updated = rewrite_links(
         &add_aliases(&text, &add),
         old_dir,
         parent(&to_path),
-        &doc.path,
-        &to_path,
+        &one,
         c,
     );
     // Relative links from other documents to the moved file.
@@ -141,7 +142,7 @@ fn move_document(
         if points_here {
             let t = read(repo, &o.path)?;
             let dir = parent(&o.path);
-            let nt = rewrite_links(&t, dir, dir, &doc.path, &to_path, c);
+            let nt = rewrite_links(&t, dir, dir, &one, c);
             if nt != t {
                 others.push((o.path.clone(), nt));
             }
@@ -195,14 +196,16 @@ pub(crate) fn parent(path: &str) -> &str {
 }
 
 /// Rewrites relative Markdown link destinations of a document that moves
-/// from `old_dir` to `new_dir`, or that links to a moved file. It does not
-/// change links that do not resolve, external links or code blocks.
-fn rewrite_links(
+/// from `old_dir` to `new_dir`, or that links to a moved file. `moves` maps
+/// the old path of each moved file, and each moved folder that a link can
+/// name, to its new path. One pass reads the tree before any move (`c`), so a
+/// batch of moves needs one call for each document. It does not change links
+/// that do not resolve, external links or code blocks.
+pub(crate) fn rewrite_links(
     text: &str,
     old_dir: &str,
     new_dir: &str,
-    moved_from: &str,
-    moved_to: &str,
+    moves: &HashMap<String, String>,
     c: &Corpus,
 ) -> String {
     let mut out = String::with_capacity(text.len());
@@ -231,14 +234,7 @@ fn rewrite_links(
                 .find(char::is_whitespace)
                 .map_or(line.len(), |j| lead + j);
             out.push_str(&line[..lead]);
-            out.push_str(&new_dest(
-                &line[lead..dest_end],
-                old_dir,
-                new_dir,
-                moved_from,
-                moved_to,
-                c,
-            ));
+            out.push_str(&new_dest(&line[lead..dest_end], old_dir, new_dir, moves, c));
             rest = &line[dest_end..];
         }
         while let Some(i) = rest.find("](") {
@@ -247,14 +243,7 @@ fn rewrite_links(
             let end = rest
                 .find(|ch: char| ch == ')' || ch.is_whitespace())
                 .unwrap_or(rest.len());
-            out.push_str(&new_dest(
-                &rest[..end],
-                old_dir,
-                new_dir,
-                moved_from,
-                moved_to,
-                c,
-            ));
+            out.push_str(&new_dest(&rest[..end], old_dir, new_dir, moves, c));
             rest = &rest[end..];
         }
         out.push_str(rest);
@@ -266,8 +255,7 @@ fn new_dest(
     dest: &str,
     old_dir: &str,
     new_dir: &str,
-    moved_from: &str,
-    moved_to: &str,
+    moves: &HashMap<String, String>,
     c: &Corpus,
 ) -> String {
     let keep = dest.to_string();
@@ -290,21 +278,23 @@ fn new_dest(
     let Some(resolved) = resolved else {
         return keep;
     };
-    let target = if resolved == moved_from {
-        moved_to.to_string()
-    } else {
-        resolved.clone()
-    };
+    let target = moves.get(&resolved).unwrap_or(&resolved).clone();
     if target == resolved && old_dir == new_dir {
         return keep;
     }
     if !(c.files.contains(&resolved) || c.dirs.contains(&resolved)) {
         return keep;
     }
+    // A link to a folder keeps its final `/`.
+    let slash = if path.ends_with('/') && !target.is_empty() {
+        "/"
+    } else {
+        ""
+    };
     if path.starts_with('/') {
-        return format!("/{target}{suffix}");
+        return format!("/{target}{slash}{suffix}");
     }
-    format!("{}{suffix}", relative(new_dir, &target))
+    format!("{}{slash}{suffix}", relative(new_dir, &target))
 }
 
 /// Returns the relative path from a directory to a repository path.
@@ -513,5 +503,60 @@ mod tests {
         let e = t.find("b\n").unwrap();
         assert_eq!(line_span(t, s, e - 1), (2, e));
         assert_eq!(dedent("  - **k**: x\n    - y\n"), "- **k**: x\n  - y\n");
+    }
+
+    fn corpus(files: &[(&str, &str)]) -> Corpus {
+        let cfg = Config::parse(&format!(
+            "spec-dna = \"{}\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"research\"\n",
+            crate::adapters::VERSION
+        ))
+        .unwrap();
+        let docs = files
+            .iter()
+            .filter(|(p, _)| is_doc_path(p))
+            .map(|(p, t)| (p.to_string(), std::sync::Arc::new(crate::parse::parse(t))))
+            .collect();
+        Corpus::build(
+            &cfg,
+            files.iter().map(|(p, _)| p.to_string()).collect(),
+            docs,
+        )
+    }
+
+    #[test]
+    fn a_batch_rewrite_follows_each_move_in_one_pass() {
+        let c = corpus(&[
+            ("docs/a/x.md", "# X\n"),
+            ("docs/a/y.md", "# Y\n"),
+            ("docs/a/img/p.png", ""),
+            ("docs/b/z.md", "# Z\n"),
+        ]);
+        let moves: std::collections::HashMap<String, String> = [
+            ("docs/a/x.md", "docs/c/x.md"),
+            ("docs/a/y.md", "docs/c/y.md"),
+            ("docs/a/img", "docs/c/img"),
+            ("docs/a/img/p.png", "docs/c/img/p.png"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        // A document that does not move: only the moved targets change.
+        let text = "[x](a/x.md#k) and [y](a/y.md), [z](b/z.md), [dir](a/img/), [self](#top)\n";
+        assert_eq!(
+            rewrite_links(text, "docs", "docs", &moves, &c),
+            "[x](c/x.md#k) and [y](c/y.md), [z](b/z.md), [dir](c/img/), [self](#top)\n"
+        );
+        // A document that moves with them: the links to the other moved files
+        // stay short, and the links to files that stay get a new path.
+        let text = "[y](y.md), [z](../b/z.md), [p](img/p.png)\n";
+        assert_eq!(
+            rewrite_links(text, "docs/a", "docs/c", &moves, &c),
+            "[y](y.md), [z](../b/z.md), [p](img/p.png)\n"
+        );
+        let text = "[z](../b/z.md)\n";
+        assert_eq!(
+            rewrite_links(text, "docs/a", "docs/d/e", &moves, &c),
+            "[z](../../b/z.md)\n"
+        );
     }
 }

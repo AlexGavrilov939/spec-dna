@@ -207,6 +207,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Fixed
 
+- `spec-dna mv` keeps the final `/` of a relative link to a folder, in the document that it moves. It dropped the `/`.
 - A plan whose `Files` section lists plain paths (`- src/dose.py`) had an empty `Files`, because spec-dna read only a code span. Before `finish` no change was in the diff, and SD913 was silent. After `finish` the deleted folder made the change part of the diff with a scope of only its folder, so each implementation file gave SD913. Now an item of `Files`, and an entry of the label `Files:` of a task, can be a plain path ([docs/types.md](docs/types.md#files-and-paths)).
   - A plain path is one token that has no white space and has a `/`, a `.` or a `*`: `src/dose.py`, `tests/*.py`, `docs/`. One final `.`, `,`, `:` or `;` is dropped, the parentheses that wrap the text are dropped, and a link `[text](destination)` gives its text. A code span is still the first choice. A URL, a tag, a placeholder `{{...}}` and a word with none of `/`, `.` and `*` (`Makefile`) are not paths: write them in a code span. Prose such as `no code here` is not a path.
   - In a task line, each entry of `Files:` (split at the commas outside code spans) gives its code spans, or its plain path if it has no code span. A task line with a code span and a plain path in 2 entries gives both.
