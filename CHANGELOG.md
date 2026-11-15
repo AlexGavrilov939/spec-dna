@@ -62,6 +62,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - The requirement lint (SD801 to SD805) is off when `language` has a primary subtag other than `en`, also with `check --lint`.
 - SD101 and SD102 give no diagnostic for a reference in the locked text of an accepted decision. This text is the body outside the amendment, history and live sections. The author cannot change it, and a finished intent leaves no document to link.
 - The plan template (`spec-dna new plan`) writes a code span in its `Files` item and in the `Files:` label of its example tasks. The span holds the placeholder `{{path}}`. A placeholder is no path, so an untouched plan lists no path.
+- CHANGE OF BEHAVIOR: the pin mismatch message depends on the pin. A pin from 0.4.0 to before this version says "run `spec-dna upgrade`", with `--pin-file spec-dna-pin.toml` if the file has `[spec-dna-sha256]`. A pin before 0.4.0 says to move to 0.4.2 first. A pin after the binary has no sentence to move the project. A pin that is not 3 numbers keeps the earlier sentence. A command that stops on a pin mismatch gives this message. `init` and `init --reconfigure` stop with exit code 3 and write nothing. The pin scan also reads a pin in single quotes and a file with a byte order mark.
 
 ### Added
 
