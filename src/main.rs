@@ -58,6 +58,7 @@ mod stage;
 mod templates;
 mod transcript;
 mod upgrade_config;
+mod upgrade_docs;
 mod upgrade_old;
 
 use crate::adapters::VERSION;
