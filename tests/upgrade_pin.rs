@@ -9,6 +9,7 @@
 mod common;
 
 use common::*;
+use std::fs;
 
 /// The fixtures of the upgrade: each pins a version before the binary.
 const FIXTURES: &[(&str, &str)] = &[("v04", "0.4.2"), ("v05", "0.5.0"), ("brownfield", "0.5.0")];
@@ -207,4 +208,63 @@ fn a_pin_before_a_parse_error_still_gives_the_message() {
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("pins version 0.5.0"), "{err}");
     assert!(err.contains(&upgrade_sentence()), "{err}");
+}
+
+// --- `--pin-file` (D135): the cases that waited for the command ---
+
+fn with_sums(repo: &Repo, pin: &str) {
+    let mut text = repo.read("spec-dna.toml");
+    text.push('\n');
+    text.push_str(&sums_table(pin, 'a'));
+    repo.write("spec-dna.toml", &text);
+    repo.commit("sums");
+}
+
+fn upgrade(repo: &Repo, args: &[&str]) -> (i32, String, String) {
+    let mut a = vec!["upgrade"];
+    a.extend_from_slice(args);
+    repo.run(&a)
+}
+
+#[test]
+fn a_table_of_sums_needs_a_pin_file_with_the_sums_of_the_new_version() {
+    let repo = Repo::from_fixture("v05", &[]);
+    with_sums(&repo, "0.5.0");
+    let before = tree_bytes(&repo.dir);
+    // No flag.
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("--pin-file"), "{err}");
+    // Another version in the file.
+    let (dir, file) = pin_file("0.5.9", Some(&sums_table("0.5.9", 'b')));
+    let (code, out, err) = upgrade(&repo, &["--pin-file", file.to_str().unwrap()]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains(VERSION), "{err}");
+    let _ = fs::remove_dir_all(dir);
+    // A bad sum: 63 characters.
+    let bad = sums_table(VERSION, 'b').replacen(&"b".repeat(64), &"b".repeat(63), 1);
+    let (dir, file) = pin_file(VERSION, Some(&bad));
+    let (code, out, err) = upgrade(&repo, &["--pin-file", file.to_str().unwrap()]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("64"), "{err}");
+    let _ = fs::remove_dir_all(dir);
+    // A file with no table.
+    let (dir, file) = pin_file(VERSION, None);
+    let (code, out, err) = upgrade(&repo, &["--pin-file", file.to_str().unwrap()]);
+    assert_eq!(code, 3, "{out}{err}");
+    let _ = fs::remove_dir_all(dir);
+    // A file that is not there.
+    let (code, out, err) = upgrade(&repo, &["--pin-file", "/nonexistent/pin.toml"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(before, tree_bytes(&repo.dir));
+}
+
+#[test]
+fn a_pin_file_of_another_version_stops_a_project_with_no_table_too() {
+    let repo = Repo::from_fixture("v05", &[]);
+    let (dir, file) = pin_file("0.5.9", Some(&sums_table("0.5.9", 'b')));
+    let (code, out, err) = upgrade(&repo, &["--pin-file", file.to_str().unwrap()]);
+    let _ = fs::remove_dir_all(dir);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(repo.git_out(&["status", "--porcelain"]), "");
 }

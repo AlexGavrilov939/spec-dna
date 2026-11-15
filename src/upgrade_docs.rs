@@ -18,9 +18,6 @@
 //! The result has no side effect. S8 (the proof), S10 (the command) and S11
 //! (the base plan of `check`) use the same data.
 
-// `upgrade` (step 5, slice 10) calls this module. Until then only the tests do.
-#![allow(dead_code)]
-
 use crate::config::Config;
 use crate::finish;
 use crate::frontmatter::{self, Value};
@@ -55,6 +52,7 @@ pub struct TreeData {
 
 impl TreeData {
     /// A tree in memory: each path with its bytes.
+    #[cfg(test)]
     pub fn from_map(blobs: HashMap<String, Vec<u8>>) -> TreeData {
         let mut files: Vec<String> = blobs.keys().cloned().collect();
         files.sort();

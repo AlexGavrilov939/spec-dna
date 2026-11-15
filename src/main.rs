@@ -84,6 +84,26 @@ files if the file has a [harness] table, unless --reconfigure is set.
 With --reconfigure, it asks the questions again.",
     ),
     (
+        "upgrade",
+        "upgrade [--dry-run] [--layout] [--pin-file <file>]",
+        "Moves a project that pins 0.4.0 or later to the version of this binary. It
+reads the committed tree (HEAD), builds the whole plan in memory, proves that
+each old id, alias, requirement and section still resolves to the same text,
+and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the
+type and the status in the front matter, and the adapter and harness files. It
+moves each proposed, accepted or rejected change to intent/<slug>/intent.md
+with git mv, and keeps its old id as an alias. With --layout, it also moves
+the folders of the other 0.5 namespaces of a mixed root. --pin-file gives the
+spec-dna-pin.toml of the release, which a project with [spec-dna-sha256]
+needs. It refuses a tree that is not clean (also with --dry-run), and it stops
+with no write if the proof fails. --dry-run prints the diff of each file and
+writes nothing. It never commits and never deletes a document: the report
+lists the proposals to delete, and the last line is the git add command. A
+second run after the commit changes nothing. Exit codes: 0 done or nothing to
+change, 1 a tree that is not clean, a stop of a move or a failed proof, 2 usage,
+3 configuration, pin or pin file, 4 git or write error.",
+    ),
+    (
         "check",
         "check [--base <rev>] [--all] [--lint] [--staged]",
         "Reports the diagnostics that are new against the merge base of <rev>
@@ -351,6 +371,8 @@ struct Args {
     answers: Option<String>,
     reconfigure: bool,
     dry_run: bool,
+    layout: bool,
+    pin_file: Option<String>,
     ty: Option<String>,
     stub: bool,
     replace: bool,
@@ -426,6 +448,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         answers: None,
         reconfigure: false,
         dry_run: false,
+        layout: false,
+        pin_file: None,
         ty: None,
         stub: false,
         replace: false,
@@ -465,6 +489,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--non-interactive" => a.non_interactive = true,
             "--reconfigure" => a.reconfigure = true,
             "--dry-run" => a.dry_run = true,
+            "--layout" => a.layout = true,
+            "--pin-file" => a.pin_file = Some(value("--pin-file")?),
             "--stub" => a.stub = true,
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
@@ -624,6 +650,13 @@ fn run(a: Args) -> Result<u8, Fatal> {
     if a.since.is_some() && a.command != "log" {
         return Err(Fatal::Usage("--since is an option of `log`".into()));
     }
+    if a.command != "upgrade" {
+        for (given, name) in [(a.layout, "--layout"), (a.pin_file.is_some(), "--pin-file")] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `upgrade`")));
+            }
+        }
+    }
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
     }
@@ -650,6 +683,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
             Ok(0)
         }
         "init" => init(&Repo::discover(&cwd)?, &a),
+        "upgrade" => upgrade(&Repo::discover(&cwd)?, &a),
         "check" => check(&Repo::discover(&cwd)?, &a),
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
@@ -715,6 +749,19 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             reconfigure: a.reconfigure,
             dry_run: a.dry_run,
             json: a.json,
+        },
+    )
+}
+
+fn upgrade(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    upgrade::run(
+        repo,
+        &upgrade::RunOpts {
+            dry_run: a.dry_run,
+            json: a.json,
+            layout: a.layout,
+            pin_file: a.pin_file.clone(),
         },
     )
 }

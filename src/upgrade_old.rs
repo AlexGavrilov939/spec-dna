@@ -4,10 +4,6 @@
 //! cannot differ. No command accepts an old name as input. A 0.4 file is a 0.5
 //! file with no `[harness]` table, so one reader serves both.
 
-// `upgrade` (step 5, slice 10) calls this module. Until then only the tests and
-// `DocType::from_old_name` use it.
-#![allow(dead_code)]
-
 use crate::model::DocType;
 use toml::{Table, Value};
 

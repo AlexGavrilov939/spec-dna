@@ -7,7 +7,8 @@
 //! `normalize_marker` removes the version from a harness marker.
 //! `Repo::from_fixture` copies a committed tree of `tests/fixtures/upgrade/`
 //! into a new repository with 1 commit, and `tree_bytes` lists a tree for an
-//! equal compare.
+//! equal compare. `pin_file` and `sums_table` write the file `spec-dna-pin.toml`
+//! that `upgrade --pin-file` reads.
 
 // Each file in tests/ is its own crate and uses only some helpers.
 #![allow(dead_code)]
@@ -381,4 +382,56 @@ pub fn tree_bytes(dir: &Path) -> Vec<(String, Vec<u8>)> {
     walk(dir, dir, &mut out);
     out.sort();
     out
+}
+
+// --- a pin file for `upgrade --pin-file` ---
+
+static PINS: AtomicUsize = AtomicUsize::new(0);
+
+fn pin_dir() -> PathBuf {
+    let n = PINS.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("spec-dna-pinfile-{}-{n}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+pub const TARGETS: [&str; 7] = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-pc-windows-gnu",
+    "aarch64-pc-windows-gnullvm",
+];
+
+/// A table `[spec-dna-sha256]` of a version, with the sum `digit` repeated.
+pub fn sums_table(version: &str, digit: char) -> String {
+    let mut t = String::from("[spec-dna-sha256]\n");
+    for target in TARGETS {
+        let ext = if target.contains("-windows-") {
+            ".exe"
+        } else {
+            ""
+        };
+        t.push_str(&format!(
+            "\"spec-dna-{version}-{target}{ext}\" = \"{}\"\n",
+            digit.to_string().repeat(64)
+        ));
+    }
+    t
+}
+
+/// Writes a file `spec-dna-pin.toml` outside the repository (a file inside
+/// would make the tree dirty) and returns its path.
+pub fn pin_file(version: &str, table: Option<&str>) -> (PathBuf, PathBuf) {
+    let dir = pin_dir();
+    let path = dir.join("spec-dna-pin.toml");
+    let mut text = format!("spec-dna = \"{version}\"\n");
+    if let Some(t) = table {
+        text.push('\n');
+        text.push_str(t);
+    }
+    fs::write(&path, text).unwrap();
+    (dir, path)
 }

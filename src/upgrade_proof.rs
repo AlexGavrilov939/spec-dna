@@ -25,9 +25,6 @@
 //! of the proof stops `upgrade` with exit code 1 before it writes. The notes
 //! are for the report: they never fail the proof (D207).
 
-// `upgrade` (step 5, slice 10) calls this module. Until then only the tests do.
-#![allow(dead_code)]
-
 use crate::check;
 use crate::config::{Config, GROUPS};
 use crate::diag::Code;

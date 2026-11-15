@@ -382,7 +382,10 @@ pub const DEFAULT_INSTALL_SOURCE: &str = "https://github.com/AlexGavrilov939/spe
 /// Reads `[spec-dna-sha256]`. If the pin is the version of this binary, it
 /// validates the table (ADR 0003, amendment "phase 2"). Otherwise it keeps
 /// only the sum of the asset of this binary.
-fn sha256_table(v: Option<&Value>, pin: &str) -> Result<Option<Vec<(String, String)>>, String> {
+pub(crate) fn sha256_table(
+    v: Option<&Value>,
+    pin: &str,
+) -> Result<Option<Vec<(String, String)>>, String> {
     let Some(v) = v else {
         return Ok(None);
     };

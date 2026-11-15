@@ -12,9 +12,6 @@
 //!   document as it was, the layers, the policy and the parts of the harness.
 //!   It also finishes the merge: the weaker value of the types in use.
 
-// `upgrade` (step 5, slice 10) calls this module. Until then only the tests do.
-#![allow(dead_code)]
-
 use crate::config::{Config, DEFAULT_BUDGETS};
 use crate::config_text::{
     Seg, append_tables, at, delete_key, delete_table, insert_keys, k, key_text, line_ending, quote,
@@ -78,8 +75,10 @@ pub struct Pass1 {
 pub struct ConfigPlan {
     pub text: String,
     pub sums_added: bool,
+    #[allow(dead_code)] // Only the unit tests read it (D193).
     pub root_statuses: Vec<(String, String)>,
     /// The 0.6 types in use: the layers of the file hold them.
+    #[allow(dead_code)] // Only the unit tests read it.
     pub types: Vec<DocType>,
 }
 
@@ -966,7 +965,9 @@ fn edit_harness(text: &str, old: &OldConfig, facts: &Facts) -> Result<String, Fa
     Ok(t)
 }
 
-/// Pass 1, then pass 2.
+/// Pass 1, then pass 2. The command calls the 2 passes itself, because the
+/// documents need the result of pass 1 between them.
+#[cfg(test)]
 pub fn plan(
     text: &str,
     old: &OldConfig,
@@ -1022,11 +1023,6 @@ mod tests {
 
     fn cfg(text: &str) -> Config {
         Config::parse(text).unwrap_or_else(|e| panic!("{e}\n{text}"))
-    }
-
-    /// The text before the layers that pass 2 appends.
-    fn head(text: &str) -> &str {
-        &text[..text.find("\n[layers.").map_or(text.len(), |i| i + 1)]
     }
 
     const ROOT: &str = "[[roots]]\npath = \"docs\"\ndefault-type = \"spec\"\nlive-sections = {}\n";
