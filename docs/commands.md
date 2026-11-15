@@ -637,7 +637,7 @@ A stop by the cap adds the line `stopped: the spend <s> USD is above max-total-u
 The result of `--json` and the result file hold the same object. The file is indented. With `--dry-run`, `--json` prints one object: `spec_dna`, `dry_run` (`true`), `evals_dir`, `max_total_usd`, `estimate_usd`, and `evals`, a list with the `id`, `runs`, `pass_at`, `max_budget_usd` and `estimate_usd` of each eval.
 
 ```json
-{"spec_dna":"0.5.0","claude_code":"2.1.325","started":"2026-11-15T10:15:00Z","evals_dir":"evals","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}]}]}]}
+{"spec_dna":"0.6.0","claude_code":"2.1.325","started":"2026-11-15T10:15:00Z","evals_dir":"evals","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}]}]}]}
 ```
 
 - `claude_code` is the first word of `claude --version`, or `null`. `stopped` is `null` or `"max-total-usd"`. After a stop, `pass_rate` is `null`, `passed` is `false`, and an eval that did not start has `"results":[]`.

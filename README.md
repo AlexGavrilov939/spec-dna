@@ -42,7 +42,7 @@ Before an agent edits `src/valves.rs`, `context` gives it the requirement that c
 
 ```console
 $ spec-dna context src/valves.rs
-<!-- spec-dna context 0.5.0: src/valves.rs; 2 sections in full, 0 listed; 291 of 8000 characters; about 73 tokens (estimated) -->
+<!-- spec-dna context 0.6.0: src/valves.rs; 2 sections in full, 0 listed; 291 of 8000 characters; about 73 tokens (estimated) -->
 
 <!-- valves#requirements h:e27a5916071223ee requirements/active cites -->
 ## Requirements
@@ -58,7 +58,7 @@ $ spec-dna context src/valves.rs
 Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has binaries for macOS, Linux and Windows. On macOS (Apple silicon):
 
 ```sh
-v=0.5.0 t=aarch64-apple-darwin
+v=0.6.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS
@@ -68,7 +68,7 @@ install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 To build from source, you need Rust 1.88 or later:
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.6.0
 ```
 
 This command needs no package name from v0.4.2 on. For v0.4.1 and earlier, add `spec-dna` at the end.

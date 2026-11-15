@@ -2879,6 +2879,26 @@ fn another_pin_does_not_validate_the_sha256_table_and_comes_before_a_parse_error
     assert!(err.contains("unknown key `future-key`"), "{err}");
 }
 
+/// The pin `0.5.0` is the pin of the last release before this one. It does not
+/// match the binary, so each command refuses it with exit code 3.
+#[test]
+fn the_pin_of_the_previous_release_does_not_match_the_binary() {
+    assert_ne!(VERSION, "0.5.0", "the binary is newer than 0.5.0");
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"docs\"\n",
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(
+        err.contains(&format!(
+            "spec-dna.toml pins version 0.5.0, but this binary is {VERSION}."
+        )),
+        "{err}"
+    );
+}
+
 #[test]
 fn the_github_job_of_init_is_the_job_of_the_quickstart() {
     let r = Repo::empty();
