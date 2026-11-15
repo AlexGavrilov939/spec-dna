@@ -974,8 +974,8 @@ pub fn base_checks(
 /// SD918: the diff adds a document of type `incident`, and adds or changes no
 /// `*.json` file directly in `[evals] dir`. It runs only for a project with
 /// `[evals]`. An add is a path that the diff adds, that git does not detect as
-/// the target of a rename, and whose id and aliases the base does not have. Thus
-/// a move is no add, also a move to a path with another id. A deleted eval does not count
+/// the target of a rename, and whose id and aliases the base does not have. So
+/// a move is not an add, also a move to a path with another id. A deleted eval does not count
 /// (design 0.6.0, D53, D95). One diagnostic for each added incident, on line 1,
 /// with its id as the target.
 fn incident_eval_missing(ctx: &Ctx) -> Result<Vec<Diag>, String> {

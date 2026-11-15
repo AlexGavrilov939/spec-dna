@@ -1439,7 +1439,7 @@ fn skeleton_changes(repo: &Repo, plan: &Plan, tests: &[String]) -> (Vec<Change>,
     if plan.evals == EvalsAnswer::None {
         if plan.evals_current {
             notes.push(format!(
-                "the table `[evals]` is removed, and the files in `{dir}/` stay. Delete them by hand if you do not need them"
+                "`init` removes the table `[evals]`. The files in `{dir}/` stay. Delete them by hand if you do not need them"
             ));
         }
         return (Vec::new(), notes);

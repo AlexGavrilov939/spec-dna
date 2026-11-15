@@ -134,9 +134,9 @@ The second prompt of question 12 sets 3 keys of `[harness]`. An omitted word kee
 
 - The defaults follow the final answers, so a later answer to question 4 or 6 changes them.
 - The 4 skill descriptions add 588 bytes to each request. `REVIEW.md` adds none. `init` prints the total bytes that the harness adds.
-- In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of a new project, so `init --reconfigure` offers the new parts to a project that has none of them.
+- In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of a new project. So `init --reconfigure` offers the new parts to a project that has none of them.
 - A `REVIEW.md` with no harness marker gives `review-md=false`. A skill file with no marker leaves that skill out of the default. A note names each such file, and `init` does not change it. An answer that asks for such a file stops `init` with exit code 2.
-- The answers keys are `harness-skills` (an array of names, `[]` for none), `harness-review-md` (`true` or `false`) and `harness-protect-tests`. They need a harness level other than `none`.
+- The answer keys are `harness-skills` (an array of names, `[]` for none), `harness-review-md` (`true` or `false`) and `harness-protect-tests`. They need a harness level other than `none`.
 
 ### Evals
 
@@ -154,7 +154,8 @@ The answer `skeleton` of question 14 writes the starter files of the evals. `spe
 - The folder is `evals`. If git lists a file under `evals/`, the folder is `.spec-dna/evals`, and a note says so.
 - `skeleton` with a current `[evals]` table keeps the table as it is and writes no file. `none` with a current table removes the table and keeps the files, and a note says so.
 - No starter file is Markdown. The folder of the evals is never part of a root, so a later fixture can hold Markdown files.
-- The workflow runs on a pull request and a push that change `CLAUDE.md`, `AGENTS.md`, `.claude/agents/`, `.claude/skills/`, `.claude/settings.json` or the folder of the evals. It also runs each week and on request. The job runs only if the repository variable `SPEC_DNA_EVALS` is `true`, and a pull request from a fork gets no run. The workflow never uses `pull_request_target`. The job has the permission `contents: read` and the secret `ANTHROPIC_API_KEY`. It installs the pinned spec-dna and Claude Code 2.1.325, and it runs `spec-dna eval run`. Each action in it has a full commit SHA.
+- The workflow runs on a pull request and a push that change `CLAUDE.md`, `AGENTS.md`, `.claude/agents/`, `.claude/skills/`, `.claude/settings.json` or the folder of the evals. It also runs each week and on request. The job runs only if the repository variable `SPEC_DNA_EVALS` is `true`, and a pull request from a fork gets no run. The workflow never uses `pull_request_target`.
+- The job has the permission `contents: read` and the secret `ANTHROPIC_API_KEY`. It installs the pinned spec-dna and Claude Code 2.1.325, and it runs `spec-dna eval run`. Each action in it has a full commit SHA.
 - After a write that created the workflow, `init` prints "To run the evals in CI, set the secret and the variable:", then `gh secret set ANTHROPIC_API_KEY` and `gh variable set SPEC_DNA_EVALS --body true`. `init --json` has the field `evals_commands` with these 2 commands, or an empty array.
 - CI runs no eval until you set the variable. The check SD918 (each incident needs an eval) needs the table `[evals]`.
 

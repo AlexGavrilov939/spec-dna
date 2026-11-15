@@ -841,7 +841,7 @@ fn report_json(r: &Report) -> String {
 }
 
 /// Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json`. If the file
-/// exists, the name gets `-2`, `-3` and so on. Returns the path from the
+/// exists, the name gets the first free suffix from `-2` to `-999`. Returns the path from the
 /// repository root.
 fn write_result(repo: &Repo, dir: &str, started: &str, compact: &str) -> Result<String, Fatal> {
     let text = json::pretty(&json::parse(compact).map_err(Fatal::Io)?);

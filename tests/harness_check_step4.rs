@@ -37,7 +37,7 @@ fn project_with(harness: &str) -> Repo {
 
 /// A project that `init` wrote at level `full` with the 4 skills and
 /// `REVIEW.md`, and that then drops the level to `lean` with no skill and no
-/// `REVIEW.md`. Thus 7 generated files are no longer in the configuration:
+/// `REVIEW.md`. So 7 generated files are no longer in the configuration:
 /// `implementer.md`, `code-simplifier.md`, the 4 skills and `REVIEW.md`.
 fn dropped() -> Repo {
     let r = project_with(FULL_ALL_ON);
@@ -258,7 +258,7 @@ fn reconfigure_clears_an_sd502_stray_and_keeps_an_sd501_stray() {
     let rows: Vec<&str> = out.lines().filter(|l| l.contains(": error SD")).collect();
     assert_eq!(rows.len(), 2, "{out}");
     assert!(rows.iter().all(|l| l.contains("error SD501")), "{out}");
-    // Deleting the marker line makes each file a file of the project.
+    // A file with no marker line is a file of the project.
     for f in [SKILLS[2], "REVIEW.md"] {
         let t = r.read(f);
         let at = t.rfind("<!-- spec-dna harness v").unwrap();

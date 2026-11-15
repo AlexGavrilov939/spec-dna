@@ -47,7 +47,7 @@ spec-dna --help                     # commands and options (-h); --version (-V) 
 spec-dna mv --help                  # the help of one command
 ```
 
-Each command accepts `--json`. spec-dna does not use the network. It reads the documents with local `git` commands. The only command that starts a program that uses the network is `eval run`: it starts `claude`, and spec-dna itself still makes no network call.
+Each command accepts `--json`. spec-dna does not use the network. It reads the documents with local `git` commands. Only `eval run` starts a program that uses the network. It starts `claude`. spec-dna itself makes no network call.
 
 A target is a document id, an alias such as `ADR-12`, `<id>#<anchor or key>`, or a repository path.
 
@@ -74,7 +74,7 @@ Then `init` asks at most 14 questions, with the found values as defaults. Questi
 
 The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the blocks of many lines that earlier versions wrote.
 
-Questions 12 and 13 set the [agent harness](harness.md). `init` writes it for Claude Code: agent files, the stage skills, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`. Question 14 sets the evals: `skeleton` writes the table `[evals]`, `evals/check.sh`, an example eval and, for the CI answer `github`, the workflow `.github/workflows/agent-evals.yml`. It starts no run. A new project gets `skeleton`, and an upgraded project keeps `none`.
+Questions 12 and 13 set the [agent harness](harness.md). `init` writes it for Claude Code: agent files, the stage skills, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`. Question 14 sets the evals. The answer `skeleton` writes the table `[evals]`, `evals/check.sh` and an example eval. For the CI answer `github`, it also writes the workflow `.github/workflows/agent-evals.yml`. It starts no run. A new project gets `skeleton`. An upgraded project keeps `none`.
 
 If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version.
 
@@ -501,14 +501,32 @@ The commit that "deleted the folder" is the first-parent commit of the deletion.
 
 The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree. It has the folder, the `Files` patterns, the `Files:` paths of the tasks, and the documents that the delta and `Interfaces` name. `stats` reads the last tree of the life in the history. A squash merge keeps no commit of the branch, so `stats` cannot see a plan that the pull request added or edited. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
 
-A shallow clone can miss old changes, so each indicator that it computes from the history has this note in `reason`. The eval pass rate reads only the tree of `HEAD`, so it has no such note. An indicator with no data has no value, and the reason says what is missing.
+A shallow clone can miss old changes, so each indicator that it computes from the history has this note in `reason`. The eval pass rate reads only the tree of `HEAD`, so it has no note. An indicator with no data has no value, and the reason says what is missing.
 
 `--group <name>` counts only the changes that are in the group. A group is a name of `[groups]` and its areas. A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target, as for [status](#status). The areas come from the last tree of the change. An unknown group is a usage error (exit code 2). With `[change] policy = "none"`, `stats` says that the change process is off and gives no indicator. It warns on a pin mismatch.
 
 The 2 Test indicators read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. They are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file and an incident belong to no change.
 
-- The pass rate reads each `*.json` file that is directly in `<[evals] dir>/results`. A file is a complete result when it has a string `started`, a number `pass_rate` from 0 to 1, and `"stopped": null`. A run that the cost cap stopped has no pass rate, so it is not complete. The value is the `pass_rate` of the file with the latest `started`, in percent. The count is the number of complete files. The note names the `started` of the newest file, and the number of files that the indicator skipped. If there is no complete file, the reason says to run `spec-dna eval run --out <[evals] dir>/results` and to commit the file. The project keeps the files, so they are the history of the pass rate.
-- The time pairs each `incident` document of `HEAD` with the first path `<[evals] dir>/<id>.json` in its section `Eval` (also with its subsections) that is a file of `HEAD`. The case and the level of the heading `Eval` do not matter. A link such as `../../evals/x.json` or `/evals/x.json` names the path. A path that continues a longer path on its left, such as `docs/evals/x.json`, does not count. The span is the days from the oldest commit that added the incident to the oldest commit that added the eval file, in the order of the ancestry. A span below 0 does not count. The value is the median, and the count is the number of incidents with a span. The text line says "result files" and "incidents" for the count, not "changes".
+The pass rate reads each `*.json` file that is directly in `<[evals] dir>/results`.
+
+- A file is a complete result when it has a string `started`, a number `pass_rate` from 0 to 1, and `"stopped": null`.
+- A run that the cost cap stopped has no pass rate, so its file is not complete.
+- The value is the `pass_rate` of the file with the latest `started`, in percent.
+- The count is the number of complete files.
+- The note names the `started` of the newest file and the number of files that the indicator skipped.
+- If there is no complete file, the reason says to run `spec-dna eval run --out <[evals] dir>/results` and to commit the file.
+- The project keeps the files, so they are the history of the pass rate.
+
+The time pairs each `incident` document of `HEAD` with an eval file.
+
+- The eval file is the first path `<[evals] dir>/<id>.json` in the section `Eval` of the incident (also in its subsections) that is a file of `HEAD`.
+- The case and the level of the heading `Eval` do not matter.
+- A link such as `../../evals/x.json` or `/evals/x.json` names the path.
+- A path that continues a longer path on its left, such as `docs/evals/x.json`, does not count.
+- The span is the days from the oldest commit that added the incident to the oldest commit that added the eval file. The order of the ancestry decides which commit is the oldest.
+- A span below 0 does not count.
+- The value is the median, and the count is the number of incidents with a span.
+- The text line says "result files" and "incidents" for the count, not "changes".
 
 The text output has a summary line, then one line for each indicator. A value that has a note gets a second line that starts with `note:`. An indicator that git cannot give shows `n/a` and its reason:
 
@@ -524,7 +542,7 @@ With `--json`, the output is one object with the 14 indicators of the table, in 
 {"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
 ```
 
-`value` is a number with 1 decimal, or `null` for an indicator with no value. `unit` is `days`, `percent` or `commits per change`. `count` is the number of changes that the value counts (for the 2 Test indicators, the result files and the incidents), and it is `null` for an indicator that git cannot give. `reason` is `null` for a full value. Each `null` value has a reason.
+`value` is a number with 1 decimal, or `null` for an indicator with no value. `unit` is `days`, `percent` or `commits per change`. `count` is the number of changes that the value counts. For the 2 Test indicators, it is the number of result files and incidents. It is `null` for an indicator that git cannot give. `reason` is `null` for a full value. Each `null` value has a reason.
 
 Exit codes: 0 done; 2 usage, an unknown group, or no `--sdlc`; 3 configuration; 4 git.
 
@@ -536,11 +554,11 @@ spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd 
 
 `eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts headless Claude Code (`claude -p`) on a copy of a fixture, and then runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand, is a usage error.
 
-spec-dna itself makes no network call. `claude` does, and each run costs money. A pin that differs from the version of the binary stops the command, as it stops `check`.
+spec-dna itself makes no network call. `claude` makes network calls, and each run costs money. A pin that differs from the version of the binary stops the command, as it stops `check`.
 
 ### An eval file
 
-An eval is the file `<dir>/<id>.json`, where `<dir>` is `[evals] dir`. A JSON file directly in `<dir>` is an eval. A file in a subfolder is not. The file has at most 64 KiB, it is UTF-8, and it is one JSON object. A key that the table does not list is an error. An integer is a JSON number with no fraction. `eval run` reads the working tree: the tracked files, and the untracked files that git does not ignore. It checks the keys in the order of this table, and it reports the first rule that fails.
+An eval is the file `<dir>/<id>.json`, where `<dir>` is `[evals] dir`. A JSON file directly in `<dir>` is an eval. A file in a subfolder is not. The file has at most 64 KiB, it is UTF-8, and it is one JSON object. A key that the table does not list is an error. An integer is a JSON number with no fraction. `eval run` reads the working tree: the tracked files, and the untracked files that git does not ignore. It checks the keys in the order of this table. It reports the first rule that fails.
 
 | Key | Required | Default | Rule |
 | --- | --- | --- | --- |
@@ -577,18 +595,18 @@ An eval is the file `<dir>/<id>.json`, where `<dir>` is `[evals] dir`. A JSON fi
 
 ### The steps
 
-1. It reads the configuration and checks each eval file. An invalid file gives exit code 3 and the message names the path and the rule. It selects the evals of the ids. With no id, it selects each eval, in the order of the id. An unknown id is a usage error.
+1. It reads the configuration and checks each eval file. An invalid file gives exit code 3. The message names the path and the rule. It selects the evals of the ids. With no id, it selects each eval, in the order of their ids. An unknown id is a usage error.
 2. The estimate is the sum of `runs x max-budget-usd` of the selected evals. If the estimate is above `max-total-usd`, it stops with exit code 3 and starts no process.
 3. It runs `claude --version` once. If `claude` is absent or cannot start, it stops with exit code 3. The message names `claude`.
-4. For each eval and each run (each run runs; there is no early stop):
-    1. It makes a temporary folder, `spec-dna-eval-<pid>-<n>` in the temporary directory of the system (mode 700 on Unix).
-    2. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path. The copy uses the list of git: a file that git ignores is not copied. It copies no symbolic link, and a warning names it.
+4. For each eval and each run (the loop has no early stop):
+    1. It makes a temporary folder, `spec-dna-eval-<pid>-<n>`, in the temporary directory of the system (mode 700 on Unix).
+    2. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path. The copy uses the list of git, so it does not copy a file that git ignores. It copies no symbolic link, and a warning names it.
     3. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name.
-    4. It starts `claude` in the folder. The arguments are `-p`, the task, then `--allowedTools` with each tool as its own argument (only for a list that is not empty), then `--output-format json --max-turns <n> --max-budget-usd <usd> --permission-mode dontAsk`, then with `--isolate` `--setting-sources project --strict-mcp-config`. It never passes `--bare`, because an eval must load `CLAUDE.md`, the skills and the hooks. The environment is the environment of `eval run`, without `CLAUDE_PROJECT_DIR`, `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`. A session that starts `eval run` keeps its `CLAUDECODE`: `claude -p` starts under it (Claude Code 2.1.325). `eval run` keeps at most 16 MiB of the output of `claude` in memory.
+    4. It starts `claude` in the folder. The arguments are, in this order: `-p`, the task, `--allowedTools` with each tool as its own argument (only for a list that is not empty), and `--output-format json --max-turns <n> --max-budget-usd <usd> --permission-mode dontAsk`. With `--isolate`, the arguments end with `--setting-sources project --strict-mcp-config`. It never passes `--bare`, because an eval must load `CLAUDE.md`, the skills and the hooks. The environment is the environment of `eval run`, without `CLAUDE_PROJECT_DIR`, `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`. A session that starts `eval run` keeps its `CLAUDECODE`, and `claude -p` starts under it (Claude Code 2.1.325). `eval run` keeps at most 16 MiB of the output of `claude` in memory.
     5. It reads `total_cost_usd` and `subtype` from the output. The output is one JSON object, or a list of events that ends with the object of type `result`. If the cost is absent, the spend counts `max-budget-usd` for the run.
-    6. It runs each check with `sh -c` in the folder. The script sources `check.sh` of the project (never the copy, so the agent cannot change its checks), and then runs the `run` text of the check. The environment has `SPEC_DNA_CHECK_SH`, the absolute path of that file, and `SPEC_DNA_EVAL_BASE`, the id of the base commit. The checks also run when `claude` failed. A check passes on exit code 0. A run passes when `claude` exits with code 0 and each check passes.
+    6. It runs each check with `sh -c` in the folder. The script sources `check.sh` of the project, never the copy, so the agent cannot change its checks. Then it runs the `run` text of the check. The environment has `SPEC_DNA_CHECK_SH`, the absolute path of that file, and `SPEC_DNA_EVAL_BASE`, the id of the base commit. The checks also run when `claude` failed. A check passes on exit code 0. A run passes when `claude` exits with code 0 and each check passes.
     7. It deletes the folder, also after an error.
-    8. It adds the cost to the spend. If the spend is above `max-total-usd` and a run is left, it stops. Claude Code checks `--max-budget-usd` against an estimate of the client, so the real cost can be higher than the budget.
+    8. It adds the cost to the spend. If the spend is above `max-total-usd` and a run remains, it stops. Claude Code checks `--max-budget-usd` against an estimate of the client, so the real cost can be higher than the budget.
 5. An eval passes when its passed runs are at least `min(pass-at, runs)`. The pass rate is the share of the evals that pass, not of the runs. The suite passes when the pass rate is at least `min-pass-rate`.
 
 ### Options
@@ -599,9 +617,9 @@ An eval is the file `<dir>/<id>.json`, where `<dir>` is `[evals] dir`. A JSON fi
 | `--runs <n>` | Replaces the `runs` of each selected eval and `[evals] runs`. An integer from 1 to 100 |
 | `--min-pass-rate <r>` | Replaces `[evals] min-pass-rate`. A number from 0 to 1 |
 | `--max-total-usd <n>` | Replaces `[evals] max-total-usd` for the cap. A number above 0 |
-| `--out <dir>` | Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start; if the file exists, `-2`, `-3` and so on). `<dir>` is relative to the repository root, and `eval run` makes it. It cannot be `[evals] dir`, because the check SD506 reads each `*.json` file there. Use for example `<dir>/results` |
+| `--out <dir>` | Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start). If the file exists, the name gets the next free suffix from `-2`. `<dir>` is relative to the repository root, and `eval run` makes it. It cannot be `[evals] dir`, because the check SD506 reads each `*.json` file there. For example, use `<[evals] dir>/results` |
 | `--dry-run` | Checks the evals and prints each eval with its runs and the estimate. It starts no process, and writes no file. Exit code 0, or 3 if the estimate is above the cap |
-| `--isolate` | Adds `--setting-sources project --strict-mcp-config`, so a run does not load the user and local settings or the MCP servers of the person. It is off by default, so CI and a laptop run the same command. A test with Claude Code 2.1.325 (probe P2 of the design page) showed the effect. The flag removes the user skills, the user agents and the plugins that the user settings enable. The test gave no sign of the user `CLAUDE.md` (a weak proof, the answer of the model). It keeps the plugins that `CLAUDE_CODE_PLUGIN_DIRS` names. `--strict-mcp-config` removes the MCP servers of the account of the person. Unset the variable before the command to remove the plugins. A clean `CLAUDE_CONFIG_DIR` also removes the login |
+| `--isolate` | Adds `--setting-sources project --strict-mcp-config`, so a run does not load the user and local settings or the MCP servers of the person. It is off by default, so CI and a laptop run the same command. A test with Claude Code 2.1.325 (probe P2 of the design page) showed the effect. The flag removes the user skills, the user agents and the plugins that the user settings enable. The test found no trace of the user `CLAUDE.md`. This proof is weak, because it uses the answer of the model. The flag keeps the plugins that `CLAUDE_CODE_PLUGIN_DIRS` names. To remove these plugins, unset the variable before the command. `--strict-mcp-config` removes the MCP servers of the account of the person. A clean `CLAUDE_CONFIG_DIR` also removes the login |
 | `--json` | Prints the result as one JSON object, and no text |
 
 ### Output
@@ -614,7 +632,7 @@ pass rate 50.0 percent (1 of 2 evals), min-pass-rate 80.0 percent: fail
 spend 1.92 USD
 ```
 
-A stop by the cap adds `stopped: the spend <s> USD is above max-total-usd <c> USD; <n> runs did not start`, and the line of the pass rate is absent. An eval that did not run all its runs does not pass. The progress of each run goes to stderr.
+A stop by the cap adds the line `stopped: the spend <s> USD is above max-total-usd <c> USD; <n> runs did not start`. The line of the pass rate is absent. An eval that did not run all its runs does not pass. The progress of each run goes to stderr.
 
 The result of `--json` and the result file hold the same object. The file is indented. With `--dry-run`, `--json` prints one object: `spec_dna`, `dry_run` (`true`), `evals_dir`, `max_total_usd`, `estimate_usd`, and `evals`, a list with the `id`, `runs`, `pass_at`, `max_budget_usd` and `estimate_usd` of each eval.
 
@@ -678,7 +696,7 @@ A named function counts once for each mention of its name. A call of itself and 
 
 When the limit is above the cap, or if there is no limit, the hook answers `permissionDecision: "ask"`, and the user decides. The cap is `SPEC_DNA_FANOUT_CAP` if it is set. Otherwise the cap is `--cap`, and its default is 10. A cap of 0 disables the hook.
 
-`protect-tests` runs before an `Edit` or `Write` tool call (the `PreToolUse` event). It reads `tool_name`, `tool_input.file_path` and `cwd` of the event, and `CLAUDE_PROJECT_DIR` of the environment. `init` writes the command from `[harness] protect-tests` and `[evidence] tests`, with one `--test <glob>` for each glob. `--mode` is `fix-branches` or `always`. An absent or unknown value acts as `fix-branches`. With no `--test`, the hook prints nothing. The steps, in this order:
+`protect-tests` runs before an `Edit` or `Write` tool call (the `PreToolUse` event). It reads `tool_name`, `tool_input.file_path` and `cwd` of the event, and `CLAUDE_PROJECT_DIR` of the environment. `init` writes the command from `[harness] protect-tests` and `[evidence] tests`, with one `--test <glob>` for each glob. `--mode` is `fix-branches` or `always`. An absent or unknown value has the same effect as `fix-branches`. With no `--test`, the hook prints nothing. The steps, in this order:
 
 1. The tool is `Edit` or `Write`.
 2. The root is `CLAUDE_PROJECT_DIR`, else `cwd`. `file_path` is absolute and below the root. If it is not, the hook resolves the links of the root and of the folder of the file, and tries again. A path with a `..`, `.` or empty segment stops the hook.

@@ -618,7 +618,7 @@ fn the_base_commit_has_a_fixed_author_no_signature_and_a_fixed_date() {
     let edit = format!(
         "git log --format='%an|%ae|%cn|%ce|%aI|%cI|%s|%G?' > \"$STUB_FILES.log\"; git rev-list --count HEAD > \"$STUB_FILES.count\"; {DONE}"
     );
-    // A global config that would sign each commit must have no effect.
+    // A global config that signs each commit must have no effect.
     let (code, out, err) = fx.run_env(
         &[],
         &[

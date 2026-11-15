@@ -133,7 +133,7 @@
       "additionalProperties": false,
       "properties": {
         "dir": {
-          "description": "The folder of the evals, relative to the repository root. It follows the rules of `templates.dir` and cannot be, or hold, or be inside, the folder of `templates.dir`. The folder is never part of a root. Default: `evals`.",
+          "description": "The folder of the evals, relative to the repository root. It follows the rules of `templates.dir`. The folder cannot be the folder of `templates.dir`, hold it or be inside it. The folder is never part of a root. Default: `evals`.",
           "type": "string",
           "pattern": "^[^/\\\\:][^\\\\:]*$",
           "default": "evals"
@@ -153,7 +153,7 @@
           "default": 3
         },
         "max-total-usd": {
-          "description": "The most that `eval run` can spend, in USD. The command refuses a run with a higher estimate and stops above this spend. Above 0. Default 20.",
+          "description": "The maximum spend of `eval run`, in USD, above 0. The command refuses a run with a higher estimate. It stops when the spend is above this value. Default 20.",
           "type": "number",
           "exclusiveMinimum": 0,
           "default": 20
@@ -374,7 +374,7 @@
           }
         },
         "review-md": {
-          "description": "True: `init` writes `REVIEW.md`, the review policy. Default false.",
+          "description": "If true, `init` writes `REVIEW.md`, the review policy. Default false.",
           "type": "boolean"
         },
         "protect-tests": {

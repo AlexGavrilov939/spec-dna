@@ -1944,7 +1944,7 @@ fn file_state(actual: &str, expected: &str) -> State {
     }
 }
 
-/// The way out for a file with no marker at the path of a generated file.
+/// The fix for a file with no marker at the path of a generated file.
 /// spec-dna never replaces such a file, so the person moves it or changes the
 /// configuration. `plan` (exit code 2) and `check` (SD504) give these words for
 /// a skill and for `REVIEW.md`.

@@ -7,7 +7,7 @@ The harness is optional. `init` asks for a level.
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the stage skills, `REVIEW.md` and a third hook. A new configuration has all 3 keys on |
+| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the stage skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys |
 | `full` | `lean`, and `implementer` and `code-simplifier` |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
@@ -31,7 +31,7 @@ Notes:
 - To keep the built-in `Explore`, set `researcher = { claude-code = "none" }` in `[harness.roles]` and run `spec-dna init --reconfigure`. `init` removes the file if you did not edit it. To use an agent of your own with the name `Explore`, set the same value and write your file. Without it, `init` refuses to replace your file.
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
 - The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
-- spec-dna 0.6 renames the role `reviewer` to `verifier`, and its file `checker.md` to `verifier.md`. The role `spec-writer` ends, and `code-simplifier` is new at level `full`. A table with the key `reviewer` or `spec-writer` gives exit code 3, and so does the word in the answer to question 13. Rename the key, or remove it, and run `spec-dna init --reconfigure`. It writes `verifier.md` and removes an unedited `checker.md` and `spec-writer.md`. It keeps an edited file.
+- spec-dna 0.6 renames the role `reviewer` to `verifier`, and its file `checker.md` to `verifier.md`. The role `spec-writer` ended, and `code-simplifier` is new at level `full`. A table with the key `reviewer` or `spec-writer` gives exit code 3. The same word in the answer to question 13 also gives exit code 3. Rename the key or remove it, and run `spec-dna init --reconfigure`. The command writes `verifier.md` and removes an unedited `checker.md` and `spec-writer.md`. It keeps an edited file.
 
 ## Configuration
 
@@ -122,7 +122,7 @@ The 4 stage skills help an agent through the stages of a change ([ADR 0008](adr/
 
 `REVIEW.md` is the review policy for the Code Review service of Claude Code. It has 3 passes: Bugs, Security and Compliance. Compliance compares the diff with `spec.md`, `plan.md` and the documents of the layer `rules`, so put the policy of the project in `rules`. A finding has the severity Important or Nit, and a review has at most 5 Nits. The list "Do not report" names the findings of `spec-dna check`, which CI runs, and the files that spec-dna generates.
 
-- The service reads `REVIEW.md` from the base branch or the default branch, so a change applies after the merge. The local `/code-review` command does not read the file. Thus `spec-dna-review` holds the same passes. spec-dna writes both from one text, so they agree in each version.
+- The service reads `REVIEW.md` from the base branch or the default branch, so a change applies after the merge. The local `/code-review` command does not read the file. So `spec-dna-review` holds the same passes. spec-dna writes both from one text, so they agree in each version.
 - Claude Code does not load `REVIEW.md` for a task, so the file adds no bytes to a request.
 
 ## Hooks
@@ -151,7 +151,7 @@ To change the cap for one session, start Claude Code with `SPEC_DNA_FANOUT_CAP=<
 
 ### `spec-dna hook protect-tests`
 
-A fix must change the code, not the test that finds the defect. An agent can edit the test to make it pass. Before an `Edit` or `Write` call, the hook asks the person if the file is a test file that git tracks, and the branch starts with `fix/`. It does not ask for a new test file, because a fix can add a test. The person approves the edit only if the test is wrong.
+A fix must change the code, not the test that finds the defect. An agent can edit the test to make it pass. The hook runs before an `Edit` or `Write` call. It asks the person when the file is a test file that git tracks and the branch starts with `fix/`. It does not ask for a new test file, because a fix can add a test. The person approves the edit only if the test is wrong.
 
 Set `protect-tests` in `[harness]`:
 
@@ -159,9 +159,9 @@ Set `protect-tests` in `[harness]`:
 | --- | --- |
 | `fix-branches` | On a branch that starts with `fix/` |
 | `always` | On each branch. Use it if your fix branches have another prefix |
-| `off` | Never. `init` writes no entry. A file with no `protect-tests` key acts as `off`, and a new configuration has `fix-branches` |
+| `off` | Never. `init` writes no entry. A file with no `protect-tests` key has the same effect as `off`, and a new configuration has `fix-branches` |
 
-The test files are the globs of `[evidence] tests`. The generated command has one `--test '<glob>'` for each glob and the mode. The hook runs `git` only for a path that matches a glob, at most 2 times: once for the branch, and once to find if git tracks the file. A path that is not below `CLAUDE_PROJECT_DIR` (else the `cwd` of the event) gets no question. An error gives no output and exit code 0, so the edit continues.
+The test files are the globs of `[evidence] tests`. The generated command has one `--test '<glob>'` for each glob and the mode. The hook runs `git` only for a path that matches a glob, and at most 2 times. The first call finds the branch. The second call finds whether git tracks the file. A path that is not below `CLAUDE_PROJECT_DIR` (else the `cwd` of the event) gets no question. An error gives no output and exit code 0, so the edit continues.
 
 - In a run with `claude -p`, nobody can answer the question. Claude Code denies the edit, and the model reads the reason. This is also true if `--allowedTools` lists `Edit`, so the hook guards an eval.
 - The hook does not see an edit through `Bash`, such as `sed -i`. The check `tests_unchanged` of an eval proves that no test changed.
@@ -175,7 +175,7 @@ The test files are the globs of `[evidence] tests`. The generated command has on
 
 | Code | Finding |
 | --- | --- |
-| SD504 | A generated file (an agent file, a stage skill, `REVIEW.md` or the team page) or the `CLAUDE.md` line is missing, or a file at the path of a generated file has no marker. spec-dna does not replace such a file. The message names the way out: move the file, set the role of an agent file to `none`, remove the skill from `skills`, or set `review-md = false` |
+| SD504 | A generated file or the `CLAUDE.md` line is missing. A generated file is an agent file, a stage skill, `REVIEW.md` or the team page. A file with no marker at the path of a generated file also gives SD504, because spec-dna does not replace it. The message gives the ways to fix it: move the file, set the role of an agent file to `none`, remove the skill from `skills`, or set `review-md = false` |
 | SD501 | A generated file or line was edited by hand, or has text after its marker. Delete the file or the line and run `spec-dna init`. The same code covers a file with a marker that the configuration does not generate (an old `checker.md`, or a skill or `REVIEW.md` that you turned off) and that has an edit. Delete the file, or delete its marker line to keep it as a file of the project |
 | SD502 | `CLAUDE.md` has a second model-team line. Delete it. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command. A file with a marker that the configuration does not generate, and that has no edit, also gives SD502. Run `spec-dna init --reconfigure` to remove it. The scan covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, but not the adapter skill |
 | SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |

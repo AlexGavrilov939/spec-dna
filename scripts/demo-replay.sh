@@ -176,9 +176,9 @@ rm -r evals
 gitc add -A
 [ "$(gitc ls-files -s docs)" = "$docs_before" ] || fail "the uninstall changed a document"
 gitc diff --cached --name-status | tee "$work/uninstall.txt"
-# The harness agent files, the stage skills, REVIEW.md and the files of the
-# evals go. `.claude/settings.json` stays, because it can hold keys of the
-# project.
+# The uninstall removes the harness agent files, the stage skills, REVIEW.md
+# and the files of the evals. `.claude/settings.json` stays, because it can
+# hold keys of the project.
 if grep -v -E '^D[[:space:]]+(spec-dna\.toml|REVIEW\.md|evals/.*|\.claude/skills/spec-dna(-[a-z]+)?/SKILL\.md|\.claude/agents/[A-Za-z-]+\.md)$|^M[[:space:]]+(CLAUDE\.md|\.claude/settings\.json)$' "$work/uninstall.txt"; then
     fail "the uninstall changed other files"
 fi
