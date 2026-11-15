@@ -13,6 +13,7 @@ Read first: `.claude/agents/ownership.md`, `docs/init.md`, `docs/quickstart.md`,
 ## You own
 
 - `src/init.rs`, `src/detect.rs` and `src/adapters.rs`
+- The harness: `src/harness.rs` (except its function `check`), `src/harness_text.rs`, `src/hook.rs`, `src/skeleton.rs` and `docs/harness.md`
 - The `init` handler in `src/main.rs`
 - `docs/init.md`, `docs/quickstart.md`, `docs/demo.md` and `scripts/demo-replay.sh`
 - `tests/fixtures/brownfield/`, `tests/fixtures/layouts/` and `tests/fixtures/demo/`, and the `init` cases in `tests/cli.rs`

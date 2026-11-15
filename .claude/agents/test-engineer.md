@@ -15,6 +15,7 @@ Read first: `.claude/agents/ownership.md`, `CONTRIBUTING.md` section "Setup", an
 - The structure and the shared helpers of `tests/cli.rs`
 - The policy for `tests/golden/` and `tests/fixtures/`, and the shared fixture `tests/fixtures/corpus/`
 - `bench/tool/` and its results in `bench/results/tool-*.json`
+- `bench/harness/` and its results in `bench/results/harness-*.json`
 
 ## Invariants
 
