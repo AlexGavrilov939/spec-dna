@@ -344,7 +344,7 @@ pub fn classify(tree: &Tree, basis: &Basis) -> Result<Classified, Fatal> {
 
 fn stop(path: &str, why: &str) -> Fatal {
     Fatal::Config(format!(
-        "{path}: {why}; upgrade does not guess. Write the change by hand, then run `spec-dna upgrade` again"
+        "{path}: {why}; upgrade does not guess. Write the change by hand, commit the change, then run `spec-dna upgrade` again"
     ))
 }
 
@@ -535,7 +535,7 @@ const LAYOUT: [(&str, &str); 6] = [
     ("notes", "research"),
 ];
 
-const AGAIN: &str = "Then run `spec-dna upgrade` again.";
+const AGAIN: &str = "Then commit the change and run `spec-dna upgrade` again.";
 
 /// `a/b` and `c` give `a/b/c`; an empty `a` gives `c`.
 fn under(dir: &str, rest: &str) -> String {

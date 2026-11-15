@@ -130,7 +130,7 @@ fn show(path: &[Seg]) -> String {
 /// The refusal of D138: the person writes the form by hand.
 fn by_hand(path: &[Seg], form: &str) -> Fatal {
     Fatal::Config(format!(
-        "`{}`: upgrade cannot edit this form; write it as {form} by hand, then run `spec-dna upgrade` again",
+        "`{}`: upgrade cannot edit this form; write it as {form} by hand, commit the change, then run `spec-dna upgrade` again",
         show(path)
     ))
 }
@@ -141,7 +141,7 @@ fn missing(path: &[Seg]) -> Fatal {
 
 fn exists(path: &[Seg], name: &str) -> Fatal {
     Fatal::Config(format!(
-        "`{}`: `{name}` exists already; remove one of them by hand, then run `spec-dna upgrade` again",
+        "`{}`: `{name}` exists already; remove one of them by hand, commit the change, then run `spec-dna upgrade` again",
         show(path)
     ))
 }
@@ -808,7 +808,7 @@ mod tests {
         assert_eq!(
             m,
             format!(
-                "`{key}`: upgrade cannot edit this form; write it as {form} by hand, then run `spec-dna upgrade` again"
+                "`{key}`: upgrade cannot edit this form; write it as {form} by hand, commit the change, then run `spec-dna upgrade` again"
             )
         );
     }

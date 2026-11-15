@@ -86,7 +86,7 @@ pub struct ConfigPlan {
 
 fn invalid(e: impl std::fmt::Display) -> Fatal {
     Fatal::Config(format!(
-        "upgrade cannot give a valid spec-dna.toml ({e}); write the change by hand, then run `spec-dna upgrade` again"
+        "upgrade cannot give a valid spec-dna.toml ({e}); write the change by hand, commit the change, then run `spec-dna upgrade` again"
     ))
 }
 

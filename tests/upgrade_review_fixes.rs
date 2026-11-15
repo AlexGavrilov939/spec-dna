@@ -39,6 +39,8 @@ fn refused(repo: &Repo) -> String {
     let (code, out, err) = repo.run(&["upgrade"]);
     assert_eq!(code, 3, "{out}{err}");
     assert!(err.contains("cannot edit this form"), "{err}");
+    // The tree is dirty after the edit, and `upgrade` reads `HEAD`.
+    assert!(err.contains("commit the change"), "{err}");
     assert_eq!(before, tree_bytes(&repo.dir), "no write");
     err
 }
@@ -186,6 +188,7 @@ fn a_file_on_the_path_of_a_folder_is_named_and_is_no_link() {
         assert!(err.contains("folder"), "{err}");
         assert!(!err.contains("link"), "{err}");
         assert!(!err.contains("os error"), "{err}");
+        assert!(err.contains("commit the change"), "{err}");
     }
     assert_eq!(before, tree_bytes(&repo.dir), "no write");
 }
@@ -213,13 +216,14 @@ fn the_commit_hint_works_from_a_subfolder() {
         .output()
         .unwrap();
     assert!(run.status.success(), "{line}: {run:?}");
-    // Each changed path is staged: no line of git status starts with a
-    // space (a change not staged) or with `??` (a file that git does not know).
+    // Each changed path is staged and has no more change: the first column
+    // is a letter, and the second column is a space (no `RM`, no `??`).
     let status = repo.git_out(&["status", "--porcelain"]);
     assert!(!status.is_empty());
     for l in status.lines() {
+        let col = l.as_bytes();
         assert!(
-            !l.starts_with(' ') && !l.starts_with("??"),
+            col[0] != b' ' && col[0] != b'?' && col[1] == b' ',
             "{line}\n{status}"
         );
     }

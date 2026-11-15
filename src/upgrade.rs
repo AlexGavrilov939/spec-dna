@@ -470,7 +470,7 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
     clash.dedup();
     if !clash.is_empty() {
         return Err(Fatal::Refused(format!(
-            "{} is a document, and upgrade also changes it as an adapter or a harness file; upgrade does not merge the 2 changes. Move the file out of the roots of spec-dna.toml (or add it to `exclude`), then run `spec-dna upgrade` again",
+            "{} is a document, and upgrade also changes it as an adapter or a harness file; upgrade does not merge the 2 changes. Move the file out of the roots of spec-dna.toml (or add it to `exclude`), commit the change, then run `spec-dna upgrade` again",
             clash.join(", ")
         )));
     }
@@ -885,7 +885,7 @@ fn file_problem(root: &Path, path: &str) -> Option<String> {
         }
         if meta.is_file() {
             return Some(format!(
-                "`{}` is a file, and upgrade needs a folder there for `{path}`; move or delete the file, then run `spec-dna upgrade` again",
+                "`{}` is a file, and upgrade needs a folder there for `{path}`; move or delete the file, commit the change, then run `spec-dna upgrade` again",
                 parts[..=i].join("/")
             ));
         }
@@ -901,7 +901,7 @@ fn link_problem(root: &Path, path: &str) -> Option<String> {
     finish::path_problem(root, path).map(|m| {
         let cut = m.split("; `finish`").next().unwrap_or(&m).to_string();
         format!(
-            "{cut}; upgrade does not write or move through a link. Replace the link, then run `spec-dna upgrade` again"
+            "{cut}; upgrade does not write or move through a link. Replace the link, commit the change, then run `spec-dna upgrade` again"
         )
     })
 }
@@ -1276,7 +1276,7 @@ fn check_paths(repo: &Repo, tree: &Tree, plan: &Plan) -> Result<(), Fatal> {
     for p in &paths {
         if !in_tree(tree, p) && repo.git.is_ignored(p) {
             return Err(Fatal::Refused(format!(
-                "git ignores {p}, so the file cannot be committed; remove the ignore rule, then run `spec-dna upgrade` again"
+                "git ignores {p}, so the file cannot be committed; remove the ignore rule, commit the change, then run `spec-dna upgrade` again"
             )));
         }
     }
