@@ -24,7 +24,7 @@ Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has these a
 On macOS and Linux, use these commands. They download the binary of your target, compare its sum with `SHA256SUMS`, and install it to `~/.local/bin`. Make sure that `~/.local/bin` is on your `PATH`:
 
 ```sh
-v=0.5.0 t=aarch64-apple-darwin
+v=0.6.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS     # Linux: sha256sum -c --ignore-missing SHA256SUMS
@@ -37,7 +37,7 @@ Apple does not notarize the macOS binaries. `curl` does not set the quarantine a
 On Windows, use these commands in PowerShell:
 
 ```powershell
-$v = "0.5.0"; $t = "x86_64-pc-windows-gnu"
+$v = "0.6.0"; $t = "x86_64-pc-windows-gnu"
 $base = "https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v"
 Invoke-WebRequest "$base/spec-dna-$v-$t.exe" -OutFile spec-dna.exe
 Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
@@ -58,14 +58,14 @@ gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. For v0.4.2 and later, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.6.0
 ```
 
 A team can also build from a local or a private clone. Give its git URL to `--git`. A path without `file://` does not work.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.5.0            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.5.0  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.6.0            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.6.0  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source. The CI job below also builds from it.
@@ -102,7 +102,9 @@ The profile sets which diagnostics fail `check`. The profiles are `lite` (only w
 
 ### Pin the sums
 
-`init` pins the version with `spec-dna = "<version>"`. To pin the sums of the binaries too, copy the table `[spec-dna-sha256]` from `spec-dna-pin.toml` of the release to the end of `spec-dna.toml`. The table must come after the keys at the top of the file. You can remove the lines of the targets that your team does not use. Copy the table before the commit of `init`, or later in a commit that changes only `spec-dna.toml`. A configuration change is a change of its own (SD503).
+`init` pins the version with `spec-dna = "<version>"`. To pin the sums of the binaries too, first commit the result of `init`. Save `spec-dna-pin.toml` of the release in the folder above the repository, and verify it with `gh attestation verify`.
+
+Then run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`. The command adds the table `[spec-dna-sha256]` to the end of `spec-dna.toml`, and it changes no other file. You can remove the lines of the targets that your team does not use. Commit the result in a commit that changes only `spec-dna.toml`. A configuration change is a change of its own (SD503).
 
 With the sums, the CI job below downloads the release binary and verifies it. The message of a version mismatch gives the URL and the sum of the pinned binary. `check` validates the table. Each key must be an asset of the pinned version. Each sum must have 64 lowercase hexadecimal characters.
 
@@ -254,11 +256,13 @@ For the evals skeleton, `init` writes a second workflow, `.github/workflows/agen
 
 ## Upgrade
 
-1. Download `spec-dna-pin.toml` of the new release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
+1. Download `spec-dna-pin.toml` of the new release. Save it outside the repository, for example in the folder above it, because `upgrade` needs a clean tree. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
 2. Install the new binary. Verify it against its sum in `spec-dna-pin.toml`.
-3. Run `spec-dna upgrade --pin-file spec-dna-pin.toml`. It moves the pin and the sums in `spec-dna.toml` to the new version.
-4. Run `spec-dna init`. It writes the adapters and the harness files of the new version. It keeps a harness file that you edited.
+3. Commit or stash your changes. Run `spec-dna upgrade --dry-run --pin-file ../spec-dna-pin.toml` to see the diff.
+4. Run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`. It moves the pin and the sums in `spec-dna.toml` to the new version. It also writes the adapters and the harness files of the new version, and it keeps a harness file that you edited.
 5. Run `spec-dna check`. Commit the result.
+
+A project with no table `[spec-dna-sha256]` needs no `--pin-file`. With the flag, `upgrade` adds the table.
 
 If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To return to the old version, install it and revert the upgrade commit.
 

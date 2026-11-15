@@ -7,7 +7,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | Command | Purpose | Section |
 | --- | --- | --- |
 | `init` | Examine the repository, ask up to 14 questions, write `spec-dna.toml`, the adapters and the harness | [init](#init) |
-| `upgrade` | Move a project from 0.4 or 0.5 to 0.6, and move the pin | [upgrade](#upgrade) |
+| `upgrade` | Move a project that pins 0.4.0 or later to the version of the binary, and move the pin | [upgrade](#upgrade) |
 | `check` | Run the controls of the gate | [check](#check) |
 | `context` | Print the sections that an agent needs | [context](#context) |
 | `show` | Print a document, a section or a requirement | [show](#show) |
@@ -26,8 +26,8 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 ```sh
 spec-dna init                       # detection, up to 14 questions, a preview, then spec-dna.toml, the adapters and the harness
 spec-dna init --dry-run             # the preview only (also --non-interactive, --answers <file>, --reconfigure)
-spec-dna upgrade --dry-run --pin-file spec-dna-pin.toml   # the diff of the move from 0.5 to 0.6; writes nothing
-spec-dna upgrade --pin-file spec-dna-pin.toml             # write the move, then commit it as one change
+spec-dna upgrade --dry-run --pin-file ../spec-dna-pin.toml   # the diff of the move from 0.5 to 0.6; writes nothing
+spec-dna upgrade --pin-file ../spec-dna-pin.toml             # write the move, then commit it as one change
 spec-dna new decision pump-choice   # a new document from the template of its type
 spec-dna new intent sensor-timeout --template prd   # the first document of a change
 spec-dna next sensor-timeout        # the checklist to the next gate of a change
@@ -42,6 +42,7 @@ spec-dna stats --sdlc --group operations   # the same for the changes of a group
 spec-dna layer add interfaces --types interface --moved-from intent   # a new layer in spec-dna.toml
 spec-dna layer list                 # each layer, its level and its documents
 spec-dna context src/valves.rs      # the sections that cite a code file
+spec-dna context src/valves.rs --group operations   # the same, with no document of an area outside the group
 spec-dna check                      # new diagnostics against HEAD; exit 1 on a new error
 spec-dna check --base origin/master # in CI: new diagnostics against the merge base
 spec-dna check --all                # every diagnostic
@@ -104,7 +105,7 @@ Questions 12 and 13 set the [agent harness](harness.md). `init` writes it for th
 
 Question 14 sets the evals ([evals.md](evals.md)). The answer `skeleton` writes the table `[evals]`, `evals/check.sh` and an example eval. For the CI answer `github`, it also writes the workflow `.github/workflows/agent-evals.yml`. It starts no run. A new project gets `skeleton`. An upgraded project keeps `none`.
 
-If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` does not run if the pin in `spec-dna.toml` is a different version.
+If `spec-dna.toml` exists, `init` updates the adapters, and the harness files if the file has a `[harness]` table. With `--reconfigure`, it asks the questions again. `init` and `init --reconfigure` do not run if the pin in `spec-dna.toml` is a different version. They write nothing and exit with code 3. For a pin from 0.4.0 up to the version of the binary, the message names `spec-dna upgrade`.
 
 At the end, `init` prints the bytes that the adapters add to the prompt prefix of each agent request (`--json`: `prefix_bytes`, when `spec-dna.toml` already exists). It also prints the `git add` command for the files that it wrote.
 
@@ -124,6 +125,13 @@ spec-dna check [--base <rev>] [--all] [--lint] [--staged]
 
 The hook that `init` writes runs `spec-dna check --staged`. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101).
 
+`check` reads the pin of the base. This also applies without `--base` and with `--staged`, where the base is `HEAD`. These rules apply:
+
+- If the base pins a version from 0.4.0 to before 0.6.0, `check` plans the upgrade of the base tree in memory. The plan is the plan of `spec-dna upgrade` without `--layout`. Then `check` compares the head with that plan. It writes nothing to git. Thus the first pull request after an upgrade keeps the gate, and the 0.5 documents of the base give no new diagnostic. [The upgrade guide](guides/upgrade-0.5.md#open-the-first-pull-request) gives the steps.
+- If the base pins a version before 0.4.0, `check` exits with code 3. The message says to move the base to 0.4.2 first.
+- If `upgrade` cannot plan the base, `check` exits with code 3. The message names the base, its pin and the reason.
+- SD503 does not apply if the base pins a version before 0.6.0. One pull request can hold the configuration and the documents. A later change of the configuration keeps SD503, also a change of the pin inside 0.6.
+
 `check` also compares the requirements of the lifecycle base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder changed, it gives SD921. This check runs only with a `[change] policy` other than `none`, and only if git can name the lifecycle base.
 
 With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`.
@@ -141,6 +149,13 @@ These rules apply to the lifecycle base:
 
   Then `check` runs only the checks of one tree.
 - `origin/HEAD` is the only ref that `check` reads for this base. It does not use a local `main` or `master`.
+- If the lifecycle base pins a version before 0.6.0, it counts as no lifecycle base. Git cannot give a diff from the planned base. `change_base` is `null`, and `check` runs the checks of one tree. The text output prints this note on stderr:
+
+  ```text
+  note: the base `main` pins `0.5.0`, before 0.6.0, so the change checks have no lifecycle base
+  ```
+
+  The note names the base: the value of `--base`, `HEAD`, or the first 12 characters of the merge base. With the policy `none`, `check` prints no note.
 - A shallow clone can fail to find the merge base. Then `change_base` is `null`.
 - For a stacked pull request, pass the branch below it as `--base`. SD910 trusts `--base`.
 
@@ -157,7 +172,7 @@ The JSON output lists each diagnostic. It also lists each document with its numb
 ## context
 
 ```text
-spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]
+spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--group <name>] [--include-inactive]
 ```
 
 `context` prints the sections that an agent needs, in this order:
@@ -180,6 +195,14 @@ The order of the layers sets the order of the first tier. It also orders the doc
 ```
 
 The layers are in the order of `context`. The line is not in the output if the request reaches no such document. In the default graph, `research`, `intent`, `incidents` and `pending` are `on-request`. A layer with `context = "always"` can fill the plan without a named target. `context` serves no `research` document in any layer, unless a target names it. The `--json` output has no count.
+
+`--group <name>` serves no document of an area outside the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A document has an area in 2 cases: it is a `requirements` document under `<folder of the layer>/<area>/`, or it is an `intent` with `areas`. A document with no area, such as a rule, a decision or a procedure, is in every group. A target that names a document of another area serves it. `context` counts the documents that it does not serve in one line after the listed sections:
+
+```text
+<!-- group operations: 2 documents of another area not served; name a document as target to serve it -->
+```
+
+The line says `1 document` for one document. It is not in the output if the count is 0. The `--json` output has no count. An unknown group, or a file with no `[groups]` table, is a usage error (exit code 2).
 
 `context` serves at most 8 documents and 5 summaries that cite a file. It lists the other sections that cite the file.
 
@@ -382,7 +405,7 @@ follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm f
 - An area of the group is in the `areas` of its intent.
 - An area of the group is the area of a delta target.
 
-The area of a delta target is the first folder under the folder of the layer of `requirements`. For example, the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). `context --group` is not in this version.
+The area of a delta target is the first folder under the folder of the layer of `requirements`. For example, the target `requirements/valves/closing` is in the area `valves`. The counts of started changes are the counts of the project. An unknown group is a usage error (exit code 2). [context](#context) has the option `--group` too.
 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 
@@ -742,60 +765,112 @@ spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]
 | Option | Meaning |
 | --- | --- |
 | `--dry-run` | Print the diff of each file and write nothing. It needs a clean tree, as a write does |
-| `--layout` | Also move the folders of the other 0.5 namespaces into the 0.6 folders |
-| `--pin-file <file>` | The file `spec-dna-pin.toml` of the release. `upgrade` copies its sums into `[spec-dna-sha256]`. The binary cannot know its own checksum |
+| `--layout` | In a mixed root, also move the folders of the other 0.5 namespaces into the 0.6 folders |
+| `--pin-file <file>` | The file `spec-dna-pin.toml` of the release, as a path from the current folder. `upgrade` copies its sums into `[spec-dna-sha256]`. The binary cannot know its own checksum |
 
-If `spec-dna.toml` has `[spec-dna-sha256]`, `--pin-file` must name the `spec-dna-pin.toml` of the new version. The person verifies that file with `gh attestation verify`. A table with no valid `--pin-file` gives exit code 3.
+Save the file of `--pin-file` outside the repository, for example in the folder above it: `--pin-file ../spec-dna-pin.toml`. A file inside the repository makes the tree not clean, so `upgrade` refuses it (exit code 1). Verify the file with `gh attestation verify`.
 
-`upgrade` starts only from a clean tree. A staged change, an unstaged change and an untracked file that git does not ignore give exit code 1. It computes the whole plan in memory, runs the proof, and writes nothing before the proof passes. It does these 7 steps and stops at the first failure:
+`upgrade` always reads and checks this file. The key `spec-dna` must be the version of the binary, and `[spec-dna-sha256]` must have valid sums. If not, `upgrade` exits with code 3. A project that has `[spec-dna-sha256]` needs the flag when the pin changes. A project with no table gets the table from the file, and the report says so.
+
+`upgrade` reads the committed tree (`HEAD`), and it starts only from a clean tree. A staged change, an unstaged change and an untracked file that git does not ignore give exit code 1. The message gives the count and the first 5 paths. A repository with no commit also gives exit code 1. `--dry-run` has the same rules.
+
+`upgrade` computes the whole plan in memory, runs the proof, and writes nothing before the proof passes. It does these 7 steps and stops at the first failure:
 
 | Step | What it does |
 | --- | --- |
 | 1. Check | Refuses a tree that is not clean. Reads the old configuration. Builds the whole plan in memory |
-| 2. Configuration | Writes the new keys and renames the old ones: the types, `reviewer` and `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version |
-| 3. Front matter | Rewrites each `type:` and each `status:` that changed, and `roots.status` and each `status-map` target. A `proposed` or `accepted` change becomes an `intent` that is `draft` or `accepted`, and a `rejected` change becomes a `closed` intent. A `done` change and a former `note` become `research`. `upgrade` writes `was-type` (`change` or `note`) on each such document. It removes the `status` line of a `done` change. For each root that has no `live-sections`, it writes `live-sections = {}`, so that no 0.5 decision gets a live section by default |
-| 4. Harness | If `[harness]` exists, renames the role keys and writes the new parts (`skills`, `review-md` and `protect-tests`) as off. A project at level `full` gets `code-simplifier = "none"`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker: it disables that role |
-| 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change to `intent/<slug>/intent.md` with `git mv`, and writes its old id into `aliases`. With `--layout` only: moves the folders `contracts`, `invariants`, `guides`, `runbooks`, `reference` and `notes` to the 0.6 folders, and writes the old ids into `aliases`. It stops if 2 moves have the same target. A 0.5 spec stays where it is, because only a person can choose its area |
-| 6. Proof | Checks that each old id resolves in the new tree and that the hash of each requirement and each section is the same. If the proof fails, `upgrade` writes nothing and exits with code 1 |
-| 7. Report | Lists the deletion proposals, each decision with no `Status` section, and the changes of behavior |
+| 2. Configuration | Renames the old names: the types, the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
+| 3. Front matter | Rewrites each `type:` and each `status:` that changed. A `proposed` or `accepted` change becomes an `intent` that is `draft` or `accepted`, and a `rejected` change becomes a `closed` intent. A `done` change and a former `note` become `research`. `upgrade` writes `was-type` (`change` or `note`) on each such document, and it adds a front matter if the document has none. It removes the `status` line of a `done` change |
+| 4. Harness | If `[harness]` exists, renames the role keys and writes the new parts as off: `skills = []`, `review-md = false` and `protect-tests = "off"`. A project at level `full` gets `code-simplifier = { claude-code = "none" }` in `[harness.roles]`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker. For a 0.5 project, it disables that role |
+| 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec |
+| 6. Proof | Checks the items below. If the proof fails, `upgrade` writes nothing and exits with code 1 |
+| 7. Report | Lists the proposals to delete, the decisions to check, the files that it kept, the links that it did not rewrite and the changes of behavior |
 
-`upgrade` also writes the 0.6 adapters, as `init` does. It changes a document body only for the link destinations of a move. It never renames the file stem of a decision, so `legacy-ids` patterns still resolve. The one change of a stem is the move of a change into `intent/<slug>/intent.md`.
+In step 2, `upgrade` also writes the keys that keep a 0.5 document as it was:
 
-When 2 old types with explicit keys merge into one, `upgrade` keeps the weaker value. A second `upgrade` changes nothing. `upgrade` never commits and never deletes a document. It prints the `git add` command at the end.
+- `required-sections = { intent = [] }` in each mixed root with a migrated change;
+- `[budgets.intent]` of 10,000 and 20,000, if a migrated change is over 12,000 characters;
+- `live-sections = { decision = [] }` in each root that has no `live-sections` and can hold a decision. Thus no 0.5 decision gets a live section by default.
 
-The proof reuses the preservation check of `mv`. It also checks these items:
+`--layout` moves the folders `contracts`, `invariants`, `guides`, `runbooks`, `reference` and `notes` of a mixed root. They go to `interfaces`, `rules`, `procedures`, `procedures`, `research` and `research`, with each tracked file under them. A root of one type keeps its path.
 
+A stop of step 5 is exit code 1, and the message names each path. These are the causes: a slug that is not valid, 2 moves with one target, a target that exists, a target in another root, and an `exclude` glob that matches a moved path.
+
+A configuration with no `[harness]` table, or with the level `none`, gets no harness file. `upgrade` writes the 0.6 adapters, as `init` does. It changes a document body only for the link destinations of a move. It never renames the file stem of a decision, so `legacy-ids` patterns still resolve. The one change of a stem is the move of a change into `intent/<slug>/intent.md`.
+
+When 2 old types with explicit keys merge into one, `upgrade` keeps the weaker value. `upgrade` never commits and never deletes a document. A second run after the commit changes nothing and prints `spec-dna upgrade: nothing to change`. A second run before the commit gives exit code 1.
+
+The proof reuses the preservation check of `mv`. It checks these items:
+
+- Each id, alias, legacy id, section anchor and requirement key of the old tree resolves to the same object in the new tree.
+- The hash of each requirement and each section is the same. The locked hash of each decision is the same too.
+- Each link of a document goes to the same file as before.
 - Each document has the 0.6 type that the mapping gives.
-- The new configuration parses.
-- The layer graph has no cycle.
+- The new configuration parses, and the layer graph has no cycle.
+- No error of the rule groups `references` (SD101, SD102, SD104, SD106) and `ids` (SD201 to SD204) is new.
+
+A pointer of `[conventions]` that names a document by its path is not edited. With `--layout`, such a pointer breaks (SD106), and the proof fails. Write the pointer as the id of the document, commit the change, and run `upgrade` again.
+
+The text output has one line for each file: `moved <from> -> <to>`, `wrote <path>`, `removed <path>` or `kept <path>: <reason>`. With `--dry-run`, the verbs are `would move`, `would write` and `would remove`, and the diff of the file follows each line. Then come the proof line, the report and the `git add` command that stages the result:
+
+```text
+to commit: git add -A -- :/spec-dna.toml :/docs/intent/dose-limit/intent.md
+```
+
+The paths start with `:/`, so the command works from each folder. The command lists the new path of a move and not the old path, because `git mv` has already staged the rename.
 
 The report lists these items:
 
-- each `done` or `rejected` change that no document cites, as a proposal to delete, and each decision with no `Status` section;
+- each `done` or `rejected` change that no document references, as a proposal to delete;
+- each decision with no `Status` section;
 - each locked decision that cites a migrated change, because `finish` does not stop on a reference in locked text;
 - each kept harness file, and each ended role with its model;
+- the first 5 links of each kind that `upgrade` did not rewrite (see the limits below);
+- the table `[spec-dna-sha256]`, if `--pin-file` added it, and each warning of the harness configuration;
 - the changes of behavior in the list below;
-- the count of each error code of `check --all` on the new tree.
+- the count of each error code of `check --all` on the new tree, without SD506.
 
 `upgrade` reports these changes of behavior, and the CHANGELOG records them:
 
-- A former `note` is now `research`, with `keep = "forever"`. SD202 allows the deletion of a document that has `was-type: note` or `was-type: change`. This is the only exemption in a `forever` layer.
+- A former `note` is now `research`, with `keep = "forever"`. SD202 allows the deletion of a document that has `was-type: note` or `was-type: change`, as 0.5 did. This is the only exemption in a `forever` layer.
 - `context` listed incidents and notes. It now counts them in one line.
 - The context order follows the levels of the graph. `foundation` comes before `rules`.
-- The `--json` field `name` of SD405 and SD611 changed. A consumer must read `code`.
-- 0.6.0 renames types, keys and commands, so it is a minor release that breaks compatibility.
+- The `--json` field `name` of SD405 and SD611 changed.
+- 0.6.0 renames types, keys and commands, so it is a minor release that breaks compatibility. Semantic Versioning allows this before 1.0.
 
-With `--json`, the output has the fields `from`, `to`, `files`, `proof` and `report`. Each entry of `files` has `path`, `action` (`write`, `move`, `remove` or `keep`) and `diff`, as in `init --json`.
+With `--json`, the output is one object with these fields:
+
+| Field | Content |
+| --- | --- |
+| `version`, `from`, `to`, `dry_run` | The version of the binary, the old pin, the new pin and a flag |
+| `files` | One entry for each file: `path`, `action` (`write`, `move`, `remove` or `keep`), `note` and `diff`. A `move` entry also has `from`, the old path |
+| `proof` | `ok`, `ids`, `requirements`, `sections`, `types` and `failures` |
+| `report` | `proposals`, `no_status`, `locked_cites` (`decision` and `change`), `kept`, `ended_roles` (`role` and `model`), `behavior`, `errors` (`code` and `count`), `sums_added`, `outside_links`, `folder_links` and `warnings` |
+
+`outside_links` and `folder_links` are counts. A failed proof gives the object on stdout and exit code 1. A second run gives `files: []`.
 
 | Exit code | Meaning |
 | --- | --- |
 | 0 | `upgrade` wrote the changes, or nothing needed a change |
-| 1 | The tree is not clean, or the proof failed |
+| 1 | The tree is not clean, or the repository has no commit. A stop of a move (see step 5). A symbolic link, or a file in the place of a folder, in a path that `upgrade` writes. A path that `upgrade` writes and git ignores. A file that is a document and also an instruction file or a harness file. The proof failed |
 | 2 | A usage error |
-| 3 | A configuration error: no `spec-dna.toml`, a pin before 0.4.0 or after the binary, a file that neither schema reads, or `[spec-dna-sha256]` with no valid `--pin-file` |
-| 4 | A git error |
+| 3 | No git repository or no `spec-dna.toml`. A pin before 0.4.0 or after the binary. A file that neither reader accepts. A form that `upgrade` cannot edit (a hand edit). A file that is not UTF-8 and needs an edit. `[spec-dna-sha256]` with no valid `--pin-file`, or a bad `--pin-file` |
+| 4 | A git error, or a write that failed |
 
-To undo an upgrade before the commit, run `git reset --hard`. Then run `git clean -fd`. After the merge, a revert needs 2 pull requests, because SD503 of the old binary rejects a configuration and documents together.
+A write that fails prints "to restore the tree, run `git reset --hard` and `git clean -fd`". To undo an upgrade before the commit, run these 2 commands. After the merge, a revert needs 2 pull requests, because SD503 of the old binary rejects a configuration and documents together.
+
+If `spec-dna.toml` has a form that `upgrade` cannot edit without a loss of text, `upgrade` exits with code 3 and writes nothing. Two examples are a budget with dotted keys (`guide.soft`) and a `types` list of many lines that must change its length. The message gives the key and the form to write.
+
+For example: "`budgets.guide`: upgrade cannot edit this form; write it as a table with a header, such as `[budgets.guide]`, ... by hand, commit the change, then run `spec-dna upgrade` again". Edit the file with the 0.5 names, because the 0.5 reader of `upgrade` refuses a 0.6 name. Commit the edit, because `upgrade` reads `HEAD`.
+
+These limits apply:
+
+- A link from a file that is not a document stays as it is. Examples are `README.md`, an instruction file and a file outside the roots. The link goes to a moved file. `upgrade` counts these links (`outside_links`) and does not rewrite them. `check` does not read them. Search for the old paths, and fix the links.
+- A link to a folder stays too, if the folder of a change moves or the document that the folder gives changes (`folder_links`).
+- A file with CRLF line endings that moves gets the new block of `aliases` with LF line endings. `mv` does the same.
+- `git log --follow` can lose the history of a small change that `upgrade` moves, because the same commit edits its front matter and links. [The upgrade guide](guides/upgrade-0.5.md#commit-the-result) gives the advice.
+- If the first write step fails, empty folders can stay. Git does not show them.
+- `status`, `next` and `finish` read a lifecycle base that pins a version before 0.6.0 with the rules of 0.6. `check` does not.
 
 ## Exit codes
 
@@ -803,8 +878,8 @@ To undo an upgrade before the commit, run `git reset --hard`. Then run `git clea
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `upgrade` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status` or `stats`, `stats` without `--sdlc`, and an unknown id of `eval run` |
-| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, and an unknown id of `eval run` |
+| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `eval run`: the temporary folder, the copy, the base commit or the result file |
 | 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
 

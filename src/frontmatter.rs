@@ -261,6 +261,130 @@ fn split_flow(s: &str) -> Result<Vec<&str>, String> {
     Ok(parts)
 }
 
+// The 3 edits of `upgrade` (design 0.6.0, D143): `set_field`, `insert_field`
+// and `remove_field`. Each edits one line and keeps the order of the keys, the
+// quotes, a trailing comment and the line endings.
+
+/// A line of the front matter: its byte range in the text, and its text with
+/// no line ending.
+struct Line<'a> {
+    start: usize,
+    end: usize,
+    bare: &'a str,
+}
+
+/// The lines of the front matter, and the offset where it starts. `None` if
+/// the text has no front matter.
+fn fm_lines(text: &str) -> Option<(usize, Vec<Line<'_>>)> {
+    let (fm, _) = split(text)?;
+    let rest = text.strip_prefix("---")?;
+    let rest = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))?;
+    let start = text.len() - rest.len();
+    let mut lines = Vec::new();
+    let mut at = start;
+    for line in fm.split_inclusive('\n') {
+        lines.push(Line {
+            start: at,
+            end: at + line.len(),
+            bare: line.trim_end_matches(['\n', '\r']),
+        });
+        at += line.len();
+    }
+    Some((start, lines))
+}
+
+/// The index of the line of a key. A line that starts with a space, a tab or
+/// `-` belongs to the value of the line above.
+fn key_line(lines: &[Line], key: &str) -> Option<usize> {
+    lines.iter().position(|l| {
+        !l.bare.starts_with([' ', '\t', '-', '#'])
+            && split_key(l.bare).is_some_and(|(k, _)| k == key)
+    })
+}
+
+/// The index after the last line of the value of the key line `i`.
+fn value_end(lines: &[Line], i: usize) -> usize {
+    let mut j = i + 1;
+    while j < lines.len() && lines[j].bare.starts_with([' ', '\t', '-']) {
+        j += 1;
+    }
+    j
+}
+
+/// Replaces the value of the key `key`. The result is `None` if the front
+/// matter has no such key, or if the value is not on the line of the key.
+pub fn set_field(text: &str, key: &str, value: &str) -> Option<String> {
+    let (_, lines) = fm_lines(text)?;
+    let i = key_line(&lines, key)?;
+    let l = &lines[i];
+    let (_, rest) = split_key(l.bare)?;
+    let head = &l.bare[..l.bare.len() - rest.len()];
+    let kept = strip_comment(rest);
+    let comment = &rest[kept.len()..];
+    let lead = &kept[..kept.len() - kept.trim_start().len()];
+    let tail = &kept[kept.trim_end().len()..];
+    let old = kept.trim();
+    if old.starts_with(['[', '{', '&', '*', '!', '|', '>']) {
+        return None;
+    }
+    if old.is_empty() && value_end(&lines, i) > i + 1 {
+        // A block list or a block mapping starts here.
+        return None;
+    }
+    let quoted = match old.chars().next() {
+        Some('"') => format!("\"{value}\""),
+        Some('\'') => format!("'{value}'"),
+        _ => value.to_string(),
+    };
+    let lead = if old.is_empty() && lead.is_empty() {
+        " "
+    } else {
+        lead
+    };
+    let tail = if old.is_empty() { "" } else { tail };
+    let eol = &text[l.start + l.bare.len()..l.end];
+    let mut out = String::with_capacity(text.len() + value.len());
+    out.push_str(&text[..l.start]);
+    out.push_str(&format!("{head}{lead}{quoted}{tail}{comment}{eol}"));
+    out.push_str(&text[l.end..]);
+    Some(out)
+}
+
+/// Inserts the line `key: value` after the line of the key `after`, or as the
+/// first line of the front matter if `after` is `None` or has no line. A
+/// document with no front matter gets one.
+pub fn insert_field(text: &str, key: &str, value: &str, after: Option<&str>) -> String {
+    let Some((start, lines)) = fm_lines(text) else {
+        let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+        return format!("---{eol}{key}: {value}{eol}---{eol}{text}");
+    };
+    let eol = match lines.first() {
+        Some(l) => &text[l.start + l.bare.len()..l.end],
+        None => {
+            if text[..start].ends_with("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            }
+        }
+    };
+    let at = after
+        .and_then(|a| key_line(&lines, a))
+        .map_or(start, |i| lines[value_end(&lines, i) - 1].end);
+    format!("{}{key}: {value}{eol}{}", &text[..at], &text[at..])
+}
+
+/// Removes the key `key`, with the lines of its value. The result is `None` if
+/// the front matter has no such key.
+pub fn remove_field(text: &str, key: &str) -> Option<String> {
+    let (_, lines) = fm_lines(text)?;
+    let i = key_line(&lines, key)?;
+    let end = lines[value_end(&lines, i) - 1].end;
+    Some(format!("{}{}", &text[..lines[i].start], &text[end..]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +438,99 @@ mod tests {
         assert_eq!(parse("a: 1\na: 2\n", 2).unwrap_err().0, 3);
         assert!(parse("just text\n", 2).is_err());
         assert!(parse("a: \"open\n", 2).is_err());
+    }
+
+    #[test]
+    fn set_field_keeps_quotes_comment_and_order() {
+        let t = |text: &str| set_field(text, "type", "requirements");
+        assert_eq!(
+            t("---\ntype: \"spec\"  # old name\nstatus: x\n---\n# T\n").unwrap(),
+            "---\ntype: \"requirements\"  # old name\nstatus: x\n---\n# T\n"
+        );
+        assert_eq!(
+            t("---\nowner: me\ntype: 'spec'\n---\n").unwrap(),
+            "---\nowner: me\ntype: 'requirements'\n---\n"
+        );
+        assert_eq!(
+            t("---\ntype:   spec\n---\n").unwrap(),
+            "---\ntype:   requirements\n---\n"
+        );
+        assert_eq!(
+            t("---\r\ntype: spec\r\nstatus: x\r\n---\r\n# T\r\n").unwrap(),
+            "---\r\ntype: requirements\r\nstatus: x\r\n---\r\n# T\r\n"
+        );
+        assert_eq!(
+            t("---\ntype:\n---\n").unwrap(),
+            "---\ntype: requirements\n---\n"
+        );
+    }
+
+    #[test]
+    fn set_field_refuses_what_it_cannot_edit_on_one_line() {
+        let t = |text: &str| set_field(text, "type", "x");
+        assert!(t("---\nstatus: draft\n---\n").is_none());
+        // A block list is not a value on the line of its key.
+        assert!(set_field("---\naliases:\n  - a\n---\n", "aliases", "b").is_none());
+        // A key in the body is not a key of the front matter.
+        assert!(t("---\na: 1\n---\ntype: spec\n").is_none());
+        assert!(t("# T\ntype: spec\n").is_none());
+        // A key with a longer name is another key.
+        assert!(t("---\ntype-of: spec\n---\n").is_none());
+    }
+
+    #[test]
+    fn insert_field_goes_first_after_a_key_or_makes_the_front_matter() {
+        assert_eq!(
+            insert_field("---\nstatus: x\n---\n# T\n", "type", "research", None),
+            "---\ntype: research\nstatus: x\n---\n# T\n"
+        );
+        assert_eq!(
+            insert_field(
+                "---\ntype: research\nstatus: x\n---\n",
+                "was-type",
+                "note",
+                Some("type")
+            ),
+            "---\ntype: research\nwas-type: note\nstatus: x\n---\n"
+        );
+        // The key `after` has no line: the first line.
+        assert_eq!(
+            insert_field("---\nstatus: x\n---\n", "was-type", "note", Some("type")),
+            "---\nwas-type: note\nstatus: x\n---\n"
+        );
+        assert_eq!(
+            insert_field("# T\n", "was-type", "note", None),
+            "---\nwas-type: note\n---\n# T\n"
+        );
+        assert_eq!(
+            insert_field("# T\r\nx\r\n", "was-type", "note", None),
+            "---\r\nwas-type: note\r\n---\r\n# T\r\nx\r\n"
+        );
+        assert_eq!(
+            insert_field("---\r\nstatus: x\r\n---\r\n", "type", "research", None),
+            "---\r\ntype: research\r\nstatus: x\r\n---\r\n"
+        );
+    }
+
+    #[test]
+    fn remove_field_removes_the_line_and_the_lines_of_its_value() {
+        assert_eq!(
+            remove_field(
+                "---\ntype: change\nstatus: done\nowner: me\n---\n# T\n",
+                "status"
+            )
+            .unwrap(),
+            "---\ntype: change\nowner: me\n---\n# T\n"
+        );
+        assert_eq!(
+            remove_field("---\r\nstatus: done\r\n---\r\n", "status").unwrap(),
+            "---\r\n---\r\n"
+        );
+        assert_eq!(
+            remove_field("---\naliases:\n  - a\n  - b\nstatus: x\n---\n", "aliases").unwrap(),
+            "---\nstatus: x\n---\n"
+        );
+        assert!(remove_field("---\ntype: x\n---\n", "status").is_none());
+        assert!(remove_field("# T\nstatus: x\n", "status").is_none());
     }
 }

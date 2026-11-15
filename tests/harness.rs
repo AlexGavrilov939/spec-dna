@@ -1256,11 +1256,14 @@ fn the_upgrade_from_0_4_1_is_not_a_configuration_change_with_other_files() {
             "repos:\n  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n"
         };
         r.write(hook_file, old_hook);
-        // The state of 0.4.1: the old pin and the old hook line.
+        // The state of 0.4.1: the old pin, a configuration that 0.4.1 read
+        // (`check` plans such a base with the code of `upgrade`), and the old
+        // hook line.
         let toml = r.read("spec-dna.toml");
-        let pinned = toml.replace(&format!("spec-dna = \"{VERSION}\""), "spec-dna = \"0.4.1\"");
-        assert_ne!(toml, pinned);
-        r.write("spec-dna.toml", &pinned);
+        r.write(
+            "spec-dna.toml",
+            "spec-dna = \"0.4.1\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"spec\"\n",
+        );
         r.commit("0.4.1");
         // The upgrade: set the pin, run `init`.
         r.write("spec-dna.toml", &toml);
@@ -1280,6 +1283,40 @@ fn the_upgrade_from_0_4_1_is_not_a_configuration_change_with_other_files() {
         let (code, out) = r.run(&["check", "--staged"]);
         assert!(!out.contains("SD503"), "{hook_file}: {out}");
         assert_eq!(code, 0, "{hook_file}: {out}");
+    }
+}
+
+#[test]
+fn a_hook_line_that_init_upgrades_is_not_a_configuration_change_with_other_files() {
+    // The base pins the version of the binary, so SD503 applies (D156): only
+    // the hook files that `init` writes with the configuration do not count.
+    for hook_file in [".pre-commit-config.yaml", ".husky/pre-commit"] {
+        let r = lean_repo();
+        let old_hook = if hook_file == ".husky/pre-commit" {
+            "#!/bin/sh\nspec-dna check\n"
+        } else {
+            "repos:\n  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n"
+        };
+        r.write(hook_file, old_hook);
+        r.commit("base");
+        let toml = r.read("spec-dna.toml");
+        r.write("spec-dna.toml", &format!("{toml}\n# A comment.\n"));
+        let (code, out, err) = r.run3(&["init"]);
+        assert_eq!(code, 0, "{hook_file}: {out}{err}");
+        assert!(
+            r.read(hook_file).contains("spec-dna check --staged"),
+            "{hook_file}: {}",
+            r.read(hook_file)
+        );
+        let (code, out) = r.run(&["check", "--base", "HEAD"]);
+        assert!(!out.contains("SD503"), "{hook_file}: {out}");
+        assert_eq!(code, 0, "{hook_file}: {out}");
+        // A document in the same change gives SD503, so the test has teeth.
+        r.write("docs/extra.md", "# Extra\n\nA text.\n");
+        git(&r.dir, &["add", "-A"]);
+        let (code, out) = r.run(&["check", "--base", "HEAD"]);
+        assert!(out.contains("SD503"), "{hook_file}: {out}");
+        assert_eq!(code, 1, "{hook_file}: {out}");
     }
 }
 

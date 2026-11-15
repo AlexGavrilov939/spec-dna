@@ -372,3 +372,234 @@ fn documents_that_cite_a_file_follow_the_order_of_the_layers() {
     let procedure = at("procedures/restart").unwrap_or_else(|| panic!("{ids:?}"));
     assert!(decision < procedure, "{ids:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `context --group`
+// ---------------------------------------------------------------------------
+
+/// A project with 2 areas and 2 groups. Each requirements document of an
+/// area names `src/irrigation/valve.py`. A rule has no area, and it applies
+/// to the whole project.
+fn grouped() -> Repo {
+    let r = Repo::with(
+        "areas = [\"valves\", \"sensors\"]\n\n[groups]\noperations = [\"valves\"]\nreporting = [\"sensors\"]\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nkeep = \"until-finished\"\n\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    r.write("src/irrigation/valve.py", VALVE);
+    let req = |title: &str, key: &str| {
+        format!(
+            "---\nstatus: active\n---\n# {title}\n\n## Requirements\n\n- **{key}**: The controller SHALL close the valve in `src/irrigation/valve.py` in 5 seconds.\n"
+        )
+    };
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &req("Closing", "close"),
+    );
+    r.write(
+        "docs/requirements/sensors/timeouts.md",
+        &req("Timeouts", "timeout"),
+    );
+    r.write(
+        "docs/rules/watering.md",
+        &rule("applies-to: [\"src/irrigation/**\"]\n", "valve-timeout"),
+    );
+    r
+}
+
+#[test]
+fn a_group_serves_only_the_areas_of_the_group() {
+    let r = grouped();
+    // Without a group, both areas are in the plan.
+    let all = r.served(&["context", "src/irrigation/valve.py"]);
+    assert!(
+        all.iter()
+            .any(|i| i.starts_with("requirements/valves/closing"))
+    );
+    assert!(
+        all.iter()
+            .any(|i| i.starts_with("requirements/sensors/timeouts"))
+    );
+    // With the group, the other area is not served and not listed.
+    let (code, out, err) = r.run(&[
+        "context",
+        "src/irrigation/valve.py",
+        "--group",
+        "operations",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let ids = full_ids(&out);
+    assert!(
+        ids.iter()
+            .any(|i| i.starts_with("requirements/valves/closing")),
+        "{ids:?}"
+    );
+    assert!(!out.contains("sensors/timeouts"), "{out}");
+    // A rule has no area: the group does not change it.
+    assert!(
+        ids.iter().any(|i| i.starts_with("rules/watering")),
+        "{ids:?}"
+    );
+    // One line counts what the group holds back, in the text output only.
+    let line = "<!-- group operations: 1 document of another area not served; name a document as target to serve it -->";
+    assert_eq!(out.matches(line).count(), 1, "{out}");
+    // The other group serves the other area. The form `--group=name` works.
+    let (_, out, _) = r.run(&["context", "src/irrigation/valve.py", "--group=reporting"]);
+    assert!(out.contains("requirements/sensors/timeouts"), "{out}");
+    assert!(!out.contains("valves/closing"), "{out}");
+}
+
+#[test]
+fn a_target_serves_a_document_of_another_area() {
+    let r = grouped();
+    let ids = r.served(&[
+        "context",
+        "requirements/sensors/timeouts",
+        "--group",
+        "operations",
+    ]);
+    assert!(
+        ids.iter()
+            .any(|i| i.starts_with("requirements/sensors/timeouts")),
+        "a named target is served in any group: {ids:?}"
+    );
+}
+
+#[test]
+fn the_group_keeps_the_json_shape_and_changes_nothing_without_it() {
+    let r = grouped();
+    let (_, plain, _) = r.run(&["context", "src/irrigation/valve.py", "--json"]);
+    let (code, json, err) = r.run(&[
+        "context",
+        "src/irrigation/valve.py",
+        "--json",
+        "--group",
+        "operations",
+    ]);
+    assert_eq!(code, 0, "{json}{err}");
+    // The same keys, and no count.
+    let keys = |s: &str| -> Vec<String> {
+        s.split("\"units\"")
+            .next()
+            .unwrap()
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .filter(|k| {
+                [
+                    "estimated_tokens",
+                    "version",
+                    "entries",
+                    "paths",
+                    "budget",
+                    "used",
+                    "full",
+                    "stubs",
+                    "omitted",
+                    "units",
+                ]
+                .contains(k)
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(keys(&plain), keys(&json), "{json}");
+    assert!(
+        !json.contains("another area") && !json.contains("sensors/timeouts"),
+        "{json}"
+    );
+    assert!(plain.contains("sensors/timeouts"), "{plain}");
+    // Without the option, no line about a group.
+    let (_, out, _) = r.run(&["context", "src/irrigation/valve.py"]);
+    assert!(!out.contains("group"), "{out}");
+}
+
+#[test]
+fn an_unknown_group_is_a_usage_error() {
+    let r = grouped();
+    let (code, _, err) = r.run(&["context", "src/irrigation/valve.py", "--group", "billing"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("billing") && err.contains("operations"),
+        "{err}"
+    );
+    // A project with no `[groups]` table.
+    let r = irrigation();
+    let (code, _, err) = r.run(&[
+        "context",
+        "src/irrigation/valve.py",
+        "--group",
+        "operations",
+    ]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no [groups] table"), "{err}");
+}
+
+#[test]
+fn a_group_holds_back_a_dependency_and_an_intent_of_another_area() {
+    let r = grouped();
+    r.write(
+        "docs/requirements/valves/closing.md",
+        "---\nstatus: active\ndepends-on: [requirements/sensors/timeouts]\n---\n# Closing\n\n## Requirements\n\n- **close**: The controller SHALL close the valve in 5 seconds.\n",
+    );
+    r.write(
+        "docs/intent/report/intent.md",
+        "---\nstatus: draft\nareas: [sensors]\n---\n# Report\n\n## Intent\n\nChange `src/irrigation/valve.py`.\n",
+    );
+    // Without a group, the entry pulls its dependency.
+    let ids = r.served(&["context", "requirements/valves/closing"]);
+    assert!(
+        ids.iter()
+            .any(|i| i.starts_with("requirements/sensors/timeouts")),
+        "{ids:?}"
+    );
+    // With the group, the dependency of another area is counted and not served.
+    let (code, out, err) = r.run(&[
+        "context",
+        "requirements/valves/closing",
+        "--group",
+        "operations",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("sensors/timeouts#"), "{out}");
+    assert!(
+        out.contains("<!-- group operations: 1 document of another area not served;"),
+        "{out}"
+    );
+    // An intent with `areas` that are not in the group stays out too. The
+    // request reaches it and the timeouts document: 2 documents.
+    let (_, out, _) = r.run(&["context", "src/irrigation/valve.py"]);
+    assert!(out.contains("report/intent"), "{out}");
+    let (_, out, _) = r.run(&[
+        "context",
+        "src/irrigation/valve.py",
+        "--group",
+        "operations",
+    ]);
+    assert!(!out.contains("report/intent"), "{out}");
+    assert!(
+        out.contains("<!-- group operations: 2 documents of another area not served;"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_group_that_holds_back_every_document_says_so_and_does_not_say_none_cites() {
+    let r = grouped();
+    // The rule goes, and the document of the group `reporting` does not cite
+    // the file. The only citing document is of another area.
+    std::fs::remove_file(r.dir.join("docs/rules/watering.md")).unwrap();
+    r.write(
+        "docs/requirements/sensors/timeouts.md",
+        "---\nstatus: active\n---\n# Timeouts\n\n## Requirements\n\n- **timeout**: The controller SHALL report a sensor timeout.\n",
+    );
+    let (code, out, err) = r.run(&["context", "src/irrigation/valve.py", "--group", "reporting"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("<!-- group reporting: 1 document of another area not served;"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("no document cites or applies to"),
+        "the output must not say that no document cites the file: {out}"
+    );
+}

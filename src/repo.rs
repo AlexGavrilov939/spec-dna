@@ -7,7 +7,7 @@ use crate::git::Git;
 use crate::index::Index;
 use crate::model::{Corpus, is_doc_path};
 use crate::parse::{ParsedDoc, parse};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -258,6 +258,21 @@ pub struct Snapshot {
     /// True for the working tree. Then spec-dna reads clean files from disk.
     pub worktree: bool,
     pub files: Vec<Entry>,
+    /// The overlay of a planned tree (D155): the text of each path that has no
+    /// blob in git. A path with a text has priority over the blob of the path.
+    pub texts: Option<Arc<HashMap<String, Vec<u8>>>>,
+}
+
+/// A change of a snapshot of a commit: the base tree that `upgrade` plans in
+/// memory for `check` (D155). It never writes to git.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Overlay {
+    /// The moves, as (old path, new path). A moved file keeps its blob.
+    pub moved: Vec<(String, String)>,
+    /// The files that the plan removes.
+    pub removed: Vec<String>,
+    /// The new text of each path that the plan writes, also a new path.
+    pub texts: HashMap<String, Vec<u8>>,
 }
 
 impl Snapshot {
@@ -301,6 +316,7 @@ impl Snapshot {
         Ok(Snapshot {
             worktree: true,
             files: out,
+            texts: None,
         })
     }
 
@@ -331,6 +347,7 @@ impl Snapshot {
         Ok(Snapshot {
             worktree: false,
             files,
+            texts: None,
         })
     }
 
@@ -345,7 +362,70 @@ impl Snapshot {
                     blob: Some(oid),
                 })
                 .collect(),
+            texts: None,
         })
+    }
+
+    /// The snapshot of a commit with an overlay (D155). Each path that the
+    /// plan writes has no blob and has its text in memory. A moved file with
+    /// no new text keeps its blob. Another file keeps its blob, so the readers
+    /// that compare blob ids see only the planned change.
+    pub fn overlaid(self, overlay: &Overlay) -> Snapshot {
+        let mut files: BTreeMap<String, Option<String>> =
+            self.files.into_iter().map(|e| (e.path, e.blob)).collect();
+        for (from, to) in &overlay.moved {
+            if let Some(blob) = files.remove(from) {
+                files.insert(to.clone(), blob);
+            }
+        }
+        for path in &overlay.removed {
+            files.remove(path);
+        }
+        // The text of a path is in memory, so the entry has no blob.
+        for path in overlay.texts.keys() {
+            files.insert(path.clone(), None);
+        }
+        Snapshot {
+            worktree: false,
+            files: files
+                .into_iter()
+                .map(|(path, blob)| Entry { path, blob })
+                .collect(),
+            texts: Some(Arc::new(overlay.texts.clone())),
+        }
+    }
+
+    /// The overlay text of a path, if the snapshot has one.
+    fn text_of(&self, path: &str) -> Option<&Vec<u8>> {
+        self.texts.as_ref().and_then(|t| t.get(path))
+    }
+
+    /// Reads the bytes of `paths` from a snapshot that is not the working
+    /// tree: the overlay text of a path, or else its blob. A path that the
+    /// snapshot does not have is not in the result.
+    pub fn read(&self, repo: &Repo, paths: &[String]) -> Result<HashMap<String, Vec<u8>>, Fatal> {
+        let mut out = HashMap::new();
+        let mut ids: Vec<(String, String)> = Vec::new();
+        for p in paths {
+            let Some(entry) = self.blob_of(p) else {
+                continue;
+            };
+            if let Some(text) = self.text_of(p) {
+                out.insert(p.clone(), text.clone());
+            } else if let Some(b) = entry.blob.clone() {
+                ids.push((p.clone(), b));
+            }
+        }
+        let blobs = repo
+            .git
+            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
+            .map_err(Fatal::Io)?;
+        for (p, b) in ids {
+            if let Some(bytes) = blobs.get(&b) {
+                out.insert(p, bytes.clone());
+            }
+        }
+        Ok(out)
     }
 
     pub fn blob_of(&self, path: &str) -> Option<&Entry> {
@@ -356,10 +436,13 @@ impl Snapshot {
     }
 }
 
-/// The source of the text of a document.
+/// The source of the text of a document: a file of the working tree, a blob of
+/// git, or a text of the overlay of a planned tree (D155). Disk and memory
+/// texts have no blob id, so the index does not cache them.
 enum Source {
     Disk(String),
     Blob(String),
+    Mem(String, Vec<u8>),
 }
 
 /// Loads the parsed documents of several snapshots through the index.
@@ -385,12 +468,14 @@ pub fn load(
     };
     // Documents and convention files per snapshot, and the work to do.
     let mut per_snap: Vec<(Vec<&Entry>, Vec<&Entry>)> = Vec::new();
-    let mut jobs: Vec<(Source, Option<String>)> = Vec::new();
+    // Each job has the number of its snapshot: 2 snapshots can have a file at
+    // one path with 2 texts, and the blob id does not tell them apart.
+    let mut jobs: Vec<(Source, Option<String>, usize)> = Vec::new();
     let mut queued: HashSet<String> = HashSet::new();
     let mut used: HashSet<String> = HashSet::new();
     let convention_files = config.convention_files();
     let root_dir = std::fs::canonicalize(&repo.root).unwrap_or_else(|_| repo.root.clone());
-    for snap in snaps {
+    for (si, snap) in snaps.iter().enumerate() {
         let docs: Vec<&Entry> = snap
             .files
             .iter()
@@ -426,10 +511,16 @@ pub fn load(
                         } else {
                             Source::Blob(b.clone())
                         };
-                        jobs.push((src, Some(b.clone())));
+                        jobs.push((src, Some(b.clone()), si));
                     }
                 }
-                _ => jobs.push((Source::Disk(e.path.clone()), None)),
+                _ => {
+                    let src = match snap.text_of(&e.path) {
+                        Some(t) if !snap.worktree => Source::Mem(e.path.clone(), t.clone()),
+                        _ => Source::Disk(e.path.clone()),
+                    };
+                    jobs.push((src, None, si));
+                }
             }
         }
         per_snap.push((docs, outs));
@@ -438,7 +529,7 @@ pub fn load(
     trace("index load", &mut t);
     let blob_ids: Vec<String> = jobs
         .iter()
-        .filter_map(|(s, _)| {
+        .filter_map(|(s, ..)| {
             if let Source::Blob(b) = s {
                 Some(b.clone())
             } else {
@@ -448,9 +539,10 @@ pub fn load(
         .collect();
     let blobs = repo.git.read_blobs(&blob_ids).map_err(Fatal::Io)?;
     let root = &repo.root;
-    let results: Vec<Result<ParsedDoc, String>> = par_map(&jobs, |(src, _)| {
+    let results: Vec<Result<ParsedDoc, String>> = par_map(&jobs, |(src, ..)| {
         let bytes = match src {
             Source::Disk(p) => std::fs::read(root.join(p)).map_err(|e| format!("{p}: {e}"))?,
+            Source::Mem(_, t) => t.clone(),
             Source::Blob(b) => blobs
                 .get(b)
                 .cloned()
@@ -460,36 +552,37 @@ pub fn load(
     });
 
     trace("read and parse", &mut t);
-    let mut worktree_docs: HashMap<String, Arc<ParsedDoc>> = HashMap::new();
+    // The documents with no blob id: the index does not keep them.
+    let mut uncached: HashMap<(usize, String), Arc<ParsedDoc>> = HashMap::new();
     let parsed = results.len();
-    for ((src, blob), res) in jobs.into_iter().zip(results) {
+    for ((src, blob, si), res) in jobs.into_iter().zip(results) {
         let doc = Arc::new(res.map_err(Fatal::Io)?);
         match blob {
             Some(b) => {
                 index.entries.insert(b, doc);
             }
             None => {
-                if let Source::Disk(p) = src {
-                    worktree_docs.insert(p, doc);
+                if let Source::Disk(p) | Source::Mem(p, _) = src {
+                    uncached.insert((si, p), doc);
                 }
             }
         }
     }
-    let mut changed = parsed > worktree_docs.len();
+    let mut changed = parsed > uncached.len();
     if prune {
         let before = index.entries.len();
         index.entries.retain(|k, _| used.contains(k));
         changed |= index.entries.len() != before;
     }
-    let cached = used.len().saturating_sub(parsed - worktree_docs.len());
+    let cached = used.len().saturating_sub(parsed - uncached.len());
 
     let mut corpora = Vec::new();
-    for (snap, (docs, outs)) in snaps.iter().zip(per_snap) {
+    for (si, (snap, (docs, outs))) in snaps.iter().zip(per_snap).enumerate() {
         let files: Vec<String> = snap.files.iter().map(|e| e.path.clone()).collect();
         let parsed_of = |e: &Entry| -> (String, Arc<ParsedDoc>) {
             let d = match &e.blob {
                 Some(b) => index.entries[b].clone(),
-                None => worktree_docs[&e.path].clone(),
+                None => uncached[&(si, e.path.clone())].clone(),
             };
             (e.path.clone(), d)
         };
@@ -499,7 +592,7 @@ pub fn load(
             .into_iter()
             .map(|e| {
                 if snap.worktree {
-                    (e.path.clone(), worktree_docs[&e.path].clone())
+                    (e.path.clone(), uncached[&(si, e.path.clone())].clone())
                 } else {
                     parsed_of(e)
                 }
@@ -591,5 +684,142 @@ mod tests {
             r"\\server\share\repo"
         );
         assert_eq!(shown(Path::new("/home/u/repo")), "/home/u/repo");
+    }
+
+    fn snap(files: &[(&str, Option<&str>)]) -> Snapshot {
+        Snapshot {
+            worktree: false,
+            files: files
+                .iter()
+                .map(|(p, b)| Entry {
+                    path: p.to_string(),
+                    blob: b.map(str::to_string),
+                })
+                .collect(),
+            texts: None,
+        }
+    }
+
+    fn overlay(moved: &[(&str, &str)], removed: &[&str], texts: &[(&str, &str)]) -> Overlay {
+        Overlay {
+            moved: moved
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect(),
+            removed: removed.iter().map(|p| p.to_string()).collect(),
+            texts: texts
+                .iter()
+                .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
+                .collect(),
+        }
+    }
+
+    fn view(s: &Snapshot) -> Vec<(&str, Option<&str>)> {
+        s.files
+            .iter()
+            .map(|e| (e.path.as_str(), e.blob.as_deref()))
+            .collect()
+    }
+
+    /// A temporary folder that is no git repository.
+    fn scratch(name: &str) -> PathBuf {
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "spec-dna-repo-{name}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_overlay_text_has_priority_over_the_blob_of_its_path() {
+        // The folder is no git repository: a read of a blob would fail.
+        let dir = scratch("priority");
+        let repo = Repo::new(&dir, dir.join(".git"));
+        let base = snap(&[("a.md", Some("aaaa")), ("b.md", Some("bbbb"))]).overlaid(&overlay(
+            &[],
+            &[],
+            &[("a.md", "planned a\n")],
+        ));
+        let got = base.read(&repo, &["a.md".to_string()]).unwrap();
+        assert_eq!(got["a.md"], b"planned a\n");
+        // A path that the snapshot lacks has no text, also if the overlay has one.
+        let got = base.read(&repo, &["zz.md".to_string()]).unwrap();
+        assert!(got.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_overlay_moves_removes_and_writes_and_keeps_the_other_blobs() {
+        let base = snap(&[
+            ("docs/a.md", Some("a1")),
+            ("docs/b.md", Some("b1")),
+            ("docs/c.md", Some("c1")),
+            ("docs/img.png", Some("p1")),
+            (".claude/agents/checker.md", Some("k1")),
+        ]);
+        let ov = overlay(
+            &[
+                ("docs/a.md", "docs/intent/a/intent.md"),
+                ("docs/img.png", "docs/res/img.png"),
+            ],
+            &[".claude/agents/checker.md"],
+            &[
+                ("docs/intent/a/intent.md", "moved and edited\n"),
+                ("docs/b.md", "edited\n"),
+                (".claude/agents/verifier.md", "new\n"),
+            ],
+        );
+        let got = base.overlaid(&ov);
+        assert!(!got.worktree);
+        assert_eq!(
+            view(&got),
+            vec![
+                (".claude/agents/verifier.md", None),
+                ("docs/b.md", None),
+                ("docs/c.md", Some("c1")),
+                ("docs/intent/a/intent.md", None),
+                ("docs/res/img.png", Some("p1")),
+            ]
+        );
+        // The list stays sorted, so `blob_of` finds each path.
+        assert!(got.blob_of("docs/res/img.png").is_some());
+        assert!(got.blob_of("docs/a.md").is_none());
+    }
+
+    #[test]
+    fn an_overlay_text_and_a_head_file_at_one_path_do_not_collide() {
+        let dir = scratch("collide");
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/a.md"), "# Head title\n").unwrap();
+        let repo = Repo::new(&dir, dir.join(".git"));
+        let cfg = Config::parse(&format!(
+            "spec-dna = \"{VERSION}\"\n[[roots]]\npath = \"docs\"\n"
+        ))
+        .unwrap();
+        // The head is the working tree, and its file differs from the index
+        // (no blob). The base is a planned tree with a text at the same path.
+        let head = Snapshot {
+            worktree: true,
+            files: vec![Entry {
+                path: "docs/a.md".into(),
+                blob: None,
+            }],
+            texts: None,
+        };
+        let base = snap(&[("docs/a.md", Some("aaaa"))]).overlaid(&overlay(
+            &[],
+            &[],
+            &[("docs/a.md", "# Base title\n")],
+        ));
+        let loaded = load(&repo, &cfg, &[&head, &base], false, false).unwrap();
+        let title = |i: usize| loaded.corpora[i].docs[0].parsed.title.clone();
+        assert_eq!(title(0), "Head title");
+        assert_eq!(title(1), "Base title");
+        assert_eq!(loaded.parsed, 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -932,10 +932,9 @@ fn exit_codes() {
         err.contains("cargo install --locked --force --git"),
         "{err}"
     );
-    assert!(
-        err.contains(&format!("set `spec-dna = \"{VERSION}\"`")),
-        "{err}"
-    );
+    // The pin 9.9.9 is after the binary: the message has no sentence to move
+    // the project (D134).
+    assert!(!err.contains("To move the project"), "{err}");
     let (code, _, err) = r.run(&["init"]);
     assert_eq!(code, 3, "init does not regenerate adapters for another pin");
     assert!(err.contains("pins version 9.9.9"), "{err}");
@@ -2843,31 +2842,33 @@ fn another_pin_does_not_validate_the_sha256_table_and_comes_before_a_parse_error
     // A table of another version: no validation, only the mismatch.
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"9.9.9\"\n[[roots]]\npath = \"docs\"\n[spec-dna-sha256]\n\"bogus\" = 1\n",
+        "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"docs\"\n[spec-dna-sha256]\n\"bogus\" = 1\n",
     );
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{err}");
     assert!(
         err.contains(&format!(
-            "spec-dna.toml pins version 9.9.9, but this binary is {VERSION}."
+            "spec-dna.toml pins version 0.5.0, but this binary is {VERSION}."
         )),
         "{err}"
     );
     assert!(
-        err.contains("replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with https://github.com/AlexGavrilov939/spec-dna/releases/download/"),
+        err.contains("download https://github.com/AlexGavrilov939/spec-dna/releases/download/")
+            && err.contains("outside the repository")
+            && err.contains("run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`"),
         "{err}"
     );
     // A key that this binary does not know, in a file of another version.
     r.write(
         "spec-dna.toml",
-        "spec-dna = \"9.9.9\"\nfuture-key = true\n[[roots]]\npath = \"docs\"\nfuture = 1\n",
+        "spec-dna = \"0.5.0\"\nfuture-key = true\n[[roots]]\npath = \"docs\"\nfuture = 1\n",
     );
     for cmd in [&["check"][..], &["show", "a"], &["context", "a"]] {
         let (code, _, err) = r.run(cmd);
         assert_eq!(code, 3, "{cmd:?}: {err}");
-        assert!(err.contains("pins version 9.9.9"), "{cmd:?}: {err}");
+        assert!(err.contains("pins version 0.5.0"), "{cmd:?}: {err}");
         assert!(!err.contains("unknown key"), "{cmd:?}: {err}");
-        assert!(err.contains("set `spec-dna = \""), "{cmd:?}: {err}");
+        assert!(err.contains("run `spec-dna upgrade`"), "{cmd:?}: {err}");
     }
     // The same file with the pin of this binary: the parse error.
     r.write(
@@ -2877,6 +2878,26 @@ fn another_pin_does_not_validate_the_sha256_table_and_comes_before_a_parse_error
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("unknown key `future-key`"), "{err}");
+}
+
+/// The pin `0.5.0` is the pin of the last release before this one. It does not
+/// match the binary, so each command refuses it with exit code 3.
+#[test]
+fn the_pin_of_the_previous_release_does_not_match_the_binary() {
+    assert_ne!(VERSION, "0.5.0", "the binary is newer than 0.5.0");
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"docs\"\n",
+    );
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(
+        err.contains(&format!(
+            "spec-dna.toml pins version 0.5.0, but this binary is {VERSION}."
+        )),
+        "{err}"
+    );
 }
 
 #[test]
@@ -3308,12 +3329,29 @@ fn mv_splits_sections_of_every_type_with_section_aliases() {
 }
 
 #[test]
+fn no_text_of_mv_or_the_schema_says_frozen() {
+    let r = hygiene_project();
+    let (code, out, err) = r.run(&["help", "mv"]);
+    let help = format!("{out}{err}");
+    assert_eq!(code, 0, "{help}");
+    assert!(help.contains("locked text"), "{help}");
+    assert!(!help.to_lowercase().contains("frozen"), "{help}");
+    let schema = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/schema/spec-dna.schema.json"
+    ))
+    .unwrap();
+    assert!(!schema.to_lowercase().contains("frozen"));
+}
+
+#[test]
 fn a_decision_keeps_its_frozen_text_and_moves_only_history() {
     let r = hygiene_project();
     let before = r.read("adr/ADR-3-rainwater.md");
     let (code, _, err) = r.run(&["mv", "ADR-3#decision-outcome", "docs/history/adr-3.md"]);
     assert_eq!(code, 2, "{err}");
-    assert!(err.contains("is frozen text of the decision"), "{err}");
+    assert!(err.contains("is locked text of the decision"), "{err}");
+    assert!(!err.to_lowercase().contains("frozen"), "{err}");
     let (code, _, err) = r.run(&["mv", "ADR-3#amendments", "watering"]);
     assert_eq!(code, 2, "{err}");
     assert!(

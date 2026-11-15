@@ -21,6 +21,7 @@ mod change;
 mod check;
 mod cite;
 mod config;
+mod config_text;
 mod context;
 mod detect;
 mod diag;
@@ -56,6 +57,11 @@ mod split;
 mod stage;
 mod templates;
 mod transcript;
+mod upgrade;
+mod upgrade_config;
+mod upgrade_docs;
+mod upgrade_old;
+mod upgrade_proof;
 
 use crate::adapters::VERSION;
 use crate::diag::Severity;
@@ -78,6 +84,26 @@ files if the file has a [harness] table, unless --reconfigure is set.
 With --reconfigure, it asks the questions again.",
     ),
     (
+        "upgrade",
+        "upgrade [--dry-run] [--layout] [--pin-file <file>]",
+        "Moves a project that pins 0.4.0 or later to the version of this binary. It
+reads the committed tree (HEAD), builds the whole plan in memory, proves that
+each old id, alias, requirement and section still resolves to the same text,
+and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the
+type and the status in the front matter, and the adapter and harness files. It
+moves each proposed, accepted or rejected change to intent/<slug>/intent.md
+with git mv, and keeps its old id as an alias. With --layout, it also moves
+the folders of the other 0.5 namespaces of a mixed root. --pin-file gives the
+spec-dna-pin.toml of the release, which a project with [spec-dna-sha256]
+needs. It refuses a tree that is not clean (also with --dry-run), and it stops
+with no write if the proof fails. --dry-run prints the diff of each file and
+writes nothing. It never commits and never deletes a document: the report
+lists the proposals to delete, and the last line is the git add command. A
+second run after the commit changes nothing. Exit codes: 0 done or nothing to
+change, 1 a tree that is not clean, a stop of a move or a failed proof, 2 usage,
+3 configuration, pin or pin file, 4 git or write error.",
+    ),
+    (
         "check",
         "check [--base <rev>] [--all] [--lint] [--staged]",
         "Reports the diagnostics that are new against the merge base of <rev>
@@ -98,9 +124,11 @@ lists all diagnostics.",
     ),
     (
         "context",
-        "context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--include-inactive]",
+        "context <target>... [--path <file>]... [--budget <chars>] [--query <text>] [--group <name>] [--include-inactive]",
         "Assembles the sections that an agent needs for the targets. With
---query, the sections that match the words of the text come first. A
+--query, the sections that match the words of the text come first. With
+--group, it serves no document of an area outside the group, and it counts
+them in one line; a target that names such a document serves it. A
 superseded, retired or rejected document is only listed, unless
 --include-inactive is set or a target names it.",
     ),
@@ -146,7 +174,7 @@ read by path. Or moves requirements and whole sections of a document of
 any type to an existing or a new document of any type. Every moved key and
 section of HEAD keeps its old id as an alias, and the companion rows of the
 moved requirements move with them. Each moved section leaves its heading
-with a one-line pointer. A decision keeps its frozen text: only its amendment
+with a one-line pointer. A decision keeps its locked text: only its amendment
 and history sections move, into a research document. A preservation
 check runs first; if it fails, nothing changes.",
     ),
@@ -345,6 +373,8 @@ struct Args {
     answers: Option<String>,
     reconfigure: bool,
     dry_run: bool,
+    layout: bool,
+    pin_file: Option<String>,
     ty: Option<String>,
     stub: bool,
     replace: bool,
@@ -420,6 +450,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         answers: None,
         reconfigure: false,
         dry_run: false,
+        layout: false,
+        pin_file: None,
         ty: None,
         stub: false,
         replace: false,
@@ -459,6 +491,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--non-interactive" => a.non_interactive = true,
             "--reconfigure" => a.reconfigure = true,
             "--dry-run" => a.dry_run = true,
+            "--layout" => a.layout = true,
+            "--pin-file" => a.pin_file = Some(value("--pin-file")?),
             "--stub" => a.stub = true,
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
@@ -618,6 +652,13 @@ fn run(a: Args) -> Result<u8, Fatal> {
     if a.since.is_some() && a.command != "log" {
         return Err(Fatal::Usage("--since is an option of `log`".into()));
     }
+    if a.command != "upgrade" {
+        for (given, name) in [(a.layout, "--layout"), (a.pin_file.is_some(), "--pin-file")] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `upgrade`")));
+            }
+        }
+    }
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
     }
@@ -644,6 +685,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
             Ok(0)
         }
         "init" => init(&Repo::discover(&cwd)?, &a),
+        "upgrade" => upgrade(&Repo::discover(&cwd)?, &a),
         "check" => check(&Repo::discover(&cwd)?, &a),
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
@@ -713,6 +755,19 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     )
 }
 
+fn upgrade(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 0, 0)?;
+    upgrade::run(
+        repo,
+        &upgrade::RunOpts {
+            dry_run: a.dry_run,
+            json: a.json,
+            layout: a.layout,
+            pin_file: a.pin_file.clone(),
+        },
+    )
+}
+
 fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, String)>, Fatal> {
     let mut out = Vec::new();
     if snap.worktree {
@@ -724,20 +779,10 @@ fn adapter_texts(repo: &Repo, snap: &Snapshot) -> Result<Vec<(&'static str, Stri
             }
         }
     } else {
-        let ids: Vec<(&'static str, String)> = adapters::PATHS
-            .iter()
-            .filter_map(|p| {
-                snap.blob_of(p)
-                    .and_then(|e| e.blob.clone())
-                    .map(|b| (*p, b))
-            })
-            .collect();
-        let blobs = repo
-            .git
-            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
-            .map_err(Fatal::Io)?;
-        for (p, b) in ids {
-            if let Some(bytes) = blobs.get(&b) {
+        let paths: Vec<String> = adapters::PATHS.iter().map(|p| p.to_string()).collect();
+        let got = snap.read(repo, &paths)?;
+        for p in adapters::PATHS {
+            if let Some(bytes) = got.get(p) {
                 out.push((p, String::from_utf8_lossy(bytes).into_owned()));
             }
         }
@@ -786,20 +831,9 @@ fn harness_texts(
         }
         return Ok(out);
     }
-    let ids: Vec<(String, String)> = paths
-        .into_iter()
-        .filter_map(|p| {
-            snap.blob_of(&p)
-                .and_then(|e| e.blob.clone())
-                .map(|b| (p, b))
-        })
-        .collect();
-    let blobs = repo
-        .git
-        .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
-        .map_err(Fatal::Io)?;
-    for (p, b) in ids {
-        if let Some(bytes) = blobs.get(&b) {
+    let got = snap.read(repo, &paths)?;
+    for p in paths {
+        if let Some(bytes) = got.get(&p) {
             out.push((p, String::from_utf8_lossy(bytes).into_owned()));
         }
     }
@@ -809,15 +843,9 @@ fn harness_texts(
 /// Reads the configuration of the base snapshot. Returns `None` if the base
 /// has no `spec-dna.toml`, or a configuration that does not parse.
 fn base_config(repo: &Repo, snap: &Snapshot) -> Result<Option<config::Config>, Fatal> {
-    let Some(blob) = snap.blob_of(config::FILE_NAME).and_then(|e| e.blob.clone()) else {
-        return Ok(None);
-    };
-    let blobs = repo
-        .git
-        .read_blobs(std::slice::from_ref(&blob))
-        .map_err(Fatal::Io)?;
-    Ok(blobs
-        .get(&blob)
+    let got = snap.read(repo, &[config::FILE_NAME.to_string()])?;
+    Ok(got
+        .get(config::FILE_NAME)
         .and_then(|b| config::Config::parse(&String::from_utf8_lossy(b)).ok()))
 }
 
@@ -873,22 +901,11 @@ fn eval_tree(
             }
         }
     } else {
-        let ids: Vec<(String, String)> = paths
-            .iter()
-            .filter(direct)
-            .filter_map(|p| {
-                snap.blob_of(p)
-                    .and_then(|e| e.blob.clone())
-                    .map(|b| (p.clone(), b))
-            })
-            .collect();
-        let blobs = repo
-            .git
-            .read_blobs(&ids.iter().map(|i| i.1.clone()).collect::<Vec<_>>())
-            .map_err(Fatal::Io)?;
-        for (p, b) in ids {
-            if let Some(bytes) = blobs.get(&b) {
-                json.push((p, bytes.clone()));
+        let want: Vec<String> = paths.iter().filter(direct).cloned().collect();
+        let mut got = snap.read(repo, &want)?;
+        for p in want {
+            if let Some(bytes) = got.remove(&p) {
+                json.push((p, bytes));
             }
         }
     }
@@ -936,10 +953,56 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         None => repo.head_commit(),
     };
+    // The pin of the base of the gate (D154). A base before 0.6.0 has 0.5
+    // documents, which 0.6 rejects. Then `check` plans the base with the code
+    // of `upgrade`, in memory, and compares the head with the result.
+    let base_label = a.base.as_deref().unwrap_or("HEAD");
+    let gate_pin = match &base_commit {
+        Some(c) => base_pin(repo, c)?,
+        None => None,
+    };
+    let plan_base = match &gate_pin {
+        Some(pin) => match config::pin_class(pin, VERSION) {
+            config::PinClass::BeforeOldest => {
+                return Err(Fatal::Config(format!(
+                    "the base `{base_label}` pins `{pin}`; move it to {} first, with the {} binary and `spec-dna init`, in a pull request of its own",
+                    config::PIN_FIRST_STEP,
+                    config::PIN_FIRST_STEP
+                )));
+            }
+            class => class == config::PinClass::Model05,
+        },
+        None => false,
+    };
     // The lifecycle base for the change checks. With the policy `none` it
-    // reads nothing.
-    let change_base =
+    // reads nothing. A git diff cannot read a planned tree, so a lifecycle base
+    // before 0.6.0 counts as no lifecycle base (D154).
+    let mut change_base =
         lifecycle::change_base(&cfg, &repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let mut life_note: Option<String> = None;
+    if let Some(c) = &change_base {
+        let pin = if Some(c) == base_commit.as_ref() {
+            gate_pin.clone()
+        } else {
+            base_pin(repo, c)?
+        };
+        if let Some(pin) = pin
+            && matches!(
+                config::pin_class(&pin, VERSION),
+                config::PinClass::BeforeOldest | config::PinClass::Model05
+            )
+        {
+            let which = if Some(c) == base_commit.as_ref() {
+                format!("the base `{base_label}`")
+            } else {
+                format!("the merge base `{}`", &c[..c.len().min(12)])
+            };
+            life_note = Some(format!(
+                "{which} pins `{pin}`, before 0.6.0, so the change checks have no lifecycle base"
+            ));
+            change_base = None;
+        }
+    }
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
@@ -971,6 +1034,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         )
     });
     let (head_snap, base_snap, extra_snap) = (head_snap?, base_snap?, extra_snap?);
+    let base_snap = match (&base_commit, plan_base) {
+        (Some(c), true) => {
+            let plan = upgrade::plan_base(&repo.git, c, base_label, &cfg)?;
+            base_snap.overlaid(&plan.overlay())
+        }
+        _ => base_snap,
+    };
     let use_base = base_commit.is_some();
     let mut snaps: Vec<&Snapshot> = if use_base {
         vec![&head_snap, &base_snap]
@@ -1177,7 +1247,10 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             outcome.new.push(is_new);
         }
     }
+    // A base before 0.6.0 and the head hold the configuration and the
+    // documents of one upgrade, so SD503 does not apply (D156).
     if let Some(c) = &base_commit
+        && !plan_base
         && let Some(d) = config_not_alone(repo, &cfg, c, untracked)?
     {
         outcome.head.push(d);
@@ -1276,11 +1349,31 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             (None, false) => format!("{total} (no base commit, so all are new)"),
         };
         println!("spec-dna check: {} documents; {counts}", head.docs.len());
-        if cfg.change_policy != config::ChangePolicy::None && change_base.is_none() {
+        if cfg.change_policy != config::ChangePolicy::None
+            && change_base.is_none()
+            && life_note.is_none()
+        {
             eprintln!("note: {}", lifecycle::NO_BASE_NOTE);
         }
     }
+    if let Some(n) = &life_note {
+        eprintln!("note: {n}");
+    }
     Ok(if failed { 1 } else { 0 })
+}
+
+/// The pin of `spec-dna.toml` in a commit. `None` if the commit has no
+/// `spec-dna.toml` (the adoption), or the file has no pin that `scan_pin` reads.
+fn base_pin(repo: &Repo, commit: &str) -> Result<Option<String>, Fatal> {
+    let got = repo
+        .git
+        .read_at(&[(commit.to_string(), config::FILE_NAME.to_string())])
+        .map_err(Fatal::Io)?;
+    Ok(got
+        .into_iter()
+        .next()
+        .flatten()
+        .and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b))))
 }
 
 /// SD503: a change that edits `spec-dna.toml` together with documents or
@@ -1477,7 +1570,10 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .iter()
         .map(|p| p.trim_start_matches("./").to_string())
         .collect();
-    let places = context::Places::new(&c, &cfg);
+    let mut places = context::Places::new(&c, &cfg);
+    if let Some(g) = a.group.as_deref() {
+        places = places.with_group(&c, &cfg, g, group_areas(&cfg, g)?);
+    }
     let cited = if paths.is_empty() {
         Vec::new()
     } else {

@@ -1,0 +1,25 @@
+spec-dna = "0.4.2"
+exclude = ["docs/vendor/**"]
+
+# The fixture shows the requirement lint, which the default profile turns off.
+[rules]
+lint = "warning"
+
+[[roots]]
+path = "docs"
+type = "mixed"
+default-type = "spec"
+status = "active"
+legacy-keys = ["R-{n}"]
+
+[[roots]]
+path = "docs/decisions"
+type = "decision"
+legacy-ids = ["ADR-{n}"]
+
+[budgets.note]
+soft = 300
+hard = 600
+
+[context]
+budget = 2500

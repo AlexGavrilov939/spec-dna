@@ -1,0 +1,52 @@
+spec-dna = "0.6.0"
+exclude = ["docs/vendor/**"]
+
+# The fixture shows the requirement lint, which the default profile turns off.
+[rules]
+lint = "warning"
+
+[[roots]]
+path = "docs"
+type = "mixed"
+default-type = "requirements"
+status = "active"
+legacy-keys = ["R-{n}"]
+required-sections = { intent = [] }
+live-sections = { decision = [] }
+
+[[roots]]
+path = "docs/decisions"
+type = "decision"
+legacy-ids = ["ADR-{n}"]
+live-sections = { decision = [] }
+
+[budgets.research]
+soft = 300
+hard = 600
+
+[context]
+budget = 2500
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.decisions]
+types = ["decision"]
+
+[layers.procedures]
+types = ["procedure"]
+
+[layers.research]
+types = ["research"]
+moves-to = ["decisions", "requirements"]
+linked-from = ["decisions", "requirements"]
+context = "on-request"
+
+[layers.intent]
+types = ["intent", "spec", "plan"]
+moves-to = ["requirements", "decisions", "procedures"]
+keep = "until-finished"
+context = "on-request"
+
+[change]
+policy = "none"

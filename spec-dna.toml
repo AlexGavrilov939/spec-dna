@@ -1,0 +1,34 @@
+# The spec-dna configuration of this repository (docs/config.md).
+# docs/design/0.6.0.md, section "Step 5 self-adoption", gives the reasons.
+spec-dna = "0.6.0"
+
+[[roots]]
+path = "docs"
+default-type = "research"  # the reference pages, docs/design/ and docs/research/
+legacy-ids = [{ alias = "ADR-{n}", file = "{n}-*" }]  # docs/adr/0005-*.md is also ADR-5
+
+[layers.decisions]
+types = ["decision"]
+dir = "adr"
+
+[layers.research]
+types = ["research"]
+moves-to = ["decisions"]
+linked-from = ["decisions"]
+context = "on-request"
+
+[layers.intent]
+types = ["intent", "spec", "plan"]
+moves-to = ["decisions"]
+keep = "until-finished"
+context = "on-request"
+max-docs = 30
+max-started = 3
+stale-days = 14
+
+[change]
+policy = "three-class"
+gate = "warn"
+
+[evidence]
+tests = []  # the tests hold `covers:` tags as test data, and no document has requirements

@@ -1,0 +1,53 @@
+spec-dna = "0.6.0"
+exclude = ["docs/vendor/**"]
+
+# The fixture shows the requirement lint, which the default profile turns off.
+[rules]
+lint = "warning"
+
+[[roots]]
+path = "docs"
+type = "mixed"
+default-type = "requirements"
+status = "active"
+legacy-keys = ["R-{n}"]
+live-sections = {}
+
+# Each file name gives an alias: ADR-1, and DR-4 for 4-drain-timing.md.
+[[roots]]
+path = "docs/decisions"
+type = "decision"
+legacy-ids = ["ADR-{n}", { alias = "DR-{n}", file = "{n}-*" }]
+live-sections = {}
+
+# A root of one type: each file is a note.
+[[roots]]
+path = "docs/field-notes"
+type = "research"
+live-sections = {}
+
+# A mixed root with no default type: a document with no type is a note.
+[[roots]]
+path = "docs/lab"
+type = "mixed"
+live-sections = {}
+
+[budgets.research]
+soft = 300
+hard = 600
+
+[budgets.procedure]
+soft = 3000
+hard = 6000
+
+[context]
+budget = 2500
+
+[harness]
+level = "full"
+skills = []
+review-md = false
+protect-tests = "off"
+
+[change]
+policy = "none"

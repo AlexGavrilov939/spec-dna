@@ -1185,6 +1185,25 @@ impl Git {
         out(&["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|| "main".to_string())
     }
 
+    /// The paths that make the working tree not clean (D151): a staged change,
+    /// an unstaged change, and an untracked file that git does not ignore.
+    /// An untracked folder is one path. The list is in the order of git.
+    pub fn unclean_paths(&self) -> Result<Vec<String>, String> {
+        let out = self.run(&["status", "--porcelain", "-z", "--untracked-files=normal"])?;
+        let mut paths = Vec::new();
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        while let Some(rec) = recs.next() {
+            let rec = String::from_utf8_lossy(rec);
+            let (xy, path) = rec.split_at(rec.len().min(2));
+            paths.push(path.trim_start().to_string());
+            // A rename or a copy is followed by its source path.
+            if xy.contains(['R', 'C']) {
+                recs.next();
+            }
+        }
+        Ok(paths)
+    }
+
     pub fn mv(&self, from: &str, to: &str) -> Result<(), String> {
         self.run(&["mv", "--", from, to]).map(|_| ())
     }

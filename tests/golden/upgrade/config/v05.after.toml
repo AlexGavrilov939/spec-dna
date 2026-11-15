@@ -1,0 +1,79 @@
+spec-dna = "0.6.0"
+exclude = ["docs/vendor/**"]
+
+# The fixture shows the requirement lint, which the default profile turns off.
+[rules]
+lint = "warning"
+
+[[roots]]
+path = "docs"
+type = "mixed"
+default-type = "requirements"
+status = "active"
+legacy-keys = ["R-{n}"]
+required-sections = { intent = [] }
+live-sections = { decision = [] }
+
+# Each file name gives an alias: ADR-1, and DR-4 for 4-drain-timing.md.
+[[roots]]
+path = "docs/decisions"
+type = "decision"
+legacy-ids = ["ADR-{n}", { alias = "DR-{n}", file = "{n}-*" }]
+live-sections = { decision = [] }
+
+# A root of one type: each file is a note.
+[[roots]]
+path = "docs/field-notes"
+type = "mixed"
+default-type = "research"
+live-sections = { decision = [] }
+
+# A mixed root with no default type: a document with no type is a note.
+[[roots]]
+path = "docs/lab"
+type = "mixed"
+default-type = "research"
+live-sections = { decision = [] }
+
+[budgets.procedure]
+soft = 3000
+hard = 6000
+
+[context]
+budget = 2500
+
+[layers.rules]
+types = ["rule"]
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.interfaces]
+types = ["interface"]
+
+[layers.decisions]
+types = ["decision"]
+
+[layers.procedures]
+types = ["procedure"]
+
+[layers.research]
+types = ["research"]
+moves-to = ["decisions", "requirements"]
+linked-from = ["decisions", "requirements"]
+context = "on-request"
+
+[layers.intent]
+types = ["intent", "spec", "plan"]
+moves-to = ["requirements", "interfaces", "rules", "decisions", "procedures"]
+keep = "until-finished"
+context = "on-request"
+
+[layers.incidents]
+types = ["incident"]
+moves-to = ["intent"]
+linked-from = ["rules", "procedures", "decisions", "requirements", "interfaces", "intent"]
+context = "on-request"
+
+[change]
+policy = "none"

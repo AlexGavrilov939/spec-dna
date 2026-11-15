@@ -114,7 +114,7 @@ For Claude Code, more adapters add agent roles with their models, skills for the
 Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has binaries for macOS, Linux and Windows. On macOS (Apple silicon):
 
 ```sh
-v=0.5.0 t=aarch64-apple-darwin
+v=0.6.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS
@@ -124,7 +124,7 @@ install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 To build from source, you need Rust 1.88 or later:
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.5.0
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.6.0
 ```
 
 You also need git. [docs/quickstart.md](docs/quickstart.md#install) gives the targets of the other platforms, the commands for Windows, and the verification of the attestations.

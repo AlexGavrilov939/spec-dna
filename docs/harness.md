@@ -241,7 +241,7 @@ These options make each request smaller. `init` does not write them, because the
 ## Change, upgrade and removal
 
 - Change: edit `[harness]`, or run `spec-dna init --reconfigure`. The preview shows each file before `init` writes it. `init --reconfigure` also offers the parts that a project does not have yet.
-- Upgrade: install the new version, set the pin, and run `spec-dna init`. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
+- Upgrade: install the new version, and run `spec-dna upgrade`. It moves the pin. It writes the generated files that you did not edit and the settings entries that changed. It keeps a file that you edited, and `check` reports it.
 - Removal: run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files, skill files and `REVIEW.md` that you did not edit, the `CLAUDE.md` line and the hook handlers. It keeps the other settings keys and tells you which ones it no longer sets.
 - Fewer skills: `spec-dna init --reconfigure` also removes an unedited skill file or `REVIEW.md` that the configuration no longer generates. It keeps an edited file and names it. Plain `init` removes no file.
 
@@ -254,7 +254,7 @@ A 0.5 configuration stops with exit code 3 under the 0.6 binary, because the pin
 | Role `reviewer` | Role `verifier`, with the same model and effort |
 | File `checker.md` | File `verifier.md`. `upgrade` deletes `checker.md` if you did not edit it |
 | Role `spec-writer` and file `spec-writer.md` | The role ends. The stage skills replace it. `upgrade` deletes the file if you did not edit it, and its report names the model of the role |
-| A 0.5 project at level `full` | `code-simplifier = "none"`, so the project gets no new agent |
+| A 0.5 project at level `full` | `code-simplifier = { claude-code = "none" }` in `[harness.roles]`, so the project gets no new agent |
 | New keys | `skills = []`, `review-md = false` and `protect-tests = "off"`. The team stays the 0.5 team under the new names |
 
 A table with the key `reviewer` or `spec-writer` gives exit code 3. The same word in the answer to question 13 also gives exit code 3. The message names `verifier`, or says that the role ended.
@@ -263,6 +263,6 @@ Rename the key or remove it, and run `spec-dna init --reconfigure`. The command 
 
 `upgrade` writes the 0.6 text of an unedited `model-team.md`, model-team line or agent file. It keeps an edited generated file, and `check` reports SD501. After the upgrade, `check` reports nothing for a deleted `checker.md` or `spec-writer.md`. The row SD501 of [Check](#check) gives the fix for an edited file of an old role. The names `checker` and `spec-writer` belong to no 0.6 role.
 
-`upgrade` never replaces a file that has no marker, at the path of a new part or of an agent with the name `verifier`. It sets the role to `none`, removes the skill from `skills`, or sets `review-md = false`, and it names the file. A generated agent has priority over a user or plugin agent of the same name.
+`upgrade` never replaces a file that has no marker, at the path of an agent file that the configuration generates. For a 0.5 project, `upgrade` sets the role to `none` and names the file. For a project that pins 0.6.0 or later, `upgrade` stops with exit code 1. The message says to rename the agent, or to set the role to `none` in `[harness.roles]`. A generated agent has priority over a user or plugin agent of the same name.
 
 Run `spec-dna init --reconfigure` to enable the new parts: the stage skills, `REVIEW.md`, `protect-tests` and `code-simplifier`.

@@ -1,0 +1,47 @@
+# case v04, recorded with spec-dna 0.4.2
+exit 1
+doc docs/changes/add-drip-lines.md changes/add-drip-lines change proposed
+doc docs/decisions/ADR-1-valve-controller.md ADR-1-valve-controller decision accepted
+doc docs/decisions/ADR-2-pump-schedule.md ADR-2-pump-schedule decision accepted
+doc docs/guides/logging.md guides/logging guide active
+doc docs/harvest/records.md harvest/records spec superseded
+doc docs/irrigation/alias-clash.md irrigation/alias-clash spec active
+doc docs/irrigation/legacy.md irrigation/legacy spec superseded
+doc docs/irrigation/sensors.md irrigation/sensors spec deprecated
+doc docs/irrigation/valves.md irrigation/valves spec active
+doc docs/notes/research.md notes/research note -
+finding SD101 error docs/changes/add-drip-lines.md
+finding SD601 warning docs/changes/add-drip-lines.md
+finding SD603 warning docs/changes/add-drip-lines.md
+finding SD305 error docs/decisions/ADR-2-pump-schedule.md
+finding SD402 error docs/harvest/records.md
+finding SD201 error docs/irrigation/alias-clash.md
+finding SD402 error docs/irrigation/legacy.md
+finding SD802 warning docs/irrigation/sensors.md
+finding SD103 error docs/irrigation/valves.md
+finding SD201 error docs/irrigation/valves.md
+finding SD203 error docs/irrigation/valves.md
+finding SD602 warning docs/irrigation/valves.md
+finding SD604 warning docs/irrigation/valves.md
+finding SD804 warning docs/irrigation/valves.md
+finding SD804 warning docs/irrigation/valves.md
+finding SD805 warning docs/irrigation/valves.md
+finding SD102 error docs/notes/research.md
+finding SD102 error docs/notes/research.md
+finding SD701 warning docs/notes/research.md
+file c25b96b443a8863e1ae38492c839de8a9415b5fd .claude/skills/spec-dna/SKILL.md
+file 46755c6f129c36dbe6fd83f705b0f07cfcd0a256 AGENTS.md
+file 112c6132e3fc935e8a2176e3b0f22574ddec30dd CLAUDE.md
+file 49dfbdc5f69f3783318f3d75e5cbe66ce440c896 docs/changes/add-drip-lines.md
+file a0c2e323926b634d1fda8ac9110a34e92f1324fe docs/decisions/ADR-1-valve-controller.md
+file 78cb97982014760e6fcc50cbc68f698953354ca0 docs/decisions/ADR-2-pump-schedule.md
+file 72cdd847b8856854f55f73fea168c039c6de9c67 docs/guides/logging.md
+file ea6d96718db5ad7e350db3e0a98bece317a283ff docs/harvest/records.md
+file 445903da7c3237178089a9e39d543b361ca6f598 docs/irrigation/alias-clash.md
+file 8721125a74a7e6439dc84c1a1b8ccb510fef278e docs/irrigation/legacy.md
+file 1e26a4b3fd421cbe19023c30d761cba827a2f342 docs/irrigation/sensors.md
+file 30651994294fe7a142e43befa06029b12298b502 docs/irrigation/valves.md
+file bc7570dc930a03dea23010ec0a64a52229b2c635 docs/notes/research.md
+file 5e578bb0016931be39ab6703b2a4900d8cf9b015 docs/vendor/upstream.md
+file d9fb31a00651bd693703fa1aaaa15c8d423d7e85 spec-dna.toml
+file bb3da97a522fbda65cacdfe69118f252e2eb9e94 src/controller.rs

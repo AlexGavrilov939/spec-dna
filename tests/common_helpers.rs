@@ -264,3 +264,34 @@ fn normalize_marker_leaves_other_text_alone() {
         "The line ends with `<!-- spec-dna harness v{VERSION} h:<hash> -->`.\n"
     );
 }
+
+#[test]
+fn from_fixture_commits_the_tree_with_the_fixed_date() {
+    let repo = Repo::from_fixture("v05", &["harness-lean"]);
+    assert_eq!(repo.git_out(&["rev-list", "--count", "HEAD"]), "1");
+    // Git writes a zero offset as `Z`.
+    assert_eq!(FIXTURE_DATE, "2026-01-15T12:00:00+00:00");
+    assert_eq!(
+        repo.git_out(&["log", "-1", "--format=%cI"]),
+        "2026-01-15T12:00:00Z"
+    );
+    assert_eq!(repo.git_out(&["status", "--porcelain"]), "");
+    // A dotfile of the fixture is in the commit.
+    assert!(
+        repo.git_out(&["ls-files"])
+            .contains(".claude/settings.json")
+    );
+}
+
+#[test]
+fn tree_bytes_is_sorted_and_skips_the_git_folder() {
+    let one = Repo::from_fixture("v04", &[]);
+    let two = Repo::from_fixture("v04", &[]);
+    let list = tree_bytes(&one.dir);
+    assert_eq!(list, tree_bytes(&two.dir));
+    assert!(list.windows(2).all(|w| w[0].0 < w[1].0));
+    assert!(list.iter().all(|(path, _)| !path.starts_with(".git/")));
+    assert!(list.iter().any(|(path, _)| path == "spec-dna.toml"));
+    two.write("docs/new.md", "# New\n");
+    assert_ne!(list, tree_bytes(&two.dir));
+}

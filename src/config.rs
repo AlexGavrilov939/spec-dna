@@ -382,7 +382,10 @@ pub const DEFAULT_INSTALL_SOURCE: &str = "https://github.com/AlexGavrilov939/spe
 /// Reads `[spec-dna-sha256]`. If the pin is the version of this binary, it
 /// validates the table (ADR 0003, amendment "phase 2"). Otherwise it keeps
 /// only the sum of the asset of this binary.
-fn sha256_table(v: Option<&Value>, pin: &str) -> Result<Option<Vec<(String, String)>>, String> {
+pub(crate) fn sha256_table(
+    v: Option<&Value>,
+    pin: &str,
+) -> Result<Option<Vec<(String, String)>>, String> {
     let Some(v) = v else {
         return Ok(None);
     };
@@ -423,10 +426,86 @@ fn sha256_table(v: Option<&Value>, pin: &str) -> Result<Option<Vec<(String, Stri
     Ok(Some(out))
 }
 
+/// The first version whose model this binary reads (D133). A pin before it is
+/// a 0.5 pin, and only `upgrade` reads such a project. It is not `VERSION`:
+/// a later 0.6 release still reads the 0.6 model.
+pub const MODEL_06: &str = "0.6.0";
+
+/// The oldest pin that `upgrade` accepts (ADR 0009).
+pub const PIN_OLDEST: &str = "0.4.0";
+
+/// The last release of the 0.4 line. A project with an older pin moves to it
+/// first (ADR 0003, "Pin first").
+pub const PIN_FIRST_STEP: &str = "0.4.2";
+
+/// A release version: 3 numbers with dots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Version(pub u64, pub u64, pub u64);
+
+impl Version {
+    /// Reads 3 numbers with dots, such as `0.4.2`. A number has digits only,
+    /// with no sign and no leading zero, so 2 equal versions are 2 equal
+    /// texts. Any other text, such as `0.5` or `0.5.0-rc1`, gives `None`.
+    pub fn parse(s: &str) -> Option<Version> {
+        let mut parts = s.split('.');
+        let mut number = || {
+            let p = parts.next()?;
+            let digits = !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+            if !digits || (p.len() > 1 && p.starts_with('0')) {
+                return None;
+            }
+            p.parse::<u64>().ok()
+        };
+        let v = Version(number()?, number()?, number()?);
+        parts.next().is_none().then_some(v)
+    }
+}
+
+/// The class of a pin against the version of the binary (D134). The class
+/// decides what `upgrade` does and the last sentence of the pin mismatch
+/// message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinClass {
+    /// Not 3 numbers with dots.
+    Invalid,
+    /// Before 0.4.0 (`PIN_OLDEST`).
+    BeforeOldest,
+    /// From 0.4.0 to before 0.6.0 (`MODEL_06`): the 0.5 reader.
+    Model05,
+    /// From 0.6.0 to before the binary: the 0.6 parser.
+    Model06,
+    /// The version of the binary.
+    Binary,
+    /// After the binary.
+    AfterBinary,
+}
+
+/// The class of `pin` when the binary is `binary`. A test gives another
+/// binary to reach each class.
+pub fn pin_class(pin: &str, binary: &str) -> PinClass {
+    let (Some(p), Some(b)) = (Version::parse(pin), Version::parse(binary)) else {
+        return PinClass::Invalid;
+    };
+    let limit = |v: &str| Version::parse(v).expect("a constant is a version");
+    if p == b {
+        PinClass::Binary
+    } else if p > b {
+        PinClass::AfterBinary
+    } else if p < limit(PIN_OLDEST) {
+        PinClass::BeforeOldest
+    } else if p < limit(MODEL_06) {
+        PinClass::Model05
+    } else {
+        PinClass::Model06
+    }
+}
+
 /// Reads the key `spec-dna` of a configuration text with a line scan, for a
 /// text that does not parse. It looks at the lines before the first table
 /// header.
 pub fn scan_pin(text: &str) -> Option<String> {
+    // A byte order mark is not part of the first key.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
@@ -438,35 +517,64 @@ pub fn scan_pin(text: &str) -> Option<String> {
         let Some(rest) = rest.trim_start().strip_prefix('=') else {
             continue;
         };
-        let rest = rest.trim_start().strip_prefix('"')?;
-        return rest.split_once('"').map(|(v, _)| v.to_string());
+        // A basic string or a literal string: a pin has no escape.
+        let rest = rest.trim_start();
+        let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+        return rest[1..].split_once(quote).map(|(v, _)| v.to_string());
     }
     None
 }
 
 /// The message of a pin mismatch (ADR 0003). `sums` is `[spec-dna-sha256]`,
 /// if the file has the table. The release form needs the public install
-/// source and the sum of the asset of this binary.
+/// source and the sum of the asset of this binary. The last sentence follows
+/// the class of the pin (D134): `upgrade` moves a project that pins 0.4.0 or
+/// later, and a project that pins an earlier version moves to 0.4.2 first.
 pub fn pin_mismatch_message(pin: &str, source: &str, sums: Option<&[(String, String)]>) -> String {
+    mismatch_message(pin, source, sums, VERSION)
+}
+
+/// `pin_mismatch_message` for a given version of the binary, so a test can
+/// reach each class of the pin.
+fn mismatch_message(
+    pin: &str,
+    source: &str,
+    sums: Option<&[(String, String)]>,
+    binary: &str,
+) -> String {
     let release = release::own_asset(pin)
         .filter(|_| source == DEFAULT_INSTALL_SOURCE)
         .and_then(|a| sums.and_then(|s| s.iter().find(|(k, _)| *k == a).cloned()));
     let build = format!("cargo install --locked --force --git {source} --tag v{pin} spec-dna");
-    let mut m = format!("spec-dna.toml pins version {pin}, but this binary is {VERSION}.\n");
+    let mut m = format!("spec-dna.toml pins version {pin}, but this binary is {binary}.\n");
     match release {
         Some((asset, sum)) => m.push_str(&format!(
             "  To use {pin}, download it and compare its SHA-256 with spec-dna.toml:\n    {source}/releases/download/v{pin}/{asset}\n    SHA-256: {sum}\n  Or build it from source:\n    {build}\n"
         )),
         None => m.push_str(&format!("  To use {pin}, install it:\n    {build}\n")),
     }
-    if sums.is_some() {
-        m.push_str(&format!(
-            "  To move the project to {VERSION}, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {DEFAULT_INSTALL_SOURCE}/releases/download/v{VERSION}/spec-dna-pin.toml and run `spec-dna init`."
-        ));
-    } else {
-        m.push_str(&format!(
-            "  To move the project to {VERSION}, set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
-        ));
+    match pin_class(pin, binary) {
+        PinClass::BeforeOldest => m.push_str(&format!(
+            "  First move the project to {PIN_FIRST_STEP} with the {PIN_FIRST_STEP} binary and `spec-dna init`, then run `spec-dna upgrade`."
+        )),
+        PinClass::Model05 | PinClass::Model06 if sums.is_some() => m.push_str(&format!(
+            "  To move the project to {binary}, download {DEFAULT_INSTALL_SOURCE}/releases/download/v{binary}/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml` in the root folder of the repository."
+        )),
+        PinClass::Model05 | PinClass::Model06 => m.push_str(&format!(
+            "  To move the project to {binary}, run `spec-dna upgrade`."
+        )),
+        // The binary is older than the project: no sentence moves the
+        // project to an older version. The pin of the binary is no mismatch.
+        PinClass::AfterBinary | PinClass::Binary => {
+            m.pop();
+        }
+        // The sentence of 0.5: the person sets the pin to the binary.
+        PinClass::Invalid if sums.is_some() => m.push_str(&format!(
+            "  To move the project to {binary}, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {DEFAULT_INSTALL_SOURCE}/releases/download/v{binary}/spec-dna-pin.toml and run `spec-dna init`."
+        )),
+        PinClass::Invalid => m.push_str(&format!(
+            "  To move the project to {binary}, set `spec-dna = \"{binary}\"` in spec-dna.toml and run `spec-dna init`."
+        )),
     }
     m
 }
@@ -521,7 +629,7 @@ pub struct Root {
     /// For each type, the names of its history sections (iteration logs,
     /// discussions, superseded drafts). They match as amendment sections do.
     /// `spec-dna history` moves them into a `research` document. In a
-    /// decision, they are not frozen text.
+    /// decision, they are not locked text.
     pub history_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of the sections that belong to the
     /// requirements, such as a coverage table. When requirements move, their
@@ -529,7 +637,7 @@ pub struct Root {
     pub companion_sections: [Vec<String>; DocType::COUNT],
     /// For each type, the names of its live sections, such as a
     /// progress section. They match as amendment sections do. In a
-    /// decision, they are not frozen text, and their text can change in
+    /// decision, they are not locked text, and their text can change in
     /// place.
     pub live_sections: [Vec<String>; DocType::COUNT],
     /// For a root of type `research`: the namespace of its ids, a suffix of
@@ -2210,33 +2318,166 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
 
     #[test]
     fn the_pin_mismatch_message_has_a_release_form() {
-        let Some(own) = release::own_asset("0.0.1") else {
+        let Some(own) = release::own_asset("0.5.0") else {
             return;
         };
         let sums = [(own.clone(), SUM.to_string())];
-        let m = pin_mismatch_message("0.0.1", DEFAULT_INSTALL_SOURCE, Some(&sums));
+        let m = pin_mismatch_message("0.5.0", DEFAULT_INSTALL_SOURCE, Some(&sums));
         let src = DEFAULT_INSTALL_SOURCE;
         let want = format!(
-            "spec-dna.toml pins version 0.0.1, but this binary is {VERSION}.\n  To use 0.0.1, download it and compare its SHA-256 with spec-dna.toml:\n    {src}/releases/download/v0.0.1/{own}\n    SHA-256: {SUM}\n  Or build it from source:\n    cargo install --locked --force --git {src} --tag v0.0.1 spec-dna\n  To move the project to {VERSION}, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {src}/releases/download/v{VERSION}/spec-dna-pin.toml and run `spec-dna init`."
+            "spec-dna.toml pins version 0.5.0, but this binary is {VERSION}.\n  To use 0.5.0, download it and compare its SHA-256 with spec-dna.toml:\n    {src}/releases/download/v0.5.0/{own}\n    SHA-256: {SUM}\n  Or build it from source:\n    cargo install --locked --force --git {src} --tag v0.5.0 spec-dna\n  To move the project to {VERSION}, download {src}/releases/download/v{VERSION}/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml` in the root folder of the repository."
         );
         assert_eq!(m, want);
         // A source of the project gets the build command only. The table still
         // sets the last line.
-        let m = pin_mismatch_message("0.0.1", "file:///srv/x", Some(&sums));
+        let m = pin_mismatch_message("0.5.0", "file:///srv/x", Some(&sums));
         assert!(!m.contains("SHA-256"), "{m}");
-        assert!(m.contains("--git file:///srv/x --tag v0.0.1"), "{m}");
-        assert!(m.ends_with("pin.toml and run `spec-dna init`."), "{m}");
+        assert!(m.contains("--git file:///srv/x --tag v0.5.0"), "{m}");
+        assert!(
+            m.ends_with(
+                "run `spec-dna upgrade --pin-file ../spec-dna-pin.toml` in the root folder of the repository."
+            ),
+            "{m}"
+        );
         // No sum of this binary, or no table: the text of phase 1.
-        let m = pin_mismatch_message("0.0.1", src, Some(&[]));
-        assert!(m.contains("To use 0.0.1, install it:"), "{m}");
+        let m = pin_mismatch_message("0.5.0", src, Some(&[]));
+        assert!(m.contains("To use 0.5.0, install it:"), "{m}");
         assert!(m.contains("spec-dna-pin.toml"), "{m}");
-        let m = pin_mismatch_message("0.0.1", src, None);
+        let m = pin_mismatch_message("0.5.0", src, None);
         assert!(
             m.ends_with(&format!(
-                "set `spec-dna = \"{VERSION}\"` in spec-dna.toml and run `spec-dna init`."
+                "To move the project to {VERSION}, run `spec-dna upgrade`."
             )),
             "{m}"
         );
+    }
+
+    #[test]
+    fn the_last_sentence_of_the_message_follows_the_class_of_the_pin() {
+        let src = DEFAULT_INSTALL_SOURCE;
+        let sums: &[(String, String)] = &[];
+        let last = |pin: &str, table: bool, binary: &str| {
+            let m = mismatch_message(pin, src, table.then_some(sums), binary);
+            m.lines().last().unwrap().to_string()
+        };
+        // Before 0.4.0: first to 0.4.2, with or without the table.
+        let first = "  First move the project to 0.4.2 with the 0.4.2 binary and `spec-dna init`, then run `spec-dna upgrade`.";
+        assert_eq!(last("0.3.3", false, "0.6.0"), first);
+        assert_eq!(last("0.3.3", true, "0.6.0"), first);
+        // 0.4.0 to before 0.6.0, and 0.6.0 to before the binary: upgrade.
+        for pin in ["0.4.0", "0.5.0", "0.5.9", "0.6.0", "0.6.2"] {
+            assert_eq!(
+                last(pin, false, "0.6.3"),
+                "  To move the project to 0.6.3, run `spec-dna upgrade`.",
+                "{pin}"
+            );
+            assert_eq!(
+                last(pin, true, "0.6.3"),
+                format!(
+                    "  To move the project to 0.6.3, download {src}/releases/download/v0.6.3/spec-dna-pin.toml to a place outside the repository, for example the folder above it, verify it with `gh attestation verify`, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml` in the root folder of the repository."
+                ),
+                "{pin}"
+            );
+        }
+        // After the binary: no sentence to move the project.
+        for table in [false, true] {
+            let m = mismatch_message("0.7.0", src, table.then_some(sums), "0.6.3");
+            assert!(!m.contains("To move the project"), "{m}");
+            assert!(!m.contains("spec-dna upgrade"), "{m}");
+            assert!(m.contains("To use 0.7.0, install it:"), "{m}");
+        }
+        // Not a release version: the sentence of 0.5.
+        assert_eq!(
+            last("0.5", false, "0.6.3"),
+            "  To move the project to 0.6.3, set `spec-dna = \"0.6.3\"` in spec-dna.toml and run `spec-dna init`."
+        );
+        assert_eq!(
+            last("0.5", true, "0.6.3"),
+            format!(
+                "  To move the project to 0.6.3, replace `spec-dna` and `[spec-dna-sha256]` in spec-dna.toml with {DEFAULT_INSTALL_SOURCE}/releases/download/v0.6.3/spec-dna-pin.toml and run `spec-dna init`."
+            )
+        );
+    }
+
+    #[test]
+    fn a_version_is_3_numbers_with_dots() {
+        assert_eq!(Version::parse("0.4.2"), Some(Version(0, 4, 2)));
+        assert_eq!(Version::parse("10.20.30"), Some(Version(10, 20, 30)));
+        for bad in [
+            "",
+            "0.5",
+            "0.5.0.1",
+            "0.5.",
+            ".5.0",
+            "a.b.c",
+            "0.5.0-rc1",
+            "0.5.0+b",
+            "+0.5.0",
+            "-1.0.0",
+            "0.05.0",
+            "00.5.0",
+            " 0.5.0",
+            "0.5.0 ",
+            "0.5.x",
+            "1_0.0.0",
+            "99999999999999999999.0.0",
+        ] {
+            assert_eq!(Version::parse(bad), None, "{bad:?}");
+        }
+        // The compare is by number, not by text.
+        assert!(Version::parse("0.10.0") > Version::parse("0.9.0"));
+        assert!(Version::parse("0.4.2") < Version::parse("0.6.0"));
+    }
+
+    #[test]
+    fn the_class_of_a_pin_follows_d134() {
+        use PinClass::*;
+        let class = |pin: &str| pin_class(pin, "0.6.3");
+        assert_eq!(class("0.5"), Invalid);
+        assert_eq!(class("abc"), Invalid);
+        assert_eq!(class("0.5.0-rc1"), Invalid);
+        assert_eq!(class(""), Invalid);
+        assert_eq!(class("0.1.0"), BeforeOldest);
+        assert_eq!(class("0.3.3"), BeforeOldest);
+        assert_eq!(class("0.3.99"), BeforeOldest);
+        assert_eq!(class("0.4.0"), Model05);
+        assert_eq!(class("0.4.2"), Model05);
+        assert_eq!(class("0.5.0"), Model05);
+        assert_eq!(class("0.5.99"), Model05);
+        assert_eq!(class("0.6.0"), Model06);
+        assert_eq!(class("0.6.2"), Model06);
+        assert_eq!(class("0.6.3"), Binary);
+        assert_eq!(class("0.6.4"), AfterBinary);
+        assert_eq!(class("0.7.0"), AfterBinary);
+        assert_eq!(class("1.0.0"), AfterBinary);
+        // The binary 0.6.0 has no class of 0.6.0 to before the binary.
+        assert_eq!(pin_class("0.6.0", "0.6.0"), Binary);
+        assert_eq!(pin_class("0.5.0", "0.6.0"), Model05);
+        // The numbers decide: 0.10.0 is after 0.9.0.
+        assert_eq!(pin_class("0.10.0", "0.9.0"), AfterBinary);
+        // The class of the pin of this binary is `Binary`.
+        assert_eq!(pin_class(VERSION, VERSION), Binary);
+    }
+
+    #[test]
+    fn the_limits_of_the_classes_are_consistent_with_the_binary() {
+        let model = Version::parse(MODEL_06).unwrap();
+        let binary = Version::parse(VERSION).unwrap();
+        assert!(model <= binary, "MODEL_06 is not after the binary");
+        assert!(Version::parse(PIN_OLDEST).unwrap() < model);
+        assert!(Version::parse(PIN_FIRST_STEP).unwrap() < model);
+        assert!(Version::parse(PIN_FIRST_STEP).unwrap() >= Version::parse(PIN_OLDEST).unwrap());
+    }
+
+    #[test]
+    fn the_line_scan_reads_a_literal_string_and_a_byte_order_mark() {
+        assert_eq!(scan_pin("spec-dna = '0.5.0'\n").as_deref(), Some("0.5.0"));
+        assert_eq!(
+            scan_pin("\u{feff}spec-dna = \"0.5.0\"\r\n[[roots]]\r\n").as_deref(),
+            Some("0.5.0")
+        );
+        assert_eq!(scan_pin("spec-dna = '0.5.0\n"), None);
+        assert_eq!(scan_pin("spec-dna = 0.5.0\n"), None);
     }
 
     const BASE: &str = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n";

@@ -1244,7 +1244,8 @@ pub fn wanted(path: &str) -> bool {
 /// The agent files that 0.5 wrote and 0.6 does not: `checker.md` became
 /// `verifier.md`, and `spec-writer.md` ended. `init --reconfigure` removes an
 /// unedited one, so a change of the configuration with it is still its own.
-const OLD_AGENT_PATHS: [&str; 2] = [".claude/agents/checker.md", ".claude/agents/spec-writer.md"];
+pub(crate) const OLD_AGENT_PATHS: [&str; 2] =
+    [".claude/agents/checker.md", ".claude/agents/spec-writer.md"];
 
 /// Returns true for a path that `init` writes for the harness, whatever the
 /// configuration is. A change of `spec-dna.toml` with these files is still a

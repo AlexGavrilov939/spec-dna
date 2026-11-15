@@ -119,7 +119,7 @@ sonnet = "high"
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. |
+| `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
 | `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD922. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
@@ -330,7 +330,7 @@ operations = ["valves", "sensors"]
 reporting = ["reports"]
 ```
 
-A project has no group by default, and `init` never proposes one. A group is a view. The options `--group <name>` of `status` and `stats` read it. A group never makes a folder, an id or a requirement key.
+A project has no group by default, and `init` never proposes one. A group is a view. The options `--group <name>` of `status`, `stats` and `context` read it. A group never makes a folder, an id or a requirement key.
 
 ## The table `change`
 
@@ -451,7 +451,7 @@ A role that the level does not include is an error, for example `harness.roles.i
 
 ## The table `spec-dna-sha256`
 
-[ADR 0003](adr/0003-distribution.md) (amendment "phase 2") gives the form of this table. Each release has the file `spec-dna-pin.toml`. It has the key `spec-dna` and the full table of that release. Copy both into `spec-dna.toml`. You can remove the lines of the targets that your project does not use.
+[ADR 0003](adr/0003-distribution.md) (amendment "phase 2") gives the form of this table. Each release has the file `spec-dna-pin.toml`. It has the key `spec-dna` and the full table of that release. Save the file outside the repository, and run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`. The command moves the pin and writes the table into `spec-dna.toml`. You can remove the lines of the targets that your project does not use.
 
 ```toml
 spec-dna = "0.6.0"
@@ -470,7 +470,7 @@ spec-dna = "0.6.0"
 - If the pin is a different version, the binary does not validate the table. It reads only the sum of its own asset, for the message of the version mismatch. The asset names contain the version, so a table of an earlier version never matches the pin.
 - The binary does not compute the sum of its own file. The install step verifies the sum. The install step is one of the install commands of the release, or the CI job that `init` writes ([docs/quickstart.md](quickstart.md)).
 - `init --reconfigure` keeps the table and writes it again in the same form.
-- The message of a version mismatch can give the URL and the sum of the pinned asset for this binary. It gives them if the file has that sum and has no `install-source`. Otherwise, it gives the `cargo install` command. If the table exists, the instruction to move the project to the new version names `spec-dna-pin.toml` of that release.
+- The message of a version mismatch can give the URL and the sum of the pinned asset for this binary. It gives them if the file has that sum and has no `install-source`. Otherwise, it gives the `cargo install` command. If the table exists, the instruction to move the project to the new version names `spec-dna-pin.toml` of that release and the command `spec-dna upgrade --pin-file ../spec-dna-pin.toml`.
 
 ## The pin comes first
 

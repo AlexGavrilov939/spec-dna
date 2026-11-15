@@ -82,17 +82,11 @@ impl DocType {
     }
 
     /// The 0.6 type of a 0.5 type name, for hints only. No input accepts an
-    /// old name. The name `spec` is also a 0.6 type, so it has no entry: a
-    /// 0.5 `spec` and a 0.6 `spec` cannot be told apart by their names.
+    /// old name. The table of the names is in `upgrade_old`. A name that 0.6
+    /// has too (`spec`, `decision`, `incident`) has no hint: a 0.5 `spec` and
+    /// a 0.6 `spec` cannot be told apart by their names.
     pub fn from_old_name(s: &str) -> Option<DocType> {
-        Some(match s {
-            "contract" => DocType::Interface,
-            "invariant" => DocType::Rule,
-            "guide" | "runbook" => DocType::Procedure,
-            "note" | "reference" => DocType::Research,
-            "change" => DocType::Intent,
-            _ => return None,
-        })
+        crate::upgrade_old::renamed(s)
     }
 
     /// The text that a message adds to the name of an unknown type: the new
