@@ -2,7 +2,9 @@
 //! them with `mod common;`. The helpers read no clock, no user config and no
 //! network. The git calls set the author, disable signing and ignore the
 //! global and system config. `git_at` sets the dates, so a test can set the
-//! age of a commit.
+//! age of a commit. `Repo::run_env` runs the binary with a changed
+//! environment, `stub_bin` and `path_with` replace a program on `PATH`, and
+//! `normalize_marker` removes the version from a harness marker.
 
 // Each file in tests/ is its own crate and uses only some helpers.
 #![allow(dead_code)]
@@ -219,15 +221,80 @@ impl Repo {
 
     /// Runs the built binary in the repository: exit code, stdout, stderr.
     pub fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(BIN)
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("binary runs");
+        self.run_env(args, &[], &[])
+    }
+
+    /// Like `run`, with the environment variables `set` added (a name and a
+    /// value) and the variables `remove` deleted. A name in both lists is
+    /// deleted, because the removals apply last.
+    pub fn run_env(
+        &self,
+        args: &[&str],
+        set: &[(&str, &str)],
+        remove: &[&str],
+    ) -> (i32, String, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(&self.dir);
+        for (name, value) in set {
+            cmd.env(name, value);
+        }
+        for name in remove {
+            cmd.env_remove(name);
+        }
+        let out = cmd.output().expect("binary runs");
         (
             out.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&out.stdout).into_owned(),
             String::from_utf8_lossy(&out.stderr).into_owned(),
         )
     }
+}
+
+/// Writes the executable script `dir/name` (mode 755) and returns its path.
+/// The script is the whole file, so it needs its own shebang line. The helper
+/// creates `dir` if it is absent. A test puts `dir` before the real `PATH`
+/// (see `path_with`) to replace a program such as `claude` with a stub.
+#[cfg(unix)]
+pub fn stub_bin(dir: &Path, name: &str, script: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(dir).unwrap();
+    let path = dir.join(name);
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// The value of `PATH` with `dir` before the `PATH` of the test process.
+pub fn path_with(dir: &Path) -> String {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(old) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&old));
+    }
+    std::env::join_paths(paths)
+        .expect("PATH has no separator in a folder name")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Replaces the version of each harness marker in `text` with `{VERSION}`,
+/// so a golden file does not change at a release. The hash of a marker does
+/// not cover the version, so it stays as it is. Text that is not a marker
+/// stays as it is.
+pub fn normalize_marker(text: &str) -> String {
+    const OPEN: &str = "<!-- spec-dna harness v";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(OPEN) {
+        let (head, tail) = rest.split_at(at + OPEN.len());
+        out.push_str(head);
+        let end = tail.find(' ').unwrap_or(tail.len());
+        if tail[end..].starts_with(" h:") && end > 0 && !tail[..end].contains('\n') {
+            out.push_str("{VERSION}");
+            rest = &tail[end..];
+        } else {
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
 }
