@@ -1,11 +1,11 @@
 # Upgrade from 0.5 to 0.6
 
-Version 0.6.0 renames document types, statuses, configuration keys and harness roles, and it keeps no old name as input. `spec-dna upgrade` moves a project to 0.6 in one step and proves that no id and no requirement text changed. This guide gives the procedure. [commands.md](../commands.md) gives the options and the exit codes.
+Version 0.6.0 renames document types, statuses, configuration keys and harness roles, and it keeps no old name as input. `spec-dna upgrade` moves a project to 0.6 in one step and proves that no id and no requirement text changed. This guide gives the procedure. [commands.md](../commands.md#upgrade) gives the options and the exit codes.
 
 ## What changes
 
 - **Types.** `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, and `note` and `reference` are `research`. A `change` is now an `intent`. [types.md](../types.md#types-of-05) gives the full table.
-- **Changes.** Each `proposed`, `accepted` or `rejected` change moves to `intent/<slug>/intent.md`, because the type `intent` is valid only in the `intent` layer. Its status becomes `draft`, `accepted` or `closed`. A `done` change becomes a `research` document.
+- **Changes.** Each `proposed`, `accepted` or `rejected` change moves to `<root>/intent/<slug>/intent.md`, because the type `intent` is valid only in the `intent` layer. Its status becomes `draft`, `accepted` or `closed`. A `done` change stays in place and becomes a `research` document.
 - **Decisions.** The word "frozen" is now "locked". SD405 checks the same text as before.
 - **Context.** The order of `context` follows the levels of the layers, so `foundation` comes before `rules`. `context` counts incidents and research documents in one line, and does not list them.
 - **Harness.** In the harness of the Claude Code adapter, the role `reviewer` is now `verifier`, and its file `checker.md` is now `verifier.md`. The role `spec-writer` no longer exists, and the stage skills replace it.
@@ -13,35 +13,51 @@ Version 0.6.0 renames document types, statuses, configuration keys and harness r
 
 ## Before you start
 
-- The project pins spec-dna 0.4.0 or later. For an older pin, first upgrade to 0.4.2.
-- The working tree is clean. `upgrade` refuses to run on uncommitted edits.
-- Install the 0.6 binary ([quickstart.md](../quickstart.md#install)). Download `spec-dna-pin.toml` of the release. Verify it with `gh attestation verify spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
+- The project pins spec-dna 0.4.0 or later. For an older pin, first move the project to 0.4.2 with the 0.4.2 binary and `spec-dna init`.
+- The repository has a commit, and the working tree is clean. `upgrade` reads `HEAD`, and it refuses a staged change, an unstaged change and an untracked file that git does not ignore.
+- Install the 0.6 binary ([quickstart.md](../quickstart.md#install)). Download `spec-dna-pin.toml` of the release.
+- Save `spec-dna-pin.toml` outside the repository, for example in the folder above it. A file inside the repository makes the tree not clean. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
+
+A project that has the table `[spec-dna-sha256]` needs this file. A project with no table can run `upgrade` without it. With the file, it gets the table.
 
 ## Run the upgrade
 
 ```sh
-spec-dna upgrade --dry-run --pin-file spec-dna-pin.toml
-spec-dna upgrade --pin-file spec-dna-pin.toml
+spec-dna upgrade --dry-run --pin-file ../spec-dna-pin.toml
+spec-dna upgrade --pin-file ../spec-dna-pin.toml
 ```
 
 `--dry-run` prints the diff of each file and writes nothing. Without it, `upgrade` does these steps:
 
 1. It reads the old configuration. It makes the whole plan in memory.
-2. It renames the keys and the types in `spec-dna.toml`. It adds the layers that the types in use need, and `[change] policy = "none"`. It moves the pin to the version of the binary, with the sums of `--pin-file`.
-3. It rewrites each `type:` and `status:` that changed. It marks a former `note` or `done` change with `was-type`.
-4. It renames the harness roles. It deletes a generated file under its old name if nobody edited it. It keeps an edited file, and `check` reports it (SD501).
-5. It moves each `proposed`, `accepted` or `rejected` change to `intent/<slug>/intent.md` with `git mv`, and writes the old id into `aliases`.
-6. It proves the result (see [What the proof checks](#what-the-proof-checks)). If the proof fails, it writes nothing.
-7. It prints a report.
+2. It renames the keys and the types in `spec-dna.toml`, and it keeps each comment. It adds the layers that the types in use need, and `[change] policy = "none"`. It moves the pin to the version of the binary, with the sums of `--pin-file`.
+3. It writes the keys that keep a 0.5 document as it was. One of them is `live-sections = { decision = [] }`, so that no 0.5 decision gets a live section by default.
+4. It rewrites each `type:` and `status:` that changed. It marks a former `note` or `done` change with `was-type`.
+5. It renames the harness roles. It deletes a generated file under its old name if nobody edited it. It keeps an edited file, and `check` reports it (SD501).
+6. It moves each `proposed`, `accepted` or `rejected` change to `<root>/intent/<slug>/intent.md` with `git mv`, and writes the old id into `aliases`.
+7. It proves the result (see [What the proof checks](#what-the-proof-checks)). If the proof fails, it writes nothing. Then it prints a report.
 
-`upgrade` never commits and never deletes a document. A second run changes nothing.
+`upgrade` never commits and never deletes a document. A second run after the commit changes nothing. A second run before the commit gives exit code 1, because the tree is not clean.
 
-The folders of the other types stay where they are. A root maps each folder to its new type. To move them to the 0.6 folders too (`contracts/` to `interfaces/`, for example), add `--layout`. It moves them with `git mv` and writes each old id into `aliases`.
+The folders of the other types stay where they are. A root maps each folder to its new type. To move the folders of a mixed root to the 0.6 folders too (`contracts/` to `interfaces/`, for example), add `--layout`. It moves them with `git mv` and writes each old id into `aliases`. A root of one type keeps its path.
+
+### If `upgrade` stops
+
+`upgrade` stops before it writes. Each stop names the cause:
+
+- A hand edit (exit code 3). `spec-dna.toml` has a form that `upgrade` cannot edit without a loss of text, such as a budget with dotted keys. The message gives the form to write. Edit the file with the 0.5 names, commit the change, and run `upgrade` again.
+- A move (exit code 1). Two changes have one slug, or a target path exists. The message names each path. Rename a file, commit the change, and run `upgrade` again.
+- A file in the place of a folder, or a symbolic link in a path (exit code 1). Move or delete it, commit the change, and run `upgrade` again.
+- A failed proof (exit code 1). The message names each failure. A pointer of `[conventions]` that names a document by its path breaks with `--layout`. Write the pointer as an id, and commit the change.
 
 ## What the proof checks
 
-- Each old id resolves in the new tree, as an id or as an alias.
-- The hash of each requirement and each section is the same as before.
+- Each old id, alias and requirement key resolves in the new tree to the same document or requirement.
+- The hash of each requirement and each section is the same as before. The locked text of each decision is the same.
+- Each link of a document goes to the same file as before.
+- Each document has the 0.6 type that the mapping gives.
+- The new configuration parses, and the layer graph has no cycle.
+- The upgrade adds no error of the rule groups `references` (SD101, SD102, SD104, SD106) and `ids` (SD201 to SD204).
 
 If one of these checks fails, `upgrade` exits with code 1 and writes nothing.
 
@@ -49,20 +65,49 @@ If one of these checks fails, `upgrade` exits with code 1 and writes nothing.
 
 The report lists these items, among others:
 
-- the changes that no document cites;
+- each `done` or `rejected` change that no document references;
 - the decisions with no `Status` section;
-- the harness files that `upgrade` kept;
+- each locked decision that cites a migrated change;
+- the harness files that `upgrade` kept, and each ended role with its model;
+- the links that `upgrade` did not rewrite;
+- the count of each error code of `check --all` on the new tree;
 - the changes of behavior from [What changes](#what-changes).
 
-[commands.md](../commands.md) gives the full report.
+[commands.md](../commands.md#upgrade) gives the full report.
 
-`upgrade` deletes no document. The report proposes each `done` or `rejected` change that no document cites for deletion. The owner approves each batch, and a later pull request deletes it.
+`upgrade` deletes no document. The report proposes each `done` or `rejected` change that no document references for deletion. The owner approves each batch, and a later pull request deletes it.
+
+`upgrade` rewrites the links of the documents of the roots. It does not rewrite a link in a file that is not a document. Examples are `README.md`, an instruction file and a file outside the roots. The report counts these links and lists the first 5. Search for the old paths of the moved files, and fix the links. Do the same for a link to a folder that the report lists.
+
+The proof refuses a new error of the groups `references` and `ids`. Another group can report an error for a 0.5 form that 0.6 checks. An example is SD304 for a status word that the type does not know. The base plan of `check` gives the same error for the base, so it is not new.
+
+## Commit the result
+
+`upgrade` stages the moves with `git mv` and leaves the other changes unstaged. It prints the `git add` command for the result after the report. Run that command, and commit.
+
+`git log --follow` can lose the history of a small moved change, because the commit moves the file and edits its front matter and links. To keep the history, commit the moves first:
+
+1. Run `git commit --no-verify`. This commit holds only the renames.
+2. Run the `git add` command of the report. Run `git commit --no-verify`.
+3. Run `spec-dna check --base origin/main`.
+
+Use `--no-verify` for both commits. After the first commit, `HEAD` pins 0.5.0 and has moved documents. In that state, `spec-dna check` without `--base` exits with code 3, and a pre-commit hook of spec-dna fails. A squash merge keeps one commit, so it keeps no history.
 
 ## Open the first pull request
 
-Commit the result. Open one pull request. The base of this pull request has a pin before 0.6.0, so `check` first runs the plan of `upgrade` on the base tree in memory. Then it compares the 2 trees. The gate stays active.
+Open one pull request. The base of this pull request pins a version before 0.6.0. Thus `check` first plans the upgrade of the base tree in memory. The plan is the plan of `upgrade` without `--layout`.
 
-One pull request can hold the configuration and the documents. A later pin change, such as 0.6.0 to 0.6.1, needs its own pull request (SD503).
+Then `check` compares the head with that plan. The gate stays active, and the 0.5 documents of the base give no new diagnostic. A moved document keeps its old id as an alias, so the comparison also works after `--layout`. Run `spec-dna check --base origin/main` to see the result.
+
+One pull request can hold the configuration and the documents, because SD503 does not apply when the base pins a version before 0.6.0. A later change of the configuration keeps SD503. A later pin change, such as 0.6.0 to 0.6.1, needs its own pull request.
+
+The change checks (SD910 to SD921) need a lifecycle base from 0.6.0. If that base pins an earlier version, `check` prints a note on stderr and runs the checks of one tree. An upgraded project has the policy `none`, so it gets no note.
+
+A branch that started before the upgrade has 0.5 documents. Merge the default branch into it, and run `spec-dna upgrade` again. Commit the result. Then the base of the branch pins 0.6.0.
+
+If the base pins a version before 0.4.0, `check` exits with code 3. It asks you to move the base to 0.4.2 first.
+
+`status`, `next` and `finish` read a lifecycle base that pins a version before 0.6.0 with the rules of 0.6. `check` does not.
 
 ## After the upgrade
 
@@ -72,4 +117,4 @@ To enable any of them, run `spec-dna init --reconfigure`. Choose the change poli
 
 ## Undo the upgrade
 
-Revert the upgrade before the merge, if possible. After the merge, the revert needs 2 pull requests. The reason is SD503: the old binary rejects a pull request that changes the configuration and the documents together. In the second pull request, `check` also reports SD202 for each moved change, and for each moved id if you used `--layout`.
+Revert the upgrade before the merge, if possible. Before the commit, run `git reset --hard` and `git clean -fd`. After the merge, the revert needs 2 pull requests. The reason is SD503: the old binary rejects a pull request that changes the configuration and the documents together. In the second pull request, `check` also reports SD202 for each moved change, and for each moved id if you used `--layout`.

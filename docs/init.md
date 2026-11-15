@@ -12,9 +12,9 @@ spec-dna init --answers a.toml  # the answers of a file
 spec-dna init --reconfigure     # the questions again, with the current values as defaults
 ```
 
-Without a terminal (for example, when an agent runs `init`), `init` uses the detected defaults, as `--non-interactive` does. If `spec-dna.toml` exists and you do not set `--reconfigure`, `init` updates the agent adapters, as in 0.1. If the file has a `[harness]` table, it also updates the harness files ([Upgrade](#upgrade)). Run `init` in this way after an upgrade.
+Without a terminal (for example, when an agent runs `init`), `init` uses the detected defaults, as `--non-interactive` does. If `spec-dna.toml` exists and you do not set `--reconfigure`, `init` updates the agent adapters, as in 0.1. If the file has a `[harness]` table, it also updates the harness files ([Upgrade](#upgrade)). `spec-dna upgrade` writes the same files when it moves the pin.
 
-`init` does not run if the pin in `spec-dna.toml` is a different version. It stops with exit code 3. For a 0.5 project, run `spec-dna upgrade` first ([upgrade guide](guides/upgrade-0.5.md)).
+`init` and `init --reconfigure` do not run if the pin in `spec-dna.toml` is a different version. They stop with exit code 3 and write nothing. For a pin from 0.4.0 up to the version of the binary, the message names `spec-dna upgrade`. For a 0.5 project, run `spec-dna upgrade` first ([upgrade guide](guides/upgrade-0.5.md)).
 
 ## Detection
 
@@ -277,7 +277,7 @@ A smaller level removes the generated files that it no longer produces, if you d
 
 ## Upgrade
 
-`init` with a `spec-dna.toml` that exists and no `--reconfigure` is the upgrade path:
+`init` with a `spec-dna.toml` that exists and no `--reconfigure` updates the generated files of the pinned version. `spec-dna upgrade` moves the pin, and it writes the same files. These rules apply to `init`:
 
 - `init` updates the adapters and the skill. The skill lists the types of the layers of the project. `init` also changes the exact hook line that 0.4.1 wrote, `spec-dna check`, to `spec-dna check --staged`. The harness upgrade below comes after these changes.
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
