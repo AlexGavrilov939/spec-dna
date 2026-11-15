@@ -60,7 +60,7 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 - the vendored, generated and large reference directories;
 - the budgets, the stack, the tests, the agent files, CI, the hooks and the default branch.
 
-Then `init` asks at most 14 questions, with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+Then `init` asks at most 14 questions, with the found values as defaults. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm. `--dry-run` shows this preview only. With a change policy other than `none`, the preview has a note with the `CODEOWNERS` line for the specs, and `--json` has the field `codeowners`. `init` never writes the `CODEOWNERS` file. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
 
 `init` writes these adapters:
 

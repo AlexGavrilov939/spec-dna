@@ -254,7 +254,7 @@ high-risk-paths = []                        # globs from the repository root
 max-fanout = 8                              # documents that one change can touch before SD905
 ```
 
-The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. An unknown key is an error (exit code 3). `two-class` runs the same checks as `three-class`.
+The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate. `spec-dna init` writes the table with the 5 keys for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps its values ([init.md](init.md)). An unknown key is an error (exit code 3). `two-class` runs the same checks as `three-class`.
 
 With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD922) are off. spec-dna turns them off before it reads `[rules]`, so a rule of the file cannot turn them on. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can turn it on with `[rules] changes = "warning"`.
 

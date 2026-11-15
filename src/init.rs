@@ -1,6 +1,6 @@
 //! `spec-dna init` (docs/init.md). It detects the facts of the repository
 //! (`detect.rs`). It asks at most 14 questions with the detected defaults (this
-//! version asks 11: see `QUESTIONS`). It
+//! version asks 13: see `QUESTIONS`). It
 //! shows a preview (the full `spec-dna.toml` and the files to create or
 //! change), and it writes only after a confirmation. It never edits a
 //! document. It changes an instruction file (`AGENTS.md`, `CLAUDE.md`) only by
@@ -20,7 +20,7 @@
 //! table. It never removes a file then.
 
 use crate::adapters::{self, VERSION};
-use crate::config::{self, Config, DEFAULT_BUDGETS, Profile, Rules};
+use crate::config::{self, ChangePolicy, Config, DEFAULT_BUDGETS, Gate, Profile, Rules};
 use crate::detect::{self, Facts, GitInfo, Row};
 use crate::diag::Severity;
 use crate::harness::{self, Effort, Harness, Level, Model, Role};
@@ -113,12 +113,14 @@ const SMALL_LIMIT: usize = 30;
 
 /// The questions of `init` with their numbers in the design
 /// (docs/design/0.6.0.md, "Init questions"), and the name that the preview
-/// shows. Later steps of 0.6.0 add the questions 4, 5 and 14.
+/// shows. The step 4 of 0.6.0 adds the question 14.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Question {
     Profile,
     Graph,
     Areas,
+    Policy,
+    Gate,
     Evidence,
     Language,
     Mapping,
@@ -131,10 +133,12 @@ enum Question {
 
 /// The questions in the order that `init` asks them: the number of the design
 /// and the name in the preview.
-const QUESTIONS: [(Question, usize, &str); 11] = [
+const QUESTIONS: [(Question, usize, &str); 13] = [
     (Question::Profile, 1, "profile"),
     (Question::Graph, 2, "layer graph"),
     (Question::Areas, 3, "areas of requirements"),
+    (Question::Policy, 4, "change policy"),
+    (Question::Gate, 5, "change gate"),
     (Question::Evidence, 6, "evidence policy and link style"),
     (
         Question::Language,
@@ -178,6 +182,21 @@ pub struct Plan {
     pub custom: Option<(Graph, bool)>,
     /// The areas of `requirements/`. Empty: one folder.
     pub areas: Vec<String>,
+    /// The answer to question 4: `[change] policy`.
+    pub change_policy: ChangePolicy,
+    /// The answer to question 5: `[change] gate`. The question is not asked
+    /// for the policy `none`, and the key keeps its value.
+    pub change_gate: Gate,
+    /// True if `init` writes the table `[change]` also for the policy
+    /// `none`: a new project, or a current file that has the table.
+    pub change_table: bool,
+    /// `[change] high-risk-layers` of the current file. `None`: the default
+    /// layers. `init` writes only the layers that the graph has.
+    pub high_risk_layers: Option<Vec<String>>,
+    /// `[change] high-risk-paths` of the current file.
+    pub high_risk_paths: Vec<String>,
+    /// `[change] max-fanout`.
+    pub max_fanout: u32,
     /// The documents that detection found in the roots.
     pub documents: usize,
     /// The root of a new project (`docs`, or the directory of `--root`).
@@ -239,6 +258,101 @@ impl Plan {
             GraphChoice::Custom => self.custom.as_ref().is_some_and(|c| c.1),
             _ => true,
         }
+    }
+}
+
+impl Plan {
+    /// True if the new file has the table `[change]`. A file with no table
+    /// and the policy `none` stays without it: no table means `none`.
+    fn writes_change(&self) -> bool {
+        self.change_policy != ChangePolicy::None || self.change_table
+    }
+
+    /// The layers of `[change] high-risk-layers`: the current or the default
+    /// names, without the names that the graph does not have.
+    fn high_risk_layers_written(&self) -> Vec<String> {
+        let graph = self.layers();
+        let names: Vec<String> = match &self.high_risk_layers {
+            Some(v) => v.clone(),
+            None => config::DEFAULT_HIGH_RISK_LAYERS
+                .map(str::to_string)
+                .to_vec(),
+        };
+        names
+            .into_iter()
+            .filter(|n| graph.index(n).is_some())
+            .collect()
+    }
+
+    /// The `[change]` table, or an empty string.
+    fn change_section(&self) -> String {
+        if !self.writes_change() {
+            return String::new();
+        }
+        format!(
+            "\n[change]  # the change process (docs/config.md)\npolicy = {}  # \"three-class\", \"two-class\" or \"none\"\ngate = {}  # \"block\", \"warn\" or \"off\"\nhigh-risk-layers = {}  # a delta in these layers makes a change higher-risk\nhigh-risk-paths = {}  # globs from the repository root\nmax-fanout = {}  # documents that one change can touch before SD905\n",
+            toml_str(self.change_policy.name()),
+            toml_str(self.change_gate.name()),
+            toml_list(&self.high_risk_layers_written()),
+            toml_list(&self.high_risk_paths),
+            self.max_fanout
+        )
+    }
+
+    /// The `CODEOWNERS` line for the specs of the changes, or `None` for the
+    /// policy `none`. Only a higher-risk change has a spec. The path is the
+    /// folder of the `intent` layer in the first mixed root.
+    fn codeowners(&self) -> Option<String> {
+        if self.change_policy == ChangePolicy::None {
+            return None;
+        }
+        let graph = self.layers();
+        let dir = graph
+            .layer_of_type(DocType::Intent)
+            .and_then(|i| graph.layers()[i].dir())
+            .unwrap_or("intent");
+        let root = self
+            .rows
+            .iter()
+            .find(|r| r.ty.is_none())
+            .map_or(self.root.as_str(), |r| r.path.as_str());
+        let root = root.trim_matches('/');
+        let prefix = if root.is_empty() || root == "." {
+            String::new()
+        } else {
+            format!("{root}/")
+        };
+        Some(format!("{prefix}{dir}/*/spec.md @OWNER"))
+    }
+}
+
+/// The note that gives the `CODEOWNERS` line. `init` never writes the file.
+fn codeowners_note(line: &str) -> String {
+    format!(
+        "CODEOWNERS: add the line `{line}` to your CODEOWNERS file, and replace `@OWNER` with the owner. `init` does not write that file. Only a higher-risk change has a spec, so the line protects its approval. A higher-risk plan has the same path as a routine plan, so a path rule cannot select it: the process of your repository (for example branch protection) must require the owner for it"
+    )
+}
+
+/// The policy is `none` if the graph has no `intent` layer: a change needs
+/// the folder `intent/<slug>/`. A note says why. The call is idempotent.
+fn settle_change(plan: &mut Plan) {
+    if plan.change_policy == ChangePolicy::None {
+        return;
+    }
+    if plan.layers().layer_of_type(DocType::Intent).is_some() {
+        return;
+    }
+    let note = format!(
+        "the policy `{}` needs an `intent` layer, and the {} graph has none: `init` writes the policy `none`. Add a layer with `spec-dna layer add intent --types intent,spec,plan`, then run `init --reconfigure` to choose a policy",
+        plan.change_policy.name(),
+        plan.graph.name()
+    );
+    plan.change_policy = ChangePolicy::None;
+    // The answer asked for a policy, so the file says `none` and does not
+    // leave the key out.
+    plan.change_table = true;
+    if !plan.notes.contains(&note) {
+        plan.notes.push(note);
     }
 }
 
@@ -320,6 +434,12 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         graph: GraphChoice::of_size(documents),
         custom: None,
         areas: facts.areas.clone(),
+        change_policy: ChangePolicy::ThreeClass,
+        change_gate: Gate::Block,
+        change_table: true,
+        high_risk_layers: None,
+        high_risk_paths: Vec::new(),
+        max_fanout: config::DEFAULT_MAX_FANOUT,
         documents,
         root: docs_root.to_string(),
         notes: language_note.into_iter().collect(),
@@ -376,6 +496,23 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     p.graph = GraphChoice::Custom;
     p.custom = Some((cfg.layers.clone(), cfg.layers_declared));
     p.areas = cfg.areas.clone();
+    // The current `[change]` is the default of questions 4 and 5. A file with
+    // no table has the policy `none`, and `init` writes no table for it unless
+    // the answer changes the policy.
+    p.change_policy = cfg.change_policy;
+    p.change_table = text
+        .parse::<toml::Table>()
+        .is_ok_and(|t| t.contains_key("change"));
+    // A table with no `gate` leaves SD910 to the profile. The gate that gives
+    // the same severity is the default, so a default answer changes nothing.
+    p.change_gate = match cfg.change_gate {
+        Some(g) => g,
+        None if p.change_table && cfg.profile == Profile::Lite => Gate::Warn,
+        None => Gate::Block,
+    };
+    p.high_risk_layers = p.change_table.then(|| cfg.high_risk_layers.clone());
+    p.high_risk_paths = cfg.high_risk_paths.clone();
+    p.max_fanout = cfg.max_fanout;
     p.kept_types = cfg.types.clone();
     p.exclude = cfg.exclude.clone();
     p.evidence = cfg.rules.iter().find(|r| r.0 == "evidence").map(|r| r.1);
@@ -407,7 +544,6 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     }
     for key in [
         "lint",
-        "change",
         "context",
         "repos",
         "conventions",
@@ -715,6 +851,7 @@ pub fn render(plan: &Plan) -> String {
     for k in kept_tables {
         out.push_str(&format!("{k}\n"));
     }
+    out.push_str(&plan.change_section());
     out.push('\n');
     out.push_str(&plan.harness.toml_section());
     if plan.writes_layers() {
@@ -1215,6 +1352,30 @@ fn areas_value(areas: &[String]) -> String {
     } else {
         list(areas)
     }
+}
+
+/// Reads the answer to question 4.
+fn parse_policy(w: &str) -> Result<ChangePolicy, String> {
+    Ok(match w {
+        "three-class" => ChangePolicy::ThreeClass,
+        "two-class" => ChangePolicy::TwoClass,
+        "none" => ChangePolicy::None,
+        _ => {
+            return Err(format!(
+                "change policy `{w}`: use three-class, two-class or none"
+            ));
+        }
+    })
+}
+
+/// Reads the answer to question 5.
+fn parse_gate(w: &str) -> Result<Gate, String> {
+    Ok(match w {
+        "block" => Gate::Block,
+        "warn" => Gate::Warn,
+        "off" => Gate::Off,
+        _ => return Err(format!("gate `{w}`: use block, warn or off")),
+    })
 }
 
 fn parse_evidence(w: &str) -> Result<Option<Option<Severity>>, String> {
@@ -1718,6 +1879,7 @@ fn notes(plan: &Plan) -> Vec<String> {
     if has_proposals(&plan.rows) && !out.iter().any(|n| n == PROPOSALS_NOTE) {
         out.push(PROPOSALS_NOTE.into());
     }
+    out.extend(plan.codeowners().map(|l| codeowners_note(&l)));
     out
 }
 
@@ -2044,6 +2206,23 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     );
     plan.areas = parse_areas(&words(&a))?;
 
+    settle_change(plan);
+    io.say("    three-class: a small-fix is a pull request only, a routine change has an intent and a plan, and a higher-risk change also has a spec that the owner approves. two-class: each change has an intent. none: no change process; only the checks of the layers.");
+    let a = io.line(
+        &Question::Policy.prompt("Change policy (three-class, two-class, none)"),
+        plan.change_policy.name(),
+    );
+    plan.change_policy = parse_policy(&a)?;
+    settle_change(plan);
+    if plan.change_policy != ChangePolicy::None {
+        io.say("    block: a plan with no approval is an error (SD910). warn: it is a warning. off: no report.");
+        let a = io.line(
+            &Question::Gate.prompt("Gate (block, warn, off)"),
+            plan.change_gate.name(),
+        );
+        plan.change_gate = parse_gate(&a)?;
+    }
+
     let found: Vec<String> = facts
         .tests
         .iter()
@@ -2264,10 +2443,12 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
             Some(_) => Err(format!("answers: `{k}` must be an array of strings")),
         }
     };
-    const KEYS: [&str; 20] = [
+    const KEYS: [&str; 22] = [
         "profile",
         "graph",
         "areas",
+        "change-policy",
+        "gate",
         "evidence",
         "evidence-style",
         "language",
@@ -2311,6 +2492,12 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
     };
     if let Some(v) = areas {
         plan.areas = parse_areas(&v).map_err(|e| format!("answers: {e}"))?;
+    }
+    if let Some(v) = s("change-policy")? {
+        plan.change_policy = parse_policy(&v).map_err(|e| format!("answers: {e}"))?;
+    }
+    if let Some(v) = s("gate")? {
+        plan.change_gate = parse_gate(&v).map_err(|e| format!("answers: {e}"))?;
     }
     if let Some(e) = s("evidence")? {
         plan.evidence = parse_evidence(&e)?;
@@ -2470,8 +2657,10 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // The answers can change the graph, so the roots follow it now. The
     // preview shows the defaults with the same rule.
     settle(&mut plan);
+    settle_change(&mut plan);
     let mut offered = before.clone();
     settle(&mut offered);
+    settle_change(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
     Config::parse(&text)
@@ -2507,6 +2696,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
 
     let preview = o.dry_run || interactive || !write;
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
+    let codeowners = plan.codeowners();
     let notes = notes(&plan);
     if o.json {
         let answers = resolved.iter().map(|r| {
@@ -2564,6 +2754,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .raw("files", &files_json(repo, &changes))
                 .strs("manual", &manual)
                 .strs("notes", &notes)
+                .opt_str("codeowners", codeowners.as_deref())
                 .raw("harness", &harness_json(hrun.as_ref(), plan.harness.level))
                 .strs("written", &written)
                 .end()
@@ -2809,6 +3000,26 @@ fn resolved_answers(
                 String::new()
             } else {
                 format!("areas = {}", toml_list(&plan.areas))
+            },
+        ),
+        (
+            Question::Policy,
+            plan.change_policy.name().to_string(),
+            before.change_policy.name().to_string(),
+            if plan.writes_change() {
+                "[change] policy, high-risk-layers, high-risk-paths, max-fanout".to_string()
+            } else {
+                String::new()
+            },
+        ),
+        (
+            Question::Gate,
+            plan.change_gate.name().to_string(),
+            before.change_gate.name().to_string(),
+            if plan.writes_change() {
+                "[change] gate".to_string()
+            } else {
+                String::new()
             },
         ),
         (

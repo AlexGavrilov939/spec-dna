@@ -177,12 +177,11 @@ fn a_new_project_gets_the_small_graph_and_a_root_without_a_default_type() {
     assert!(bytes <= 300, "{bytes} bytes");
     // The preview names the questions with the numbers of the design.
     let (_, out, _) = r.run(&["init", "--reconfigure", "--dry-run", "--non-interactive"]);
-    for n in [1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13] {
+    for n in 1..=13 {
         assert!(out.contains(&format!("\n  {n}. ")), "question {n}:\n{out}");
     }
-    for n in [4, 5, 14] {
-        assert!(!out.contains(&format!("\n  {n}. ")), "question {n}:\n{out}");
-    }
+    // Question 14 (the evals) comes in step 4.
+    assert!(!out.contains("\n  14. "), "question 14:\n{out}");
 }
 
 /// The bytes that the adapters add to the prefix of each request, from the
