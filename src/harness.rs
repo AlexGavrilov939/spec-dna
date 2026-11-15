@@ -58,10 +58,10 @@ impl Level {
 pub enum Role {
     Orchestrator,
     Advisor,
-    Reviewer,
+    Verifier,
     Researcher,
     Implementer,
-    SpecWriter,
+    CodeSimplifier,
     Helper,
 }
 
@@ -69,10 +69,10 @@ impl Role {
     pub const ALL: [Role; 7] = [
         Role::Orchestrator,
         Role::Advisor,
-        Role::Reviewer,
+        Role::Verifier,
         Role::Researcher,
         Role::Implementer,
-        Role::SpecWriter,
+        Role::CodeSimplifier,
         Role::Helper,
     ];
 
@@ -81,10 +81,10 @@ impl Role {
         match self {
             Role::Orchestrator => "orchestrator",
             Role::Advisor => "advisor",
-            Role::Reviewer => "reviewer",
+            Role::Verifier => "verifier",
             Role::Researcher => "researcher",
             Role::Implementer => "implementer",
-            Role::SpecWriter => "spec-writer",
+            Role::CodeSimplifier => "code-simplifier",
             Role::Helper => "helper",
         }
     }
@@ -95,15 +95,15 @@ impl Role {
 
     /// Returns true for a role that only level `full` installs.
     pub fn full_only(self) -> bool {
-        matches!(self, Role::Implementer | Role::SpecWriter)
+        matches!(self, Role::Implementer | Role::CodeSimplifier)
     }
 
     pub fn default_model(self) -> &'static str {
         match self {
-            Role::Orchestrator | Role::Reviewer => "opus",
+            Role::Orchestrator | Role::Verifier => "opus",
             Role::Advisor => "fable",
             Role::Researcher | Role::Helper => "haiku",
-            Role::Implementer | Role::SpecWriter => "sonnet",
+            Role::Implementer | Role::CodeSimplifier => "sonnet",
         }
     }
 
@@ -119,6 +119,65 @@ impl Role {
     /// have none: they are settings.
     pub fn agent(self) -> Option<&'static AgentDef> {
         AGENT_DEFS.iter().find(|a| a.role == self)
+    }
+}
+
+/// A role of spec-dna 0.5 that does not exist in 0.6. spec-dna keeps no alias:
+/// the key of `[harness.roles]` and the word of question 13 give an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoneRole {
+    /// `reviewer` is now `verifier`.
+    Reviewer,
+    /// `spec-writer` ended. The stage skills replace it.
+    SpecWriter,
+}
+
+impl GoneRole {
+    pub const ALL: [GoneRole; 2] = [GoneRole::Reviewer, GoneRole::SpecWriter];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            GoneRole::Reviewer => "reviewer",
+            GoneRole::SpecWriter => "spec-writer",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<GoneRole> {
+        GoneRole::ALL.into_iter().find(|g| g.key() == s)
+    }
+
+    /// The error for a key of `[harness.roles]`.
+    pub fn config_message(self) -> String {
+        let key = self.key();
+        match self {
+            GoneRole::Reviewer => {
+                format!("`harness.roles.{key}`: the role is now `verifier`; rename the key")
+            }
+            GoneRole::SpecWriter => format!(
+                "`harness.roles.{key}`: the role ended, and the stage skills of `[harness] skills` replace it; remove the key"
+            ),
+        }
+    }
+
+    /// The error for a word of question 13 (`role=model[:effort]`).
+    pub fn word_message(self) -> String {
+        let key = self.key();
+        match self {
+            GoneRole::Reviewer => {
+                format!("the role `{key}` is now `verifier`; rename the word")
+            }
+            GoneRole::SpecWriter => format!(
+                "the role `{key}` ended, and the stage skills of `[harness] skills` replace it; remove the word"
+            ),
+        }
+    }
+
+    /// Returns true if `error` holds the message of a word of question 13.
+    /// `init` gives exit code 3 for it, as for the key of the table.
+    pub fn is_word_error(error: &str) -> bool {
+        GoneRole::ALL
+            .into_iter()
+            .any(|g| error.contains(&g.word_message()))
     }
 }
 
@@ -498,6 +557,10 @@ impl Harness {
         }
         if let Some(v) = f.take("roles") {
             let roles = v.as_table().ok_or("`harness.roles` must be a table")?;
+            // A role of 0.5 gives its own error, before any other key is read.
+            if let Some(gone) = roles.keys().find_map(|k| GoneRole::from_key(k)) {
+                return Err(gone.config_message());
+            }
             for (key, rv) in roles {
                 let role = Role::from_key(key).ok_or_else(|| {
                     let keys: Vec<&str> = Role::ALL.iter().map(|r| r.key()).collect();
@@ -746,12 +809,12 @@ Answer in 200 words or fewer:
 - Risk: what can fail, and the check that shows it.",
     },
     AgentDef {
-        role: Role::Reviewer,
-        name: "checker",
-        tools: &["Read", "Bash", "Monitor", "TaskStop"],
+        role: Role::Verifier,
+        name: "verifier",
+        tools: &["Read", "Bash"],
         omit_claude_md: false,
-        description: "Reviews finished work independently. It runs the tests, examines the diff, probes edge cases and lists each defect. It never edits. Use it before you report that a task is complete.",
-        body: r"You review work that another agent reports as complete. Do not change files or git state. Put temporary files in a temporary directory, and remove them at the end.
+        description: "Verifies finished work independently. It runs the tests, examines the diff, probes edge cases and lists each defect. It fixes nothing. Use it before you report that a task is complete.",
+        body: r"You verify work that another agent reports as complete. Do not fix anything; report only. Do not change files or git state. Put temporary files in a temporary directory, and remove them at the end.
 
 1. Find the change: `git status`, `git diff`, and the files in the brief.
 2. Run the tests and checks that cover the change. Use the commands of the project instruction files.
@@ -759,6 +822,7 @@ Answer in 200 words or fewer:
 4. Compare the change with the brief. Report missing work and extra work.
 
 Report:
+
 - Each defect: the file and line or the command, the expected result, and the actual result.
 - Each check that you could not run, with the reason.
 - If you found no defect, list the commands that you ran.",
@@ -798,20 +862,20 @@ Answer:
 Report: the files that you changed, the commands that you ran with their result, and the open issues. Do not commit.",
     },
     AgentDef {
-        role: Role::SpecWriter,
-        name: "spec-writer",
-        tools: &["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
+        role: Role::CodeSimplifier,
+        name: "code-simplifier",
+        tools: &["Read", "Grep", "Glob", "Bash", "Edit"],
         omit_claude_md: false,
-        description: "Writes and updates the specifications of the project with spec-dna. Use it for a new spec, decision or runbook, or to keep the specs true after a code change.",
-        body: r"You keep the specifications true. Use spec-dna for each step.
+        description: "Removes needless complexity from the diff of a task and keeps the behavior. It changes no test and adds no feature. Use it after the checks pass and before you report that a task is complete.",
+        body: r"You simplify the code of the diff that the brief names. Keep the behavior. Do not change a test. Do not add a feature.
 
-1. Run `spec-dna context <files>` for the files of the change. Read a listed section with `spec-dna show <id>#<anchor>` only when you need it.
-2. Run `spec-dna show --conventions <type>` before you edit a document of that type.
-3. For a new document, run `spec-dna new <type> <id>`. The folder of a layer gives the type, so write no `type:` line there. A top file has no id (`spec-dna new terms`), and a change has a folder (`spec-dna new intent <slug>`). Then replace each placeholder.
-4. Change an accepted decision only in its amendment section, or write a new decision that supersedes it.
-5. Run `spec-dna check`. Fix each error.
+1. Read the diff: `git status` and `git diff`. Edit only the files of the diff.
+2. Find needless complexity: dead code, a layer that gives no value, a copy of code that exists, a name that is not clear.
+3. Make each simplification small. Keep the interface of each public function.
+4. Run the tests and checks that the project instruction files name. If a check fails, undo the edit that caused it.
+5. If you find no simplification, change nothing and say so.
 
-Report: the documents that you changed, and the output of `spec-dna check`. Do not commit.",
+Report: the files that you changed, the commands that you ran with their result, and each simplification that you did not make, with the reason. Do not commit.",
     },
 ];
 
@@ -937,10 +1001,10 @@ fn team_page(h: &Harness) -> String {
         }
     }
     for r in [
-        Role::Reviewer,
+        Role::Verifier,
         Role::Researcher,
         Role::Implementer,
-        Role::SpecWriter,
+        Role::CodeSimplifier,
     ] {
         if let (true, Some(def)) = (h.on(r), r.agent()) {
             // `Explore` is the name of a built-in subagent, and this file replaces it.
@@ -1068,6 +1132,11 @@ pub fn wanted(path: &str) -> bool {
             .is_some_and(|r| r.ends_with(".md") && !r.contains('/'))
 }
 
+/// The agent files that 0.5 wrote and 0.6 does not: `checker.md` became
+/// `verifier.md`, and `spec-writer.md` ended. `init --reconfigure` removes an
+/// unedited one, so a change of the configuration with it is still its own.
+const OLD_AGENT_PATHS: [&str; 2] = [".claude/agents/checker.md", ".claude/agents/spec-writer.md"];
+
 /// Returns true for a path that `init` writes for the harness, whatever the
 /// configuration is. A change of `spec-dna.toml` with these files is still a
 /// change of its own (SD503).
@@ -1075,6 +1144,7 @@ pub fn is_output_path(path: &str) -> bool {
     path == CLAUDE
         || path == SETTINGS
         || path == TEAM_PAGE
+        || OLD_AGENT_PATHS.contains(&path)
         || AGENT_DEFS.iter().any(|d| d.path() == path)
 }
 
@@ -1100,10 +1170,10 @@ fn claude_body(h: &Harness) -> String {
             shown_model(&h.cfg(Role::Advisor).model)
         );
     }
-    if h.on(Role::Reviewer) {
+    if h.on(Role::Verifier) {
         s += &format!(
-            "`checker` ({}) tests finished work. ",
-            shown_model(&h.cfg(Role::Reviewer).model)
+            "`verifier` ({}) tests finished work. ",
+            shown_model(&h.cfg(Role::Verifier).model)
         );
     }
     if h.on(Role::Researcher) {
@@ -1118,19 +1188,17 @@ fn claude_body(h: &Harness) -> String {
             s += "If the advisor tool is missing, fails or declines, brief `fallback-advisor`. ";
         }
     }
-    if h.on(Role::Reviewer) {
-        s += "Run `checker` before you say that a task is done. A trivial task needs only the one command that proves it. ";
+    if h.on(Role::Verifier) {
+        s += "Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. ";
     }
     if h.on(Role::Researcher) {
         s += "Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. ";
     }
-    match (h.on(Role::Implementer), h.on(Role::SpecWriter)) {
-        (true, true) => {
-            s += "Give a code change to `implementer` and a spec change to `spec-writer`, one writer at a time. "
-        }
-        (true, false) => s += "Give a code change to `implementer`. ",
-        (false, true) => s += "Give a spec change to `spec-writer`. ",
-        _ => {}
+    if h.on(Role::Implementer) {
+        s += "Give a code change to `implementer`. ";
+    }
+    if h.on(Role::CodeSimplifier) {
+        s += "After the checks pass, give the diff to `code-simplifier`. ";
     }
     s += "Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. ";
     if adv {
@@ -2155,7 +2223,7 @@ fanout-cap = 4
 [harness.roles]
 orchestrator = { claude-code = "opus[1m]", effort = "high", fallback = ["sonnet"] }
 advisor = { claude-code = "none" }
-reviewer = { claude-code = "inherit", effort = "inherit" }
+verifier = { claude-code = "inherit", effort = "inherit" }
 helper = { claude-code = "inherit" }
 [harness.efforts]
 opus = "xhigh"
@@ -2174,7 +2242,7 @@ opus = "xhigh"
             vec!["sonnet".to_string()]
         );
         assert!(!h.on(Role::Advisor));
-        assert_eq!(h.cfg(Role::Reviewer).model, Model::Inherit);
+        assert_eq!(h.cfg(Role::Verifier).model, Model::Inherit);
         assert_eq!(h.cfg(Role::Researcher).model, Model::Id("haiku".into()));
         assert_eq!(h.efforts, vec![("opus".to_string(), Effort::XHigh)]);
         assert!(!h.context_hook_on() && h.fanout_hook_on());
@@ -2204,24 +2272,24 @@ opus = "xhigh"
                 "unknown role",
             ),
             (
-                "level = \"lean\"\n[harness.roles]\nreviewer = 1",
+                "level = \"lean\"\n[harness.roles]\nverifier = 1",
                 "must be a table",
             ),
             (
-                "level = \"lean\"\n[harness.roles]\nreviewer = { codex = \"x\" }",
-                "unknown key `harness.roles.reviewer.codex`",
+                "level = \"lean\"\n[harness.roles]\nverifier = { codex = \"x\" }",
+                "unknown key `harness.roles.verifier.codex`",
             ),
             (
                 "level = \"lean\"\n[harness.roles]\nhelper = { effort = \"high\" }",
                 "unknown key `harness.roles.helper.effort`",
             ),
             (
-                "level = \"lean\"\n[harness.roles]\nreviewer = { claude-code = \"a b\" }",
+                "level = \"lean\"\n[harness.roles]\nverifier = { claude-code = \"a b\" }",
                 "no spaces",
             ),
             (
-                "level = \"lean\"\n[harness.roles]\nreviewer = { effort = \"huge\" }",
-                "`harness.roles.reviewer.effort` must be",
+                "level = \"lean\"\n[harness.roles]\nverifier = { effort = \"huge\" }",
+                "`harness.roles.verifier.effort` must be",
             ),
             (
                 "level = \"lean\"\n[harness.roles]\norchestrator = { claude-code = \"none\" }",
@@ -2256,7 +2324,7 @@ opus = "xhigh"
                 "removes each tool of the agent `fallback-advisor`",
             ),
             (
-                "level = \"full\"\ndeny = [\"Read\", \"Grep\", \"Glob\", \"Bash\", \"WebFetch\", \"WebSearch\"]\n[harness.roles]\nadvisor = { agent = \"none\" }",
+                "level = \"full\"\ndeny = [\"Read\", \"Grep\", \"Glob\", \"Bash\", \"WebFetch\", \"WebSearch\"]\n[harness.roles]\nadvisor = { agent = \"none\" }\nverifier = { claude-code = \"none\" }",
                 "removes each tool of the agent `Explore`",
             ),
         ];
@@ -2265,7 +2333,7 @@ opus = "xhigh"
             assert!(e.contains(want), "{src:?}: {e}");
         }
         // An agent that is off needs no tool. The advisor can be haiku in its agent.
-        parse("level = \"lean\"\ndeny = [\"Read\", \"Bash\"]\n[harness.roles]\nadvisor = { agent = \"none\" }").unwrap();
+        parse("level = \"lean\"\ndeny = [\"Read\", \"Bash\"]\n[harness.roles]\nadvisor = { agent = \"none\" }\nverifier = { claude-code = \"none\" }").unwrap();
         parse("level = \"none\"\ndeny = [\"Read\", \"Bash\"]").unwrap();
         parse("level = \"lean\"\n[harness.roles]\nadvisor = { agent = \"haiku\" }").unwrap();
         // With level none the roles are not checked against the level.
@@ -2357,7 +2425,7 @@ opus = "xhigh"
                 let mut h = full();
                 h.deny = vec!["NotebookEdit".into()];
                 h.context_meter.clear();
-                h.cfg_mut(Role::Reviewer).model = Model::None;
+                h.cfg_mut(Role::Verifier).model = Model::None;
                 h.cfg_mut(Role::Advisor).agent = Model::None;
                 h.cfg_mut(Role::Orchestrator).fallback.clear();
                 h.efforts.clear();
@@ -2466,14 +2534,16 @@ opus = "xhigh"
     #[test]
     fn agent_file_has_the_frontmatter_the_body_and_the_marker() {
         let f = files(&lean());
-        let (path, text) = f.iter().find(|f| f.0.ends_with("checker.md")).unwrap();
-        assert_eq!(path, ".claude/agents/checker.md");
+        let (path, text) = f.iter().find(|f| f.0.ends_with("verifier.md")).unwrap();
+        assert_eq!(path, ".claude/agents/verifier.md");
         assert!(
             text.starts_with(
-                "---\nname: checker\ndescription: Reviews finished work independently"
+                "---\nname: verifier\ndescription: Verifies finished work independently"
             )
         );
-        assert!(text.contains("\nmodel: opus\neffort: high\ntools: Read, Bash, Monitor, TaskStop\n---\n\nYou review work"));
+        assert!(
+            text.contains("\nmodel: opus\neffort: high\ntools: Read, Bash\n---\n\nYou verify work")
+        );
         let last = text.lines().last().unwrap();
         assert!(
             last.starts_with(&format!("{OPEN}{VERSION} h:")) && last.ends_with(" -->"),
@@ -2516,8 +2586,8 @@ opus = "xhigh"
     fn agent_file_follows_the_configuration() {
         let mut h = full();
         h.deny = vec!["Bash".into(), "WebSearch".into()];
-        h.cfg_mut(Role::Reviewer).model = Model::Inherit;
-        h.cfg_mut(Role::Reviewer).effort = Effort::Inherit;
+        h.cfg_mut(Role::Verifier).model = Model::Inherit;
+        h.cfg_mut(Role::Verifier).effort = Effort::Inherit;
         h.cfg_mut(Role::Implementer).model = Model::None;
         h.cfg_mut(Role::Advisor).agent = Model::None;
         let f = files(&h);
@@ -2525,17 +2595,14 @@ opus = "xhigh"
         assert_eq!(
             names,
             [
-                ".claude/agents/checker.md",
+                ".claude/agents/verifier.md",
                 ".claude/agents/Explore.md",
-                ".claude/agents/spec-writer.md",
+                ".claude/agents/code-simplifier.md",
                 ".claude/agents/model-team.md"
             ]
         );
         let c = &f[0].1;
-        assert!(
-            c.contains("\nmodel: inherit\ntools: Read, Monitor, TaskStop\n---"),
-            "{c}"
-        );
+        assert!(c.contains("\nmodel: inherit\ntools: Read\n---"), "{c}");
         assert!(f[1].1.contains("tools: Read, Grep, Glob, WebFetch\n"));
         assert!(generated_files(&Harness::new(Level::None)).is_empty());
     }
@@ -2548,8 +2615,8 @@ opus = "xhigh"
             "| orchestrator | `model` in `.claude/settings.json` | opus | xhigh |",
             "| advisor | `advisorModel` in `.claude/settings.json` | fable | - |",
             "| advisor fallback | `.claude/agents/fallback-advisor.md` | opus | xhigh |",
-            "| reviewer | `.claude/agents/checker.md` | opus | high |",
-            "| spec-writer | `.claude/agents/spec-writer.md` | sonnet | high |",
+            "| verifier | `.claude/agents/verifier.md` | opus | high |",
+            "| code-simplifier | `.claude/agents/code-simplifier.md` | sonnet | high |",
             "| helper | `env.CLAUDE_CODE_SUBAGENT_MODEL` | haiku | - |",
             "## Outage",
             "## No access to the advisor model",
@@ -2582,20 +2649,20 @@ opus = "xhigh"
     fn claude_line_follows_the_roles() {
         let line = claude_line(&lean()).unwrap();
         assert!(!line.contains('\n'));
-        assert!(line.starts_with("Model team: opus builds. The advisor (fable) gives advice and writes no code. `checker` (opus) tests finished work. `Explore` (haiku) searches. Consult the advisor"), "{line}");
+        assert!(line.starts_with("Model team: opus builds. The advisor (fable) gives advice and writes no code. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Consult the advisor"), "{line}");
         assert!(line.contains(
-            "brief `fallback-advisor`. Run `checker` before you say that a task is done."
+            "brief `fallback-advisor`. Run `verifier` before you say that a task is done."
         ));
         assert!(line.contains("`Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`."));
         assert!(line.contains("tell the advisor in a second consult. <!-- spec-dna harness v"));
         assert!(!line.contains("implementer"));
-        assert!(claude_line(&full()).unwrap().contains("Give a code change to `implementer` and a spec change to `spec-writer`, one writer at a time. "));
+        assert!(claude_line(&full()).unwrap().contains("Give a code change to `implementer`. After the checks pass, give the diff to `code-simplifier`. "));
         let mut h = lean();
         h.cfg_mut(Role::Advisor).model = Model::None;
         h.cfg_mut(Role::Orchestrator).model = Model::Inherit;
         let line = claude_line(&h).unwrap();
         assert!(
-            line.starts_with("Model team: the main model builds. `checker`"),
+            line.starts_with("Model team: the main model builds. `verifier`"),
             "{line}"
         );
         for gone in ["advisor", "Advisor", "consult", "fallback-advisor"] {
@@ -2613,11 +2680,11 @@ opus = "xhigh"
         assert_eq!(t, format!("# Rules\n\n{line}\n"));
         assert_eq!(upsert_claude(&t, &h), t, "idempotent");
         let mut h2 = h.clone();
-        h2.cfg_mut(Role::Reviewer).model = Model::Id("sonnet".into());
+        h2.cfg_mut(Role::Verifier).model = Model::Id("sonnet".into());
         let t2 = upsert_claude(&t, &h2);
         assert!(
             t2.starts_with("# Rules\n\n")
-                && t2.contains("`checker` (sonnet)")
+                && t2.contains("`verifier` (sonnet)")
                 && t2.matches("Model team:").count() == 1
         );
         assert_eq!(remove_claude_line(&t), "# Rules\n");
@@ -2931,22 +2998,21 @@ opus = "xhigh"
             removed,
             [
                 ".claude/agents/implementer.md",
-                ".claude/agents/spec-writer.md"
+                ".claude/agents/code-simplifier.md"
             ]
         );
         // An edited file stays, and the plan says so.
         let i = t
             .iter()
-            .position(|f| f.0.ends_with("spec-writer.md"))
+            .position(|f| f.0.ends_with("code-simplifier.md"))
             .unwrap();
-        t[i].1 = t[i]
-            .1
-            .replace("You keep the specifications true.", "You do my work.");
+        t[i].1 = t[i].1.replace("You simplify the code", "You do my work");
         let p = plan(&t, Some(&h), &lean(), Mode::Reconfigure).unwrap();
         assert!(
-            p.kept.iter().any(
-                |k| k.starts_with("kept .claude/agents/spec-writer.md: edited by hand (SD501)")
-            ),
+            p.kept
+                .iter()
+                .any(|k| k
+                    .starts_with("kept .claude/agents/code-simplifier.md: edited by hand (SD501)")),
             "{:?}",
             p.kept
         );
@@ -3003,23 +3069,23 @@ opus = "xhigh"
     #[test]
     fn a_file_that_spec_dna_did_not_generate_is_never_replaced() {
         let own = vec![(
-            ".claude/agents/reviewer-agent.md".to_string(),
-            "---\nname: checker\ndescription: mine\n---\nText\n".to_string(),
+            ".claude/agents/verifier-agent.md".to_string(),
+            "---\nname: verifier\ndescription: mine\n---\nText\n".to_string(),
         )];
         assert_eq!(
             name_conflicts(&own),
             vec![(
-                Role::Reviewer,
-                ".claude/agents/reviewer-agent.md".to_string()
+                Role::Verifier,
+                ".claude/agents/verifier-agent.md".to_string()
             )]
         );
         let e = plan(&own, None, &lean(), Mode::Reconfigure).unwrap_err();
         assert!(
-            e.contains("holds the agent `checker`") && e.contains("\"none\""),
+            e.contains("holds the agent `verifier`") && e.contains("\"none\""),
             "{e}"
         );
         let mut h = lean();
-        h.cfg_mut(Role::Reviewer).model = Model::None;
+        h.cfg_mut(Role::Verifier).model = Model::None;
         assert!(plan(&own, None, &h, Mode::Reconfigure).is_ok());
         // The advisor with no fallback agent writes no file at that path.
         let adv = vec![(
@@ -3063,7 +3129,7 @@ opus = "xhigh"
     fn the_upgrade_path_regenerates_old_files_and_keeps_edited_ones() {
         let h = lean();
         let mut t = installed(&h);
-        let i = t.iter().position(|f| f.0.ends_with("checker.md")).unwrap();
+        let i = t.iter().position(|f| f.0.ends_with("verifier.md")).unwrap();
         let old_version = t[i].1.replace(&format!("v{VERSION} "), "v0.0.1 ");
         // An old marker with the right hash for its text: the text is not
         // stale, so only the version part differs. Make the text differ too.
@@ -3081,7 +3147,7 @@ opus = "xhigh"
         assert_eq!(p.changes.len(), 1, "{:?}", p.changes);
         assert_eq!(
             (p.changes[0].path.as_str(), p.changes[0].action),
-            (".claude/agents/checker.md", Action::Change)
+            (".claude/agents/verifier.md", Action::Change)
         );
         assert!(
             p.kept
@@ -3103,7 +3169,7 @@ opus = "xhigh"
             names,
             [
                 ".claude/agents/fallback-advisor.md",
-                ".claude/agents/checker.md",
+                ".claude/agents/verifier.md",
                 ".claude/agents/Explore.md",
                 ".claude/agents/model-team.md",
                 "CLAUDE.md",
@@ -3111,7 +3177,7 @@ opus = "xhigh"
             ]
         );
         assert_eq!(p.changes[0].note, "agent fallback-advisor: opus, xhigh");
-        assert_eq!(p.changes[1].note, "agent checker: opus, high");
+        assert_eq!(p.changes[1].note, "agent verifier: opus, high");
         assert_eq!(p.changes[4].note, "CLAUDE.md: model-team line");
     }
 
@@ -3140,25 +3206,25 @@ opus = "xhigh"
             t
         };
         // SD504: an expected file is absent, or has no marker.
-        let d = check(&h, &drop(".claude/agents/checker.md"));
+        let d = check(&h, &drop(".claude/agents/verifier.md"));
         assert_eq!(codes(&d), ["SD504"]);
         assert_eq!(
             (d[0].path.as_str(), d[0].target.as_str()),
-            (".claude/agents/checker.md", "file")
+            (".claude/agents/verifier.md", "file")
         );
         let d = check(&h, &drop(TEAM_PAGE));
         assert_eq!(codes(&d), ["SD504"]);
         let d = check(
             &h,
-            &edit(".claude/agents/checker.md", &|_| "own text\n".into()),
+            &edit(".claude/agents/verifier.md", &|_| "own text\n".into()),
         );
         assert_eq!(codes(&d), ["SD504"]);
         assert!(d[0].message.contains("no harness marker"));
         // SD501: the hash differs from the text.
         let d = check(
             &h,
-            &edit(".claude/agents/checker.md", &|t| {
-                t.replace("You review", "You skim")
+            &edit(".claude/agents/verifier.md", &|t| {
+                t.replace("You verify", "You skim")
             }),
         );
         assert_eq!(codes(&d), ["SD501"]);
@@ -3166,7 +3232,7 @@ opus = "xhigh"
         // SD502: the text is not what this version generates.
         let d = check(
             &h,
-            &edit(".claude/agents/checker.md", &|t| {
+            &edit(".claude/agents/verifier.md", &|t| {
                 let m = file_marker(t).unwrap();
                 let before = m.before.replace("model: opus", "model: sonnet");
                 format!("{before}{}\n", marker_text(&before))
@@ -3214,7 +3280,7 @@ opus = "xhigh"
                     .split(" <!--")
                     .next()
                     .unwrap()
-                    .replace("`checker` (opus)", "`checker` (haiku)");
+                    .replace("`verifier` (opus)", "`verifier` (haiku)");
                 format!("{before} {}\n", marker_text(&before))
             }),
         );
@@ -3264,7 +3330,7 @@ opus = "xhigh"
     fn text_after_the_marker_is_a_hand_edit() {
         let h = lean();
         let clean = installed(&h);
-        for path in [".claude/agents/checker.md", TEAM_PAGE] {
+        for path in [".claude/agents/verifier.md", TEAM_PAGE] {
             let mut t = clean.clone();
             let e = t.iter_mut().find(|x| x.0 == path).unwrap();
             e.1.push_str("extra\n");
@@ -3462,7 +3528,7 @@ opus = "xhigh"
             CLAUDE,
             SETTINGS,
             TEAM_PAGE,
-            ".claude/agents/checker.md",
+            ".claude/agents/verifier.md",
             ".claude/agents/Explore.md",
             ".claude/agents/fallback-advisor.md",
         ] {
@@ -3481,5 +3547,50 @@ opus = "xhigh"
             CLAUDE.into(),
             crate::adapters::upsert_line("")
         )]));
+    }
+
+    #[test]
+    fn the_old_agent_files_of_05_are_output_paths() {
+        for p in [
+            ".claude/agents/checker.md",
+            ".claude/agents/spec-writer.md",
+            ".claude/agents/verifier.md",
+            ".claude/agents/code-simplifier.md",
+            TEAM_PAGE,
+        ] {
+            assert!(is_output_path(p), "{p}");
+        }
+        assert!(!is_output_path(".claude/agents/mine.md"));
+        assert!(!is_output_path("docs/checker.md"));
+    }
+
+    #[test]
+    fn the_descriptions_of_the_new_agents_are_at_most_200_characters() {
+        for def in AGENT_DEFS
+            .iter()
+            .filter(|d| matches!(d.role, Role::Verifier | Role::CodeSimplifier))
+        {
+            let n = def.description.chars().count();
+            assert!(n <= 200, "{}: {n} characters", def.name);
+        }
+    }
+
+    #[test]
+    fn a_role_of_05_has_its_messages_before_the_unknown_role_error() {
+        for level in ["none", "lean", "full"] {
+            for gone in GoneRole::ALL {
+                let src = format!(
+                    "level = \"{level}\"\n[harness.roles]\nzzz = {{}}\n{} = {{ claude-code = \"opus\" }}",
+                    gone.key()
+                );
+                assert_eq!(parse(&src).unwrap_err(), gone.config_message(), "{src}");
+            }
+        }
+        assert!(GoneRole::is_word_error(&GoneRole::Reviewer.word_message()));
+        assert!(GoneRole::is_word_error(&format!(
+            "answers: harness-models: {}",
+            GoneRole::SpecWriter.word_message()
+        )));
+        assert!(!GoneRole::is_word_error("unknown role `judge`"));
     }
 }

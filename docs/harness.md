@@ -1,14 +1,14 @@
 # Agent harness
 
-The agent harness is a small team of models for a coding agent. One model builds. A stronger model advises. A reviewer checks finished work. A small model searches. `spec-dna init` writes the files of the team for Claude Code. `spec-dna check` reports a generated file that differs from the configuration. The decision is [ADR 0004](adr/0004-harness.md).
+The agent harness is a small team of models for a coding agent. One model builds. A stronger model advises. A verifier checks finished work. A small model searches. `spec-dna init` writes the files of the team for Claude Code. `spec-dna check` reports a generated file that differs from the configuration. The decision is [ADR 0004](adr/0004-harness.md).
 
 The harness is optional. `init` asks for a level.
 
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, the advisor, `checker`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people |
-| `full` | `lean`, and `implementer` and `spec-writer` |
+| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people |
+| `full` | `lean`, and `implementer` and `code-simplifier` |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
 
@@ -19,10 +19,10 @@ A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or
 | `orchestrator` | The main session. It builds, delegates and runs checks | `opus`, `xhigh`; fallback `opus`, `sonnet` | `.claude/settings.json` |
 | `advisor` | Advice at a decision point. It writes no code | `fable` | `advisorModel` in `.claude/settings.json` |
 | | The advisor when the advisor tool is not available | `opus`, `xhigh` | `.claude/agents/fallback-advisor.md` |
-| `reviewer` | Checks finished work and looks for defects. It never edits | `opus`, `high` | `.claude/agents/checker.md` |
+| `verifier` | Runs the tests and checks on finished work and reports defects. It fixes nothing | `opus`, `high` | `.claude/agents/verifier.md` |
 | `researcher` | Read-only search of the repository and the web | `haiku`, `high` | `.claude/agents/Explore.md` |
 | `implementer` (full) | Code and tests for one delegated task | `sonnet`, `high` | `.claude/agents/implementer.md` |
-| `spec-writer` (full) | Specs with spec-dna | `sonnet`, `high` | `.claude/agents/spec-writer.md` |
+| `code-simplifier` (full) | Removes needless complexity from the diff of a task and keeps the behavior | `sonnet`, `high` | `.claude/agents/code-simplifier.md` |
 | `helper` | Each subagent without a model of its own, such as `general-purpose` | `haiku` | `env.CLAUDE_CODE_SUBAGENT_MODEL` |
 
 Notes:
@@ -31,6 +31,7 @@ Notes:
 - To keep the built-in `Explore`, set `researcher = { claude-code = "none" }` in `[harness.roles]` and run `spec-dna init --reconfigure`. `init` removes the file if you did not edit it. To use an agent of your own with the name `Explore`, set the same value and write your file. Without it, `init` refuses to replace your file.
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
 - The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
+- spec-dna 0.6 renames the role `reviewer` to `verifier`, and its file `checker.md` to `verifier.md`. The role `spec-writer` ends, and `code-simplifier` is new at level `full`. A table with the key `reviewer` or `spec-writer` gives exit code 3, and so does the word in the answer to question 13. Rename the key, or remove it, and run `spec-dna init --reconfigure`. It writes `verifier.md` and removes an unedited `checker.md` and `spec-writer.md`. It keeps an edited file.
 
 ## Configuration
 
@@ -45,7 +46,7 @@ fanout-cap = 10
 [harness.roles]
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
-reviewer = { claude-code = "opus", effort = "high" }
+verifier = { claude-code = "opus", effort = "high" }
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -134,7 +135,7 @@ As for the other adapters, only findings that are new against the base fail the 
 
 - The main model sets the cost of each request. `opus` at `xhigh` costs more than `sonnet` at `high`.
 - The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
-- `checker`, `Explore`, `implementer` and `spec-writer` cost nothing until the main session uses them. Their descriptions are part of each request.
+- `verifier`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request.
 - The `CLAUDE.md` line is part of each request (about 200 tokens).
 
 These options make each request smaller. `init` does not write them, because they remove features that some teams use:
@@ -147,7 +148,7 @@ These options make each request smaller. `init` does not write them, because the
 1. Start a new session. Do not resume an old session: it keeps the model of its transcript.
 2. Read the header. It shows the main model.
 3. Run `/advisor`. It shows the advisor model.
-4. Type `@`. The list shows `checker`, `Explore` and `fallback-advisor`.
+4. Type `@`. The list shows `verifier`, `Explore` and `fallback-advisor`.
 5. While a subagent runs, run `/tasks`. Its row shows its model.
 6. When Claude consults the advisor, an `Advising` line shows. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
 

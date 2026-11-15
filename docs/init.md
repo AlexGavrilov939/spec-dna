@@ -101,7 +101,7 @@ The numbers are the numbers of the design of 0.6.0. This version asks the questi
 | 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none` | The instruction files that exist, and the skill |
 | 11 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 | 12 | The agent harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean` |
-| 13 | The models: `role=model[:effort]` words, such as `reviewer=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high spec-writer=sonnet:high`. The detected values replace the main model and the advisor |
+| 13 | The models: `role=model[:effort]` words, such as `verifier=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high code-simplifier=sonnet:high`. The words `reviewer=` and `spec-writer=` of spec-dna 0.5 give exit code 3: the role `reviewer` is now `verifier`, and the role `spec-writer` ended. The detected values replace the main model and the advisor |
 
 Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the types of the project, so `init` writes no `types` key. Question 3 writes `areas = [...]`, if the answer has a name. `init` never proposes a group: add a `[groups]` table by hand.
 
@@ -170,7 +170,7 @@ ci = "github"                   # "github", "gitlab" or "none"
 hook = "pre-commit"             # "pre-commit", "husky", "lefthook" or "none"
 base = "main"
 harness = "lean"                # "none", "lean" or "full"
-harness-models = ["orchestrator=opus:xhigh", "reviewer=sonnet:medium", "advisor=fable/opus"]
+harness-models = ["orchestrator=opus:xhigh", "verifier=sonnet:medium", "advisor=fable/opus"]
 harness-deny = ["NotebookEdit"] # tools that no agent gets; replaces the default
 write = true                    # false: the preview only
 

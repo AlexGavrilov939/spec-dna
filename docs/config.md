@@ -98,7 +98,7 @@ protect-tests = "fix-branches"  # "fix-branches", "always" or "off" (default "of
 [harness.roles]                 # a role that is not here takes its default
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
-reviewer = { claude-code = "opus", effort = "high" }
+verifier = { claude-code = "opus", effort = "high" }
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -174,7 +174,7 @@ sonnet = "high"
 | `evals.max-total-usd` | number | `20` | The most that `eval run` can spend, in USD. Above 0. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
-| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them. |
+| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper. `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
 | `harness.deny` | list of strings | `[]` | Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
@@ -320,7 +320,7 @@ max-total-usd = 20
 
 [ADR 0004](adr/0004-harness.md) gives the roles. [docs/harness.md](harness.md) gives the generated files and the hooks.
 
-`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `reviewer`, `researcher`, `implementer`, `spec-writer` and `helper`.
+`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `verifier`, `researcher`, `implementer`, `code-simplifier` and `helper`. The keys `reviewer` and `spec-writer` of spec-dna 0.5 give exit code 3: the role `reviewer` is now `verifier`, and the role `spec-writer` ended.
 
 | Key | Roles | Meaning |
 | --- | --- | --- |
@@ -335,10 +335,10 @@ The defaults:
 | --- | --- | --- | --- |
 | `orchestrator` | `opus` | `xhigh` | `lean`, `full` |
 | `advisor` | `fable` (agent: `opus`) | `xhigh` (agent) | `lean`, `full` |
-| `reviewer` | `opus` | `high` | `lean`, `full` |
+| `verifier` | `opus` | `high` | `lean`, `full` |
 | `researcher` | `haiku` | `high` | `lean`, `full` |
 | `implementer` | `sonnet` | `high` | `full` |
-| `spec-writer` | `sonnet` | `high` | `full` |
+| `code-simplifier` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
 A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in level full. These rules apply to the values:

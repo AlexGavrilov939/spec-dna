@@ -3021,12 +3021,23 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             harness.get("additionalProperties"),
             &crate::json::Value::Bool(false)
         );
-        // The roles of `[harness.roles]`. Step 4, S2 renames `reviewer`.
+        // The roles of `[harness.roles]`. The roles of 0.5 that ended are not
+        // in the schema, and the parser gives an error that is not "unknown".
         let mut rkeys = keys(harness.get("properties").get("roles"));
         rkeys.sort();
         let mut roles: Vec<&str> = crate::harness::Role::ALL.iter().map(|r| r.key()).collect();
         roles.sort();
         assert_eq!(rkeys, roles);
+        for gone in ["reviewer", "spec-writer"] {
+            assert!(!rkeys.iter().any(|k| k == gone), "{gone}");
+            let toml = format!("[harness]\nlevel = \"lean\"\n[harness.roles]\n{gone} = {{}}\n");
+            let e = with("", &toml).unwrap_err();
+            assert!(!is_unknown(&e), "{gone}: {e}");
+            assert!(
+                e.contains(&format!("`harness.roles.{gone}`")),
+                "{gone}: {e}"
+            );
+        }
         // The rule groups of the schema are the groups of the parser.
         let pattern = match schema
             .get("$defs")

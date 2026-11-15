@@ -23,7 +23,7 @@ use crate::adapters::{self, VERSION};
 use crate::config::{self, ChangePolicy, Config, DEFAULT_BUDGETS, Gate, Profile, Rules};
 use crate::detect::{self, Facts, GitInfo, Row};
 use crate::diag::Severity;
-use crate::harness::{self, Effort, Harness, Level, Model, Role};
+use crate::harness::{self, Effort, GoneRole, Harness, Level, Model, Role};
 use crate::json::{self, Obj};
 use crate::layer::{self, Graph};
 use crate::model::DocType;
@@ -1485,6 +1485,9 @@ fn apply_models(h: &mut Harness, words: &[String]) -> Result<(), String> {
         let (key, value) = w
             .split_once('=')
             .ok_or_else(|| format!("`{w}`: write role=model[:effort]"))?;
+        if let Some(gone) = GoneRole::from_key(key) {
+            return Err(gone.word_message());
+        }
         let role = Role::from_key(key).ok_or_else(|| {
             let keys: Vec<&str> = Role::ALL.iter().map(|r| r.key()).collect();
             format!("unknown role `{key}`; use {}", keys.join(", "))
@@ -2410,8 +2413,8 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.base = b.clone();
     }
 
-    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `checker`, `Explore`, `fallback-advisor`, 2 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `spec-writer`. none writes nothing. The files are for Claude Code only.");
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, 2 hooks and a model-team line in CLAUDE.md.");
+    io.say("    full also writes `implementer` and `code-simplifier`. none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -2423,7 +2426,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     if plan.harness.level != Level::None {
         io.say("    The main model sets the cost of each request.");
         io.say("    The advisor reads the whole context at its own price each time that it is consulted. It needs Fable access, or `fallback-advisor` gives the advice.");
-        io.say("    `checker` and `Explore` run only when the main session uses them.");
+        io.say("    `verifier` and `Explore` run only when the main session uses them.");
         io.say("    `none` turns a role off. Write advisor=<model>/<model of fallback-advisor> to set both.");
         let a = io.line(
             &Question::Models.prompt("Models (role=model[:effort] ...)"),
@@ -2607,6 +2610,16 @@ fn roots_text(v: &toml::Value) -> Option<String> {
     Some(out)
 }
 
+/// The exit code of an error of the answers: 3 for a role of 0.5 that does
+/// not exist (the same code as the key of the table), else 2.
+fn answer_error(e: String) -> Fatal {
+    if GoneRole::is_word_error(&e) {
+        Fatal::Config(e)
+    } else {
+        Fatal::Usage(e)
+    }
+}
+
 /// Runs `init`.
 pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let cfg_path = repo.config_path();
@@ -2658,7 +2671,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     if let Some(path) = &o.answers {
         let text = std::fs::read_to_string(path)
             .map_err(|e| Fatal::Usage(format!("--answers {path}: {e}")))?;
-        write = apply_answers(&mut plan, &text).map_err(Fatal::Usage)?;
+        write = apply_answers(&mut plan, &text).map_err(answer_error)?;
     } else if interactive {
         let stdin = std::io::stdin();
         let mut input = stdin.lock();
@@ -2667,7 +2680,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
             input: &mut input,
             out: &mut out,
         };
-        ask(&mut plan, &facts, &mut io).map_err(Fatal::Usage)?;
+        ask(&mut plan, &facts, &mut io).map_err(answer_error)?;
     }
     // The answers can change the graph, so the roots follow it now. The
     // preview shows the defaults with the same rule.
@@ -3516,19 +3529,19 @@ mod tests {
         let mut h = Harness::new(Level::Lean);
         assert_eq!(
             models_line(&h),
-            "orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku"
+            "orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku"
         );
         h.level = Level::Full;
         assert!(
             models_line(&h)
-                .ends_with("helper=haiku implementer=sonnet:high spec-writer=sonnet:high"),
+                .ends_with("helper=haiku implementer=sonnet:high code-simplifier=sonnet:high"),
             "{}",
             models_line(&h)
         );
         let edits: Vec<String> = [
             "orchestrator=sonnet:inherit",
             "advisor=opus/sonnet:high",
-            "reviewer=none",
+            "verifier=none",
             "researcher=inherit",
         ]
         .map(String::from)
@@ -3537,7 +3550,7 @@ mod tests {
         let line = models_line(&h);
         assert!(
             line.starts_with(
-                "orchestrator=sonnet:inherit advisor=opus/sonnet:high reviewer=none researcher=inherit:high helper=haiku"
+                "orchestrator=sonnet:inherit advisor=opus/sonnet:high verifier=none researcher=inherit:high helper=haiku"
             ),
             "{line}"
         );
@@ -3551,17 +3564,28 @@ mod tests {
     fn the_model_words_refuse_what_the_configuration_refuses() {
         let lean = || Harness::new(Level::Lean);
         for (word, want) in [
-            ("reviewer", "write role=model[:effort]"),
+            ("verifier", "write role=model[:effort]"),
+            ("reviewer=opus", "the role `reviewer` is now `verifier`"),
+            ("spec-writer=opus", "the role `spec-writer` ended"),
             ("judge=opus", "unknown role `judge`"),
             ("implementer=opus", "role `implementer` is in level full"),
             ("helper=haiku:high", "the role `helper` has no effort"),
-            ("reviewer=", "the model is empty"),
-            ("reviewer=opus:ultra", "unknown effort `ultra`"),
-            ("reviewer=opus:", "unknown effort ``"),
+            ("verifier=", "the model is empty"),
+            ("verifier=opus:ultra", "unknown effort `ultra`"),
+            ("verifier=opus:", "unknown effort ``"),
             ("advisor=opus/haiku:ultra", "unknown effort `ultra`"),
         ] {
             let e = apply_models(&mut lean(), &[word.to_string()]).unwrap_err();
             assert!(e.contains(want), "{word}: {e}");
+        }
+        // A word of a role of 0.5 gives exit code 3, the other errors 2.
+        for (word, code) in [
+            ("reviewer=opus", 3),
+            ("spec-writer=opus", 3),
+            ("judge=opus", 2),
+        ] {
+            let e = apply_models(&mut lean(), &[word.to_string()]).unwrap_err();
+            assert_eq!(answer_error(e).exit_code(), code, "{word}");
         }
         // The configuration rules apply to the result.
         for (word, want) in [
@@ -3581,9 +3605,9 @@ mod tests {
         validate_harness(&h).unwrap();
         // A suffix that is no effort belongs to the model id.
         let mut h = lean();
-        apply_models(&mut h, &["reviewer=vendor.model-v1:0".to_string()]).unwrap();
+        apply_models(&mut h, &["verifier=vendor.model-v1:0".to_string()]).unwrap();
         assert_eq!(
-            h.cfg(Role::Reviewer).model,
+            h.cfg(Role::Verifier).model,
             Model::Id("vendor.model-v1:0".into())
         );
         // Level none takes any role word.
@@ -3596,14 +3620,14 @@ mod tests {
         let own =
             |path: &str, name: &str| (path.to_string(), format!("---\nname: {name}\n---\nown\n"));
         let existing = vec![
-            own(".claude/agents/mine.md", "checker"),
+            own(".claude/agents/mine.md", "verifier"),
             own(".claude/agents/fallback-advisor.md", "fallback-advisor"),
             own(".claude/agents/implementer.md", "implementer"),
         ];
         let mut h = Harness::new(Level::Lean);
         let notes = apply_conflicts(&mut h, &existing, false);
         assert_eq!(notes.len(), 3, "{notes:?}");
-        assert_eq!(h.cfg(Role::Reviewer).model, Model::None);
+        assert_eq!(h.cfg(Role::Verifier).model, Model::None);
         assert_eq!(h.cfg(Role::Advisor).agent, Model::None);
         assert!(h.cfg(Role::Advisor).model != Model::None);
         assert_eq!(h.cfg(Role::Implementer).model, Model::None);
@@ -3611,7 +3635,7 @@ mod tests {
         let mut h = Harness::new(Level::Lean);
         let notes = apply_conflicts(&mut h, &existing, true);
         assert_eq!(notes.len(), 1, "{notes:?}");
-        assert_eq!(h.cfg(Role::Reviewer).model, Model::Id("opus".into()));
+        assert_eq!(h.cfg(Role::Verifier).model, Model::Id("opus".into()));
     }
 
     fn facts_with(scripts: &[(&str, usize)], outcome: &[&str]) -> Facts {

@@ -1,13 +1,16 @@
 //! Integration tests of the agent harness (ADR 0004): `init` and `check` on the
-//! harness files. The helpers are small copies of the ones in tests/cli.rs.
+//! harness files. The git calls, the binary path and the version are the
+//! shared ones of tests/common. The roles of step 4 are in
+//! tests/harness_roles.rs.
 
+mod common;
+
+use common::{BIN, VERSION, git};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const BIN: &str = env!("CARGO_BIN_EXE_spec-dna");
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 struct Repo {
@@ -19,29 +22,6 @@ impl Drop for Repo {
         let _ = fs::remove_dir_all(&self.dir);
         let _ = fs::remove_file(self.answers_path());
     }
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args([
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.org",
-        ])
-        .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .expect("git runs");
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 impl Repo {
@@ -141,7 +121,7 @@ fn check_reports_each_missing_harness_file() {
     assert_eq!(code, 1, "{out}");
     for file in [
         ".claude/agents/fallback-advisor.md",
-        ".claude/agents/checker.md",
+        ".claude/agents/verifier.md",
         ".claude/agents/Explore.md",
         ".claude/agents/model-team.md",
     ] {
@@ -170,19 +150,19 @@ fn check_reports_each_missing_harness_file() {
 #[test]
 fn check_reads_untracked_files_and_reports_a_file_that_spec_dna_did_not_write() {
     let r = Repo::with_harness("[harness]\nlevel = \"lean\"\n");
-    r.write(".claude/agents/checker.md", "my own agent\n");
+    r.write(".claude/agents/verifier.md", "my own agent\n");
     let (_, out) = r.run(&["check"]);
     assert!(
-        out.contains("checker.md:1: error SD504 harness-missing: the file has no harness marker"),
+        out.contains("verifier.md:1: error SD504 harness-missing: the file has no harness marker"),
         "{out}"
     );
     assert!(
-        !out.contains("checker.md:1: error SD504 harness-missing: the generated file is absent")
+        !out.contains("verifier.md:1: error SD504 harness-missing: the generated file is absent")
     );
     // The gate against a base reads tracked files only.
     let (_, out) = r.run(&["check", "--base", "HEAD"]);
     assert!(
-        out.contains("checker.md:1: error SD504 harness-missing: the generated file is absent"),
+        out.contains("verifier.md:1: error SD504 harness-missing: the generated file is absent"),
         "{out}"
     );
 }
@@ -214,7 +194,7 @@ fn harness_files_do_not_make_a_configuration_change_impure() {
         ),
     );
     r.write(".claude/settings.json", "{}\n");
-    r.write(".claude/agents/checker.md", "text\n");
+    r.write(".claude/agents/verifier.md", "text\n");
     r.write("CLAUDE.md", "# Rules\n");
     let (_, out) = r.run(&["check"]);
     assert!(!out.contains("SD503"), "{out}");
@@ -229,7 +209,7 @@ fn harness_files_do_not_make_a_configuration_change_impure() {
 
 const LEAN_FILES: [&str; 4] = [
     ".claude/agents/fallback-advisor.md",
-    ".claude/agents/checker.md",
+    ".claude/agents/verifier.md",
     ".claude/agents/Explore.md",
     ".claude/agents/model-team.md",
 ];
@@ -258,7 +238,7 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
         assert!(out.contains(&format!("wrote {f}\n")), "{out}");
     }
     assert!(!r.exists(".claude/agents/implementer.md"));
-    assert!(!r.exists(".claude/agents/spec-writer.md"));
+    assert!(!r.exists(".claude/agents/code-simplifier.md"));
     let cfg = r.read("spec-dna.toml");
     assert!(
         cfg.contains("\n[harness]\nlevel = \"lean\"\ndeny = [\"NotebookEdit\"]\n"),
@@ -309,7 +289,7 @@ fn a_dry_run_shows_the_harness_and_writes_nothing() {
         "{out}"
     );
     assert!(
-        out.contains("  create .claude/agents/checker.md (agent checker: opus, high)\n"),
+        out.contains("  create .claude/agents/verifier.md (agent verifier: opus, high)\n"),
         "{out}"
     );
     assert!(
@@ -340,8 +320,8 @@ fn an_answers_file_writes_the_full_harness_with_the_chosen_models() {
     assert_eq!(code, 0, "{out}{err}");
     for f in [
         ".claude/agents/implementer.md",
-        ".claude/agents/spec-writer.md",
-        ".claude/agents/checker.md",
+        ".claude/agents/code-simplifier.md",
+        ".claude/agents/verifier.md",
         ".claude/agents/Explore.md",
         ".claude/agents/model-team.md",
     ] {
@@ -377,7 +357,7 @@ fn an_answers_file_writes_the_full_harness_with_the_chosen_models() {
     let r = Repo::empty();
     for answers in [
         "harness = \"wide\"\n",
-        "harness-models = [\"reviewer\"]\n",
+        "harness-models = [\"verifier\"]\n",
         "harness-models = [\"judge=opus\"]\n",
         "harness-models = [\"implementer=opus\"]\n",
         "harness-models = [\"advisor=haiku\"]\n",
@@ -397,7 +377,7 @@ fn reconfigure_moves_between_the_levels_and_removes_what_it_wrote() {
     let (code, out, err) = r.init_with("harness = \"full\"\n", &["--reconfigure"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(r.exists(".claude/agents/implementer.md"));
-    assert!(r.exists(".claude/agents/spec-writer.md"));
+    assert!(r.exists(".claude/agents/code-simplifier.md"));
     assert!(
         out.contains("wrote .claude/agents/implementer.md\n"),
         "{out}"
@@ -449,13 +429,13 @@ fn reconfigure_moves_between_the_levels_and_removes_what_it_wrote() {
     // A plain `init` after that writes no harness.
     let (code, out, _) = r.run3(&["init"]);
     assert_eq!(code, 0, "{out}");
-    assert!(!r.exists(".claude/agents/checker.md"));
+    assert!(!r.exists(".claude/agents/verifier.md"));
 }
 
 #[test]
 fn reconfigure_keeps_a_generated_file_that_a_person_edited() {
     let r = lean_repo();
-    let p = ".claude/agents/checker.md";
+    let p = ".claude/agents/verifier.md";
     r.write(
         p,
         &r.read(p)
@@ -466,7 +446,7 @@ fn reconfigure_keeps_a_generated_file_that_a_person_edited() {
     assert!(r.exists(p));
     assert!(r.read(p).contains("Mine."));
     assert!(
-        out.contains("kept .claude/agents/checker.md: edited by hand (SD501)\n"),
+        out.contains("kept .claude/agents/verifier.md: edited by hand (SD501)\n"),
         "{out}"
     );
     assert!(!r.exists(".claude/agents/Explore.md"));
@@ -475,31 +455,31 @@ fn reconfigure_keeps_a_generated_file_that_a_person_edited() {
 #[test]
 fn a_file_of_the_project_makes_its_role_none_and_stays() {
     let r = Repo::empty();
-    let own = "---\nname: checker\ndescription: mine\n---\n\nMy reviewer.\n";
-    r.write(".claude/agents/checker.md", own);
+    let own = "---\nname: verifier\ndescription: mine\n---\n\nMy verifier.\n";
+    r.write(".claude/agents/verifier.md", own);
     let (code, out, err) = r.run3(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(r.read(".claude/agents/checker.md"), own);
+    assert_eq!(r.read(".claude/agents/verifier.md"), own);
     assert!(
-        out.contains("note: .claude/agents/checker.md holds the agent `checker`, and spec-dna did not generate it: the role `reviewer` is none\n"),
+        out.contains("note: .claude/agents/verifier.md holds the agent `verifier`, and spec-dna did not generate it: the role `verifier` is none\n"),
         "{out}"
     );
     assert!(
         r.read("spec-dna.toml")
-            .contains("reviewer = { claude-code = \"none\"")
+            .contains("verifier = { claude-code = \"none\"")
     );
-    assert!(!r.read("CLAUDE.md").contains("`checker`"));
+    assert!(!r.read("CLAUDE.md").contains("`verifier`"));
     assert!(r.exists(".claude/agents/Explore.md"));
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     // Another repository: the answers force the role. That is a usage error.
     let r = Repo::empty();
-    r.write(".claude/agents/checker.md", own);
-    let (code, out, err) = r.init_with("harness-models = [\"reviewer=opus\"]\n", &[]);
+    r.write(".claude/agents/verifier.md", own);
+    let (code, out, err) = r.init_with("harness-models = [\"verifier=opus\"]\n", &[]);
     assert_eq!(code, 2, "{out}{err}");
-    assert!(err.contains("holds the agent `checker`"), "{err}");
+    assert!(err.contains("holds the agent `verifier`"), "{err}");
     assert!(!r.exists("spec-dna.toml"));
-    assert_eq!(r.read(".claude/agents/checker.md"), own);
+    assert_eq!(r.read(".claude/agents/verifier.md"), own);
     // An agent with the name of the advisor agent turns off only its file.
     let r = Repo::empty();
     r.write(".claude/agents/fallback-advisor.md", "own\n");
@@ -535,7 +515,7 @@ fn a_git_ignore_of_the_claude_folder_refuses_the_harness() {
     assert_eq!(code, 2, "{err}");
     // So does the rule for one agent file, or for `CLAUDE.md`.
     for (rule, path) in [
-        (".claude/agents/checker.md\n", ".claude/agents/checker.md"),
+        (".claude/agents/verifier.md\n", ".claude/agents/verifier.md"),
         ("Explore.md\n", ".claude/agents/Explore.md"),
         ("CLAUDE.md\n", "CLAUDE.md"),
         ("settings.json\n", ".claude/settings.json"),
@@ -575,7 +555,7 @@ fn check_reports_each_kind_of_drift_after_init() {
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     let (agent, settings, explore) = (
-        ".claude/agents/checker.md",
+        ".claude/agents/verifier.md",
         ".claude/settings.json",
         ".claude/agents/Explore.md",
     );
@@ -589,7 +569,7 @@ fn check_reports_each_kind_of_drift_after_init() {
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("checker.md:") && out.contains("error SD501"),
+        out.contains("verifier.md:") && out.contains("error SD501"),
         "{out}"
     );
     r.write(agent, &agent_text);
@@ -627,7 +607,7 @@ fn check_reports_each_kind_of_drift_after_init() {
 #[test]
 fn the_upgrade_regenerates_an_old_file_and_keeps_an_edited_one() {
     let r = lean_repo();
-    let (old, edited) = (".claude/agents/checker.md", ".claude/agents/Explore.md");
+    let (old, edited) = (".claude/agents/verifier.md", ".claude/agents/Explore.md");
     let (old_text, edited_text) = (r.read(old), r.read(edited));
     r.write(old, &age_marker(&old_text));
     assert_ne!(r.read(old), old_text);
@@ -635,12 +615,12 @@ fn the_upgrade_regenerates_an_old_file_and_keeps_an_edited_one() {
     r.write(edited, &by_hand);
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("checker.md:21: error SD502"), "{out}");
+    assert!(out.contains("verifier.md:22: error SD502"), "{out}");
     let (code, out, err) = r.run3(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(r.read(old), old_text, "the old file is generated again");
     assert_eq!(r.read(edited), by_hand, "the edited file stays");
-    assert!(out.contains("wrote .claude/agents/checker.md\n"), "{out}");
+    assert!(out.contains("wrote .claude/agents/verifier.md\n"), "{out}");
     assert!(!out.contains("wrote .claude/agents/Explore.md"), "{out}");
     assert!(
         out.contains("kept .claude/agents/Explore.md: edited by hand (SD501); delete it and run `spec-dna init` to generate it again\n"),
@@ -652,7 +632,7 @@ fn the_upgrade_regenerates_an_old_file_and_keeps_an_edited_one() {
     let (code, out, _) = r.run3(&["init", "--dry-run"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("would change .claude/agents/checker.md ("),
+        out.contains("would change .claude/agents/verifier.md ("),
         "{out}"
     );
     assert_eq!(r.read(old), age_marker(&old_text));
@@ -669,7 +649,7 @@ fn a_configuration_without_a_harness_table_gets_none_until_reconfigure() {
     let (code, out, err) = r.run3(&["init", "--reconfigure", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        r.exists(".claude/agents/checker.md"),
+        r.exists(".claude/agents/verifier.md"),
         "reconfigure defaults to lean"
     );
     assert!(
@@ -773,12 +753,12 @@ fn a_change_of_the_harness_table_alone_is_new_drift() {
     let (code, out) = r.run(&["check", "--base", "HEAD"]);
     assert_eq!(code, 0, "{out}");
     let cfg = r.read("spec-dna.toml");
-    assert!(cfg.contains("reviewer = { claude-code = \"opus\""), "{cfg}");
+    assert!(cfg.contains("verifier = { claude-code = \"opus\""), "{cfg}");
     r.write(
         "spec-dna.toml",
         &cfg.replace(
-            "reviewer = { claude-code = \"opus\"",
-            "reviewer = { claude-code = \"sonnet\"",
+            "verifier = { claude-code = \"opus\"",
+            "verifier = { claude-code = \"sonnet\"",
         ),
     );
     for args in [&["check"][..], &["check", "--base", "HEAD"][..]] {
@@ -794,7 +774,7 @@ fn a_change_of_the_harness_table_alone_is_new_drift() {
 
 #[test]
 fn text_after_the_marker_is_a_hand_edit_for_init_and_check() {
-    for file in [".claude/agents/checker.md", ".claude/agents/model-team.md"] {
+    for file in [".claude/agents/verifier.md", ".claude/agents/model-team.md"] {
         let r = lean_repo();
         r.commit("init");
         let text = format!("{}extra\n", r.read(file));
@@ -842,7 +822,7 @@ fn a_deny_rule_that_removes_each_tool_of_an_agent_is_refused() {
 #[test]
 fn a_model_word_with_an_unknown_effort_is_refused() {
     let r = Repo::empty();
-    for word in ["reviewer=opus:ultra", "reviewer=opus:"] {
+    for word in ["verifier=opus:ultra", "verifier=opus:"] {
         let (code, out, err) = r.init_with(&format!("harness-models = [\"{word}\"]\n"), &[]);
         assert_eq!(code, 2, "{word}: {out}{err}");
         assert!(err.contains("unknown effort"), "{word}: {err}");
@@ -912,7 +892,10 @@ fn lean_after_none_takes_the_fresh_defaults_and_none_prints_no_restart_line() {
     r.commit("init");
     let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("removed .claude/agents/checker.md\n"), "{out}");
+    assert!(
+        out.contains("removed .claude/agents/verifier.md\n"),
+        "{out}"
+    );
     assert!(!out.contains("Restart Claude Code"), "{out}");
     r.commit("none");
     let (code, out, err) = r.init_with("harness = \"lean\"\n", &["--reconfigure"]);
@@ -966,32 +949,33 @@ fn a_dry_run_gives_the_diff_of_each_harness_file_in_text_and_json() {
     let (code, out, err) = r.init_with("harness = \"none\"\n", &["--reconfigure", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("--- a/.claude/agents/checker.md\n+++ /dev/null\n@@ -1,"),
+        out.contains("--- a/.claude/agents/verifier.md\n+++ /dev/null\n@@ -1,"),
         "{out}"
     );
-    assert!(out.contains("-name: checker\n"), "{out}");
+    assert!(out.contains("-name: verifier\n"), "{out}");
     let (code, json, err) = r.init_with(
         "harness = \"none\"\n",
         &["--reconfigure", "--dry-run", "--json"],
     );
     assert_eq!(code, 0, "{json}{err}");
     assert!(
-        json.contains("\"path\":\".claude/agents/checker.md\",\"action\":\"remove\",\"note\":")
-            && json.contains("\"diff\":\"--- a/.claude/agents/checker.md\\n+++ /dev/null\\n@@ -1,"),
+        json.contains("\"path\":\".claude/agents/verifier.md\",\"action\":\"remove\",\"note\":")
+            && json
+                .contains("\"diff\":\"--- a/.claude/agents/verifier.md\\n+++ /dev/null\\n@@ -1,"),
         "{json}"
     );
     assert!(
-        r.exists(".claude/agents/checker.md"),
+        r.exists(".claude/agents/verifier.md"),
         "a dry run removes nothing"
     );
     // A change of a file: the diff has the lines of the change.
     let (code, out, err) = r.init_with(
-        "harness-models = [\"reviewer=sonnet:medium\"]\n",
+        "harness-models = [\"verifier=sonnet:medium\"]\n",
         &["--reconfigure", "--dry-run"],
     );
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("--- a/.claude/agents/checker.md\n+++ b/.claude/agents/checker.md\n@@ "),
+        out.contains("--- a/.claude/agents/verifier.md\n+++ b/.claude/agents/verifier.md\n@@ "),
         "{out}"
     );
 }
@@ -999,25 +983,25 @@ fn a_dry_run_gives_the_diff_of_each_harness_file_in_text_and_json() {
 #[test]
 fn the_upgrade_dry_run_gives_the_diff_of_each_harness_file() {
     let r = lean_repo();
-    let old = ".claude/agents/checker.md";
+    let old = ".claude/agents/verifier.md";
     let old_text = r.read(old);
     r.write(old, &age_marker(&old_text));
     let (code, out, err) = r.run3(&["init", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("would change .claude/agents/checker.md ("),
+        out.contains("would change .claude/agents/verifier.md ("),
         "{out}"
     );
     assert!(
-        out.contains("--- a/.claude/agents/checker.md\n+++ b/.claude/agents/checker.md\n@@ "),
+        out.contains("--- a/.claude/agents/verifier.md\n+++ b/.claude/agents/verifier.md\n@@ "),
         "{out}"
     );
     assert!(out.contains("-<!-- spec-dna harness v0.0.1 "), "{out}");
     let (code, json, err) = r.run3(&["init", "--dry-run", "--json"]);
     assert_eq!(code, 0, "{json}{err}");
     assert!(
-        json.contains("\"dry_run\":true,\"files\":[{\"path\":\".claude/agents/checker.md\",\"action\":\"change\",\"note\":")
-            && json.contains("\"diff\":\"--- a/.claude/agents/checker.md\\n+++ b/.claude/agents/checker.md\\n@@ "),
+        json.contains("\"dry_run\":true,\"files\":[{\"path\":\".claude/agents/verifier.md\",\"action\":\"change\",\"note\":")
+            && json.contains("\"diff\":\"--- a/.claude/agents/verifier.md\\n+++ b/.claude/agents/verifier.md\\n@@ "),
         "{json}"
     );
     assert_eq!(
@@ -1037,7 +1021,7 @@ fn the_preview_has_13_answers_and_question_13_writes_nothing_without_a_harness()
         "  1. profile: ",
         "  11. CI step, hook and base branch: ",
         "  12. agent harness: lean (default) -> [harness] level = \"lean\", ",
-        ".claude/agents/checker.md",
+        ".claude/agents/verifier.md",
         ".claude/settings.json",
         "  13. harness models: orchestrator=opus:xhigh advisor=fable ",
         " (default) -> [harness.roles] table\n",
@@ -1081,7 +1065,7 @@ fn the_preview_has_13_answers_and_question_13_writes_nothing_without_a_harness()
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains("(changed from lean) -> [harness] level = \"none\", removes ")
-            && out.contains("removes .claude/agents/checker.md"),
+            && out.contains("removes .claude/agents/verifier.md"),
         "{out}"
     );
 }
@@ -1092,7 +1076,7 @@ fn check_staged_reads_the_harness_files_of_the_index() {
     r.commit("init");
     let (code, out) = r.run(&["check", "--staged"]);
     assert_eq!(code, 0, "{out}");
-    let file = ".claude/agents/checker.md";
+    let file = ".claude/agents/verifier.md";
     let by_hand = r
         .read(file)
         .replacen("<!-- spec-dna harness", "Mine.\n<!-- spec-dna harness", 1);
@@ -1110,7 +1094,7 @@ fn check_staged_reads_the_harness_files_of_the_index() {
     let (code, out) = r.run(&["check", "--staged"]);
     assert_eq!(code, 1, "{out}");
     assert!(
-        out.contains("checker.md") && out.contains("error SD501"),
+        out.contains("verifier.md") && out.contains("error SD501"),
         "{out}"
     );
     // An untracked harness file does not count either: delete a staged one
@@ -1131,7 +1115,7 @@ fn check_staged_reads_the_harness_files_of_the_index() {
 #[test]
 fn the_upgrade_changes_the_hook_of_0_4_1_and_the_harness_files_together() {
     let r = lean_repo();
-    let old = ".claude/agents/checker.md";
+    let old = ".claude/agents/verifier.md";
     let old_text = r.read(old);
     r.write(old, &age_marker(&old_text));
     let hook = "repos:\n  - repo: local\n    hooks:\n      - id: spec-dna\n        name: spec-dna check\n        entry: spec-dna check\n        language: system\n        pass_filenames: false\n        always_run: true\n      - id: other\n        name: other\n        entry: spec-dna checkout\n        language: system\n";
@@ -1143,14 +1127,14 @@ fn the_upgrade_changes_the_hook_of_0_4_1_and_the_harness_files_together() {
             && out.contains(
                 "-        entry: spec-dna check\n+        entry: spec-dna check --staged\n"
             )
-            && out.contains("would change .claude/agents/checker.md ("),
+            && out.contains("would change .claude/agents/verifier.md ("),
         "{out}"
     );
     let (code, out, err) = r.run3(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains("wrote .pre-commit-config.yaml\n")
-            && out.contains("wrote .claude/agents/checker.md\n"),
+            && out.contains("wrote .claude/agents/verifier.md\n"),
         "{out}"
     );
     assert_eq!(r.read(old), old_text);
@@ -1247,7 +1231,7 @@ fn a_second_model_team_line_is_reported_and_init_keeps_one() {
 fn the_fix_texts_of_sd501_and_sd505_say_to_delete_and_name_the_types() {
     let r = lean_repo();
     r.commit("init");
-    let file = ".claude/agents/checker.md";
+    let file = ".claude/agents/verifier.md";
     r.write(file, &format!("{}extra\n", r.read(file)));
     r.write(".claude/settings.json", "{\"model\": ");
     let (code, out) = r.run(&["check", "--all"]);
@@ -1303,16 +1287,16 @@ fn the_upgrade_from_0_4_1_is_not_a_configuration_change_with_other_files() {
 fn an_effort_word_without_a_digit_must_be_an_effort_and_a_cloud_id_stays_a_model() {
     let r = Repo::empty();
     for word in [
-        "reviewer=opus:x-high",
-        "reviewer=opus:xhigh-",
-        "reviewer=opus:Ultra",
+        "verifier=opus:x-high",
+        "verifier=opus:xhigh-",
+        "verifier=opus:Ultra",
     ] {
         let (code, out, err) = r.init_with(&format!("harness-models = [\"{word}\"]\n"), &[]);
         assert_eq!(code, 2, "{word}: {out}{err}");
         assert!(err.contains("unknown effort"), "{word}: {err}");
     }
     let (code, out, err) = r.init_with(
-        "harness-models = [\"reviewer=anthropic.claude-opus-4-v1:0\"]\n",
+        "harness-models = [\"verifier=anthropic.claude-opus-4-v1:0\"]\n",
         &[],
     );
     assert_eq!(code, 0, "{out}{err}");

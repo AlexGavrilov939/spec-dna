@@ -324,7 +324,7 @@
       ],
       "properties": {
         "level": {
-          "description": "`none` installs nothing. `lean` installs the orchestrator, the advisor, the reviewer, the researcher and the helper. `full` also installs the implementer and the spec-writer. With `none`, spec-dna reads the other keys and ignores them.",
+          "description": "`none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper. `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them.",
           "enum": [
             "none",
             "lean",
@@ -443,7 +443,7 @@
                 }
               }
             },
-            "reviewer": {
+            "verifier": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -482,7 +482,7 @@
                 }
               }
             },
-            "spec-writer": {
+            "code-simplifier": {
               "type": "object",
               "additionalProperties": false,
               "properties": {

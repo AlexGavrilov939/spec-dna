@@ -815,7 +815,7 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/checker.md\nwrote .claude/agents/Explore.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nper-request prefix: "
+            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/Explore.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nper-request prefix: "
         ),
         "{out}"
     );
@@ -875,7 +875,7 @@ fn fresh_project_init_check_uninstall() {
     let status = git(&r.dir, &["status", "--porcelain"]);
     assert_eq!(
         status,
-        " D .claude/agents/Explore.md\n D .claude/agents/checker.md\n D .claude/agents/fallback-advisor.md\n D .claude/agents/model-team.md\n D .claude/settings.json\n D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D spec-dna.toml\n"
+        " D .claude/agents/Explore.md\n D .claude/agents/fallback-advisor.md\n D .claude/agents/model-team.md\n D .claude/agents/verifier.md\n D .claude/settings.json\n D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D spec-dna.toml\n"
     );
 }
 
@@ -3036,7 +3036,7 @@ fn init_asks_on_a_terminal() {
     // 4 change policy, 5 gate, 6 evidence, 7 language, 8 mapping (4 roots), 9
     // budgets, 10 adapters, 11 CI, hook and base, 12 harness, 13 models, then
     // the confirmation.
-    let answers = "strict\ndefault\n\ntwo-class\nwarn\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nreviewer=sonnet:medium implementer=none\ny\n";
+    let answers = "strict\ndefault\n\ntwo-class\nwarn\nerror, covers\n\n\ndrop\n\ntype=requirements\n\noff\nclaude-md, skill\nnone, none, main\nfull\nverifier=sonnet:medium implementer=none\ny\n";
     let (code, out) = on_terminal(&r.dir, &["init"], answers);
     assert_eq!(code, 0, "{out}");
     for want in [
@@ -3054,9 +3054,9 @@ fn init_asks_on_a_terminal() {
         "9. Budget level (default, relaxed, tight, off) [default]: ",
         "11. CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
         "12. Agent harness (none, lean, full) [lean]: ",
-        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable reviewer=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high spec-writer=sonnet:high]: ",
+        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high code-simplifier=sonnet:high]: ",
         "Agent harness: full (for Claude Code)",
-        "  create .claude/agents/checker.md (agent checker: sonnet, medium)",
+        "  create .claude/agents/verifier.md (agent verifier: sonnet, medium)",
         "Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.",
         "Restart Claude Code. Then check:",
         "--- spec-dna.toml ---",
@@ -3091,14 +3091,14 @@ fn init_asks_on_a_terminal() {
     let cfg = r.read("spec-dna.toml");
     assert!(cfg.contains("[harness]\nlevel = \"full\"\n"), "{cfg}");
     assert!(
-        cfg.contains("reviewer = { claude-code = \"sonnet\", effort = \"medium\" }"),
+        cfg.contains("verifier = { claude-code = \"sonnet\", effort = \"medium\" }"),
         "{cfg}"
     );
     assert!(
-        r.read(".claude/agents/checker.md")
+        r.read(".claude/agents/verifier.md")
             .contains("model: sonnet\neffort: medium\n")
     );
-    assert!(r.dir.join(".claude/agents/spec-writer.md").exists());
+    assert!(r.dir.join(".claude/agents/code-simplifier.md").exists());
     assert!(!r.dir.join(".claude/agents/implementer.md").exists());
     assert!(!r.read(".pre-commit-config.yaml").contains("spec-dna"));
 

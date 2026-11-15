@@ -72,7 +72,7 @@ start=$(block Start)
 added=$(diff <(printf '%s\n' "$before_claude") CLAUDE.md | grep -c '^> .' || true)
 [ "$added" = 2 ] || fail "init added $added non-empty lines to CLAUDE.md, not 2"
 grep -q '^Model team: ' CLAUDE.md || fail "init wrote no model-team line"
-for f in checker Explore fallback-advisor model-team; do
+for f in verifier Explore fallback-advisor model-team; do
     [ -f ".claude/agents/$f.md" ] || fail "init wrote no .claude/agents/$f.md"
 done
 grep -q '@' CLAUDE.md && fail "init wrote an import into CLAUDE.md"
@@ -136,7 +136,7 @@ spec-dna init
 gitc diff --stat
 grep -q "<!-- spec-dna v$nextv h:" CLAUDE.md || fail "init did not regenerate the CLAUDE.md line"
 grep -q "spec-dna:begin skill v$nextv" .claude/skills/spec-dna/SKILL.md || fail "init did not regenerate the skill"
-grep -q "<!-- spec-dna harness v$nextv h:" .claude/agents/checker.md || fail "init did not regenerate the harness files"
+grep -q "<!-- spec-dna harness v$nextv h:" .claude/agents/verifier.md || fail "init did not regenerate the harness files"
 spec-dna check
 gitc commit -q -am "build: upgrade spec-dna to $nextv"
 use current
@@ -154,7 +154,7 @@ docs_before=$(gitc ls-files -s docs)
 # The quickstart first turns the harness off with `init --reconfigure`.
 printf 'harness = "none"\n' >"$work/none.toml"
 spec-dna init --reconfigure --answers "$work/none.toml"
-[ -e .claude/agents/checker.md ] && fail "init --reconfigure did not remove the agent files"
+[ -e .claude/agents/verifier.md ] && fail "init --reconfigure did not remove the agent files"
 uninstall=$(block Uninstall | grep -v '^cargo uninstall')
 [ -n "$uninstall" ] || fail "no sh block under \"## Uninstall\" in the quickstart"
 eval "$uninstall"
