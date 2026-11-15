@@ -11,18 +11,23 @@
 //! decides the result for both commands. Both commands use the same rename
 //! detection (`-M`), so a rename of a folder inside the intent folder is not a
 //! deletion for either command.
+//!
+//! The 2 Test indicators do not come from the lives of the changes. They read
+//! the tree of `HEAD`: the result files in `<[evals] dir>/results`, and the
+//! incidents with the evals that they name (`test_rows`).
 
 use crate::change::{self, Verb};
-use crate::config::{ChangePolicy, Config};
+use crate::config::{ChangePolicy, Config, Evals};
+use crate::evals;
 use crate::frontmatter::{self, Value};
 use crate::git::{ArtifactTouch, Git, PathChange};
 use crate::json::{self, Obj};
 use crate::lifecycle;
-use crate::model::{Class, Corpus};
+use crate::model::{Class, Corpus, DocType};
 use crate::parse::{ItemSection, ListItem, parse};
 use crate::registry;
-use crate::repo::{Fatal, Repo};
-use std::collections::{BTreeMap, HashMap};
+use crate::repo::{self, Fatal, Repo, Snapshot};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 const OFF_NOTE: &str = "the change process is off: `[change] policy` is `none`";
@@ -507,7 +512,19 @@ struct Indicator {
     value: Option<f64>,
     unit: Option<&'static str>,
     count: Option<usize>,
+    /// The word of the count in the text line, for 1 and for any other number.
+    noun: (&'static str, &'static str),
     reason: Option<String>,
+}
+
+const CHANGES: (&str, &str) = ("change", "changes");
+
+impl Indicator {
+    /// Sets the word that the text line uses for the count.
+    fn counting(mut self, noun: (&'static str, &'static str)) -> Self {
+        self.noun = noun;
+        self
+    }
 }
 
 fn na(play: &'static str, kind: &'static str, name: &'static str, reason: &str) -> Indicator {
@@ -518,6 +535,7 @@ fn na(play: &'static str, kind: &'static str, name: &'static str, reason: &str) 
         value: None,
         unit: None,
         count: None,
+        noun: CHANGES,
         reason: Some(reason.to_string()),
     }
 }
@@ -552,6 +570,7 @@ fn computed(
         value,
         unit: Some(unit),
         count: Some(count),
+        noun: CHANGES,
         reason,
     }
 }
@@ -662,7 +681,7 @@ pub fn stats(
         });
     }
     measured.reverse();
-    let rows = indicators(git, &measured, shallow)?;
+    let rows = indicators(repo, cfg, &measured, shallow)?;
     let finished = measured
         .iter()
         .filter(|m| m.outcome == Some(Outcome::Finished))
@@ -711,7 +730,7 @@ pub fn stats(
                 line.push_str(&format!(
                     "{v:.1} {} ({n} {})",
                     r.unit.unwrap_or(""),
-                    if n == 1 { "change" } else { "changes" }
+                    if n == 1 { r.noun.0 } else { r.noun.1 }
                 ));
                 println!("{line}");
                 if let Some(note) = &r.reason {
@@ -728,7 +747,13 @@ pub fn stats(
 }
 
 /// The rows of the indicator table of the design, in its order.
-fn indicators(git: &Git, ms: &[Measured], shallow: bool) -> Result<Vec<Indicator>, Fatal> {
+fn indicators(
+    repo: &Repo,
+    cfg: &Config,
+    ms: &[Measured],
+    shallow: bool,
+) -> Result<Vec<Indicator>, Fatal> {
+    let git = &repo.git;
     let finished = |m: &&Measured| m.outcome == Some(Outcome::Finished);
     let mut rows = Vec::new();
 
@@ -863,18 +888,7 @@ fn indicators(git: &Git, ms: &[Measured], shallow: bool) -> Result<Vec<Indicator
         "it needs pull request metadata",
     ));
 
-    rows.push(na(
-        "Test",
-        "leading",
-        "The eval pass rate over time",
-        "evals come in step 4 of 0.6.0, with the files of `eval run --out`",
-    ));
-    rows.push(na(
-        "Test",
-        "leading",
-        "How long a production incident takes to become a permanent eval",
-        "evals come in step 4 of 0.6.0",
-    ));
+    rows.extend(test_rows(repo, cfg, shallow)?);
     rows.push(na(
         "Test",
         "lagging",
@@ -900,6 +914,286 @@ fn indicators(git: &Git, ms: &[Measured], shallow: bool) -> Result<Vec<Indicator
         "they need CI logs, telemetry or an incident tracker",
     ));
     Ok(rows)
+}
+
+const NO_EVALS_NOTE: &str = "the configuration has no [evals] table";
+const PASS_RATE: (&str, &str, &str) = ("Test", "leading", "The eval pass rate over time");
+const INCIDENT_TIME: (&str, &str, &str) = (
+    "Test",
+    "leading",
+    "How long a production incident takes to become a permanent eval",
+);
+
+/// The 2 leading rows of the Test play. They read the tree of `HEAD`: the
+/// result files in `<[evals] dir>/results`, and the incidents with the evals
+/// that they name. A `--group` filter does not change them, because neither
+/// file belongs to a change. Without `[evals]`, both rows are `n/a`.
+fn test_rows(repo: &Repo, cfg: &Config, shallow: bool) -> Result<Vec<Indicator>, Fatal> {
+    let Some(evals) = &cfg.evals else {
+        return Ok(vec![
+            na(PASS_RATE.0, PASS_RATE.1, PASS_RATE.2, NO_EVALS_NOTE),
+            na(
+                INCIDENT_TIME.0,
+                INCIDENT_TIME.1,
+                INCIDENT_TIME.2,
+                NO_EVALS_NOTE,
+            ),
+        ]);
+    };
+    let head = repo.head_commit();
+    // The files of the tree: path and blob id. A submodule is not a file.
+    let tree: Vec<(String, String)> = match &head {
+        Some(h) => repo
+            .git
+            .ls_tree(h)
+            .map_err(Fatal::Io)?
+            .into_iter()
+            .filter(|e| !e.2)
+            .map(|e| (e.0, e.1))
+            .collect(),
+        None => Vec::new(),
+    };
+    Ok(vec![
+        pass_rate_row(&repo.git, evals, &tree)?,
+        incident_time_row(repo, cfg, evals, head.as_deref(), &tree, shallow)?,
+    ])
+}
+
+/// The started time and the pass rate of a complete result file: a JSON object
+/// with a string `started`, a number `pass_rate` from 0 to 1 and
+/// `"stopped": null`. A run that the cap stopped has no pass rate.
+fn complete_result(bytes: &[u8]) -> Option<(String, f64)> {
+    let value = json::parse(std::str::from_utf8(bytes).ok()?).ok()?;
+    let json::Value::Obj(fields) = &value else {
+        return None;
+    };
+    let key = |k: &str| fields.iter().find(|(n, _)| n == k).map(|(_, v)| v);
+    let started = key("started")?.as_str()?;
+    let Some(json::Value::Num(rate)) = key("pass_rate") else {
+        return None;
+    };
+    (matches!(key("stopped"), Some(json::Value::Null))
+        && !started.is_empty()
+        && (0.0..=1.0).contains(rate))
+    .then(|| (started.to_string(), *rate))
+}
+
+fn files_word(n: usize) -> &'static str {
+    if n == 1 { "file" } else { "files" }
+}
+
+/// The pass rate of the newest result file by `started`, in percent. The time
+/// text is `YYYY-MM-DDTHH:MM:SSZ`, so the order of the text is the order of the
+/// times. If 2 files have the same time, the later path wins.
+fn pass_rate_row(git: &Git, evals: &Evals, tree: &[(String, String)]) -> Result<Indicator, Fatal> {
+    let folder = format!("{}/{}", evals.dir, evals::RESULTS);
+    let prefix = format!("{folder}/");
+    let files: Vec<&(String, String)> = tree
+        .iter()
+        .filter(|(p, _)| {
+            p.strip_prefix(&prefix).is_some_and(|n| {
+                n.len() > ".json".len() && n.ends_with(".json") && !n.contains('/')
+            })
+        })
+        .collect();
+    let mut ids: Vec<String> = files.iter().map(|f| f.1.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    let blobs = git.read_blobs(&ids).map_err(Fatal::Io)?;
+    let mut valid = 0;
+    let mut skipped = 0;
+    let mut newest: Option<(String, &str, f64)> = None;
+    for (path, id) in files {
+        match blobs.get(id).and_then(|b| complete_result(b)) {
+            Some((started, rate)) => {
+                valid += 1;
+                if newest
+                    .as_ref()
+                    .is_none_or(|(s, p, _)| (&started, path.as_str()) > (s, *p))
+                {
+                    newest = Some((started, path.as_str(), rate));
+                }
+            }
+            None => skipped += 1,
+        }
+    }
+    let skip = if skipped > 0 {
+        format!(
+            "; {skipped} {} skipped: not a complete result",
+            files_word(skipped)
+        )
+    } else {
+        String::new()
+    };
+    let note = newest.as_ref().map_or(String::new(), |(started, ..)| {
+        format!(
+            "the value is the pass rate of the newest result file ({started}); the committed files hold the history{skip}"
+        )
+    });
+    let empty = format!(
+        "no result file in {folder}; run `spec-dna eval run --out {folder}` and commit the file{skip}"
+    );
+    // The row reads the tree of `HEAD`, not the history, so a shallow clone
+    // adds no note.
+    Ok(computed(
+        PASS_RATE,
+        newest.map(|(_, _, rate)| 100.0 * rate),
+        "percent",
+        valid,
+        &note,
+        &empty,
+        false,
+    )
+    .counting(("result file", "result files")))
+}
+
+/// The text of each section `Eval` of a document, with its subsections. The
+/// case and the level of the heading do not matter.
+fn eval_section(text: &str, doc: &crate::parse::ParsedDoc) -> String {
+    let chunks = &doc.chunks;
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chunks.len() {
+        let head = &chunks[i];
+        i += 1;
+        if head.level == 0 || !head.heading.trim().eq_ignore_ascii_case("eval") {
+            continue;
+        }
+        out.push_str(
+            text.get(head.start as usize..head.end as usize)
+                .unwrap_or(""),
+        );
+        out.push('\n');
+        while i < chunks.len() && chunks[i].level > head.level {
+            let c = &chunks[i];
+            out.push_str(text.get(c.start as usize..c.end as usize).unwrap_or(""));
+            out.push('\n');
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The first path `<dir>/<id>.json` in the text that is a file of `files`. A
+/// leading `/`, `./` or a chain of `../` is part of a link to the path and does
+/// not count. Before that, the path must not continue a longer path or word, so
+/// `docs/evals/x.json` does not name `evals/x.json`. After `.json`, a letter, a
+/// digit or `_` ends the match. An eval id has the characters `a` to `z`, `0`
+/// to `9` and `-`.
+fn first_eval_path(text: &str, dir: &str, files: &HashSet<String>) -> Option<String> {
+    let prefix = format!("{dir}/");
+    for (at, _) in text.match_indices(&prefix) {
+        let mut before = &text[..at];
+        // One `/` for a path from the root, then the dots of a relative link.
+        before = before.strip_suffix('/').unwrap_or(before);
+        if before.ends_with('.') {
+            before = before.trim_end_matches(['.', '/']);
+        }
+        let left_ok = before
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '/' | '.' | '_' | '-')));
+        if !left_ok {
+            continue;
+        }
+        let rest = &text[at + prefix.len()..];
+        let id_len = rest
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+            .unwrap_or(rest.len());
+        let Some(after) = rest[id_len..].strip_prefix(".json") else {
+            continue;
+        };
+        if id_len == 0
+            || after
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let path = format!("{prefix}{}.json", &rest[..id_len]);
+        if files.contains(&path) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// The median days from the commit that added an incident to the commit that
+/// added the eval that its `Eval` section names. A span below 0 does not
+/// count.
+fn incident_time_row(
+    repo: &Repo,
+    cfg: &Config,
+    evals: &Evals,
+    head: Option<&str>,
+    tree: &[(String, String)],
+    shallow: bool,
+) -> Result<Indicator, Fatal> {
+    let row = |v: Vec<f64>| {
+        computed(
+            INCIDENT_TIME,
+            median(v.clone()),
+            "days",
+            v.len(),
+            "",
+            "no incident names an eval file in its `Eval` section",
+            shallow,
+        )
+        .counting(("incident", "incidents"))
+    };
+    let Some(head) = head else {
+        return Ok(row(Vec::new()));
+    };
+    // An eval file is a `*.json` file directly in `[evals] dir`.
+    let prefix = format!("{}/", evals.dir);
+    let files: HashSet<String> = tree
+        .iter()
+        .filter(|(p, _)| {
+            p.strip_prefix(&prefix).is_some_and(|n| {
+                n.len() > ".json".len() && n.ends_with(".json") && !n.contains('/')
+            })
+        })
+        .map(|(p, _)| p.clone())
+        .collect();
+    if files.is_empty() {
+        return Ok(row(Vec::new()));
+    }
+    let snap = Snapshot::at(repo, head)?;
+    let corpus = repo::load(repo, cfg, &[&snap], true, false)?
+        .corpora
+        .remove(0);
+    let incidents: Vec<&crate::model::Doc> = corpus
+        .docs
+        .iter()
+        .filter(|d| d.ty == DocType::Incident)
+        .collect();
+    let specs: Vec<(String, String)> = incidents
+        .iter()
+        .map(|d| (head.to_string(), d.path.clone()))
+        .collect();
+    let texts = repo.git.read_at(&specs).map_err(Fatal::Io)?;
+    let mut pairs: Vec<(&str, String)> = Vec::new();
+    for (d, text) in incidents.iter().zip(&texts) {
+        let Some(bytes) = text else { continue };
+        let text = String::from_utf8_lossy(bytes);
+        let section = eval_section(&text, &d.parsed);
+        if let Some(eval) = first_eval_path(&section, &evals.dir, &files) {
+            pairs.push((d.path.as_str(), eval));
+        }
+    }
+    let mut paths: Vec<String> = pairs
+        .iter()
+        .flat_map(|(i, e)| [(*i).to_string(), e.clone()])
+        .collect();
+    paths.sort();
+    paths.dedup();
+    let added = repo.git.first_added(head, &paths).map_err(Fatal::Io)?;
+    let spans = pairs
+        .iter()
+        .filter_map(|(i, e)| days(*added.get(*i)?, *added.get(e)?))
+        .collect();
+    Ok(row(spans))
 }
 
 impl Measured {

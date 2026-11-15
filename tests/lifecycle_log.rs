@@ -597,8 +597,8 @@ fn an_indicator_that_git_cannot_give_has_a_null_value_and_a_reason() {
     let na = [
         ("Share of changes that merge", "pull request metadata"),
         ("Rework cycles", "pull request metadata"),
-        ("The eval pass rate", "evals come in step 4"),
-        ("How long a production incident", "evals come in step 4"),
+        ("The eval pass rate", "no [evals] table"),
+        ("How long a production incident", "no [evals] table"),
         ("Regressions caught in CI", "incident tracker"),
         ("Time from band breach", "no bands"),
         ("Repeat incidents", "no class field"),

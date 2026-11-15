@@ -466,6 +466,59 @@ impl Git {
         Ok(touched)
     }
 
+    /// Returns the committer date of the oldest commit in the history of
+    /// `rev` that added each of the literal paths. The order is the order of
+    /// the ancestry, not of the dates (`--topo-order`). A path that no commit
+    /// added is absent from the map. A path can be added again after a
+    /// deletion, and then the oldest add counts. A shallow clone shows the
+    /// files of its boundary commit as added.
+    pub fn first_added(&self, rev: &str, paths: &[String]) -> Result<HashMap<String, i64>, String> {
+        let mut added: HashMap<String, i64> = HashMap::new();
+        for group in paths.chunks(500) {
+            let specs: Vec<String> = group.iter().map(|p| format!(":(literal){p}")).collect();
+            let mut args = vec![
+                "-c",
+                "log.showRoot=true",
+                "log",
+                "--topo-order",
+                "--no-renames",
+                "--diff-filter=A",
+                "--format=%x01%ct",
+                "--name-only",
+                "-z",
+                rev,
+                "--",
+            ];
+            args.extend(specs.iter().map(String::as_str));
+            let out = self.run(&args)?;
+            // The output is `\x01<seconds> NUL LF <path> NUL <path> NUL ...`
+            // for each commit, the newest first. A later line is an older
+            // commit, so it overwrites the earlier one.
+            let mut when: Option<i64> = None;
+            let mut first = false;
+            for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+                let rec = String::from_utf8_lossy(rec);
+                if let Some(ts) = rec.strip_prefix('\x01') {
+                    when = ts.trim().parse().ok();
+                    first = true;
+                    continue;
+                }
+                let path = if first {
+                    rec.strip_prefix('\n').unwrap_or(&rec)
+                } else {
+                    &rec
+                };
+                first = false;
+                if let Some(t) = when
+                    && !path.is_empty()
+                {
+                    added.insert(path.to_string(), t);
+                }
+            }
+        }
+        Ok(added)
+    }
+
     /// Returns the commits (id and committer date) that touched a path, the
     /// newest first. A touch is an addition, a change or a deletion of the
     /// file. The path is a literal path from the repository root.

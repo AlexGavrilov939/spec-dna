@@ -112,6 +112,10 @@ This file lists the changes of each version. The project uses [Semantic Versioni
   - An indicator that git cannot give prints `n/a` with the reason. `--json` has `value: null` and a `reason`.
   - `--group` counts only the changes of a group of `areas`. An unknown group, and `stats` without `--sdlc`, are exit code 2.
   - With `[change] policy = "none"`, both commands say that the change process is off and list nothing.
+  - With `[evals]` in the configuration, the 2 Test indicators have values. Without `[evals]`, they are `n/a`.
+    - The eval pass rate is the percent of the newest result file in `<[evals] dir>/results` of `HEAD`. The newest file is the file with the latest `started`. A file that `eval run --out` wrote and that the project committed counts. A file with no `started`, with no `pass_rate` from 0 to 1, or with a stop is skipped, and the note counts it.
+    - The time from an incident to its eval is the median of the days from the commit that added an incident to the commit that added the first eval file that its `Eval` section names. The path is `<[evals] dir>/<id>.json`. A span below 0 does not count.
+    - `--group` does not change these 2 rows. In text, the count word of the 2 rows is "result files" and "incidents". `--json` has the same fields.
 - Each line of `next`, and each item of its `--json`, has the name of a skill. The names are `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. The skills come in 0.7.0. The names stay fixed until then.
 - The code SD922 (`question-open`): a spec with the status `approved` has an open question, a `- [ ]` item in its `Open questions` section.
   - It is a warning in `lite` and an error in `standard` and `strict`, as SD919.

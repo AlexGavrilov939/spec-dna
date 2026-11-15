@@ -490,8 +490,8 @@ The command rebuilds the life of each change from the commits that touched its `
 | Build | leading | Share of changes that merge from the first implementation pass | `n/a`: it needs pull request metadata. |
 | Build | lagging | How often the merged diff still matches the committed `plan.md` | The percent of finished changes whose diff has no path that SD913 reports for the scope of the plan. |
 | Build | lagging | Rework cycles per change | `n/a`: it needs pull request metadata. |
-| Test | leading | The eval pass rate over time | `n/a`: evals come in step 4 of 0.6.0. |
-| Test | leading | How long a production incident takes to become a permanent eval | `n/a`: evals come in step 4 of 0.6.0. |
+| Test | leading | The eval pass rate over time | The `pass_rate` of the newest result file in `<[evals] dir>/results`, in percent. `n/a` without `[evals]`. |
+| Test | leading | How long a production incident takes to become a permanent eval | The median days from the commit that added an incident to the commit that added the eval that its `Eval` section names. `n/a` without `[evals]`. |
 | Test | lagging | Regressions caught in CI against regressions found in production | `n/a`: it needs the incident tracker. |
 | Maintain | leading | Time from band breach to an `intent.md` in the triage queue | `n/a`: spec-dna has no bands. |
 | Maintain | lagging | Repeat incidents of the same class | `n/a`: an incident has no class field. |
@@ -501,9 +501,14 @@ The commit that "deleted the folder" is the first-parent commit of the deletion.
 
 The diff of "the merged diff still matches the plan" is the diff of that commit against its first parent. The scope is the scope of SD913 for the approved plan of the parent tree. It has the folder, the `Files` patterns, the `Files:` paths of the tasks, and the documents that the delta and `Interfaces` name. `stats` reads the last tree of the life in the history. A squash merge keeps no commit of the branch, so `stats` cannot see a plan that the pull request added or edited. When one commit finishes more than one change, the scope is the union of their scopes, as SD913 reads the changes of one diff. `stats` finds the document of an id by its place under each root, and it does not read aliases. A generated index is in scope. A change with no plan is not counted.
 
-A shallow clone can miss old changes, so each indicator that it computes has this note in `reason`. An indicator with no data has no value, and the reason says what is missing.
+A shallow clone can miss old changes, so each indicator that it computes from the history has this note in `reason`. The eval pass rate reads only the tree of `HEAD`, so it has no such note. An indicator with no data has no value, and the reason says what is missing.
 
 `--group <name>` counts only the changes that are in the group. A group is a name of `[groups]` and its areas. A change is in the group if an area of the group is in the `areas` of its intent, or is the area of a delta target, as for [status](#status). The areas come from the last tree of the change. An unknown group is a usage error (exit code 2). With `[change] policy = "none"`, `stats` says that the change process is off and gives no indicator. It warns on a pin mismatch.
+
+The 2 Test indicators read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. They are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file and an incident belong to no change.
+
+- The pass rate reads each `*.json` file that is directly in `<[evals] dir>/results`. A file is a complete result when it has a string `started`, a number `pass_rate` from 0 to 1, and `"stopped": null`. A run that the cost cap stopped has no pass rate, so it is not complete. The value is the `pass_rate` of the file with the latest `started`, in percent. The count is the number of complete files. The note names the `started` of the newest file, and the number of files that the indicator skipped. If there is no complete file, the reason says to run `spec-dna eval run --out <[evals] dir>/results` and to commit the file. The project keeps the files, so they are the history of the pass rate.
+- The time pairs each `incident` document of `HEAD` with the first path `<[evals] dir>/<id>.json` in its section `Eval` (also with its subsections) that is a file of `HEAD`. The case and the level of the heading `Eval` do not matter. A link such as `../../evals/x.json` or `/evals/x.json` names the path. A path that continues a longer path on its left, such as `docs/evals/x.json`, does not count. The span is the days from the oldest commit that added the incident to the oldest commit that added the eval file, in the order of the ancestry. A span below 0 does not count. The value is the median, and the count is the number of incidents with a span. The text line says "result files" and "incidents" for the count, not "changes".
 
 The text output has a summary line, then one line for each indicator. A value that has a note gets a second line that starts with `note:`. An indicator that git cannot give shows `n/a` and its reason:
 
@@ -519,7 +524,7 @@ With `--json`, the output is one object with the 14 indicators of the table, in 
 {"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
 ```
 
-`value` is a number with 1 decimal, or `null` for an indicator with no value. `unit` is `days`, `percent` or `commits per change`. `count` is the number of changes that the value counts, and it is `null` for an indicator that git cannot give. `reason` is `null` for a full value. Each `null` value has a reason.
+`value` is a number with 1 decimal, or `null` for an indicator with no value. `unit` is `days`, `percent` or `commits per change`. `count` is the number of changes that the value counts (for the 2 Test indicators, the result files and the incidents), and it is `null` for an indicator that git cannot give. `reason` is `null` for a full value. Each `null` value has a reason.
 
 Exit codes: 0 done; 2 usage, an unknown group, or no `--sdlc`; 3 configuration; 4 git.
 
