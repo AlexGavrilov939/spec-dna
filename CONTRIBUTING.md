@@ -133,7 +133,7 @@ This repository uses its own change process ([ADR 0006](docs/adr/0006-change-lif
 
 ## Releases
 
-1. In a pull request, set the new version in `Cargo.toml` and `Cargo.lock`. Add its section to `CHANGELOG.md`, in the form `## <version> - <date>`.
+1. In a pull request, set the new version in `Cargo.toml` and `Cargo.lock`. Set the pin in `spec-dna.toml` to the same version in the same commit. Add its section to `CHANGELOG.md`, in the form `## <version> - <date>`.
 2. Merge the pull request when CI passes. CI builds the 7 targets and runs each binary on a runner of its platform.
 3. Push a signed tag `v<version>` on that commit of `master`.
 
@@ -141,7 +141,7 @@ The tag starts `.github/workflows/release.yml`. The workflow compares the tag wi
 
 The repository has immutable releases. After the publication, nobody can change the assets or the tag of a release. To correct a release, publish a new version.
 
-After the release, move the pin in `spec-dna.toml` to the new version in a pull request of its own. `check` gives SD503 for a change of `spec-dna.toml` that comes with other files.
+The binary of this tree is a tree binary ([docs/diagnostics.md](docs/diagnostics.md#files-that-sd503-counts)). SD503 does not count a change of the pin line of `spec-dna.toml` in such a binary, so the pin moves with the version. The exact pin rule stays: between a commit of the version and a commit of the pin, `check` stops with exit code 3. Make one commit for both.
 
 ## Dependencies
 

@@ -4,6 +4,10 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ## Unreleased
 
+### Changed
+
+- In a tree binary, SD503 does not count a change of the line `spec-dna = "..."` of `spec-dna.toml`. A tree binary is a binary that the checkout of spec-dna itself builds: the file `Cargo.toml` at the top level of the git repository has `name = "spec-dna"` in `[package]`, and its `version` is equal to the version of the binary. The mode needs no key. A change of any other line of `spec-dna.toml` counts as before, and a release binary in another repository keeps SD503 for a pin change. The exact pin rule stays: a pin that differs from the version of the binary stops `check`, `finish` and `eval run` with exit code 3. The release pull request of spec-dna now moves the pin with the version in one commit ([docs/diagnostics.md](docs/diagnostics.md#files-that-sd503-counts), [ADR 0013](docs/adr/0013-self-hosting.md)).
+
 ## 0.6.1 - 2026-11-16
 
 0.6.1 has fixes and small additions from the first upgrade of a consumer repository. It keeps compatibility with 0.6.0.
