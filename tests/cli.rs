@@ -3506,9 +3506,7 @@ fn a_generated_index_replaces_a_hand_kept_list() {
     let index = r.read("incidents/README.md");
     assert!(index.contains("generated: spec-dna index h:"), "{index}");
     assert!(
-        index.contains(
-            "| [INC-1](INC-1.md) | Outage |  |\n| [INC-2](INC-2.md) | Stuck valve |  |\n"
-        ),
+        index.contains("| [INC-1](INC-1.md) | Outage | |\n| [INC-2](INC-2.md) | Stuck valve | |\n"),
         "{index}"
     );
     assert!(
@@ -3527,16 +3525,18 @@ fn a_generated_index_replaces_a_hand_kept_list() {
     assert!(out.contains("warning SD610 index-stale"), "{out}");
     let (code, out, err) = r.run(&["index", "incidents"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(r.read("incidents/README.md").contains(
-        "| [INC-2](INC-2.md) | Stuck valve |  |\n| [INC-10](INC-10.md) | Dry tank |  |\n"
-    ));
+    assert!(
+        r.read("incidents/README.md").contains(
+            "| [INC-2](INC-2.md) | Stuck valve | |\n| [INC-10](INC-10.md) | Dry tank | |\n"
+        )
+    );
     let (_, out, _) = r.run(&["check"]);
     assert!(!out.contains("SD610"), "{out}");
     // A hand edit of the rows makes it stale too.
     r.write(
         "incidents/README.md",
         &r.read("incidents/README.md")
-            .replace("| [INC-1](INC-1.md) | Outage |  |\n", ""),
+            .replace("| [INC-1](INC-1.md) | Outage | |\n", ""),
     );
     let (_, out, _) = r.run(&["check"]);
     assert!(out.contains("edited by hand"), "{out}");

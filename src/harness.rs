@@ -810,6 +810,7 @@ const AGENT_DEFS: [AgentDef; 5] = [
 3. Prefer the simplest option that meets the goal. Name the risk that can make it fail.
 
 Answer in 200 words or fewer:
+
 - Advice: the next 1 to 3 steps.
 - Reason: the evidence for them.
 - Risk: what can fail, and the check that shows it.",
@@ -847,6 +848,7 @@ Report:
 - Stop when you can answer the question of the brief.
 
 Answer:
+
 - Result: 1 or 2 lines.
 - Evidence: `path:line` with a short quote, or a URL.
 - Not found: what you did not find or did not search.",

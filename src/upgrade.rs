@@ -1651,10 +1651,18 @@ mod tests {
     #[test]
     fn an_unedited_agent_file_changes_only_its_marker() {
         // The marker has the version, so the file is written again. The text
-        // above the marker is the text of 0.5.
+        // above the marker is the text of 0.5, except for a blank line between
+        // `Answer:` and its list (0.6.1, for markdownlint MD032). The test
+        // ignores blank lines.
         let c = case(&["harness-full"]);
         let p = plan_of(&c);
-        let above = |t: &str| t.trim_end().rsplit_once('\n').unwrap().0.to_string();
+        let above = |t: &str| {
+            let head = t.trim_end().rsplit_once('\n').unwrap().0;
+            head.lines()
+                .filter(|l| !l.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         for name in ["Explore", "fallback-advisor", "implementer"] {
             let path = format!(".claude/agents/{name}.md");
             let old = text(&c.blobs, &path);

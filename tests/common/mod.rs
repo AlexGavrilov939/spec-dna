@@ -8,10 +8,17 @@
 //! `Repo::from_fixture` copies a committed tree of `tests/fixtures/upgrade/`
 //! into a new repository with 1 commit, and `tree_bytes` lists a tree for an
 //! equal compare. `pin_file` and `sums_table` write the file `spec-dna-pin.toml`
-//! that `upgrade --pin-file` reads.
+//! that `upgrade --pin-file` reads. `md_lint` (in `md_lint.rs`) checks a
+//! Markdown text against the markdownlint rules that the generated files can
+//! break.
 
 // Each file in tests/ is its own crate and uses only some helpers.
 #![allow(dead_code)]
+
+mod md_lint;
+// Only some test crates use it.
+#[allow(unused_imports)]
+pub use md_lint::md_lint;
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -687,7 +687,7 @@ If no layer has the type `research`, `history` stops with exit code 2 and change
 spec-dna index <dir or file> [--replace]
 ```
 
-`index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
+`index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. A cell with no text, such as a missing status, is written as `| |`. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
 
 ## eval
 
