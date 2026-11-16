@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="spec-dna">
+  <title>spec-dna</title>
+  <g fill="none" stroke-linecap="round">
+    <path d="M22 9H42M22 32H42M22 55H42" stroke="#6e7681" stroke-width="3.5"/>
+    <path d="M18 4C18 20 46 18 46 32C46 46 18 44 18 60" stroke="#4493f8" stroke-width="6"/>
+    <path d="M46 4C46 20 18 18 18 32C18 46 46 44 46 60" stroke="#3fb950" stroke-width="6"/>
+  </g>
+</svg>

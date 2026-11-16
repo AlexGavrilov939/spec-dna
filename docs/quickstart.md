@@ -21,14 +21,14 @@ Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has these a
 | Windows x86-64 | `x86_64-pc-windows-gnu` |
 | Windows arm64 | `aarch64-pc-windows-gnullvm` |
 
-On macOS and Linux, use these commands. They download the binary of your target, compare its sum with `SHA256SUMS`, and install it to `~/.local/bin`. Make sure that `~/.local/bin` is on your `PATH`:
+On macOS and Linux, use these commands. They download the binary of your target, compare its sum with `SHA256SUMS`, and install it to `~/.local/bin`. They make the folder if it does not exist. Make sure that `~/.local/bin` is on your `PATH`:
 
 ```sh
 v=0.6.1 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS     # Linux: sha256sum -c --ignore-missing SHA256SUMS
-install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
+mkdir -p ~/.local/bin && install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 spec-dna --version
 ```
 

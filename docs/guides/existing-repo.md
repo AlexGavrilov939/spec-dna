@@ -19,7 +19,7 @@ spec-dna init
 - **Profile.** In `lite`, only the structural errors fail `check`, such as an invalid front matter or an edit of an accepted decision. Most other codes are warnings, and some are off. [profiles.md](../profiles.md) gives each code. Use `lite` for the first weeks. Move to `standard` later.
 - **Layer graph.** `init` proposes `small` for fewer than 30 documents and `default` for 30 documents or more. The small graph has no layer for `interface`, `procedure` and `research`, so `init` writes no root for a folder of these types. Choose `default` to keep these folders.
 - **Change policy.** Answer `none` to start with no change process. The layers and their checks still work.
-- **Roots.** `init` shows each detected folder and its type. Accept it, drop it or edit it, for example `type=requirements status=active`. A root of one type gives that type to each document in it, so no document needs a `type:` field.
+- **Roots.** `init` shows each detected folder and its type. Accept it, drop it or edit it, for example `type=requirements status=active`. A root of one type gives that type to each document in it, so no document needs a `type:` field. Examine the proposal: `init` can propose one root for all of `docs/`, with one default type. Give each folder its own root, as in [example 2](../../examples/existing-repo/README.md).
 - **Budgets.** The question shows the number of documents over the hard budget at each level. `relaxed` doubles the budgets.
 
 `init` shows a preview of each file. It writes nothing before you confirm. [init.md](../init.md) gives each question.

@@ -6,6 +6,8 @@ This page lists each page of the documentation. The [README](../README.md) gives
 
 - [Quickstart](quickstart.md): install, the first run of `init`, daily use, the CI job, upgrade and uninstall.
 - [Demo](demo.md): the steps of the quickstart on a small example project.
+- [Examples](../examples/README.md): 3 scripts that run spec-dna in a scratch repository, with their real output.
+- [Troubleshooting](troubleshooting.md): the cause and the fix of the frequent stops of a new user.
 
 ## Concepts
 
