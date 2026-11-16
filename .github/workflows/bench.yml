@@ -1,0 +1,159 @@
+name: Benchmark
+
+# This workflow measures the release binary of one git ref on a synthetic
+# corpus. A person starts it by hand. It commits nothing.
+# The file must be on master: GitHub runs a workflow_dispatch file from the
+# default branch. The input "ref" selects the code to measure.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit SHA to measure
+        type: string
+        default: master
+      size:
+        description: Size of the synthetic corpus
+        type: choice
+        options: [small, medium, large]
+        default: medium
+      runs:
+        description: Number of timed runs of each mode
+        type: number
+        default: 15
+
+permissions: {}
+
+env:
+  RUSTUP_TOOLCHAIN: "1.99.1"
+
+jobs:
+  bench:
+    name: Benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    # A second run of the same ref waits. It does not cancel the first run.
+    concurrency:
+      group: ${{ github.workflow }}-${{ inputs.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+
+      - name: Build
+        run: cargo build --locked --release
+
+      - name: Write the corpus
+        run: python3 bench/gen/gen.py --model spec-dna --size "$SIZE" --out "$RUNNER_TEMP/corpus"
+        env:
+          SIZE: ${{ inputs.size }}
+
+      # gen.py writes an old version pin. The binary refuses a project that
+      # pins a different version. This step sets the pin to the version of the
+      # binary.
+      - name: Pin the version
+        run: |
+          version=$(target/release/spec-dna --version)
+          version=${version##* }
+          sed "1s/.*/spec-dna = \"$version\"/" "$RUNNER_TEMP/corpus/spec-dna.toml" > "$RUNNER_TEMP/spec-dna.toml"
+          grep -qx "spec-dna = \"$version\"" "$RUNNER_TEMP/spec-dna.toml"
+          head -n 1 "$RUNNER_TEMP/spec-dna.toml"
+
+      # The output of run.py goes to a file, so that the next steps can use it.
+      - name: Run the benchmark
+        run: |
+          entry=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["tasks"][0]["entry"][0])' "$RUNNER_TEMP/corpus/tasks.json")
+          python3 bench/tool/run.py \
+            --corpus "$RUNNER_TEMP/corpus" \
+            --config "$RUNNER_TEMP/spec-dna.toml" \
+            --label "synthetic-$SIZE" \
+            --context "$entry" \
+            --runs "$RUNS" \
+            --work "$RUNNER_TEMP/work" \
+            --out "$RUNNER_TEMP/tool-synthetic-$SIZE.json" |
+            tee "$RUNNER_TEMP/tool-synthetic-$SIZE.txt"
+        env:
+          SIZE: ${{ inputs.size }}
+          RUNS: ${{ inputs.runs }}
+
+      # The two agreement flags must be true. A missing flag is also a failure.
+      - name: Check that the modes agree
+        run: |
+          python3 - "$RUNNER_TEMP/tool-synthetic-$SIZE.json" <<'PY'
+          import json
+          import sys
+
+          res = json.load(open(sys.argv[1]))
+          bad = [k for k in ("modes_agree", "incremental_agrees_with_full") if res.get(k) is not True]
+          for k in bad:
+              print(f"::error title=Benchmark::{k} is not true")
+          sys.exit(1 if bad else 0)
+          PY
+        env:
+          SIZE: ${{ inputs.size }}
+
+      # This step also runs after a failed check, so that a person can read
+      # the result. The medians are a table to copy into CHANGELOG.md.
+      - name: Write the summary
+        if: ${{ !cancelled() }}
+        run: |
+          json="$RUNNER_TEMP/tool-synthetic-$SIZE.json"
+          {
+            echo "## Benchmark: $SIZE corpus, $RUNS runs"
+            echo
+            echo "- Ref: \`$REF\`"
+            echo "- Commit: \`$(git rev-parse HEAD)\`"
+            echo "- Binary: \`$(target/release/spec-dna --version)\`"
+            echo "- Runner: $RUNNER_OS $RUNNER_ARCH, $(nproc) CPUs"
+            echo "- A shared runner gives numbers that differ from the host table of bench/tool/README.md. Do not compare them."
+            echo
+            if [ -f "$json" ]; then
+              echo "### Medians"
+              echo
+              python3 - "$json" <<'PY'
+          import json
+          import sys
+
+          res = json.load(open(sys.argv[1]))
+          print("| Mode | Median (ms) | Min (ms) | Peak RSS (MB) |")
+          print("| --- | ---: | ---: | ---: |")
+          order = ["startup", "full", "cold", "warm", "warm_base", "context_0", "incremental"]
+          for name in sorted(res["modes"], key=lambda n: order.index(n) if n in order else len(order)):
+              m = res["modes"][name]
+              print(f"| {name} | {m['median_ms']} | {m['min_ms']} | {m['peak_rss_mb']} |")
+          PY
+              echo
+              echo "### Output of run.py"
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/tool-synthetic-$SIZE.txt"
+              echo '```'
+            else
+              echo "run.py wrote no result."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.ref }}
+          SIZE: ${{ inputs.size }}
+          RUNS: ${{ inputs.runs }}
+
+      - name: Upload the result
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-tool-${{ inputs.size }}
+          path: |
+            ${{ runner.temp }}/tool-synthetic-${{ inputs.size }}.json
+            ${{ runner.temp }}/tool-synthetic-${{ inputs.size }}.txt
+          if-no-files-found: error
+          retention-days: 30
