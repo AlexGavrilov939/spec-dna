@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Workflow pack of 11 skills: plan
 
