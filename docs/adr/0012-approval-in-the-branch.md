@@ -65,7 +65,7 @@ The rule also covers the last approval. Take each artifact whose status is `acce
 - The check proves the order of the commits and a match of the e-mail. It does not prove that a person read the text.
 - The real control is the code host: `CODEOWNERS` for `docs/intent/`, a protected default branch, and required signed commits.
 - For a `higher-risk` change, the owner should list only the e-mail of a human, and the agent must not commit with it. The owner then makes the approval commits in the web editor of the host. A hidden e-mail becomes a `noreply` address there, so the list holds that address too.
-- Owner answer Q5: `approvers` of this repository lists 2 addresses of the owner. An agent approves only when the owner says so in the chat.
+- Owner answer Q5: `approvers` of this repository lists 2 addresses of the owner. An agent approves only when the owner says so explicitly in the chat. This replaces the previous bullet here.
 
 ### Fail closed
 
@@ -92,7 +92,7 @@ In the fourth case, a commit has an approval and another change in the same file
 - A branch that adds an intent and deletes it with `finish` still gives SD910, also with approval commits ([D16](../design/0.7.0.md#d16-a-change-that-starts-and-ends-in-one-branch)).
 - `log` reads the deletion of `intent.md` on the default branch. A squash merge writes only the net diff, so such a change leaves no record.
 - The floor is 2 pull requests. The first holds the artifacts and their approvals. The second holds the code with `finish`. The guide advises the design pull request first, but `check` does not enforce this.
-- Q2 of the design asks if a project can turn the record off.
+- Q2 of the design: no key turns the record off.
 
 ### Message and output
 
@@ -157,7 +157,7 @@ ADR 0006 rejects 3 items that this rule uses. Each answer applies only to `appro
 
 ## Amends
 
-ADR 0001 and ADR 0006 are accepted and locked, so this ADR does not edit them. When the owner accepts this ADR, these rules replace the named text for `approval = "branch"`:
+ADR 0001 and ADR 0006 are accepted and locked, so this ADR does not edit them. These rules replace the named text for `approval = "branch"`:
 
 - ADR 0006, "Approval and merge", the sentence "Thus an approval in the pull request of the work does not count": an approval commit counts when it meets the 4 conditions and comes before the work in the walk.
 - ADR 0006, "Who approves", the sentence "spec-dna does not check the identity of the approver": `check` compares the author e-mail of an approval commit with `[change] approvers`. The compare is a condition, not a proof.

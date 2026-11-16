@@ -86,7 +86,7 @@ The binary is a tree binary when both facts are true:
 
 ## Amends
 
-ADR 0001 and ADR 0003 are accepted and locked, so this ADR does not edit them. When the owner accepts this ADR, these rules replace the named text:
+ADR 0001 and ADR 0003 are accepted and locked, so this ADR does not edit them. These rules replace the named text:
 
 - ADR 0003 stays as it is: the pin is exact, and a binary whose version differs from the pin refuses to run a gate. This ADR changes the SD503 rule for the pin line only.
 - ADR 0001, amendment "hygiene functions (0.3.0)", item "Configuration changes": in a tree binary, a change of the line `spec-dna = "..."` alone is not a configuration change.

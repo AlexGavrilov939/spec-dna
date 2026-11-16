@@ -30,7 +30,7 @@ None. The design proposes changes to the interfaces of `spec-dna`. These are the
 
 - [x] Q1: Accept the amendment of ADR 0006 by ADR 0012? Answer: Yes.
 - [x] Q2: Add `[change] record = "none"`? Answer: No. The minimum stays 2 pull requests with a `log` record.
-- [x] Q3: The budget of the eval run: the pilot or the full run? Answer: Both. The pilot runs in the build part A, and the full run runs in part B before the tag. The stop is 600 US dollars.
+- [x] Q3: The budget of the eval run: the pilot or the full run? Answer: Both. The pilot runs after slice 5, and the full run runs before the tag. The stop is 600 US dollars.
 - [x] Q4: Keep `execute`, `tdd`, `verify` and `debug` off by default until a verdict? Answer: Yes. The 4 skills stay off until their verdict.
 - [x] Q5: Which e-mail goes into `approvers` of this repository? Answer: Two addresses of the owner. An agent approves only on the explicit word of the owner.
 - [x] Q6: Is `--keep none` the right default of `import`? Answer: Yes. `--keep none`.

@@ -28,7 +28,7 @@ Evidence:
 ## Considered Options
 
 1. Four or more profiles.
-2. A new key `preset`, separate from `profile` (open question [Q7](../design/0.7.0.md#14-owner-questions)).
+2. A new key `preset`, separate from `profile` (rejected by the owner in [Q7](../design/0.7.0.md#14-owner-questions)).
 3. Profiles with runtime effects: the binary reads the name of the profile and changes the rules of the workflow.
 4. `lite` with `policy = "none"`.
 5. One key `profile`: it keeps the severity table, and `init` expands it into the keys of the workflow.

@@ -66,7 +66,7 @@ The reasons:
 
 ### Cost
 
-The estimate is 55 evals x 2 arms x 4 runs, which is 440 runs. Lab sessions 8 and 16 cost about 1 US dollar for each run, so the full run costs about 440 US dollars. The pilot runs the 20 evals of the 4 skills that are off, which is 160 runs. It adds 40 runs for the line of `AGENTS.md`, with and without it. The pilot then has 200 runs and costs about 200 US dollars, and the full run has 480 runs and costs about 480 US dollars. The default of `max-total-usd` is 20, so a run needs `--max-total-usd`. These numbers are estimates. `max-total-usd` stops a run above its cap, as in 0.6. [Q3](../design/0.7.0.md#14-owner-questions) asks the owner for the budget.
+The estimate is 55 evals x 2 arms x 4 runs, which is 440 runs. Lab sessions 8 and 16 cost about 1 US dollar for each run, so the full run costs about 440 US dollars. The pilot runs the 20 evals of the 4 skills that are off, which is 160 runs. It adds 40 runs for the line of `AGENTS.md`, with and without it. The pilot then has 200 runs and costs about 200 US dollars, and the full run has 480 runs and costs about 480 US dollars. The default of `max-total-usd` is 20, so a run needs `--max-total-usd`. These numbers are estimates. `max-total-usd` stops a run above its cap, as in 0.6. The owner answered [Q3](../design/0.7.0.md#14-owner-questions): the pilot runs after slice 5, the full run runs before the tag, the total is about 520 US dollars, and the work stops at 600 US dollars.
 
 ### Commands and SD507
 
