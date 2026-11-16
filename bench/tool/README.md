@@ -27,6 +27,16 @@ python3 bench/tool/run.py --corpus bench/work/sd/medium --config bench/work/sd/m
   --label synthetic-medium --context <entry id from tasks.json> --out bench/results/tool-synthetic-medium.json
 ```
 
+## Benchmark in GitHub Actions
+
+The workflow `.github/workflows/bench.yml` (name `Benchmark`) builds the release binary of a git ref on a GitHub runner. It writes a synthetic corpus with `gen.py`, sets the version pin of the corpus to the version of the binary, and runs `run.py` on it. The job fails if `modes_agree` or `incremental_agrees_with_full` is not true. The summary of the run shows the ref, the commit, the runner and the median of each mode. The JSON result and the text output are in the artifact `bench-tool-<size>` for 30 days. To start the workflow, use a file on `master`:
+
+```sh
+gh workflow run bench.yml -f ref=<branch> -f size=medium -f runs=15
+```
+
+The `size` is `small`, `medium` or `large`. A shared runner has other load and other hardware. Its numbers differ from the host table below. Do not compare them with that table.
+
 ## Results (measured 2026-11-07)
 
 Host: Apple M4 Max, 16 cores, macOS 26.6.1, APFS SSD. Other work used the host at the same time (1-minute load average 6 to 12 during the runs). Binaries: spec-dna 0.1.0 (release, LTO, stripped), and git 2.50.1 (Apple Git-155) called as `git` from `PATH`. Each cell shows the median of 15 runs in milliseconds, with the minimum in parentheses. Treat results that differ by less than about 20% as equal.
