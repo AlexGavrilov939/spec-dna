@@ -104,11 +104,40 @@ If the base pins a version before 0.4.0, `check` exits with code 3. It asks you 
 
 `status`, `next` and `finish` read a lifecycle base that pins a version before 0.6.0 with the rules of 0.6. `check` does not.
 
+## A repository with no remote
+
+A repository with no remote has no `origin/HEAD`. The change commands then have no base, unless you pass `--base` or set `[change] base`. Use these steps for the upgrade:
+
+1. Run `spec-dna upgrade` on a branch, and commit the result.
+2. Run `spec-dna check --base main`. The base pins a version before 0.6.0, so `check` plans the upgrade of that tree in memory, as for a pull request ([Open the first pull request](#open-the-first-pull-request)).
+3. Merge the branch into `main`.
+4. On a new branch, add the key `base` to the table `[change]`, and commit it in a commit of its own. `upgrade` has written the table with `policy = "none"`.
+
+```toml
+[change]
+policy = "none"
+base = "main"
+```
+
+The key `base` names a local branch. Without `--base` and without `origin/HEAD`, the change commands use the merge base of this branch and `HEAD`. With the policy `none`, only `finish` reads the key. `status`, `next` and the change checks of `check` read it after you set a policy ([After the upgrade](#after-the-upgrade)). [config.md](../config.md#the-table-change) gives the rules.
+
+Step 4 needs a commit of its own, because the key edits `spec-dna.toml`. If the same commit changes another file, `check --base main` gives SD503. If the commit has `spec-dna.toml` only, it gives no SD503.
+
+A binary of 0.6.0 does not know the key, and it stops with exit code 3. Pin 0.6.1 or later first, in a pull request of its own, and then set the key.
+
+With a binary of 0.6.0, or before you set the key, you can make `origin/HEAD` by hand:
+
+```sh
+git symbolic-ref refs/remotes/origin/HEAD refs/heads/main
+```
+
+This ref is local to one clone. Each clone needs the command. It is not in a commit. If `origin/HEAD` exists, it has priority over the key.
+
 ## After the upgrade
 
 An upgraded project has the policy `none`: it has the layers and their checks, but no change process. The harness keeps its roles, and the new parts (the stage skills, `REVIEW.md` and the hook `protect-tests`) are off. The project has no evals.
 
-To enable any of them, run `spec-dna init --reconfigure`. Choose the change policy, the harness parts and the evals. [The change guide](change.md) gives the change process.
+To enable any of them, run `spec-dna init --reconfigure`. Choose the change policy, the harness parts and the evals. The command writes the table `[change]` again and does not keep the key `base`. In a repository with no remote, add the key again in a commit of its own. [The change guide](change.md) gives the change process.
 
 ## Upgrade a 0.6 project
 

@@ -119,7 +119,8 @@ git index (the tree that the next commit records) in place of the working
 tree. Untracked and unstaged files do not count. The hook that `init`
 writes uses it. With a [change] policy, the change checks (SD905, SD910,
 SD913, SD917, SD921) compare with the merge base of --base (default:
-origin/HEAD) and HEAD, and they print a note if there is none. --json
+origin/HEAD, then [change] base) and HEAD, and they print a note if there
+is none. --json
 lists all diagnostics.",
     ),
     (
@@ -209,12 +210,12 @@ spec), an open concern or question, a decision that is not accepted, a delta
 line that does not match the tree (SD914), a delta that differs from the
 approved delta of the base tree, an interface that the diff does not change,
 a requirement with no evidence (SD916), or a new error. The base is the merge
-base of --base (default: origin/HEAD) and HEAD. An intent with the status
-closed runs the first two steps and deletes the folder. The folder must be
-tracked and clean. --dry-run prints the diff of each file and `remove <path>`
-for each deleted file, and writes nothing. Without it, the command writes the
-files, deletes the folder, and stages the paths with `git add`. It makes no
-commit. It is the only command that deletes documents. Exit codes: 1 a stop,
+base of --base (default: origin/HEAD, then [change] base) and HEAD. An intent
+with the status closed runs the first two steps and deletes the folder. The
+folder must be tracked and clean. --dry-run prints the diff of each file and
+`remove <path>` for each deleted file, and writes nothing. Without it, the
+command writes the files, deletes the folder, and stages the paths with
+`git add`. It makes no commit. It is the only command that deletes documents. Exit codes: 1 a stop,
 3 pin, base or configuration, 4 write error, 5 no folder.",
     ),
     (
@@ -230,8 +231,8 @@ Files item that starts with none needs no changed file: the build stage ends
 when each task is done. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
 verify or finish. The skills come in 0.7.0, and the names are fixed. The
 output has at most 12 lines. The base is the merge base of --base (default:
-origin/HEAD) and HEAD. Without a base, the stage stops at build, and the
-output has a note. With the policy none, it says that the change process is
+origin/HEAD, then [change] base) and HEAD. Without a base, the stage stops at
+build, and the output has a note. With the policy none, it says that the change process is
 off. Exit codes: 2 usage, 3 base or configuration, 4 git, 5 no folder.",
     ),
     (
@@ -244,8 +245,8 @@ number of started changes and the limit max-started, and the open follow-ups
 (`- [ ]` in Follow-ups) of the incidents. With --group, it lists only the
 changes that have an area of the group, in the areas of the intent or in the
 folder of a delta target; an unknown group is a usage error. The base is the
-merge base of --base (default: origin/HEAD) and HEAD, and a note says when
-there is none. With the policy none, it says that the change process is off
+merge base of --base (default: origin/HEAD, then [change] base) and HEAD,
+and a note says when there is none. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage or unknown group, 3 base or configuration,
 4 git.",
     ),
@@ -1378,7 +1379,10 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             && change_base.is_none()
             && life_note.is_none()
         {
-            eprintln!("note: {}", lifecycle::NO_BASE_NOTE);
+            eprintln!(
+                "note: {}",
+                lifecycle::no_base_note(&cfg, &repo.git, a.base.as_deref())
+            );
         }
     }
     if let Some(n) = &life_note {
@@ -2690,7 +2694,9 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         return Err(pin_mismatch(&cfg));
     }
     // The base needs no policy: `finish` stops whatever the policy is.
-    let base_rev = lifecycle::merge_base_of(&repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let base_rev =
+        lifecycle::merge_base_of(&repo.git, a.base.as_deref(), cfg.change_base.as_deref())
+            .map_err(Fatal::Config)?;
     let folder = lifecycle::intent_dirs(&cfg)
         .iter()
         .map(|d| format!("{d}/{slug}"))
@@ -2790,7 +2796,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         Err(finish::Failure::NoBase) => {
             return Err(Fatal::Config(format!(
                 "the change `{slug}` is `accepted`, and `finish` compares its delta with the base tree; {}",
-                lifecycle::NO_BASE_NOTE
+                lifecycle::no_base_note(&cfg, &repo.git, a.base.as_deref())
             )));
         }
         Err(finish::Failure::Io(m)) => return Err(Fatal::Io(m)),

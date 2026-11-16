@@ -23,7 +23,7 @@ The gate compares each diagnostic with the base by its fingerprint (code, docume
 
 The codes SD401 to SD405, SD202, SD605, SD606, SD607, SD702, SD703 and SD921 compare the base tree with the head tree. Thus these diagnostics are always new. SD704 is new only if the root does not enforce budgets and the document is new or grew.
 
-Without `--base`, the change codes that need a base use the merge base of `origin/HEAD` with `HEAD` ([the checks of the change lifecycle](#checks-of-the-change-lifecycle)). If git cannot name this base, `check` prints a note and runs only the checks of one tree.
+Without `--base`, the change codes that need a base use the merge base of `origin/HEAD` with `HEAD`, or, if there is no `origin/HEAD`, of the branch of `[change] base` with `HEAD` ([the checks of the change lifecycle](#checks-of-the-change-lifecycle)). If git cannot name this base, `check` prints a note and runs only the checks of one tree.
 
 ## Code ranges
 
@@ -213,7 +213,7 @@ The checks of the change codes read these trees:
   - SD921.
 - SD911 reads the base and the history.
 
-The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. It reads each approval from the base tree only, so an approval in the same pull request does not count.
+The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. It reads each approval from the base tree only, so an approval in the same pull request does not count.
 
 The changes of a diff are these:
 
@@ -279,7 +279,7 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - The check skips a line that the head already applies. For an `ADD` or `CHANGE` line, the requirement has the text of the line. For a `REMOVE` line, the base has the key and the head has not.
   - An item of `Interfaces` must be `CHANGE <interface id>: <text>`, and the id must name a document of the type `interface`.
   - The target of the diagnostic is `<id>#<key>`. For an `Interfaces` item it is the id, and for an invalid form it is the text of the item.
-  - `check` reports SD914 as an error (in the profiles that make it an error) for a spec that the diff touches. It reports a warning for another spec. It also reports a warning for each spec when git cannot name the lifecycle base (the merge base with `--base` or with `origin/HEAD`).
+  - `check` reports SD914 as an error (in the profiles that make it an error) for a spec that the diff touches. It reports a warning for another spec. It also reports a warning for each spec when git cannot name the lifecycle base (the merge base with `--base`, with `origin/HEAD` or with the branch of `[change] base`).
   - The check that the diff changes an interface of `Interfaces` is part of SD914 too. The pull request must change the interface document, or a file that it cites.
   - `finish` runs this check. `check` runs it for each change that the diff deletes and whose base status is not `closed`. It reads the spec of the base tree, and the diff of the head against the lifecycle base.
 - SD918. A change that adds an incident must add an eval for it.
@@ -330,7 +330,7 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - The check compares each requirement of the base with the requirement of the head that has the same key. It applies the aliases of `mv`. A requirement has changed if the hash of its text, without link destinations, is different.
   - A key that has no match on the other side was added or removed. A move or a split with `spec-dna mv` keeps the keys through aliases, so it gives nothing. A split by hand with no alias gives 2 diagnostics (an added key and a removed key).
   - SD921 gives one diagnostic for each document.
-  - It compares with the lifecycle base (the merge base of `--base`, or of `origin/HEAD`, with `HEAD`). It does not run when git cannot name that base.
+  - It compares with the lifecycle base (the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD`). It does not run when git cannot name that base.
   - A document that the `Files` of a plan lists gives nothing in 2 cases:
     - The change is in the diff.
     - The base tree has the change with an `accepted` intent and an `approved` plan.
@@ -358,7 +358,7 @@ SD506 needs the table `[evals]`, with any `[change] policy`. It reads the files 
 | 4 | The result would not give the result of a delta line (`check` would report SD915), or two lines edit the same lines of a file |
 | 5 | SD916 (a requirement that the change adds or changes has no evidence), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
 
-The base of step 3 is the merge base of `--base` (or of `origin/HEAD`) with `HEAD`, for each policy. An `accepted` change needs it, and without it `finish` exits with code 3. A change that the base tree does not have was added in the same branch: its delta has no approved text to compare.
+The base of step 3 is the merge base of `--base` (or of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`, for each policy. An `accepted` change needs it, and without it `finish` exits with code 3. A change that the base tree does not have was added in the same branch: its delta has no approved text to compare.
 
 ### Locked references
 

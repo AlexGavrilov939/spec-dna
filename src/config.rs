@@ -97,6 +97,10 @@ pub struct Config {
     /// `[change] max-fanout`: the most requirement documents that one change
     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
     pub max_fanout: u32,
+    /// `[change] base`: the name of a local branch that is the base of the
+    /// change checks when `--base` and `refs/remotes/origin/HEAD` give none
+    /// (design 0.6.1, D35 and D36). `None`: the key is absent.
+    pub change_base: Option<String>,
 }
 
 /// The default folder of the evals.
@@ -219,6 +223,7 @@ struct ChangeTable {
     high_risk_layers: Vec<String>,
     high_risk_paths: Vec<String>,
     max_fanout: u32,
+    base: Option<String>,
 }
 
 impl ChangeTable {
@@ -230,6 +235,7 @@ impl ChangeTable {
             high_risk_layers: default_high_risk_layers(graph),
             high_risk_paths: Vec::new(),
             max_fanout: DEFAULT_MAX_FANOUT,
+            base: None,
         }
     }
 }
@@ -283,6 +289,14 @@ impl ChangeTable {
         };
         let high_risk_paths = high_risk_paths_value(&f.opt_strs("high-risk-paths")?)?;
         let max_fanout = f.opt_u32("max-fanout")?.unwrap_or(DEFAULT_MAX_FANOUT);
+        let base = f.opt_str("base")?;
+        if let Some(b) = &base {
+            branch_name_problem(b).map_or(Ok(()), |why| {
+                Err(format!(
+                    "`change.base`: `{b}` {why}; write the name of a local branch, such as `main`"
+                ))
+            })?;
+        }
         f.done()?;
         Ok(ChangeTable {
             policy,
@@ -290,8 +304,35 @@ impl ChangeTable {
             high_risk_layers,
             high_risk_paths,
             max_fanout,
+            base,
         })
     }
+}
+
+/// Checks the name of a branch for `[change] base` (design 0.6.1, D35). The
+/// name is not empty. It has no space or control character, no `..`, and none
+/// of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end
+/// with `/` or `.lock`. Returns the reason, or `None` for a good name.
+fn branch_name_problem(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some("is empty".to_string());
+    }
+    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Some("has a space or a control character".to_string());
+    }
+    if name.contains("..") {
+        return Some("has `..`".to_string());
+    }
+    if let Some(c) = name.chars().find(|c| "~^:?*[\\".contains(*c)) {
+        return Some(format!("has the character `{c}`"));
+    }
+    if name.starts_with(['-', '/']) {
+        return Some("starts with `-` or `/`".to_string());
+    }
+    if name.ends_with('/') || name.ends_with(".lock") {
+        return Some("ends with `/` or `.lock`".to_string());
+    }
+    None
 }
 
 /// Checks `[change] high-risk-paths`: globs from the repository root. A glob
@@ -1212,6 +1253,7 @@ impl Config {
             high_risk_layers: change.high_risk_layers,
             high_risk_paths: change.high_risk_paths,
             max_fanout: change.max_fanout,
+            change_base: change.base,
         })
     }
 
@@ -3193,6 +3235,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert_eq!(
             ckeys,
             [
+                "base",
                 "gate",
                 "high-risk-layers",
                 "high-risk-paths",
@@ -3201,6 +3244,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ]
         );
         for (k, bad) in [
+            ("base", "1"),
             ("gate", "1"),
             ("high-risk-layers", "1"),
             ("high-risk-paths", "1"),

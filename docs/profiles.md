@@ -40,7 +40,7 @@ The codes of the group `changes` depend on the `[change]` table:
 - SD910 follows `[change] gate` when the key is present. `block` makes it an error, `warn` makes it a warning, and `off` disables it. Then the profile column does not apply. If `gate` is absent, SD910 takes the severity of its profile column. When `init` writes the `[change]` table, it also writes `gate`.
 - A rule for SD910 in `[rules]` has priority over the gate. `[rules]` can also override SD921, as it overrides each code.
 
-These codes compare with the lifecycle base: SD905 for a change with no delta, SD910, SD913, SD915, SD916, SD917 and SD918. SD920 for a decision that is not `accepted` and SD921 do the same. This base is the merge base of `--base`, or of `origin/HEAD`, with `HEAD`. These codes do not run if git cannot name it.
+These codes compare with the lifecycle base: SD905 for a change with no delta, SD910, SD913, SD915, SD916, SD917 and SD918. SD920 for a decision that is not `accepted` and SD921 do the same. This base is the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD`. These codes do not run if git cannot name it.
 
 SD911 reads the base and the history. It is silent without a base. SD911 is a state code: it is never new, and `check` shows it only with `--all`.
 

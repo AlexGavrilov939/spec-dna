@@ -968,7 +968,7 @@ fn without_a_base_the_commands_print_a_note_and_the_stage_stops_at_build() {
             ("src/dose.py", "x = 2\n"),
         ],
     );
-    let note = "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>";
+    let note = "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base";
     let json = next_json(&r);
     assert_eq!(field(&json, "stage"), "build");
     assert!(json.contains("\"base\":null"), "{json}");

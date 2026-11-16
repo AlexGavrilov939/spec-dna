@@ -82,6 +82,11 @@
           "type": "integer",
           "minimum": 0,
           "default": 8
+        },
+        "base": {
+          "description": "The name of a local branch. It is the base of the change checks when `--base` and `refs/remotes/origin/HEAD` give none. Use it in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \\`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. If the branch does not exist, the base is unknown, and the commands print a note. Without the key, there is no such base.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

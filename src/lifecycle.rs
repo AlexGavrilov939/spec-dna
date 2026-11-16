@@ -5,8 +5,8 @@
 //! SD920), and
 //! the staleness of a started change (`stale_changes`, SD911).
 //!
-//! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`) with
-//! `HEAD`. It is never the tip of `--base`: a branch that started from an old
+//! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`, or of
+//! the local branch of `[change] base`) with `HEAD`. It is never the tip of `--base`: a branch that started from an old
 //! commit is not behind the default branch because of that.
 
 use crate::change::{self, Change, Delta, Verb};
@@ -22,11 +22,28 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 /// The note that a command prints when the lifecycle base is unknown.
-pub const NO_BASE_NOTE: &str =
-    "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>";
+pub const NO_BASE_NOTE: &str = "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base";
+
+/// Returns the note for an unknown lifecycle base. If `[change] base` names a
+/// branch that the repository does not have, and there is no `--base` and no
+/// `origin/HEAD`, the note names the branch (design 0.6.1, D37). Otherwise it
+/// is `NO_BASE_NOTE`.
+pub fn no_base_note(config: &Config, git: &Git, base: Option<&str>) -> String {
+    match &config.change_base {
+        Some(b)
+            if base.is_none() && git.remote_head().is_none() && git.local_branch(b).is_none() =>
+        {
+            format!(
+                "no base for the change checks: no origin/HEAD, and the branch `{b}` of [change] base does not exist; pass --base <rev>"
+            )
+        }
+        _ => NO_BASE_NOTE.to_string(),
+    }
+}
 
 /// Returns the lifecycle base: the merge base of `--base` (or, without it, of
-/// `refs/remotes/origin/HEAD`) with `HEAD`. A `Some` value is always a real
+/// `refs/remotes/origin/HEAD`, or, if that ref is absent, of the local branch
+/// of `[change] base`) with `HEAD`. A `Some` value is always a real
 /// merge base. It is never a tip that a command used because no merge base
 /// exists. Thus a check that needs the age of a commit can trust it.
 ///
@@ -42,22 +59,29 @@ pub fn change_base(
     if config.change_policy == ChangePolicy::None {
         return Ok(None);
     }
-    merge_base_of(git, base)
+    merge_base_of(git, base, config.change_base.as_deref())
 }
 
-/// The merge base of `--base` (or, without it, of `refs/remotes/origin/HEAD`)
-/// with `HEAD`, for any policy. `change_base` returns `None` for the policy
+/// The merge base of `--base` (or, without it, of `refs/remotes/origin/HEAD`,
+/// or, if that ref is absent, of the local branch `branch`, the value of
+/// `[change] base`) with `HEAD`, for any policy. `change_base` returns `None` for the policy
 /// `none` before it calls this function. `finish` always needs the base of an
 /// `accepted` change, so it calls this function. The result has the same
 /// meaning as the result of `change_base`.
-pub fn merge_base_of(git: &Git, base: Option<&str>) -> Result<Option<String>, String> {
+pub fn merge_base_of(
+    git: &Git,
+    base: Option<&str>,
+    branch: Option<&str>,
+) -> Result<Option<String>, String> {
     let tip = match base {
         Some(rev) => Some(git.commit(rev).ok_or_else(|| {
             format!(
                 "base `{rev}` is not a commit here; fetch it first (a depth-1 fetch of the base commit is enough)"
             )
         })?),
-        None => git.remote_head(),
+        None => git
+            .remote_head()
+            .or_else(|| branch.and_then(|b| git.local_branch(b))),
     };
     let (Some(tip), Some(head)) = (tip, git.commit("HEAD")) else {
         return Ok(None);

@@ -134,7 +134,7 @@ The hook that `init` writes runs `spec-dna check --staged`. A commit records the
 
 `check` also compares the requirements of the lifecycle base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder changed, it gives SD921. This check runs only with a `[change] policy` other than `none`, and only if git can name the lifecycle base.
 
-With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`.
+With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`, or, if the repository has no `origin/HEAD`, of the local branch that `[change] base` names) with `HEAD`.
 
 Without `--base`, the base that decides which diagnostics are new stays `HEAD`. The lifecycle base is only for the change codes that compare the head with a base ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). Their diagnostics are always new. With `--staged`, they diff the git index against the lifecycle base.
 
@@ -144,11 +144,11 @@ These rules apply to the lifecycle base:
 - If there is no base, the text output prints this note on stderr:
 
   ```text
-  note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>
+  note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base
   ```
 
   Then `check` runs only the checks of one tree.
-- `origin/HEAD` is the only ref that `check` reads for this base. It does not use a local `main` or `master`.
+- The refs that `check` reads for this base are `origin/HEAD` and the branch of `[change] base`, in this order. It never guesses a local `main` or `master`. If `[change] base` names a branch that does not exist, and there is no `origin/HEAD`, the note is ``no base for the change checks: no origin/HEAD, and the branch `<b>` of [change] base does not exist; pass --base <rev>``. This is not an error, because a CI clone often has no local branch.
 - If the lifecycle base pins a version before 0.6.0, it counts as no lifecycle base. Git cannot give a diff from the planned base. `change_base` is `null`, and `check` runs the checks of one tree. The text output prints this note on stderr:
 
   ```text
@@ -331,7 +331,7 @@ A line that is done has the skill of its own step.
 
 ### Base and output
 
-The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. `next` prints it. If git cannot name a base, `next` prints a note. The note is `note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>`. The stage then stops at `build`, because the diff against the base is unknown.
+The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] base`) and `HEAD`. `next` prints it. If git cannot name a base, `next` prints a note. The note is `note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base`. The stage then stops at `build`, because the diff against the base is unknown.
 
 With `[change] policy = "none"`, `next` says that the change process is off and reads no git data. It exits with 0.
 
@@ -380,7 +380,7 @@ These rules apply to the files:
 - `finish` writes and deletes no path that has a symbolic link, also as the last part of the path, and no path outside the repository.
 - It checks all the paths before it writes the first file, in `--dry-run` too.
 
-The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. An `accepted` change needs it. A `closed` change needs none. The base of step 3 does not depend on `[change] policy`, and the stops do not follow the profile or a `[rules]` entry.
+The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] base`) and `HEAD`. An `accepted` change needs it. A `closed` change needs none. The base of step 3 does not depend on `[change] policy`, and the stops do not follow the profile or a `[rules]` entry.
 
 `--dry-run` writes nothing. It prints the diff of each file that `finish` would write, and `remove <path>` for each file that it would delete. With `--json`, the output is one object:
 

@@ -219,7 +219,7 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
         .map_err(Fatal::Io)?;
     let mut notes = Vec::new();
     if base_rev.is_none() {
-        notes.push(lifecycle::NO_BASE_NOTE.to_string());
+        notes.push(lifecycle::no_base_note(cfg, &repo.git, base));
     }
     Ok(View {
         head,
@@ -769,7 +769,12 @@ pub fn next(
     );
     match &view.base_rev {
         Some(b) => println!("base {}", short(b)),
-        None => println!("base none: {}", lifecycle::NO_BASE_NOTE),
+        None => println!(
+            "base none: {}",
+            view.notes
+                .first()
+                .map_or(lifecycle::NO_BASE_NOTE, String::as_str)
+        ),
     }
     for i in &r.items {
         println!(

@@ -130,6 +130,7 @@ sonnet = "high"
 | `change.high-risk-layers` | array of strings | `["interfaces", "rules"]`, without the names that the graph does not have | The layers whose documents make a change higher-risk. Each name must be a layer of the graph, or the exit code is 3. |
 | `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
 | `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
+| `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
@@ -341,11 +342,12 @@ gate = "block"                              # "block", "warn" or "off"
 high-risk-layers = ["interfaces", "rules"]  # layers whose documents make a change higher-risk
 high-risk-paths = []                        # globs from the repository root
 max-fanout = 8                              # documents that one change can touch before SD905
+base = "main"                               # a local branch, for a repository with no remote (default: none)
 ```
 
 The table `[change]` sets the change process: the change classes that the project uses, and the strictness of the gate. [The change guide](guides/change.md) gives the process. The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate.
 
-`spec-dna init` writes the table with the 5 keys for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps its values ([init.md](init.md)). An unknown key is an error (exit code 3).
+`spec-dna init` writes the table with the 5 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). `init` never proposes the key `base`, and `init --reconfigure` does not keep it: add it again after the command. An unknown key is an error (exit code 3).
 
 `policy` has these values:
 
@@ -368,7 +370,15 @@ With `gate = "block"`, a change to the artifact of a stage needs the base tree t
 
 `high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905.
 
-The lifecycle checks compare the head with the merge base of `origin/HEAD` and `HEAD`, or of `--base` and `HEAD`. `git remote set-head origin <branch>` sets `origin/HEAD`. A clone that has no `origin/HEAD` needs `--base`. spec-dna reads no local branch for this base and uses no network.
+The lifecycle checks compare the head with the merge base of a base revision and `HEAD`. The base revision is the first of these:
+
+1. `--base`.
+2. `refs/remotes/origin/HEAD`. `git remote set-head origin <branch>` sets it.
+3. `refs/heads/<base>`, where `<base>` is the key `base`.
+
+spec-dna never guesses a branch: it reads only the branch that the file names, and it uses no network. A repository with no remote has no `origin/HEAD`, so set `base` there. If the branch does not exist and there is no `origin/HEAD`, the base is unknown. This is not an error, because a CI clone often has no local branch. The commands print a note, `check` runs only the checks of one tree, and `--base <rev>` gives the base. `status`, `next`, `finish` and `check` read the key. `finish` reads it for each policy.
+
+A change of `base` edits `spec-dna.toml`, so SD503 applies: make it a change of its own.
 
 ## The table `templates`
 

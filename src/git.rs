@@ -386,11 +386,30 @@ impl Git {
     }
 
     /// Returns the commit that `refs/remotes/origin/HEAD` names, or `None`.
-    /// It reads only this ref, with no fallback to a local branch, so that the
-    /// result is the same for every checkout. `git remote set-head origin
-    /// <branch>` sets the ref.
+    /// It reads only this ref, with no guess of a branch, so that the result is
+    /// the same for every checkout. `git remote set-head origin <branch>` sets
+    /// the ref. For a repository with no remote, `[change] base` names a local
+    /// branch (`local_branch`).
     pub fn remote_head(&self) -> Option<String> {
         self.commit("refs/remotes/origin/HEAD")
+    }
+
+    /// Returns the commit of the local branch `name`, or `None` if the
+    /// repository has no such branch. A tag, a remote branch or a commit id
+    /// of the same name is not a local branch. The lookup is for the exact
+    /// ref, so a revision form such as `main@{1}` (the reflog, which differs
+    /// in each clone) names no branch.
+    pub fn local_branch(&self, name: &str) -> Option<String> {
+        let out = self
+            .run(&[
+                "show-ref",
+                "--verify",
+                "--hash",
+                &format!("refs/heads/{name}"),
+            ])
+            .ok()?;
+        let s = String::from_utf8_lossy(&out).trim().to_string();
+        (!s.is_empty()).then_some(s)
     }
 
     /// Returns the committer date of a commit, in seconds. It never reads the
