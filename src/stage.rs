@@ -447,8 +447,19 @@ impl<'a> Ctx<'a> {
         if higher {
             done.push(item(true, Step::Specify, "the spec is approved"));
         }
+        // A routine change with an approved plan that lists no files edits no
+        // file. The build step is then done when each task is done, with no
+        // test of the diff. A higher-risk change has a delta, so it keeps the
+        // test.
+        let no_files = !higher && plan == "approved" && ch.no_files(head);
         let changed = self.files_changed(ch);
-        if plan != "approved" || changed != Some(true) {
+        let build_done = if no_files {
+            let t = tasks(ch, head);
+            t.done == t.total
+        } else {
+            changed == Some(true)
+        };
+        if plan != "approved" || !build_done {
             let mut items = done;
             let mut next_task = None;
             let approved = plan == "approved";
@@ -462,6 +473,11 @@ impl<'a> Ctx<'a> {
                 ));
             } else if approved {
                 items.push(item(true, Step::WritePlan, "the plan is approved"));
+                // This line is before the tasks, so that an open task or the
+                // edit of the stage stays the last line.
+                if no_files {
+                    items.push(item(true, Step::Execute, NO_FILES_LINE));
+                }
             }
             // The tasks of the plan, also if the plan is a draft.
             let t = tasks(ch, head);
@@ -482,7 +498,7 @@ impl<'a> Ctx<'a> {
                     Step::WritePlan,
                     format!("set `status: approved` in {dir}/plan.md"),
                 ));
-            } else {
+            } else if !no_files {
                 let files = ch.files(head);
                 items.push(item(
                     false,
@@ -513,7 +529,11 @@ impl<'a> Ctx<'a> {
         items.push(item(
             true,
             Step::Execute,
-            "a file of `Files` differs from the base",
+            if no_files {
+                NO_FILES_LINE
+            } else {
+                "a file of `Files` differs from the base"
+            },
         ));
         let proof = self.proof(ch);
         if !proof.missing.is_empty() {
@@ -567,6 +587,9 @@ impl<'a> Ctx<'a> {
         report(Stage::Deploy, items, None)
     }
 }
+
+/// The step of the files of a routine change with a plan that lists no files.
+const NO_FILES_LINE: &str = "the plan lists no files: the change edits no file";
 
 /// The text of a task in one line.
 fn task_line(t: &PlanTask) -> String {

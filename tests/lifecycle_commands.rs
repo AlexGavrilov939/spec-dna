@@ -412,6 +412,157 @@ fn a_routine_requirement_with_a_new_hash_and_no_evidence_is_in_the_stage_test() 
     assert_eq!(stage_of(&r), "deploy");
 }
 
+/// A plan with one `Files` item `item`, in the form that a plan with no files
+/// has, and the tasks `order`.
+fn plan_with_item(status: &str, item: &str, order: &str) -> String {
+    format!(
+        "---\nstatus: {status}\n---\n# Plan\n\n## Files\n\n{item}\n\n## Order\n\n{order}\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
+    )
+}
+
+#[test]
+fn a_routine_plan_with_files_none_reaches_the_finish_step() {
+    // The plan states in `Files` that the work edits no file. The stage passes
+    // the build step when each task is done, with no file of the diff.
+    for origin in [true, false] {
+        let r = start_with("policy = \"three-class\"\ngate = \"block\"\n", origin);
+        stage(
+            &r,
+            &[
+                (INTENT, &intent("accepted", "routine", "")),
+                (
+                    PLAN,
+                    &plan_with_item(
+                        "approved",
+                        "- None: this change is research.",
+                        "- [x] t1: Read the code.",
+                    ),
+                ),
+            ],
+        );
+        let text = next_text(&r);
+        assert_stage(&r, "deploy");
+        assert!(
+            text.contains("[x] the plan lists no files: the change edits no file"),
+            "{text}"
+        );
+        assert!(
+            text.contains("run `spec-dna finish dose --dry-run`"),
+            "{text}"
+        );
+        assert!(!text.contains("lists none"), "{text}");
+        assert!(!text.contains("are not paths"), "{text}");
+    }
+
+    // The checks of the diff do not complain about the approved plan: the
+    // approval of the intent is in the base.
+    let r = start_with("policy = \"three-class\"\ngate = \"block\"\n", true);
+    r.git(&["checkout", "-q", "main"]);
+    r.write(INTENT, &intent("accepted", "routine", ""));
+    r.commit("approve the intent");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "main"]);
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan_with_item("approved", "- None.", "- [x] t1: Read the code."),
+        )],
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("SD915"), "{out}");
+    assert!(out.contains("0 new errors and 0 new warnings"), "{out}");
+    // An edit of a file is outside the plan, and SD913 says so.
+    stage(&r, &[("src/dose.py", "x = 3\n")]);
+    let (_, out, _) = r.run(&["check"]);
+    assert!(out.contains("SD913 outside-plan"), "{out}");
+
+    // A plan with no task passes the build step too, and `NONE` in any case
+    // and a bare `none` read as the same word.
+    for item in ["- NONE", "- none: research only", "- None."] {
+        let r = start();
+        stage(
+            &r,
+            &[
+                (INTENT, &intent("accepted", "routine", "")),
+                (PLAN, &plan_with_item("approved", item, "")),
+            ],
+        );
+        assert_stage(&r, "deploy");
+    }
+
+    // An open task keeps the stage at build. The text shows the task, and the
+    // step of the files is done.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item("approved", "- None.", "- [ ] t1: Read the code."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(text.contains("task t1: Read the code"), "{text}");
+    assert!(
+        text.contains("[x] the plan lists no files: the change edits no file"),
+        "{text}"
+    );
+    assert!(!text.contains("lists none"), "{text}");
+    // The last line is the open task, and so is the field `next`.
+    assert!(
+        items(&text).last().unwrap().starts_with("[ ] task t1"),
+        "{text}"
+    );
+    let json = next_json(&r);
+    assert!(
+        field(&json, "next").starts_with("task t1: Read the code"),
+        "{json}"
+    );
+    let (_, status, _) = r.run(&["status"]);
+    assert!(status.contains("next: task t1: Read the code"), "{status}");
+
+    // A word that only starts with `none`, and a second item, are not the
+    // form.
+    for item in ["- nonexistent.md", "- None.\n- Later."] {
+        let r = start();
+        stage(
+            &r,
+            &[
+                (INTENT, &intent("accepted", "routine", "")),
+                (PLAN, &plan_with_item("approved", item, "- [x] t1: Done.")),
+            ],
+        );
+        assert_stage(&r, "build");
+        assert!(!next_text(&r).contains("the plan lists no files"));
+    }
+
+    // A higher-risk change keeps the message: its spec has a delta.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan_with_item("approved", "- None.", "- [x] t1: Done."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(!text.contains("the plan lists no files"), "{text}");
+    // The `none` item is no wrong item, so the message is the one of a plan
+    // with no `Files` item.
+    assert!(text.contains("it lists none"), "{text}");
+}
+
 #[test]
 fn the_stage_deploy_names_the_skills_of_its_steps_in_order() {
     let r = start();

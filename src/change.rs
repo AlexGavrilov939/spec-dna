@@ -127,17 +127,56 @@ impl Change {
 
     /// The items of the `Files` section that give no pattern, in the order of
     /// the file: prose, and a code span that is a template placeholder. Each
-    /// is on one line and has at most 80 characters.
+    /// is on one line and has at most 80 characters. The one item that states
+    /// "no files" ([`Change::no_files`]) is not in the list.
     pub fn files_not_paths(&self, corpus: &Corpus) -> Vec<String> {
         let Some(a) = &self.plan else {
             return Vec::new();
         };
+        // The one item that states "no files" is no wrong item.
+        if self.has_none_item(corpus) {
+            return Vec::new();
+        }
         section_items(&corpus.docs[a.doc as usize], ItemSection::Files)
             .filter(|i| item_pattern(i).is_none())
             .map(|i| shown(&i.text))
             .filter(|t| !t.is_empty())
             .collect()
     }
+}
+
+impl Change {
+    /// True if the plan states that the change edits no file. The `Files`
+    /// section has one item only, and the item starts with the word `none` in
+    /// any case, such as `- none: research only`. A plan that lists a path in
+    /// its tasks does not state it, because the plan then names a file.
+    pub fn no_files(&self, corpus: &Corpus) -> bool {
+        self.has_none_item(corpus) && self.files(corpus).is_empty()
+    }
+
+    /// True if the `Files` section has one item only, and the item starts with
+    /// the word `none`.
+    fn has_none_item(&self, corpus: &Corpus) -> bool {
+        let Some(a) = &self.plan else {
+            return false;
+        };
+        let mut items = section_items(&corpus.docs[a.doc as usize], ItemSection::Files);
+        match (items.next(), items.next()) {
+            (Some(item), None) => starts_with_none(&item.text),
+            _ => false,
+        }
+    }
+}
+
+/// True if the first word of `text` is `none`, in any case. The word ends at
+/// the first character that is not a letter or a digit.
+fn starts_with_none(text: &str) -> bool {
+    let word: String = text
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric())
+        .collect();
+    word.eq_ignore_ascii_case("none")
 }
 
 /// The pattern of a `Files` item. A code span is the first choice. An item
@@ -1084,6 +1123,47 @@ mod tests {
         let ch = &collect(&c)[0];
         assert_eq!(ch.files(&c), ["src/a.py", "src/b.py", "tests/*.py"]);
         assert_eq!(ch.files_not_paths(&c), ["None."]);
+    }
+
+    #[test]
+    fn a_files_section_with_one_none_item_states_no_files() {
+        let plan = |files: &str, order: &str| {
+            format!(
+                "---\nstatus: approved\n---\n# P\n\n## Files\n\n{files}\n\n## Order\n\n{order}\n"
+            )
+        };
+        let check = |files: &str, order: &str| {
+            let c = corpus(&[("docs/intent/x/plan.md", &plan(files, order))]);
+            let ch = &collect(&c)[0];
+            (ch.no_files(&c), ch.files_not_paths(&c))
+        };
+        // The word is `none` in any case, and a mark or a sentence may follow.
+        for item in [
+            "- None.",
+            "- none",
+            "- NONE: research only",
+            "-   None, no file.",
+        ] {
+            assert_eq!(check(item, ""), (true, vec![]), "{item}");
+        }
+        // Another word, a code span, a path with the letters, and a second
+        // item are not the form.
+        assert!(!check("- nonexistent", "").0);
+        assert!(!check("- `none`", "").0);
+        assert!(!check("- No files.", "").0);
+        assert!(!check("", "").0);
+        assert_eq!(
+            check("- None.\n- Later.", ""),
+            (false, vec!["None.".into(), "Later.".into()])
+        );
+        // A task that lists a path names a file, so the plan lists files.
+        assert!(!check("- None.", "- [ ] t1: Edit. Files: `src/a.py`.").0);
+        // A change with no plan lists no file and states nothing.
+        let c = corpus(&[(
+            "docs/intent/x/intent.md",
+            "---\nstatus: accepted\n---\n# I\n",
+        )]);
+        assert!(!collect(&c)[0].no_files(&c));
     }
 
     #[test]

@@ -159,9 +159,14 @@ forever or until-finished, and --context is always or on-request. With
 --moved-from, the new layer joins the moves-to list of each named layer, and
 the file keeps every comment. It stops with exit code 2 and does not change
 the file for a cycle, a name that exists, a type that another layer has, a
-layer that the graph does not have, and a bad value. If the file has no
-[layers] table, it writes the default graph first. Commit spec-dna.toml as a
-change of its own.
+layer that the graph does not have, a types list on many lines that --types
+must grow, and a bad value. If the file has no
+[layers] table, it writes the default graph first. If the file has a types
+list, --types also appends each type that the list lacks, and the output says
+so. It ends with up to 3 lines that start with next: and give one action each:
+commit spec-dna.toml as a change of its own, run init when the agent skill
+lists other types, and write the first document with new. With --json, the
+fields types_added and next hold the same.
 `list` prints each layer: its level, its selection, its edges, its limits and
 the number of documents that each rule put in it. With --json, it also lists
 the rule of each document.",
@@ -220,8 +225,9 @@ comes from the files of the folder, their statuses, the diff against the
 base and the evidence of the requirements: plan, design, build, test,
 deploy or closed. Each line says done ([x]) or open ([ ]). The last line
 gives the edit or the command that ends the stage. In the build stage, it
-names the next open task of the plan. Each line has the name of the skill for
-its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
+names the next open task of the plan. A routine change whose plan has one
+Files item that starts with none needs no changed file: the build stage ends
+when each task is done. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
 verify or finish. The skills come in 0.7.0, and the names are fixed. The
 output has at most 12 lines. The base is the merge base of --base (default:
 origin/HEAD) and HEAD. Without a base, the stage stops at build, and the
@@ -253,8 +259,9 @@ finished, and any other status is closed. For each change it prints the date,
 the result, the slug, the class, the counts of the delta lines (add, change,
 remove) of its spec, the commit and the title. A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
-default branch, has no entry. A move of the folder out of the intent folder
-reads as a deletion. --since limits the walk to the commits after <rev>. In a
+default branch, has no entry. A move of intent.md out of the intent folder
+that keeps its id as an alias (spec-dna mv) does not end a change. A plain
+git mv, which writes no alias, still reads as a deletion. --since limits the walk to the commits after <rev>. In a
 shallow clone, a note says that older changes can be missing, and --json has
 shallow: true. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
@@ -267,7 +274,9 @@ not a commit, 4 git.",
 playbook names. It reads git and the committed files only: the plan and
 design times, the survival rate of the intents, the spec commits after the
 first plan commit, the time from plan approval to the merged pull request,
-and how often the merged diff stays inside the plan (SD913). An indicator
+and how often the merged diff stays inside the plan (SD913). A move of
+intent.md out of the intent folder that keeps its id as an alias (spec-dna
+mv) does not end a life: stats drops that change. An indicator
 that git cannot give prints n/a with the reason, and --json has value null
 and a reason. With --group, it counts only the changes that have an area of
 the group. An unknown group is a usage error, and so is stats without --sdlc.
@@ -1995,12 +2004,45 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     })?;
     let cfg = Repo::parse_config(&text)?;
     warn_pin(&cfg);
-    let out = layer::add_layer(&text, &cfg.layers, cfg.layers_declared, new, &moved_from)
-        .map_err(Fatal::Usage)?;
+    let out = layer::add_layer(
+        &text,
+        &cfg.layers,
+        cfg.layers_declared,
+        new.clone(),
+        &moved_from,
+    )
+    .map_err(Fatal::Usage)?;
+    // A `types` list that the file has limits the types of the project, so
+    // the types of the new layer join it. A file with no list allows each
+    // type already. The edit keeps each comment.
+    let (out, types_added) =
+        add_types_to_list(out, &cfg.types, &new.types).map_err(Fatal::Usage)?;
     // `add_layer` read the new text: this cannot fail.
     let read = Repo::parse_config(&out)?;
     let level = read.layers.index(name).map_or(0, |i| read.layers.level(i));
     mv::write(&path, &out)?;
+    let mut next = Vec::new();
+    next.push(format!(
+        "commit {} as a change of its own (SD503)",
+        config::FILE_NAME
+    ));
+    if adapters::project_types(&cfg.layers, &cfg.types)
+        != adapters::project_types(&read.layers, &read.types)
+        && repo.root.join(adapters::SKILL).is_file()
+    {
+        next.push(
+            "run spec-dna init to update the agent skill, which lists the types of the project"
+                .to_string(),
+        );
+    }
+    if let Some(first) = new.types.first() {
+        // A layer with top files holds types that take no id.
+        let id = if new.dir().is_some() { " <id>" } else { "" };
+        next.push(format!(
+            "run spec-dna new {}{id} to write the first document of the layer",
+            first.name()
+        ));
+    }
     if a.json {
         println!(
             "{}",
@@ -2010,6 +2052,8 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .str("path", config::FILE_NAME)
                 .bool("wrote_implied_graph", !cfg.layers_declared)
                 .strs("moved_from", &moved_from)
+                .strs("types_added", &types_added)
+                .strs("next", &next)
                 .end()
         );
     } else {
@@ -2026,12 +2070,58 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         for from in &moved_from {
             println!("`{from}` now moves to `{name}`");
         }
-        println!(
-            "Commit {} as a change of its own: `check` reports a configuration change with other files (SD503).",
-            config::FILE_NAME
-        );
+        if !types_added.is_empty() {
+            println!("added the types {} to `types`", ticked(&types_added));
+        }
+        for line in &next {
+            println!("next: {line}");
+        }
     }
     Ok(0)
+}
+
+/// Appends the types of `new` that `list` lacks to the top-level key `types`
+/// of the configuration text. It gives the new text and the names that it
+/// added. An empty `list` means that the file has no `types` key or an empty
+/// one: each type is valid, so the text stays. A list that the edit cannot
+/// grow in place, such as a list on many lines, is a refusal: the caller
+/// writes nothing.
+fn add_types_to_list(
+    text: String,
+    list: &[model::DocType],
+    new: &[model::DocType],
+) -> Result<(String, Vec<String>), String> {
+    let missing: Vec<String> = new
+        .iter()
+        .filter(|t| !list.contains(t))
+        .map(|t| t.name().to_string())
+        .collect();
+    if list.is_empty() || missing.is_empty() {
+        return Ok((text, Vec::new()));
+    }
+    let all: Vec<toml::Value> = list
+        .iter()
+        .map(|t| t.name().to_string())
+        .chain(missing.iter().cloned())
+        .map(toml::Value::String)
+        .collect();
+    match config_text::set_value(&text, &[config_text::k("types")], &toml::Value::Array(all)) {
+        Ok(t) => Ok((t, missing)),
+        Err(_) => Err(format!(
+            "`types` in {} is a list that the command cannot grow in place (a list on many lines, for example); add {} to it by hand, then run `layer add` again",
+            config::FILE_NAME,
+            ticked(&missing)
+        )),
+    }
+}
+
+/// The names in backticks, separated by commas.
+fn ticked(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn layer_list(repo: &Repo, a: &Args) -> Result<u8, Fatal> {

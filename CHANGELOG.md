@@ -11,6 +11,10 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Fixed
 
+- `spec-dna next` and `spec-dna status` no longer ask for paths of a routine change whose plan lists no files. In such a plan, the `Files` section has one item only, and the item starts with the word `none` (`- none: research only`). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage `build` ends when each task of `Order` is done, or when `Order` has no task. A higher-risk change keeps the step of the files. The messages about `Files` items that are not paths no longer name the `none` item ([docs/types.md](docs/types.md#files-and-paths), [docs/guides/change.md](docs/guides/change.md#work-with-no-files)).
+- `spec-dna layer add --types` now appends each new type to the top-level `types` list, when the file has one. Before, `new` and `check` refused the type of the new layer. The output names the added types and ends with up to 3 `next:` lines (commit the file, run `init` when the agent skill lists the types, write the first document). `--json` has the new fields `types_added` and `next` ([docs/commands.md](docs/commands.md#layer-add)).
+- In the default graph and the small graph, the `pending` layer now has `linked-from = ["intent", "requirements", "decisions"]`. A requirement that names an open question and a decision that names the roadmap no longer give SD901. A file with its own `[layers.pending]` keeps its value ([docs/config.md](docs/config.md#default-graph)).
+- A move of `intent.md` out of the intent folder is no longer the end of a change, when the move keeps the id as an alias (`spec-dna mv`, `upgrade`). `log` gives no entry for it, and `stats --sdlc` drops that change. A plain `git mv` writes no alias, so it still reads as a deletion ([docs/commands.md](docs/commands.md#log)).
 - `spec-dna mv` of a document to the path of one of its own aliases no longer stops with "already exists". It drops that alias and keeps the old id as an alias. The output has `(alias dropped: <alias>)`, and `--json` has the new field `alias_dropped`.
 
 ## 0.6.0 - 2026-11-16

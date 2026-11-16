@@ -300,9 +300,9 @@ A project with no `[layers]` table gets the [default graph](#default-graph). If 
 | `research` | `research` | `decisions`, `requirements` | `decisions`, `requirements` | `forever` | `on-request` | none | 1 |
 | `intent` | `intent`, `spec`, `plan` | `requirements`, `interfaces`, `rules`, `decisions`, `procedures` | none | `until-finished` | `on-request` | `max-docs = 30`, `max-started = 3`, `stale-days = 14` | 1 |
 | `incidents` | `incident` | `intent` | `rules`, `procedures`, `decisions`, `requirements`, `interfaces`, `intent` | `forever` | `on-request` | none | 2 |
-| `pending` | `roadmap`, `questions` (`files`) | `intent`, `decisions` | `intent` | `forever` | `on-request` | `max-docs = 2` | 2 |
+| `pending` | `roadmap`, `questions` (`files`) | `intent`, `decisions` | `intent`, `requirements`, `decisions` | `forever` | `on-request` | `max-docs = 2` | 2 |
 
-A layer at level 0 needs no `linked-from`, because no layer is more stable than it. `research` and `incidents` keep `linked-from` entries, because a decision, a rule or a procedure names its source.
+A layer at level 0 needs no `linked-from`, because no layer is more stable than it. `research` and `incidents` keep `linked-from` entries, because a decision, a rule or a procedure names its source. `pending` lists `requirements` and `decisions`, because a requirement can name an open question and a decision can name the roadmap (SD901).
 
 For a project of fewer than 30 documents, also a new project, `init` writes the small graph. It has 7 of the 10 layers: `interfaces`, `procedures` and `research` are not in it. `layer add` adds a missing layer later.
 

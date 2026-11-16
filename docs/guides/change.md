@@ -111,9 +111,23 @@ A routine change has no spec and no delta. It has 3 pull requests:
 
 For a routine change, `finish` checks the evidence of each requirement whose hash is different from the base.
 
+### Work with no files
+
+Some work edits no file. An example is a research task: the result is a document in the plan, or a decision of the team. Write this in the `Files` section of the plan. Use one item only, and start it with the word `none`, in any case:
+
+```md
+## Files
+
+- None: this change is research.
+```
+
+The plan then lists no file, and `next` and `status` do not ask for paths. The stage `build` ends when each task of `Order` is done, or when `Order` has no task. A diff against the base is not needed. Then the steps of test, verify, review and finish follow. The last line of `next` tells you to run `spec-dna finish <slug>`.
+
+This rule is for a routine change only. A higher-risk change has a delta, so its plan must list the files of the work. If a task of `Order` lists a path with `Files:`, the plan lists files, and the rule does not apply ([Files and paths](../types.md#files-and-paths)).
+
 ## A small fix
 
-A small fix has no folder and no stage. It is a pull request only. It must keep each requirement of `rules`, `requirements` and `interfaces` as it is. If the diff changes such a requirement and touches no intent folder, `check` reports SD921. Then write an intent.
+A small fix has no folder and no stage. It is a pull request only. It must keep each requirement of `rules`, `requirements` and `interfaces` as it is. If the diff changes such a requirement and touches no intent folder, `check` reports SD921. Then write an intent. With the policy `three-class`, trivial work that keeps each requirement needs no intent.
 
 ## Drop a change
 

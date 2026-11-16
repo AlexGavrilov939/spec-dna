@@ -603,7 +603,8 @@ impl Git {
     /// Returns the commits of the history of `HEAD` that deleted an
     /// `intent.md` under `dir` (the folder of the `intent` layer, from the
     /// repository root, with no final `/`), the newest first. With `since`,
-    /// only the commits of `<since>..HEAD`. A move is not a deletion. The
+    /// only the commits of `<since>..HEAD`. A move inside `dir` is not a
+    /// deletion. A move out of `dir` reads as one (see `moved_out`). The
     /// command `git log` follows every parent and shows no merge commit: a squash, a merge
     /// commit and a rebase merge each give one entry for a deleted file. An
     /// entry is the non-merge commit that deleted the file. Its parent gives
@@ -681,6 +682,53 @@ impl Git {
         Ok(found)
     }
 
+    /// Tells for each entry of a walk of deleted intents if the commit moved
+    /// the file instead. `dir` is the folder of the `intent` layer, as for
+    /// `deleted_intents`. The result has one item for each entry, in order.
+    ///
+    /// An entry is a move out only if both conditions are true:
+    ///
+    /// 1. The deleted file is the source of a rename in the diff of the
+    ///    commit against its (first) parent. The diff has no pathspec, so the
+    ///    new path can be anywhere.
+    /// 2. The front matter `aliases` of the new file, in the tree of the
+    ///    commit, holds the old id of the intent. `spec-dna mv` and `upgrade`
+    ///    write it. `finish` never does. Git can pair a deletion with a new
+    ///    file of the same commit that copies much of its text, so condition 1
+    ///    alone is not enough (design 0.6.1, D10).
+    ///
+    /// The old id is the path with no `.md`, from a root. A root is the
+    /// folder `dir` or one of its parents, so the code tries each of them.
+    pub fn moved_out(&self, dir: &str, entries: &[DeletedIntent]) -> Result<Vec<bool>, String> {
+        let mut result = vec![false; entries.len()];
+        let mut wanted: Vec<(usize, (String, String))> = Vec::new();
+        for (i, e) in entries.iter().enumerate() {
+            let Some(parent) = &e.parent else { continue };
+            let out = self.run_offline(&[
+                "diff-tree",
+                "-r",
+                "-M",
+                "--name-status",
+                "-z",
+                parent,
+                &e.commit,
+            ])?;
+            if let Some(to) = renamed_to(&out, &e.path) {
+                wanted.push((i, (e.commit.clone(), to)));
+            }
+        }
+        let specs: Vec<(String, String)> = wanted.iter().map(|(_, s)| s.clone()).collect();
+        let texts = self.read_at(&specs)?;
+        for ((i, _), text) in wanted.iter().zip(texts) {
+            let Some(text) = text else { continue };
+            let ids = old_ids(&entries[*i].path, dir);
+            result[*i] = front_matter_aliases(&String::from_utf8_lossy(&text))
+                .iter()
+                .any(|a| ids.contains(a));
+        }
+        Ok(result)
+    }
+
     /// Returns each touch of an `intent.md`, `spec.md` or `plan.md` that is
     /// one level under `dir` (the folder of the `intent` layer, from the
     /// repository root, with no final `/`), in the history of `HEAD`. The
@@ -689,7 +737,7 @@ impl Git {
     /// history does not keep in order. A commit that touches 2 files gives 2
     /// entries, one after the other. A merge commit gives no entry. A rename of the
     /// folder inside `dir` is a touch of the new path, with the old path in
-    /// `from`. A move out of `dir` reads as a deletion.
+    /// `from`. A move out of `dir` reads as a deletion (see `moved_out`).
     pub fn artifact_touches(&self, dir: &str) -> Result<Vec<ArtifactTouch>, String> {
         let specs: Vec<String> = ["intent.md", "spec.md", "plan.md"]
             .iter()
@@ -1237,6 +1285,75 @@ impl Git {
 }
 
 /// Reads `<id> <parents>|<seconds>` of a commit header.
+/// Finds the new path of `old` in the output of
+/// `git diff-tree -r -M --name-status -z`, if the diff renames it.
+fn renamed_to(out: &[u8], old: &str) -> Option<String> {
+    let mut recs = out
+        .split(|b| *b == 0)
+        .filter(|r| !r.is_empty())
+        .map(String::from_utf8_lossy);
+    while let Some(status) = recs.next() {
+        let paths = if status.starts_with(['R', 'C']) { 2 } else { 1 };
+        let first = recs.next()?;
+        if paths == 1 {
+            continue;
+        }
+        let second = recs.next()?;
+        if status.starts_with('R') && first == old {
+            return Some(second.into_owned());
+        }
+    }
+    None
+}
+
+/// The ids that the file `path` had before a move: the path with no `.md`,
+/// from the repository root and from each folder that holds `dir`.
+fn old_ids(path: &str, dir: &str) -> Vec<String> {
+    let stem = path.strip_suffix(".md").unwrap_or(path);
+    let mut ids = vec![stem.to_string()];
+    for (i, _) in dir.trim_matches('/').match_indices('/') {
+        if let Some(rest) = stem.get(i + 1..) {
+            ids.push(rest.to_string());
+        }
+    }
+    ids
+}
+
+/// Reads the list `aliases` of the front matter of a document. It reads the
+/// block list and the inline list of the YAML subset of the front matter. A
+/// text with no front matter gives no alias.
+fn front_matter_aliases(text: &str) -> Vec<String> {
+    let mut lines = text.lines();
+    if lines.next().map(str::trim_end) != Some("---") {
+        return Vec::new();
+    }
+    let unquote = |v: &str| v.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+    let mut found = Vec::new();
+    let mut in_list = false;
+    for line in lines {
+        let line = line.trim_end();
+        if line == "---" {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("aliases:") {
+            let rest = rest.trim();
+            if let Some(inner) = rest.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+                found.extend(inner.split(',').map(unquote).filter(|a| !a.is_empty()));
+                in_list = false;
+            } else {
+                in_list = rest.is_empty();
+            }
+        } else if in_list {
+            match line.trim_start().strip_prefix("- ") {
+                Some(item) => found.push(unquote(item)),
+                None if line.starts_with([' ', '\t']) || line.is_empty() => {}
+                None => in_list = false,
+            }
+        }
+    }
+    found
+}
+
 fn parse_commit_header(h: &str) -> Option<(String, Vec<String>, i64)> {
     let (ids, time) = h.trim().rsplit_once('|')?;
     let mut parts = ids.split(' ').filter(|p| !p.is_empty());

@@ -20,7 +20,7 @@ use crate::change::{self, Verb};
 use crate::config::{ChangePolicy, Config, Evals};
 use crate::evals;
 use crate::frontmatter::{self, Value};
-use crate::git::{ArtifactTouch, Git, PathChange};
+use crate::git::{ArtifactTouch, DeletedIntent, Git, PathChange};
 use crate::json::{self, Obj};
 use crate::lifecycle;
 use crate::model::{Class, Corpus, DocType};
@@ -266,7 +266,16 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
     let mut raw = Vec::new();
     if repo.head_commit().is_some() {
         for dir in lifecycle::intent_dirs(cfg) {
-            raw.extend(git.deleted_intents(&dir, since).map_err(Fatal::Io)?);
+            let found = git.deleted_intents(&dir, since).map_err(Fatal::Io)?;
+            // A move out that keeps the id as an alias is not an end.
+            let moved = git.moved_out(&dir, &found).map_err(Fatal::Io)?;
+            raw.extend(
+                found
+                    .into_iter()
+                    .zip(moved)
+                    .filter(|(_, m)| !m)
+                    .map(|(e, _)| e),
+            );
         }
     }
     raw.sort_by_key(|e| std::cmp::Reverse(e.time));
@@ -384,8 +393,30 @@ fn folder_of(path: &str) -> &str {
 /// the oldest to the newest in the order of the ancestry, not of the dates.
 fn lives(git: &Git, dirs: &[String]) -> Result<Vec<Life>, Fatal> {
     let mut touches = Vec::new();
+    // The commit and the path of each `intent.md` that a commit moved out of
+    // its folder with the id as an alias. Such a deletion is not an end.
+    let mut moved: HashSet<(String, String)> = HashSet::new();
     for d in dirs {
-        touches.extend(git.artifact_touches(d).map_err(Fatal::Io)?);
+        let found = git.artifact_touches(d).map_err(Fatal::Io)?;
+        let deleted: Vec<DeletedIntent> = found
+            .iter()
+            .filter(|t| t.kind == PathChange::Deleted && t.path.ends_with("/intent.md"))
+            .map(|t| DeletedIntent {
+                commit: t.commit.clone(),
+                parent: t.parents.first().cloned(),
+                time: t.time,
+                path: t.path.clone(),
+            })
+            .collect();
+        let flags = git.moved_out(d, &deleted).map_err(Fatal::Io)?;
+        moved.extend(
+            deleted
+                .into_iter()
+                .zip(flags)
+                .filter(|(_, m)| *m)
+                .map(|(e, _)| (e.commit, e.path)),
+        );
+        touches.extend(found);
     }
     // The status of each intent and each plan that a commit wrote.
     let wanted: Vec<(String, String)> = touches
@@ -473,6 +504,13 @@ fn lives(git: &Git, dirs: &[String]) -> Result<Vec<Life>, Fatal> {
                 }
             }
             if let Some(t) = intent
+                && t.kind == PathChange::Deleted
+                && moved.contains(&(t.commit.clone(), t.path.clone()))
+            {
+                // The change goes on under another path. It is neither
+                // finished nor closed nor open, so the life is dropped.
+                cur = new();
+            } else if let Some(t) = intent
                 && t.kind == PathChange::Deleted
             {
                 cur.end = Some(End {
@@ -618,7 +656,14 @@ pub fn stats(
     let mut first_parent: HashMap<String, Vec<(String, Option<String>, i64)>> = HashMap::new();
     if head.is_some() {
         for d in &dirs {
-            for e in git.deleted_intents_first_parent(d).map_err(Fatal::Io)? {
+            let found = git.deleted_intents_first_parent(d).map_err(Fatal::Io)?;
+            let moved = git.moved_out(d, &found).map_err(Fatal::Io)?;
+            for e in found
+                .into_iter()
+                .zip(moved)
+                .filter(|(_, m)| !m)
+                .map(|(e, _)| e)
+            {
                 let folder = e.path.strip_suffix("/intent.md").unwrap_or(&e.path);
                 first_parent
                     .entry(folder.to_string())

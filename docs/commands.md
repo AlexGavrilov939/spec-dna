@@ -289,11 +289,12 @@ A change has no stage field. The stage is the first row of this table that match
 | `closed` | `intent.md` is `closed` | Run `spec-dna finish <slug>` |
 | `plan` | `intent.md` is absent, or its status is not `accepted` | Set `status: accepted` in `intent.md` |
 | `design` | The class is `higher-risk`, and `spec.md` is absent or not `approved` | Set `status: approved` in `spec.md` |
-| `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base | Set `status: approved` in `plan.md`, or change a file of `Files` |
+| `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base. A routine change with an approved plan that lists no files is in `build` while a task of `Order` is open | Set `status: approved` in `plan.md`, or change a file of `Files` |
 | `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
 - If the plan lists no path because the items of `Files` are not paths, the last line says so and shows the first such item. A path is a code span, or a plain path ([Files and paths](types.md#files-and-paths)).
+- A routine change with an approved plan that lists no files has no step for the diff. The plan states this with one `Files` item that starts with `none` ([Files and paths](types.md#files-and-paths)). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage passes `build` when each task of `Order` is done, or when `Order` has no task, with or without a base. A higher-risk change keeps the step of the files.
 - A file of `Files` differs from the base if the diff against the base has a path that a `Files` item matches. The diff is the diff of the working tree. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
 - A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
@@ -445,6 +446,13 @@ A change has an entry only if the folder came to the default branch in an earlie
 
 A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion. The entry comes later, under the new name.
 
+A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end a change. `log` gives no entry for it, because the id still resolves. For each deleted `intent.md`, `log` asks git for the diff of the commit against its first parent, with no path limit. The deletion is a move out only if both conditions are true:
+
+1. The diff renames the deleted `intent.md` to a new path.
+2. The front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
+
+A plain `git mv` writes no alias, so it still reads as a deletion. Assume that a commit of `finish` adds a near copy of the intent, and the copy has the old id in its `aliases`. Then the commit reads as a move, and `log` gives no entry for that change.
+
 In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
 
 With `--json`, the output is one object:
@@ -470,6 +478,7 @@ The command rebuilds the life of each change from the commits that touched its `
 - A span that would be negative is not counted.
 - The durations use the committer dates.
 - A rename of the folder inside the `intent` folder keeps the life under the new name.
+- A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end the life, because the id still resolves. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 2 conditions of a move out.
 
 | Play | Kind | Indicator | Value |
 | --- | --- | --- | --- |
@@ -581,15 +590,26 @@ The command refuses these cases with exit code 2. It writes nothing, and the fil
 - A name that a layer already has.
 - A type that another layer has.
 - A layer in an edge (`--moves-to`, `--linked-from`, `--moved-from`) that the graph does not have.
+- A `types` list that `--types` must grow and that the command cannot edit in place, such as a list on many lines.
 - A value that is not valid. Examples are a name with a character other than a letter, a digit, `-` or `_`, and an unknown type. Other examples are a numeric option with a value that is not a number, and a `--dir` that leaves the root. A `--keep` or `--context` value that is not in the list is not valid. `--files` with `--dir` is not valid, and a folder that another layer has is not valid.
 - A file layout where the new table has no place, for example `layers = { ... }` as an inline table of the root.
 
 The command reads its own result before it writes it. The result must give the layers that the command expects.
 
-The change goes into `spec-dna.toml` only. Commit it as a change of its own: `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)). With `--json`, the output is one object:
+If `spec-dna.toml` has a top-level `types` list, `--types` also appends each type that the list lacks. The command writes it in the same write as the layer, and each comment stays. Without a `types` key, or with an empty list, each type is valid already, and the command changes no `types` list. A list that the command cannot grow in place, such as a list on many lines, gives exit code 2. The file keeps its bytes. Add the types to the list by hand, and run the command again.
+
+The change goes into `spec-dna.toml` only. The output ends with `next:` lines, one action for each line. There are 3 lines at most:
+
+1. `next: commit spec-dna.toml as a change of its own (SD503)`. `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)).
+2. `next: run spec-dna init to update the agent skill, which lists the types of the project`. The command writes this line only when the new types change the types of the project, and `.claude/skills/spec-dna/SKILL.md` exists.
+3. `next: run spec-dna new <first type> <id> to write the first document of the layer`. The command writes this line only when the layer has a type. A layer with `--files` holds top files, and its line has no `<id>`.
+
+When the command appended types, a line that starts with `added the types` comes before the `next:` lines.
+
+With `--json`, the output is one object. `types_added` lists the appended types. `next` lists the `next:` lines without their prefix.
 
 ```json
-{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"]}
+{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"],"types_added":[],"next":["commit spec-dna.toml as a change of its own (SD503)","run spec-dna new interface <id> to write the first document of the layer"]}
 ```
 
 ### layer list
