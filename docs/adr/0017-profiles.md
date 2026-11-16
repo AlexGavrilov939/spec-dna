@@ -118,3 +118,7 @@ ADR 0003, ADR 0006 and ADR 0008 are accepted, and their text is locked. Read the
 The build adds the section "What `init` writes for each profile" to [docs/profiles.md](../profiles.md), with the table of D37. The severity table of that page keeps its meaning, and it gets SD923, SD924 and SD507.
 
 ## Amendments
+
+### 2026-11-16: SD925
+
+SD925 (`checkbox-missing`) joins SD923 and SD924 in the row "Checks that this profile turns on": it is off in `lite`, a warning in `standard` and an error in `strict`. Thus the profile adds the severities of SD923, SD924, SD925 and SD507. [Section 15 of the design](../design/0.7.0.md#15-deviations-during-the-build) gives the reason.
