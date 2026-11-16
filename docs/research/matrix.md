@@ -51,8 +51,9 @@ Consequence: the spec-dna standard uses its own words, under the repository lice
 
 | Tool | Latest release | Licence | Canonical storage | Change model | Deterministic checks | Lifecycle | Footprint |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| GitHub Spec Kit | v1.3.2, 2026-11-06 | MIT | `specs/NNN-feature/{spec,plan,tasks,...}.md`, `.specify/memory/constitution.md` | One folder per change; retention is a team convention | None for spec content in core; `analyze` and `converge` are LLM prompts | No archive or supersede command | Python 3.11+, uv; per-agent command files |
-| OpenSpec | v1.16.1, 2026-11-07 | MIT | `openspec/specs/<capability>/spec.md` as current truth; `openspec/changes/<name>/` with deltas | Delta specs (ADDED, MODIFIED, REMOVED, RENAMED) that OpenSpec merges on archive | `openspec validate --strict --json`: sections, SHALL/MUST, scenario per requirement, delta grammar | `archive` moves changes to a dated folder | TypeScript; binary or Node 22.12+; telemetry on by default |
+| GitHub Spec Kit | v1.4.1, 2026-11-16 | MIT | `specs/NNN-feature/{spec,plan,tasks,...}.md`, `.specify/memory/constitution.md` | One folder per change; retention is a team convention | None for spec content in core; `analyze` and `converge` are LLM prompts | No archive or supersede command | Python 3.11+, uv; per-agent command files |
+| OpenSpec | v2.0.0, 2026-11-11 | MIT | `openspec/specs/<domain>/spec.md` as current truth; `openspec/changes/<name>/` with deltas | Delta specs (ADDED, MODIFIED, REMOVED, RENAMED) that OpenSpec merges on archive | `openspec validate --strict --json`: sections, SHALL/MUST, scenario per requirement, delta grammar | `archive` moves changes to a dated folder | TypeScript; binary or Node 22.12+; telemetry on by default |
+| Superpowers | v7.0.2, 2026-11-03 | MIT | `docs/superpowers/specs/<date>-<topic>-design.md` and `docs/superpowers/plans/<date>-<feature>.md`; no store of current truth | A design page, then a plan page; no delta | None: skills are prompts, and a hard gate in the text of `brainstorming` waits for the approval of the design | Skills `finishing-a-development-branch` and `using-git-worktrees`; no archive | A plugin of 15 skills; a SessionStart hook injects the entry skill in each session; no runtime of its own |
 | BMAD Method | v6.12.4, 2026-10-14 (v7 in alpha) | MIT code, trade-marked names | `_bmad-output/` plan files for each initiative | Persona-driven workflow; epics and stories | No gate for spec content; narrow helper scripts | Retrospectives; no supersede metadata | Node 20.12+, Python 3.10+, 30+ skills per tool |
 
 | Tool | Applicability | Scalability at thousands of docs | Complexity | Maintainability | Machine validation | Agent efficiency | Adoption cost |
@@ -89,7 +90,7 @@ Mechanisms to reuse, not to rebuild:
 3. The KEP metadata pattern: typed schema, enums, cross-field rules, supersede links, changed-files-only checks. Keep it offline.
 4. The OpenSpec referenced-spec index (id, one-line purpose, fetch command) as the progressive-disclosure unit.
 
-Integration decision: spec-dna stays independent of all three frameworks. No framework stores a merged current truth with stable ids, supersede links and a link checker at the scale of thousands of documents. Only OpenSpec validates its own documents deterministically, but its grammar is narrower than the information model that spec-dna needs. A later adapter can import OpenSpec capability specs, because their requirement and scenario structure maps to the spec-dna requirement type.
+Integration decision: spec-dna stays independent of all three frameworks. No framework stores a merged current truth with stable ids, supersede links and a link checker at the scale of thousands of documents. Only OpenSpec validates its own documents deterministically, but its grammar is narrower than the information model that spec-dna needs. [ADR 0014](../adr/0014-import.md) adds `spec-dna import` for Spec Kit and OpenSpec in 0.7.0, because their requirement and scenario structure maps to the spec-dna requirement type. [ADR 0010](../adr/0010-workflow-pack.md) adds the workflow pack. It takes ideas from Superpowers (MIT), and the skill text is original. If a later build copies text from a tool, it must keep the MIT notice of the copyright holder in this file.
 
 ## 4. Context engineering evidence
 
@@ -168,8 +169,9 @@ The GtWR rule ids come from the v4 rule list, as secondary sources cite it. This
 | <https://spec.openapis.org/oas/latest.html> | OpenAPI | 3.2.1, 2026-09-10 |
 | <https://www.asyncapi.com/docs/reference/specification/latest> | AsyncAPI | 3.1.0 |
 | <https://llmstxt.org/> | llms.txt | proposal 2024-09-03 |
-| <https://github.com/github/spec-kit> | Spec Kit repository | v1.3.2, HEAD c43849408ac0 |
-| <https://github.com/Fission-AI/OpenSpec> | OpenSpec repository | v1.16.1, HEAD 0fa4a9705c20 |
+| <https://github.com/github/spec-kit> | Spec Kit repository | v1.4.1, 2026-11-16 (the layout and the commands of the import in ADR 0014 follow this tag) |
+| <https://github.com/Fission-AI/OpenSpec> | OpenSpec repository | v2.0.0, 2026-11-11 (the layout of the import in ADR 0014 follows this tag) |
+| <https://github.com/obra/superpowers> | Superpowers repository | v7.0.2, 2026-11-03 (the skills of the pack in ADR 0010; the text of spec-dna is its own) |
 | <https://github.com/bmad-code-org/BMAD-METHOD> | BMAD repository | v6.12.4, HEAD e734d3ac3c0f |
 | <https://github.com/kubernetes/enhancements> | KEP process and tooling | HEAD 72907deaa85e, 2026-11-06 |
 | <https://kiro.dev/docs/specs/> | Kiro specs | page updated 2026-10-15 |
