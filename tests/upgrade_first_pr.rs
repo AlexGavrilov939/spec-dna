@@ -19,6 +19,8 @@ const CASES: &[(&str, &str, &[&str])] = &[
     ("harness-lean", "v05", &["harness-lean"]),
     ("harness-full", "v05", &["harness-full"]),
     ("harness-edited", "v05", &["harness-lean", "harness-edited"]),
+    // Top files that `--layout` makes (0.6.1, D40). Documents only.
+    ("top-files", "v05", &["top-files"]),
 ];
 
 const UPGRADE_DATE: &str = "2026-01-16T12:00:00+00:00";
@@ -373,4 +375,29 @@ fn a_later_config_change_with_a_document_gives_sd503() {
     assert!(found.iter().any(|(c, _)| c == "SD503"), "{found:?}");
     // No note about a base before 0.6.0: the base is a 0.6 tree.
     assert!(!err.contains("before 0.6.0"), "{err}");
+}
+
+// --- top files and areas (0.6.1): the gate against the 0.5 base ---
+
+#[test]
+fn the_upgrade_with_top_files_and_areas_has_no_new_finding() {
+    // The base plan runs with no `--layout`: there the roadmap is an intent
+    // and the overview is a `research` document. The head has the top files
+    // and the area folder, and each id still resolves. The area of the test is
+    // `pumps`: `irrigation/sensors` has a link with a missing anchor in
+    // `valves.md`. The link text changes with the move of its target, so its
+    // old warning SD602 reads as new in the gate.
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    repo.git(&["switch", "-q", "-c", "up"]);
+    let dir = std::env::temp_dir().join(format!("spec-dna-areas-first-pr-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("areas.toml");
+    fs::write(&file, "[areas]\n\"irrigation/pumps\" = \"pumps\"\n").unwrap();
+    let (code, out, err) = repo.run(&["upgrade", "--layout", "--areas", file.to_str().unwrap()]);
+    let _ = fs::remove_dir_all(dir);
+    assert_eq!(code, 0, "{out}{err}");
+    repo.commit_at("upgrade", UPGRADE_DATE);
+    assert!(repo.dir.join("docs/roadmap.md").is_file());
+    assert!(repo.dir.join("docs/requirements/pumps/pumps.md").is_file());
+    assert_clean_gate(&repo, "top files and areas", &[]);
 }

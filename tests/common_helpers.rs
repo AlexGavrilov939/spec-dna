@@ -1,5 +1,5 @@
-//! Tests of the shared git helpers in tests/common/mod.rs. Each test proves 1
-//! helper, so a later test file can trust it.
+//! Tests of the shared helpers in tests/common/ (the git helpers and
+//! `md_lint`). Each test proves 1 helper, so a later test file can trust it.
 
 mod common;
 
@@ -294,4 +294,163 @@ fn tree_bytes_is_sorted_and_skips_the_git_folder() {
     assert!(list.iter().any(|(path, _)| path == "spec-dna.toml"));
     two.write("docs/new.md", "# New\n");
     assert_ne!(list, tree_bytes(&two.dir));
+}
+
+// --- md_lint ---
+// Each case below is a small text. The expected lines are the ones that
+// `markdownlint-cli2` v0.24.0 gives for the same text and the rules of
+// `.markdownlint-cli2.yaml`.
+
+#[test]
+fn md_lint_passes_a_clean_text() {
+    let text = "---\nname: x\n---\n\n<!-- begin -->\n# Title\n<!-- note -->\n\nText.  \nMore.\n\n- a\n  - b\n- c\n\n```sh\nx\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n<!-- end -->\n";
+    assert_eq!(md_lint(text), []);
+    assert_eq!(md_lint(""), []);
+}
+
+#[test]
+fn md_lint_reports_trailing_spaces_and_hard_tabs() {
+    // 1 space and 3 spaces are problems. 2 spaces are a line break.
+    assert_eq!(
+        md_lint("# T\n\na \nb   \nc  \nd\n"),
+        [(3, "MD009"), (4, "MD009")]
+    );
+    assert_eq!(md_lint("# T\n\na\tb\n"), [(3, "MD010")]);
+    // A tab in code is a problem. Trailing spaces in code are not.
+    assert_eq!(md_lint("# T\n\n```sh\n\tx   \n```\n"), [(4, "MD010")]);
+    // The text of a comment and the front matter have no check.
+    assert_eq!(md_lint("---\na:   \n---\n\n<!--\nb  \t\n-->\n"), []);
+}
+
+#[test]
+fn md_lint_reports_a_second_blank_line() {
+    assert_eq!(md_lint("# T\n\n\ntext\n"), [(3, "MD012")]);
+    assert_eq!(md_lint("# T\n\ntext\n\n"), [(5, "MD012")]);
+    // The blank lines in code and after the front matter are free.
+    assert_eq!(md_lint("# T\n\n```sh\na\n\n\nb\n```\n"), []);
+    assert_eq!(md_lint("---\na: b\n---\n\n\n# T\n"), []);
+    // A comment line is not a blank line for this rule.
+    assert_eq!(md_lint("# T\n\n<!-- c -->\n\ntext\n"), []);
+}
+
+#[test]
+fn md_lint_reports_a_heading_with_no_blank_line() {
+    assert_eq!(md_lint("# T\ntext\n"), [(1, "MD022")]);
+    assert_eq!(md_lint("# T\n\ntext\n## H\n\ntext\n"), [(4, "MD022")]);
+    // A heading at the start of the text or of the last line needs only 1 side.
+    assert_eq!(md_lint("# T\n\ntext\n\n## H\n"), []);
+    assert_eq!(md_lint("---\na: b\n---\n# T\n\ntext\n"), []);
+    // A line with `#` and no space, and a line in code, are not headings.
+    assert_eq!(md_lint("# T\n\n#tag\ntext\n\n```sh\n# c\n```\n"), []);
+}
+
+#[test]
+fn md_lint_reads_a_comment_line_as_a_blank_line() {
+    // The marker lines of a generated file are such comments.
+    let text = "# T\n\n<!-- spec-dna:begin skill v1 h:00 -->\n# Skill\n\n1. a\n2. b\n<!-- spec-dna:end skill -->\n";
+    assert_eq!(md_lint(text), []);
+    // A comment on many lines is blank too.
+    assert_eq!(md_lint("# T\n\n- a\n<!--\nnote\n-->\n\ntext\n"), []);
+    // A line with text and a comment is text.
+    assert_eq!(md_lint("# T\n\ntext <!-- c -->\n- a\n"), [(4, "MD032")]);
+}
+
+#[test]
+fn md_lint_reports_a_fence_with_no_blank_line() {
+    assert_eq!(
+        md_lint("# T\n\ntext\n```sh\nx\n```\nmore\n"),
+        [(4, "MD031"), (6, "MD031")]
+    );
+    assert_eq!(
+        md_lint("# T\n\n```sh\na\n```\n```sh\nb\n```\n"),
+        [(5, "MD031"), (6, "MD031")]
+    );
+    // A fence in a list item is a fence too.
+    assert_eq!(
+        md_lint("# T\n\n- a\n  ```sh\n  x\n  ```\n- b\n"),
+        [(4, "MD031"), (6, "MD031")]
+    );
+    // A longer fence holds a shorter one. A tilde fence is a fence.
+    assert_eq!(md_lint("# T\n\n````md\n```\ninner\n```\n````\n"), []);
+}
+
+#[test]
+fn md_lint_reports_a_fence_with_no_language() {
+    assert_eq!(md_lint("# T\n\n```\nx\n```\n"), [(3, "MD040")]);
+    assert_eq!(md_lint("# T\n\n~~~\nx\n~~~\n"), [(3, "MD040")]);
+    assert_eq!(md_lint("# T\n\n```text\nx\n```\n"), []);
+    // The line that closes a fence has no language, and that is right.
+    assert_eq!(md_lint("# T\n\n```sh\n```\n\n```sh\n\n```\n"), []);
+}
+
+#[test]
+fn md_lint_reports_a_list_with_no_blank_line() {
+    // Above: the list starts right after text. The problem is on the first line.
+    assert_eq!(
+        md_lint("# T\n\nAnswer:\n- a\n- b\n\ntext\n"),
+        [(4, "MD032")]
+    );
+    // Below: another block ends the list. The problem is on the last line.
+    assert_eq!(
+        md_lint("# T\n\n- a\n- b\n## H\n\ntext\n"),
+        [(4, "MD032"), (5, "MD022")]
+    );
+    assert_eq!(md_lint("# T\n\n1. a\n2. b\n---\n\ntext\n"), [(4, "MD032")]);
+    assert_eq!(
+        md_lint("# T\n\n- a\n```sh\nx\n```\n"),
+        [(3, "MD032"), (4, "MD031")]
+    );
+    // A text line right after an item is part of the item.
+    assert_eq!(md_lint("# T\n\n- a\ntext\n\nmore\n"), []);
+    // Another marker at the same level starts another list.
+    assert_eq!(
+        md_lint("# T\n\n+ a\ntext\n- c\n"),
+        [(4, "MD032"), (5, "MD032")]
+    );
+}
+
+#[test]
+fn md_lint_reads_nested_lists_and_item_text() {
+    let text = "# T\n\n1. a\n   - n\n   - m\n2. b\n\n   text of b\n\n   - n\n3. c\n\ntext\n";
+    assert_eq!(md_lint(text), []);
+    // A number other than 1 does not interrupt a paragraph.
+    assert_eq!(md_lint("# T\n\ntext\n2. x\n\nmore\n"), []);
+    assert_eq!(md_lint("# T\n\ntext\n1. x\n"), [(4, "MD032")]);
+    // A `-` line, `*emphasis*` and a rule are not items.
+    assert_eq!(md_lint("# T\n\n*emphasis* text\n\n---\n\n- a\n\n***\n"), []);
+    // The list inside a fence is not a list.
+    assert_eq!(md_lint("# T\n\n```sh\n- a\ntext\n- b\n```\n"), []);
+}
+
+#[test]
+fn md_lint_reports_a_table_with_no_blank_line() {
+    let table = "| a | b |\n| - | - |\n| 1 | 2 |\n";
+    assert_eq!(md_lint(&format!("# T\n\ntext\n{table}")), [(4, "MD058")]);
+    assert_eq!(
+        md_lint(&format!("# T\n\n{table}## H\n\ntext\n")),
+        [(5, "MD058"), (6, "MD022")]
+    );
+    assert_eq!(
+        md_lint(&format!("# T\n\n{table}- a\n")),
+        [(5, "MD058"), (6, "MD032")]
+    );
+    assert_eq!(md_lint(&format!("# T\n\n{table}<!-- c -->\n")), []);
+    // A line with `|` and no delimiter row is no table.
+    assert_eq!(md_lint("# T\n\ntext\na | b\nc | d\n"), []);
+}
+
+#[test]
+fn md_lint_reports_a_text_that_does_not_end_with_a_newline() {
+    assert_eq!(md_lint("# T\n\ntext"), [(3, "MD047")]);
+    assert_eq!(md_lint("# T\n\ntext\r\n"), []);
+}
+
+#[test]
+fn md_lint_counts_the_front_matter_in_the_line_numbers() {
+    assert_eq!(
+        md_lint("---\na: b\n---\ntext\n# H\n\ntext\n"),
+        [(5, "MD022")]
+    );
+    // The front matter needs a closing line. Else its first line is a rule.
+    assert_eq!(md_lint("---\na: b\n\n# H\n\ntext   \n"), [(6, "MD009")]);
 }

@@ -428,6 +428,33 @@ fn reconfigure_keeps_the_current_change_values() {
 }
 
 #[test]
+fn reconfigure_keeps_the_change_base() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The project adds the key by hand. A new `init` never proposes it.
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("\nmax-fanout = 8", "\nbase = \"trunk\"\nmax-fanout = 8");
+    assert!(cfg.contains("base = \"trunk\""), "{cfg}");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt and edit");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(text(&r.change().unwrap(), "base"), "trunk");
+    r.commit("reconfigure");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    // A project with no key still gets none.
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.change().unwrap().contains_key("base"));
+}
+
+#[test]
 fn a_table_with_no_gate_keeps_the_severity_of_the_profile() {
     // Without `gate`, the profile sets SD910: a warning in `lite`, an error in
     // `standard`. A default answer to question 5 writes the gate with the same
@@ -629,4 +656,127 @@ fn question_5_is_asked_unless_the_policy_is_none() {
     let t = r.change().unwrap();
     assert_eq!(text(&t, "policy"), "two-class");
     assert_eq!(text(&t, "gate"), "warn");
+}
+
+#[test]
+fn a_small_graph_reconfigured_to_the_default_graph_gets_both_high_risk_layers() {
+    // The small graph has no `interfaces` layer, so `init` wrote `["rules"]`.
+    // That is the default of the small graph, so the new graph gets its own
+    // default (D17).
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(list(&r.change().unwrap(), "high-risk-layers"), ["rules"]);
+    r.commit("adopt spec-dna");
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(list(&t, "high-risk-layers"), ["interfaces", "rules"]);
+    r.commit("reconfigure");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_high_risk_layers_value_that_is_not_the_default_stays_in_a_reconfigure() {
+    // An empty list is a choice of the project, and it stays.
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("high-risk-layers = [\"rules\"]", "high-risk-layers = []");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt and edit");
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(list(&r.change().unwrap(), "high-risk-layers").is_empty());
+    // A value that names a layer of the new graph, with no default, stays too.
+    let cfg = r.read("spec-dna.toml").replace(
+        "high-risk-layers = []",
+        "high-risk-layers = [\"interfaces\"]",
+    );
+    r.write("spec-dna.toml", &cfg);
+    r.commit("edit again");
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        list(&r.change().unwrap(), "high-risk-layers"),
+        ["interfaces"]
+    );
+}
+
+/// A committed project of the small graph whose `spec-dna.toml` has `types`.
+fn project_with_types(types: &str) -> Repo {
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    let at = cfg.find("profile = ").unwrap();
+    r.write(
+        "spec-dna.toml",
+        &format!("{}types = {types}\n{}", &cfg[..at], &cfg[at..]),
+    );
+    r.commit("adopt spec-dna");
+    r
+}
+
+#[test]
+fn reconfigure_warns_when_types_lacks_a_type_of_the_policy() {
+    let r = project_with_types("[\"requirements\", \"intent\"]");
+    let want = "warning: the policy three-class needs the types intent, spec and plan; add spec and plan to types in spec-dna.toml";
+    // The preview and the write both print the warning, once.
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(want).count(), 1, "{out}");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(want).count(), 1, "{out}");
+    // `init` does not edit the key: no question asks for it.
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("types = [\"requirements\", \"intent\"]\n"),
+        "{cfg}"
+    );
+    // `--json` has the warning in the field `warnings`.
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"warnings\":[\"the policy three-class needs"),
+        "{out}"
+    );
+}
+
+#[test]
+fn reconfigure_names_each_missing_type_and_warns_only_when_one_is_missing() {
+    for (types, add) in [
+        ("[\"requirements\"]", "intent, spec and plan"),
+        ("[\"requirements\", \"intent\", \"spec\"]", "plan"),
+    ] {
+        let r = project_with_types(types);
+        let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive", "--dry-run"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.contains(&format!("; add {add} to types in spec-dna.toml")),
+            "{types}: {out}"
+        );
+    }
+    // No warning: the 3 types are there, the policy is `none`, or the file
+    // has no key `types` (each type is valid).
+    let r = project_with_types("[\"requirements\", \"intent\", \"spec\", \"plan\"]");
+    let (_, out, _) = r.run(&["init", "--reconfigure", "--non-interactive", "--dry-run"]);
+    assert!(!out.contains("warning:"), "{out}");
+    let r = project_with_types("[\"requirements\", \"intent\"]");
+    let (code, out, err) = r.init_with(
+        "change-policy = \"none\"\n",
+        &["--reconfigure", "--dry-run"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("warning:"), "{out}");
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    let (_, out, _) = r.run(&["init", "--reconfigure", "--non-interactive", "--dry-run"]);
+    assert!(!out.contains("warning:"), "{out}");
 }

@@ -134,7 +134,7 @@ The hook that `init` writes runs `spec-dna check --staged`. A commit records the
 
 `check` also compares the requirements of the lifecycle base and the head. If a requirement of a `forever` layer changed and no file of the `intent` folder changed, it gives SD921. This check runs only with a `[change] policy` other than `none`, and only if git can name the lifecycle base.
 
-With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`) with `HEAD`.
+With a `[change] policy` other than `none`, `check` finds the lifecycle base. This base is the merge base of `--base` (or, without it, of `origin/HEAD`, or, if the repository has no `origin/HEAD`, of the local branch that `[change] base` names) with `HEAD`.
 
 Without `--base`, the base that decides which diagnostics are new stays `HEAD`. The lifecycle base is only for the change codes that compare the head with a base ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). Their diagnostics are always new. With `--staged`, they diff the git index against the lifecycle base.
 
@@ -144,11 +144,11 @@ These rules apply to the lifecycle base:
 - If there is no base, the text output prints this note on stderr:
 
   ```text
-  note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>
+  note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base
   ```
 
   Then `check` runs only the checks of one tree.
-- `origin/HEAD` is the only ref that `check` reads for this base. It does not use a local `main` or `master`.
+- The refs that `check` reads for this base are `origin/HEAD` and the branch of `[change] base`, in this order. It never guesses a local `main` or `master`. If `[change] base` names a branch that does not exist, and there is no `origin/HEAD`, the note is ``no base for the change checks: no origin/HEAD, and the branch `<b>` of [change] base does not exist; pass --base <rev>``. This is not an error, because a CI clone often has no local branch. If the branch exists but has no common history with `HEAD`, the note is ``no base for the change checks: the branch `<b>` of [change] base has no common history with HEAD; pass --base <rev>``.
 - If the lifecycle base pins a version before 0.6.0, it counts as no lifecycle base. Git cannot give a diff from the planned base. `change_base` is `null`, and `check` runs the checks of one tree. The text output prints this note on stderr:
 
   ```text
@@ -167,7 +167,15 @@ The text output gives the errors first, then SD606 and SD607, then the other war
 
 `--lint` lists each prose lint warning. It also runs the lint in a profile that has it off (`lite`, `standard`), and it overrides a `lint = "off"` rule. `--lint` does not run the lint when `language` is not English. The findings are warnings, so they never fail the gate. Without `--all`, `--lint` lists the new findings only.
 
-The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
+An accepted decision cannot change its locked text (SD405), so `check` gives no SD101 and no SD102 for a link or a reference there. After `finish` deletes an intent, such a link is dead. With `--all`, `check` prints one info line for each of these locked links, after the diagnostics and before the count line:
+
+```text
+docs/decisions/timer.md:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that points to the change `dose` (`spec-dna log` names its commit)
+```
+
+The line is not a diagnostic. It has no code, no severity and no rule, it is not in the counts, and it does not change the exit code. If the target was in the folder of an intent, the line names the change. Otherwise it says "the new place of the text, or the reason for its removal". Add the amendment to the decision: an amendment section can name the new place as plain text. Without `--all`, `check` prints no such line. A reference to a document that exists, with an absent section, is not a locked link.
+
+The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target` and `pointer` (the text after "points to" in the info line). The list is empty if there is no locked link. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 
 ## context
 
@@ -289,11 +297,12 @@ A change has no stage field. The stage is the first row of this table that match
 | `closed` | `intent.md` is `closed` | Run `spec-dna finish <slug>` |
 | `plan` | `intent.md` is absent, or its status is not `accepted` | Set `status: accepted` in `intent.md` |
 | `design` | The class is `higher-risk`, and `spec.md` is absent or not `approved` | Set `status: approved` in `spec.md` |
-| `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base | Set `status: approved` in `plan.md`, or change a file of `Files` |
+| `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base. A routine change with an approved plan that lists no files is in `build` while a task of `Order` is open | Set `status: approved` in `plan.md`, or change a file of `Files` |
 | `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
 - If the plan lists no path because the items of `Files` are not paths, the last line says so and shows the first such item. A path is a code span, or a plain path ([Files and paths](types.md#files-and-paths)).
+- A routine change with an approved plan that lists no files has no step for the diff. The plan states this with one `Files` item that starts with `none` ([Files and paths](types.md#files-and-paths)). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage passes `build` when each task of `Order` is done, or when `Order` has no task, with or without a base. A higher-risk change keeps the step of the files.
 - A file of `Files` differs from the base if the diff against the base has a path that a `Files` item matches. The diff is the diff of the working tree. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
 - A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
@@ -322,7 +331,7 @@ A line that is done has the skill of its own step.
 
 ### Base and output
 
-The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. `next` prints it. If git cannot name a base, `next` prints a note. The note is `note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>`. The stage then stops at `build`, because the diff against the base is unknown.
+The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] base`) and `HEAD`. `next` prints it. If git cannot name a base, `next` prints a note. The note is `note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base`. The stage then stops at `build`, because the diff against the base is unknown.
 
 With `[change] policy = "none"`, `next` says that the change process is off and reads no git data. It exits with 0.
 
@@ -371,7 +380,7 @@ These rules apply to the files:
 - `finish` writes and deletes no path that has a symbolic link, also as the last part of the path, and no path outside the repository.
 - It checks all the paths before it writes the first file, in `--dry-run` too.
 
-The base is the merge base of `--base` (default: `origin/HEAD`) and `HEAD`. An `accepted` change needs it. A `closed` change needs none. The base of step 3 does not depend on `[change] policy`, and the stops do not follow the profile or a `[rules]` entry.
+The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] base`) and `HEAD`. An `accepted` change needs it. A `closed` change needs none. The base of step 3 does not depend on `[change] policy`, and the stops do not follow the profile or a `[rules]` entry.
 
 `--dry-run` writes nothing. It prints the diff of each file that `finish` would write, and `remove <path>` for each file that it would delete. With `--json`, the output is one object:
 
@@ -445,6 +454,13 @@ A change has an entry only if the folder came to the default branch in an earlie
 
 A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion. The entry comes later, under the new name.
 
+A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end a change. `log` gives no entry for it, because the id still resolves. For each deleted `intent.md`, `log` asks git for the diff of the commit against its first parent, with no path limit. The deletion is a move out only if both conditions are true:
+
+1. The diff renames the deleted `intent.md` to a new path.
+2. The front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
+
+A plain `git mv` writes no alias, so it still reads as a deletion. Assume that a commit of `finish` adds a near copy of the intent, and the copy has the old id in its `aliases`. Then the commit reads as a move, and `log` gives no entry for that change.
+
 In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
 
 With `--json`, the output is one object:
@@ -470,6 +486,7 @@ The command rebuilds the life of each change from the commits that touched its `
 - A span that would be negative is not counted.
 - The durations use the committer dates.
 - A rename of the folder inside the `intent` folder keeps the life under the new name.
+- A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end the life, because the id still resolves. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 2 conditions of a move out.
 
 | Play | Kind | Indicator | Value |
 | --- | --- | --- | --- |
@@ -581,15 +598,26 @@ The command refuses these cases with exit code 2. It writes nothing, and the fil
 - A name that a layer already has.
 - A type that another layer has.
 - A layer in an edge (`--moves-to`, `--linked-from`, `--moved-from`) that the graph does not have.
+- A `types` list that `--types` must grow and that the command cannot edit in place, such as a list on many lines.
 - A value that is not valid. Examples are a name with a character other than a letter, a digit, `-` or `_`, and an unknown type. Other examples are a numeric option with a value that is not a number, and a `--dir` that leaves the root. A `--keep` or `--context` value that is not in the list is not valid. `--files` with `--dir` is not valid, and a folder that another layer has is not valid.
 - A file layout where the new table has no place, for example `layers = { ... }` as an inline table of the root.
 
 The command reads its own result before it writes it. The result must give the layers that the command expects.
 
-The change goes into `spec-dna.toml` only. Commit it as a change of its own: `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)). With `--json`, the output is one object:
+If `spec-dna.toml` has a top-level `types` list, `--types` also appends each type that the list lacks. The command writes it in the same write as the layer, and each comment stays. Without a `types` key, or with an empty list, each type is valid already, and the command changes no `types` list. A list that the command cannot grow in place, such as a list on many lines, gives exit code 2. The file keeps its bytes. Add the types to the list by hand, and run the command again.
+
+The change goes into `spec-dna.toml` only. The output ends with `next:` lines, one action for each line. There are 3 lines at most:
+
+1. `next: commit spec-dna.toml as a change of its own (SD503)`. `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)).
+2. `next: run spec-dna init to update the agent skill, which lists the types of the project`. The command writes this line only when the new types change the types of the project, and `.claude/skills/spec-dna/SKILL.md` exists.
+3. `next: run spec-dna new <first type> <id> to write the first document of the layer`. The command writes this line only when the layer has a type. A layer with `--files` holds top files, and its line has no `<id>`.
+
+When the command appended types, a line that starts with `added the types` comes before the `next:` lines.
+
+With `--json`, the output is one object. `types_added` lists the appended types. `next` lists the `next:` lines without their prefix.
 
 ```json
-{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"]}
+{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"],"types_added":[],"next":["commit spec-dna.toml as a change of its own (SD503)","run spec-dna new interface <id> to write the first document of the layer"]}
 ```
 
 ### layer list
@@ -615,6 +643,17 @@ spec-dna mv <doc-id>#<key or anchor>... <doc-id or path> [--type <type>]
 ```
 
 The first form moves a document with `git mv`. It adds the old id to the `aliases` of the document, and it changes the relative links to the document. `--stub` leaves a stub at the old path for tools that read a file by its path. The stub has the front matter `moved-to`, no id and no budget.
+
+These rules apply to the move of a whole document:
+
+- If the new id is an alias of the moved document, the move drops that alias, and the old id becomes an alias. The output has `(alias dropped: <alias>)`, and `--json` has the field `alias_dropped` (the alias, or `null`). A file at the new path, the id of another document or an ambiguous alias stops the move with exit code 2.
+- In a mixed root, the new place can give the type ([Place gives the type](types.md#place-gives-the-type)). Then `mv` removes the `type` line. The move can change the type of the document, because the person chose the place. The output names the change: `type: intent -> roadmap (the place gives the type)`.
+- If the document has requirements and the type of the new place holds none, `mv` stops with exit code 2 and changes nothing. Move the requirements first, with the second form.
+- An accepted decision keeps its type. `mv` stops with exit code 2 if the new place gives another type.
+- If the new type has no status, `mv` removes the `status` line. If the status is not a status of the new type (after `status-map`), `mv` writes the first status of the new type, and the output names it: `status: accepted -> draft`. All other fields stay.
+- If the new place gives no type, and the old type came from the old place, `mv` writes the `type` line, unless `default-type` of the new root is that type. A move never changes a type with no line in the output.
+- In a root of one type, `mv` changes no `type` and no `status` line.
+- After the move, `mv` removes each folder that the move left empty, from the deepest folder to the highest. A folder with a file stays, and so does a folder with an ignored file. The root folder of the document stays. With `--stub`, the stub keeps the folder.
 
 The second form splits a document of any type. It moves requirements, or whole sections with their subsections, into one of these documents:
 
@@ -656,7 +695,7 @@ If no layer has the type `research`, `history` stops with exit code 2 and change
 spec-dna index <dir or file> [--replace]
 ```
 
-`index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
+`index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. A cell with no text, such as a missing status, is written as `| |`. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
 
 ## eval
 
@@ -757,7 +796,7 @@ Each step that fails gives no output. `git` runs with `GIT_OPTIONAL_LOCKS=0`. Th
 ## upgrade
 
 ```text
-spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]
+spec-dna upgrade [--dry-run] [--layout [--areas <file>]] [--pin-file <file>]
 ```
 
 `upgrade` moves a project that pins spec-dna 0.4.0 or later to the version of the binary that you run. It is also the command that moves the pin. It has no `--to` option, because the binary embeds the standard of its own version. A project with an older pin first moves to 0.4.2 and then runs `upgrade`. [The upgrade guide](guides/upgrade-0.5.md) gives the procedure.
@@ -765,7 +804,8 @@ spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]
 | Option | Meaning |
 | --- | --- |
 | `--dry-run` | Print the diff of each file and write nothing. It needs a clean tree, as a write does |
-| `--layout` | In a mixed root, also move the folders of the other 0.5 namespaces into the 0.6 folders |
+| `--layout` | In a mixed root, also move the folders of the other 0.5 namespaces into the 0.6 folders, and move the documents that have the name of a top file to the top file of their root |
+| `--areas <file>` | With `--layout` only. A TOML file with the table `[areas]`. Each key is a document id of the 0.5 tree, and each value is an area: `"specs/pumps" = "pumps"`. Each mapped document moves to `<root>/requirements/<area>/<slug>.md`. Save the file outside the repository, as the file of `--pin-file`. A 0.6 project gets exit code 2 |
 | `--pin-file <file>` | The file `spec-dna-pin.toml` of the release, as a path from the current folder. `upgrade` copies its sums into `[spec-dna-sha256]`. The binary cannot know its own checksum |
 
 Save the file of `--pin-file` outside the repository, for example in the folder above it: `--pin-file ../spec-dna-pin.toml`. A file inside the repository makes the tree not clean, so `upgrade` refuses it (exit code 1). Verify the file with `gh attestation verify`.
@@ -779,10 +819,10 @@ Save the file of `--pin-file` outside the repository, for example in the folder 
 | Step | What it does |
 | --- | --- |
 | 1. Check | Refuses a tree that is not clean. Reads the old configuration. Builds the whole plan in memory |
-| 2. Configuration | Renames the old names: the types, the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
+| 2. Configuration | Renames the old names: the types (`change` gives the 3 types `intent`, `spec` and `plan`), the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
 | 3. Front matter | Rewrites each `type:` and each `status:` that changed. A `proposed` or `accepted` change becomes an `intent` that is `draft` or `accepted`, and a `rejected` change becomes a `closed` intent. A `done` change and a former `note` become `research`. `upgrade` writes `was-type` (`change` or `note`) on each such document, and it adds a front matter if the document has none. It removes the `status` line of a `done` change |
 | 4. Harness | If `[harness]` exists, renames the role keys and writes the new parts as off: `skills = []`, `review-md = false` and `protect-tests = "off"`. A project at level `full` gets `code-simplifier = { claude-code = "none" }` in `[harness.roles]`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker. For a 0.5 project, it disables that role |
-| 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec |
+| 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec: `--areas` gives the choice. The top files and the areas are in the paragraphs below |
 | 6. Proof | Checks the items below. If the proof fails, `upgrade` writes nothing and exits with code 1 |
 | 7. Report | Lists the proposals to delete, the decisions to check, the files that it kept, the links that it did not rewrite and the changes of behavior |
 
@@ -792,9 +832,43 @@ In step 2, `upgrade` also writes the keys that keep a 0.5 document as it was:
 - `[budgets.intent]` of 10,000 and 20,000, if a migrated change is over 12,000 characters;
 - `live-sections = { decision = [] }` in each root that has no `live-sections` and can hold a decision. Thus no 0.5 decision gets a live section by default.
 
+If the 0.5 key `types` has `change`, the new list has `intent`, `spec` and `plan` at its place, because the intent layer holds the 3 types together. A list of many lines that needs this change is a hand edit (exit code 3), because the plan keeps the comments of such a list only if its length stays.
+
+A 0.6 project gets 2 more edits of `spec-dna.toml` beyond the pin. Both add values only, both follow an exact rule, and the report names each of them:
+
+- The file has the key `types`, `[change] policy` is not `none`, and the list lacks `intent`, `spec` or `plan`. `upgrade` adds the absent types. With the policy `none`, no command writes a `spec` or a `plan`, so the list stays as it is. An empty list (`types = []`) means that every type is valid, so it also stays as it is.
+- `linked-from` of `[layers.pending]` is exactly `["intent"]`, the value that `init` 0.6.0 wrote. `upgrade` adds `requirements` and `decisions`, for each of them that the graph has. Another value stays.
+
+These edits change `spec-dna.toml`. A new `types` list also changes the generated skill, because the skill lists the types of the project. SD503 does not count the skill, so the pull request of the pin can hold these edits. If a list has many lines, `upgrade` does not edit it. It prints a warning that names the hand edit.
+
 `--layout` moves the folders `contracts`, `invariants`, `guides`, `runbooks`, `reference` and `notes` of a mixed root. They go to `interfaces`, `rules`, `procedures`, `procedures`, `research` and `research`, with each tracked file under them. A root of one type keeps its path.
 
-A stop of step 5 is exit code 1, and the message names each path. These are the causes: a slug that is not valid, 2 moves with one target, a target that exists, a target in another root, and an `exclude` glob that matches a moved path.
+Also with `--layout`, a document of a mixed root becomes the top file of the root when its file stem is in this table. The stem is lowercase, and `_` is read as `-`:
+
+| File stem | Top file |
+| --- | --- |
+| `roadmap` | `roadmap.md` |
+| `product-overview`, `overview` | `product.md` |
+| `open-questions`, `questions` | `questions.md` |
+| `glossary`, `terms` | `terms.md` |
+| `architecture`, `system` | `system.md` |
+
+A document qualifies only if all these are true:
+
+- Its 0.5 type is `note`, `reference`, or a `change` that is not `done`. A `change` named `roadmap` becomes the top file, not an intent.
+- It has no requirement: no item with a legacy key, and no item with a slug key and a BCP 14 word.
+- It is directly in the root, or directly in `notes/`, `reference/` or `changes/`.
+- Its size is not above the hard budget of the type of the top file. A `note` or a `reference` has no hard budget, and the types `product`, `system`, `terms`, `roadmap` and `questions` have one. A document over it would give SD702.
+
+The moved file has no `type` line, no `status` line and no `was-type` line, because its place gives the type. Its old id is an alias, the key `types` (if the project has it) gets the type, and the graph gets the layer `foundation` or `pending`. If 2 documents want the same top file, or the top file exists, or the id of the top file is the id or an alias of another document (also in another root), or the id of the document names more than one document already, or a document is over the budget, that document is no top file. The report has one `kept` line that names the paths, and each such document follows the other rules of `upgrade`: a change moves to the intent layer, and `--layout` renames its folder. The upgrade does not stop. A 0.6 project gets no move to a top file, because SD503 forbids a move of a document in the pull request of the pin. For a 0.6 project, see [After the upgrade: top files and areas](guides/upgrade-0.5.md#after-the-upgrade-top-files-and-areas).
+
+`--areas <file>` moves the documents that the file maps. The file has one table, `[areas]`, and each entry is `"<id of the document in the 0.5 tree>" = "<area>"`. A mapped document goes to `<root>/<folder of the requirements layer>/<area>/<slug>.md` in its own root, with its old id as an alias. The plan adds each area to the key `areas`, sorted, and writes the key if the file has none. An unknown id, a document that is not a `requirements` document in 0.6, an area that is not one folder name (letters, digits, `-` and `_`), a target that exists and 2 documents with one target stop the plan (exit code 1), and nothing is written. A file that does not parse, that has no table `[areas]` or that has a value that is not a string is exit code 3. `--areas` without `--layout` is exit code 2. A 0.6 project with `--areas` is exit code 2: `` `--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own ``.
+
+After the moves, `upgrade` removes each folder that a move left empty, from the deepest folder to the highest. A folder with any file stays, also an ignored file, and the root folder of the document stays. Git does not track folders, so the output does not list them. `--dry-run` removes no folder.
+
+The plan compares the paths of a target in ASCII lowercase, because some file systems fold the case of a name (macOS, Windows). Thus `docs/Roadmap.md` and `docs/roadmap.md` are one target on each file system: a top file that exists under another case keeps the document, and 2 files with targets that differ only in case are 2 files with one target.
+
+A stop of step 5 is exit code 1, and the message names each path. These are the causes: a slug that is not valid, 2 moves with one target, a target that exists, a target in another root, an `exclude` glob that matches a moved path, and each cause of `--areas` above.
 
 A configuration with no `[harness]` table, or with the level `none`, gets no harness file. `upgrade` writes the 0.6 adapters, as `init` does. It changes a document body only for the link destinations of a move. It never renames the file stem of a decision, so `legacy-ids` patterns still resolve. The one change of a stem is the move of a change into `intent/<slug>/intent.md`.
 
@@ -805,7 +879,7 @@ The proof reuses the preservation check of `mv`. It checks these items:
 - Each id, alias, legacy id, section anchor and requirement key of the old tree resolves to the same object in the new tree.
 - The hash of each requirement and each section is the same. The locked hash of each decision is the same too.
 - Each link of a document goes to the same file as before.
-- Each document has the 0.6 type that the mapping gives.
+- Each document has the 0.6 type that the mapping gives. A document that became a top file has the type of the top file.
 - The new configuration parses, and the layer graph has no cycle.
 - No error of the rule groups `references` (SD101, SD102, SD104, SD106) and `ids` (SD201 to SD204) is new.
 
@@ -824,13 +898,14 @@ The report lists these items:
 - each `done` or `rejected` change that no document references, as a proposal to delete;
 - each decision with no `Status` section;
 - each locked decision that cites a migrated change, because `finish` does not stop on a reference in locked text;
-- each kept harness file, and each ended role with its model;
+- each kept harness file, each `kept` line of a top file, and each ended role with its model;
 - the first 5 links of each kind that `upgrade` did not rewrite (see the limits below);
-- the table `[spec-dna-sha256]`, if `--pin-file` added it, and each warning of the harness configuration;
-- the changes of behavior in the list below;
+- each edit of `spec-dna.toml` beyond the pin (the `types` list and the `pending` layer of a 0.6 project);
+- the table `[spec-dna-sha256]`, if `--pin-file` added it, each warning of the harness configuration and each hand edit of `spec-dna.toml` that the plan cannot make;
+- the changes of behavior in the list below, for a project of 0.5 or earlier only;
 - the count of each error code of `check --all` on the new tree, without SD506.
 
-`upgrade` reports these changes of behavior, and the CHANGELOG records them:
+For a project of 0.5 or earlier, `upgrade` reports these changes of behavior, and the CHANGELOG records them. The report of a 0.6 project does not list them. The field `behavior` of `--json` is the same for each source:
 
 - A former `note` is now `research`, with `keep = "forever"`. SD202 allows the deletion of a document that has `was-type: note` or `was-type: change`, as 0.5 did. This is the only exemption in a `forever` layer.
 - `context` listed incidents and notes. It now counts them in one line.
@@ -845,7 +920,7 @@ With `--json`, the output is one object with these fields:
 | `version`, `from`, `to`, `dry_run` | The version of the binary, the old pin, the new pin and a flag |
 | `files` | One entry for each file: `path`, `action` (`write`, `move`, `remove` or `keep`), `note` and `diff`. A `move` entry also has `from`, the old path |
 | `proof` | `ok`, `ids`, `requirements`, `sections`, `types` and `failures` |
-| `report` | `proposals`, `no_status`, `locked_cites` (`decision` and `change`), `kept`, `ended_roles` (`role` and `model`), `behavior`, `errors` (`code` and `count`), `sums_added`, `outside_links`, `folder_links` and `warnings` |
+| `report` | `proposals`, `no_status`, `locked_cites` (`decision` and `change`), `kept`, `ended_roles` (`role` and `model`), `behavior`, `errors` (`code` and `count`), `sums_added`, `outside_links`, `folder_links`, `warnings` and `edits` (the edits of a 0.6 `spec-dna.toml` beyond the pin, as lines of text) |
 
 `outside_links` and `folder_links` are counts. A failed proof gives the object on stdout and exit code 1. A second run gives `files: []`.
 
@@ -853,8 +928,8 @@ With `--json`, the output is one object with these fields:
 | --- | --- |
 | 0 | `upgrade` wrote the changes, or nothing needed a change |
 | 1 | The tree is not clean, or the repository has no commit. A stop of a move (see step 5). A symbolic link, or a file in the place of a folder, in a path that `upgrade` writes. A path that `upgrade` writes and git ignores. A file that is a document and also an instruction file or a harness file. The proof failed |
-| 2 | A usage error |
-| 3 | No git repository or no `spec-dna.toml`. A pin before 0.4.0 or after the binary. A file that neither reader accepts. A form that `upgrade` cannot edit (a hand edit). A file that is not UTF-8 and needs an edit. `[spec-dna-sha256]` with no valid `--pin-file`, or a bad `--pin-file` |
+| 2 | A usage error, also `--areas` without `--layout` and `--areas` for a 0.6 project |
+| 3 | No git repository or no `spec-dna.toml`. A pin before 0.4.0 or after the binary. A file that neither reader accepts. A form that `upgrade` cannot edit (a hand edit). A file that is not UTF-8 and needs an edit. `[spec-dna-sha256]` with no valid `--pin-file`, or a bad `--pin-file` or `--areas` file |
 | 4 | A git error, or a write that failed |
 
 A write that fails prints "to restore the tree, run `git reset --hard` and `git clean -fd`". To undo an upgrade before the commit, run these 2 commands. After the merge, a revert needs 2 pull requests, because SD503 of the old binary rejects a configuration and documents together.

@@ -74,7 +74,7 @@ Do not set `status` to `approved`. A person approves the plan in a pull request.
 
 const REVIEW_STEPS: &str = r"You review the diff of a change against its spec and its plan. Do not edit files.
 
-1. Find the base with `git merge-base HEAD origin/HEAD`. If git cannot find it, ask the person for the base. Read the diff with `git diff <base>`.
+1. Find the base with `git merge-base HEAD origin/HEAD`, or use the branch of `[change] base` in spec-dna.toml. If git cannot find it, ask the person for the base. Read the diff with `git diff <base>`.
 2. Find the change in the diff. Its folder has `intent.md`. If the folder is in the tree, run `spec-dna status` for its stage, and read `spec.md` and `plan.md` with `spec-dna show <id>`. The ids are `intent/<slug>/spec` and `intent/<slug>/plan`. A routine change has no `spec.md`.
 3. In a `finish` pull request, the folder is deleted. Read `spec.md` and `plan.md` as deleted text in the diff.
 4. Run `spec-dna check`. Do not report its findings.

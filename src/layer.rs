@@ -653,7 +653,7 @@ const PENDING: LayerDef = LayerDef {
     types: &[DocType::Roadmap, DocType::Questions],
     files: &["roadmap.md", "questions.md"],
     moves_to: &["intent", "decisions"],
-    linked_from: &["intent"],
+    linked_from: &["intent", "requirements", "decisions"],
     context: ContextMode::OnRequest,
     max_docs: Some(2),
     ..BASE

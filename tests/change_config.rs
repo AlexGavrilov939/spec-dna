@@ -121,6 +121,43 @@ fn high_risk_layers_name_layers_of_the_graph() {
 }
 
 #[test]
+fn base_must_be_a_branch_name() {
+    // A good name of a local branch.
+    for ok in ["main", "master", "release/1.0", "feat-x", "v1.2"] {
+        accepts(&table(&format!("base = \"{ok}\"")));
+    }
+    // A bad name is exit code 3. The message has the key path and the reason.
+    // The reasons are text that only the check of the name prints.
+    for (bad, why) in [
+        ("", "is empty"),
+        ("a b", "has a space"),
+        ("a..b", "has `..`"),
+        ("a~b", "has the character `~`"),
+        ("a^b", "has the character `^`"),
+        ("a:b", "has the character `:`"),
+        ("a?b", "has the character `?`"),
+        ("a*b", "has the character `*`"),
+        ("a[b", "has the character `[`"),
+        ("a\\\\b", "has the character `\\`"),
+        ("-main", "starts with `-` or `/`"),
+        ("/main", "starts with `-` or `/`"),
+        ("main/", "ends with `/` or `.lock`"),
+        ("main.lock", "ends with `/` or `.lock`"),
+    ] {
+        rejects(
+            &table(&format!("base = \"{bad}\"")),
+            &["`change.base`", why, "name of a local branch"],
+        );
+    }
+    for bad in ["1", "true", "[\"main\"]"] {
+        rejects(
+            &table(&format!("base = {bad}")),
+            &["`change.base` must be a string"],
+        );
+    }
+}
+
+#[test]
 fn an_invented_key_is_unknown_and_policy_stays_required() {
     rejects(&table("invented = 1"), &["unknown key `change.invented`"]);
     rejects(
@@ -172,7 +209,7 @@ fn change_base_is_null_without_origin_head_and_prints_the_note() {
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(
         err.contains(
-            "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>"
+            "no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base"
         ),
         "{err}"
     );

@@ -85,7 +85,7 @@ With --reconfigure, it asks the questions again.",
     ),
     (
         "upgrade",
-        "upgrade [--dry-run] [--layout] [--pin-file <file>]",
+        "upgrade [--dry-run] [--layout [--areas <file>]] [--pin-file <file>]",
         "Moves a project that pins 0.4.0 or later to the version of this binary. It
 reads the committed tree (HEAD), builds the whole plan in memory, proves that
 each old id, alias, requirement and section still resolves to the same text,
@@ -93,7 +93,13 @@ and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the
 type and the status in the front matter, and the adapter and harness files. It
 moves each proposed, accepted or rejected change to intent/<slug>/intent.md
 with git mv, and keeps its old id as an alias. With --layout, it also moves
-the folders of the other 0.5 namespaces of a mixed root. --pin-file gives the
+the folders of the other 0.5 namespaces of a mixed root, and it moves a note,
+a reference or a change named roadmap, overview, questions, glossary or
+architecture (and their usual synonyms) to the top file of its root. With
+--layout --areas <file>, each document that the TOML table [areas] of the file
+maps (id = \"area\") moves to requirements/<area>/ with its old id as an alias.
+The top files and --areas need a project of 0.5; a project of 0.6 gets exit
+code 2 for --areas. The file of --areas stays outside the repository. --pin-file gives the
 spec-dna-pin.toml of the release, which a project with [spec-dna-sha256]
 needs. It refuses a tree that is not clean (also with --dry-run), and it stops
 with no write if the proof fails. --dry-run prints the diff of each file and
@@ -119,7 +125,8 @@ git index (the tree that the next commit records) in place of the working
 tree. Untracked and unstaged files do not count. The hook that `init`
 writes uses it. With a [change] policy, the change checks (SD905, SD910,
 SD913, SD917, SD921) compare with the merge base of --base (default:
-origin/HEAD) and HEAD, and they print a note if there is none. --json
+origin/HEAD, then [change] base) and HEAD, and they print a note if there
+is none. --json
 lists all diagnostics.",
     ),
     (
@@ -159,9 +166,14 @@ forever or until-finished, and --context is always or on-request. With
 --moved-from, the new layer joins the moves-to list of each named layer, and
 the file keeps every comment. It stops with exit code 2 and does not change
 the file for a cycle, a name that exists, a type that another layer has, a
-layer that the graph does not have, and a bad value. If the file has no
-[layers] table, it writes the default graph first. Commit spec-dna.toml as a
-change of its own.
+layer that the graph does not have, a types list on many lines that --types
+must grow, and a bad value. If the file has no
+[layers] table, it writes the default graph first. If the file has a types
+list, --types also appends each type that the list lacks, and the output says
+so. It ends with up to 3 lines that start with next: and give one action each:
+commit spec-dna.toml as a change of its own, run init when the agent skill
+lists other types, and write the first document with new. With --json, the
+fields types_added and next hold the same.
 `list` prints each layer: its level, its selection, its edges, its limits and
 the number of documents that each rule put in it. With --json, it also lists
 the rule of each document.",
@@ -204,12 +216,12 @@ spec), an open concern or question, a decision that is not accepted, a delta
 line that does not match the tree (SD914), a delta that differs from the
 approved delta of the base tree, an interface that the diff does not change,
 a requirement with no evidence (SD916), or a new error. The base is the merge
-base of --base (default: origin/HEAD) and HEAD. An intent with the status
-closed runs the first two steps and deletes the folder. The folder must be
-tracked and clean. --dry-run prints the diff of each file and `remove <path>`
-for each deleted file, and writes nothing. Without it, the command writes the
-files, deletes the folder, and stages the paths with `git add`. It makes no
-commit. It is the only command that deletes documents. Exit codes: 1 a stop,
+base of --base (default: origin/HEAD, then [change] base) and HEAD. An intent
+with the status closed runs the first two steps and deletes the folder. The
+folder must be tracked and clean. --dry-run prints the diff of each file and
+`remove <path>` for each deleted file, and writes nothing. Without it, the
+command writes the files, deletes the folder, and stages the paths with
+`git add`. It makes no commit. It is the only command that deletes documents. Exit codes: 1 a stop,
 3 pin, base or configuration, 4 write error, 5 no folder.",
     ),
     (
@@ -220,12 +232,13 @@ comes from the files of the folder, their statuses, the diff against the
 base and the evidence of the requirements: plan, design, build, test,
 deploy or closed. Each line says done ([x]) or open ([ ]). The last line
 gives the edit or the command that ends the stage. In the build stage, it
-names the next open task of the plan. Each line has the name of the skill for
-its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
+names the next open task of the plan. A routine change whose plan has one
+Files item that starts with none needs no changed file: the build stage ends
+when each task is done. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
 verify or finish. The skills come in 0.7.0, and the names are fixed. The
 output has at most 12 lines. The base is the merge base of --base (default:
-origin/HEAD) and HEAD. Without a base, the stage stops at build, and the
-output has a note. With the policy none, it says that the change process is
+origin/HEAD, then [change] base) and HEAD. Without a base, the stage stops at
+build, and the output has a note. With the policy none, it says that the change process is
 off. Exit codes: 2 usage, 3 base or configuration, 4 git, 5 no folder.",
     ),
     (
@@ -238,8 +251,8 @@ number of started changes and the limit max-started, and the open follow-ups
 (`- [ ]` in Follow-ups) of the incidents. With --group, it lists only the
 changes that have an area of the group, in the areas of the intent or in the
 folder of a delta target; an unknown group is a usage error. The base is the
-merge base of --base (default: origin/HEAD) and HEAD, and a note says when
-there is none. With the policy none, it says that the change process is off
+merge base of --base (default: origin/HEAD, then [change] base) and HEAD,
+and a note says when there is none. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage or unknown group, 3 base or configuration,
 4 git.",
     ),
@@ -253,8 +266,9 @@ finished, and any other status is closed. For each change it prints the date,
 the result, the slug, the class, the counts of the delta lines (add, change,
 remove) of its spec, the commit and the title. A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
-default branch, has no entry. A move of the folder out of the intent folder
-reads as a deletion. --since limits the walk to the commits after <rev>. In a
+default branch, has no entry. A move of intent.md out of the intent folder
+that keeps its id as an alias (spec-dna mv) does not end a change. A plain
+git mv, which writes no alias, still reads as a deletion. --since limits the walk to the commits after <rev>. In a
 shallow clone, a note says that older changes can be missing, and --json has
 shallow: true. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
@@ -267,7 +281,9 @@ not a commit, 4 git.",
 playbook names. It reads git and the committed files only: the plan and
 design times, the survival rate of the intents, the spec commits after the
 first plan commit, the time from plan approval to the merged pull request,
-and how often the merged diff stays inside the plan (SD913). An indicator
+and how often the merged diff stays inside the plan (SD913). A move of
+intent.md out of the intent folder that keeps its id as an alias (spec-dna
+mv) does not end a life: stats drops that change. An indicator
 that git cannot give prints n/a with the reason, and --json has value null
 and a reason. With --group, it counts only the changes that have an area of
 the group. An unknown group is a usage error, and so is stats without --sdlc.
@@ -375,6 +391,7 @@ struct Args {
     dry_run: bool,
     layout: bool,
     pin_file: Option<String>,
+    areas: Option<String>,
     ty: Option<String>,
     stub: bool,
     replace: bool,
@@ -452,6 +469,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         dry_run: false,
         layout: false,
         pin_file: None,
+        areas: None,
         ty: None,
         stub: false,
         replace: false,
@@ -493,6 +511,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--dry-run" => a.dry_run = true,
             "--layout" => a.layout = true,
             "--pin-file" => a.pin_file = Some(value("--pin-file")?),
+            "--areas" => a.areas = Some(value("--areas")?),
             "--stub" => a.stub = true,
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
@@ -653,7 +672,11 @@ fn run(a: Args) -> Result<u8, Fatal> {
         return Err(Fatal::Usage("--since is an option of `log`".into()));
     }
     if a.command != "upgrade" {
-        for (given, name) in [(a.layout, "--layout"), (a.pin_file.is_some(), "--pin-file")] {
+        for (given, name) in [
+            (a.layout, "--layout"),
+            (a.pin_file.is_some(), "--pin-file"),
+            (a.areas.is_some(), "--areas"),
+        ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `upgrade`")));
             }
@@ -757,6 +780,9 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 fn upgrade(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
+    if a.areas.is_some() && !a.layout {
+        return Err(Fatal::Usage("--areas needs --layout".into()));
+    }
     upgrade::run(
         repo,
         &upgrade::RunOpts {
@@ -764,6 +790,7 @@ fn upgrade(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             json: a.json,
             layout: a.layout,
             pin_file: a.pin_file.clone(),
+            areas: a.areas.clone(),
         },
     )
 }
@@ -1278,6 +1305,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     );
     let (new_errors, new_warnings) = (count(Severity::Error, true), count(Severity::Warning, true));
     let failed = if a.all { errors > 0 } else { new_errors > 0 };
+    // Not diagnostics: no code, no severity, no effect on the exit code.
+    let locked = check::locked_links(&cfg, head);
     let mut order: Vec<usize> = (0..outcome.head.len()).collect();
     order.sort_by(|&x, &y| outcome.head[x].cmp(&outcome.head[y]));
     if a.json {
@@ -1308,6 +1337,14 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .num("requirements", d.reqs.len())
                 .end()
         });
+        let locked_json = locked.iter().map(|l| {
+            Obj::new()
+                .str("path", &l.path)
+                .num("line", l.line)
+                .str("target", &l.target)
+                .str("pointer", &l.pointer)
+                .end()
+        });
         let mut obj = Obj::new()
             .str("version", VERSION)
             .str("mode", if a.all { "all" } else { "base" })
@@ -1322,6 +1359,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             obj.bool("ok", !failed)
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
+                .raw("locked_links", &json::array(locked_json))
                 .raw("documents", &json::array(docs))
                 .end()
         );
@@ -1333,6 +1371,11 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .collect();
         for line in human_lines(&shown, a.lint) {
             println!("{line}");
+        }
+        if a.all {
+            for l in &locked {
+                println!("{}", l.line_text());
+            }
         }
         let n = |count: usize, what: &str| {
             format!("{count} {what}{}", if count == 1 { "" } else { "s" })
@@ -1353,7 +1396,10 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             && change_base.is_none()
             && life_note.is_none()
         {
-            eprintln!("note: {}", lifecycle::NO_BASE_NOTE);
+            eprintln!(
+                "note: {}",
+                lifecycle::no_base_note(&cfg, &repo.git, a.base.as_deref())
+            );
         }
     }
     if let Some(n) = &life_note {
@@ -1995,12 +2041,45 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     })?;
     let cfg = Repo::parse_config(&text)?;
     warn_pin(&cfg);
-    let out = layer::add_layer(&text, &cfg.layers, cfg.layers_declared, new, &moved_from)
-        .map_err(Fatal::Usage)?;
+    let out = layer::add_layer(
+        &text,
+        &cfg.layers,
+        cfg.layers_declared,
+        new.clone(),
+        &moved_from,
+    )
+    .map_err(Fatal::Usage)?;
+    // A `types` list that the file has limits the types of the project, so
+    // the types of the new layer join it. A file with no list allows each
+    // type already. The edit keeps each comment.
+    let (out, types_added) =
+        add_types_to_list(out, &cfg.types, &new.types).map_err(Fatal::Usage)?;
     // `add_layer` read the new text: this cannot fail.
     let read = Repo::parse_config(&out)?;
     let level = read.layers.index(name).map_or(0, |i| read.layers.level(i));
     mv::write(&path, &out)?;
+    let mut next = Vec::new();
+    next.push(format!(
+        "commit {} as a change of its own (SD503)",
+        config::FILE_NAME
+    ));
+    if adapters::project_types(&cfg.layers, &cfg.types)
+        != adapters::project_types(&read.layers, &read.types)
+        && repo.root.join(adapters::SKILL).is_file()
+    {
+        next.push(
+            "run spec-dna init to update the agent skill, which lists the types of the project"
+                .to_string(),
+        );
+    }
+    if let Some(first) = new.types.first() {
+        // A layer with top files holds types that take no id.
+        let id = if new.dir().is_some() { " <id>" } else { "" };
+        next.push(format!(
+            "run spec-dna new {}{id} to write the first document of the layer",
+            first.name()
+        ));
+    }
     if a.json {
         println!(
             "{}",
@@ -2010,6 +2089,8 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .str("path", config::FILE_NAME)
                 .bool("wrote_implied_graph", !cfg.layers_declared)
                 .strs("moved_from", &moved_from)
+                .strs("types_added", &types_added)
+                .strs("next", &next)
                 .end()
         );
     } else {
@@ -2026,12 +2107,58 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         for from in &moved_from {
             println!("`{from}` now moves to `{name}`");
         }
-        println!(
-            "Commit {} as a change of its own: `check` reports a configuration change with other files (SD503).",
-            config::FILE_NAME
-        );
+        if !types_added.is_empty() {
+            println!("added the types {} to `types`", ticked(&types_added));
+        }
+        for line in &next {
+            println!("next: {line}");
+        }
     }
     Ok(0)
+}
+
+/// Appends the types of `new` that `list` lacks to the top-level key `types`
+/// of the configuration text. It gives the new text and the names that it
+/// added. An empty `list` means that the file has no `types` key or an empty
+/// one: each type is valid, so the text stays. A list that the edit cannot
+/// grow in place, such as a list on many lines, is a refusal: the caller
+/// writes nothing.
+fn add_types_to_list(
+    text: String,
+    list: &[model::DocType],
+    new: &[model::DocType],
+) -> Result<(String, Vec<String>), String> {
+    let missing: Vec<String> = new
+        .iter()
+        .filter(|t| !list.contains(t))
+        .map(|t| t.name().to_string())
+        .collect();
+    if list.is_empty() || missing.is_empty() {
+        return Ok((text, Vec::new()));
+    }
+    let all: Vec<toml::Value> = list
+        .iter()
+        .map(|t| t.name().to_string())
+        .chain(missing.iter().cloned())
+        .map(toml::Value::String)
+        .collect();
+    match config_text::set_value(&text, &[config_text::k("types")], &toml::Value::Array(all)) {
+        Ok(t) => Ok((t, missing)),
+        Err(_) => Err(format!(
+            "`types` in {} is a list that the command cannot grow in place (a list on many lines, for example); add {} to it by hand, then run `layer add` again",
+            config::FILE_NAME,
+            ticked(&missing)
+        )),
+    }
+}
+
+/// The names in backticks, separated by commas.
+fn ticked(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn layer_list(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
@@ -2584,7 +2711,9 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         return Err(pin_mismatch(&cfg));
     }
     // The base needs no policy: `finish` stops whatever the policy is.
-    let base_rev = lifecycle::merge_base_of(&repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let base_rev =
+        lifecycle::merge_base_of(&repo.git, a.base.as_deref(), cfg.change_base.as_deref())
+            .map_err(Fatal::Config)?;
     let folder = lifecycle::intent_dirs(&cfg)
         .iter()
         .map(|d| format!("{d}/{slug}"))
@@ -2684,7 +2813,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         Err(finish::Failure::NoBase) => {
             return Err(Fatal::Config(format!(
                 "the change `{slug}` is `accepted`, and `finish` compares its delta with the base tree; {}",
-                lifecycle::NO_BASE_NOTE
+                lifecycle::no_base_note(&cfg, &repo.git, a.base.as_deref())
             )));
         }
         Err(finish::Failure::Io(m)) => return Err(Fatal::Io(m)),
@@ -2783,6 +2912,9 @@ fn report_move(m: &mv::Moved, json: bool) {
         if let Some(st) = &m.stub {
             o = o.str("stub", st);
         }
+        if m.kind == "document" {
+            o = o.opt_str("alias_dropped", m.alias_dropped.as_deref());
+        }
         if let Some(s) = &m.split {
             let (hashes, ids, decisions) = s.preserved;
             o = o
@@ -2856,10 +2988,19 @@ fn report_move(m: &mv::Moved, json: bool) {
             "moved {} {} -> {} (no alias: the key is new in this change)",
             m.kind, m.from, m.to
         ),
-        _ => println!(
-            "moved {} {} -> {} (alias kept: {})",
-            m.kind, m.from, m.to, m.alias
-        ),
+        _ => {
+            let dropped = m
+                .alias_dropped
+                .as_ref()
+                .map_or(String::new(), |a| format!(" (alias dropped: {a})"));
+            println!(
+                "moved {} {} -> {} (alias kept: {}){dropped}",
+                m.kind, m.from, m.to, m.alias
+            );
+        }
+    }
+    for line in &m.changes {
+        println!("{line}");
     }
     if let Some(s) = &m.split {
         if !s.section_aliases.is_empty() {
@@ -2934,4 +3075,65 @@ fn transcript(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     transcript::read_files(&files, a.format.as_deref(), &mut analysis).map_err(Fatal::Usage)?;
     print!("{}", analysis.report(&expect, a.json));
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The part of `docs/diagnostics.md` under the heading "Files that SD503
+    /// counts", up to the next heading.
+    fn sd503_section() -> &'static str {
+        let doc = include_str!("../docs/diagnostics.md");
+        let start = doc
+            .find("### Files that SD503 counts")
+            .expect("the section `Files that SD503 counts` is in docs/diagnostics.md");
+        let rest = &doc[start + 4..];
+        let end = rest.find("\n#").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    #[test]
+    fn the_sd503_section_names_each_path_that_does_not_count() {
+        let section = sd503_section();
+        let mut paths: Vec<String> = vec![config::FILE_NAME.to_string()];
+        paths.extend(adapters::PATHS.iter().map(|p| p.to_string()));
+        paths.extend(init::HOOK_FILES.iter().map(|p| p.to_string()));
+        paths.extend(harness::OLD_AGENT_PATHS.iter().map(|p| p.to_string()));
+        paths.extend([
+            harness::SETTINGS.to_string(),
+            harness::TEAM_PAGE.to_string(),
+            harness::REVIEW.to_string(),
+        ]);
+        // The agent files and the stage skills, with every role and skill on.
+        let h = harness::Harness::new(harness::Level::Full);
+        paths.extend(harness::generated_files(&h).into_iter().map(|g| g.path));
+        paths.extend(harness::Skill::ALL.iter().map(|s| s.path()));
+        // The starter files of the evals, with the folder `<dir>` of `[evals]`.
+        paths.extend(evals::skeleton_paths("<dir>"));
+        for p in &paths {
+            assert!(
+                harness::is_output_path(p)
+                    || adapters::PATHS.contains(&p.as_str())
+                    || init::HOOK_FILES.contains(&p.as_str())
+                    || p == config::FILE_NAME
+                    || p.starts_with("<dir>")
+                    || p.ends_with("agent-evals.yml"),
+                "`{p}` does not skip SD503 in the code"
+            );
+            assert!(
+                section.contains(&format!("`{p}`")),
+                "the section lacks `{p}`"
+            );
+        }
+        // The 5 agent files of 0.6 are in the list, so a new one fails here.
+        assert!(
+            paths
+                .iter()
+                .filter(|p| p.starts_with(harness::AGENTS_DIR))
+                .count()
+                >= 8,
+            "{paths:?}"
+        );
+    }
 }

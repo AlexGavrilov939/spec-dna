@@ -22,7 +22,7 @@ max-chars = 30000
 types = ["roadmap", "questions"]
 files = ["roadmap.md", "questions.md"]
 moves-to = ["intent"]
-linked-from = ["intent"]
+linked-from = ["intent", "requirements", "decisions"]
 context = "on-request"
 max-docs = 2
 
@@ -387,7 +387,7 @@ types = ["decision"]
     // The output tells the user to commit the file alone.
     assert!(out.contains("added layer `interfaces` (level 0)"), "{out}");
     assert!(
-        out.contains("Commit spec-dna.toml as a change of its own"),
+        out.contains("next: commit spec-dna.toml as a change of its own (SD503)"),
         "{out}"
     );
     assert!(out.contains("SD503"), "{out}");
@@ -559,6 +559,98 @@ fn a_custom_layer_by_paths_places_documents_by_their_path() {
 }
 
 #[test]
+fn layer_add_appends_its_types_to_the_types_list_and_prints_the_next_steps() {
+    // `types` is a key of the root table: it comes before the tables. The
+    // project has the agent skill, which lists the types of the project.
+    let body = "# The types of the project.\ntypes = [\"requirements\", \"decision\"]  # keep me\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
+    let r = Repo::raw(body);
+    let skill = r.dir.join(".claude/skills/spec-dna/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "skill\n").unwrap();
+    let (code, out, err) = r.run(&[
+        "layer",
+        "add",
+        "research",
+        "--types",
+        "research",
+        "--moves-to",
+        "decisions",
+        "--linked-from",
+        "decisions",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.text();
+    assert!(
+        t.contains("# The types of the project.\ntypes = [\"requirements\", \"decision\", \"research\"]  # keep me\n"),
+        "{t}"
+    );
+    assert!(
+        out.contains("added the types `research` to `types`\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("next: commit spec-dna.toml as a change of its own (SD503)\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("next: run spec-dna init to update the agent skill, which lists the types of the project\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(
+            "next: run spec-dna new research <id> to write the first document of the layer\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("next: ").count(), 3, "{out}");
+    // The type is now a type of the project.
+    let (code, out, err) = r.run(&["new", "research", "r"]);
+    assert_eq!(code, 0, "{out}{err}");
+
+    // With no skill file, the second step is absent. A type that the list
+    // has already is not added twice. `--json` has both fields.
+    let r = Repo::raw(body);
+    let (code, out, err) = r.run(&[
+        "layer",
+        "add",
+        "notes",
+        "--types",
+        "decision,research",
+        "--json",
+    ]);
+    // `decision` has a layer already, so the command stops.
+    assert_eq!(code, 2, "{out}{err}");
+    let (code, out, err) = r.run(&["layer", "add", "notes", "--types", "research", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"types_added\":[\"research\"],\"next\":[\"commit spec-dna.toml as a change of its own (SD503)\",\"run spec-dna new research <id> to write the first document of the layer\"]"),
+        "{out}"
+    );
+
+    // A list on many lines cannot grow in place: exit code 2, and the file
+    // keeps its bytes.
+    let r = Repo::raw(
+        "types = [\n  \"requirements\",\n  \"decision\",\n]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    let head = r.config();
+    let (code, out, err) = r.run(&["layer", "add", "notes", "--types", "research"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("add `research` to it by hand"), "{err}");
+    assert_eq!(r.config(), head);
+
+    // A file with no `types` key stays as it is: each type is valid.
+    let r = Repo::with(SMALL);
+    let (code, out, err) = r.run(&["layer", "add", "interfaces", "--types", "interface"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.text().contains("types = [\"interface\"]\n\n[layers"));
+    assert!(!out.contains("added the types"), "{out}");
+    assert!(
+        out.contains("next: commit spec-dna.toml as a change of its own (SD503)\n"),
+        "{out}"
+    );
+}
+
+#[test]
 fn layer_add_json_and_the_help() {
     let r = Repo::with(SMALL);
     let (code, out, err) = r.run(&[
@@ -574,7 +666,7 @@ fn layer_add_json_and_the_help() {
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(
         out.trim(),
-        "{\"layer\":\"interfaces\",\"level\":0,\"path\":\"spec-dna.toml\",\"wrote_implied_graph\":false,\"moved_from\":[\"intent\"]}"
+        "{\"layer\":\"interfaces\",\"level\":0,\"path\":\"spec-dna.toml\",\"wrote_implied_graph\":false,\"moved_from\":[\"intent\"],\"types_added\":[],\"next\":[\"commit spec-dna.toml as a change of its own (SD503)\",\"run spec-dna new interface <id> to write the first document of the layer\"]}"
     );
     // `layer` without a command, and an unknown command, are usage errors.
     for args in [vec!["layer"], vec!["layer", "remove", "x"]] {

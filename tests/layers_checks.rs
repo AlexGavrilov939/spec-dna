@@ -249,6 +249,49 @@ fn sd901_a_default_edge_allows_a_requirement_to_link_research() {
     assert_eq!(severity(&out, "SD901"), None, "{out}");
 }
 
+/// The default graph, and the small graph that `init` writes. The small graph
+/// is not a file of this test, so the code of `init` gives it.
+fn graph_repos() -> Vec<(&'static str, Repo)> {
+    let default = Repo::new("standard", "", "", "");
+    let small = Repo::new("standard", "", "", "");
+    fs::remove_file(small.dir.join("spec-dna.toml")).unwrap();
+    let out = Command::new(BIN)
+        .args(["init", "--non-interactive"])
+        .current_dir(&small.dir)
+        .output()
+        .expect("binary runs");
+    assert!(out.status.success(), "{out:?}");
+    let config = fs::read_to_string(small.dir.join("spec-dna.toml")).unwrap();
+    assert!(config.contains("[layers.pending]"), "{config}");
+    vec![("default", default), ("small", small)]
+}
+
+#[test]
+fn requirements_and_decisions_can_link_the_pending_layer() {
+    // A requirement can name an open question, and a decision can name the
+    // roadmap. The `pending` layer lists both layers in `linked-from`.
+    for (graph, r) in graph_repos() {
+        r.write(
+            "docs/requirements/pump.md",
+            &req_doc("The controller SHALL stop the pump. See [the question](../questions.md)."),
+        );
+        r.write(
+            "docs/decisions/pump.md",
+            &doc(
+                "decision",
+                "proposed",
+                "",
+                "## Decision Outcome\n\nUse the pump. See [the plan](../roadmap.md).",
+            ),
+        );
+        r.write("docs/questions.md", "# Questions\n\nWhich pump?\n");
+        r.write("docs/roadmap.md", "# Roadmap\n\nThe pump comes next.\n");
+        let out = r.check();
+        assert_eq!(severity(&out, "SD901"), None, "{graph}: {out}");
+        assert_eq!(severity(&out, "SD101"), None, "{graph}: {out}");
+    }
+}
+
 #[test]
 fn sd901_two_layers_with_no_path_and_an_unresolved_target_give_nothing() {
     // `rules` and `requirements` have no edge between them.

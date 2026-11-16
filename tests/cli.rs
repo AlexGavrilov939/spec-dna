@@ -3506,9 +3506,7 @@ fn a_generated_index_replaces_a_hand_kept_list() {
     let index = r.read("incidents/README.md");
     assert!(index.contains("generated: spec-dna index h:"), "{index}");
     assert!(
-        index.contains(
-            "| [INC-1](INC-1.md) | Outage |  |\n| [INC-2](INC-2.md) | Stuck valve |  |\n"
-        ),
+        index.contains("| [INC-1](INC-1.md) | Outage | |\n| [INC-2](INC-2.md) | Stuck valve | |\n"),
         "{index}"
     );
     assert!(
@@ -3527,16 +3525,18 @@ fn a_generated_index_replaces_a_hand_kept_list() {
     assert!(out.contains("warning SD610 index-stale"), "{out}");
     let (code, out, err) = r.run(&["index", "incidents"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(r.read("incidents/README.md").contains(
-        "| [INC-2](INC-2.md) | Stuck valve |  |\n| [INC-10](INC-10.md) | Dry tank |  |\n"
-    ));
+    assert!(
+        r.read("incidents/README.md").contains(
+            "| [INC-2](INC-2.md) | Stuck valve | |\n| [INC-10](INC-10.md) | Dry tank | |\n"
+        )
+    );
     let (_, out, _) = r.run(&["check"]);
     assert!(!out.contains("SD610"), "{out}");
     // A hand edit of the rows makes it stale too.
     r.write(
         "incidents/README.md",
         &r.read("incidents/README.md")
-            .replace("| [INC-1](INC-1.md) | Outage |  |\n", ""),
+            .replace("| [INC-1](INC-1.md) | Outage | |\n", ""),
     );
     let (_, out, _) = r.run(&["check"]);
     assert!(out.contains("edited by hand"), "{out}");
@@ -4541,4 +4541,320 @@ fn the_answers_say_when_a_root_changed_and_when_text_is_left_to_the_user() {
         !shown.contains("lefthook, main (changed from none, none, main, writes nothing)"),
         "{shown}"
     );
+}
+
+/// A mixed root `docs` with the default graph and no `default-type`: the
+/// place of a document gives its type.
+fn place_project() -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n",
+    );
+    r
+}
+
+#[test]
+fn mv_to_the_path_of_its_own_alias_drops_the_alias() {
+    let r = place_project();
+    r.write(
+        "docs/old/pumps.md",
+        "---\ntype: requirements\nstatus: draft\naliases:\n  - requirements/pumps\n---\n# Pumps\n\n- **flow**: The pump SHALL move 5 liters in 1 minute.\n",
+    );
+    r.write("docs/old/other.md", "---\ntype: research\n---\n# Other\n");
+    r.commit("start");
+    // Another document with the alias, or a file at the path, keeps the stop.
+    let (code, _, err) = r.run(&["mv", "old/other", "requirements/pumps"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("already exists"), "{err}");
+    let (code, out, err) = r.run(&["mv", "old/pumps", "requirements/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("(alias dropped: requirements/pumps)"), "{out}");
+    let text = r.read("docs/requirements/pumps.md");
+    assert!(
+        text.starts_with("---\nstatus: draft\naliases:\n  - old/pumps\n---\n# Pumps\n"),
+        "{text}"
+    );
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn mv_json_names_the_dropped_alias() {
+    let r = place_project();
+    r.write(
+        "docs/old/pumps.md",
+        "---\ntype: requirements\nstatus: draft\naliases: [requirements/pumps, ADR-7]\n---\n# Pumps\n\n- **flow**: The pump SHALL move 5 liters in 1 minute.\n",
+    );
+    r.write("docs/old/valves.md", "---\ntype: research\n---\n# Valves\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "old/pumps", "requirements/pumps", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"alias_dropped\":\"requirements/pumps\""),
+        "{out}"
+    );
+    assert!(
+        r.read("docs/requirements/pumps.md")
+            .contains("aliases:\n  - ADR-7\n  - old/pumps\n")
+    );
+    let (code, out, err) = r.run(&["mv", "old/valves", "notes/valves", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"alias_dropped\":null"), "{out}");
+}
+
+#[test]
+fn mv_into_a_place_fits_the_type_and_the_status() {
+    let r = place_project();
+    r.write(
+        "docs/old/glossary.md",
+        "---\ntype: terms\nstatus: active\nowner: ops\n---\n# Glossary\n\nA pump moves water.\n",
+    );
+    r.write(
+        "docs/old/pumps.md",
+        "---\ntype: requirements\nstatus: active\n---\n# Pumps\n\n- **flow**: The pump SHALL move 5 liters in 1 minute.\n",
+    );
+    r.write(
+        "docs/old/plan-big.md",
+        "---\ntype: research\n---\n# Big plan\n\nA text.\n",
+    );
+    r.write(
+        "docs/intent/big/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Big\n\nThe plan.\n",
+    );
+    r.write(
+        "docs/requirements/x.md",
+        "---\nstatus: draft\n---\n# X\n\n- **x-key**: The pump SHALL stop in 1 second.\n",
+    );
+    r.commit("start");
+    // A top file: neither `type` nor `status` stays, and `owner` stays.
+    let (code, out, err) = r.run(&["mv", "old/glossary", "docs/terms.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/terms.md");
+    assert!(
+        !text.contains("type:") && !text.contains("status:"),
+        "{text}"
+    );
+    assert!(text.contains("owner: ops"), "{text}");
+    assert!(out.contains("status: active"), "the output names it: {out}");
+    // The folder of a layer: the status of the type stays, the type goes.
+    let (code, out, err) = r.run(&["mv", "old/pumps", "docs/requirements/pumps.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/requirements/pumps.md");
+    assert!(!text.contains("type:"), "{text}");
+    assert!(text.contains("status: active"), "{text}");
+    // An intent to a top file: the type changes, and the output names it.
+    let (code, out, err) = r.run(&["mv", "intent/big/intent", "docs/roadmap.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/roadmap.md");
+    assert!(
+        !text.contains("type:") && !text.contains("status:"),
+        "{text}"
+    );
+    assert!(text.contains("class: routine"), "{text}");
+    assert!(
+        out.contains("type: intent -> roadmap (the place gives the type)"),
+        "{out}"
+    );
+    assert!(out.contains("status: accepted"), "{out}");
+    // A document with requirements cannot go to a type that has none.
+    let before = r.read("docs/requirements/pumps.md");
+    let (code, out, err) = r.run(&["mv", "requirements/pumps", "docs/questions.md"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("holds no requirements") && err.contains("spec-dna mv requirements/pumps#"),
+        "{err}"
+    );
+    assert_eq!(r.read("docs/requirements/pumps.md"), before);
+    assert!(!r.dir.join("docs/questions.md").exists());
+    // A place with no type: the type of the old place becomes a line.
+    let (code, out, err) = r.run(&["mv", "requirements/x", "docs/notes/x.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read("docs/notes/x.md")
+            .starts_with("---\ntype: requirements\n"),
+        "{}",
+        r.read("docs/notes/x.md")
+    );
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn mv_writes_the_first_status_when_the_new_type_does_not_accept_the_old_one() {
+    let r = place_project();
+    r.write(
+        "docs/old/pumps.md",
+        "---\ntype: requirements\nstatus: deprecated\n---\n# Pumps\n\nA text.\n",
+    );
+    r.write(
+        "docs/old/lore.md",
+        "---\ntype: requirements\nstatus: active\n---\n# Lore\n\nA text.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "old/pumps", "docs/decisions/pumps.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/decisions/pumps.md");
+    assert!(text.contains("status: proposed"), "{text}");
+    assert!(!text.contains("type:"), "{text}");
+    assert!(
+        out.contains("type: requirements -> decision")
+            && out.contains("status: deprecated -> proposed"),
+        "{out}"
+    );
+    let (code, out, err) = r.run(&["mv", "old/lore", "docs/intent/lore/intent.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read("docs/intent/lore/intent.md")
+            .contains("status: draft"),
+        "{}",
+        r.read("docs/intent/lore/intent.md")
+    );
+}
+
+#[test]
+fn mv_keeps_the_type_line_in_a_root_of_one_type() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ntype = \"requirements\"\nstatus = \"active\"\n",
+    );
+    r.write(
+        "docs/a/pumps.md",
+        "---\ntype: requirements\nstatus: active\n---\n# Pumps\n\n- **flow**: The pump SHALL move 5 liters in 1 minute.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "a/pumps", "b/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/b/pumps.md");
+    assert!(
+        text.starts_with("---\ntype: requirements\nstatus: active\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn mv_removes_the_folder_that_it_leaves_empty() {
+    let r = place_project();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n[[roots]]\npath = \"other\"\ntype = \"research\"\n",
+    );
+    r.write(
+        "docs/old/deep/pumps.md",
+        "---\ntype: research\n---\n# Pumps\n",
+    );
+    r.write("docs/old/keep.md", "---\ntype: research\n---\n# Keep\n");
+    r.write("docs/busy/x.md", "---\ntype: research\n---\n# X\n");
+    r.write("docs/busy/scratch.tmp", "scratch\n");
+    r.write(".gitignore", "*.tmp\n");
+    r.write("other/only/y.md", "# Y\n");
+    r.commit("start");
+    // The folder of the only document goes, and so does its empty parent.
+    let (code, out, err) = r.run(&["mv", "old/deep/pumps", "notes/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join("docs/old/deep").exists());
+    assert!(
+        r.dir.join("docs/old/keep.md").exists(),
+        "a folder with a file stays"
+    );
+    // An ignored file keeps its folder.
+    let (code, out, err) = r.run(&["mv", "busy/x", "notes/x"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join("docs/busy/scratch.tmp").exists());
+    // The root folder stays, with the last document of the root gone.
+    let (code, out, err) = r.run(&["mv", "only/y", "docs/notes/y.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join("other/only").exists());
+    assert!(r.dir.join("other").is_dir(), "the root folder stays");
+    // `--stub` leaves the stub, so the folder stays.
+    let (code, out, err) = r.run(&["mv", "old/keep", "notes/keep", "--stub"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join("docs/old/keep.md").exists());
+}
+
+#[test]
+fn mv_keeps_the_type_of_an_accepted_decision() {
+    let r = place_project();
+    r.write(
+        "docs/old/use-x.md",
+        "---\ntype: decision\nstatus: accepted\n---\n# Use X\n\n## Decision Outcome\n\nUse X.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "old/use-x", "docs/rules/use-x.md"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("accepted decision"), "{err}");
+    assert!(r.dir.join("docs/old/use-x.md").exists());
+    let (code, out, err) = r.run(&["mv", "old/use-x", "docs/decisions/use-x.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn mv_keeps_a_status_word_that_the_status_map_of_the_new_root_accepts() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nstatus-map = { released = \"active\" }\n",
+    );
+    r.write(
+        "docs/old/pumps.md",
+        "---\ntype: requirements\nstatus: released\n---\n# Pumps\n\n- **flow**: The pump SHALL move 5 liters in 1 minute.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "old/pumps", "docs/requirements/pumps.md"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("status:"), "{out}");
+    let text = r.read("docs/requirements/pumps.md");
+    assert!(text.starts_with("---\nstatus: released\n"), "{text}");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn mv_adds_no_type_line_when_the_default_type_of_the_new_root_is_the_type() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"draft\"\n",
+    );
+    r.write(
+        "docs/a/pumps.md",
+        "# Pumps\n\n- **flow**: The pump SHALL move 5 liters in 1 minute.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "a/pumps", "b/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.read("docs/b/pumps.md").contains("type:"));
+    assert!(!out.contains("type:"), "{out}");
+}
+
+#[test]
+fn mv_removes_each_empty_folder_up_to_the_root() {
+    let r = place_project();
+    r.write("docs/a/b/c.md", "---\ntype: research\n---\n# C\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["mv", "a/b/c", "notes/c"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join("docs/a").exists(), "both levels go");
+    assert!(r.dir.join("docs").is_dir());
+}
+
+#[test]
+fn mv_stops_when_a_file_is_at_the_path_of_its_own_alias() {
+    let r = place_project();
+    r.write(
+        "docs/old/pumps.md",
+        "---\ntype: research\naliases:\n  - notes/pumps\n---\n# Pumps\n",
+    );
+    r.write(
+        "docs/notes/pumps.md",
+        "---\nmoved-to: somewhere\n---\n# Pumps\n",
+    );
+    r.commit("start");
+    let (code, _, err) = r.run(&["mv", "old/pumps", "notes/pumps"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("already exists"), "{err}");
+    assert!(r.dir.join("docs/old/pumps.md").exists());
 }

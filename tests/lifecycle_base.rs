@@ -849,7 +849,7 @@ fn with_no_base_the_note_is_printed_and_only_the_checks_of_one_tree_run() {
     }
     assert_eq!(code, 0, "{out}");
     assert!(
-        err.contains("note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>"),
+        err.contains("note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base"),
         "{err}"
     );
     let (_, out, _) = r.run(&["check", "--json"]);
@@ -915,4 +915,212 @@ fn the_policy_none_runs_none_of_the_codes() {
     assert!(!err.contains("no base for the change checks"), "{err}");
     let (_, out, _) = r.run(&["check", "--json"]);
     assert!(!out.contains("change_base"), "{out}");
+}
+
+// The key `[change] base`: the base of a repository with no remote (0.6.1)
+
+/// The note of a base that the file names and that does not exist.
+fn missing_branch_note(b: &str) -> String {
+    format!(
+        "no base for the change checks: no origin/HEAD, and the branch `{b}` of [change] base does not exist; pass --base <rev>"
+    )
+}
+
+/// A repository with no remote and no `origin/HEAD`. `main` has the accepted
+/// routine change `dose` and the plan of it. The branch `feature` has 1 more
+/// commit. `policy` is the change policy, and `key` is text for `[change]`.
+fn local_repo(policy: &str, key: &str) -> Repo {
+    let r = Repo::with_config(&config("standard", "gate = \"block\"\n").replace(
+        "policy = \"three-class\"\ngate = \"block\"\n",
+        &format!("policy = \"{policy}\"\ngate = \"block\"\n{key}"),
+    ));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("src/dose.py", "x = 1\n");
+    r.write(INTENT, &intent("accepted", "routine"));
+    r.write(PLAN, &plan("approved", &["src/dose.py"]));
+    r.commit("base");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("src/dose.py", "x = 2\n");
+    r.commit("work");
+    r
+}
+
+fn short_of(r: &Repo, rev: &str) -> String {
+    r.git_out(&["rev-parse", rev])[..12].to_string()
+}
+
+/// The base that `status` prints: 12 characters of a commit id, or `none`.
+fn status_base(r: &Repo, extra: &[&str]) -> String {
+    status_out(r, extra).0
+}
+
+/// The base that `status` prints, and its text. The note is in the text.
+fn status_out(r: &Repo, extra: &[&str]) -> (String, String) {
+    let mut args = vec!["status"];
+    args.extend(extra);
+    let (code, out, err) = r.run(&args);
+    assert_eq!(code, 0, "{out}{err}");
+    let line = out.lines().next().unwrap_or_default();
+    let base = line
+        .split(", ")
+        .find_map(|p| p.strip_prefix("base "))
+        .unwrap_or_else(|| panic!("no base in the first line: {out}"));
+    (base.to_string(), out)
+}
+
+#[test]
+fn the_base_is_the_branch_of_the_config_when_there_is_no_origin_head() {
+    let r = local_repo("three-class", "base = \"main\"\n");
+    let main = short_of(&r, "main");
+    assert_eq!(status_base(&r, &[]), main);
+    // `next`, `check` and `status --json` read the key too.
+    let (code, out, err) = r.run(&["next", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(&format!("base {main}")), "{out}");
+    assert!(!out.contains("no base"), "{out}");
+    let (code, out, err) = r.run(&["check", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let full = r.git_out(&["rev-parse", "main"]);
+    assert!(
+        out.contains(&format!("\"change_base\":\"{full}\"")),
+        "{out}"
+    );
+    let (_, _, err) = r.run(&["check"]);
+    assert!(!err.contains("no base for the change checks"), "{err}");
+}
+
+#[test]
+fn the_base_is_the_merge_base_of_the_branch_and_head() {
+    let r = local_repo("three-class", "base = \"main\"\n");
+    let first = short_of(&r, "main");
+    // `main` moves on, and the feature branch stays on its old start.
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "y = 1\n");
+    r.commit("main moves on");
+    r.git(&["checkout", "-q", "feature"]);
+    assert_ne!(short_of(&r, "main"), first);
+    assert_eq!(status_base(&r, &[]), first);
+}
+
+#[test]
+fn a_branch_of_the_config_that_does_not_exist_gives_a_note_and_no_error() {
+    let r = local_repo("three-class", "base = \"nope\"\n");
+    let note = missing_branch_note("nope");
+    let (base, text) = status_out(&r, &[]);
+    assert_eq!(base, "none");
+    assert!(text.contains(&format!("note: {note}")), "{text}");
+    let (code, out, err) = r.run(&["next", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(&format!("base none: {note}")), "{out}");
+    let (code, out, err) = r.run(&["check", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"change_base\":null"), "{out}");
+    let (code, _, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains(&format!("note: {note}")), "{err}");
+    // `finish` of an accepted change needs the base, and it says why.
+    let (code, _, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains(&note), "{err}");
+    // A tag or a remote branch of the same name is not a local branch.
+    r.git(&["tag", "nope"]);
+    assert_eq!(status_base(&r, &[]), "none");
+    // A revision form is not a branch name: `main@{1}` reads the reflog.
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "y = 1\n");
+    r.commit("main moves on");
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["rev-parse", "--verify", "main@{1}"]);
+    let toml = r.read("spec-dna.toml").replace("\"nope\"", "\"main@{1}\"");
+    r.write("spec-dna.toml", &toml);
+    assert_eq!(status_base(&r, &[]), "none");
+}
+
+#[test]
+fn a_base_with_no_branch_in_the_config_keeps_the_general_note_that_names_the_key() {
+    let r = local_repo("three-class", "");
+    let (base, text) = status_out(&r, &[]);
+    assert_eq!(base, "none");
+    assert!(
+        text.contains("note: no base for the change checks; pass --base <rev>, or run git remote set-head origin <branch>, or set [change] base\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_branch_of_the_config_with_no_merge_base_gets_a_note_that_does_not_ask_for_the_key() {
+    let r = local_repo("three-class", "base = \"main\"\n");
+    // The history of `feature` has no commit of `main` now.
+    r.git(&["checkout", "-q", "--orphan", "island"]);
+    r.git(&["add", "-A"]);
+    r.commit("island");
+    let (base, text) = status_out(&r, &[]);
+    assert_eq!(base, "none");
+    assert!(
+        text.contains("note: no base for the change checks: the branch `main` of [change] base has no common history with HEAD; pass --base <rev>\n"),
+        "{text}"
+    );
+    assert!(!text.contains("does not exist"), "{text}");
+    assert!(!text.contains("or set [change] base"), "{text}");
+}
+
+#[test]
+fn origin_head_wins_over_the_branch_of_the_config() {
+    let r = local_repo("three-class", "base = \"main\"\n");
+    // 3 commits: `main` is the oldest, `origin/HEAD` is the second.
+    r.write("src/one.py", "1\n");
+    r.commit("one");
+    origin_head(&r.dir, "HEAD");
+    r.write("src/two.py", "2\n");
+    r.commit("two");
+    assert_ne!(short_of(&r, "main"), short_of(&r, "origin/HEAD"));
+    assert_eq!(status_base(&r, &[]), short_of(&r, "origin/HEAD"));
+    // A key that names no branch does not change this.
+    let toml = r.read("spec-dna.toml").replace("\"main\"", "\"nope\"");
+    r.write("spec-dna.toml", &toml);
+    assert_eq!(status_base(&r, &[]), short_of(&r, "origin/HEAD"));
+}
+
+#[test]
+fn base_of_the_command_line_wins_over_origin_head_and_the_config() {
+    let r = local_repo("three-class", "base = \"main\"\n");
+    r.write("src/one.py", "1\n");
+    r.commit("one");
+    origin_head(&r.dir, "HEAD");
+    r.write("src/two.py", "2\n");
+    r.commit("two");
+    let third = short_of(&r, "HEAD");
+    r.write("src/three.py", "3\n");
+    r.commit("three");
+    assert_eq!(status_base(&r, &["--base", &third]), third);
+    assert_ne!(third, short_of(&r, "origin/HEAD"));
+    assert_ne!(third, short_of(&r, "main"));
+    let (code, out, _) = r.run(&["check", "--base", &third, "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let full = r.git_out(&["rev-parse", &third]);
+    assert!(
+        out.contains(&format!("\"change_base\":\"{full}\"")),
+        "{out}"
+    );
+}
+
+#[test]
+fn finish_reads_the_branch_of_the_config_for_each_policy() {
+    for policy in ["three-class", "two-class", "none"] {
+        // Without the key, an accepted change has no base.
+        let r = local_repo(policy, "");
+        let (code, _, err) = r.run(&["finish", "dose"]);
+        assert_eq!(code, 3, "{policy}: {err}");
+        assert!(
+            err.contains("no base for the change checks"),
+            "{policy}: {err}"
+        );
+        assert!(err.contains("or set [change] base"), "{policy}: {err}");
+        assert!(r.dir.join("docs/intent/dose").exists(), "{policy}");
+        // With the key, it finishes.
+        let r = local_repo(policy, "base = \"main\"\n");
+        let (code, out, err) = r.run(&["finish", "dose"]);
+        assert_eq!(code, 0, "{policy}: {out}{err}");
+        assert!(!r.dir.join("docs/intent/dose").exists(), "{policy}");
+    }
 }

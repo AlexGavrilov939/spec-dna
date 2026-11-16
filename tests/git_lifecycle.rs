@@ -377,6 +377,123 @@ fn deleted_intents_skips_a_move_a_deeper_file_and_a_plan() {
     );
 }
 
+const LONG: &str = "# Slug\n\n## Intent\n\nThe controller must hold the valve open for 4 seconds.\nThe operator needs the time to read the pressure.\n\n## Context\n\nThe old controller closed the valve at once.\nThe pumps stopped, and the line lost its pressure.\n";
+
+/// The ids that `moved_out` reads, from a repository whose `main` holds the
+/// intent `slug` with a long body, so that git can pair a move.
+fn with_long_intent() -> Repo {
+    let r = Repo::new();
+    r.write(INTENT, &format!("---\nstatus: accepted\n---\n{LONG}"));
+    r.commit("start");
+    r
+}
+
+/// The result of `moved_out` for the deletion that the last commit made.
+fn moved_out_of_head(r: &Repo) -> Vec<bool> {
+    let git = git_of(r);
+    let entries = git.deleted_intents(DIR, None).unwrap();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    git.moved_out(DIR, &entries).unwrap()
+}
+
+#[test]
+fn moved_out_needs_a_rename_and_the_old_id_as_an_alias() {
+    // A move of the file with the old id as an alias is a move out.
+    let r = with_long_intent();
+    r.write(
+        "docs/roadmap.md",
+        &format!("---\naliases:\n  - intent/slug/intent\n---\n{LONG}"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("move with an alias");
+    assert_eq!(moved_out_of_head(&r), [true]);
+
+    // The same move with an inline list and a quoted id.
+    let r = with_long_intent();
+    r.write(
+        "docs/roadmap.md",
+        &format!("---\naliases: [other, \"intent/slug/intent\"]\n---\n{LONG}"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("move with an inline alias");
+    assert_eq!(moved_out_of_head(&r), [true]);
+
+    // Condition 2 fails: a plain `git mv` writes no alias.
+    let r = with_long_intent();
+    r.git(&["mv", INTENT, "docs/roadmap.md"]);
+    r.commit("plain move");
+    assert_eq!(moved_out_of_head(&r), [false]);
+
+    // Condition 2 fails: the alias is another id.
+    let r = with_long_intent();
+    r.write(
+        "docs/roadmap.md",
+        &format!("---\naliases:\n  - intent/other/intent\n---\n{LONG}"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("move with another alias");
+    assert_eq!(moved_out_of_head(&r), [false]);
+
+    // Condition 1 fails: a plain deletion, and a file elsewhere that names
+    // the id but has another text.
+    let r = with_long_intent();
+    r.write(
+        "docs/other.md",
+        "---\naliases:\n  - intent/slug/intent\n---\n# Other\n\nA text that has no line of the intent.\n",
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("delete the intent");
+    assert_eq!(moved_out_of_head(&r), [false]);
+
+    // D10: `finish` deletes the intent, and the same commit adds a research
+    // note with a text like the intent. Git pairs them as a rename. With no
+    // alias, the deletion still ends the change.
+    let r = with_long_intent();
+    r.write(
+        "docs/research/note.md",
+        &format!("---\nstatus: draft\n---\n{LONG}\nA new line.\n"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("finish with a near copy");
+    let out = r.git_out(&["diff-tree", "-r", "-M", "--name-status", "HEAD~1", "HEAD"]);
+    assert!(out.starts_with('R'), "git must pair the files: {out}");
+    assert_eq!(moved_out_of_head(&r), [false]);
+
+    // D59: a near copy that names the old id as an alias reads as a move.
+    let r = with_long_intent();
+    r.write(
+        "docs/research/note.md",
+        &format!("---\naliases:\n  - intent/slug/intent\n---\n{LONG}\nA new line.\n"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("finish with a near copy that has the alias");
+    assert_eq!(moved_out_of_head(&r), [true]);
+}
+
+#[test]
+fn moved_out_uses_the_first_parent_of_a_merge_commit() {
+    let r = with_long_intent();
+    r.git(&["checkout", "-q", "-b", "side"]);
+    r.write(
+        "docs/roadmap.md",
+        &format!("---\naliases:\n  - intent/slug/intent\n---\n{LONG}"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("move with an alias");
+    r.git(&["checkout", "-q", "main"]);
+    r.write("main-side.txt", "main\n");
+    r.commit("main side");
+    r.git(&["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+    assert_eq!(parents(&r, "HEAD").len(), 2);
+    let git = git_of(&r);
+    // The first-parent walk gives the merge commit, and its diff against the
+    // first parent holds the rename.
+    let entries = git.deleted_intents_first_parent(DIR).unwrap();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].commit, sha_of(&r));
+    assert_eq!(git.moved_out(DIR, &entries).unwrap(), [true]);
+}
+
 #[test]
 fn deleted_intents_gives_one_entry_for_each_deleted_file_of_a_commit() {
     let r = with_intent();

@@ -18,18 +18,18 @@
 //! The result has no side effect. S8 (the proof), S10 (the command) and S11
 //! (the base plan of `check`) use the same data.
 
-use crate::config::Config;
+use crate::config::{Config, Root};
 use crate::finish;
 use crate::frontmatter::{self, Value};
 use crate::git::Git;
 use crate::hash::nfc;
-use crate::model::{Corpus, DocType, is_doc_path, root_doc_id};
+use crate::model::{Corpus, DocType, canonical, is_doc_path, is_slug, root_doc_id};
 use crate::mv::{self, add_aliases, rewrite_links};
-use crate::parse::parse;
+use crate::parse::{ParsedDoc, has_bcp14, parse};
 use crate::repo::Fatal;
 use crate::upgrade_config::Facts;
 use crate::upgrade_old::{self as names, Kind, OldConfig, OldRoot, change_status, type_of};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The reader of a tree: the bytes of each path that it gets.
@@ -128,6 +128,8 @@ pub struct Basis<'a> {
     /// The 0.5 file, if the pin is before 0.6.0 (D137). With `None`, the 0.6
     /// rule applies, and only a 0.5 name changes (D141).
     pub old: Option<&'a OldConfig>,
+    /// `--layout`. With a 0.5 file, it also makes the top files (D40).
+    pub layout: bool,
 }
 
 /// What `upgrade` does to a document.
@@ -159,6 +161,10 @@ pub struct Class {
     /// not a document of its 0.5 type, so nothing changes in it, and nothing
     /// moves it.
     pub stub: bool,
+    /// The type of the top file where `--layout` moves this document (D40,
+    /// D43). A change that is a top file does not move to the intent layer: each
+    /// reader of `fate` reads `top` first.
+    pub top: Option<DocType>,
 }
 
 /// The documents of a tree, with their classes.
@@ -174,6 +180,9 @@ pub struct Classified {
     /// The documents whose bytes are not UTF-8. The text above is lossy for
     /// them, so an edit of such a document stops the plan.
     pub lossy: std::collections::BTreeSet<String>,
+    /// The `kept` lines of the top files (D42): a top file that 2 documents
+    /// want, or that exists. The documents stay ordinary documents.
+    pub top_kept: Vec<String>,
 }
 
 impl Classified {
@@ -185,6 +194,13 @@ impl Classified {
         let hard = cfg.budgets[DocType::Intent as usize].1;
         let mut f = Facts::default();
         for c in &self.docs {
+            // A top file has the type of its place: its 0.5 type is not in use.
+            if let Some(top) = c.top {
+                if !f.top_types.contains(&top) {
+                    f.top_types.push(top);
+                }
+                continue;
+            }
             if let Some(t) = &c.old_type {
                 f.old_types.insert(t.clone());
             }
@@ -199,6 +215,7 @@ impl Classified {
                 Fate::Keep => {}
             }
         }
+        f.top_types.sort();
         f
     }
 }
@@ -216,6 +233,9 @@ pub struct DocChange {
     /// The text with the edits of the front matter only: no alias and no link
     /// edit. The proof reads it as the text "before" (D149).
     pub edited: String,
+    /// For a top file: the text that the plan writes, with no `type` and no
+    /// `status` line (D43). `None`: the plan writes `edited`.
+    pub written: Option<String>,
 }
 
 /// The 0.5 type of a document in a 0.5 file (D141): the type of a root of
@@ -270,6 +290,7 @@ pub fn classify(tree: &Tree, basis: &Basis) -> Result<Classified, Fatal> {
         .collect();
     let mut bytes = (tree.read)(&paths)?;
     let mut out = Classified::default();
+    let mut owners: Vec<(String, usize)> = Vec::new();
     for path in paths {
         let blob = bytes
             .remove(&path)
@@ -317,11 +338,45 @@ pub fn classify(tree: &Tree, basis: &Basis) -> Result<Classified, Fatal> {
                 (ty, status)
             }
         };
-        let fate = match (old_type.as_deref(), old_status.as_deref()) {
-            (Some("change"), Some(w)) if change_status(w) == Some(None) => Fate::Done,
-            (Some("change"), _) => Fate::Move,
-            _ => Fate::Keep,
-        };
+        let fate = fate_of(old_type.as_deref(), old_status.as_deref());
+        // A document of a root that was mixed in a 0.5 file can be a top file
+        // (D40, D41). It is no change then.
+        let top = basis
+            .old
+            .filter(|old| basis.layout && !stub && old.roots[root].kind() == Kind::Mixed)
+            .and_then(|_| {
+                top_candidate(
+                    &cfg.roots[root],
+                    &path,
+                    (old_type.as_deref(), fate),
+                    &parsed,
+                )
+            })
+            // A `note` or a `reference` has no hard budget, and a top file has
+            // one: a document over it would give SD702 in the new tree.
+            .filter(|ty| {
+                let hard = cfg.budgets[*ty as usize].1;
+                let fits = hard == 0 || parsed.body_chars <= hard;
+                if !fits {
+                    out.top_kept.push(format!(
+                        "kept {path}: it has {} characters, over the hard budget of {hard} of the type `{}`, so it is no top file",
+                        parsed.body_chars,
+                        ty.name()
+                    ));
+                }
+                fits
+            });
+        // The ids of the document and its aliases, for the check of a top file.
+        let index = out.docs.len();
+        owners.push((canonical(&id_of(cfg, root, &path)), index));
+        if let Some((Value::List(aliases), _)) = fm.and_then(|f| f.get("aliases")) {
+            owners.extend(
+                aliases
+                    .iter()
+                    .filter(|a| !a.contains('#'))
+                    .map(|a| (canonical(a), index)),
+            );
+        }
         out.docs.push(Class {
             path: path.clone(),
             root,
@@ -330,9 +385,13 @@ pub fn classify(tree: &Tree, basis: &Basis) -> Result<Classified, Fatal> {
             fate,
             body_chars: parsed.body_chars,
             stub,
+            top,
         });
         out.texts.insert(path, text);
     }
+    let settled = settle_tops(&mut out.docs, cfg, tree.files, &owners);
+    out.top_kept.extend(settled);
+    out.top_kept.sort();
     out.mixed = (0..cfg.roots.len())
         .map(|i| match basis.old {
             Some(old) => old.roots[i].kind() == Kind::Mixed,
@@ -340,6 +399,180 @@ pub fn classify(tree: &Tree, basis: &Basis) -> Result<Classified, Fatal> {
         })
         .collect();
     Ok(out)
+}
+
+/// The fate of a document by its 0.5 type and status.
+fn fate_of(old_type: Option<&str>, old_status: Option<&str>) -> Fate {
+    match (old_type, old_status) {
+        (Some("change"), Some(w)) if change_status(w) == Some(None) => Fate::Done,
+        (Some("change"), _) => Fate::Move,
+        _ => Fate::Keep,
+    }
+}
+
+/// The file stems of a 0.5 document that `--layout` moves to a top file, and
+/// the type of that top file (D40). The stem is lowercase, and `_` is read as
+/// `-`.
+const TOP_FILES: [(&str, DocType); 9] = [
+    ("roadmap", DocType::Roadmap),
+    ("product-overview", DocType::Product),
+    ("overview", DocType::Product),
+    ("open-questions", DocType::Questions),
+    ("questions", DocType::Questions),
+    ("glossary", DocType::Terms),
+    ("terms", DocType::Terms),
+    ("architecture", DocType::System),
+    ("system", DocType::System),
+];
+
+/// The folders of a root, besides the root itself, where a document can be a
+/// top file (D41): the folders of the notes, of the references and of the
+/// changes of 0.5.
+const TOP_FOLDERS: [&str; 3] = ["notes", "reference", "changes"];
+
+/// The key of a path where the plan decides that a target is free: ASCII
+/// lowercase. A file system can fold the case of a name (macOS, Windows), so
+/// `docs/Roadmap.md` and `docs/roadmap.md` are one file there. The plan reads
+/// them as one file everywhere, so its result does not depend on the file
+/// system. Only ASCII folds: a name with another letter keeps its case.
+fn path_key(path: &str) -> String {
+    path.to_ascii_lowercase()
+}
+
+/// True if 2 paths are the same file by `path_key`.
+fn same_path(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
+/// The path of the top file of a type in a root (D40).
+fn top_path(root: &Root, ty: DocType) -> String {
+    under(&root.path, &format!("{}.md", ty.name()))
+}
+
+/// The type of the top file that a document wants (D40, D41), or `None`. The
+/// root was mixed in the 0.5 file. A document qualifies if all these are true:
+/// its 0.5 type is a `note`, a `reference` or a change that is not done; it has
+/// no requirement (and `classify` adds: it fits the hard budget of the top type); its file stem is in the table; it is directly in the root,
+/// or directly in one of the folders of `TOP_FOLDERS`; it is not at the path
+/// of the top file already.
+fn top_candidate(
+    root: &Root,
+    path: &str,
+    (old_type, fate): (Option<&str>, Fate),
+    parsed: &ParsedDoc,
+) -> Option<DocType> {
+    match (old_type, fate) {
+        (Some("note" | "reference"), _) | (Some("change"), Fate::Move) => {}
+        _ => return None,
+    }
+    let rel = root.rel(path);
+    let (dir, file) = rel.rsplit_once('/').unwrap_or(("", rel));
+    if !dir.is_empty() && !TOP_FOLDERS.contains(&dir) {
+        return None;
+    }
+    let stem = file.rsplit_once('.').map_or(file, |(s, _)| s);
+    let stem = stem.to_lowercase().replace('_', "-");
+    let ty = TOP_FILES.iter().find(|(s, _)| *s == stem)?.1;
+    // A requirement: an item with a legacy key, or a key that is a slug with a
+    // BCP 14 word. A glossary entry with a bold word is no requirement.
+    let requirement = parsed.reqs.iter().any(|r| {
+        root.legacy_keys.iter().any(|p| p.is_match(&r.key))
+            || (r.colon && is_slug(&r.key) && has_bcp14(&r.text))
+    });
+    (!requirement && !same_path(&top_path(root, ty), path)).then_some(ty)
+}
+
+/// D42: a top file that 2 documents want, or that exists, is no top file, and
+/// the documents stay ordinary documents (they take their other rule: a change
+/// moves to the intent layer, and `--layout` moves a folder). The same holds
+/// when the id of the top file is the id or an alias of another document, also
+/// in another root: the new id would be a duplicate (SD201), and the proof would
+/// refuse the plan. `owners` gives the ids and aliases of each document, with the
+/// index of the document. The result is one `kept` line for each such top file.
+fn settle_tops(
+    docs: &mut [Class],
+    cfg: &Config,
+    files: &[String],
+    owners: &[(String, usize)],
+) -> Vec<String> {
+    let mut kept = Vec::new();
+    // A document whose id (or alias) already names another document is no top
+    // file: the move would change what the id names, and the proof would refuse
+    // the plan.
+    for i in 0..docs.len() {
+        if docs[i].top.is_none() {
+            continue;
+        }
+        let mut others: Vec<usize> = owners
+            .iter()
+            .filter(|(id, o)| *o != i && owners.iter().any(|(mine, m)| *m == i && mine == id))
+            .map(|(_, o)| *o)
+            .collect();
+        if others.is_empty() {
+            continue;
+        }
+        others.sort_unstable();
+        others.dedup();
+        let mut paths: Vec<&str> = std::iter::once(i)
+            .chain(others)
+            .map(|d| docs[d].path.as_str())
+            .collect();
+        paths.sort();
+        kept.push(format!(
+            "kept {}: the id of `{}` names more than one document, so no document moves to a top file",
+            paths.join(", "),
+            docs[i].path
+        ));
+        docs[i].top = None;
+    }
+    let have: std::collections::HashSet<String> = files.iter().map(|f| path_key(f)).collect();
+    // The paths first, then the ids: a document that stops wanting its path
+    // frees its id.
+    for by_id in [false, true] {
+        let mut wanted: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (i, c) in docs.iter().enumerate() {
+            if let Some(ty) = c.top {
+                let target = top_path(&cfg.roots[c.root], ty);
+                let key = if by_id {
+                    canonical(&id_of(cfg, c.root, &target))
+                } else {
+                    path_key(&target)
+                };
+                wanted.entry(key).or_default().push(i);
+            }
+        }
+        for (key, idx) in wanted {
+            let target = |i: usize| top_path(&cfg.roots[docs[i].root], docs[i].top.expect("top"));
+            let taken = by_id && owners.iter().any(|(id, o)| *id == key && !idx.contains(o));
+            let exists = !by_id && have.contains(&key);
+            if idx.len() == 1 && !exists && !taken {
+                continue;
+            }
+            let mut paths: Vec<&str> = idx.iter().map(|&i| docs[i].path.as_str()).collect();
+            paths.sort();
+            let top = target(idx[0]);
+            let why = if exists {
+                format!("the top file {top} exists")
+            } else if by_id && taken {
+                format!("the id `{key}` of the top file {top} is the id of another document")
+            } else if by_id {
+                format!(
+                    "{} documents want the id `{key}` for their top file",
+                    idx.len()
+                )
+            } else {
+                format!("{} documents want the top file {top}", idx.len())
+            };
+            kept.push(format!(
+                "kept {}: {why}, so no document moves there",
+                paths.join(", ")
+            ));
+            for i in idx {
+                docs[i].top = None;
+            }
+        }
+    }
+    kept
 }
 
 fn stop(path: &str, why: &str) -> Fatal {
@@ -404,66 +637,89 @@ pub fn edit_docs(
         };
         let mut t = text.clone();
         // The type: rewrite the line, or write it where the place gives another.
-        match value("type") {
-            Some(w) => {
-                let to = if w == *old {
-                    Some(new_type)
-                } else {
-                    type_of(&w)
-                };
-                if let Some(to) = to
-                    && to.name() != w
-                {
-                    t = frontmatter::set_field(&t, "type", to.name())
-                        .ok_or_else(|| cannot("type"))?;
-                }
-            }
-            None => {
-                let root = &fin.roots[c.root];
-                if root.single_type.is_none() && !has("type") {
-                    let path = dest.get(&c.path).unwrap_or(&c.path);
-                    let want = fin.layers.place_type(root.rel(path)).or(root.default_type);
-                    if want != Some(new_type) {
-                        t = frontmatter::insert_field(&t, "type", new_type.name(), None);
-                    }
-                }
-            }
-        }
-        // The status.
         let mut new_status = None;
-        match c.fate {
-            Fate::Done => {
-                if has("status") {
-                    t = frontmatter::remove_field(&t, "status").ok_or_else(|| cannot("status"))?;
-                }
-            }
-            Fate::Move => {
-                let word = c.old_status.as_deref();
-                let to = word
-                    .and_then(change_status)
-                    .flatten()
-                    .map(str::to_string)
-                    .or_else(|| word.map(str::to_string));
-                if let Some(to) = &to {
-                    match value("status") {
-                        Some(raw) if raw != *to => {
-                            t = frontmatter::set_field(&t, "status", to)
-                                .ok_or_else(|| cannot("status"))?;
-                        }
-                        Some(_) => {}
-                        None => t = frontmatter::insert_field(&t, "status", to, Some("type")),
+        {
+            match value("type") {
+                Some(w) => {
+                    let to = if w == *old {
+                        Some(new_type)
+                    } else {
+                        type_of(&w)
+                    };
+                    if let Some(to) = to
+                        && to.name() != w
+                    {
+                        t = frontmatter::set_field(&t, "type", to.name())
+                            .ok_or_else(|| cannot("type"))?;
                     }
                 }
-                new_status = to;
+                None => {
+                    let root = &fin.roots[c.root];
+                    if root.single_type.is_none() && !has("type") {
+                        // The text "before" of a top file reads it in its old
+                        // place (D43).
+                        let path = match c.top {
+                            Some(_) => &c.path,
+                            None => dest.get(&c.path).unwrap_or(&c.path),
+                        };
+                        let want = fin.layers.place_type(root.rel(path)).or(root.default_type);
+                        if want != Some(new_type) {
+                            t = frontmatter::insert_field(&t, "type", new_type.name(), None);
+                        }
+                    }
+                }
             }
-            Fate::Keep => {}
+            // The status.
+            match c.fate {
+                Fate::Done => {
+                    if has("status") {
+                        t = frontmatter::remove_field(&t, "status")
+                            .ok_or_else(|| cannot("status"))?;
+                    }
+                }
+                Fate::Move => {
+                    let word = c.old_status.as_deref();
+                    let to = word
+                        .and_then(change_status)
+                        .flatten()
+                        .map(str::to_string)
+                        .or_else(|| word.map(str::to_string));
+                    if let Some(to) = &to {
+                        match value("status") {
+                            Some(raw) if raw != *to => {
+                                t = frontmatter::set_field(&t, "status", to)
+                                    .ok_or_else(|| cannot("status"))?;
+                            }
+                            Some(_) => {}
+                            None => t = frontmatter::insert_field(&t, "status", to, Some("type")),
+                        }
+                    }
+                    new_status = to;
+                }
+                Fate::Keep => {}
+            }
         }
         if let Some(v) = was_type
             && !has("was-type")
         {
             t = frontmatter::insert_field(&t, "was-type", v, Some("type"));
         }
-        if t == *text {
+        // The text that the plan writes for a top file: its place gives the
+        // type, and the type has no status (D43). `edited` stays the text of
+        // the 0.5 type in its old place, because the proof reads it as "before".
+        let mut written = None;
+        if c.top.is_some() {
+            let mut w = text.clone();
+            for key in ["type", "status"] {
+                if has(key) {
+                    w = frontmatter::remove_field(&w, key).ok_or_else(|| cannot(key))?;
+                }
+            }
+            if w != *text {
+                written = Some(w);
+            }
+        }
+        if t == *text && written.is_none() {
             continue;
         }
         if let Some(why) = broken {
@@ -494,6 +750,7 @@ pub fn edit_docs(
             new_status,
             was_type,
             edited: t,
+            written,
         });
     }
     Ok(out)
@@ -509,8 +766,21 @@ pub struct Move {
     pub old_id: String,
     pub new_id: String,
     pub aliases: Vec<String>,
-    /// True for a move of `--layout`, false for the move of a change.
-    pub layout: bool,
+    pub kind: MoveKind,
+}
+
+/// The reason of a move. Each reader of the moves needs it: only a `Change` is
+/// a migrated change, and only `Layout` moves a folder whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MoveKind {
+    /// A change that becomes an intent (D144).
+    Change,
+    /// A file of a folder of a 0.5 namespace, which `--layout` renames (D145).
+    Layout,
+    /// A document that becomes the top file of its root (D40).
+    Top,
+    /// A requirements document that moves into its area (D46).
+    Area,
 }
 
 /// The plan of the documents: the front matter, the moves and the new text of
@@ -522,6 +792,8 @@ pub struct DocsPlan {
     pub moves: Vec<Move>,
     /// The final path of each document that changes, with its new text.
     pub writes: BTreeMap<String, String>,
+    /// The `kept` lines of the top files (D42).
+    pub kept: Vec<String>,
 }
 
 /// The folders of the 0.5 namespaces that `--layout` moves, and the 0.6
@@ -555,6 +827,113 @@ fn id_of(fin: &Config, root: usize, path: &str) -> String {
     nfc(&root_doc_id(&fin.roots[root], path)).into_owned()
 }
 
+/// An area is one folder name: letters, digits, `-` and `_` (D46).
+pub(crate) fn valid_area(area: &str) -> bool {
+    !area.is_empty()
+        && area
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The areas that the plan writes to `areas` (D47): sorted, no area twice. An
+/// area that is not one folder name is left out: the plan of the moves stops
+/// on it (D46), and the key would not load.
+pub(crate) fn areas_of(areas: &[(String, String)]) -> BTreeSet<String> {
+    areas
+        .iter()
+        .map(|(_, a)| a.clone())
+        .filter(|a| valid_area(a))
+        .collect()
+}
+
+/// The 0.6 type of a document of a 0.5 file, as the proof expects it.
+fn final_type(c: &Class) -> Option<DocType> {
+    match (c.top, c.fate) {
+        (Some(top), _) => Some(top),
+        (None, Fate::Done) => Some(DocType::Research),
+        _ => c.old_type.as_deref().and_then(type_of),
+    }
+}
+
+/// The moves of `--areas` (D46): `<root>/<dir of the requirements layer>/<area>/<slug>.md`
+/// in the root of the document. The result lists the stops: an area that is not
+/// one folder name, an id that no document of the tree has, and a document that
+/// is not `requirements` in 0.6.
+fn plan_areas(
+    classified: &Classified,
+    fin: &Config,
+    areas: &[(String, String)],
+    want: &mut Vec<(String, String, MoveKind)>,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if areas.is_empty() {
+        return problems;
+    }
+    let dir = fin
+        .layers
+        .layer_of_type(DocType::Requirements)
+        .and_then(|i| fin.layers.layers()[i].dir());
+    let Some(dir) = dir else {
+        return vec![format!(
+            "`--areas` needs a layer of the new spec-dna.toml that has the type `requirements` and a folder. {AGAIN}"
+        )];
+    };
+    let mut by_id: HashMap<String, Vec<&Class>> = HashMap::new();
+    for c in classified.docs.iter().filter(|c| !c.stub) {
+        by_id
+            .entry(canonical(&id_of(fin, c.root, &c.path)))
+            .or_default()
+            .push(c);
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for (id, area) in areas {
+        if !valid_area(area) {
+            problems.push(format!(
+                "the area `{area}` of `{id}` is not one folder name (letters, digits, `-` and `_`). Change the file of `--areas`."
+            ));
+            continue;
+        }
+        let docs = by_id.get(&canonical(id)).map(Vec::as_slice).unwrap_or(&[]);
+        let c = match docs {
+            [] => {
+                problems.push(format!(
+                    "the id `{id}` of the file of `--areas` is no document of the tree. Change the file."
+                ));
+                continue;
+            }
+            [c] => *c,
+            _ => {
+                problems.push(format!(
+                    "the id `{id}` of the file of `--areas` names {} documents. Change the file.",
+                    docs.len()
+                ));
+                continue;
+            }
+        };
+        if final_type(c) != Some(DocType::Requirements) {
+            problems.push(format!(
+                "`{}` (id `{id}`) is not a `requirements` document in 0.6, so it cannot move into an area. Remove the id from the file of `--areas`.",
+                c.path
+            ));
+            continue;
+        }
+        if seen.contains(&c.path.as_str()) {
+            problems.push(format!(
+                "the document `{}` is in the file of `--areas` twice. Change the file.",
+                c.path
+            ));
+            continue;
+        }
+        seen.push(&c.path);
+        let slug = slug_of(&id_of(fin, c.root, &c.path)).to_string();
+        let to = under(&fin.roots[c.root].path, &format!("{dir}/{area}/{slug}.md"));
+        if to != c.path {
+            want.push((c.path.clone(), to, MoveKind::Area));
+        }
+    }
+    problems
+}
+
 /// The moves of the files (D144, D145), in path order. A stop is
 /// `Fatal::Refused`, exit code 1, and it names each path. The function reads
 /// only the list of the paths of the tree, so a target that exists is a path
@@ -564,6 +943,7 @@ pub fn plan_moves(
     classified: &Classified,
     fin: &Config,
     layout: bool,
+    areas: &[(String, String)],
 ) -> Result<Vec<Move>, Fatal> {
     let class: HashMap<&str, &Class> = classified
         .docs
@@ -571,15 +951,15 @@ pub fn plan_moves(
         .map(|c| (c.path.as_str(), c))
         .collect();
     let mut problems: Vec<String> = Vec::new();
-    // (from, to, layout)
-    let mut want: Vec<(String, String, bool)> = Vec::new();
+    // (from, to, kind)
+    let mut want: Vec<(String, String, MoveKind)> = Vec::new();
 
     // The changes: each one goes to `<root>/<intent folder>/<slug>/intent.md`
     // in its own root, so its id keeps the root and the namespace (D144).
     let changes: Vec<&Class> = classified
         .docs
         .iter()
-        .filter(|c| c.fate == Fate::Move)
+        .filter(|c| c.fate == Fate::Move && c.top.is_none())
         .collect();
     if !changes.is_empty() {
         let dir = fin
@@ -607,7 +987,7 @@ pub fn plan_moves(
                 &format!("{dir}/{slug}/{}.md", DocType::Intent.name()),
             );
             if to != c.path {
-                want.push((c.path.clone(), to, false));
+                want.push((c.path.clone(), to, MoveKind::Change));
             }
         }
     }
@@ -632,7 +1012,10 @@ pub fn plan_moves(
                     continue;
                 };
                 if let Some(c) = class.get(f.as_str())
-                    && (c.fate != Fate::Keep || c.stub || c.old_type.as_deref() == Some("spec"))
+                    && (c.fate != Fate::Keep
+                        || c.stub
+                        || c.top.is_some()
+                        || c.old_type.as_deref() == Some("spec"))
                 {
                     continue;
                 }
@@ -643,30 +1026,56 @@ pub fn plan_moves(
                     ));
                     continue;
                 }
-                want.push((f.clone(), to, true));
+                want.push((f.clone(), to, MoveKind::Layout));
             }
+        }
+        // The top files (D40 to D43): `classify` chose them.
+        for c in classified.docs.iter().filter(|c| c.top.is_some()) {
+            let to = top_path(&fin.roots[c.root], c.top.expect("a top file"));
+            if fin.is_excluded(c.root, &c.path) || fin.is_excluded(c.root, &to) {
+                problems.push(format!(
+                    "an `exclude` glob matches `{}` or its new path `{to}`, and the move would add or remove a document. Change the glob. {AGAIN}",
+                    c.path
+                ));
+                continue;
+            }
+            want.push((c.path.clone(), to, MoveKind::Top));
         }
     }
 
+    // `--areas`: each mapped document moves into its area (D46).
+    problems.extend(plan_areas(classified, fin, areas, &mut want));
+
     // The stops: one target for 2 files, a target that exists, a target in
     // another root.
-    let have: std::collections::HashSet<&str> = tree.files.iter().map(String::as_str).collect();
-    let mut by_target: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    // The paths compare by `path_key`: 2 targets that differ only in case are
+    // one target, and a file that differs only in case from a target exists.
+    let have: std::collections::HashSet<String> = tree.files.iter().map(|f| path_key(f)).collect();
+    let mut by_target: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for (from, to, _) in &want {
-        by_target.entry(to).or_default().push(from);
+        by_target.entry(path_key(to)).or_default().push(from);
     }
-    for (to, sources) in &by_target {
+    for sources in by_target.values() {
         if sources.len() > 1 {
+            let mut targets: Vec<&str> = want
+                .iter()
+                .filter(|(f, _, _)| sources.contains(&f.as_str()))
+                .map(|(_, t, _)| t.as_str())
+                .collect();
+            targets.sort();
+            targets.dedup();
             let list: Vec<String> = sources.iter().map(|f| format!("`{f}`")).collect();
             problems.push(format!(
-                "{} files move to `{to}`: {}. Rename one of them. {AGAIN}",
+                "{} files move to `{}`: {}. Rename one of them. {AGAIN}",
                 sources.len(),
+                targets.join("` and `"),
                 list.join(", ")
             ));
         }
     }
     for (from, to, _) in &want {
-        if have.contains(to.as_str()) {
+        // A file that is the source itself is no obstacle.
+        if have.contains(&path_key(to)) && !same_path(from, to) {
             problems.push(format!(
                 "the target `{to}` of `{from}` exists. Move or rename the file that is there. {AGAIN}"
             ));
@@ -693,7 +1102,7 @@ pub fn plan_moves(
     want.sort();
     Ok(want
         .into_iter()
-        .map(|(from, to, layout)| {
+        .map(|(from, to, kind)| {
             let (old_id, new_id, aliases) = match class.get(from.as_str()) {
                 Some(c) => {
                     let root = &fin.roots[c.root];
@@ -725,7 +1134,7 @@ pub fn plan_moves(
                 old_id,
                 new_id,
                 aliases,
-                layout,
+                kind,
             }
         })
         .collect())
@@ -749,7 +1158,7 @@ pub(crate) fn link_moves(tree: &Tree, moves: &[Move]) -> HashMap<String, String>
     for m in moves {
         let from_dirs = ancestors(&m.from);
         let to_dirs = ancestors(&m.to);
-        if m.layout {
+        if m.kind == MoveKind::Layout {
             for (d, td) in from_dirs.iter().zip(&to_dirs) {
                 let e = dirs.entry(d).or_insert((Some(td), 0));
                 if e.0 != Some(td) {
@@ -757,6 +1166,9 @@ pub(crate) fn link_moves(tree: &Tree, moves: &[Move]) -> HashMap<String, String>
                 }
                 e.1 += 1;
             }
+        } else if m.kind != MoveKind::Change {
+            // A top file and an area document move alone: no folder moves
+            // whole with them.
         } else if let (Some(d), Some(td)) = (from_dirs.last(), to_dirs.last()) {
             // The folder of an `index.md` or `README.md` change is its name.
             let stem = m.from.rsplit('/').next().unwrap_or("");
@@ -825,8 +1237,9 @@ pub fn plan_docs(
     classified: &Classified,
     fin: &Config,
     layout: bool,
+    areas: &[(String, String)],
 ) -> Result<DocsPlan, Fatal> {
-    let moves = plan_moves(tree, classified, fin, layout)?;
+    let moves = plan_moves(tree, classified, fin, layout, areas)?;
     let dest: HashMap<String, String> = moves
         .iter()
         .map(|m| (m.from.clone(), m.to.clone()))
@@ -835,7 +1248,7 @@ pub fn plan_docs(
     // The texts of step 3: the documents with the edits of the front matter.
     let edited: HashMap<&str, &str> = docs
         .iter()
-        .map(|d| (d.path.as_str(), d.edited.as_str()))
+        .map(|d| (d.path.as_str(), d.written.as_deref().unwrap_or(&d.edited)))
         .collect();
     let texts: Vec<(&String, &str)> = classified
         .texts
@@ -879,6 +1292,7 @@ pub fn plan_docs(
         docs,
         moves,
         writes,
+        kept: classified.top_kept.clone(),
     })
 }
 
@@ -943,6 +1357,21 @@ pub(crate) mod tests {
 
     /// The pipeline up to the final configuration. `changes` is empty.
     pub(crate) fn pipeline(tree: &TreeData, toml: &str) -> Run {
+        pipeline_layout(tree, toml, false)
+    }
+
+    /// The pipeline of `upgrade`, with or without `--layout` for `classify`.
+    pub(crate) fn pipeline_layout(tree: &TreeData, toml: &str, layout: bool) -> Run {
+        pipeline_areas(tree, toml, layout, &[])
+    }
+
+    /// Like `pipeline_layout`, with the pairs of `--areas`.
+    pub(crate) fn pipeline_areas(
+        tree: &TreeData,
+        toml: &str,
+        layout: bool,
+        areas: &[(String, String)],
+    ) -> Run {
         let old = OldConfig::read(toml).unwrap_or_else(|e| panic!("{e}\n{toml}"));
         let p1 = upgrade_config::pass1(toml, &old, &opts()).unwrap();
         let cfg1 = Config::parse(&p1.text).unwrap();
@@ -953,11 +1382,13 @@ pub(crate) mod tests {
                     &Basis {
                         cfg: &cfg1,
                         old: Some(&old),
+                        layout,
                     },
                 )
             })
             .unwrap();
-        let facts = classified.facts(&cfg1);
+        let mut facts = classified.facts(&cfg1);
+        facts.areas = areas_of(areas);
         let plan = upgrade_config::plan(toml, &old, &facts, &opts()).unwrap();
         let fin = Config::parse(&plan.text).unwrap();
         Run {
@@ -1332,6 +1763,7 @@ pub(crate) mod tests {
                     &Basis {
                         cfg: &cfg1,
                         old: Some(&old),
+                        layout: false,
                     },
                 )
             })
@@ -1371,6 +1803,7 @@ pub(crate) mod tests {
                     &Basis {
                         cfg: &cfg,
                         old: None,
+                        layout: false,
                     },
                 )
             })
@@ -1581,6 +2014,7 @@ pub(crate) mod tests {
                         &Basis {
                             cfg: &cfg1,
                             old: Some(&old),
+                            layout: false,
                         },
                     )
                 })
@@ -1622,6 +2056,7 @@ pub(crate) mod tests {
                         &Basis {
                             cfg: &r.fin,
                             old: None,
+                            layout: false,
                         },
                     )
                 })
@@ -1643,8 +2078,17 @@ pub(crate) mod tests {
         toml: &str,
         layout: bool,
     ) -> Result<(Run, DocsPlan), Fatal> {
-        let mut r = pipeline(tree, toml);
-        let p = tree.with(|t| plan_docs(t, &r.classified, &r.fin, layout))?;
+        full_areas(tree, toml, layout, &[])
+    }
+
+    pub(crate) fn full_areas(
+        tree: &TreeData,
+        toml: &str,
+        layout: bool,
+        areas: &[(String, String)],
+    ) -> Result<(Run, DocsPlan), Fatal> {
+        let mut r = pipeline_areas(tree, toml, layout, areas);
+        let p = tree.with(|t| plan_docs(t, &r.classified, &r.fin, layout, areas))?;
         r.changes = p.docs.clone();
         Ok((r, p))
     }
@@ -1753,7 +2197,7 @@ pub(crate) mod tests {
                 m.new_id,
                 format!("intent/{}/intent", m.to.split('/').nth(2).unwrap())
             );
-            assert!(!m.layout);
+            assert!(m.kind == MoveKind::Change);
         }
         // The done change stays, and the decisions do not move.
         assert!(p.moves.iter().all(|m| !m.from.contains("tune-pump")));
@@ -1891,7 +2335,7 @@ pub(crate) mod tests {
             }
         }
         // Each moved change is an `intent` of the layer, with a valid type.
-        for m in p.moves.iter().filter(|m| !m.layout) {
+        for m in p.moves.iter().filter(|m| m.kind == MoveKind::Change) {
             let d = &after.docs[after.by_path[&m.to] as usize];
             assert_eq!(d.ty, DocType::Intent, "{}", m.to);
             assert!(!d.type_failed, "{}", m.to);
@@ -1951,7 +2395,10 @@ pub(crate) mod tests {
                     .filter(|c| c.fate == Fate::Move)
                     .count();
                 assert_eq!(
-                    p.moves.iter().filter(|m| !m.layout).count(),
+                    p.moves
+                        .iter()
+                        .filter(|m| m.kind == MoveKind::Change)
+                        .count(),
                     changes,
                     "{case}"
                 );
@@ -2016,10 +2463,11 @@ pub(crate) mod tests {
                         &Basis {
                             cfg: &r.fin,
                             old: None,
+                            layout: false,
                         },
                     )
                     .unwrap();
-                    let plan2 = plan_docs(t, &cl, &r.fin, layout).unwrap();
+                    let plan2 = plan_docs(t, &cl, &r.fin, layout, &[]).unwrap();
                     (cl, plan2)
                 });
                 assert!(cl.docs.iter().all(|c| c.fate == Fate::Keep), "{case}");
@@ -2062,12 +2510,13 @@ pub(crate) mod tests {
             &Basis {
                 cfg: &cfg1,
                 old: Some(&old),
+                layout: false,
             },
         )
         .unwrap();
         let plan = upgrade_config::plan(&toml, &old, &cl.facts(&cfg1), &opts()).unwrap();
         let fin = Config::parse(&plan.text).unwrap();
-        let p = plan_docs(&t, &cl, &fin, true).unwrap();
+        let p = plan_docs(&t, &cl, &fin, true, &[]).unwrap();
         assert!(!p.moves.is_empty());
         assert_eq!(reads.get(), 1);
     }
@@ -2081,7 +2530,7 @@ pub(crate) mod tests {
         let layout: Vec<(&str, &str, &str, &str)> = p
             .moves
             .iter()
-            .filter(|m| m.layout)
+            .filter(|m| m.kind == MoveKind::Layout)
             .map(|m| {
                 (
                     m.from.as_str(),
@@ -2132,7 +2581,7 @@ pub(crate) mod tests {
                 ),
             ]
         );
-        for m in p.moves.iter().filter(|m| m.layout) {
+        for m in p.moves.iter().filter(|m| m.kind == MoveKind::Layout) {
             assert_eq!(m.aliases, std::slice::from_ref(&m.old_id));
         }
         // A link from one moved folder to another: both follow.
@@ -2279,7 +2728,7 @@ pub(crate) mod tests {
         let pairs: Vec<(&str, &str, bool)> = p
             .moves
             .iter()
-            .map(|m| (m.from.as_str(), m.to.as_str(), m.layout))
+            .map(|m| (m.from.as_str(), m.to.as_str(), m.kind == MoveKind::Layout))
             .collect();
         assert_eq!(
             pairs,
@@ -2544,5 +2993,276 @@ pub(crate) mod tests {
         assert!(p.writes["docs/guides/stub.md"].contains("[Old](../procedures/real.md)"));
         assert!(p.writes["docs/old.md"].contains("[Old](procedures/real.md)"));
         assert!(r.facts.change_roots.is_empty());
+    }
+
+    // --- the top files and the areas (0.6.1, D40 to D48) ---
+
+    fn top_of(r: &Run, path: &str) -> Option<DocType> {
+        r.classified
+            .docs
+            .iter()
+            .find(|c| c.path == path)
+            .unwrap_or_else(|| panic!("no class of {path}"))
+            .top
+    }
+
+    fn note(title: &str) -> String {
+        format!("---\ntype: note\n---\n# {title}\n\nText.\n")
+    }
+
+    #[test]
+    fn a_file_stem_of_the_table_gives_a_top_file_in_a_folder_of_the_list() {
+        let tree = mem(&[
+            ("docs/notes/roadmap.md", &note("R")),
+            ("docs/notes/Product_Overview.md", &note("P")),
+            ("docs/reference/overview.md", &note("O")),
+            ("docs/notes/open-questions.md", &note("Q")),
+            ("docs/notes/glossary.md", &note("G")),
+            ("docs/reference/Architecture.md", &note("A")),
+            ("docs/terms-x.md", &note("not in the table")),
+            ("docs/irrigation/system.md", &note("a deeper folder")),
+        ]);
+        let r = pipeline_layout(&tree, MIXED, true);
+        for (path, ty) in [
+            ("docs/notes/roadmap.md", Some(DocType::Roadmap)),
+            ("docs/notes/Product_Overview.md", Some(DocType::Product)),
+            ("docs/reference/overview.md", Some(DocType::Product)),
+            ("docs/notes/open-questions.md", Some(DocType::Questions)),
+            ("docs/notes/glossary.md", Some(DocType::Terms)),
+            ("docs/reference/Architecture.md", Some(DocType::System)),
+            ("docs/terms-x.md", None),
+            ("docs/irrigation/system.md", None),
+        ] {
+            // Two files want `product.md`: D42 keeps both.
+            let want = if ty == Some(DocType::Product) {
+                None
+            } else {
+                ty
+            };
+            assert_eq!(top_of(&r, path), want, "{path}");
+        }
+        assert_eq!(r.classified.top_kept.len(), 1);
+        assert!(
+            r.classified.top_kept[0]
+                .starts_with("kept docs/notes/Product_Overview.md, docs/reference/overview.md: "),
+            "{:?}",
+            r.classified.top_kept
+        );
+    }
+
+    #[test]
+    fn the_top_files_need_layout_and_a_05_source() {
+        let tree = mem(&[("docs/notes/roadmap.md", &note("R"))]);
+        let r = pipeline_layout(&tree, MIXED, false);
+        assert_eq!(top_of(&r, "docs/notes/roadmap.md"), None);
+        assert!(r.facts.top_types.is_empty());
+        // A 0.6 source gets none (D44).
+        let cfg = Config::parse("spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n").unwrap();
+        let cl = tree
+            .with(|t| {
+                classify(
+                    t,
+                    &Basis {
+                        cfg: &cfg,
+                        old: None,
+                        layout: true,
+                    },
+                )
+            })
+            .unwrap();
+        assert!(cl.docs.iter().all(|c| c.top.is_none()));
+    }
+
+    #[test]
+    fn a_document_that_fails_d41_is_no_top_file() {
+        let tree = mem(&[
+            // A requirement of the legacy kind, and a slug key with a MUST.
+            (
+                "docs/notes/glossary.md",
+                "---\ntype: note\n---\n# G\n\n- **valve-open**: The valve MUST open.\n",
+            ),
+            // A glossary entry with a bold word is no requirement.
+            (
+                "docs/reference/terms.md",
+                "---\ntype: reference\n---\n# T\n\n- **valve**: A device.\n",
+            ),
+            // The type is a spec, a guide, or a change that is done.
+            ("docs/notes/architecture.md", "---\ntype: spec\n---\n# A\n"),
+            (
+                "docs/notes/system.md",
+                "---\ntype: guide\nstatus: active\n---\n# S\n",
+            ),
+            (
+                "docs/changes/questions.md",
+                "---\ntype: change\nstatus: done\n---\n# Q\n",
+            ),
+            // A change that is not done is a top file, and so is the file that
+            // is already at its place.
+            (
+                "docs/changes/roadmap.md",
+                "---\ntype: change\nstatus: rejected\n---\n# R\n",
+            ),
+            ("docs/overview.md", &note("already a top file by its name")),
+        ]);
+        let r = pipeline_layout(&tree, MIXED, true);
+        for (path, ty) in [
+            ("docs/notes/glossary.md", None),
+            ("docs/reference/terms.md", Some(DocType::Terms)),
+            ("docs/notes/architecture.md", None),
+            ("docs/notes/system.md", None),
+            ("docs/changes/questions.md", None),
+            ("docs/changes/roadmap.md", Some(DocType::Roadmap)),
+            ("docs/overview.md", Some(DocType::Product)),
+        ] {
+            assert_eq!(top_of(&r, path), ty, "{path}");
+        }
+        // The change that is a top file is no change in the facts.
+        assert!(r.facts.change_roots.is_empty());
+        assert_eq!(
+            r.facts.top_types,
+            [DocType::Product, DocType::Terms, DocType::Roadmap]
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        );
+        assert!(!r.facts.old_types.contains("change") || r.facts.done_changes);
+    }
+
+    #[test]
+    fn an_existing_top_file_keeps_the_document_and_names_it() {
+        let tree = mem(&[
+            ("docs/notes/glossary.md", &note("G")),
+            ("docs/terms.md", "---\ntype: research\n---\n# Terms\n"),
+        ]);
+        let r = pipeline_layout(&tree, MIXED, true);
+        assert_eq!(top_of(&r, "docs/notes/glossary.md"), None);
+        assert_eq!(
+            r.classified.top_kept,
+            [
+                "kept docs/notes/glossary.md: the top file docs/terms.md exists, so no document moves there"
+            ]
+        );
+        assert!(r.facts.top_types.is_empty());
+    }
+
+    #[test]
+    fn a_top_file_has_no_type_no_status_and_no_marker_where_the_plan_writes_it() {
+        let tree = mem(&[
+            (
+                "docs/changes/roadmap.md",
+                "---\ntype: change\nstatus: proposed\nowner: me\n---\n# R\n\nSee [x](../x.md).\n",
+            ),
+            ("docs/notes/glossary.md", &note("G")),
+            ("docs/x.md", "# X\n"),
+        ]);
+        let (r, p) = go(&tree, MIXED, true);
+        assert_eq!(
+            p.moves
+                .iter()
+                .map(|m| (m.from.as_str(), m.to.as_str(), m.kind))
+                .collect::<Vec<_>>(),
+            [
+                ("docs/changes/roadmap.md", "docs/roadmap.md", MoveKind::Top),
+                ("docs/notes/glossary.md", "docs/terms.md", MoveKind::Top),
+            ]
+        );
+        assert_eq!(
+            p.writes["docs/roadmap.md"],
+            "---\nowner: me\naliases:\n  - changes/roadmap\n---\n# R\n\nSee [x](x.md).\n"
+        );
+        assert_eq!(
+            p.writes["docs/terms.md"],
+            "---\naliases:\n  - notes/glossary\n---\n# G\n\nText.\n"
+        );
+        // The text "before" of the proof has the 0.5 type in its old place.
+        assert!(edited(&r, "docs/notes/glossary.md").contains("type: research\nwas-type: note"));
+        assert!(edited(&r, "docs/changes/roadmap.md").contains("type: intent\nstatus: draft"));
+        // The graph has the layers of the top files, and no `intent` layer.
+        assert!(r.fin.layers.layer_of_type(DocType::Roadmap).is_some());
+        assert!(r.fin.layers.layer_of_type(DocType::Terms).is_some());
+        assert!(r.fin.layers.layer_of_type(DocType::Intent).is_none());
+    }
+
+    fn areas(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(i, a)| (i.to_string(), a.to_string()))
+            .collect()
+    }
+
+    fn spec(title: &str) -> String {
+        format!(
+            "---\ntype: spec\n---\n# {title}\n\n## Requirements\n\n- **{title}-rule**: The x SHALL y.\n"
+        )
+    }
+
+    #[test]
+    fn a_mapped_requirements_document_moves_into_its_area_and_the_config_has_the_area() {
+        let tree = mem(&[
+            ("docs/irrigation/pumps.md", &spec("pumps")),
+            ("docs/irrigation/valves.md", &spec("valves")),
+            ("docs/a.md", "# A\n\n[p](irrigation/pumps.md)\n"),
+        ]);
+        let map = areas(&[
+            ("irrigation/pumps", "water"),
+            ("irrigation/valves", "water"),
+        ]);
+        let (r, p) = full_areas(&tree, MIXED, true, &map).unwrap();
+        assert_eq!(
+            p.moves
+                .iter()
+                .map(|m| (m.from.as_str(), m.to.as_str(), m.kind))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "docs/irrigation/pumps.md",
+                    "docs/requirements/water/pumps.md",
+                    MoveKind::Area
+                ),
+                (
+                    "docs/irrigation/valves.md",
+                    "docs/requirements/water/valves.md",
+                    MoveKind::Area
+                ),
+            ]
+        );
+        assert_eq!(r.fin.areas, ["water"]);
+        assert!(p.writes["docs/requirements/water/pumps.md"].contains("  - irrigation/pumps\n"));
+        assert!(p.writes["docs/a.md"].contains("(requirements/water/pumps.md)"));
+        // No link of a folder maps to a folder, because the files go to one
+        // folder from one folder only by chance.
+        let tree = mem(&[("docs/irrigation/pumps.md", &spec("pumps"))]);
+        let (_, p) = full_areas(&tree, MIXED, true, &areas(&[("irrigation/pumps", "w")])).unwrap();
+        let moves = tree.with(|t| link_moves(t, &p.moves));
+        assert_eq!(moves.len(), 1, "{moves:?}");
+    }
+
+    #[test]
+    fn each_stop_of_the_areas_names_its_cause_and_nothing_moves() {
+        let tree = mem(&[
+            ("docs/irrigation/pumps.md", &spec("pumps")),
+            (
+                "docs/guides/g.md",
+                "---\ntype: guide\nstatus: active\n---\n# G\n",
+            ),
+            ("docs/requirements/water/pumps.md", "# Exists\n"),
+        ]);
+        for (pairs, want) in [
+            (&[("nope", "w")][..], "the id `nope`"),
+            (&[("guides/g", "w")], "is not a `requirements` document"),
+            (&[("irrigation/pumps", "a/b")], "not one folder name"),
+            (&[("irrigation/pumps", "")], "not one folder name"),
+            (&[("irrigation/pumps", "water")], "exists"),
+        ] {
+            let (tree2, m) = (&tree, areas(pairs));
+            let e = match full_areas(tree2, MIXED, true, &m) {
+                Err(Fatal::Refused(m)) => m,
+                Err(other) => panic!("{pairs:?}: {other:?}"),
+                Ok(_) => panic!("{pairs:?}: the plan must stop"),
+            };
+            assert!(e.contains(want), "{pairs:?}: {e}");
+        }
     }
 }
