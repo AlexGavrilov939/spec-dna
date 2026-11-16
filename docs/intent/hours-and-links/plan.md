@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Hours of a change and links into a change: plan
 
