@@ -616,6 +616,17 @@ spec-dna mv <doc-id>#<key or anchor>... <doc-id or path> [--type <type>]
 
 The first form moves a document with `git mv`. It adds the old id to the `aliases` of the document, and it changes the relative links to the document. `--stub` leaves a stub at the old path for tools that read a file by its path. The stub has the front matter `moved-to`, no id and no budget.
 
+These rules apply to the move of a whole document:
+
+- If the new id is an alias of the moved document, the move drops that alias, and the old id becomes an alias. The output has `(alias dropped: <alias>)`, and `--json` has the field `alias_dropped` (the alias, or `null`). A file at the new path, the id of another document or an ambiguous alias stops the move with exit code 2.
+- In a mixed root, the new place can give the type ([Place gives the type](types.md#place-gives-the-type)). Then `mv` removes the `type` line. The move can change the type of the document, because the person chose the place. The output names the change: `type: intent -> roadmap (the place gives the type)`.
+- If the document has requirements and the type of the new place holds none, `mv` stops with exit code 2 and changes nothing. Move the requirements first, with the second form.
+- An accepted decision keeps its type. `mv` stops with exit code 2 if the new place gives another type.
+- If the new type has no status, `mv` removes the `status` line. If the status is not a status of the new type (after `status-map`), `mv` writes the first status of the new type, and the output names it: `status: accepted -> draft`. All other fields stay.
+- If the new place gives no type, and the old type came from the old place, `mv` writes the `type` line, unless `default-type` of the new root is that type. A move never changes a type with no line in the output.
+- In a root of one type, `mv` changes no `type` and no `status` line.
+- After the move, `mv` removes each folder that the move left empty, from the deepest folder to the highest. A folder with a file stays, and so does a folder with an ignored file. The root folder of the document stays. With `--stub`, the stub keeps the folder.
+
 The second form splits a document of any type. It moves requirements, or whole sections with their subsections, into one of these documents:
 
 - an existing document of any type;

@@ -51,6 +51,8 @@ In a mixed root, a document gets its type from this list. The first rule that gi
 4. The file name, in the folder of a layer that has more types: `intent/<slug>/intent.md`, `spec.md` and `plan.md` have the types `intent`, `spec` and `plan`.
 5. `default-type` of the root.
 
+`spec-dna mv` of a whole document into a mixed root removes the `type` line that the new place makes redundant, and it names a change of the type ([mv](commands.md#mv)).
+
 If no rule gives a type, the document gives SD303. A mixed root has no `default-type` unless the file sets it. Thus `type:` is optional in a new corpus, wherever the place gives the type.
 
 The layer of a document is the first layer in the file whose `paths` match it. If no layer matches, it is the layer that has the type of the document. A `paths` match does not give a type.

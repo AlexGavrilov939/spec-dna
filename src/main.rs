@@ -2783,6 +2783,9 @@ fn report_move(m: &mv::Moved, json: bool) {
         if let Some(st) = &m.stub {
             o = o.str("stub", st);
         }
+        if m.kind == "document" {
+            o = o.opt_str("alias_dropped", m.alias_dropped.as_deref());
+        }
         if let Some(s) = &m.split {
             let (hashes, ids, decisions) = s.preserved;
             o = o
@@ -2856,10 +2859,19 @@ fn report_move(m: &mv::Moved, json: bool) {
             "moved {} {} -> {} (no alias: the key is new in this change)",
             m.kind, m.from, m.to
         ),
-        _ => println!(
-            "moved {} {} -> {} (alias kept: {})",
-            m.kind, m.from, m.to, m.alias
-        ),
+        _ => {
+            let dropped = m
+                .alias_dropped
+                .as_ref()
+                .map_or(String::new(), |a| format!(" (alias dropped: {a})"));
+            println!(
+                "moved {} {} -> {} (alias kept: {}){dropped}",
+                m.kind, m.from, m.to, m.alias
+            );
+        }
+    }
+    for line in &m.changes {
+        println!("{line}");
     }
     if let Some(s) = &m.split {
         if !s.section_aliases.is_empty() {

@@ -19,6 +19,12 @@ pub struct Moved {
     pub split: Option<crate::split::Split>,
     /// The path of the stub that `--stub` left at the old path.
     pub stub: Option<String>,
+    /// For a move of a whole document: the alias that the move dropped,
+    /// because it is the new id.
+    pub alias_dropped: Option<String>,
+    /// For a move of a whole document: the changes of the `type` and `status`
+    /// lines that the new place needs, one text line for each.
+    pub changes: Vec<String>,
 }
 
 /// Moves one document, or requirements and sections (`split.rs`). The last
@@ -62,6 +68,8 @@ pub fn run(
         files: s.files.clone(),
         split: Some(s),
         stub: None,
+        alias_dropped: None,
+        changes: Vec::new(),
     })
 }
 
@@ -102,8 +110,23 @@ fn move_document(
             "`{to_path}` has the same id `{new_id}`"
         )));
     }
-    if repo.root.join(&to_path).exists() || c.lookup.contains_key(&crate::model::canonical(&new_id))
-    {
+    // The new id can be a front matter alias of the moved document itself.
+    // The move then drops that alias. A file at the path, the id of another
+    // document, a legacy alias and an ambiguous alias stop the move.
+    let canon_new = crate::model::canonical(&new_id);
+    let file_exists = repo.root.join(&to_path).exists();
+    let own_alias = c
+        .lookup
+        .get(&canon_new)
+        .filter(|hits| hits.as_slice() == [d])
+        .and_then(|_| {
+            doc.aliases
+                .iter()
+                .find(|a| !a.contains('#') && crate::model::canonical(a) == canon_new)
+                .cloned()
+        })
+        .filter(|_| !file_exists);
+    if file_exists || (c.lookup.contains_key(&canon_new) && own_alias.is_none()) {
         return Err(Fatal::Usage(format!(
             "`{to_path}` (id `{new_id}`) already exists"
         )));
@@ -123,10 +146,12 @@ fn move_document(
             .cloned(),
     );
     let text = read(repo, &doc.path)?;
+    // Everything that can stop the move runs before the first change.
+    let (text, changes) = fit_front_matter(config, doc, new_root, &to_path, text)?;
     let old_dir = parent(&doc.path);
     let one: HashMap<String, String> = HashMap::from([(doc.path.clone(), to_path.clone())]);
     let updated = rewrite_links(
-        &add_aliases(&text, &add),
+        &edit_aliases(&text, &add, own_alias.as_deref()),
         old_dir,
         parent(&to_path),
         &one,
@@ -180,6 +205,10 @@ fn move_document(
     } else {
         None
     };
+    // The folders that the move left empty go. The stub keeps its folder.
+    if !stub {
+        remove_empty_parents(repo, &root.path, &doc.path);
+    }
     Ok(Moved {
         kind: "document",
         from: doc.id.clone(),
@@ -188,7 +217,153 @@ fn move_document(
         files,
         split: None,
         stub: stub_path,
+        alias_dropped: own_alias,
+        changes,
     })
+}
+
+/// Removes each empty parent folder of an old path, from the deepest folder
+/// to the highest. A folder with any file stays, an ignored file too. It
+/// stops at the root folder of the document, which never goes.
+pub(crate) fn remove_empty_parents(repo: &Repo, root_path: &str, old_path: &str) {
+    let mut dir = parent(old_path);
+    while !dir.is_empty()
+        && dir != root_path
+        && (root_path.is_empty() || dir.starts_with(&format!("{root_path}/")))
+    {
+        if std::fs::remove_dir(repo.root.join(dir)).is_err() {
+            break;
+        }
+        dir = parent(dir);
+    }
+}
+
+/// Fits the `type` and `status` lines of a document to its new place. It
+/// applies to a mixed root only: a root of one type gives the type, and
+/// nothing changes. Returns the new text and one text line for each change.
+fn fit_front_matter(
+    config: &Config,
+    doc: &crate::model::Doc,
+    new_root: usize,
+    to_path: &str,
+    mut text: String,
+) -> Result<(String, Vec<String>), Fatal> {
+    use crate::model::DocType;
+    let root = &config.roots[new_root];
+    if root.single_type.is_some() {
+        return Ok((text, Vec::new()));
+    }
+    let rel = root.rel(to_path);
+    // The type of the place, as `make_doc` reads it.
+    let place = config
+        .layers
+        .place_type(rel)
+        .filter(|&t| !t.is_intent_type() || config.layers.is_intent_place(t, rel));
+    let raw = |text: &str, key: &str| -> Option<String> {
+        let (fm, _) = frontmatter::split(text)?;
+        match frontmatter::parse(fm, 2).ok()?.get(key)?.0 {
+            Value::Str(s) => Some(s.clone()),
+            _ => None,
+        }
+    };
+    let has_line = |text: &str, key: &str| frontmatter::remove_field(text, key).is_some();
+    let hand = |key: &str| {
+        Fatal::Usage(format!(
+            "cannot edit the `{key}` line of `{}`; edit it by hand and run `mv` again",
+            doc.path
+        ))
+    };
+    let mut changes = Vec::new();
+    let Some(t) = place else {
+        // The place gives no type. The old type came from the old place
+        // unless the front matter or `default-type` of the new root has it.
+        if !doc.type_failed && !has_line(&text, "type") && Some(doc.ty) != root.default_type {
+            text = frontmatter::insert_field(&text, "type", doc.ty.name(), None);
+            changes.push(format!(
+                "type: {} written (the new place gives no type)",
+                doc.ty.name()
+            ));
+        }
+        return Ok((text, changes));
+    };
+    if !doc.reqs.is_empty() && !t.has_requirements() {
+        return Err(Fatal::Usage(format!(
+            "`{to_path}` gives the type `{}`, which holds no requirements; move the {} requirements first with `spec-dna mv {}#<key>... <to>`",
+            t.name(),
+            doc.reqs.len(),
+            doc.id
+        )));
+    }
+    if doc.ty == DocType::Decision
+        && t != DocType::Decision
+        && doc.status.as_deref() == Some("accepted")
+    {
+        return Err(Fatal::Usage(format!(
+            "`{}` is an accepted decision, and `{to_path}` gives the type `{}`; a decision keeps its locked text, so it keeps its type",
+            doc.path,
+            t.name()
+        )));
+    }
+    if let Some(s) = frontmatter::remove_field(&text, "type") {
+        text = s;
+    }
+    if t != doc.ty {
+        changes.push(format!(
+            "type: {} -> {} (the place gives the type)",
+            doc.ty.name(),
+            t.name()
+        ));
+    }
+    let line = raw(&text, "status");
+    if line.is_none() && has_line(&text, "status") && t.has_status() {
+        // A `status` line with a list or another form that `mv` cannot read.
+        return Err(hand("status"));
+    }
+    if !t.has_status() {
+        if let Some(old) = line {
+            text = frontmatter::remove_field(&text, "status").ok_or_else(|| hand("status"))?;
+            changes.push(format!(
+                "status: {old} removed (the type {} has no status)",
+                t.name()
+            ));
+        }
+        return Ok((text, changes));
+    }
+    // The status that the document has now, with the `status-map` of the new
+    // root. With no line, it is the status that the old place gave.
+    let fits = |s: &str| {
+        t.statuses().contains(&s)
+            || root
+                .status_map
+                .iter()
+                .any(|(from, to)| from == s && t.statuses().contains(&to.as_str()))
+    };
+    let current = line.clone().or_else(|| doc.status.clone());
+    match current {
+        Some(s) if fits(&s) => {
+            // A status that only the old root gave needs a line in the new root.
+            let given = Some(t) == root.default_type && root.status.as_deref() == Some(s.as_str());
+            if line.is_none() && !given {
+                text = frontmatter::insert_field(&text, "status", &s, Some("type"));
+            }
+        }
+        other => {
+            let first = crate::templates::first_status(t).unwrap_or("draft");
+            let given = Some(t) == root.default_type && other.is_none() && root.status.is_some();
+            if !given {
+                text = match line {
+                    Some(_) => frontmatter::set_field(&text, "status", first)
+                        .ok_or_else(|| hand("status"))?,
+                    None => frontmatter::insert_field(&text, "status", first, Some("type")),
+                };
+                changes.push(format!(
+                    "status: {} -> {first}",
+                    other.as_deref().unwrap_or("none")
+                ));
+            }
+        }
+    }
+    Ok((text, changes))
 }
 
 pub(crate) fn parent(path: &str) -> &str {
@@ -359,6 +534,12 @@ pub fn add_req_alias(item: &str, alias: &str) -> String {
 /// Adds aliases to the front matter. If the front matter does not exist, it
 /// creates it.
 pub fn add_aliases(text: &str, add: &[String]) -> String {
+    edit_aliases(text, add, None)
+}
+
+/// Adds aliases to the front matter, and drops the alias `drop` from it. It
+/// compares the names in their canonical form, as the lookup does.
+pub fn edit_aliases(text: &str, add: &[String], drop: Option<&str>) -> String {
     let Some((fm, body_at)) = frontmatter::split(text) else {
         return format!("---\n{}---\n{text}", alias_block(add));
     };
@@ -371,6 +552,10 @@ pub fn add_aliases(text: &str, add: &[String]) -> String {
         Some(Value::List(l)) => l,
         _ => Vec::new(),
     };
+    if let Some(d) = drop {
+        let d = crate::model::canonical(d);
+        existing.retain(|a| crate::model::canonical(a) != d);
+    }
     for a in add {
         if !existing.contains(a) {
             existing.push(a.clone());
@@ -467,6 +652,26 @@ mod tests {
         assert_eq!(
             add_aliases("---\nstatus: draft\n---\n", &["a".into()]),
             "---\nstatus: draft\naliases:\n  - a\n---\n"
+        );
+    }
+
+    #[test]
+    fn an_alias_that_is_the_new_id_drops_out() {
+        assert_eq!(
+            edit_aliases(
+                "---\naliases: [a/b, ADR-007]\n---\n# T\n",
+                &["x/y".into()],
+                Some("a/b")
+            ),
+            "---\naliases:\n  - ADR-007\n  - x/y\n---\n# T\n"
+        );
+        assert_eq!(
+            edit_aliases(
+                "---\naliases:\n  - ADR-007\n---\n# T\n",
+                &["x/y".into()],
+                Some("ADR-7")
+            ),
+            "---\naliases:\n  - x/y\n---\n# T\n"
         );
     }
 

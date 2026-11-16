@@ -4,6 +4,15 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ## Unreleased
 
+### Changed
+
+- `spec-dna mv` of a whole document into a mixed root fits the `type` and `status` lines to the new place. It removes a `type` line that the place gives, and a `status` line of a type with no status. It writes the first status of the new type when the old status does not fit, and it writes `type:` when the new place gives no type. The output names each change of the type or the status. `mv` stops with exit code 2 if the document has requirements and the new type holds none, or if an accepted decision would get another type ([docs/commands.md](docs/commands.md#mv)).
+- `spec-dna mv` removes each folder that the move leaves empty. A folder with a file, including an ignored file, stays. The root folder of the document stays, and so does the folder of a `--stub`.
+
+### Fixed
+
+- `spec-dna mv` of a document to the path of one of its own aliases no longer stops with "already exists". It drops that alias and keeps the old id as an alias. The output has `(alias dropped: <alias>)`, and `--json` has the new field `alias_dropped`.
+
 ## 0.6.0 - 2026-11-16
 
 0.6.0 breaks compatibility with 0.5. It renames document types, statuses, configuration keys, harness roles and 2 code names, and it keeps no old name as input. The command `spec-dna upgrade` moves a project that pins 0.4.0 or later, and it proves that no id and no requirement text changed ([ADR 0009](docs/adr/0009-upgrade-from-0-5.md)). 0.6.0 also adds the layer graph, the change lifecycle, the evals and the stage skills of the harness.
