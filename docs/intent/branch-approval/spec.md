@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Approval in the branch: spec
 
