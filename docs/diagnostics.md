@@ -11,9 +11,9 @@ SD103 fix: Fix the `verified-by` path. The path must exist in the git tree.
 
 Every diagnostic has a stable code. A code keeps its meaning. spec-dna does not use a retired code again. An error fails `check` when the error is new against the base. A warning never fails `check`.
 
-The text output has this order: the errors, the drift warnings, the other warnings, and one count line for each prose lint code. Then it gives the fix of each listed code once (`SD102 fix: ...`). Thus an agent needs no lookup.
+The text output has this order: the errors, the drift warnings, the other warnings, and one count line for each prose lint code. Then it gives the fix of each listed code once (`SD102 fix: ...`). Thus an agent needs no lookup. With `--all`, the output also has one info line for each dead link in locked text, after the diagnostics ([locked references](#locked-references)). An info line is not a diagnostic.
 
-`check --json` prints `code`, `name`, `severity`, `new`, `doc`, `path`, `line`, `target`, `message` and `fix` for each diagnostic. It also prints `documents`: the id, path, type, status, body characters and number of recognized requirements of each document.
+`check --json` prints `code`, `name`, `severity`, `new`, `doc`, `path`, `line`, `target`, `message` and `fix` for each diagnostic. It also prints `locked_links` (see [locked references](#locked-references)) and `documents`: the id, path, type, status, body characters and number of recognized requirements of each document.
 
 The tables below give the severity of each code in the `standard` profile. The profile and the rules of the root can change the severity or disable the code ([profiles.md](profiles.md)).
 
@@ -89,10 +89,29 @@ SD501, SD502, SD504 and SD505 check the files that `spec-dna init` writes: the a
 | --- | --- | --- | --- |
 | SD501 | adapter-modified | error | A generated adapter (the line in `AGENTS.md` or `CLAUDE.md`, or the skill block) has a manual edit. A generated harness file of the Claude Code adapter has a manual edit, or text after its marker. These files are an agent file, a stage skill, `REVIEW.md`, `model-team.md` and the model-team line of `CLAUDE.md`. A file with a harness marker that the configuration does not generate also gives SD501 when it has a manual edit: delete the file, or delete its marker line to keep it as a file of the project. The scan covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, but not the adapter skill `.claude/skills/spec-dna/SKILL.md`. |
 | SD502 | adapter-outdated | error | A generated adapter differs from the adapter that this version generates. The multi-line block of an earlier version also gives SD502: `spec-dna init` replaces it with one line. A generated harness file or line of the Claude Code adapter differs from the text for the configuration. A `.claude/settings.json` entry of the harness is absent or different (the message names its JSON path). A file with a harness marker is no longer in the configuration, and it has no edit (`spec-dna init --reconfigure` removes it). The scan is the one of SD501. An old `checker.md` or `spec-writer.md` is such a file. `CLAUDE.md` has a second model-team line (delete it). The skill lists the types of the layers, so `spec-dna layer add` also gives SD502 until `spec-dna init` runs again. |
-| SD503 | config-not-alone | error | The change edits `spec-dna.toml` and other files (documents or code). A configuration change must be a change of its own. The files that `init` writes with it do not count: the adapters, the harness files, `.pre-commit-config.yaml`, `.husky/pre-commit`, the starter files of the evals, and files whose name starts with `spec-dna`. The starter files are `<dir>/check.sh`, `<dir>/example.json`, `<dir>/fixtures/example/notes.txt` and `.github/workflows/agent-evals.yml`, with `<dir>` from `[evals] dir`. They do not count if the head configuration has `[evals]`. Without `[evals]`, they count. `check` does not examine a new `spec-dna.toml`. `check` compares the working tree with the base (with `--base`, tracked files; without it, also untracked files). SD503 does not apply if the base pins a version before 0.6.0. Thus one pull request can hold the configuration and the documents of an upgrade. A base from 0.6.0 keeps SD503, also for a change of the pin. |
+| SD503 | config-not-alone | error | The change edits `spec-dna.toml` and other files. A configuration change must be a change of its own. [Files that SD503 counts](#files-that-sd503-counts) lists the paths that do not count. |
 | SD504 | harness-missing | error | `[harness]` has a level that is not `none`, and a file that the harness of the Claude Code adapter needs is absent: an agent file, a stage skill (`.claude/skills/spec-dna-<skill>/SKILL.md`), `REVIEW.md`, `.claude/agents/model-team.md`, or the model-team line of `CLAUDE.md`. A file at the path of one of these files, with no harness marker, also gives SD504: spec-dna does not replace a file that it did not generate. The message gives the ways to fix it: move the file, set the role of an agent file to `none`, remove the skill from `skills`, or set `review-md = false`. |
 | SD505 | harness-settings-invalid | error | `.claude/settings.json` of the harness of the Claude Code adapter is not valid JSON, or its root is not an object, or a key that spec-dna writes into has a value of the wrong type (the message names it). `check` cannot compare the harness entries. |
 | SD506 | evals-invalid | error | The table `[evals]` is in the configuration, and a `*.json` file directly in `[evals] dir` is not a valid eval, or the file `<dir>/check.sh` is absent. The message names the broken rule, and the target is its key (for example `task`, `fixture` or `checks`). `spec-dna eval run` uses the same rules. SD506 reads no text of `check.sh` or of a fixture, and no file in a subfolder. It is an error in each profile. It does not depend on `[change] policy` ([the checks of the evals](#checks-of-the-evals)). |
+
+### Files that SD503 counts
+
+SD503 reads paths only. It compares the working tree with the base (with `--base`, tracked files; without it, also each untracked file that git does not ignore, except with `--staged`). It does not read the content of a file, and its lists do not depend on the harness level. A manual edit of one of the files below does not count.
+
+`check` does not examine a new `spec-dna.toml` (an adoption). SD503 does not apply if the base pins a version before 0.6.0. Thus one pull request can hold the configuration and the documents of an upgrade. A base from 0.6.0 keeps SD503, also for a change of the pin.
+
+These paths do not count. Each one is a file that `init` writes with the configuration:
+
+- `spec-dna.toml`
+- The adapters: `AGENTS.md`, `CLAUDE.md` and `.claude/skills/spec-dna/SKILL.md`.
+- The files of the harness: `.claude/settings.json`, `.claude/agents/model-team.md` and `REVIEW.md`.
+- The agent files: `.claude/agents/fallback-advisor.md`, `.claude/agents/verifier.md`, `.claude/agents/Explore.md`, `.claude/agents/implementer.md` and `.claude/agents/code-simplifier.md`. The agent files of 0.5 also do not count: `.claude/agents/checker.md` and `.claude/agents/spec-writer.md`.
+- The stage skills: `.claude/skills/spec-dna-intent/SKILL.md`, `.claude/skills/spec-dna-spec/SKILL.md`, `.claude/skills/spec-dna-plan/SKILL.md` and `.claude/skills/spec-dna-review/SKILL.md`.
+- The hook files: `.pre-commit-config.yaml` and `.husky/pre-commit`.
+- The starter files of the evals, if the head configuration has `[evals]`: `<dir>/check.sh`, `<dir>/example.json`, `<dir>/fixtures/example/notes.txt` and `.github/workflows/agent-evals.yml`. `<dir>` is `[evals] dir`. Without `[evals]`, these files count.
+- Each path whose file name starts with `spec-dna`, such as `.github/workflows/spec-dna.yml`. This rule has no folder limit, so a document `docs/spec-dna-notes.md` does not count.
+
+Each other path that differs from the base counts. Examples are documents, code, lint configurations such as `.markdownlint-cli2.yaml`, `CODEOWNERS`, other workflows and a deleted file. A move gives 2 paths, the old path and the new path, because the diff has no rename detection.
 
 ## Links, drift and quality (SD601 to SD611)
 
@@ -108,7 +127,7 @@ SD501, SD502, SD504 and SD505 check the files that `spec-dna init` writes: the a
 | SD608 | requirement-unverified | warning | A requirement of an active `requirements`, `interface` or `rule` document has no evidence: no `verified-by` and no `covers:` tag. |
 | SD609 | incident-unlinked | warning | An incident links no requirement, rule, decision or procedure. |
 | SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries. A change added, removed or renamed an entry document, or changed its title or status, or edited the rows manually. |
-| SD611 | decision-links-intent | warning | An accepted decision links an `intent` document in its locked text, or in `depends-on`. You can delete a finished intent (SD202 allows it), but you cannot remove the link from the locked text (SD405). SD611 does not report a link in an amendment, history or live section. SD901 reports it, so name the intent as plain text there. [types.md](types.md#links-between-types) gives the link directions. |
+| SD611 | decision-links-intent | warning | An accepted decision links an `intent` document in its locked text, or in `depends-on`. You can delete a finished intent (SD202 allows it), but you cannot remove the link from the locked text (SD405). SD611 does not report a link in an amendment, history or live section. SD901 reports it, so name the intent as plain text there. After `spec-dna finish` deletes the intent, the link is dead, and `check --all` names it in an [info line](#locked-references). [types.md](types.md#links-between-types) gives the link directions. |
 
 ## Budgets (SD701 to SD704)
 
@@ -344,6 +363,8 @@ The base of step 3 is the merge base of `--base` (or of `origin/HEAD`) with `HEA
 ### Locked references
 
 A reference in the locked text of an accepted decision gives no SD101 and no SD102. This text cannot change (SD405). A reference to a finished intent must stay in it (SD611 warned when the author wrote it). The locked text is each part of the body outside the amendment, history and live sections.
+
+`check --all` prints one info line for each such reference whose target no longer exists, after the diagnostics: ``<path>:<line>: info: the locked text links `<target>`, which no longer exists; add an amendment that points to <pointer>``. The pointer is the change (``the change `<slug>` (`spec-dna log` names its commit)``) if the target was in the folder of an intent. Otherwise it is "the new place of the text, or the reason for its removal". The line is not a diagnostic: it has no code and no severity, it is not in the counts, and it does not change the exit code. An absent anchor in a link of the locked text stays SD602. `check --json` always has the field `locked_links`, a list of `{path, line, target, pointer}`.
 
 The front matter is not locked, so a broken `supersedes` or `depends-on` still gives SD101. The same reference in one of these sections still gives SD101 or SD102, because the author can change that text. A decision that is not accepted has no locked text.
 

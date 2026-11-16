@@ -627,6 +627,96 @@ pub(crate) fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
         .is_some_and(|i| editable.contains(&i))
 }
 
+/// A reference in the locked text of an accepted decision, with a target that
+/// no longer exists. `check` gives no SD101 and no SD102 for it, because the
+/// author cannot edit the text. `check --all` names it in an info line, and
+/// `check --json` has it in `locked_links`. It is not a diagnostic: it has no
+/// code, no severity and no effect on the exit code.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LockedLink {
+    pub path: String,
+    pub line: u32,
+    /// The target, as the text writes it.
+    pub target: String,
+    /// Where the amendment must point.
+    pub pointer: String,
+}
+
+impl LockedLink {
+    /// The info line of `check --all`.
+    pub fn line_text(&self) -> String {
+        format!(
+            "{}:{}: info: the locked text links `{}`, which no longer exists; add an amendment that points to {}",
+            self.path, self.line, self.target, self.pointer
+        )
+    }
+}
+
+/// The locked links of a tree: each document or link target of the locked
+/// text of an accepted decision that is absent. A reference that names a
+/// document that exists, with a section that is absent, is not in the list.
+pub fn locked_links(config: &Config, c: &Corpus) -> Vec<LockedLink> {
+    let mut out: Vec<LockedLink> = Vec::new();
+    for d in &c.docs {
+        let Some(editable) = editable_chunks(config, d) else {
+            continue;
+        };
+        for r in &d.parsed.refs {
+            if !in_locked_text(d, &editable, r.line) {
+                continue;
+            }
+            // The place of the target that is gone, to find its change.
+            let gone = match r.kind {
+                RefKind::Wiki => match c.resolve(&r.target) {
+                    Res::Missing => r.target.split('#').next().unwrap_or("").to_string(),
+                    _ => continue,
+                },
+                RefKind::Link | RefKind::Image => match c.resolve_link(&d.path, &r.target) {
+                    LinkRes::Missing(path) => match config.roots.get(d.root) {
+                        Some(root) if !root.path.is_empty() => path
+                            .strip_prefix(&format!("{}/", root.path))
+                            .unwrap_or(&path)
+                            .to_string(),
+                        _ => path,
+                    },
+                    _ => continue,
+                },
+            };
+            let link = LockedLink {
+                path: d.path.clone(),
+                line: r.line,
+                target: r.target.clone(),
+                pointer: match intent_slug(config, &gone) {
+                    Some(slug) => format!("the change `{slug}` (`spec-dna log` names its commit)"),
+                    None => "the new place of the text, or the reason for its removal".to_string(),
+                },
+            };
+            if !out.contains(&link) {
+                out.push(link);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The name of the change whose folder holds a path, if the path is in the
+/// folder of a layer that has the type `intent`. `rel` is relative to the
+/// root, and it has no extension for an id.
+fn intent_slug(config: &Config, rel: &str) -> Option<String> {
+    config
+        .layers
+        .layers()
+        .iter()
+        .filter(|l| l.types.contains(&DocType::Intent))
+        .filter_map(|l| l.dir())
+        .find_map(|dir| {
+            let rest = rel.strip_prefix(dir)?.strip_prefix('/')?;
+            let slug = rest.split('/').next().filter(|s| !s.is_empty())?;
+            Some(slug.to_string())
+        })
+}
+
 /// SD611: an accepted decision links a document of the type `intent` in its
 /// locked text, or in `depends-on`. You can delete a finished intent (SD202
 /// allows it: its layer is `until-finished`), but you cannot remove the link from

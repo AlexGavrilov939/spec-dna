@@ -1287,6 +1287,8 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     );
     let (new_errors, new_warnings) = (count(Severity::Error, true), count(Severity::Warning, true));
     let failed = if a.all { errors > 0 } else { new_errors > 0 };
+    // Not diagnostics: no code, no severity, no effect on the exit code.
+    let locked = check::locked_links(&cfg, head);
     let mut order: Vec<usize> = (0..outcome.head.len()).collect();
     order.sort_by(|&x, &y| outcome.head[x].cmp(&outcome.head[y]));
     if a.json {
@@ -1317,6 +1319,14 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .num("requirements", d.reqs.len())
                 .end()
         });
+        let locked_json = locked.iter().map(|l| {
+            Obj::new()
+                .str("path", &l.path)
+                .num("line", l.line)
+                .str("target", &l.target)
+                .str("pointer", &l.pointer)
+                .end()
+        });
         let mut obj = Obj::new()
             .str("version", VERSION)
             .str("mode", if a.all { "all" } else { "base" })
@@ -1331,6 +1341,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             obj.bool("ok", !failed)
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
+                .raw("locked_links", &json::array(locked_json))
                 .raw("documents", &json::array(docs))
                 .end()
         );
@@ -1342,6 +1353,11 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .collect();
         for line in human_lines(&shown, a.lint) {
             println!("{line}");
+        }
+        if a.all {
+            for l in &locked {
+                println!("{}", l.line_text());
+            }
         }
         let n = |count: usize, what: &str| {
             format!("{count} {what}{}", if count == 1 { "" } else { "s" })
@@ -3036,4 +3052,65 @@ fn transcript(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     transcript::read_files(&files, a.format.as_deref(), &mut analysis).map_err(Fatal::Usage)?;
     print!("{}", analysis.report(&expect, a.json));
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The part of `docs/diagnostics.md` under the heading "Files that SD503
+    /// counts", up to the next heading.
+    fn sd503_section() -> &'static str {
+        let doc = include_str!("../docs/diagnostics.md");
+        let start = doc
+            .find("### Files that SD503 counts")
+            .expect("the section `Files that SD503 counts` is in docs/diagnostics.md");
+        let rest = &doc[start + 4..];
+        let end = rest.find("\n#").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    #[test]
+    fn the_sd503_section_names_each_path_that_does_not_count() {
+        let section = sd503_section();
+        let mut paths: Vec<String> = vec![config::FILE_NAME.to_string()];
+        paths.extend(adapters::PATHS.iter().map(|p| p.to_string()));
+        paths.extend(init::HOOK_FILES.iter().map(|p| p.to_string()));
+        paths.extend(harness::OLD_AGENT_PATHS.iter().map(|p| p.to_string()));
+        paths.extend([
+            harness::SETTINGS.to_string(),
+            harness::TEAM_PAGE.to_string(),
+            harness::REVIEW.to_string(),
+        ]);
+        // The agent files and the stage skills, with every role and skill on.
+        let h = harness::Harness::new(harness::Level::Full);
+        paths.extend(harness::generated_files(&h).into_iter().map(|g| g.path));
+        paths.extend(harness::Skill::ALL.iter().map(|s| s.path()));
+        // The starter files of the evals, with the folder `<dir>` of `[evals]`.
+        paths.extend(evals::skeleton_paths("<dir>"));
+        for p in &paths {
+            assert!(
+                harness::is_output_path(p)
+                    || adapters::PATHS.contains(&p.as_str())
+                    || init::HOOK_FILES.contains(&p.as_str())
+                    || p == config::FILE_NAME
+                    || p.starts_with("<dir>")
+                    || p.ends_with("agent-evals.yml"),
+                "`{p}` does not skip SD503 in the code"
+            );
+            assert!(
+                section.contains(&format!("`{p}`")),
+                "the section lacks `{p}`"
+            );
+        }
+        // The 5 agent files of 0.6 are in the list, so a new one fails here.
+        assert!(
+            paths
+                .iter()
+                .filter(|p| p.starts_with(harness::AGENTS_DIR))
+                .count()
+                >= 8,
+            "{paths:?}"
+        );
+    }
 }

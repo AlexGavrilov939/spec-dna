@@ -4,6 +4,11 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ## Unreleased
 
+### Added
+
+- `spec-dna check --all` prints one info line for each dead link in the locked text of an accepted decision, such as a link to an intent that `finish` deleted: ``<path>:<line>: info: the locked text links `<target>`, which no longer exists; add an amendment that points to <pointer>``. The pointer names the change (`spec-dna log` names its commit), or says "the new place of the text, or the reason for its removal". The line is not a diagnostic. It has no code, no severity and no rule, and it does not change the counts or the exit code. SD611, SD602 and `finish` are the same ([docs/commands.md](docs/commands.md#check), [docs/diagnostics.md](docs/diagnostics.md#locked-references)).
+- `spec-dna check --json` has the new field `locked_links`: a list of `{path, line, target, pointer}`. The field is always in the output, and the list is empty if there is no locked link.
+
 ### Changed
 
 - `spec-dna mv` of a whole document into a mixed root fits the `type` and `status` lines to the new place. It removes a `type` line that the place gives, and a `status` line of a type with no status. It writes the first status of the new type when the old status does not fit, and it writes `type:` when the new place gives no type. The output names each change of the type or the status. `mv` stops with exit code 2 if the document has requirements and the new type holds none, or if an accepted decision would get another type ([docs/commands.md](docs/commands.md#mv)).
@@ -11,6 +16,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Fixed
 
+- The row of SD503 in [docs/diagnostics.md](docs/diagnostics.md) gave no paths. The new section "Files that SD503 counts" lists each path that does not count (the adapters, the harness files, the hook files, the starter files of the evals and each file whose name starts with `spec-dna`) and says that each other path counts, such as a lint configuration, `CODEOWNERS` and a deleted file. No behavior changes.
 - `spec-dna upgrade` of a 0.4 or 0.5 project writes the 3 types of the intent layer for a `change` in the key `types`: `change` becomes `intent`, `spec` and `plan`. Before, the list had only `intent`, and `new spec` and `new plan` stopped after a policy started. A list of many lines that needs this change is a hand edit (exit code 3) ([docs/commands.md](docs/commands.md#upgrade)).
 - `spec-dna upgrade` of a 0.6 project makes 2 more edits of `spec-dna.toml`, and the report names each edit. If the file has the key `types`, the policy is not `none` and the list lacks `intent`, `spec` or `plan`, it adds the absent types. If `linked-from` of `[layers.pending]` is exactly `["intent"]` (the value of `init` 0.6.0), it adds `requirements` and `decisions`. A list of many lines is not edited, and a warning names the hand edit.
 - `spec-dna upgrade` removes each folder that a move leaves empty, such as `docs/changes/` after it moved its last change. A folder with a file stays, and so does the root folder. `--dry-run` removes nothing.

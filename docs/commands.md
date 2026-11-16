@@ -167,7 +167,15 @@ The text output gives the errors first, then SD606 and SD607, then the other war
 
 `--lint` lists each prose lint warning. It also runs the lint in a profile that has it off (`lite`, `standard`), and it overrides a `lint = "off"` rule. `--lint` does not run the lint when `language` is not English. The findings are warnings, so they never fail the gate. Without `--all`, `--lint` lists the new findings only.
 
-The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
+An accepted decision cannot change its locked text (SD405), so `check` gives no SD101 and no SD102 for a link or a reference there. After `finish` deletes an intent, such a link is dead. With `--all`, `check` prints one info line for each of these locked links, after the diagnostics and before the count line:
+
+```text
+docs/decisions/timer.md:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that points to the change `dose` (`spec-dna log` names its commit)
+```
+
+The line is not a diagnostic. It has no code, no severity and no rule, it is not in the counts, and it does not change the exit code. If the target was in the folder of an intent, the line names the change. Otherwise it says "the new place of the text, or the reason for its removal". Add the amendment to the decision: an amendment section can name the new place as plain text. Without `--all`, `check` prints no such line. A reference to a document that exists, with an absent section, is not a locked link.
+
+The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target` and `pointer` (the text after "points to" in the info line). The list is empty if there is no locked link. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 
 ## context
 
