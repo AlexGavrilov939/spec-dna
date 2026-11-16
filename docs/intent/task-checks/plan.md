@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Task checks and the parse of a change: plan
 
