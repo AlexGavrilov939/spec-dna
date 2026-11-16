@@ -8,7 +8,7 @@ This example takes one change through the change process of spec-dna: the intent
 examples/one-change/run.sh
 ```
 
-You need `spec-dna` on your `PATH`, git, bash and perl. [The list of examples](../README.md#run-an-example) gives the details. The script makes a bare repository as the origin, so `check`, `next` and `finish` have a base, as in a pull request.
+You need `spec-dna` on your `PATH`, git 2.32 or later, bash and perl. [The list of examples](../README.md#run-an-example) gives the details. The script makes a bare repository as the origin, so `check`, `next` and `finish` have a base, as in a pull request.
 
 The project uses the default change policy of `init`: `three-class` with the gate `block`. The change adds a requirement: when a moisture sensor gives no value for 60 seconds, the controller closes the valve of its bed. The owner chose the class `higher-risk`, so the change has a spec that the owner approves.
 
