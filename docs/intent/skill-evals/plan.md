@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Evals of each skill against no skill: plan
 
