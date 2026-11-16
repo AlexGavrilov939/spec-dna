@@ -41,3 +41,33 @@ jobs:
         env:
           # The local guard that stops commits to master does not apply to CI.
           SKIP: no-commit-to-branch
+
+  # D20 of docs/design/0.7.0.md and ADR 0013. The binary of this tree checks the
+  # documents of this repository. One command serves both events. In a pull
+  # request, the merge base of origin/master and HEAD is the base of the change
+  # checks. After a push to master, the merge base is HEAD, so the change checks
+  # see an empty diff and the other rules still run on the whole tree.
+  self-check:
+    name: Self-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.1"
+    steps:
+      # The full history gives the merge base and the approvals in the branch.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+
+      - name: Build the tree binary
+        run: cargo build --locked
+
+      - name: Check this repository
+        run: target/debug/spec-dna check --base origin/master
