@@ -9,7 +9,7 @@ None. This change adds, changes or removes no requirement. It changes the rule o
 
 ## Interfaces
 
-- none
+None. No interface document exists for the rule of SD503 or for CI.
 
 ## Decisions
 
