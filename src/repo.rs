@@ -131,6 +131,18 @@ impl Repo {
         Self::parse_config(&text)
     }
 
+    /// True if this binary is a tree binary (ADR 0013): the file `Cargo.toml`
+    /// at the top level of the repository is the package `spec-dna` with the
+    /// version of this binary. It reads the head tree: the git index for
+    /// `check --staged`, else the working tree. A file that is absent or that
+    /// cannot be read gives `false`.
+    pub fn is_tree_binary(&self) -> bool {
+        matches!(
+            self.git.head_file("Cargo.toml"),
+            Ok(Some(bytes)) if config::is_tree_manifest(&String::from_utf8_lossy(&bytes), VERSION)
+        )
+    }
+
     /// Reads `spec-dna.toml` as the git index has it.
     pub fn load_staged_config(&self) -> Result<Config, Fatal> {
         let blob = self

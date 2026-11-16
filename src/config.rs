@@ -566,6 +566,51 @@ pub fn scan_pin(text: &str) -> Option<String> {
     None
 }
 
+/// True if `line` is the pin line `spec-dna = "..."`. It follows the rule of
+/// `scan_pin`, so the key `spec-dna-sha256` is not a pin line.
+fn is_pin_line(line: &str) -> bool {
+    let line = line.trim().trim_start_matches('\u{feff}');
+    let Some(rest) = line.strip_prefix("spec-dna") else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix('=') else {
+        return false;
+    };
+    rest.trim_start().starts_with(['"', '\''])
+}
+
+/// True if `old` and `new` differ in the pin line and in no other line
+/// (ADR 0013, D19). The pin line is a line before the first table header.
+/// Two texts that are equal, or that differ in another way, give `false`.
+pub fn pin_line_only_change(old: &str, new: &str) -> bool {
+    fn without_pin(text: &str) -> String {
+        let mut in_header = true;
+        text.split_inclusive('\n')
+            .filter(|line| {
+                if line.trim().starts_with('[') {
+                    in_header = false;
+                }
+                !(in_header && is_pin_line(line))
+            })
+            .collect()
+    }
+    old != new && without_pin(old) == without_pin(new)
+}
+
+/// True if the text of a `Cargo.toml` is the package `spec-dna` with the
+/// version `version` (ADR 0013, the 2 facts of the tree binary). A text that
+/// does not parse, or that has no such `[package]`, gives `false`.
+pub fn is_tree_manifest(text: &str, version: &str) -> bool {
+    let Ok(table) = text.parse::<Table>() else {
+        return false;
+    };
+    let Some(package) = table.get("package").and_then(Value::as_table) else {
+        return false;
+    };
+    package.get("name").and_then(Value::as_str) == Some("spec-dna")
+        && package.get("version").and_then(Value::as_str) == Some(version)
+}
+
 /// The message of a pin mismatch (ADR 0003). `sums` is `[spec-dna-sha256]`,
 /// if the file has the table. The release form needs the public install
 /// source and the sum of the asset of this binary. The last sentence follows
@@ -2356,6 +2401,64 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert_eq!(scan_pin("spec-dna-sha256 = \"x\"\n"), None);
         assert_eq!(scan_pin("[[roots]]\nspec-dna = \"1.2.3\"\n"), None);
         assert_eq!(scan_pin("spec-dna = 5\n"), None);
+    }
+
+    #[test]
+    fn a_pin_line_is_the_key_spec_dna_with_a_string() {
+        assert!(is_pin_line("spec-dna = \"1.2.3\""));
+        assert!(is_pin_line("  spec-dna='1.2.3' # c\r\n"));
+        assert!(is_pin_line("\u{feff}spec-dna = \"1.2.3\""));
+        assert!(!is_pin_line("spec-dna-sha256 = \"x\""));
+        assert!(!is_pin_line("spec-dna = 5"));
+        assert!(!is_pin_line("# spec-dna = \"1.2.3\""));
+        assert!(!is_pin_line("name = \"spec-dna\""));
+    }
+
+    #[test]
+    fn a_pin_only_change_differs_in_the_pin_line_and_nowhere_else() {
+        let old = "spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n";
+        let new = "spec-dna = \"0.7.0\"\n[[roots]]\npath = \"docs\"\n";
+        assert!(pin_line_only_change(old, new));
+        // The comment above the pin and the line ending are part of the text.
+        assert!(!pin_line_only_change(old, &format!("# c\n{new}")));
+        assert!(!pin_line_only_change(old, &new.replace('\n', "\r\n")));
+        // Another line changes with the pin.
+        assert!(!pin_line_only_change(old, &new.replace("docs", "doc")));
+        assert!(!pin_line_only_change(old, &format!("{new}\n")));
+        // The same text, or a pin line that moves into a table, is no pin-only change.
+        assert!(!pin_line_only_change(old, old));
+        assert!(!pin_line_only_change(
+            old,
+            "[[roots]]\nspec-dna = \"0.7.0\"\npath = \"docs\"\n"
+        ));
+        // The sums table is another line.
+        assert!(!pin_line_only_change(
+            "spec-dna = \"0.6.0\"\nspec-dna-sha256 = \"a\"\n",
+            "spec-dna = \"0.7.0\"\nspec-dna-sha256 = \"b\"\n"
+        ));
+    }
+
+    #[test]
+    fn a_tree_manifest_is_the_package_spec_dna_at_the_version() {
+        let m = |name: &str, version: &str| {
+            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n")
+        };
+        assert!(is_tree_manifest(&m("spec-dna", "0.7.0"), "0.7.0"));
+        assert!(!is_tree_manifest(&m("spec-dna", "0.7.1"), "0.7.0"));
+        assert!(!is_tree_manifest(&m("tool", "0.7.0"), "0.7.0"));
+        assert!(!is_tree_manifest("[workspace]\nmembers = []\n", "0.7.0"));
+        assert!(!is_tree_manifest(
+            "name = \"spec-dna\"\nversion = \"0.7.0\"\n",
+            "0.7.0"
+        ));
+        // A workspace version is not a string, and a text that does not parse
+        // is not a manifest.
+        assert!(!is_tree_manifest(
+            "[package]\nname = \"spec-dna\"\nversion.workspace = true\n",
+            "0.7.0"
+        ));
+        assert!(!is_tree_manifest("[package\nname = ", "0.7.0"));
+        assert!(!is_tree_manifest("", "0.7.0"));
     }
 
     #[test]
