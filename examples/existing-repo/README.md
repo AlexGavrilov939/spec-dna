@@ -8,7 +8,7 @@ This example adds spec-dna to a repository that already has documents in its own
 examples/existing-repo/run.sh
 ```
 
-You need `spec-dna` on your `PATH`, git, bash and perl. [The list of examples](../README.md#run-an-example) gives the details.
+You need `spec-dna` on your `PATH`, git 2.32 or later, bash and perl. [The list of examples](../README.md#run-an-example) gives the details.
 
 ## 1. Map the folders
 
