@@ -42,6 +42,12 @@ pub struct Facts {
     pub done_changes: bool,
     /// The keys of the roles whose agent file has no marker (D147).
     pub unmarked_roles: BTreeSet<String>,
+    /// The types of the top files that `--layout` makes (D43): `roadmap`,
+    /// `product`, `questions`, `terms` or `system`. The plan adds each of
+    /// them to the types in use. Sorted, with no type twice.
+    pub top_types: Vec<DocType>,
+    /// The areas of `--areas` (D47), sorted. The plan writes the key `areas`.
+    pub areas: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -668,6 +674,8 @@ pub fn types_in_use(old: &OldConfig, facts: &Facts) -> Vec<DocType> {
     if facts.done_changes {
         out.push(DocType::Research);
     }
+    // A top file needs the layer of its type (D43).
+    out.extend(facts.top_types.iter().copied());
     out.sort_by_key(|t| *t as usize);
     out.dedup();
     out
@@ -723,6 +731,29 @@ pub fn pass2(
             t = set_value(&t, &[k("types")], &str_array(&list))?;
         }
     }
+    // The key `types` must allow the type of each top file (D43). An empty
+    // list means that every type is valid: it stays.
+    if old.types.is_some() && !facts.top_types.is_empty() {
+        let mut list = table_at(&t, &[])?
+            .and_then(|r| r.get("types").map(strs))
+            .unwrap_or_default();
+        let before = list.len();
+        if before > 0 {
+            for ty in &facts.top_types {
+                if !list.iter().any(|l| l == ty.name()) {
+                    list.push(ty.name().to_string());
+                }
+            }
+            if list.len() != before {
+                t = set_value(&t, &[k("types")], &str_array(&list))?;
+            }
+        }
+    }
+    // The areas of `--areas`, sorted (D47). A 0.5 file has no key `areas`.
+    if !facts.areas.is_empty() {
+        let list: Vec<String> = facts.areas.iter().cloned().collect();
+        t = insert_keys(&t, &[], &[("areas", str_array(&list))])?;
+    }
     t = edit_harness(&t, old, facts)?;
     let graph = graph_without_limits(&types)?;
     let mut block = render_graph(&graph);
@@ -735,6 +766,7 @@ pub fn pass2(
     let ok = c.layers_declared
         && c.layers == graph
         && c.change_policy.name() == "none"
+        && c.areas.iter().eq(facts.areas.iter())
         && paths(&c) == old.roots.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
         && c.harness
             .as_ref()
@@ -1626,6 +1658,48 @@ mod tests {
             .map(|l| l.name.clone())
             .collect();
         assert_eq!(names, ["requirements", "decisions", "intent"]);
+    }
+
+    #[test]
+    fn a_top_file_adds_its_type_and_its_layer_and_the_areas_go_into_the_key_areas() {
+        let mut f = facts(&["spec", "note"], &[]);
+        f.top_types = vec![DocType::Terms, DocType::Roadmap];
+        f.areas = ["valves".to_string(), "pumps".to_string()].into();
+        // No key `types`: the layers of the top files are in the graph.
+        let t = "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"docs\"\nlive-sections = {}\n";
+        let got = go(t, &f);
+        let c = cfg(&got.text);
+        let names: Vec<&str> = c.layers.layers().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["foundation", "requirements", "research", "pending"]);
+        assert!(got.types.contains(&DocType::Terms) && got.types.contains(&DocType::Roadmap));
+        // The key `areas` is sorted, and it comes before the first table.
+        assert_eq!(c.areas, ["pumps", "valves"]);
+        assert!(
+            got.text.find("areas = [\"pumps\", \"valves\"]\n") < got.text.find("[[roots]]"),
+            "{}",
+            got.text
+        );
+        // The key `types` of the project allows the types of the top files.
+        let t = "spec-dna = \"0.5.0\"\ntypes = [\"spec\", \"note\"]\n[[roots]]\npath = \"docs\"\nlive-sections = {}\n";
+        let got = go(t, &f);
+        let c = cfg(&got.text);
+        assert!(
+            c.allows(DocType::Terms) && c.allows(DocType::Roadmap),
+            "{}",
+            got.text
+        );
+        assert!(
+            got.text
+                .contains("types = [\"requirements\", \"research\", \"terms\", \"roadmap\"]\n"),
+            "{}",
+            got.text
+        );
+        // No top file and no area: no key, and no such layer.
+        f.top_types.clear();
+        f.areas.clear();
+        let got = go(t, &f);
+        assert!(!got.text.contains("areas ="), "{}", got.text);
+        assert!(!got.types.contains(&DocType::Terms));
     }
 
     #[test]

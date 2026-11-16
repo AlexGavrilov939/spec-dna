@@ -796,7 +796,7 @@ Each step that fails gives no output. `git` runs with `GIT_OPTIONAL_LOCKS=0`. Th
 ## upgrade
 
 ```text
-spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]
+spec-dna upgrade [--dry-run] [--layout [--areas <file>]] [--pin-file <file>]
 ```
 
 `upgrade` moves a project that pins spec-dna 0.4.0 or later to the version of the binary that you run. It is also the command that moves the pin. It has no `--to` option, because the binary embeds the standard of its own version. A project with an older pin first moves to 0.4.2 and then runs `upgrade`. [The upgrade guide](guides/upgrade-0.5.md) gives the procedure.
@@ -804,7 +804,8 @@ spec-dna upgrade [--dry-run] [--layout] [--pin-file <file>]
 | Option | Meaning |
 | --- | --- |
 | `--dry-run` | Print the diff of each file and write nothing. It needs a clean tree, as a write does |
-| `--layout` | In a mixed root, also move the folders of the other 0.5 namespaces into the 0.6 folders |
+| `--layout` | In a mixed root, also move the folders of the other 0.5 namespaces into the 0.6 folders, and move the documents that have the name of a top file to the top file of their root |
+| `--areas <file>` | With `--layout` only. A TOML file with the table `[areas]`. Each key is a document id of the 0.5 tree, and each value is an area: `"specs/pumps" = "pumps"`. Each mapped document moves to `<root>/requirements/<area>/<slug>.md`. Save the file outside the repository, as the file of `--pin-file`. A 0.6 project gets exit code 2 |
 | `--pin-file <file>` | The file `spec-dna-pin.toml` of the release, as a path from the current folder. `upgrade` copies its sums into `[spec-dna-sha256]`. The binary cannot know its own checksum |
 
 Save the file of `--pin-file` outside the repository, for example in the folder above it: `--pin-file ../spec-dna-pin.toml`. A file inside the repository makes the tree not clean, so `upgrade` refuses it (exit code 1). Verify the file with `gh attestation verify`.
@@ -821,7 +822,7 @@ Save the file of `--pin-file` outside the repository, for example in the folder 
 | 2. Configuration | Renames the old names: the types (`change` gives the 3 types `intent`, `spec` and `plan`), the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
 | 3. Front matter | Rewrites each `type:` and each `status:` that changed. A `proposed` or `accepted` change becomes an `intent` that is `draft` or `accepted`, and a `rejected` change becomes a `closed` intent. A `done` change and a former `note` become `research`. `upgrade` writes `was-type` (`change` or `note`) on each such document, and it adds a front matter if the document has none. It removes the `status` line of a `done` change |
 | 4. Harness | If `[harness]` exists, renames the role keys and writes the new parts as off: `skills = []`, `review-md = false` and `protect-tests = "off"`. A project at level `full` gets `code-simplifier = { claude-code = "none" }` in `[harness.roles]`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker. For a 0.5 project, it disables that role |
-| 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec |
+| 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec: `--areas` gives the choice. The top files and the areas are in the paragraphs below |
 | 6. Proof | Checks the items below. If the proof fails, `upgrade` writes nothing and exits with code 1 |
 | 7. Report | Lists the proposals to delete, the decisions to check, the files that it kept, the links that it did not rewrite and the changes of behavior |
 
@@ -842,9 +843,30 @@ These edits change `spec-dna.toml`. A new `types` list also changes the generate
 
 `--layout` moves the folders `contracts`, `invariants`, `guides`, `runbooks`, `reference` and `notes` of a mixed root. They go to `interfaces`, `rules`, `procedures`, `procedures`, `research` and `research`, with each tracked file under them. A root of one type keeps its path.
 
+Also with `--layout`, a document of a mixed root becomes the top file of the root when its file stem is in this table. The stem is lowercase, and `_` is read as `-`:
+
+| File stem | Top file |
+| --- | --- |
+| `roadmap` | `roadmap.md` |
+| `product-overview`, `overview` | `product.md` |
+| `open-questions`, `questions` | `questions.md` |
+| `glossary`, `terms` | `terms.md` |
+| `architecture`, `system` | `system.md` |
+
+A document qualifies only if all these are true:
+
+- Its 0.5 type is `note`, `reference`, or a `change` that is not `done`. A `change` named `roadmap` becomes the top file, not an intent.
+- It has no requirement: no item with a legacy key, and no item with a slug key and a BCP 14 word.
+- It is directly in the root, or directly in `notes/`, `reference/` or `changes/`.
+- Its size is not above the hard budget of the type of the top file. A `note` or a `reference` has no hard budget, and the types `product`, `system`, `terms`, `roadmap` and `questions` have one. A document over it would give SD702.
+
+The moved file has no `type` line, no `status` line and no `was-type` line, because its place gives the type. Its old id is an alias, the key `types` (if the project has it) gets the type, and the graph gets the layer `foundation` or `pending`. If 2 documents want the same top file, or the top file exists, or the id of the top file is the id or an alias of another document (also in another root), or a document is over the budget, that document is no top file. The report has one `kept` line that names the paths, and each such document follows the other rules of `upgrade`: a change moves to the intent layer, and `--layout` renames its folder. The upgrade does not stop. A 0.6 project gets no move to a top file, because SD503 forbids a move of a document in the pull request of the pin. For a 0.6 project, see [After the upgrade: top files and areas](guides/upgrade-0.5.md#after-the-upgrade-top-files-and-areas).
+
+`--areas <file>` moves the documents that the file maps. The file has one table, `[areas]`, and each entry is `"<id of the document in the 0.5 tree>" = "<area>"`. A mapped document goes to `<root>/<folder of the requirements layer>/<area>/<slug>.md` in its own root, with its old id as an alias. The plan adds each area to the key `areas`, sorted, and writes the key if the file has none. An unknown id, a document that is not a `requirements` document in 0.6, an area that is not one folder name (letters, digits, `-` and `_`), a target that exists and 2 documents with one target stop the plan (exit code 1), and nothing is written. A file that does not parse, that has no table `[areas]` or that has a value that is not a string is exit code 3. `--areas` without `--layout` is exit code 2. A 0.6 project with `--areas` is exit code 2: `` `--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own ``.
+
 After the moves, `upgrade` removes each folder that a move left empty, from the deepest folder to the highest. A folder with any file stays, also an ignored file, and the root folder of the document stays. Git does not track folders, so the output does not list them. `--dry-run` removes no folder.
 
-A stop of step 5 is exit code 1, and the message names each path. These are the causes: a slug that is not valid, 2 moves with one target, a target that exists, a target in another root, and an `exclude` glob that matches a moved path.
+A stop of step 5 is exit code 1, and the message names each path. These are the causes: a slug that is not valid, 2 moves with one target, a target that exists, a target in another root, an `exclude` glob that matches a moved path, and each cause of `--areas` above.
 
 A configuration with no `[harness]` table, or with the level `none`, gets no harness file. `upgrade` writes the 0.6 adapters, as `init` does. It changes a document body only for the link destinations of a move. It never renames the file stem of a decision, so `legacy-ids` patterns still resolve. The one change of a stem is the move of a change into `intent/<slug>/intent.md`.
 
@@ -855,7 +877,7 @@ The proof reuses the preservation check of `mv`. It checks these items:
 - Each id, alias, legacy id, section anchor and requirement key of the old tree resolves to the same object in the new tree.
 - The hash of each requirement and each section is the same. The locked hash of each decision is the same too.
 - Each link of a document goes to the same file as before.
-- Each document has the 0.6 type that the mapping gives.
+- Each document has the 0.6 type that the mapping gives. A document that became a top file has the type of the top file.
 - The new configuration parses, and the layer graph has no cycle.
 - No error of the rule groups `references` (SD101, SD102, SD104, SD106) and `ids` (SD201 to SD204) is new.
 
@@ -874,7 +896,7 @@ The report lists these items:
 - each `done` or `rejected` change that no document references, as a proposal to delete;
 - each decision with no `Status` section;
 - each locked decision that cites a migrated change, because `finish` does not stop on a reference in locked text;
-- each kept harness file, and each ended role with its model;
+- each kept harness file, each `kept` line of a top file, and each ended role with its model;
 - the first 5 links of each kind that `upgrade` did not rewrite (see the limits below);
 - each edit of `spec-dna.toml` beyond the pin (the `types` list and the `pending` layer of a 0.6 project);
 - the table `[spec-dna-sha256]`, if `--pin-file` added it, each warning of the harness configuration and each hand edit of `spec-dna.toml` that the plan cannot make;
@@ -904,8 +926,8 @@ With `--json`, the output is one object with these fields:
 | --- | --- |
 | 0 | `upgrade` wrote the changes, or nothing needed a change |
 | 1 | The tree is not clean, or the repository has no commit. A stop of a move (see step 5). A symbolic link, or a file in the place of a folder, in a path that `upgrade` writes. A path that `upgrade` writes and git ignores. A file that is a document and also an instruction file or a harness file. The proof failed |
-| 2 | A usage error |
-| 3 | No git repository or no `spec-dna.toml`. A pin before 0.4.0 or after the binary. A file that neither reader accepts. A form that `upgrade` cannot edit (a hand edit). A file that is not UTF-8 and needs an edit. `[spec-dna-sha256]` with no valid `--pin-file`, or a bad `--pin-file` |
+| 2 | A usage error, also `--areas` without `--layout` and `--areas` for a 0.6 project |
+| 3 | No git repository or no `spec-dna.toml`. A pin before 0.4.0 or after the binary. A file that neither reader accepts. A form that `upgrade` cannot edit (a hand edit). A file that is not UTF-8 and needs an edit. `[spec-dna-sha256]` with no valid `--pin-file`, or a bad `--pin-file` or `--areas` file |
 | 4 | A git error, or a write that failed |
 
 A write that fails prints "to restore the tree, run `git reset --hard` and `git clean -fd`". To undo an upgrade before the commit, run these 2 commands. After the merge, a revert needs 2 pull requests, because SD503 of the old binary rejects a configuration and documents together.

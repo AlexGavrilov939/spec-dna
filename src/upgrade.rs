@@ -26,7 +26,9 @@ use crate::mv;
 use crate::parse::{ParsedDoc, RefKind, parse};
 use crate::repo::{self, Fatal, Repo};
 use crate::upgrade_config::{self, ConfigOpts};
-use crate::upgrade_docs::{Basis, Classified, DocsPlan, Fate, Tree, TreeData, classify, plan_docs};
+use crate::upgrade_docs::{
+    Basis, Classified, DocsPlan, Fate, MoveKind, Tree, TreeData, areas_of, classify, plan_docs,
+};
 use crate::upgrade_old::OldConfig;
 use crate::upgrade_proof::{self, Planned, Proof};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -272,6 +274,9 @@ pub struct PlanOpts {
     pub pin: String,
     /// The sums of `spec-dna-pin.toml` of that version (`--pin-file`).
     pub sums: Option<Vec<(String, String)>>,
+    /// `--areas`: the id of each 0.5 document and its area, sorted by id. It
+    /// needs `layout` and a 0.5 source (D45, D48).
+    pub areas: Vec<(String, String)>,
 }
 
 /// The plan of `upgrade` over one tree. It is the result of a pure function.
@@ -350,6 +355,7 @@ pub fn plan_base(git: &Git, rev: &str, label: &str, head: &Config) -> Result<Pla
         layout: false,
         pin: head.pin.clone(),
         sums: head.sha256.clone(),
+        areas: Vec::new(),
     };
     data.with(|tree| {
         plan(tree, &opts).map_err(|e| match e {
@@ -400,6 +406,9 @@ fn pin_only(cfg: &Config, text: &str) -> OldConfig {
     }
 }
 
+/// The text of the stop for `--areas` on a 0.6 source (D48).
+const AREAS_ON_06: &str = "`--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own";
+
 /// The plan of `upgrade` over a tree (design 0.6.0, "The steps of `plan`"). It
 /// reads the tree and writes nothing. A stop of the plan is `Fatal::Refused`
 /// (exit code 1); a text that the plan cannot edit is `Fatal::Config` (exit
@@ -426,14 +435,19 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
                 &Basis {
                     cfg: &cfg1,
                     old: Some(&old),
+                    layout: opts.layout,
                 },
             )?;
             let mut facts = classified.facts(&cfg1);
             facts.unmarked_roles = unmarked_roles(tree, &old)?;
+            facts.areas = areas_of(&opts.areas);
             let cp = upgrade_config::pass2(&p1, &old, &facts, &copts)?;
             (old.pin.clone(), cp.text, cp.sums_added, classified, true)
         }
         Source::Current(cfg) => {
+            if !opts.areas.is_empty() {
+                return Err(Fatal::Usage(AREAS_ON_06.to_string()));
+            }
             // The pin changes, or `--pin-file` gives the table that the file
             // lacks (D135, O4). A table that the file has stays, if the pin
             // stays: the sums are the trust of the project.
@@ -457,13 +471,14 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
                 &Basis {
                     cfg: &fin,
                     old: None,
+                    layout: opts.layout,
                 },
             )?;
             (cfg.pin.clone(), t, added, classified, false)
         }
     };
     let fin = Config::parse(&final_text).map_err(|e| Fatal::Config(e.to_string()))?;
-    let docs = plan_docs(tree, &classified, &fin, opts.layout)?;
+    let docs = plan_docs(tree, &classified, &fin, opts.layout, &opts.areas)?;
     let files = plan_files(tree, &fin, from_old)?;
     // An instruction file can be a document too (D231). The 2 plans would
     // write one path, and upgrade does not merge 2 texts, so it stops.
@@ -747,7 +762,9 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
     }
     let mut proposals = Vec::new();
     for cl in &plan.classified.docs {
+        // A change that is a top file is a document of its root, no proposal.
         let proposal = match cl.fate {
+            _ if cl.top.is_some() => false,
             Fate::Done => true,
             Fate::Move => cl.old_status.as_deref() == Some("rejected"),
             Fate::Keep => false,
@@ -781,7 +798,7 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
         .docs
         .moves
         .iter()
-        .filter(|m| !m.layout)
+        .filter(|m| m.kind == MoveKind::Change)
         .map(|m| m.to.as_str())
         .collect();
     let mut locked_cites: Vec<(String, String)> = Vec::new();
@@ -829,7 +846,13 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
         proposals,
         no_status,
         locked_cites,
-        kept: plan.files.kept.clone(),
+        kept: plan
+            .docs
+            .kept
+            .iter()
+            .chain(&plan.files.kept)
+            .cloned()
+            .collect(),
         ended_roles: plan.files.ended_roles.clone(),
         errors: errors.into_iter().collect(),
         sums_added: plan.sums_added,
@@ -857,6 +880,8 @@ pub struct RunOpts {
     pub layout: bool,
     /// `--pin-file`: a path from the current folder.
     pub pin_file: Option<String>,
+    /// `--areas`: a path from the current folder (D45).
+    pub areas: Option<String>,
 }
 
 /// Reads `--pin-file` (D135): the key `spec-dna` must be the version of the
@@ -884,6 +909,30 @@ pub fn read_pin_file(path: &str) -> Result<Vec<(String, String)>, Fatal> {
         )),
         Err(e) => Err(bad(e)),
     }
+}
+
+/// Reads `--areas` (D45): the table `[areas]`, whose keys are document ids and
+/// whose values are areas. The result is sorted by id. An error is exit code 3.
+/// The check of the names is a stop of the plan (D46).
+pub fn read_areas_file(path: &str) -> Result<Vec<(String, String)>, Fatal> {
+    let bad = |m: String| Fatal::Config(format!("--areas {path}: {m}"));
+    let text = std::fs::read_to_string(path).map_err(|e| bad(format!("cannot read it ({e})")))?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| bad(e.to_string().trim().to_string()))?;
+    let Some(areas) = table.get("areas").and_then(toml::Value::as_table) else {
+        return Err(bad(
+            "the table `[areas]` is missing; each key is a document id and each value is an area"
+                .into(),
+        ));
+    };
+    areas
+        .iter()
+        .map(|(id, v)| match v.as_str() {
+            Some(area) => Ok((id.clone(), area.to_string())),
+            None => Err(bad(format!("the area of `{id}` is not a string"))),
+        })
+        .collect()
 }
 
 /// The paths that make the tree not clean, as a message (D151).
@@ -997,10 +1046,11 @@ fn entries(tree: &Tree, plan: &Plan) -> Result<Vec<Entry>, Fatal> {
             path: m.to.clone(),
             action: "move",
             from: Some(m.from.clone()),
-            note: if m.layout {
-                "the folder has its 0.6 name".to_string()
-            } else {
-                "the change becomes an intent".to_string()
+            note: match m.kind {
+                MoveKind::Layout => "the folder has its 0.6 name".to_string(),
+                MoveKind::Change => "the change becomes an intent".to_string(),
+                MoveKind::Top => "the document is the top file of its root".to_string(),
+                MoveKind::Area => "the document is in its area".to_string(),
             },
             diff,
             line: None,
@@ -1038,7 +1088,7 @@ fn entries(tree: &Tree, plan: &Plan) -> Result<Vec<Entry>, Fatal> {
             line: None,
         });
     }
-    for line in &plan.files.kept {
+    for line in plan.docs.kept.iter().chain(&plan.files.kept) {
         let (path, note) = kept_path(line);
         out.push(Entry {
             path,
@@ -1348,8 +1398,19 @@ pub fn run(repo: &Repo, o: &RunOpts) -> Result<u8, Fatal> {
     })?;
     let text = String::from_utf8(text)
         .map_err(|_| Fatal::Config(format!("{} is not UTF-8", config::FILE_NAME)))?;
-    source_of(&text)?;
+    let source = source_of(&text)?;
+    // `--areas` moves documents of a 0.5 project (D45, D48). The check of the
+    // arguments is before the check of the file and of the tree.
+    if o.areas.is_some() && matches!(source, Source::Current(_)) {
+        return Err(Fatal::Usage(AREAS_ON_06.to_string()));
+    }
     let sums = o.pin_file.as_deref().map(read_pin_file).transpose()?;
+    let areas = o
+        .areas
+        .as_deref()
+        .map(read_areas_file)
+        .transpose()?
+        .unwrap_or_default();
     let unclean = repo.git.unclean_paths().map_err(Fatal::Io)?;
     if !unclean.is_empty() {
         return Err(Fatal::Refused(unclean_message(&unclean)));
@@ -1365,6 +1426,7 @@ pub fn run(repo: &Repo, o: &RunOpts) -> Result<u8, Fatal> {
         layout: o.layout,
         pin: VERSION.to_string(),
         sums,
+        areas,
     };
     data.with(|tree| {
         let plan = plan(tree, &popts)?;
@@ -1473,6 +1535,7 @@ mod tests {
                     &Basis {
                         cfg: &cfg1,
                         old: Some(&old),
+                        layout: false,
                     },
                 )
             })
@@ -1979,6 +2042,7 @@ mod tests {
             layout: false,
             pin: VERSION.to_string(),
             sums: None,
+            areas: Vec::new(),
         }
     }
 
@@ -2099,7 +2163,7 @@ mod tests {
         );
         assert!(toml.contains(&"c".repeat(64)), "{toml}");
         // The base has no `--layout` move: only the changes move.
-        assert!(p.docs.moves.iter().all(|m| !m.layout));
+        assert!(p.docs.moves.iter().all(|m| m.kind == MoveKind::Change));
         // The tree of the commit is the base, not the work directory.
         std::fs::write(dir.join("spec-dna.toml"), "spec-dna = \"0.4.2\"\n").unwrap();
         let again = plan_base(&git, "HEAD", "main", &head).unwrap();

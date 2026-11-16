@@ -41,12 +41,22 @@ spec-dna upgrade --pin-file ../spec-dna-pin.toml
 
 The folders of the other types stay where they are. A root maps each folder to its new type. To move the folders of a mixed root to the 0.6 folders too (`contracts/` to `interfaces/`, for example), add `--layout`. It moves them with `git mv` and writes each old id into `aliases`. A root of one type keeps its path.
 
+`--layout` also moves a roadmap, an overview, a list of questions, a glossary and an architecture note to the top files of their root (`roadmap.md`, `product.md`, `questions.md`, `terms.md` and `system.md`). With `--areas <file>`, it moves the requirements documents that you map into the folders `requirements/<area>/`. The file is a TOML file outside the repository, with one table:
+
+```toml
+[areas]
+"specs/pumps" = "pumps"
+"specs/valves" = "valves"
+```
+
+Each key is the id of a document of the 0.5 tree, and each value is an area. [commands.md](../commands.md#upgrade) gives the rules and the stops. A second run after the commit changes nothing. The top files and `--areas` are only for a 0.5 project.
+
 ### If `upgrade` stops
 
 `upgrade` stops before it writes. Each stop names the cause:
 
 - A hand edit (exit code 3). `spec-dna.toml` has a form that `upgrade` cannot edit without a loss of text, such as a budget with dotted keys. The message gives the form to write. Edit the file with the 0.5 names, commit the change, and run `upgrade` again. If the default branch has the same form, make this edit in a pull request of its own first and merge it. The first pull request after the upgrade plans the upgrade of its base, so a form that `upgrade` cannot edit in the base stops `check --base` with exit code 3. The same rule holds for a move stop of a change in the base.
-- A move (exit code 1). Two changes have one slug, or a target path exists. The message names each path. Rename a file, commit the change, and run `upgrade` again.
+- A move (exit code 1). Two changes have one slug, or a target path exists. An id of the file of `--areas` is no document, the document is not a `requirements` document, or an area is not one folder name. The message names each path or id. Rename a file or change the file of `--areas`, commit the change, and run `upgrade` again. If 2 documents want one top file, or the top file exists, `upgrade` does not stop: the report has a `kept` line, and no document moves to that top file.
 - A file in the place of a folder, or a symbolic link in a path (exit code 1). Move or delete it, commit the change, and run `upgrade` again.
 - A failed proof (exit code 1). The message names each failure. A pointer of `[conventions]` that names a document by its path breaks with `--layout`. Write the pointer as an id, and commit the change.
 
@@ -55,7 +65,7 @@ The folders of the other types stay where they are. A root maps each folder to i
 - Each old id, alias and requirement key resolves in the new tree to the same document or requirement.
 - The hash of each requirement and each section is the same as before. The locked text of each decision is the same.
 - Each link of a document goes to the same file as before.
-- Each document has the 0.6 type that the mapping gives.
+- Each document has the 0.6 type that the mapping gives. A document that became a top file has the type of the top file.
 - The new configuration parses, and the layer graph has no cycle.
 - The upgrade adds no error of the rule groups `references` (SD101, SD102, SD104, SD106) and `ids` (SD201 to SD204).
 
@@ -149,6 +159,42 @@ A project that pins 0.6.0 or later runs the same command. `upgrade` changes the 
 These edits change `spec-dna.toml`. A new `types` list also changes the generated skill, which lists the types of the project. SD503 does not count the skill, so the pull request of the pin can hold these edits. If the `types` list has many lines, `upgrade` does not edit it. It prints a warning that names the types to add by hand.
 
 If you set a change policy later with `spec-dna init --reconfigure`, and the `types` list lacks one of the 3 types, `init` prints a warning. It does not edit the key.
+
+## After the upgrade: top files and areas
+
+For a 0.5 project, `--layout` moves the top files, and `--layout --areas <file>` moves the requirements into their areas ([Run the upgrade](#run-the-upgrade)). For a 0.6 project, `--layout` moves no document to a top file, and `--areas` gives exit code 2. SD503 does not allow a move of a document in the pull request of the pin. So move the documents in a later pull request, with `spec-dna mv`. `mv` keeps the old id as an alias, removes the `type` and `status` lines that the new place makes redundant, and removes the folders that it leaves empty.
+
+An upgraded project without `--layout` has the layers of its types in use only. A top file needs its layer, so that `mv` can read the type from the place. Add the layers in a pull request of its own, because the change edits `spec-dna.toml`:
+
+```sh
+spec-dna layer add foundation --types product,system,terms --files product.md,system.md,terms.md
+spec-dna layer add pending --types roadmap,questions --files roadmap.md,questions.md --linked-from intent,requirements,decisions --context on-request
+spec-dna init
+```
+
+`spec-dna init` updates the agent skill, which lists the types. Skip a layer that the project has already. `--linked-from` names layers that must exist: if the project has no `decisions` layer, for example, remove the name from the list. To list the areas, add the key `areas` by hand in the same pull request, for example `areas = ["pumps", "valves"]`. Write it before the first table header of `spec-dna.toml`, after the line `spec-dna = "..."`. [config.md](../config.md#default-graph) gives the other keys of these layers.
+
+Then move each document in the next pull request. For a top file, give the id of the document and the new path. The path starts with the root. For a root `docs`:
+
+```sh
+spec-dna mv notes/product-overview docs/product.md
+spec-dna mv reference/open-questions docs/questions.md
+spec-dna mv notes/glossary docs/terms.md
+spec-dna mv intent/roadmap/intent docs/roadmap.md
+```
+
+The roadmap is a change that the upgrade moved to `intent/roadmap/intent.md`. `mv` stops with exit code 2 and changes nothing if the document has requirements, because the type of a top file has none. The message names the requirements to move first.
+
+For the areas, write a file with one `id area` pair on each line, such as `specs/pumps pumps`. Then run `mv` for each line. The slug is the last part of the id:
+
+```sh
+while read -r id area; do
+  slug="${id##*/}"
+  spec-dna mv "$id" "docs/requirements/$area/$slug.md" || break
+done < ../areas.txt
+```
+
+The loop stops at the first error. Each `mv` writes its result, so run the loop again after you fix the cause. A document that is already moved gives exit code 2 (`has the same id`), so remove its line from the file. Then run `spec-dna check` and commit. If a link in another document points to a section that does not exist, its old warning can show as new, because the move changes the link text.
 
 ## Undo the upgrade
 

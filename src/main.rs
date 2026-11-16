@@ -85,7 +85,7 @@ With --reconfigure, it asks the questions again.",
     ),
     (
         "upgrade",
-        "upgrade [--dry-run] [--layout] [--pin-file <file>]",
+        "upgrade [--dry-run] [--layout [--areas <file>]] [--pin-file <file>]",
         "Moves a project that pins 0.4.0 or later to the version of this binary. It
 reads the committed tree (HEAD), builds the whole plan in memory, proves that
 each old id, alias, requirement and section still resolves to the same text,
@@ -93,7 +93,13 @@ and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the
 type and the status in the front matter, and the adapter and harness files. It
 moves each proposed, accepted or rejected change to intent/<slug>/intent.md
 with git mv, and keeps its old id as an alias. With --layout, it also moves
-the folders of the other 0.5 namespaces of a mixed root. --pin-file gives the
+the folders of the other 0.5 namespaces of a mixed root, and it moves a note,
+a reference or a change named roadmap, overview, questions, glossary or
+architecture (and their usual synonyms) to the top file of its root. With
+--layout --areas <file>, each document that the TOML table [areas] of the file
+maps (id = \"area\") moves to requirements/<area>/ with its old id as an alias.
+The top files and --areas need a project of 0.5; a project of 0.6 gets exit
+code 2 for --areas. The file of --areas stays outside the repository. --pin-file gives the
 spec-dna-pin.toml of the release, which a project with [spec-dna-sha256]
 needs. It refuses a tree that is not clean (also with --dry-run), and it stops
 with no write if the proof fails. --dry-run prints the diff of each file and
@@ -385,6 +391,7 @@ struct Args {
     dry_run: bool,
     layout: bool,
     pin_file: Option<String>,
+    areas: Option<String>,
     ty: Option<String>,
     stub: bool,
     replace: bool,
@@ -462,6 +469,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         dry_run: false,
         layout: false,
         pin_file: None,
+        areas: None,
         ty: None,
         stub: false,
         replace: false,
@@ -503,6 +511,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--dry-run" => a.dry_run = true,
             "--layout" => a.layout = true,
             "--pin-file" => a.pin_file = Some(value("--pin-file")?),
+            "--areas" => a.areas = Some(value("--areas")?),
             "--stub" => a.stub = true,
             "--replace" => a.replace = true,
             "--type" => a.ty = Some(value("--type")?),
@@ -663,7 +672,11 @@ fn run(a: Args) -> Result<u8, Fatal> {
         return Err(Fatal::Usage("--since is an option of `log`".into()));
     }
     if a.command != "upgrade" {
-        for (given, name) in [(a.layout, "--layout"), (a.pin_file.is_some(), "--pin-file")] {
+        for (given, name) in [
+            (a.layout, "--layout"),
+            (a.pin_file.is_some(), "--pin-file"),
+            (a.areas.is_some(), "--areas"),
+        ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `upgrade`")));
             }
@@ -767,6 +780,9 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 fn upgrade(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
+    if a.areas.is_some() && !a.layout {
+        return Err(Fatal::Usage("--areas needs --layout".into()));
+    }
     upgrade::run(
         repo,
         &upgrade::RunOpts {
@@ -774,6 +790,7 @@ fn upgrade(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             json: a.json,
             layout: a.layout,
             pin_file: a.pin_file.clone(),
+            areas: a.areas.clone(),
         },
     )
 }

@@ -32,6 +32,11 @@
 #   harness-edited/           An overlay of `harness-lean/`. It has `checker.md`
 #                             with one more line, so its hash in the marker
 #                             does not match any more (SD501).
+#   top-files/                An overlay of `v05/` with documents only, written
+#                             by hand: a roadmap change and notes and
+#                             references that `upgrade --layout` makes top
+#                             files. It has no generated file, so this script
+#                             records nothing for it.
 #   recorded/<case>.txt       The result of the real binary on the composed
 #                             tree of each case: the exit code of
 #                             `check --all`, each document that it loaded, each

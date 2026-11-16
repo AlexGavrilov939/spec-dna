@@ -17,7 +17,8 @@
 //!    link destinations), and the locked text of each decision is the same.
 //! 3. Each document has the type that the mapping gives for its 0.5 type. The
 //!    0.5 type comes from the `Class` of the document, not from its text
-//!    (D211).
+//!    (D211). A document that `--layout` makes a top file has the type of the
+//!    top file, `Class.top` (D43).
 //! 4. The new configuration parses, and its layer graph has no cycle.
 //! 5. No error of the groups `references` and `ids` is new (O5).
 //!
@@ -32,7 +33,7 @@ use crate::model::{Corpus, Doc, DocType, LinkRes, Res, is_doc_path, join};
 use crate::parse::{RefKind, parse};
 use crate::repo::Fatal;
 use crate::split;
-use crate::upgrade_docs::{Class, Classified, DocsPlan, Fate, Tree, link_moves};
+use crate::upgrade_docs::{Class, Classified, DocsPlan, Fate, MoveKind, Tree, link_moves};
 use crate::upgrade_old::type_of;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -262,7 +263,26 @@ pub fn prove(tree: &Tree, planned: &Planned) -> Result<Proof, Fatal> {
 fn check_types(proof: &mut Proof, pairs: &[(&Doc, &Doc)], class: &HashMap<&str, &Class>) {
     for (b, a) in pairs {
         proof.types += 1;
+        // Only a note, a reference or a change that moves can become a top
+        // file (D41). The 0.5 type is the one of the front matter and the
+        // configuration, so this check does not trust the choice of `classify`.
+        if let Some(c) = class.get(b.path.as_str())
+            && c.top.is_some()
+            && !matches!(
+                (c.old_type.as_deref(), c.fate),
+                (Some("note" | "reference"), _) | (Some("change"), Fate::Move)
+            )
+        {
+            proof.failures.push(format!(
+                "`{}`: the document has the 0.5 type `{}`, and only a `note`, a `reference` or a change that is not done can become a top file",
+                b.path,
+                c.old_type.as_deref().unwrap_or("none")
+            ));
+            continue;
+        }
         let want = match class.get(b.path.as_str()) {
+            // A top file has the type of its place (D43).
+            Some(c) if c.top.is_some() => c.top,
             Some(c) => match (&c.old_type, c.fate) {
                 (Some(_), Fate::Done) => Some(DocType::Research),
                 (Some(old), _) => type_of(old),
@@ -528,7 +548,7 @@ fn check_links(
     let change_dirs: HashSet<&str> = plan
         .moves
         .iter()
-        .filter(|m| !m.layout)
+        .filter(|m| m.kind == MoveKind::Change)
         .filter_map(|m| m.from.rsplit_once('/').map(|(d, _)| d))
         .collect();
     for (b, a) in pairs {
@@ -915,7 +935,7 @@ mod tests {
             old_id: String::new(),
             new_id: String::new(),
             aliases: Vec::new(),
-            layout: true,
+            kind: MoveKind::Layout,
         });
         let pr = prove_of(&tree, &r, &p);
         has(
@@ -1187,5 +1207,136 @@ mod tests {
             compared += 1;
         }
         assert!(compared >= 6, "only {compared} documents are in both trees");
+    }
+
+    // --- the top files and the areas (0.6.1, D40 to D48) ---
+
+    /// `v05/` with the overlay `top-files/`, planned with `--layout` and the
+    /// pairs of `--areas`.
+    fn v05_top(areas: &[(&str, &str)]) -> (TreeData, Run, DocsPlan) {
+        use crate::upgrade_docs::tests::{fixture_tree, full_areas};
+        let (base, toml) = fixture_case("v05");
+        let mut blobs = base.with(|t| (t.read)(t.files)).unwrap();
+        blobs.extend(
+            fixture_tree("top-files")
+                .with(|t| (t.read)(t.files))
+                .unwrap(),
+        );
+        let tree = TreeData::from_map(blobs);
+        let pairs: Vec<(String, String)> = areas
+            .iter()
+            .map(|(i, a)| (i.to_string(), a.to_string()))
+            .collect();
+        let (r, p) = full_areas(&tree, &toml, true, &pairs).unwrap_or_else(|e| panic!("{e:?}"));
+        (tree, r, p)
+    }
+
+    #[test]
+    fn the_plan_with_top_files_and_areas_passes_the_proof() {
+        let (tree, r, p) = v05_top(&[("irrigation/pumps", "pumps")]);
+        let kinds: Vec<MoveKind> = p.moves.iter().map(|m| m.kind).collect();
+        assert_eq!(kinds.iter().filter(|k| **k == MoveKind::Top).count(), 5);
+        assert_eq!(kinds.iter().filter(|k| **k == MoveKind::Area).count(), 1);
+        let pr = prove_of(&tree, &r, &p);
+        assert!(pr.failures.is_empty(), "{}", failed(&pr));
+        // The proof checked the type of each document, also of a top file.
+        assert_eq!(pr.types, r.classified.docs.len());
+        assert!(pr.requirements >= 6, "{}", pr.requirements);
+    }
+
+    #[test]
+    fn a_top_file_that_loses_its_alias_fails_the_proof() {
+        let (tree, r, mut p) = v05_top(&[]);
+        tamper(&r, &mut p, "docs/terms.md", |t| {
+            t.replace("aliases:\n  - notes/glossary\n", "")
+        });
+        let pr = prove_of(&tree, &r, &p);
+        has(&pr, &["`notes/glossary`", "does not resolve"]);
+    }
+
+    #[test]
+    fn a_top_file_with_a_type_line_of_another_type_fails_the_proof() {
+        let (tree, r, mut p) = v05_top(&[]);
+        tamper(&r, &mut p, "docs/terms.md", |t| {
+            t.replacen("---\n", "---\ntype: research\n", 1)
+        });
+        let pr = prove_of(&tree, &r, &p);
+        has(&pr, &["docs/terms.md", "`research`", "gives `terms`"]);
+    }
+
+    #[test]
+    fn a_requirement_text_that_changes_in_an_area_document_fails_the_proof() {
+        let (tree, r, mut p) = v05_top(&[("irrigation/pumps", "pumps")]);
+        tamper(&r, &mut p, "docs/requirements/pumps/pumps.md", |t| {
+            t.replace("between 02:00 and 04:00", "between 01:00 and 04:00")
+        });
+        let pr = prove_of(&tree, &r, &p);
+        assert!(!pr.failures.is_empty());
+        has(&pr, &["fill-window"]);
+    }
+
+    #[test]
+    fn an_area_document_that_loses_its_alias_fails_the_proof() {
+        let (tree, r, mut p) = v05_top(&[("irrigation/pumps", "pumps")]);
+        tamper(&r, &mut p, "docs/requirements/pumps/pumps.md", |t| {
+            t.replace("  - irrigation/pumps\n", "")
+        });
+        let pr = prove_of(&tree, &r, &p);
+        has(&pr, &["`irrigation/pumps#fill-window`", "does not resolve"]);
+    }
+
+    #[test]
+    fn a_spec_that_is_made_a_top_file_fails_the_proof_on_its_requirement() {
+        // A broken `classify` that gives `top` to a document with requirements:
+        // the type of the top file has none, so the hashes differ.
+        let (tree, mut r, _) = v05_top(&[]);
+        r.classified
+            .docs
+            .iter_mut()
+            .find(|c| c.path == "docs/irrigation/pumps.md")
+            .unwrap()
+            .top = Some(DocType::System);
+        let p = tree
+            .with(|t| crate::upgrade_docs::plan_docs(t, &r.classified, &r.fin, true, &[]))
+            .unwrap();
+        assert!(p.moves.iter().any(|m| m.to == "docs/system.md"));
+        let pr = prove_of(&tree, &r, &p);
+        assert!(!pr.failures.is_empty());
+        has(&pr, &["fill-window"]);
+    }
+
+    #[test]
+    fn a_document_of_another_type_that_is_made_a_top_file_fails_the_proof() {
+        // A broken `classify` that gives `top` to a guide, and to an accepted
+        // decision. The text and the ids stay, but the type would change, and
+        // the locked text of a decision would not be checked any more.
+        for (path, doc) in [
+            ("docs/guides/logging.md", None),
+            (
+                "docs/d.md",
+                Some("---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Status\n\nAccepted.\n"),
+            ),
+        ] {
+            let (tree, toml) = match doc {
+                None => fixture_case("v05"),
+                Some(text) => (mem(&[("docs/d.md", text)]), MIXED.to_string()),
+            };
+            let mut r = crate::upgrade_docs::tests::pipeline_layout(&tree, &toml, true);
+            r.classified
+                .docs
+                .iter_mut()
+                .find(|c| c.path == path)
+                .unwrap_or_else(|| panic!("no {path}"))
+                .top = Some(DocType::System);
+            let p = tree
+                .with(|t| crate::upgrade_docs::plan_docs(t, &r.classified, &r.fin, true, &[]))
+                .unwrap();
+            assert!(
+                p.moves.iter().any(|m| m.to.ends_with("system.md")),
+                "{path}"
+            );
+            let pr = prove_of(&tree, &r, &p);
+            has(&pr, &[path, "can become a top file"]);
+        }
     }
 }

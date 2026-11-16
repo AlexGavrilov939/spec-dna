@@ -1217,3 +1217,550 @@ fn upgrade_removes_the_folder_of_the_moved_changes() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("nothing to change"), "{out}");
 }
+
+// --- top files and areas (0.6.1, D40 to D48) ---
+
+/// The recorded errors of the 0.5.0 binary on `v05`, by code. The overlay
+/// `top-files` adds documents that the 0.5.0 binary reads with no error.
+fn old_errors_of_v05() -> BTreeMap<String, usize> {
+    let recorded = fs::read_to_string(fixture_dir("recorded").join("v05.txt")).unwrap();
+    let mut old = BTreeMap::new();
+    for line in recorded.lines() {
+        let f: Vec<&str> = line.split(' ').collect();
+        if f.len() == 4 && f[0] == "finding" && f[2] == "error" {
+            *old.entry(f[1].to_string()).or_insert(0) += 1;
+        }
+    }
+    old
+}
+
+/// No error of `check --all` is new against the errors of the 0.5.0 binary.
+fn assert_no_new_error(repo: &Repo, what: &str) {
+    let (_, out, _) = repo.run(&["check", "--all", "--json"]);
+    let old = old_errors_of_v05();
+    for (code, n) in errors_of_check(&out) {
+        assert!(
+            old.get(&code).is_some_and(|o| *o >= n),
+            "{what}: {code} x{n} is new; the old tree had {old:?}\n{out}"
+        );
+    }
+}
+
+static AREA_FILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Writes a file for `--areas` outside the repository (a file inside would
+/// make the tree not clean) and returns its folder and its path.
+fn areas_file(text: &str) -> (std::path::PathBuf, String) {
+    let n = AREA_FILES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("spec-dna-areas-{}-{n}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("areas.toml");
+    fs::write(&path, text).unwrap();
+    (dir, path.to_str().unwrap().to_string())
+}
+
+/// `upgrade --layout --areas <file>` with the text of the file.
+fn upgrade_areas(repo: &Repo, text: &str, extra: &[&str]) -> (i32, String, String) {
+    let (dir, file) = areas_file(text);
+    let mut args = vec!["--layout", "--areas", file.as_str()];
+    args.extend_from_slice(extra);
+    let r = upgrade(repo, &args);
+    let _ = fs::remove_dir_all(dir);
+    r
+}
+
+const TOP_MOVES: [(&str, &str); 5] = [
+    ("docs/changes/roadmap.md", "docs/roadmap.md"),
+    ("docs/notes/product-overview.md", "docs/product.md"),
+    ("docs/reference/open-questions.md", "docs/questions.md"),
+    ("docs/notes/glossary.md", "docs/terms.md"),
+    ("docs/lab/reference/architecture.md", "docs/lab/system.md"),
+];
+
+#[test]
+fn layout_moves_a_roadmap_change_and_overview_notes_to_top_files() {
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    let (code, out, err) = upgrade(&repo, &["--layout", "--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"proof\":{\"ok\":true"), "{out}");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("proof: ok"), "{out}");
+    for (from, to) in TOP_MOVES {
+        assert!(out.contains(&format!("moved {from} -> {to}\n")), "{out}");
+    }
+    repo.commit("upgrade");
+    for (from, to) in TOP_MOVES {
+        assert!(repo.dir.join(to).is_file(), "{to}");
+        assert!(!repo.dir.join(from).exists(), "{from}");
+        // The place gives the type, so the file has no type, no status and no
+        // marker. The old id is an alias.
+        let text = repo.read(to);
+        for line in ["type:", "status:", "was-type:"] {
+            assert!(!text.contains(line), "{to} has {line}: {text}");
+        }
+        assert!(text.contains("aliases:\n  - "), "{to}: {text}");
+    }
+    // A change named `roadmap` is a top file, not an intent.
+    assert!(!repo.dir.join("docs/intent/roadmap").exists());
+    assert!(
+        repo.read("docs/roadmap.md")
+            .contains("  - changes/roadmap\n")
+    );
+    // Each old id resolves, and the new id names the top file.
+    for (id, path) in [
+        ("changes/roadmap", "docs/roadmap.md"),
+        ("roadmap", "docs/roadmap.md"),
+        ("notes/product-overview", "docs/product.md"),
+        ("reference/open-questions", "docs/questions.md"),
+        ("notes/glossary", "docs/terms.md"),
+        ("reference/architecture", "docs/lab/system.md"),
+    ] {
+        let (code, out, err) = repo.run(&["show", id]);
+        assert_eq!(code, 0, "{id}: {out}{err}");
+        assert!(out.contains(path), "{id}: {out}");
+    }
+    // The links follow the moves.
+    let roadmap = repo.read("docs/roadmap.md");
+    assert!(roadmap.contains("(irrigation/pumps.md)"), "{roadmap}");
+    let product = repo.read("docs/product.md");
+    assert!(product.contains("(questions.md)"), "{product}");
+    // The layers of the top files are in the graph.
+    let toml = repo.read("spec-dna.toml");
+    assert!(toml.contains("[layers.pending]"), "{toml}");
+    assert!(toml.contains("[layers.foundation]"), "{toml}");
+    assert_no_new_error(&repo, "top-files");
+    // The result is stable: a second run changes nothing.
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out, "spec-dna upgrade: nothing to change\n");
+}
+
+#[test]
+fn without_layout_a_roadmap_change_is_an_intent_and_the_notes_stay() {
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(repo.dir.join("docs/intent/roadmap/intent.md").is_file());
+    assert!(repo.dir.join("docs/notes/product-overview.md").is_file());
+    assert!(!repo.dir.join("docs/product.md").exists());
+    assert!(!repo.dir.join("docs/roadmap.md").exists());
+}
+
+#[test]
+fn two_files_for_one_top_file_stay_and_the_report_has_one_kept_line() {
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    repo.write(
+        "docs/reference/overview.md",
+        "---\ntype: reference\n---\n# Overview\n\nA second overview.\n",
+    );
+    repo.commit("a second overview");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!repo.dir.join("docs/product.md").exists(), "{out}");
+    let kept: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("kept ") && l.contains("docs/product.md"))
+        .collect();
+    assert_eq!(kept.len(), 1, "{out}");
+    assert!(
+        kept[0].contains("docs/notes/product-overview.md")
+            && kept[0].contains("docs/reference/overview.md"),
+        "{out}"
+    );
+    // The other top files still move.
+    assert!(repo.dir.join("docs/roadmap.md").is_file(), "{out}");
+    assert!(repo.dir.join("docs/terms.md").is_file(), "{out}");
+    repo.commit("upgrade");
+    // Both files keep their ids.
+    for id in ["notes/product-overview", "reference/overview"] {
+        let (code, out, err) = repo.run(&["show", id]);
+        assert_eq!(code, 0, "{id}: {out}{err}");
+    }
+    assert_no_new_error(&repo, "two files");
+}
+
+#[test]
+fn a_top_file_that_exists_keeps_the_document_and_the_report_has_a_kept_line() {
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    repo.write(
+        "docs/roadmap.md",
+        "---\ntype: research\n---\n# Old roadmap\n\nThe file exists already.\n",
+    );
+    repo.commit("a roadmap");
+    let (code, out, err) = upgrade(&repo, &["--layout", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"kept\":[\"kept docs/changes/roadmap.md"),
+        "{out}"
+    );
+    // The change is an intent, as without the top files.
+    assert!(repo.dir.join("docs/intent/roadmap/intent.md").is_file());
+    assert!(repo.read("docs/roadmap.md").contains("Old roadmap"));
+    // The other documents move to their top files.
+    assert!(repo.dir.join("docs/product.md").is_file());
+}
+
+#[test]
+fn a_document_that_does_not_meet_d41_is_not_a_top_file() {
+    let repo = Repo::from_fixture("v05", &[]);
+    for (path, text) in [
+        // A requirement.
+        (
+            "docs/notes/glossary.md",
+            "---\ntype: note\n---\n# Glossary\n\n- **valve-open**: The valve MUST open.\n",
+        ),
+        // Not directly in a folder of the list.
+        (
+            "docs/irrigation/roadmap.md",
+            "---\ntype: note\n---\n# Roadmap\n\nA note.\n",
+        ),
+        // Another type.
+        (
+            "docs/notes/overview.md",
+            "---\ntype: spec\n---\n# Overview\n\nA spec.\n",
+        ),
+        // A change that is done.
+        (
+            "docs/changes/questions.md",
+            "---\ntype: change\nstatus: done\n---\n# Questions\n\nDone.\n",
+        ),
+        // A name that is not in the list.
+        (
+            "docs/notes/pump-glossary.md",
+            "---\ntype: note\n---\n# Pump glossary\n\nA note.\n",
+        ),
+    ] {
+        repo.write(path, text);
+    }
+    repo.commit("documents");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for top in ["terms", "roadmap", "product", "questions", "system"] {
+        assert!(!repo.dir.join(format!("docs/{top}.md")).exists(), "{top}");
+    }
+    assert!(!out.contains("kept docs/"), "{out}");
+    assert!(repo.dir.join("docs/irrigation/roadmap.md").is_file());
+    assert!(repo.dir.join("docs/notes/overview.md").is_file());
+    assert!(
+        repo.read("docs/changes/questions.md")
+            .contains("was-type: change")
+    );
+}
+
+#[test]
+fn a_top_file_of_a_06_project_does_not_move() {
+    // D44: a 0.6 source gets no move to a top file.
+    let repo = project_06(None);
+    repo.write(
+        "docs/notes/roadmap.md",
+        "---\ntype: research\n---\n# Roadmap\n",
+    );
+    repo.commit("a note");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The folder `notes/` of 0.5 has its 0.6 name, as before 0.6.1, and the
+    // file is no top file.
+    assert!(!repo.dir.join("docs/roadmap.md").exists(), "{out}");
+    assert!(repo.dir.join("docs/research/roadmap.md").is_file(), "{out}");
+    assert!(!out.contains("kept "), "{out}");
+}
+
+#[test]
+fn areas_moves_each_mapped_requirements_document_into_its_area() {
+    let repo = Repo::from_fixture("v05", &[]);
+    let map = "[areas]\n\"irrigation/pumps\" = \"pumps\"\n\"irrigation/sensors\" = \"sensors\"\n";
+    let (code, out, err) = upgrade_areas(&repo, map, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("would move docs/irrigation/pumps.md -> docs/requirements/pumps/pumps.md\n"),
+        "{out}"
+    );
+    assert_eq!(status(&repo), "");
+    let (code, out, err) = upgrade_areas(&repo, map, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("proof: ok"), "{out}");
+    repo.commit("upgrade");
+    assert!(repo.dir.join("docs/requirements/pumps/pumps.md").is_file());
+    assert!(
+        repo.dir
+            .join("docs/requirements/sensors/sensors.md")
+            .is_file()
+    );
+    assert!(!repo.dir.join("docs/irrigation/pumps.md").exists());
+    // The old id is an alias, and a requirement id still resolves.
+    assert!(
+        repo.read("docs/requirements/pumps/pumps.md")
+            .contains("  - irrigation/pumps\n")
+    );
+    for id in [
+        "irrigation/pumps",
+        "irrigation/pumps#fill-window",
+        "irrigation/sensors#max-age",
+    ] {
+        let (code, out, err) = repo.run(&["show", id]);
+        assert_eq!(code, 0, "{id}: {out}{err}");
+        assert!(out.contains("docs/requirements/"), "{id}: {out}");
+    }
+    // The key `areas` is sorted and is a key of the top level.
+    let toml = repo.read("spec-dna.toml");
+    assert!(
+        toml.contains("\nareas = [\"pumps\", \"sensors\"]\n"),
+        "{toml}"
+    );
+    assert!(
+        toml.find("areas = ").unwrap() < toml.find("[[roots]]").unwrap(),
+        "{toml}"
+    );
+    // The links follow the moves, in both directions.
+    let pumps = repo.read("docs/requirements/pumps/pumps.md");
+    assert!(
+        pumps.contains("(../../intent/rework-pumps/intent.md)"),
+        "{pumps}"
+    );
+    let rework = repo.read("docs/intent/rework-pumps/intent.md");
+    assert!(
+        rework.contains("(../../requirements/pumps/pumps.md)"),
+        "{rework}"
+    );
+    assert_no_new_error(&repo, "areas");
+}
+
+#[test]
+fn areas_and_top_files_run_in_one_plan() {
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    let map = "[areas]\n\"irrigation/pumps\" = \"pumps\"\n";
+    let (code, out, err) = upgrade_areas(&repo, map, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    repo.commit("upgrade");
+    assert!(repo.dir.join("docs/requirements/pumps/pumps.md").is_file());
+    assert!(repo.dir.join("docs/roadmap.md").is_file());
+    // The roadmap links the pumps at their new place.
+    assert!(
+        repo.read("docs/roadmap.md")
+            .contains("(requirements/pumps/pumps.md)")
+    );
+    assert_no_new_error(&repo, "areas and top files");
+}
+
+#[test]
+fn a_stop_of_areas_gives_exit_code_1_and_writes_nothing() {
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    let before = tree_bytes(&repo.dir);
+    for (map, want) in [
+        ("[areas]\n\"nope/pumps\" = \"pumps\"\n", "nope/pumps"),
+        (
+            "[areas]\n\"contracts/valve-api\" = \"valves\"\n",
+            "contracts/valve-api",
+        ),
+        (
+            "[areas]\n\"notes/glossary\" = \"terms\"\n",
+            "notes/glossary",
+        ),
+        ("[areas]\n\"irrigation/pumps\" = \"a/b\"\n", "a/b"),
+        ("[areas]\n\"irrigation/pumps\" = \"..\"\n", ".."),
+        ("[areas]\n\"irrigation/pumps\" = \"\"\n", "area"),
+        (
+            "[areas]\n\"irrigation/pumps\" = \"two words\"\n",
+            "two words",
+        ),
+    ] {
+        for extra in [&[][..], &["--dry-run"], &["--json"]] {
+            let (code, out, err) = upgrade_areas(&repo, map, extra);
+            assert_eq!(code, 1, "{map} {extra:?}: {out}{err}");
+            assert!(err.contains(want), "{map}: {err}");
+            assert_eq!(before, tree_bytes(&repo.dir), "{map} {extra:?}");
+            assert_eq!(status(&repo), "", "{map} {extra:?}");
+        }
+    }
+}
+
+#[test]
+fn two_documents_for_one_area_file_stop_the_plan() {
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write(
+        "docs/harvest/pumps.md",
+        "---\ntype: spec\n---\n# Pumps of the harvest\n\n## Requirements\n\n- **harvest-pump**: The pump SHALL stop at the end of the harvest.\n",
+    );
+    repo.commit("a second pumps");
+    let before = tree_bytes(&repo.dir);
+    let map = "[areas]\n\"irrigation/pumps\" = \"pumps\"\n\"harvest/pumps\" = \"pumps\"\n";
+    let (code, out, err) = upgrade_areas(&repo, map, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("docs/requirements/pumps/pumps.md"), "{err}");
+    assert_eq!(before, tree_bytes(&repo.dir));
+}
+
+#[test]
+fn an_area_target_that_exists_stops_the_plan() {
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write(
+        "docs/requirements/pumps/pumps.md",
+        "---\ntype: requirements\n---\n# Pumps\n",
+    );
+    repo.commit("a target");
+    let before = tree_bytes(&repo.dir);
+    let (code, out, err) = upgrade_areas(&repo, "[areas]\n\"irrigation/pumps\" = \"pumps\"\n", &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("exists"), "{err}");
+    assert_eq!(before, tree_bytes(&repo.dir));
+}
+
+#[test]
+fn areas_without_layout_is_a_usage_error() {
+    let repo = Repo::from_fixture("v05", &[]);
+    let (dir, file) = areas_file("[areas]\n\"irrigation/pumps\" = \"pumps\"\n");
+    let (code, out, err) = upgrade(&repo, &["--areas", &file]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("--layout"), "{err}");
+    // Another command gives a usage error too.
+    let (code, out, err) = repo.run(&["check", "--areas", &file]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("option of `upgrade`"), "{err}");
+    let (code, out, err) = upgrade(&repo, &["--layout", "--areas"]);
+    assert_eq!(code, 2, "{out}{err}");
+    let _ = fs::remove_dir_all(dir);
+    assert_eq!(status(&repo), "");
+}
+
+#[test]
+fn a_bad_areas_file_gives_exit_code_3() {
+    let repo = Repo::from_fixture("v05", &[]);
+    let (code, out, err) = upgrade(&repo, &["--layout", "--areas", "/no/such/areas.toml"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("--areas"), "{err}");
+    for text in [
+        "not toml [",
+        "[other]\nx = \"y\"\n",
+        "[areas]\n\"irrigation/pumps\" = 3\n",
+        "areas = \"pumps\"\n",
+    ] {
+        let (code, out, err) = upgrade_areas(&repo, text, &[]);
+        assert_eq!(code, 3, "{text}: {out}{err}");
+        assert!(err.contains("--areas"), "{text}: {err}");
+    }
+    assert_eq!(status(&repo), "");
+}
+
+#[test]
+fn areas_on_a_06_source_is_a_usage_error_with_the_text_of_d48() {
+    let repo = project_06(None);
+    let before = tree_bytes(&repo.dir);
+    let (code, out, err) = upgrade_areas(&repo, "[areas]\n\"a\" = \"b\"\n", &[]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains(
+            "`--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own"
+        ),
+        "{err}"
+    );
+    assert_eq!(before, tree_bytes(&repo.dir));
+}
+
+#[test]
+fn a_document_over_the_hard_budget_of_its_top_type_is_no_top_file() {
+    // A `reference` has no budget, and `system` has a hard budget. The move
+    // would give a new error SD702.
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    let long: String = (0..400)
+        .map(|i| format!("Line {i} of the long text that fills the budget.\n"))
+        .collect();
+    repo.write(
+        "docs/reference/system.md",
+        &format!("---\ntype: reference\n---\n# System\n\n{long}"),
+    );
+    repo.commit("a long system");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!repo.dir.join("docs/system.md").exists(), "{out}");
+    let kept: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("kept docs/reference/system.md"))
+        .collect();
+    assert_eq!(kept.len(), 1, "{out}");
+    assert!(kept[0].contains("over the hard budget of 16000"), "{out}");
+    assert!(!out.contains("SD702"), "{out}");
+    // The other documents are top files still.
+    assert!(repo.dir.join("docs/terms.md").is_file());
+    repo.commit("upgrade");
+    assert_no_new_error(&repo, "a long system");
+}
+
+#[test]
+fn a_top_file_with_the_id_of_another_document_is_kept() {
+    // `docs/lab` is a root of its own with no namespace, so `docs/lab/terms.md`
+    // and `docs/terms.md` would have the id `terms`. A document of a root of one
+    // type has the id `questions`. The proof would refuse each of them (SD201),
+    // so the plan keeps the documents where their other rules put them.
+    let repo = Repo::from_fixture("v05", &["top-files"]);
+    repo.write(
+        "docs/lab/reference/terms.md",
+        "---\ntype: reference\n---\n# Lab terms\n\nThe terms of the lab.\n",
+    );
+    repo.write(
+        "docs/field-notes/questions.md",
+        "# Questions of the field\n",
+    );
+    repo.commit("documents with the ids of top files");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!repo.dir.join("docs/terms.md").exists(), "{out}");
+    assert!(!repo.dir.join("docs/lab/terms.md").exists(), "{out}");
+    assert!(!repo.dir.join("docs/questions.md").exists(), "{out}");
+    let kept: Vec<&str> = out.lines().filter(|l| l.starts_with("kept ")).collect();
+    assert_eq!(kept.len(), 2, "{out}");
+    assert!(
+        kept.iter()
+            .any(|l| l.contains("docs/lab/reference/terms.md")
+                && l.contains("docs/notes/glossary.md")
+                && l.contains("`terms`")),
+        "{out}"
+    );
+    assert!(
+        kept.iter()
+            .any(|l| l.contains("docs/reference/open-questions.md") && l.contains("`questions`")),
+        "{out}"
+    );
+    // The other top files move.
+    assert!(repo.dir.join("docs/roadmap.md").is_file());
+    assert!(repo.dir.join("docs/product.md").is_file());
+    repo.commit("upgrade");
+    for id in [
+        "notes/glossary",
+        "reference/open-questions",
+        "reference/terms",
+    ] {
+        let (code, out, err) = repo.run(&["show", id]);
+        assert_eq!(code, 0, "{id}: {out}{err}");
+    }
+}
+
+#[test]
+fn areas_moves_a_document_of_a_root_of_one_type_inside_its_root() {
+    // D46 says "in its own root", and a root of one type is a root. `--layout`
+    // keeps the paths of such a root, but the file of `--areas` names the
+    // document, so the move is the choice of the person.
+    let repo = Repo::new();
+    repo.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.5.0\"\n\n[[roots]]\npath = \"docs/specs\"\ntype = \"spec\"\n",
+    );
+    repo.write(
+        "docs/specs/pumps.md",
+        "---\nstatus: active\n---\n# Pumps\n\n- **fill-window**: The controller SHALL run the pump at night.\n",
+    );
+    repo.commit("a root of specs");
+    let (code, out, err) = upgrade_areas(&repo, "[areas]\n\"pumps\" = \"pumps\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("proof: ok"), "{out}");
+    repo.commit("upgrade");
+    assert!(
+        repo.dir
+            .join("docs/specs/requirements/pumps/pumps.md")
+            .is_file()
+    );
+    for id in ["pumps", "pumps#fill-window"] {
+        let (code, out, err) = repo.run(&["show", id]);
+        assert_eq!(code, 0, "{id}: {out}{err}");
+    }
+}
