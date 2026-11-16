@@ -942,6 +942,18 @@ impl Git {
         Ok(out)
     }
 
+    /// Reads a file of the head tree: the git index for a `staged` `Git`, else
+    /// the file of the working tree. `None` if the file is absent or is not a
+    /// file. The path is from the repository root.
+    pub fn head_file(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
+        if self.staged {
+            // The spec `:<path>` names the entry of the index (stage 0).
+            let got = self.read_at(&[(String::new(), path.to_string())])?;
+            return Ok(got.into_iter().next().flatten());
+        }
+        Ok(std::fs::read(self.root.join(path)).ok())
+    }
+
     /// Runs a git command with `input` on its standard input.
     fn run_with_input(&self, args: &[&str], input: String) -> Result<Vec<u8>, String> {
         let mut child = self

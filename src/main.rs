@@ -1422,12 +1422,34 @@ fn base_pin(repo: &Repo, commit: &str) -> Result<Option<String>, Fatal> {
         .and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b))))
 }
 
+/// True if `spec-dna.toml` differs from its text in `base` in the pin line
+/// and in no other line. The head text is the working tree, or the git index
+/// for `--staged`.
+fn pin_line_only_change(repo: &Repo, base: &str) -> Result<bool, Fatal> {
+    let old = repo
+        .git
+        .read_at(&[(base.to_string(), config::FILE_NAME.to_string())])
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .next()
+        .flatten();
+    let new = repo.git.head_file(config::FILE_NAME).map_err(Fatal::Io)?;
+    Ok(match (old, new) {
+        (Some(old), Some(new)) => config::pin_line_only_change(
+            &String::from_utf8_lossy(&old),
+            &String::from_utf8_lossy(&new),
+        ),
+        _ => false,
+    })
+}
+
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
 /// `init` writes with it (the adapters, the harness files, the hook files
 /// that `init` writes or upgrades, the starter files of the evals, and files
 /// named `spec-dna*`) do not count,
-/// and a new `spec-dna.toml` (the adoption) is not checked.
+/// and a new `spec-dna.toml` (the adoption) is not checked. In a tree binary,
+/// a change of the pin line alone is not a change of `spec-dna.toml`.
 fn config_not_alone(
     repo: &Repo,
     cfg: &config::Config,
@@ -1439,6 +1461,11 @@ fn config_not_alone(
         return Ok(None);
     };
     if *added {
+        return Ok(None);
+    }
+    // In a tree binary, a change of the pin line alone is not a change of
+    // `spec-dna.toml` (ADR 0013, D19).
+    if repo.is_tree_binary() && pin_line_only_change(repo, base)? {
         return Ok(None);
     }
     // The starter files of `skeleton` come with the table `[evals]`.
