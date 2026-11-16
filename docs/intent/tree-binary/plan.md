@@ -5,9 +5,10 @@ status: approved
 
 ## Files
 
-- `src/git.rs` The diff of one file for the SD503 pin rule.
-- `src/check.rs` The tree binary test and the SD503 rule.
-- `src/config.rs` The tree binary test, next to the pin check.
+- `src/git.rs` The read of a file from the head or the index, for the SD503 pin rule.
+- `src/main.rs` The call of the pin rule in the SD503 check.
+- `src/repo.rs` The tree binary test.
+- `src/config.rs` The pin line rule and the test of `Cargo.toml`, next to the pin check.
 - `docs/diagnostics.md` The section of SD503.
 - `docs/config.md` The text about the pin and the tree binary.
 - `tests/tree_binary.rs` The tests of the tree binary and SD503.
@@ -18,10 +19,10 @@ status: approved
 
 ## Order
 
-- [ ] t1: Write the tests that fail before the code. Files: `tests/tree_binary.rs`. Verify: `cargo test --test tree_binary` fails on each case before the fix.
-- [ ] t2: Add the tree binary test and the SD503 pin rule. Files: `src/config.rs`, `src/check.rs`, `src/git.rs`. Verify: `cargo test --test tree_binary` passes.
-- [ ] t3: Add the job `Self-check`. Files: `.github/workflows/ci.yml`. Verify: `pre-commit run --all-files` passes, and the job passes in the pull request.
-- [ ] t4: Update the docs, the conventions and the entry of the change log. Files: `docs/diagnostics.md`, `docs/config.md`, `CONTRIBUTING.md`, `.claude/agents/ownership.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t1: Write the tests that fail before the code. Files: `tests/tree_binary.rs`. Verify: `cargo test --test tree_binary` fails on each case before the fix.
+- [x] t2: Add the tree binary test and the SD503 pin rule. Files: `src/config.rs`, `src/repo.rs`, `src/git.rs`, `src/main.rs`. Verify: `cargo test --test tree_binary` passes.
+- [x] t3: Add the job `Self-check`. Files: `.github/workflows/ci.yml`. Verify: `pre-commit run --all-files` passes, and the job passes in the pull request.
+- [x] t4: Update the docs, the conventions and the entry of the change log. Files: `docs/diagnostics.md`, `docs/config.md`, `CONTRIBUTING.md`, `.claude/agents/ownership.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
 
 ## Risks
 
