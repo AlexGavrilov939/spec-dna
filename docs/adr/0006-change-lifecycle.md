@@ -143,3 +143,9 @@ ADR 0001 is accepted and locked, so this ADR does not edit it. When the owner ac
 - "Metadata": the type `intent` adds the field `class` and the optional fields `from` and `areas`.
 
 ## Amendments
+
+### 2026-11-16: a draft artifact and the gate
+
+- "Gates and scope": SD910 reports a `spec.md` or a `plan.md` whose status is not `draft`, when the approval of the artifact before it is absent. A `draft` artifact needs no approval. Code under `Files` still needs an `approved` plan.
+- ADR 0012, "The rule": the walk checks an artifact only at the commits after which its status is not `draft`.
+- The counts of pull requests do not change.

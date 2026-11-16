@@ -131,3 +131,7 @@ ADR 0008 is accepted, and its text is locked. Read it with this change:
 - "Stage skills": the 4 skills `intent`, `spec`, `plan` and `review` become `brainstorm`, `specify` and `clarify`, `write-plan`, and `review`. The pack has 11 skills, and 7 of them are on by default. The listing of the 4 skills of 0.6 has 588 bytes in Claude Code, and a 0.6 test fixes this size. In 0.7.0, the listing of the 11 skills has 1,900 bytes or fewer. The listing of the 7 skills that are on has 1,250 bytes or fewer (D6).
 
 ## Amendments
+
+### 2026-11-16: the floor of `clarify`
+
+The floor of `clarify` also has SD925 (`checkbox-missing`): an item of `Concerns` or `Open questions` with no task box. SD919 and SD922 cannot see if such an item is open. [Section 15 of the design](../design/0.7.0.md#15-deviations-during-the-build) gives the reason.

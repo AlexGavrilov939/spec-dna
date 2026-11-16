@@ -168,3 +168,7 @@ ADR 0001 and ADR 0006 are accepted and locked, so this ADR does not edit them. T
 - ADR 0001, "Layers", the sentences "Every gate needs only two trees" and "A depth-1 fetch of the base commit is sufficient": SD910 also reads the commits of `base..HEAD`. With 2 trees only, the gate still runs and gives the result of ADR 0006. Thus less history never gives a pass.
 
 ## Amendments
+
+### 2026-11-16
+
+See the amendment of ADR 0006.

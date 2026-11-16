@@ -136,3 +136,7 @@ This ADR amends no accepted text. ADR 0001, ADR 0005, ADR 0006 and ADR 0009 stay
 It adds a command, so the change sets "Command, option, help text or exit code" and "`--json` shape" of `.claude/agents/ownership.md` apply.
 
 ## Amendments
+
+### 2026-11-16: drafts
+
+A `draft` artifact needs no approval (ADR 0006, amendment of 2026-11-16). Thus an imported open change gives no SD910, and `--skip-open` only leaves it in place.
