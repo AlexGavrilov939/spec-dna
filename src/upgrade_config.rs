@@ -451,20 +451,43 @@ fn edit_sums(t: &mut String, old: &OldConfig, opts: &ConfigOpts) -> Result<bool,
     }
 }
 
+/// The 0.6 names that a 0.5 type gives to the key `types`. `change` gives the
+/// 3 types of the intent layer, which hold together (D14).
+fn types_of(old: &str) -> Vec<String> {
+    match type_of(old) {
+        Some(DocType::Intent) => INTENT_TYPES.map(str::to_string).to_vec(),
+        Some(d) => vec![d.name().to_string()],
+        None => Vec::new(),
+    }
+}
+
+/// The types of the intent layer: a change policy needs all of them.
+pub const INTENT_TYPES: [&str; 3] = ["intent", "spec", "plan"];
+
 /// The key `types`: the new names, with no name twice.
 fn edit_types(t: &str, types: &[String]) -> Result<String, Fatal> {
-    let map = |o: &str| type_of(o).map(|d| d.name().to_string());
     let mut mapped: Vec<String> = Vec::new();
     for o in types {
-        if let Some(n) = map(o)
-            && !mapped.contains(&n)
-        {
-            mapped.push(n);
+        for n in types_of(o) {
+            if !mapped.contains(&n) {
+                mapped.push(n);
+            }
         }
     }
-    if mapped.len() == types.len() {
-        replace_strings(t, &[k("types")], &|s| map(s))
+    // The list keeps its length only if no name merges and no name grows.
+    let grows = types.iter().any(|o| type_of(o) == Some(DocType::Intent));
+    if mapped.len() == types.len() && !grows {
+        replace_strings(t, &[k("types")], &|s| {
+            type_of(s).map(|d| d.name().to_string())
+        })
     } else {
+        // `set_value` changes an array of many lines at each element, so it
+        // accepts a new list that has the same length by chance. That would
+        // move the comments to other names. A list of another length makes
+        // `set_value` refuse such an array, so a probe finds it.
+        let mut probe = mapped.clone();
+        probe.push(String::new());
+        set_value(t, &[k("types")], &str_array(&probe))?;
         set_value(t, &[k("types")], &str_array(&mapped))
     }
 }
@@ -726,6 +749,107 @@ pub fn pass2(
         root_statuses: p1.root_statuses.clone(),
         types,
     })
+}
+
+/// The edits of a 0.6 file beyond the pin (D15, D34), and the edits that the
+/// plan cannot make.
+#[derive(Clone, Debug, Default)]
+pub struct Repair {
+    pub text: String,
+    /// One line for each edit that the plan made, for the report.
+    pub edits: Vec<String>,
+    /// One line for each edit that the plan cannot make: the person makes it
+    /// by hand.
+    pub by_hand: Vec<String>,
+}
+
+/// "`a`", "`a` and `b`" or "`a`, `b` and `c`".
+fn code_list(items: &[String]) -> String {
+    let q: Vec<String> = items.iter().map(|i| format!("`{i}`")).collect();
+    match q.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, head)) => format!("{} and {last}", head.join(", ")),
+    }
+}
+
+/// The 2 repairs of a 0.6 file. Both add values only, and both are exact rules.
+/// The caller reads `cfg` from `text`.
+///
+/// - D15. The file has the key `types`, the change policy is not `none`, and
+///   the list lacks a type of the intent layer. The plan adds the absent types.
+/// - D34. The `linked-from` of `[layers.pending]` is exactly `["intent"]`, the
+///   value of `init` 0.6.0. The plan adds `requirements` and `decisions`, the
+///   layers that the graph has.
+///
+/// A list of many lines keeps its comments only if its length stays, so the
+/// plan cannot add to it. It leaves the list and names the edit.
+pub fn repair_current(text: &str, cfg: &Config) -> Result<Repair, Fatal> {
+    let table = parse_table(text)?;
+    let mut out = Repair {
+        text: text.to_string(),
+        ..Repair::default()
+    };
+    let policy = cfg.change_policy.name();
+    if policy != "none"
+        && let Some(list) = table.get("types").filter(|v| v.is_array()).map(strs)
+    {
+        let absent: Vec<String> = INTENT_TYPES
+            .iter()
+            .filter(|n| !list.iter().any(|l| l == *n))
+            .map(|n| n.to_string())
+            .collect();
+        if !absent.is_empty() {
+            let all = [list, absent.clone()].concat();
+            match set_value(&out.text, &[k("types")], &str_array(&all)) {
+                Ok(t) => {
+                    out.text = t;
+                    out.edits.push(format!(
+                        "`types` got {}: the change policy `{policy}` needs the types `intent`, `spec` and `plan`",
+                        code_list(&absent)
+                    ));
+                }
+                Err(_) => out.by_hand.push(format!(
+                    "`types` lacks {}, which the change policy `{policy}` needs; the list has many lines, so add the types by hand",
+                    code_list(&absent)
+                )),
+            }
+        }
+    }
+    let links = table
+        .get("layers")
+        .and_then(|l| l.get("pending"))
+        .and_then(|p| p.get("linked-from"))
+        .map(strs)
+        .filter(|l| l == &["intent"]);
+    if let Some(mut links) = links {
+        let add: Vec<String> = ["requirements", "decisions"]
+            .iter()
+            .filter(|n| cfg.layers.index(n).is_some())
+            .map(|n| n.to_string())
+            .collect();
+        if !add.is_empty() {
+            links.extend(add.iter().cloned());
+            let path = [k("layers"), k("pending"), k("linked-from")];
+            match set_value(&out.text, &path, &str_array(&links)) {
+                Ok(t) => {
+                    out.text = t;
+                    out.edits.push(format!(
+                        "`linked-from` of `[layers.pending]` got {}: `init` 0.6.0 wrote only `intent`",
+                        code_list(&add)
+                    ));
+                }
+                Err(_) => out.by_hand.push(format!(
+                    "`linked-from` of `[layers.pending]` is only `intent`; add {} by hand",
+                    code_list(&add)
+                )),
+            }
+        }
+    }
+    if out.text != text {
+        Config::parse(&out.text).map_err(invalid)?;
+    }
+    Ok(out)
 }
 
 /// The budget of 2 old types that become one is the weaker value of the types
@@ -1299,14 +1423,16 @@ mod tests {
     fn the_key_types_gets_the_new_names_with_no_duplicate() {
         let t = "spec-dna = \"0.5.0\"\ntypes = [\"spec\", \"guide\", \"runbook\", \"change\"] # kept\n[[roots]]\npath = \"d\"\n";
         let got = go(t, &facts(&[], &[]));
+        // `change` becomes the 3 types of the intent layer (D14).
         assert!(
-            got.text
-                .contains("types = [\"requirements\", \"procedure\", \"intent\"] # kept\n"),
+            got.text.contains(
+                "types = [\"requirements\", \"procedure\", \"intent\", \"spec\", \"plan\"] # kept\n"
+            ),
             "{}",
             got.text
         );
         let c = cfg(&got.text);
-        assert_eq!(c.types.len(), 3);
+        assert_eq!(c.types.len(), 5);
         // The types of the key are the types in use.
         let names: Vec<&str> = c.layers.layers().iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["requirements", "procedures", "intent"]);
@@ -1331,6 +1457,123 @@ mod tests {
             message(&e).contains("cannot edit this form"),
             "{}",
             message(&e)
+        );
+    }
+
+    #[test]
+    fn a_list_of_many_lines_with_change_is_a_hand_edit() {
+        // `change` becomes 3 names, so the list gets longer (D14). A list of
+        // many lines keeps its comments only if its length stays.
+        let t = "spec-dna = \"0.5.0\"\ntypes = [\n  \"spec\", # one\n  \"change\",\n]\n[[roots]]\npath = \"d\"\n";
+        let old = OldConfig::read(t).unwrap();
+        let e = plan(t, &old, &facts(&[], &[]), &opts()).unwrap_err();
+        assert_eq!(e.exit_code(), 3);
+        assert!(
+            message(&e).contains("cannot edit this form"),
+            "{}",
+            message(&e)
+        );
+        // 2 merges and the growth of `change` give a list of the same length.
+        // `set_value` would take it at each element, so the plan refuses it.
+        let t = "spec-dna = \"0.5.0\"\ntypes = [\n  \"guide\",\n  \"runbook\",\n  \"note\",\n  \"reference\",\n  \"change\",\n]\n[[roots]]\npath = \"d\"\n";
+        let old = OldConfig::read(t).unwrap();
+        let e = plan(t, &old, &facts(&[], &[]), &opts()).unwrap_err();
+        assert_eq!(e.exit_code(), 3);
+        // A list of one line keeps its comment.
+        let t =
+            "spec-dna = \"0.5.0\"\ntypes = [\"spec\", \"change\"] # one\n[[roots]]\npath = \"d\"\n";
+        let got = go(t, &facts(&[], &[]));
+        assert!(
+            got.text
+                .contains("types = [\"requirements\", \"intent\", \"spec\", \"plan\"] # one\n"),
+            "{}",
+            got.text
+        );
+    }
+
+    /// A 0.6 file of the small graph: `head` (the keys before the first table)
+    /// and `[change] policy`.
+    fn file_06(head: &str, policy: &str, pending_links: &str) -> String {
+        let graph = render_graph(&Graph::small());
+        let at = graph.find("[layers.pending]").unwrap();
+        let end = at + graph[at..].find("linked-from = ").unwrap();
+        let line_end = end + graph[end..].find('\n').unwrap();
+        let graph = format!(
+            "{}linked-from = {pending_links}{}",
+            &graph[..end],
+            &graph[line_end..]
+        );
+        format!(
+            "spec-dna = \"0.6.0\"\n{head}[change]\npolicy = \"{policy}\"\n\n{graph}\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\ntype = \"mixed\"\n"
+        )
+    }
+
+    #[test]
+    fn a_06_file_gets_the_types_of_the_policy_and_the_links_of_pending() {
+        let t = file_06(
+            "types = [\"requirements\", \"plan\"] # kept\n",
+            "two-class",
+            "[\"intent\"]",
+        );
+        let r = repair_current(&t, &cfg(&t)).unwrap();
+        assert!(
+            r.text
+                .contains("types = [\"requirements\", \"plan\", \"intent\", \"spec\"] # kept\n"),
+            "{}",
+            r.text
+        );
+        assert!(
+            r.text
+                .contains("linked-from = [\"intent\", \"requirements\", \"decisions\"]\n"),
+            "{}",
+            r.text
+        );
+        assert_eq!(r.edits.len(), 2, "{:?}", r.edits);
+        assert!(r.by_hand.is_empty());
+        // The result is the fixed point: a second repair changes nothing.
+        let again = repair_current(&r.text, &cfg(&r.text)).unwrap();
+        assert_eq!(again.text, r.text);
+        assert!(again.edits.is_empty());
+    }
+
+    #[test]
+    fn a_06_file_keeps_each_value_that_is_not_an_exact_match() {
+        // The policy `none`, no key `types`, and another list of links.
+        for (head, policy, links) in [
+            (
+                "types = [\"requirements\"]\n",
+                "none",
+                "[\"intent\", \"rules\"]",
+            ),
+            ("", "three-class", "[]"),
+            ("", "three-class", "[\"requirements\"]"),
+            (
+                "types = [\"intent\", \"spec\", \"plan\"]\n",
+                "three-class",
+                "[\"intent\", \"decisions\"]",
+            ),
+        ] {
+            let t = file_06(head, policy, links);
+            let r = repair_current(&t, &cfg(&t)).unwrap();
+            assert_eq!(r.text, t, "{head} {policy} {links}");
+            assert!(r.edits.is_empty() && r.by_hand.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_06_list_of_many_lines_is_named_and_not_edited() {
+        let t = file_06(
+            "types = [\n  \"requirements\", # kept\n  \"intent\",\n]\n",
+            "three-class",
+            "[\"intent\", \"requirements\", \"decisions\"]",
+        );
+        let r = repair_current(&t, &cfg(&t)).unwrap();
+        assert_eq!(r.text, t);
+        assert_eq!(r.by_hand.len(), 1, "{:?}", r.by_hand);
+        assert!(
+            r.by_hand[0].starts_with("`types` lacks `spec` and `plan`"),
+            "{:?}",
+            r.by_hand
         );
     }
 
@@ -1377,15 +1620,21 @@ mod tests {
         assert!(c.allows(DocType::Research), "{}", got.text);
         assert!(c.allows(DocType::Intent) && c.allows(DocType::Requirements));
         assert!(
+            got.text.contains(
+                "types = [\"requirements\", \"intent\", \"spec\", \"plan\", \"research\"]\n"
+            ),
+            "{}",
             got.text
-                .contains("types = [\"requirements\", \"intent\", \"research\"]\n")
         );
         // A type list that has `research` stays as it is.
         let t = "spec-dna = \"0.5.0\"\ntypes = [\"spec\", \"change\", \"note\"]\n[[roots]]\npath = \"docs\"\nlive-sections = {}\n";
         let got = go(t, &f);
         assert!(
+            got.text.contains(
+                "types = [\"requirements\", \"intent\", \"spec\", \"plan\", \"research\"]\n"
+            ),
+            "{}",
             got.text
-                .contains("types = [\"requirements\", \"intent\", \"research\"]\n")
         );
         // A list of many lines, with no `research`, is a hand edit.
         let t = "spec-dna = \"0.5.0\"\ntypes = [\n  \"spec\",\n  \"change\",\n]\n[[roots]]\npath = \"docs\"\nlive-sections = {}\n";

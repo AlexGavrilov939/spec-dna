@@ -299,6 +299,14 @@ pub struct Plan {
     pub writes: BTreeMap<String, String>,
     /// The files to remove, in path order.
     pub removes: Vec<String>,
+    /// The source is a 0.4 or 0.5 file.
+    pub from_old: bool,
+    /// The edits of a 0.6 `spec-dna.toml` beyond the pin (D15, D34), as lines
+    /// for the report.
+    pub edits: Vec<String>,
+    /// The edits of a 0.6 `spec-dna.toml` that the plan cannot make: the person
+    /// makes them by hand. The report gives them as warnings.
+    pub by_hand: Vec<String>,
 }
 
 impl Plan {
@@ -408,6 +416,7 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
         pin: opts.pin.clone(),
         sums: opts.sums.clone(),
     };
+    let mut repairs = upgrade_config::Repair::default();
     let (from, final_text, sums_added, classified, from_old) = match source_of(&text)? {
         Source::Old(old) => {
             let p1 = upgrade_config::pass1(&text, &old, &copts)?;
@@ -438,6 +447,10 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
                 let p1 = upgrade_config::pass1(&text, &pin_only(&cfg, &text), &copts)?;
                 (p1.text, p1.sums_added)
             };
+            let fin = Config::parse(&t).map_err(|e| Fatal::Config(e.to_string()))?;
+            // The 2 edits of a 0.6 file beyond the pin (D15, D34).
+            repairs = upgrade_config::repair_current(&t, &fin)?;
+            let t = repairs.text.clone();
             let fin = Config::parse(&t).map_err(|e| Fatal::Config(e.to_string()))?;
             let classified = classify(
                 tree,
@@ -508,6 +521,9 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
         files,
         writes,
         removes,
+        from_old,
+        edits: repairs.edits,
+        by_hand: repairs.by_hand,
     })
 }
 
@@ -559,8 +575,14 @@ pub struct Report {
     pub outside_links: Vec<(String, String)>,
     /// The links to a folder that changes its documents (D216).
     pub folder_links: Vec<(String, String)>,
-    /// The warnings of the configuration of the harness.
+    /// The warnings of the configuration of the harness, and the edits of
+    /// `spec-dna.toml` that the person makes by hand.
     pub warnings: Vec<String>,
+    /// The edits of a 0.6 `spec-dna.toml` beyond the pin (D15, D34).
+    pub edits: Vec<String>,
+    /// The source is a 0.4 or 0.5 file: the report lists the changes of
+    /// behavior (D56).
+    pub from_old: bool,
 }
 
 /// The tree after the plan: the corpus of the new tree and the diagnostics of
@@ -813,7 +835,15 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
         sums_added: plan.sums_added,
         outside_links: proof.notes.outside_links.clone(),
         folder_links: proof.notes.folder_links.clone(),
-        warnings: plan.files.warnings.clone(),
+        warnings: plan
+            .files
+            .warnings
+            .iter()
+            .chain(&plan.by_hand)
+            .cloned()
+            .collect(),
+        edits: plan.edits.clone(),
+        from_old: plan.from_old,
     })
 }
 
@@ -1154,6 +1184,11 @@ fn report_text(r: &Report) -> String {
         "links to a folder whose documents changed (upgrade did not rewrite them)",
         links(&r.folder_links),
     );
+    list(
+        &mut out,
+        "edits of spec-dna.toml beyond the pin",
+        r.edits.clone(),
+    );
     if r.sums_added {
         out.push_str("  the table `[spec-dna-sha256]` is new: --pin-file added it\n");
     }
@@ -1169,9 +1204,12 @@ fn report_text(r: &Report) -> String {
             errors.join(", ")
         }
     ));
-    out.push_str("  changes of behavior:\n");
-    for b in BEHAVIOR {
-        out.push_str(&format!("    - {b}\n"));
+    // The changes of behavior are the changes of 0.5 to 0.6 (D56).
+    if r.from_old {
+        out.push_str("  changes of behavior:\n");
+        for b in BEHAVIOR {
+            out.push_str(&format!("    - {b}\n"));
+        }
     }
     out
 }
@@ -1251,6 +1289,16 @@ fn write_all(repo: &Repo, plan: &Plan) -> Result<(), Fatal> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(fail(format!("{path}: {e}"))),
         }
+    }
+    // Each folder that a move left empty goes (D32). The folders are no part
+    // of the tree of git, so no output lists them, and no error stops the
+    // command.
+    for m in &plan.docs.moves {
+        let root = plan
+            .fin
+            .root_of(&m.from)
+            .map_or("", |r| &plan.fin.roots[r].path);
+        mv::remove_empty_parents(repo, root, &m.from);
     }
     Ok(())
 }
@@ -1349,6 +1397,9 @@ pub fn run(repo: &Repo, o: &RunOpts) -> Result<u8, Fatal> {
             println!("{}", output_json(&plan, &files, &proof, &report, o.dry_run));
         } else if plan.is_empty() {
             println!("spec-dna upgrade: nothing to change");
+            for w in &plan.by_hand {
+                println!("  warning: {w}");
+            }
         } else {
             print!("{}", output_text(&plan, &files, &proof, &report, o.dry_run));
         }

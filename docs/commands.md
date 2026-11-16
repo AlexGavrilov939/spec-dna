@@ -810,7 +810,7 @@ Save the file of `--pin-file` outside the repository, for example in the folder 
 | Step | What it does |
 | --- | --- |
 | 1. Check | Refuses a tree that is not clean. Reads the old configuration. Builds the whole plan in memory |
-| 2. Configuration | Renames the old names: the types, the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
+| 2. Configuration | Renames the old names: the types (`change` gives the 3 types `intent`, `spec` and `plan`), the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
 | 3. Front matter | Rewrites each `type:` and each `status:` that changed. A `proposed` or `accepted` change becomes an `intent` that is `draft` or `accepted`, and a `rejected` change becomes a `closed` intent. A `done` change and a former `note` become `research`. `upgrade` writes `was-type` (`change` or `note`) on each such document, and it adds a front matter if the document has none. It removes the `status` line of a `done` change |
 | 4. Harness | If `[harness]` exists, renames the role keys and writes the new parts as off: `skills = []`, `review-md = false` and `protect-tests = "off"`. A project at level `full` gets `code-simplifier = { claude-code = "none" }` in `[harness.roles]`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker. For a 0.5 project, it disables that role |
 | 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec |
@@ -823,7 +823,18 @@ In step 2, `upgrade` also writes the keys that keep a 0.5 document as it was:
 - `[budgets.intent]` of 10,000 and 20,000, if a migrated change is over 12,000 characters;
 - `live-sections = { decision = [] }` in each root that has no `live-sections` and can hold a decision. Thus no 0.5 decision gets a live section by default.
 
+If the 0.5 key `types` has `change`, the new list has `intent`, `spec` and `plan` at its place, because the intent layer holds the 3 types together. A list of many lines that needs this change is a hand edit (exit code 3), because the plan keeps the comments of such a list only if its length stays.
+
+A 0.6 project gets 2 more edits of `spec-dna.toml` beyond the pin. Both add values only, both follow an exact rule, and the report names each of them:
+
+- The file has the key `types`, `[change] policy` is not `none`, and the list lacks `intent`, `spec` or `plan`. `upgrade` adds the absent types. With the policy `none`, no command writes a `spec` or a `plan`, so the list stays as it is.
+- `linked-from` of `[layers.pending]` is exactly `["intent"]`, the value that `init` 0.6.0 wrote. `upgrade` adds `requirements` and `decisions`, for each of them that the graph has. Another value stays.
+
+These edits change `spec-dna.toml`. A new `types` list also changes the generated skill, because the skill lists the types of the project. SD503 does not count the skill, so the pull request of the pin can hold these edits. If a list has many lines, `upgrade` does not edit it. It prints a warning that names the hand edit.
+
 `--layout` moves the folders `contracts`, `invariants`, `guides`, `runbooks`, `reference` and `notes` of a mixed root. They go to `interfaces`, `rules`, `procedures`, `procedures`, `research` and `research`, with each tracked file under them. A root of one type keeps its path.
+
+After the moves, `upgrade` removes each folder that a move left empty, from the deepest folder to the highest. A folder with any file stays, also an ignored file, and the root folder of the document stays. Git does not track folders, so the output does not list them. `--dry-run` removes no folder.
 
 A stop of step 5 is exit code 1, and the message names each path. These are the causes: a slug that is not valid, 2 moves with one target, a target that exists, a target in another root, and an `exclude` glob that matches a moved path.
 
@@ -857,11 +868,12 @@ The report lists these items:
 - each locked decision that cites a migrated change, because `finish` does not stop on a reference in locked text;
 - each kept harness file, and each ended role with its model;
 - the first 5 links of each kind that `upgrade` did not rewrite (see the limits below);
-- the table `[spec-dna-sha256]`, if `--pin-file` added it, and each warning of the harness configuration;
-- the changes of behavior in the list below;
+- each edit of `spec-dna.toml` beyond the pin (the `types` list and the `pending` layer of a 0.6 project);
+- the table `[spec-dna-sha256]`, if `--pin-file` added it, each warning of the harness configuration and each hand edit of `spec-dna.toml` that the plan cannot make;
+- the changes of behavior in the list below, for a project of 0.5 or earlier only;
 - the count of each error code of `check --all` on the new tree, without SD506.
 
-`upgrade` reports these changes of behavior, and the CHANGELOG records them:
+For a project of 0.5 or earlier, `upgrade` reports these changes of behavior, and the CHANGELOG records them. The report of a 0.6 project does not list them. The field `behavior` of `--json` is the same for each source:
 
 - A former `note` is now `research`, with `keep = "forever"`. SD202 allows the deletion of a document that has `was-type: note` or `was-type: change`, as 0.5 did. This is the only exemption in a `forever` layer.
 - `context` listed incidents and notes. It now counts them in one line.

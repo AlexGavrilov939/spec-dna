@@ -409,6 +409,30 @@ impl Plan {
     }
 }
 
+/// The warning of a policy that needs types: the current `types` list lacks a
+/// type of the intent layer (D16). `init` does not edit the key, because no
+/// question asks for it. A file with no list allows each type.
+fn types_warning(plan: &Plan) -> Option<String> {
+    if plan.change_policy == ChangePolicy::None || plan.kept_types.is_empty() {
+        return None;
+    }
+    let absent: Vec<&str> = [DocType::Intent, DocType::Spec, DocType::Plan]
+        .into_iter()
+        .filter(|t| !plan.kept_types.contains(t))
+        .map(DocType::name)
+        .collect();
+    let list = match absent.split_last() {
+        None => return None,
+        Some((last, [])) => last.to_string(),
+        Some((last, [first])) => format!("{first} and {last}"),
+        Some((last, head)) => format!("{} and {last}", head.join(", ")),
+    };
+    Some(format!(
+        "the policy {} needs the types intent, spec and plan; add {list} to types in spec-dna.toml",
+        plan.change_policy.name()
+    ))
+}
+
 /// The note that gives the `CODEOWNERS` line. `init` never writes the file.
 fn codeowners_note(line: &str) -> String {
     format!(
@@ -609,7 +633,11 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         None if p.change_table && cfg.profile == Profile::Lite => Gate::Warn,
         None => Gate::Block,
     };
-    p.high_risk_layers = p.change_table.then(|| cfg.high_risk_layers.clone());
+    // The current value stays only if it is not the default of the current
+    // graph. The default follows the new graph (D17).
+    p.high_risk_layers = (p.change_table
+        && cfg.high_risk_layers != config::default_high_risk_layers(&cfg.layers))
+    .then(|| cfg.high_risk_layers.clone());
     p.high_risk_paths = cfg.high_risk_paths.clone();
     p.max_fanout = cfg.max_fanout;
     p.kept_types = cfg.types.clone();
@@ -3262,6 +3290,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
     let codeowners = plan.codeowners();
     let notes = notes(&plan);
+    let warnings: Vec<String> = types_warning(&plan).into_iter().collect();
     if o.json {
         let answers = resolved.iter().map(|r| {
             Obj::new()
@@ -3318,6 +3347,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
                 .raw("files", &files_json(repo, &changes))
                 .strs("manual", &manual)
                 .strs("notes", &notes)
+                .strs("warnings", &warnings)
                 .opt_str("codeowners", codeowners.as_deref())
                 .raw("harness", &harness_json(hrun.as_ref(), plan.harness.level))
                 .strs("written", &written)
@@ -3333,6 +3363,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         }
         for n in &notes {
             println!("note: {n}");
+        }
+        for w in &warnings {
+            println!("warning: {w}");
         }
         println!("\n--- spec-dna.toml ---\n{}---", text);
         println!("Files to create or change:");
@@ -3385,6 +3418,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     if !preview {
         for n in &notes {
             println!("note: {n}");
+        }
+        for w in &warnings {
+            println!("warning: {w}");
         }
     }
     for m in &manual {

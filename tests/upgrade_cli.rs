@@ -967,3 +967,223 @@ fn a_failed_proof_stops_with_exit_code_1_and_writes_nothing() {
     );
     assert_eq!(before, tree_bytes(&repo.dir));
 }
+
+// --- the repairs of a 0.6 file, the empty folders and the notes (0.6.1) ---
+
+/// A committed 0.6 project of the small graph, with no harness. `types` is a
+/// line for the key `types`, or `None` for a file with no such key. The file
+/// pins the version of the binary, so a pin change does not hide a repair.
+fn project_06(types: Option<&str>) -> Repo {
+    let repo = Repo::new();
+    let answers = repo.dir.with_extension("answers.toml");
+    fs::write(&answers, "harness = \"none\"\n").unwrap();
+    let a = answers.to_str().unwrap();
+    let (code, out, err) = repo.run(&["init", "--answers", a]);
+    assert_eq!(code, 0, "{out}{err}");
+    if let Some(line) = types {
+        let text = repo.read("spec-dna.toml");
+        let at = text.find("profile = ").unwrap();
+        repo.write(
+            "spec-dna.toml",
+            &format!("{}{line}\n{}", &text[..at], &text[at..]),
+        );
+        // `init` writes the adapters again, so they list the new types.
+        let (code, out, err) = repo.run(&["init", "--reconfigure", "--answers", a]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    let _ = fs::remove_file(&answers);
+    repo.commit("adopt spec-dna");
+    repo
+}
+
+/// The text of `spec-dna.toml` with the `linked-from` of `[layers.pending]`
+/// set to `value`.
+fn pending_links(repo: &Repo, value: &str) {
+    let text = repo.read("spec-dna.toml");
+    let table = text.find("[layers.pending]").unwrap();
+    let key = table + text[table..].find("linked-from = ").unwrap();
+    let end = key + text[key..].find('\n').unwrap();
+    let edited = format!("{}linked-from = {value}{}", &text[..key], &text[end..]);
+    repo.write("spec-dna.toml", &edited);
+    // A value that is already there changes nothing.
+    if !status(repo).is_empty() {
+        repo.commit("edit the pending layer");
+    }
+}
+
+#[test]
+fn upgrade_of_a_06_file_with_a_policy_adds_spec_and_plan_to_types() {
+    let repo = project_06(Some("types = [\"requirements\", \"intent\"]"));
+    let before = tree_bytes(&repo.dir);
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("would write spec-dna.toml"), "{out}");
+    assert!(
+        out.contains("`spec` and `plan`"),
+        "the report names it: {out}"
+    );
+    assert_eq!(before, tree_bytes(&repo.dir), "a dry run writes nothing");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let toml = repo.read("spec-dna.toml");
+    assert!(
+        toml.contains("types = [\"requirements\", \"intent\", \"spec\", \"plan\"]\n"),
+        "{toml}"
+    );
+    // The skill lists the types of the project, so it changes with the list.
+    // No other file changes.
+    assert_eq!(
+        status(&repo),
+        " M .claude/skills/spec-dna/SKILL.md\n M spec-dna.toml"
+    );
+    repo.commit("upgrade");
+    // A second run has nothing to change, and the adapters fit the new list.
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+    let (code, out, err) = repo.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for ty in ["intent", "spec", "plan"] {
+        let (code, out, err) = repo.run(&["new", ty, "x"]);
+        assert_eq!(code, 0, "new {ty}: {out}{err}");
+    }
+}
+
+#[test]
+fn upgrade_of_a_06_file_with_the_policy_none_keeps_the_types() {
+    let repo = project_06(Some("types = [\"requirements\", \"intent\"]"));
+    let toml = repo
+        .read("spec-dna.toml")
+        .replace("policy = \"three-class\"", "policy = \"none\"");
+    repo.write("spec-dna.toml", &toml);
+    repo.commit("no policy");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+    // A file with no key `types` allows each type, so it has nothing to add.
+    let repo = project_06(None);
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+}
+
+#[test]
+fn a_types_list_of_many_lines_is_named_and_not_edited() {
+    // `init` writes the list in one line, so the test makes the lines.
+    let repo = project_06(Some("types = [\"requirements\", \"intent\"]"));
+    let toml = repo.read("spec-dna.toml").replace(
+        "types = [\"requirements\", \"intent\"]",
+        "types = [\n  \"requirements\", # kept\n  \"intent\",\n]",
+    );
+    repo.write("spec-dna.toml", &toml);
+    repo.commit("many lines");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+    assert!(
+        out.contains("`types` lacks `spec` and `plan`"),
+        "the output names the hand edit: {out}"
+    );
+    let (code, out, err) = upgrade(&repo, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("`types` lacks `spec` and `plan`"), "{out}");
+}
+
+#[test]
+fn upgrade_of_a_06_file_widens_the_pending_links() {
+    let repo = project_06(None);
+    pending_links(&repo, "[\"intent\"]");
+    let before = tree_bytes(&repo.dir);
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("would write spec-dna.toml"), "{out}");
+    assert!(
+        out.contains("`[layers.pending]`"),
+        "the report names it: {out}"
+    );
+    assert_eq!(before, tree_bytes(&repo.dir), "a dry run writes nothing");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let toml = repo.read("spec-dna.toml");
+    assert!(
+        toml.contains("linked-from = [\"intent\", \"requirements\", \"decisions\"]\n"),
+        "{toml}"
+    );
+    assert_eq!(
+        status(&repo),
+        " M spec-dna.toml",
+        "only the file of the project"
+    );
+    repo.commit("upgrade");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+}
+
+#[test]
+fn upgrade_keeps_a_pending_links_value_that_is_not_the_old_default() {
+    for value in [
+        "[\"intent\", \"decisions\"]",
+        "[\"requirements\"]",
+        "[]",
+        "[\"intent\", \"requirements\", \"decisions\"]",
+    ] {
+        let repo = project_06(None);
+        pending_links(&repo, value);
+        let (code, out, err) = upgrade(&repo, &[]);
+        assert_eq!(code, 0, "{value}: {out}{err}");
+        assert!(out.contains("nothing to change"), "{value}: {out}");
+    }
+}
+
+#[test]
+fn the_behavior_notes_show_only_for_a_05_source() {
+    // A 0.6 file with no sums table and `--pin-file`: the plan is not empty.
+    let repo = project_06(None);
+    assert!(!repo.read("spec-dna.toml").contains("[spec-dna-sha256]"));
+    let (dir, file) = pin_file(VERSION, Some(&sums_table(VERSION, 'a')));
+    let pin = file.to_str().unwrap();
+    let (code, out, err) = upgrade(&repo, &["--dry-run", "--pin-file", pin]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("report:"), "{out}");
+    assert!(!out.contains("changes of behavior"), "{out}");
+    assert!(!out.contains("A former `note`"), "{out}");
+    // A 0.5 source keeps the 5 lines.
+    let old = Repo::from_fixture("v05", &[]);
+    let (code, out, err) = upgrade(&old, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("changes of behavior:"), "{out}");
+    assert_eq!(out.matches("\n    - ").count(), 5, "{out}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn upgrade_removes_the_folder_of_the_moved_changes() {
+    let repo = Repo::from_fixture("v05", &[]);
+    assert!(repo.dir.join("docs/changes/planning").is_dir());
+    // A dry run removes nothing.
+    let (code, out, err) = upgrade(&repo, &["--layout", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(repo.dir.join("docs/changes/planning").is_dir());
+    assert!(repo.dir.join("docs/contracts").is_dir());
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        repo.dir
+            .join("docs/intent/add-pump-timer/intent.md")
+            .is_file(),
+        "{out}"
+    );
+    // The folder that held only moved changes is gone.
+    assert!(!repo.dir.join("docs/changes/planning").exists());
+    assert!(!repo.dir.join("docs/contracts").exists());
+    // A folder that still holds a file, and the root, stay.
+    assert!(repo.dir.join("docs/changes/tune-pump.md").is_file());
+    assert!(repo.dir.join("docs/changes").is_dir());
+    assert!(repo.dir.join("docs").is_dir());
+    // The tree has no empty folder that the write made.
+    repo.commit("upgrade");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+}

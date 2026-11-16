@@ -4,7 +4,7 @@ Version 0.6.0 renames document types, statuses, configuration keys and harness r
 
 ## What changes
 
-- **Types.** `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, and `note` and `reference` are `research`. A `change` is now an `intent`. [types.md](../types.md#types-of-05) gives the full table.
+- **Types.** `spec` is now `requirements`, `contract` is `interface`, `invariant` is `rule`, `guide` and `runbook` are `procedure`, and `note` and `reference` are `research`. A `change` is now an `intent`. In the key `types` of `spec-dna.toml`, `change` becomes `intent`, `spec` and `plan`, because the intent layer holds the 3 types together. [types.md](../types.md#types-of-05) gives the full table.
 - **Changes.** Each `proposed`, `accepted` or `rejected` change moves to `<root>/intent/<slug>/intent.md`, because the type `intent` is valid only in the `intent` layer. Its status becomes `draft`, `accepted` or `closed`. A `done` change stays in place and becomes a `research` document.
 - **Decisions.** The word "frozen" is now "locked". SD405 checks the same text as before.
 - **Context.** The order of `context` follows the levels of the layers, so `foundation` comes before `rules`. `context` counts incidents and research documents in one line, and does not list them.
@@ -34,7 +34,7 @@ spec-dna upgrade --pin-file ../spec-dna-pin.toml
 3. It writes the keys that keep a 0.5 document as it was. One of them is `live-sections = { decision = [] }`, so that no 0.5 decision gets a live section by default.
 4. It rewrites each `type:` and `status:` that changed. It marks a former `note` or `done` change with `was-type`.
 5. It renames the harness roles. It deletes a generated file under its old name if nobody edited it. It keeps an edited file, and `check` reports it (SD501).
-6. It moves each `proposed`, `accepted` or `rejected` change to `<root>/intent/<slug>/intent.md` with `git mv`, and writes the old id into `aliases`.
+6. It moves each `proposed`, `accepted` or `rejected` change to `<root>/intent/<slug>/intent.md` with `git mv`, and writes the old id into `aliases`. It removes each folder that a move left empty. A folder with a file stays, and so does the root folder. `--dry-run` removes no folder.
 7. It proves the result (see [What the proof checks](#what-the-proof-checks)). If the proof fails, it writes nothing. Then it prints a report.
 
 `upgrade` never commits and never deletes a document. A second run after the commit changes nothing. A second run before the commit gives exit code 1, because the tree is not clean.
@@ -70,8 +70,9 @@ The report lists these items, among others:
 - each locked decision that cites a migrated change;
 - the harness files that `upgrade` kept, and each ended role with its model;
 - the links that `upgrade` did not rewrite;
+- each edit of `spec-dna.toml` beyond the pin, for a 0.6 project (see [Upgrade a 0.6 project](#upgrade-a-06-project));
 - the count of each error code of `check --all` on the new tree;
-- the changes of behavior from [What changes](#what-changes).
+- the changes of behavior from [What changes](#what-changes). A 0.6 project gets no such list.
 
 [commands.md](../commands.md#upgrade) gives the full report.
 
@@ -108,6 +109,17 @@ If the base pins a version before 0.4.0, `check` exits with code 3. It asks you 
 An upgraded project has the policy `none`: it has the layers and their checks, but no change process. The harness keeps its roles, and the new parts (the stage skills, `REVIEW.md` and the hook `protect-tests`) are off. The project has no evals.
 
 To enable any of them, run `spec-dna init --reconfigure`. Choose the change policy, the harness parts and the evals. [The change guide](change.md) gives the change process.
+
+## Upgrade a 0.6 project
+
+A project that pins 0.6.0 or later runs the same command. `upgrade` changes the pin, and it makes 2 more edits of `spec-dna.toml`. Both add values only, and the report names each edit:
+
+- If the file has the key `types`, the change policy is not `none`, and the list lacks `intent`, `spec` or `plan`, `upgrade` adds the absent types. A policy needs the 3 types. With the policy `none`, the list stays.
+- If `linked-from` of `[layers.pending]` is exactly `["intent"]`, `upgrade` adds `requirements` and `decisions`, so that a requirement or a decision can link the roadmap and the question list with no SD901. Another value stays.
+
+These edits change `spec-dna.toml`. A new `types` list also changes the generated skill, which lists the types of the project. SD503 does not count the skill, so the pull request of the pin can hold these edits. If the `types` list has many lines, `upgrade` does not edit it. It prints a warning that names the types to add by hand.
+
+If you set a change policy later with `spec-dna init --reconfigure`, and the `types` list lacks one of the 3 types, `init` prints a warning. It does not edit the key.
 
 ## Undo the upgrade
 

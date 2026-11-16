@@ -234,7 +234,7 @@ impl ChangeTable {
     }
 }
 
-fn default_high_risk_layers(graph: &Graph) -> Vec<String> {
+pub(crate) fn default_high_risk_layers(graph: &Graph) -> Vec<String> {
     DEFAULT_HIGH_RISK_LAYERS
         .iter()
         .filter(|n| graph.index(n).is_some())
