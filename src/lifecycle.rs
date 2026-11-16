@@ -26,8 +26,9 @@ pub const NO_BASE_NOTE: &str = "no base for the change checks; pass --base <rev>
 
 /// Returns the note for an unknown lifecycle base. If `[change] base` names a
 /// branch that the repository does not have, and there is no `--base` and no
-/// `origin/HEAD`, the note names the branch (design 0.6.1, D37). Otherwise it
-/// is `NO_BASE_NOTE`.
+/// `origin/HEAD`, the note names the branch (design 0.6.1, D37). If the
+/// branch exists but has no merge base with `HEAD`, the note says so. Otherwise
+/// it is `NO_BASE_NOTE`.
 pub fn no_base_note(config: &Config, git: &Git, base: Option<&str>) -> String {
     match &config.change_base {
         Some(b)
@@ -35,6 +36,19 @@ pub fn no_base_note(config: &Config, git: &Git, base: Option<&str>) -> String {
         {
             format!(
                 "no base for the change checks: no origin/HEAD, and the branch `{b}` of [change] base does not exist; pass --base <rev>"
+            )
+        }
+        // The key is set and the branch exists, but the base is unknown: the
+        // branch and `HEAD` have no merge base. The note does not ask for a
+        // key that is already set.
+        Some(b)
+            if base.is_none()
+                && git.remote_head().is_none()
+                && git.local_branch(b).is_some()
+                && git.commit("HEAD").is_some() =>
+        {
+            format!(
+                "no base for the change checks: the branch `{b}` of [change] base has no common history with HEAD; pass --base <rev>"
             )
         }
         _ => NO_BASE_NOTE.to_string(),

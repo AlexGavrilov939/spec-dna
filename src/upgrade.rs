@@ -1111,6 +1111,7 @@ fn report_json(r: &Report) -> String {
         .num("outside_links", r.outside_links.len())
         .num("folder_links", r.folder_links.len())
         .strs("warnings", &r.warnings)
+        .strs("edits", &r.edits)
         .end()
 }
 

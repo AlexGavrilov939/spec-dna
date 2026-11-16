@@ -148,7 +148,7 @@ These rules apply to the lifecycle base:
   ```
 
   Then `check` runs only the checks of one tree.
-- The refs that `check` reads for this base are `origin/HEAD` and the branch of `[change] base`, in this order. It never guesses a local `main` or `master`. If `[change] base` names a branch that does not exist, and there is no `origin/HEAD`, the note is ``no base for the change checks: no origin/HEAD, and the branch `<b>` of [change] base does not exist; pass --base <rev>``. This is not an error, because a CI clone often has no local branch.
+- The refs that `check` reads for this base are `origin/HEAD` and the branch of `[change] base`, in this order. It never guesses a local `main` or `master`. If `[change] base` names a branch that does not exist, and there is no `origin/HEAD`, the note is ``no base for the change checks: no origin/HEAD, and the branch `<b>` of [change] base does not exist; pass --base <rev>``. This is not an error, because a CI clone often has no local branch. If the branch exists but has no common history with `HEAD`, the note is ``no base for the change checks: the branch `<b>` of [change] base has no common history with HEAD; pass --base <rev>``.
 - If the lifecycle base pins a version before 0.6.0, it counts as no lifecycle base. Git cannot give a diff from the planned base. `change_base` is `null`, and `check` runs the checks of one tree. The text output prints this note on stderr:
 
   ```text
@@ -835,7 +835,7 @@ If the 0.5 key `types` has `change`, the new list has `intent`, `spec` and `plan
 
 A 0.6 project gets 2 more edits of `spec-dna.toml` beyond the pin. Both add values only, both follow an exact rule, and the report names each of them:
 
-- The file has the key `types`, `[change] policy` is not `none`, and the list lacks `intent`, `spec` or `plan`. `upgrade` adds the absent types. With the policy `none`, no command writes a `spec` or a `plan`, so the list stays as it is.
+- The file has the key `types`, `[change] policy` is not `none`, and the list lacks `intent`, `spec` or `plan`. `upgrade` adds the absent types. With the policy `none`, no command writes a `spec` or a `plan`, so the list stays as it is. An empty list (`types = []`) means that every type is valid, so it also stays as it is.
 - `linked-from` of `[layers.pending]` is exactly `["intent"]`, the value that `init` 0.6.0 wrote. `upgrade` adds `requirements` and `decisions`, for each of them that the graph has. Another value stays.
 
 These edits change `spec-dna.toml`. A new `types` list also changes the generated skill, because the skill lists the types of the project. SD503 does not count the skill, so the pull request of the pin can hold these edits. If a list has many lines, `upgrade` does not edit it. It prints a warning that names the hand edit.
@@ -896,7 +896,7 @@ With `--json`, the output is one object with these fields:
 | `version`, `from`, `to`, `dry_run` | The version of the binary, the old pin, the new pin and a flag |
 | `files` | One entry for each file: `path`, `action` (`write`, `move`, `remove` or `keep`), `note` and `diff`. A `move` entry also has `from`, the old path |
 | `proof` | `ok`, `ids`, `requirements`, `sections`, `types` and `failures` |
-| `report` | `proposals`, `no_status`, `locked_cites` (`decision` and `change`), `kept`, `ended_roles` (`role` and `model`), `behavior`, `errors` (`code` and `count`), `sums_added`, `outside_links`, `folder_links` and `warnings` |
+| `report` | `proposals`, `no_status`, `locked_cites` (`decision` and `change`), `kept`, `ended_roles` (`role` and `model`), `behavior`, `errors` (`code` and `count`), `sums_added`, `outside_links`, `folder_links`, `warnings` and `edits` (the edits of a 0.6 `spec-dna.toml` beyond the pin, as lines of text) |
 
 `outside_links` and `folder_links` are counts. A failed proof gives the object on stdout and exit code 1. A second run gives `files: []`.
 

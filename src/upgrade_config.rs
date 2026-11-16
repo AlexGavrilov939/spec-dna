@@ -717,7 +717,8 @@ pub fn pass2(
             .and_then(|r| r.get("types").map(strs))
             .unwrap_or_default();
         let research = DocType::Research.name().to_string();
-        if !list.contains(&research) {
+        // An empty list means that every type is valid: it stays.
+        if !list.is_empty() && !list.contains(&research) {
             list.push(research);
             t = set_value(&t, &[k("types")], &str_array(&list))?;
         }
@@ -792,7 +793,12 @@ pub fn repair_current(text: &str, cfg: &Config) -> Result<Repair, Fatal> {
     };
     let policy = cfg.change_policy.name();
     if policy != "none"
-        && let Some(list) = table.get("types").filter(|v| v.is_array()).map(strs)
+        && let Some(list) = table
+            .get("types")
+            .filter(|v| v.is_array())
+            .map(strs)
+            // An empty list means that every type is valid: it stays.
+            .filter(|l| !l.is_empty())
     {
         let absent: Vec<String> = INTENT_TYPES
             .iter()
@@ -1558,6 +1564,31 @@ mod tests {
             assert_eq!(r.text, t, "{head} {policy} {links}");
             assert!(r.edits.is_empty() && r.by_hand.is_empty());
         }
+    }
+
+    #[test]
+    fn an_empty_types_list_of_a_06_file_stays_as_it_is() {
+        // An empty list means that every type is valid.
+        let t = file_06("types = []\n", "three-class", "[\"intent\"]");
+        let r = repair_current(&t, &cfg(&t)).unwrap();
+        assert!(r.text.contains("types = []\n"), "{}", r.text);
+        assert!(
+            r.edits.iter().all(|e| !e.starts_with("`types`")),
+            "{:?}",
+            r.edits
+        );
+        assert!(r.by_hand.is_empty(), "{:?}", r.by_hand);
+    }
+
+    #[test]
+    fn an_empty_types_list_of_a_05_file_stays_as_it_is() {
+        let mut f = facts(&["spec", "change"], &["docs"]);
+        f.done_changes = true;
+        let t =
+            "spec-dna = \"0.5.0\"\ntypes = []\n[[roots]]\npath = \"docs\"\nlive-sections = {}\n";
+        let got = go(t, &f);
+        assert!(got.text.contains("types = []\n"), "{}", got.text);
+        assert!(cfg(&got.text).allows(DocType::Research), "{}", got.text);
     }
 
     #[test]

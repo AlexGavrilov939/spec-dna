@@ -1121,6 +1121,36 @@ fn upgrade_of_a_06_file_widens_the_pending_links() {
 }
 
 #[test]
+fn upgrade_keeps_an_empty_types_list_of_a_06_file() {
+    // An empty list means that every type is valid, so it has nothing to add.
+    let repo = project_06(Some("types = []"));
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+    assert!(!out.contains("`types`"), "{out}");
+}
+
+#[test]
+fn upgrade_json_lists_the_edits_of_a_06_file() {
+    let repo = project_06(Some("types = [\"requirements\", \"intent\"]"));
+    pending_links(&repo, "[\"intent\"]");
+    let (code, out, err) = upgrade(&repo, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let at = out.find("\"edits\":[").unwrap_or_else(|| panic!("{out}"));
+    let list = &out[at..at + out[at..].find("\"]").unwrap()];
+    assert!(list.contains("`types` got `spec` and `plan`"), "{list}");
+    assert!(
+        list.contains("`linked-from` of `[layers.pending]`"),
+        "{list}"
+    );
+    // A project with nothing to edit has an empty list.
+    let repo = project_06(None);
+    let (code, out, err) = upgrade(&repo, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"edits\":[]"), "{out}");
+}
+
+#[test]
 fn upgrade_keeps_a_pending_links_value_that_is_not_the_old_default() {
     for value in [
         "[\"intent\", \"decisions\"]",

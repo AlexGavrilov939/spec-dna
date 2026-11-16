@@ -376,7 +376,7 @@ The lifecycle checks compare the head with the merge base of a base revision and
 2. `refs/remotes/origin/HEAD`. `git remote set-head origin <branch>` sets it.
 3. `refs/heads/<base>`, where `<base>` is the key `base`.
 
-spec-dna never guesses a branch: it reads only the branch that the file names, and it uses no network. A repository with no remote has no `origin/HEAD`, so set `base` there. If the branch does not exist and there is no `origin/HEAD`, the base is unknown. This is not an error, because a CI clone often has no local branch. The commands print a note, `check` runs only the checks of one tree, and `--base <rev>` gives the base. `status`, `next`, `finish` and `check` read the key. `finish` reads it for each policy.
+spec-dna never guesses a branch: it reads only the branch that the file names, and it uses no network. A repository with no remote has no `origin/HEAD`, so set `base` there. If the branch does not exist and there is no `origin/HEAD`, the base is unknown. This is not an error, because a CI clone often has no local branch. If the branch exists but has no common history with `HEAD`, the note says so. The commands print a note, `check` runs only the checks of one tree, and `--base <rev>` gives the base. `status`, `next`, `finish` and `check` read the key. `finish` reads it for each policy.
 
 A change of `base` edits `spec-dna.toml`, so SD503 applies: make it a change of its own.
 

@@ -143,7 +143,7 @@ To enable any of them, run `spec-dna init --reconfigure`. Choose the change poli
 
 A project that pins 0.6.0 or later runs the same command. `upgrade` changes the pin, and it makes 2 more edits of `spec-dna.toml`. Both add values only, and the report names each edit:
 
-- If the file has the key `types`, the change policy is not `none`, and the list lacks `intent`, `spec` or `plan`, `upgrade` adds the absent types. A policy needs the 3 types. With the policy `none`, the list stays.
+- If the file has the key `types`, the change policy is not `none`, and the list lacks `intent`, `spec` or `plan`, `upgrade` adds the absent types. A policy needs the 3 types. With the policy `none`, the list stays. An empty list (`types = []`) means that every type is valid, so it stays too.
 - If `linked-from` of `[layers.pending]` is exactly `["intent"]`, `upgrade` adds `requirements` and `decisions`, so that a requirement or a decision can link the roadmap and the question list with no SD901. Another value stays.
 
 These edits change `spec-dna.toml`. A new `types` list also changes the generated skill, which lists the types of the project. SD503 does not count the skill, so the pull request of the pin can hold these edits. If the `types` list has many lines, `upgrade` does not edit it. It prints a warning that names the types to add by hand.

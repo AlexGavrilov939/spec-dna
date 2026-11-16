@@ -1048,7 +1048,7 @@ fn a_base_with_no_branch_in_the_config_keeps_the_general_note_that_names_the_key
 }
 
 #[test]
-fn a_branch_of_the_config_with_no_merge_base_keeps_the_general_note() {
+fn a_branch_of_the_config_with_no_merge_base_gets_a_note_that_does_not_ask_for_the_key() {
     let r = local_repo("three-class", "base = \"main\"\n");
     // The history of `feature` has no commit of `main` now.
     r.git(&["checkout", "-q", "--orphan", "island"]);
@@ -1057,10 +1057,11 @@ fn a_branch_of_the_config_with_no_merge_base_keeps_the_general_note() {
     let (base, text) = status_out(&r, &[]);
     assert_eq!(base, "none");
     assert!(
-        text.contains("note: no base for the change checks; "),
+        text.contains("note: no base for the change checks: the branch `main` of [change] base has no common history with HEAD; pass --base <rev>\n"),
         "{text}"
     );
     assert!(!text.contains("does not exist"), "{text}");
+    assert!(!text.contains("or set [change] base"), "{text}");
 }
 
 #[test]
