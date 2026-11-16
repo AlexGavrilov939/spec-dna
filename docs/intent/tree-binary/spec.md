@@ -17,8 +17,8 @@ None. No interface document exists for the rule of SD503 or for CI.
 
 ## Concerns
 
-- [ ] SD503 reads paths only today. The new rule reads the diff of one file. The tests must prove that a pin change with another line still counts.
+- [x] SD503 reads paths only today. The new rule reads the diff of one file. The tests must prove that a pin change with another line still counts. Resolved in the plan: task t1 has this test.
 
 ## Open questions
 
-- [ ] None.
+None.
