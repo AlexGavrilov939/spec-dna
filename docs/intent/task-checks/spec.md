@@ -26,7 +26,9 @@ None. No interface document describes the parser, the codes or the templates.
 
 ## Open questions
 
-- [x] Which text states "nothing"? Answer: the form of D28 (the first word `none`, then `:`, `.` or the end) applies to the paragraph under `Files`, and to the single item of `Interfaces`, `Concerns` and `Open questions`, with or without a task box. A list item under `Files` keeps the rule of 0.6.1.
+- [x] Which text states "nothing"? Answer: the form of D28 applies: the first word is `none`, then `:`, `.` or the end. It applies to the paragraph under `Files`. It also applies to the single item of `Interfaces`, `Concerns` and `Open questions`, with or without a task box. A list item under `Files` keeps the rule of 0.6.1.
+- [x] Which line does `next` show first when a plan has a paragraph under `Files` that is not `none`? Answer: the line of D28 comes first. If the plan is not `approved`, the approval line follows it and stays the last line. If the plan is `approved`, the line of D28 is the last line, in the place of the line "it lists none".
+- [x] What does an `ADD` item of `Interfaces` give when the diff deletes the folder? Answer: SD914 when the head has no such document and no delta line adds it. It gives nothing when the head has the document.
 - [x] Does SD923 or SD924 read a draft plan? Answer: no. They read an `approved` plan only (D40). SD925 reads a spec in each status, except the spec of a `closed` change.
 - [x] What is a glob or a folder in the label `Files:` of a task (SD923)? Answer: a path with `*`, `?` or `[`, a path that ends with `/`, or a path that names a folder of the tree.
 - [x] What are the severities? Answer: SD923, SD924 and SD925 are in the rule group `changes`: off in `lite`, a warning in `standard` and an error in `strict`.

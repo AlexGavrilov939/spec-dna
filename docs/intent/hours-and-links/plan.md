@@ -28,7 +28,7 @@ status: draft
 
 - [ ] t1: Write the failing tests of the hours: `finish` prints `Hours: 3.5`, and `log` and `stats --sdlc` read the line from a squash commit with the line in a middle paragraph (`core-engineer`, `hygiene-engineer`). Files: `tests/lifecycle_log.rs`, `tests/finish.rs`. Verify: `cargo test --test lifecycle_log --test finish` fails on the new tests only.
 - [ ] t2: Write the failing tests of SD612 in `standard` and `lite`, and of the locked links: an amendment that names the target, and the pointer with the commit (`diagnostics-engineer`). Files: `tests/layers_checks.rs`, `tests/lifecycle_finished.rs`. Verify: `cargo test --test layers_checks --test lifecycle_finished` fails on the new tests only.
-- [ ] t3: Read the messages of a list of commits with one git process (`core-engineer`). Files: `src/git.rs`. Verify: `cargo test --lib git` passes.
+- [ ] t3: Read the messages of a list of commits with one git process (`core-engineer`). Files: `src/git.rs`. Verify: `cargo test --bin spec-dna git::` passes.
 - [ ] t4: Add the total of `Hours`, the line `Hours: <total>`, the note of an item with no number, and the field `hours` to `finish` (`hygiene-engineer`). Files: `src/finish.rs`, `src/main.rs`. Verify: `cargo test --test finish` passes.
 - [ ] t5: Read the line `Hours:` in `log` and `stats --sdlc` (`core-engineer`). Files: `src/sdlc.rs`, `tests/golden/stats-sdlc.txt`, `tests/golden/stats-sdlc-evals.txt`. Verify: `cargo test --test lifecycle_log --test stats_evals` passes.
 - [ ] t6: Make the search of step 0 of `finish` a function that takes the corpus and the change folders, with no change of its result (`hygiene-engineer`). Files: `src/finish.rs`. Verify: `cargo test --test finish` passes.
@@ -42,7 +42,7 @@ status: draft
 - A person who does not copy the line `Hours:` into the squash message loses the hours of the change. The skill `finish` and the guide say where the line goes.
 - The text line of `log` gets 2 tokens (`hours <n>` or `hours -`). A script that reads the line by position must change.
 - `check` reads the history for the pointer of a locked link. On a long history this costs one `git log` for each intent folder, and only when such a link exists.
-- Slice 7 also edits `src/sdlc.rs` and `src/git.rs` (D31), so it starts after this change.
+- Merge order: this change starts after `task-checks` merges, because `finish` reads `ItemSection::Hours`. Slice 7 also edits `src/sdlc.rs` and `src/git.rs` (D31), so it starts after this change.
 
 ## Proof
 

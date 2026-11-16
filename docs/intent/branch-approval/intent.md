@@ -11,7 +11,8 @@ Add the approval in the branch of [ADR 0012](../../adr/0012-approval-in-the-bran
 The change also adds these items:
 
 - The keys `[change] approval` and `[change] approvers` (D15), and the errors of D14 and D15.
-- The field `approvals` of `check --json`, the line of `next` for an approval in branch mode (D7), and the source of each approval in `status` (D8).
+- The field `approvals` of `check --json`, and the line of `next` for an approval in branch mode (D7).
+- In `status` (D8): the source of each approval, and the skill `post-mortem` for an incident with an open follow-up.
 - `init` writes the keys as D15 says.
 - Items 1 and 2 of the feedback of a second project (section 15 of the design): a `draft` artifact needs no earlier approval, and `next` and `status` ask for a class.
 - The rule of Q5 in `AGENTS.md` and `CONTRIBUTING.md`: an agent writes an approval commit only when the owner says so explicitly in the chat.

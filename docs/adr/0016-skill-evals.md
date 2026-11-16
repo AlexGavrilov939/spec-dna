@@ -113,3 +113,10 @@ ADR 0008 is accepted, and its text is locked. Read its section "Evals" with thes
 - `eval pack` and `eval verdict` are new subcommands. SD507 is a new code.
 
 ## Amendments
+
+### 2026-11-16: refused runs, the target and the result file
+
+- A run of `eval run --ab` that gets 401, 403, 429, a 5xx status or a page of Cloudflare is not a result. The runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds, about 63 minutes in total. Then it stops with exit code 3 and `stopped: "api-error"`. No result counts such a run, and the result file gives the `excluded` counts. This differs from ADR 0008, which counts each run. `eval run` without `--ab` keeps the rule of ADR 0008. The variable `SPEC_DNA_EVAL_BACKOFF` sets the first wait, so a test does not wait.
+- `eval run --ab` takes one target: a skill, `all`, or `agents-line` (the pair of the line of `AGENTS.md`).
+- The result file is `skills-<YYYYMMDD>T<HHMMSS>Z.json`, so 2 runs on one day keep 2 files. For each skill, `eval verdict` reads the newest result file that holds the skill. The pilot gives 5 files: 4 skills and `agents-line`. The table of the release comes from the committed files of the pilot and of the full run.
+- The `without` arm denies `Bash(spec-dna skill:*)`, the permission form of Claude Code, in place of `Bash(spec-dna skill*)`.

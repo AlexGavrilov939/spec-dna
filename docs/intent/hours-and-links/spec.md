@@ -26,7 +26,7 @@ None. No interface document describes `finish`, `log`, `stats` or the output of 
 
 ## Open questions
 
-- [x] What is the form of an item of `Hours`? Answer: a number of hours (up to 4 digits, and up to 2 decimals after a `.`), an optional `h`, then the end of the item, or `:` or a space and free text. An item with another form gives a note of `finish` and no total.
+- [x] What is the form of an item of `Hours`? Answer: the item starts with a number of hours, with up to 4 digits and up to 2 decimals after a `.`. An optional `h` follows. Then the item ends, or it has `:` or a space and free text. An item with another form gives a note of `finish` and no total.
 - [x] What does `stats --sdlc` show? Answer: one row, play `Build`, kind `lagging`, name "Hours of work per finished change", unit `hours`. The value is the median of the finished changes that have a line, and the count is their number. The note gives the total.
-- [x] What clears the info line of a locked link? Answer: an amendment section of the same decision with a code span or a prose word that equals the target as written (without its fragment), or the id or the path of the place that is gone. For a target in the folder of a change, the slug of the change in a code span also clears it.
+- [x] What clears the info line of a locked link? Answer: an amendment section of the same decision that names the old target. A code span or a prose word of the section must equal the target as written, without its fragment. The id or the path of the place that is gone also counts. For a target in the folder of a change, the slug of the change in a code span also clears it.
 - [x] What are the severities of SD612? Answer: a warning in each profile. It is in no rule group, as SD611, and `[rules] SD612` changes it.
