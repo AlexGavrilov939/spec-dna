@@ -347,7 +347,7 @@ base = "main"                               # a local branch, for a repository w
 
 The table `[change]` sets the change process: the change classes that the project uses, and the strictness of the gate. [The change guide](guides/change.md) gives the process. The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate.
 
-`spec-dna init` writes the table with the 5 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). `init` never proposes the key `base`, and `init --reconfigure` does not keep it: add it again after the command. An unknown key is an error (exit code 3).
+`spec-dna init` writes the table with the 5 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
 
 `policy` has these values:
 

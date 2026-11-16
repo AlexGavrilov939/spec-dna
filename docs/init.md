@@ -261,7 +261,7 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 
 - `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[context]`, `[groups]` and `[templates]`
 - the table `[evals]`, as question 14 says: `skeleton` keeps it as it is
-- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths` and `max-fanout`. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
+- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths`, `max-fanout` and `base`. `base` is the local branch of the change checks. `init` never asks for it, and it stays as you set it. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
 - `language`: it is the default of question 7. The answer `en` removes the key
 - every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs

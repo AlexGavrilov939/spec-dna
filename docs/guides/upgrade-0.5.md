@@ -137,7 +137,7 @@ This ref is local to one clone. Each clone needs the command. It is not in a com
 
 An upgraded project has the policy `none`: it has the layers and their checks, but no change process. The harness keeps its roles, and the new parts (the stage skills, `REVIEW.md` and the hook `protect-tests`) are off. The project has no evals.
 
-To enable any of them, run `spec-dna init --reconfigure`. Choose the change policy, the harness parts and the evals. The command writes the table `[change]` again and does not keep the key `base`. In a repository with no remote, add the key again in a commit of its own. [The change guide](change.md) gives the change process.
+To enable any of them, run `spec-dna init --reconfigure`. Choose the change policy, the harness parts and the evals. The command writes the table `[change]` again and keeps the key `base`. [The change guide](change.md) gives the change process.
 
 ## Upgrade a 0.6 project
 

@@ -428,6 +428,33 @@ fn reconfigure_keeps_the_current_change_values() {
 }
 
 #[test]
+fn reconfigure_keeps_the_change_base() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The project adds the key by hand. A new `init` never proposes it.
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("\nmax-fanout = 8", "\nbase = \"trunk\"\nmax-fanout = 8");
+    assert!(cfg.contains("base = \"trunk\""), "{cfg}");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt and edit");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(text(&r.change().unwrap(), "base"), "trunk");
+    r.commit("reconfigure");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    // A project with no key still gets none.
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.change().unwrap().contains_key("base"));
+}
+
+#[test]
 fn a_table_with_no_gate_keeps_the_severity_of_the_profile() {
     // Without `gate`, the profile sets SD910: a warning in `lite`, an error in
     // `standard`. A default answer to question 5 writes the gate with the same

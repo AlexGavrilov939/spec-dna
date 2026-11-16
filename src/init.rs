@@ -255,6 +255,9 @@ pub struct Plan {
     pub high_risk_paths: Vec<String>,
     /// `[change] max-fanout`.
     pub max_fanout: u32,
+    /// `[change] base`. No question asks for it. `--reconfigure` keeps the
+    /// value that the file sets. The config loader has checked the name.
+    pub change_base: Option<String>,
     /// The documents that detection found in the roots.
     pub documents: usize,
     /// The root of a new project (`docs`, or the directory of `--root`).
@@ -356,14 +359,21 @@ impl Plan {
         if !self.writes_change() {
             return String::new();
         }
-        format!(
+        let mut out = format!(
             "\n[change]  # the change process (docs/config.md)\npolicy = {}  # \"three-class\", \"two-class\" or \"none\"\ngate = {}  # \"block\", \"warn\" or \"off\"\nhigh-risk-layers = {}  # a delta in these layers makes a change higher-risk\nhigh-risk-paths = {}  # globs from the repository root\nmax-fanout = {}  # documents that one change can touch before SD905\n",
             toml_str(self.change_policy.name()),
             toml_str(self.change_gate.name()),
             toml_list(&self.high_risk_layers_written()),
             toml_list(&self.high_risk_paths),
             self.max_fanout
-        )
+        );
+        if let Some(b) = &self.change_base {
+            out.push_str(&format!(
+                "base = {}  # the local branch that the change checks use as the base\n",
+                toml_str(b)
+            ));
+        }
+        out
     }
 
     /// The table `[evals]` and the empty line after it, or an empty string.
@@ -549,6 +559,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         high_risk_layers: None,
         high_risk_paths: Vec::new(),
         max_fanout: config::DEFAULT_MAX_FANOUT,
+        change_base: None,
         documents,
         root: docs_root.to_string(),
         notes: language_note.into_iter().collect(),
@@ -640,6 +651,7 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     .then(|| cfg.high_risk_layers.clone());
     p.high_risk_paths = cfg.high_risk_paths.clone();
     p.max_fanout = cfg.max_fanout;
+    p.change_base = cfg.change_base.clone();
     p.kept_types = cfg.types.clone();
     p.exclude = cfg.exclude.clone();
     p.evidence = cfg.rules.iter().find(|r| r.0 == "evidence").map(|r| r.1);
