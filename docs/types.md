@@ -51,6 +51,8 @@ In a mixed root, a document gets its type from this list. The first rule that gi
 4. The file name, in the folder of a layer that has more types: `intent/<slug>/intent.md`, `spec.md` and `plan.md` have the types `intent`, `spec` and `plan`.
 5. `default-type` of the root.
 
+`spec-dna mv` of a whole document into a mixed root removes the `type` line that the new place makes redundant, and it names a change of the type ([mv](commands.md#mv)).
+
 If no rule gives a type, the document gives SD303. A mixed root has no `default-type` unless the file sets it. Thus `type:` is optional in a new corpus, wherever the place gives the type.
 
 The layer of a document is the first layer in the file whose `paths` match it. If no layer matches, it is the layer that has the type of the document. A `paths` match does not give a type.
@@ -183,6 +185,8 @@ The rules are about the form only. A token such as `n/a` or `**src/a.py**` passe
 A plain path has the same meaning as the same text in a code span. A final `/` matches the folder and all files in it.
 
 The patterns of a plan are the paths of its section `Files`, then the `Files:` paths of its tasks of `Order`, with no repeat. Each reader of the scope uses this list: the checks SD905, SD910, SD911, SD913, SD915, SD916, SD917 and SD921, `finish`, `stats --sdlc`, `status` and `next`. A plan can list its paths only in its tasks.
+
+A plan can state that the work edits no file. The `Files` section then has one item only, a list item, and the item starts with the word `none` in any case, such as `- none: research only`. The word ends at the first character that is not a letter or a digit, so `nonexistent` is not the word. Such a plan lists no file when no task of `Order` has a path in `Files:`. In that case, the item is not a wrong item: `next` and `status` do not name it, and the messages of SD913 and SD915 do not name it. For a routine change, `next` and `status` then show `[x] the plan lists no files: the change edits no file` in place of the step of the files ([commands.md](commands.md#next)). A higher-risk change keeps the step of the files, because its spec has a delta.
 
 Assume that the items of `Files` are not paths, and the plan lists no path in `Files` or in its tasks. Then `next` and `status` say so and show the first such item. The messages of SD913 and SD915 do the same ([diagnostics](diagnostics.md)). If the plan lists a path, they do not name an item, because the item is not the reason for the diagnostic.
 

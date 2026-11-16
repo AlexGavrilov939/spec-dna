@@ -797,3 +797,105 @@ fn a_closed_or_draft_change_is_never_stale() {
         assert!(!has(&out, "SD911"), "{status}: {out}");
     }
 }
+
+// A dead link in the locked text of an accepted decision
+
+const LINKED: &str = "---\nstatus: accepted\n---\n# Use a timer\n\n## Decision Outcome\n\nUse a timer, as [the intent](../intent/dose/intent.md) says.\n";
+const TIMER: &str = "docs/decisions/timer.md";
+const POINTER: &str = "the change `dose` (`spec-dna log` names its commit)";
+
+fn info_lines(out: &str) -> Vec<&str> {
+    out.lines().filter(|l| l.contains(": info: ")).collect()
+}
+
+/// A decision that links the intent `dose` in its locked text, in a commit.
+fn linked() -> Repo {
+    let r = Fx::default().start();
+    r.git(&["checkout", "-q", "main"]);
+    r.write(TIMER, LINKED);
+    r.commit("decision");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-B", "feature", "main"]);
+    r
+}
+
+#[test]
+fn check_all_names_a_dead_link_in_locked_text_after_finish() {
+    let r = linked();
+    // The intent exists: SD611 warns, and there is no info line.
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(has(&out, "SD611"), "{out}");
+    assert!(info_lines(&out).is_empty(), "{out}");
+    let (_, json, _) = r.run(&["check", "--all", "--json"]);
+    assert!(json.contains("\"locked_links\":[]"), "{json}");
+    // After `finish`, the intent is gone. The link is quiet (no SD101, no
+    // SD102), and `check --all` says how to record it.
+    r.write("src/dose.py", "x = 2\n");
+    finish(&r);
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD102") && !has(&out, "SD611"), "{out}");
+    let want = format!(
+        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that points to {POINTER}"
+    );
+    assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
+    // The line is before the summary line, and the counts do not change.
+    let last = out.lines().last().unwrap();
+    assert!(last.starts_with("spec-dna check: "), "{out}");
+    assert!(last.contains("0 errors and 0 warnings"), "{out}");
+    // `--json` has the same record.
+    let (code, json, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 0, "{json}");
+    let field = format!(
+        "\"locked_links\":[{{\"path\":\"{TIMER}\",\"line\":8,\"target\":\"../intent/dose/intent.md\",\"pointer\":\"{}\"}}]",
+        POINTER
+    );
+    assert!(json.contains(&field), "{json}");
+    // Without `--all`, the human output has no such line.
+    let (code, out, _) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(info_lines(&out).is_empty(), "{out}");
+    // The field is always in the JSON output.
+    let (_, json, _) = r.run(&["check", "--json"]);
+    assert!(json.contains("\"locked_links\":["), "{json}");
+}
+
+#[test]
+fn a_dead_locked_link_of_no_intent_folder_gets_the_general_pointer() {
+    let r = Fx::default().start();
+    r.write(
+        TIMER,
+        &LINKED.replace("../intent/dose/intent.md", "../old/notes.md"),
+    );
+    r.commit("decision");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    let want = format!(
+        "{TIMER}:8: info: the locked text links `../old/notes.md`, which no longer exists; add an amendment that points to the new place of the text, or the reason for its removal"
+    );
+    assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
+    assert!(!has(&out, "SD102"), "{out}");
+}
+
+#[test]
+fn a_dead_link_outside_locked_text_keeps_its_diagnostic_and_gets_no_info_line() {
+    let r = Fx::default().start();
+    // The same dead link: in an amendment section of the decision, and in a
+    // document that is not a decision.
+    r.write(
+        TIMER,
+        &format!(
+            "{}\n## Amendments\n\nSee [the notes](../old/notes.md).\n",
+            LINKED.replace("../intent/dose/intent.md", "../intent/dose/plan.md")
+        ),
+    );
+    r.write(
+        "docs/requirements/other.md",
+        "---\nstatus: active\n---\n# Other\n\nSee [the notes](../old/notes.md).\n",
+    );
+    r.commit("documents");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(lines(&out, "SD102").len(), 2, "{out}");
+    assert!(info_lines(&out).is_empty(), "{out}");
+}

@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{Repo, normalize_marker};
+use common::{Repo, md_lint, normalize_marker};
 use std::fs;
 
 const LEAN_FILES: [&str; 4] = [
@@ -158,11 +158,35 @@ fn full_writes_the_implementer_and_the_code_simplifier() {
 fn the_agent_files_match_the_golden_files() {
     let r = full_repo();
     for (path, name) in [
+        (".claude/agents/fallback-advisor.md", "fallback-advisor.md"),
         (".claude/agents/verifier.md", "verifier.md"),
+        (".claude/agents/Explore.md", "Explore.md"),
+        (".claude/agents/implementer.md", "implementer.md"),
         (".claude/agents/code-simplifier.md", "code-simplifier.md"),
+        (".claude/agents/model-team.md", "model-team.md"),
     ] {
         assert_eq!(normalize_marker(&r.read(path)), golden(name), "{path}");
+        // The pre-commit hook lints the golden file with markdownlint-cli2.
+        // This test reads the same file with the helper.
+        assert_eq!(md_lint(&golden(name)), [], "{name}");
     }
+}
+
+#[test]
+fn the_skill_of_the_adapter_matches_its_golden_file() {
+    let r = Repo::new();
+    let (code, out, err) = init_with(&r, "adapters = [\"skill\"]\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The version of the begin marker is not part of the golden file.
+    let text = r.read(".claude/skills/spec-dna/SKILL.md");
+    let (head, tail) = text
+        .split_once("<!-- spec-dna:begin skill v")
+        .expect("begin marker");
+    let (_, tail) = tail.split_once(" h:").expect("hash");
+    let normalized = format!("{head}<!-- spec-dna:begin skill v{{VERSION}} h:{tail}");
+    let want = golden("skills/spec-dna.md");
+    assert_eq!(normalized, want);
+    assert_eq!(md_lint(&want), [], "skills/spec-dna.md");
 }
 
 #[test]

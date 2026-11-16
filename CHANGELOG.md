@@ -4,6 +4,79 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ## Unreleased
 
+## 0.6.1 - 2026-11-16
+
+0.6.1 has fixes and small additions from the first upgrade of a consumer repository. It keeps compatibility with 0.6.0.
+
+### Upgrade from 0.6.0
+
+- Install the 0.6.1 binary. Then move the pin in `spec-dna.toml` in a pull request of its own, because SD503 rejects a change of the configuration that comes with other files. You can edit the pin by hand, or run `spec-dna upgrade`. In a 0.6 project, `upgrade` moves the pin, makes 2 more edits of `spec-dna.toml`, and names each edit in the report. `upgrade --layout` is for a 0.4 or 0.5 source. [docs/guides/upgrade-0.5.md](docs/guides/upgrade-0.5.md#upgrade-a-06-project) gives the steps.
+- Run `spec-dna init` to refresh the generated agent and skill files. The text of `Explore.md`, `fallback-advisor.md` and the review skill changed. The marker hash of the review skill changed. The marker hashes of the 2 agent files stay the same, because the hash ignores the new blank line.
+- The new key `[change] base` is optional. A binary of 0.6.0 stops with exit code 3 on this key, so pin 0.6.1 first.
+- The JSON output has new fields. Each field is always present:
+  - `locked_links` in `check --json` (an empty list if there is no locked link)
+  - `edits` in `upgrade --json`, in `report`
+  - `alias_dropped` in `mv --json`
+  - `types_added` and `next` in `layer add --json`
+  - `warnings` in `init --json`
+
+### Added
+
+- `spec-dna check --all` prints one info line for each dead link in the locked text of an accepted decision, such as a link to an intent that `finish` deleted: ``<path>:<line>: info: the locked text links `<target>`, which no longer exists; add an amendment that points to <pointer>``. The pointer names the change (`spec-dna log` names its commit), or says "the new place of the text, or the reason for its removal". The line is not a diagnostic: it has no code and no severity, and it does not change the counts or the exit code. `check --json` lists these links in `locked_links` with and without `--all` ([docs/commands.md](docs/commands.md#check), [docs/diagnostics.md](docs/diagnostics.md#locked-references)).
+- The new key `[change] base` names a local branch. It is the base of the change checks in a repository with no remote. The order is `--base`, then `origin/HEAD`, then the branch of the key. spec-dna never guesses a branch. If the branch does not exist and there is no `origin/HEAD`, the base is unknown, and a note names the branch. It is not an error. `status`, `next`, `finish` and `check` read the key. `spec-dna init --reconfigure` keeps it ([docs/config.md](docs/config.md#the-table-change), [docs/guides/upgrade-0.5.md](docs/guides/upgrade-0.5.md#a-repository-with-no-remote)).
+- `spec-dna upgrade --layout` moves a document of a mixed root to the top file of the root when its file stem is `roadmap`, `product-overview` or `overview`, `open-questions` or `questions`, `glossary` or `terms`, or `architecture` or `system`. The document is a `note`, a `reference` or a `change` that is not `done`. It has no requirement. It is directly in the root or in `notes/`, `reference/` or `changes/`. It is not over the hard budget of the type of the top file. A `change` named `roadmap` becomes the top file, not an intent. The moved file has no `type`, `status` or `was-type` line, and its old id is an alias. The plan adds the type to the key `types` and the layer `foundation` or `pending` to the graph. A document stays, with one `kept` line in the report, if 2 documents want one top file, if the top file or its id exists, or if its id names more than one document. A 0.6 project gets no such move ([docs/commands.md](docs/commands.md#upgrade)).
+- `spec-dna upgrade --layout --areas <file>` moves each document that the TOML table `[areas]` of the file maps (`"specs/pumps" = "pumps"`) to `<root>/requirements/<area>/<slug>.md`, with its old id as an alias. The plan adds each area to the key `areas`, sorted. An unknown id, a document that is not a `requirements` document in 0.6, and an area that is not one folder name stop the plan with exit code 1 and no write. `--areas` without `--layout`, or for a 0.6 project, is a usage error (exit code 2). A bad file gives exit code 3 ([docs/commands.md](docs/commands.md#upgrade)).
+- The new section "After the upgrade: top files and areas" of [docs/guides/upgrade-0.5.md](docs/guides/upgrade-0.5.md#after-the-upgrade-top-files-and-areas) gives the `spec-dna mv` commands and a shell loop for a 0.6 project, where `--layout` moves no document to a top file.
+- `spec-dna upgrade --json` has the new field `edits` in `report`: one string for each edit of a 0.6 `spec-dna.toml` beyond the pin ([docs/commands.md](docs/commands.md#upgrade)).
+- `spec-dna init --reconfigure` prints a warning when the policy is not `none` and the `types` list lacks `intent`, `spec` or `plan`. It does not edit the key. `--json` has the new field `warnings` ([docs/init.md](docs/init.md#reconfigure)).
+
+### Changed
+
+- `spec-dna mv` of a whole document into a mixed root fits the `type` and `status` lines to the new place. It removes a `type` line that the place gives, and a `status` line of a type with no status. It writes the first status of the new type when the old status does not fit, and it writes `type:` when the new place gives no type. The output names each change. `mv` stops with exit code 2 if the document has requirements and the new type holds none, or if an accepted decision would get another type ([docs/commands.md](docs/commands.md#mv)).
+- `spec-dna mv` and `spec-dna upgrade` remove each folder that a move leaves empty, such as `docs/changes/` after the last change moved out. A folder with a file, including an ignored file, stays. The root folder of the document stays, and so does the folder of a `--stub`. `upgrade --dry-run` removes nothing.
+- `spec-dna upgrade` of a 0.6 project makes 2 more edits of `spec-dna.toml`, and the report names each edit. If the file has the key `types`, the policy is not `none`, and the list lacks `intent`, `spec` or `plan`, it adds the absent types. If `linked-from` of `[layers.pending]` is exactly `["intent"]` (the value of `init` 0.6.0), it adds `requirements` and `decisions`. A list of many lines is not edited, and a warning names the hand edit.
+- The report of `spec-dna upgrade` lists the changes of behavior of 0.6 only for a 0.4 or 0.5 project. A 0.6 project no longer gets the 5 lines. The field `behavior` of `--json` stays.
+- `spec-dna layer add --types` appends each new type to the top-level `types` list, when the file has one. Before, `new` and `check` refused the type of the new layer. The output names the added types and ends with up to 3 `next:` lines (commit the file, run `init` when the agent skill lists the types, write the first document). `--json` has the new fields `types_added` and `next` ([docs/commands.md](docs/commands.md#layer-add)).
+- In the default graph and the small graph, the `pending` layer has `linked-from = ["intent", "requirements", "decisions"]`. A requirement that names an open question and a decision that names the roadmap no longer give SD901. A file with its own `[layers.pending]` keeps its value ([docs/config.md](docs/config.md#default-graph)).
+- `spec-dna next` and `spec-dna status` no longer ask for paths of a routine change whose plan lists no files. In such a plan, the `Files` section has one item only, and the item starts with the word `none` (`- none: research only`). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage `build` ends when each task of `Order` is done, or when `Order` has no task. A higher-risk change keeps the step of the files ([docs/types.md](docs/types.md#files-and-paths), [docs/guides/change.md](docs/guides/change.md#work-with-no-files)).
+- The row of SD503 in [docs/diagnostics.md](docs/diagnostics.md) gave no paths. The new section "Files that SD503 counts" lists each path that does not count (the adapters, the harness files, the hook files, the starter files of the evals and each file whose name starts with `spec-dna`) and says that each other path counts, such as a lint configuration, `CODEOWNERS` and a deleted file. No behavior changes.
+
+### Fixed
+
+- `spec-dna upgrade` of a 0.4 or 0.5 project writes the 3 types of the intent layer for a `change` in the key `types`: `change` becomes `intent`, `spec` and `plan`. Before, the list had only `intent`, and `new spec` and `new plan` stopped after a policy started. A list of many lines that needs this change is a hand edit (exit code 3) ([docs/commands.md](docs/commands.md#upgrade)).
+- `spec-dna upgrade` no longer changes an empty `types` list (`types = []`), which means that every type is valid. Before, a 0.6 project got the list `["intent", "spec", "plan"]`, which limited the project to 3 types, and a 0.4 or 0.5 project with a `done` change got the list `["research"]`.
+- The plan of `spec-dna upgrade --layout` compares the paths of a target in ASCII lowercase. The dry run and the write now agree on a file system that ignores case. Before, the dry run could say ok and the write could stop with exit code 4 for 2 names that differ only in case. Two area targets that differ only in case stop the plan.
+- When the branch of `[change] base` exists but has no common history with `HEAD`, the note for an unknown base no longer tells the person to set the key. The note is ``no base for the change checks: the branch `<b>` of [change] base has no common history with HEAD; pass --base <rev>``.
+- `spec-dna init --reconfigure` writes the default `high-risk-layers` of the new graph when the file has the default of the current graph. A project that changes from the small graph to the default graph gets `["interfaces", "rules"]`. A value that you set stays.
+- A move of `intent.md` out of the intent folder is no longer the end of a change, when the move keeps the id as an alias (`spec-dna mv`, `upgrade`). `log` gives no entry for it, and `stats --sdlc` drops that change ([docs/commands.md](docs/commands.md#log)).
+- `spec-dna mv` of a document to the path of one of its own aliases no longer stops with "already exists". It drops that alias and keeps the old id as an alias. The output has `(alias dropped: <alias>)`, and `--json` has the new field `alias_dropped`.
+- The agent files `Explore.md` and `fallback-advisor.md` have a blank line between `Answer:` and its list, so they pass markdownlint (MD032). `spec-dna index` writes an empty cell as `| |` in place of `|  |`, so a generated index passes MD060. The golden files of the generated agent files and the skill in `tests/golden/harness/` now go through the lint of the pre-commit hook.
+
+### Benchmark
+
+The new workflow `Benchmark` ran once on a GitHub runner (ubuntu-24.04, run 43906896512) with the release binary 0.6.1 on the synthetic medium corpus (1,194 documents, 15 runs of each mode). `modes_agree` and `incremental_agrees_with_full` were true. A shared runner has other load and other hardware, so do not compare these numbers with the host table in `bench/tool/README.md`.
+
+| Mode | Median (ms) | Min (ms) | Peak RSS (MB) |
+| --- | ---: | ---: | ---: |
+| startup | 0.8 | 0.8 | 15.1 |
+| full | 80.5 | 77.0 | 43.1 |
+| cold | 78.9 | 78.1 | 71.2 |
+| warm | 50.2 | 49.0 | 99.2 |
+| warm, base | 42.6 | 39.1 | 103.5 |
+| context | 12.9 | 12.3 | 114.0 |
+| incremental | 45.5 | 42.9 | 114.0 |
+
+The peak RSS values rise in the order of the modes on this runner. The cause is not yet known, so read that column with care.
+
+### Known limits
+
+- `spec-dna layer add` with a `types` list on many lines stops with exit code 2 and changes nothing, because the editor cannot grow such a list. Add the types by hand.
+- A paragraph under `Files` does not mean "no files". Use the list item `- none`.
+- `spec-dna index` on a layer with a status stops with SD304 and a message with an empty target.
+- Two area names that differ only in case, with different file names, plan two folders. A file system that ignores case merges them.
+- A plain `git mv` of an intent out of the intent folder writes no alias, so `log` still reads it as a closed change.
+- A commit of `finish` that adds a near copy of an intent, with its id as an alias, reads as a move. `log` then gives no entry for that change.
+
 ## 0.6.0 - 2026-11-16
 
 0.6.0 breaks compatibility with 0.5. It renames document types, statuses, configuration keys, harness roles and 2 code names, and it keeps no old name as input. The command `spec-dna upgrade` moves a project that pins 0.4.0 or later, and it proves that no id and no requirement text changed ([ADR 0009](docs/adr/0009-upgrade-from-0-5.md)). 0.6.0 also adds the layer graph, the change lifecycle, the evals and the stage skills of the harness.

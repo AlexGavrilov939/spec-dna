@@ -8,4 +8,4 @@ procedures  level 0  types procedure  keep forever  context always  docs 0
 research  level 1  types research  moves-to decisions,requirements  linked-from decisions,requirements  keep forever  context on-request  docs 0
 intent  level 1  types intent,spec,plan  moves-to requirements,interfaces,rules,decisions,procedures  keep until-finished  context on-request  max-docs 30  max-started 3  stale-days 14  docs 1 (type 1)
 incidents  level 2  types incident  moves-to intent  linked-from rules,procedures,decisions,requirements,interfaces,intent  keep forever  context on-request  docs 0
-pending  level 2  types roadmap,questions  files roadmap.md,questions.md  moves-to intent,decisions  linked-from intent  keep forever  context on-request  max-docs 2  docs 0
+pending  level 2  types roadmap,questions  files roadmap.md,questions.md  moves-to intent,decisions  linked-from intent,requirements,decisions  keep forever  context on-request  max-docs 2  docs 0

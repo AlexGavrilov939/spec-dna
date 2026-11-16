@@ -97,7 +97,7 @@ Reference: [config.md](config.md#the-table-layers), [commands.md](commands.md#la
 
 ## The gate
 
-`spec-dna check` compares the head with a base and reports only the problems that the change adds. Without `--base`, the base is `HEAD`, so `check` reads the edits that are not committed. In CI, `--base origin/<main branch>` makes the base the merge base with the target branch. The checks of the change lifecycle need the base of the pull request. Without `--base`, they use the merge base of `origin/HEAD` and `HEAD`. If git has no `origin/HEAD`, `check` prints a note and runs only the change checks that need one tree.
+`spec-dna check` compares the head with a base and reports only the problems that the change adds. Without `--base`, the base is `HEAD`, so `check` reads the edits that are not committed. In CI, `--base origin/<main branch>` makes the base the merge base with the target branch. The checks of the change lifecycle need the base of the pull request. Without `--base`, they use the merge base of `origin/HEAD` and `HEAD`. A repository with no remote has no `origin/HEAD`: the key `[change] base` names a local branch for it. If git has no base, `check` prints a note and runs only the change checks that need one tree.
 
 Thus a mature repository can adopt spec-dna before it fixes the old problems. `check --all` shows each problem once. The gate fails only on a new error.
 

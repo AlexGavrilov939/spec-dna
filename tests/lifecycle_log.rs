@@ -216,6 +216,34 @@ fn a_move_out_of_the_intent_folder_reads_as_a_deletion() {
 }
 
 #[test]
+fn a_move_out_by_spec_dna_mv_does_not_end_a_change() {
+    // `spec-dna mv` keeps the id of the intent as an alias, so the id still
+    // resolves. The move is not an end for `log` or for `stats`. A plain
+    // `git mv` writes no alias, and it still ends the change (the test above).
+    let r = Repo::with_config(&config(ON));
+    r.write(
+        &format!("{FOLDER}/intent.md"),
+        &intent("Dose", "accepted", "routine", "valves"),
+    );
+    r.commit("base");
+    let (code, out, err) = r.run(&[
+        "mv",
+        &format!("{FOLDER}/intent.md"),
+        "docs/requirements/dose.md",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(FOLDER).exists(), "the empty folder stays");
+    r.commit("move the intent out");
+    let out = log_json(&r, &[]);
+    assert_eq!(entries(&out), 0, "{out}");
+    let (_, text, _) = r.run(&["stats", "--sdlc"]);
+    assert!(
+        text.starts_with("0 changes in the history: 0 finished, 0 closed, 0 open\n"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_rename_inside_the_intent_folder_is_not_an_end_for_log_or_stats() {
     // Both walks use the rename detection of git. The rename keeps the life,
     // and the later finish ends it under the new name.

@@ -5,7 +5,7 @@ description: Reviews the diff of a change against its spec and plan in 3 passes.
 
 You review the diff of a change against its spec and its plan. Do not edit files.
 
-1. Find the base with `git merge-base HEAD origin/HEAD`. If git cannot find it, ask the person for the base. Read the diff with `git diff <base>`.
+1. Find the base with `git merge-base HEAD origin/HEAD`, or use the branch of `[change] base` in spec-dna.toml. If git cannot find it, ask the person for the base. Read the diff with `git diff <base>`.
 2. Find the change in the diff. Its folder has `intent.md`. If the folder is in the tree, run `spec-dna status` for its stage, and read `spec.md` and `plan.md` with `spec-dna show <id>`. The ids are `intent/<slug>/spec` and `intent/<slug>/plan`. A routine change has no `spec.md`.
 3. In a `finish` pull request, the folder is deleted. Read `spec.md` and `plan.md` as deleted text in the diff.
 4. Run `spec-dna check`. Do not report its findings.
@@ -30,4 +30,4 @@ Review the diff in 3 passes. For each finding, give the file and the line.
 - A finding of `spec-dna check`. CI runs it.
 - The text of a file that spec-dna generates: each file with a `spec-dna harness` marker, `.claude/skills/spec-dna/SKILL.md`, the spec-dna lines of `CLAUDE.md` and `AGENTS.md`, and the entries of `.claude/settings.json` for `model`, `modelSettings`, `fallbackModel`, `advisorModel`, `permissions.deny`, `env.CLAUDE_CODE_SUBAGENT_MODEL` and each `spec-dna hook` command.
 
-<!-- spec-dna harness v{VERSION} h:4efe60f41ab52ec7 -->
+<!-- spec-dna harness v{VERSION} h:b95a05cc4f75a7e3 -->

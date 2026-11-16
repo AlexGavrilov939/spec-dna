@@ -10,7 +10,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | amendment section | A section of an accepted decision that can grow after the acceptance. The default name is `Amendments` | | [config](config.md) |
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
-| base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, or of `origin/HEAD`, with `HEAD` | | [concepts](concepts.md#the-gate) |
+| base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree | | [concepts](concepts.md#the-change-lifecycle) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |

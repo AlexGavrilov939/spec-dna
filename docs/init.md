@@ -188,7 +188,7 @@ After the list, the preview gives the diff of each file other than `spec-dna.tom
 
 `--dry-run` shows the same diffs, even for a project that has a `spec-dna.toml` already (`init` then updates the adapters only). With `--json`, each entry of `files` has a `diff`.
 
-A new project and `--reconfigure` also give `notes`, `codeowners` and `answers` with the 14 answers. The field `number` of an answer is the number of the question. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With a `spec-dna.toml` that exists, `--dry-run --json` gives `files` with the same entries, and `harness`.
+A new project and `--reconfigure` also give `notes`, `warnings`, `codeowners` and `answers` with the 14 answers. The field `number` of an answer is the number of the question. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With a `spec-dna.toml` that exists, `--dry-run --json` gives `files` with the same entries, and `harness`.
 
 The skill lists the types of the project: the types that a layer has. If `spec-dna.toml` has the key `types`, the skill lists only the types of that key. If you change the layers later, for example with `spec-dna layer add`, run `spec-dna init` to update the skill. Otherwise `check` reports SD502.
 
@@ -261,7 +261,7 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 
 - `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[context]`, `[groups]` and `[templates]`
 - the table `[evals]`, as question 14 says: `skeleton` keeps it as it is
-- the keys of `[change]` that no question asks for: `high-risk-layers` (only the layers that the graph has), `high-risk-paths` and `max-fanout`. The answers of questions 4 and 5 replace `policy` and `gate`
+- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths`, `max-fanout` and `base`. `base` is the local branch of the change checks. `init` never asks for it, and it stays as you set it. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
 - `language`: it is the default of question 7. The answer `en` removes the key
 - every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs
@@ -272,6 +272,8 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 The harness has the current `[harness]` table as its defaults. `--reconfigure` also offers the parts that a project has not yet, such as the stage skills, `REVIEW.md` and `protect-tests`.
 
 A smaller level removes the generated files that it no longer produces, if you did not edit them. These files include the stage skills and `REVIEW.md`. It removes the model-team line and the hook handlers too. It keeps each key of `.claude/settings.json` that the new configuration no longer sets, and it prints one `kept` line for each key. Remove these keys manually.
+
+`init` does not edit the key `types`. If the answer to question 4 is not `none`, and the `types` list lacks `intent`, `spec` or `plan`, `init` prints `warning: the policy <p> needs the types intent, spec and plan; add <list> to types in spec-dna.toml`. A file with no `types` key allows each type, so it gets no warning. With `--json`, the warning is in the top-level field `warnings`.
 
 `init` does not keep the comments of the old file. The preview shows the new file before `init` writes it.
 
