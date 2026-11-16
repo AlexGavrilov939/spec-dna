@@ -1764,3 +1764,104 @@ fn areas_moves_a_document_of_a_root_of_one_type_inside_its_root() {
         assert_eq!(code, 0, "{id}: {out}{err}");
     }
 }
+
+// --- names that differ only in case (0.6.1) ---
+//
+// A file system can fold the case of a name (macOS, Windows). The plan reads
+// each path as lowercase ASCII where it decides that a target is free, so the
+// result does not depend on the file system. These tests use names that differ
+// only in case, and they give the same result on each file system.
+
+#[test]
+fn a_top_file_that_exists_under_another_case_keeps_the_document() {
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write(
+        "docs/Roadmap.md",
+        "---\ntype: spec\n---\n# Roadmap of the spec\n\nText.\n",
+    );
+    repo.write(
+        "docs/notes/roadmap.md",
+        "---\ntype: note\n---\n# Roadmap\n\nText.\n",
+    );
+    repo.commit("2 names");
+    for args in [&["--layout", "--dry-run"][..], &["--layout"]] {
+        let (code, out, err) = upgrade(&repo, args);
+        assert_eq!(code, 0, "{args:?}: {out}{err}");
+        assert!(
+            out.lines().any(|l| l
+                .starts_with("kept docs/notes/roadmap.md: the top file docs/roadmap.md exists")),
+            "{args:?}: {out}"
+        );
+    }
+    // The spec stays, and the note follows its folder.
+    assert!(repo.read("docs/Roadmap.md").contains("Roadmap of the spec"));
+    assert!(repo.dir.join("docs/research/roadmap.md").is_file());
+    assert!(!repo.dir.join("docs/notes/roadmap.md").exists());
+}
+
+#[test]
+fn two_areas_that_differ_only_in_case_stop_the_plan() {
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write(
+        "docs/specs/pumps.md",
+        "---\ntype: spec\n---\n# Pumps of the field\n\n- **field-pump**: The pump SHALL stop at night.\n",
+    );
+    repo.commit("a second pumps");
+    let before = tree_bytes(&repo.dir);
+    let map = "[areas]\n\"irrigation/pumps\" = \"Pumps\"\n\"specs/pumps\" = \"pumps\"\n";
+    for extra in [&["--dry-run"][..], &[]] {
+        let (code, out, err) = upgrade_areas(&repo, map, extra);
+        assert_eq!(code, 1, "{extra:?}: {out}{err}");
+        assert!(err.contains("2 files move to"), "{err}");
+        assert_eq!(before, tree_bytes(&repo.dir));
+    }
+}
+
+#[test]
+fn two_files_for_one_target_that_differ_only_in_case_stop_the_plan() {
+    // Both want `docs/roadmap.md`, so D42 keeps both. `--layout` then moves
+    // both to `docs/research/`, and the 2 targets differ only in case. The rule
+    // is the rule for 2 files with one target: a stop with exit code 1.
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write(
+        "docs/notes/Roadmap.md",
+        "---\ntype: note\n---\n# One\n\nText.\n",
+    );
+    repo.write(
+        "docs/reference/roadmap.md",
+        "---\ntype: reference\n---\n# Two\n\nText.\n",
+    );
+    repo.commit("2 names");
+    let before = tree_bytes(&repo.dir);
+    for args in [&["--layout", "--dry-run"][..], &["--layout"]] {
+        let (code, out, err) = upgrade(&repo, args);
+        assert_eq!(code, 1, "{args:?}: {out}{err}");
+        assert!(err.contains("2 files move to"), "{err}");
+        assert!(err.contains("docs/notes/Roadmap.md"), "{err}");
+        assert_eq!(before, tree_bytes(&repo.dir));
+    }
+}
+
+#[test]
+fn a_document_whose_id_names_2_documents_is_no_top_file() {
+    // The id `overview` is a duplicate already: the spec and the note of
+    // another root have it. A move would change what it names, so the upgrade
+    // keeps the note, and the proof passes as without `--layout`.
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write(
+        "docs/overview.md",
+        "---\ntype: spec\n---\n# Overview\n\nText.\n",
+    );
+    repo.write("docs/lab/overview.md", "# Lab overview\n\nText.\n");
+    repo.commit("a duplicate id");
+    let (code, out, err) = upgrade(&repo, &["--layout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("proof: ok"), "{out}");
+    let kept: Vec<&str> = out.lines().filter(|l| l.starts_with("kept ")).collect();
+    assert_eq!(kept.len(), 1, "{out}");
+    assert!(
+        kept[0].contains("docs/lab/overview.md") && kept[0].contains("docs/overview.md"),
+        "{out}"
+    );
+    assert!(!repo.dir.join("docs/lab/product.md").exists());
+}

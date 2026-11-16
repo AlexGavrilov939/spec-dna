@@ -430,6 +430,20 @@ const TOP_FILES: [(&str, DocType); 9] = [
 /// changes of 0.5.
 const TOP_FOLDERS: [&str; 3] = ["notes", "reference", "changes"];
 
+/// The key of a path where the plan decides that a target is free: ASCII
+/// lowercase. A file system can fold the case of a name (macOS, Windows), so
+/// `docs/Roadmap.md` and `docs/roadmap.md` are one file there. The plan reads
+/// them as one file everywhere, so its result does not depend on the file
+/// system. Only ASCII folds: a name with another letter keeps its case.
+fn path_key(path: &str) -> String {
+    path.to_ascii_lowercase()
+}
+
+/// True if 2 paths are the same file by `path_key`.
+fn same_path(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
 /// The path of the top file of a type in a root (D40).
 fn top_path(root: &Root, ty: DocType) -> String {
     under(&root.path, &format!("{}.md", ty.name()))
@@ -465,7 +479,7 @@ fn top_candidate(
         root.legacy_keys.iter().any(|p| p.is_match(&r.key))
             || (r.colon && is_slug(&r.key) && has_bcp14(&r.text))
     });
-    (!requirement && top_path(root, ty) != path).then_some(ty)
+    (!requirement && !same_path(&top_path(root, ty), path)).then_some(ty)
 }
 
 /// D42: a top file that 2 documents want, or that exists, is no top file, and
@@ -482,6 +496,36 @@ fn settle_tops(
     owners: &[(String, usize)],
 ) -> Vec<String> {
     let mut kept = Vec::new();
+    // A document whose id (or alias) already names another document is no top
+    // file: the move would change what the id names, and the proof would refuse
+    // the plan.
+    for i in 0..docs.len() {
+        if docs[i].top.is_none() {
+            continue;
+        }
+        let mut others: Vec<usize> = owners
+            .iter()
+            .filter(|(id, o)| *o != i && owners.iter().any(|(mine, m)| *m == i && mine == id))
+            .map(|(_, o)| *o)
+            .collect();
+        if others.is_empty() {
+            continue;
+        }
+        others.sort_unstable();
+        others.dedup();
+        let mut paths: Vec<&str> = std::iter::once(i)
+            .chain(others)
+            .map(|d| docs[d].path.as_str())
+            .collect();
+        paths.sort();
+        kept.push(format!(
+            "kept {}: the id of `{}` names more than one document, so no document moves to a top file",
+            paths.join(", "),
+            docs[i].path
+        ));
+        docs[i].top = None;
+    }
+    let have: std::collections::HashSet<String> = files.iter().map(|f| path_key(f)).collect();
     // The paths first, then the ids: a document that stops wanting its path
     // frees its id.
     for by_id in [false, true] {
@@ -492,7 +536,7 @@ fn settle_tops(
                 let key = if by_id {
                     canonical(&id_of(cfg, c.root, &target))
                 } else {
-                    target
+                    path_key(&target)
                 };
                 wanted.entry(key).or_default().push(i);
             }
@@ -500,7 +544,7 @@ fn settle_tops(
         for (key, idx) in wanted {
             let target = |i: usize| top_path(&cfg.roots[docs[i].root], docs[i].top.expect("top"));
             let taken = by_id && owners.iter().any(|(id, o)| *id == key && !idx.contains(o));
-            let exists = !by_id && files.binary_search(&key).is_ok();
+            let exists = !by_id && have.contains(&key);
             if idx.len() == 1 && !exists && !taken {
                 continue;
             }
@@ -1004,23 +1048,34 @@ pub fn plan_moves(
 
     // The stops: one target for 2 files, a target that exists, a target in
     // another root.
-    let have: std::collections::HashSet<&str> = tree.files.iter().map(String::as_str).collect();
-    let mut by_target: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    // The paths compare by `path_key`: 2 targets that differ only in case are
+    // one target, and a file that differs only in case from a target exists.
+    let have: std::collections::HashSet<String> = tree.files.iter().map(|f| path_key(f)).collect();
+    let mut by_target: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for (from, to, _) in &want {
-        by_target.entry(to).or_default().push(from);
+        by_target.entry(path_key(to)).or_default().push(from);
     }
-    for (to, sources) in &by_target {
+    for sources in by_target.values() {
         if sources.len() > 1 {
+            let mut targets: Vec<&str> = want
+                .iter()
+                .filter(|(f, _, _)| sources.contains(&f.as_str()))
+                .map(|(_, t, _)| t.as_str())
+                .collect();
+            targets.sort();
+            targets.dedup();
             let list: Vec<String> = sources.iter().map(|f| format!("`{f}`")).collect();
             problems.push(format!(
-                "{} files move to `{to}`: {}. Rename one of them. {AGAIN}",
+                "{} files move to `{}`: {}. Rename one of them. {AGAIN}",
                 sources.len(),
+                targets.join("` and `"),
                 list.join(", ")
             ));
         }
     }
     for (from, to, _) in &want {
-        if have.contains(to.as_str()) {
+        // A file that is the source itself is no obstacle.
+        if have.contains(&path_key(to)) && !same_path(from, to) {
             problems.push(format!(
                 "the target `{to}` of `{from}` exists. Move or rename the file that is there. {AGAIN}"
             ));
