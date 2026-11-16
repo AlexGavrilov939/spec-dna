@@ -54,7 +54,19 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Benchmark
 
-Benchmark: TO BE FILLED
+The new workflow `Benchmark` ran once on a GitHub runner (ubuntu-24.04, run 43906896512) with the release binary 0.6.1 on the synthetic medium corpus (1,194 documents, 15 runs of each mode). `modes_agree` and `incremental_agrees_with_full` were true. A shared runner has other load and other hardware, so do not compare these numbers with the host table in `bench/tool/README.md`.
+
+| Mode | Median (ms) | Min (ms) | Peak RSS (MB) |
+| --- | ---: | ---: | ---: |
+| startup | 0.8 | 0.8 | 15.1 |
+| full | 80.5 | 77.0 | 43.1 |
+| cold | 78.9 | 78.1 | 71.2 |
+| warm | 50.2 | 49.0 | 99.2 |
+| warm, base | 42.6 | 39.1 | 103.5 |
+| context | 12.9 | 12.3 | 114.0 |
+| incremental | 45.5 | 42.9 | 114.0 |
+
+The peak RSS values rise in the order of the modes on this runner. The cause is not yet known, so read that column with care.
 
 ### Known limits
 
