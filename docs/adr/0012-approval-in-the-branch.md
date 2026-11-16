@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0012. Approval in the branch
@@ -61,10 +61,11 @@ The rule also covers the last approval. Take each artifact whose status is `acce
 ### The identity of the approver
 
 - The condition on the e-mail is hard: an approval commit of an author outside the list does not count ([D12](../design/0.7.0.md#d12-the-identity-of-the-approver)).
-- The e-mail is not a proof. A person can set any e-mail, and an agent often commits with the e-mail of its owner.
+- The e-mail is not a proof. A person or an agent can set any e-mail.
 - The check proves the order of the commits and a match of the e-mail. It does not prove that a person read the text.
 - The real control is the code host: `CODEOWNERS` for `docs/intent/`, a protected default branch, and required signed commits.
 - For a `higher-risk` change, the owner should list only the e-mail of a human, and the agent must not commit with it. The owner then makes the approval commits in the web editor of the host. A hidden e-mail becomes a `noreply` address there, so the list holds that address too.
+- Owner answer Q5: `approvers` of this repository lists 2 addresses of the owner. An agent approves only when the owner says so in the chat.
 
 ### Fail closed
 

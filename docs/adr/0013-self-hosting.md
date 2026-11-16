@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0013. The checkout of spec-dna itself: the tree binary

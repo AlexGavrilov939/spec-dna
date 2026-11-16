@@ -17,7 +17,7 @@ status: draft
 - [x] t3: Write ADRs 0010 to 0017 with `architect`. Files: `docs/adr/`. Verify: each file has at most 14,000 characters (the budget of an ADR).
 - [x] t4: Check the language of the new text with `docs-editor`. Files: `docs/design/0.7.0.md`, `docs/adr/`. Verify: `pre-commit run --all-files` passes.
 - [x] t5: Run an independent critique with `checker`, and apply the fixes. Files: `docs/design/0.7.0.md`, `docs/adr/`. Verify: the report of `checker` has no open problem.
-- [ ] t6: Open the draft pull request. Files: `docs/intent/0-7-0-design/`. Verify: the owner reads the pull request.
+- [x] t6: Open the draft pull request. Files: `docs/intent/0-7-0-design/`. Verify: the owner reads the pull request.
 
 ## Risks
 
@@ -27,4 +27,4 @@ status: draft
 
 ## Proof
 
-`spec-dna check` reports no error. The lab scripts reproduce the table of section 4 of the design. The owner does 2 steps after the merge. First, the owner sets the statuses `accepted` and `approved`, and commits them. Then the owner runs `spec-dna finish 0-7-0-design` in a later pull request.
+`spec-dna check` reports no error. The lab scripts reproduce the table of section 4 of the design. The owner answered Q1 to Q8 on 2026-11-16, and the answers are in section 14 of the design. The statuses `accepted` and `approved` are set in approval commits of this pull request, on the explicit word of the owner. `spec-dna finish 0-7-0-design` runs in a later pull request.

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0010. The workflow pack: own skills bound to the artifacts
