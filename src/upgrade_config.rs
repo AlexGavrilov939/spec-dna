@@ -1382,6 +1382,8 @@ mod tests {
     }
 
     const OLD_ASSET: &str = "spec-dna-0.5.0-x86_64-unknown-linux-gnu";
+    /// The version of this binary: `config` accepts sums only for this pin.
+    const V: &str = crate::adapters::VERSION;
 
     #[test]
     fn a_sums_table_gets_the_sums_of_the_pin_file() {
@@ -1390,8 +1392,8 @@ mod tests {
             "0".repeat(64)
         );
         let o = ConfigOpts {
-            pin: "0.6.0".into(),
-            sums: Some(sums_for("0.6.0", 'a')),
+            pin: V.into(),
+            sums: Some(sums_for(V, 'a')),
         };
         let got = try_plan(&t, &facts(&["spec"], &[]), &o).unwrap();
         assert!(!got.sums_added);
@@ -1402,7 +1404,7 @@ mod tests {
         assert_eq!(sums.len(), 7);
         assert!(
             sums.iter()
-                .all(|(k, v)| k.contains("0.6.0") && v == &"a".repeat(64))
+                .all(|(k, v)| k.contains(V) && v == &"a".repeat(64))
         );
     }
 
@@ -1422,13 +1424,17 @@ mod tests {
     fn a_file_with_the_new_pin_and_the_old_names_keeps_its_sums() {
         // The 0.5 docs told a person to set the pin by hand (D137): the pin is
         // the new one, and the sums are the sums of that pin.
-        let sums = sums_for("0.6.0", 'c');
-        let mut t = String::from("spec-dna = \"0.6.0\"\n[spec-dna-sha256]\n");
+        let sums = sums_for(V, 'c');
+        let mut t = format!("spec-dna = \"{V}\"\n[spec-dna-sha256]\n");
         for (name, sum) in &sums {
             t.push_str(&format!("\"{name}\" = \"{sum}\"\n"));
         }
         t.push_str("[[roots]]\npath = \"d\"\ntype = \"guide\"\n");
-        let got = go(&t, &facts(&["guide"], &[]));
+        let o = ConfigOpts {
+            pin: V.into(),
+            sums: None,
+        };
+        let got = try_plan(&t, &facts(&["guide"], &[]), &o).unwrap();
         let mut got_sums = cfg(&got.text).sha256.unwrap();
         got_sums.sort();
         let mut want = sums;
@@ -1442,8 +1448,8 @@ mod tests {
     fn a_pin_file_adds_the_table_when_the_file_has_none() {
         let t = "spec-dna = \"0.5.0\"\n[[roots]]\npath = \"d\"\n";
         let o = ConfigOpts {
-            pin: "0.6.0".into(),
-            sums: Some(sums_for("0.6.0", 'b')),
+            pin: V.into(),
+            sums: Some(sums_for(V, 'b')),
         };
         let got = try_plan(t, &facts(&["spec"], &[]), &o).unwrap();
         assert!(got.sums_added);
