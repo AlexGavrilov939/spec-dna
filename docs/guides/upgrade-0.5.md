@@ -119,9 +119,9 @@ If the base pins a version before 0.4.0, `check` exits with code 3. It asks you 
 A repository with no remote has no `origin/HEAD`. The change commands then have no base, unless you pass `--base` or set `[change] base`. Use these steps for the upgrade:
 
 1. Run `spec-dna upgrade` on a branch, and commit the result.
-2. Run `spec-dna check --base main`. The base pins a version before 0.6.0, so `check` plans the upgrade of that tree in memory, as for a pull request ([Open the first pull request](#open-the-first-pull-request)).
+2. Run `spec-dna check --base main`. If the base pins a version before 0.6.0, `check` plans the upgrade of that tree in memory, as for a pull request ([Open the first pull request](#open-the-first-pull-request)). If the base pins 0.6.0, `check` reads it with the rules of 0.6.
 3. Merge the branch into `main`.
-4. On a new branch, add the key `base` to the table `[change]`, and commit it in a commit of its own. `upgrade` has written the table with `policy = "none"`.
+4. On a new branch, add the key `base` to the table `[change]`, and commit it in a commit of its own. A project that came from 0.5 has the policy `none`, because `upgrade` wrote it. A project that came from 0.6.0 keeps its policy.
 
 ```toml
 [change]

@@ -11,7 +11,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 ### Upgrade from 0.6.0
 
 - Install the 0.6.1 binary. Then move the pin in `spec-dna.toml` in a pull request of its own, because SD503 rejects a change of the configuration that comes with other files. You can edit the pin by hand, or run `spec-dna upgrade`. In a 0.6 project, `upgrade` moves the pin, makes 2 more edits of `spec-dna.toml`, and names each edit in the report. `upgrade --layout` is for a 0.4 or 0.5 source. [docs/guides/upgrade-0.5.md](docs/guides/upgrade-0.5.md#upgrade-a-06-project) gives the steps.
-- Run `spec-dna init` to refresh the generated agent and skill files. The text of `Explore.md`, `fallback-advisor.md` and the review skill changed, so their marker hashes changed.
+- Run `spec-dna init` to refresh the generated agent and skill files. The text of `Explore.md`, `fallback-advisor.md` and the review skill changed. The marker hash of the review skill changed. The marker hashes of the 2 agent files stay the same, because the hash ignores the new blank line.
 - The new key `[change] base` is optional. A binary of 0.6.0 stops with exit code 3 on this key, so pin 0.6.1 first.
 - The JSON output has new fields. Each field is always present:
   - `locked_links` in `check --json` (an empty list if there is no locked link)
@@ -50,7 +50,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - `spec-dna init --reconfigure` writes the default `high-risk-layers` of the new graph when the file has the default of the current graph. A project that changes from the small graph to the default graph gets `["interfaces", "rules"]`. A value that you set stays.
 - A move of `intent.md` out of the intent folder is no longer the end of a change, when the move keeps the id as an alias (`spec-dna mv`, `upgrade`). `log` gives no entry for it, and `stats --sdlc` drops that change ([docs/commands.md](docs/commands.md#log)).
 - `spec-dna mv` of a document to the path of one of its own aliases no longer stops with "already exists". It drops that alias and keeps the old id as an alias. The output has `(alias dropped: <alias>)`, and `--json` has the new field `alias_dropped`.
-- The agent files `Explore.md` and `fallback-advisor.md` have a blank line between `Answer:` and its list, so they pass markdownlint (MD032). `spec-dna index` writes an empty cell as `| |` in place of `|  |`, so a generated index passes MD060. The hash of the marker of the 2 agent files changes with the text. The golden files of the generated agent files and the skill in `tests/golden/harness/` now go through the lint of the pre-commit hook. The prefix bytes of the harness stay 2655.
+- The agent files `Explore.md` and `fallback-advisor.md` have a blank line between `Answer:` and its list, so they pass markdownlint (MD032). `spec-dna index` writes an empty cell as `| |` in place of `|  |`, so a generated index passes MD060. The golden files of the generated agent files and the skill in `tests/golden/harness/` now go through the lint of the pre-commit hook.
 
 ### Benchmark
 
