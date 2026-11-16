@@ -32,6 +32,7 @@ The golden outputs of the integration tests are in `tests/golden/`. After an int
 | `docs/design/` | The design of a version, with the deviations of each step |
 | `docs/adr/` | The decisions of the project (ADRs) |
 | `docs/research/` | Standards and prior art |
+| `examples/` | Example scripts and their pages. `tests/examples.rs` runs each script and compares its output with the pages |
 | `scripts/` | The cross-build, the run test, the release assets and the demo replay |
 | `bench/` | Benchmarks, retrieval measurements and the prototypes of the language decision |
 | `AGENTS.md` | Rules for AI agents that work in this repository. `CLAUDE.md` imports it. |
