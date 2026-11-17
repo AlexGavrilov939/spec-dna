@@ -2719,10 +2719,29 @@ fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .unwrap_or_else(|| templates::title_of(mv::parent(&path)));
     let status = registry::index_status(&cfg, &path, existing.as_deref()).map_err(|_| {
         let dir = mv::parent(&path);
-        Fatal::Usage(format!(
-            "the place `{}` gives no type; index a folder of a layer, or set `default-type` of the root",
-            if dir.is_empty() { "." } else { dir }
-        ))
+        let base = cfg.roots[root].path.as_str();
+        let rel = dir
+            .strip_prefix(base)
+            .map_or(dir, |r| r.trim_start_matches('/'));
+        let layer = cfg
+            .layers
+            .layers()
+            .iter()
+            .find(|l| l.types.len() > 1 && l.dir() == Some(rel));
+        Fatal::Usage(match layer {
+            Some(l) => {
+                let names: Vec<&str> = l.types.iter().map(|t| t.name()).collect();
+                format!(
+                    "the folder `{dir}` is the folder of the layer `{}`, which holds more than one type ({}), so the place gives no type; index a folder under another layer, or set `default-type` of the root",
+                    l.name,
+                    names.join(", ")
+                )
+            }
+            None => format!(
+                "the place `{}` gives no type; index a folder of a layer, or set `default-type` of the root",
+                if dir.is_empty() { "." } else { dir }
+            ),
+        })
     })?;
     let text = registry::render(&path, &entries, existing.as_deref(), &title, status);
     let mut changed = std::collections::HashMap::from([(path.clone(), text)]);

@@ -5105,3 +5105,22 @@ fn mv_stops_for_an_area_that_differs_from_a_name_of_areas_only_in_case() {
     let (code, out, err) = r.run(&["mv", "requirements/valves/shut", "requirements/Shut"]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+#[test]
+fn index_of_the_folder_of_a_layer_with_many_types_names_the_layer() {
+    let r = index_project("");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n",
+    );
+    r.commit("a change");
+    let (code, out, err) = r.run(&["index", "docs/intent"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("the folder `docs/intent` is the folder of the layer `intent`")
+            && err.contains("intent, spec, plan")
+            && !err.contains("index a folder of a layer"),
+        "{err}"
+    );
+    assert!(!r.dir.join("docs/intent/README.md").exists());
+}
