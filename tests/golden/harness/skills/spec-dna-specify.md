@@ -20,6 +20,6 @@ Check: `spec-dna check --base origin/HEAD` gives no SD914 and no SD920. SD914 is
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run the check again.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:03d56fa458128f67 -->
+<!-- spec-dna harness v{VERSION} h:63ad1cd6a6f5e50d -->

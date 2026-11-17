@@ -16,11 +16,24 @@ pub const CLAUDE: &str = "CLAUDE.md";
 pub const SKILL: &str = ".claude/skills/spec-dna/SKILL.md";
 pub const PATHS: [&str; 3] = [AGENTS, CLAUDE, SKILL];
 
+/// The sentence of the approval rule (Q5). The line of `AGENTS.md` and the
+/// body of each skill (`harness_text::APPROVAL_RULE`) both use it, so they
+/// state the same words. A macro, because `concat!` needs a literal.
+macro_rules! approval_sentence {
+    () => {
+        "An agent writes an approval commit only when the owner says so explicitly in the chat."
+    };
+}
+pub(crate) use approval_sentence;
+
 /// The text of the line (ADR 0003, ADR 0010, ADR 0011). The whole line, with
 /// its marker, has 400 bytes or fewer (D6), and each request carries it. It
 /// names the 5 disciplines (D3) with the skill of each, the command that
 /// prints the detail (D4), and the approval rule of the owner (Q5).
-const LINE_BODY: &str = "If a task edits code or docs, run `spec-dna context <files>` once first. Before a commit, run `spec-dna check`. Rules: test first (tdd), cause first (debug), proof before done (verify), review is data (review), isolated work (execute). Detail: `spec-dna skill show <name>`. Write an approval commit only when the owner says so explicitly in the chat.";
+const LINE_BODY: &str = concat!(
+    "If a task edits code or docs, run `spec-dna context <files>` once. Before a commit, run `spec-dna check`. Rules: test first (tdd), cause first (debug), proof before done (verify), review is data (review), isolated work (execute). Detail: `spec-dna skill show <name>`. ",
+    approval_sentence!()
+);
 
 /// The skill description. An agent loads the description of each skill into
 /// every request, so it must stay short.
@@ -379,7 +392,7 @@ mod tests {
             assert!(l.contains(w), "{w}");
         }
         assert!(l.contains("`spec-dna skill show <name>`"));
-        assert!(l.contains("approval commit only when the owner says so explicitly in the chat"));
+        assert!(l.contains(approval_sentence!()));
         // The skill body holds the block and the rule of D5.
         let skill = skill_file(&[]);
         assert!(skill.contains(DISCIPLINES));

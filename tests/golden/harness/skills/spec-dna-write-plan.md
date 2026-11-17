@@ -19,6 +19,6 @@ Check: `spec-dna check --base origin/HEAD` gives no SD913, SD923 and SD924. SD91
 
 If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run the check again.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:de570426a6d1bc70 -->
+<!-- spec-dna harness v{VERSION} h:adc3ce5fffd0490e -->

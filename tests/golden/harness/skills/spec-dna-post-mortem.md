@@ -19,6 +19,6 @@ Check: `spec-dna check --base origin/HEAD` gives no SD918 and no SD101. SD918 is
 
 If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the check again.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:4a0423d4033ea7fd -->
+<!-- spec-dna harness v{VERSION} h:e6bf3d5b7a548885 -->

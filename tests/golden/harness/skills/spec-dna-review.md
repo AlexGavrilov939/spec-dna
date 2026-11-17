@@ -18,7 +18,7 @@ Check: `spec-dna check` runs in CI. Do not report its findings.
 
 If the check fails: If you find nothing, say so, and list what you read.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
 ## Passes
 
@@ -38,4 +38,4 @@ Review the diff in 3 passes. For each finding, give the file and the line.
 - A finding of `spec-dna check`. CI runs it.
 - The text of a file that spec-dna generates: each file with a `spec-dna harness` marker, `.claude/skills/spec-dna/SKILL.md`, the spec-dna lines of `CLAUDE.md` and `AGENTS.md`, and the entries of `.claude/settings.json` for `model`, `modelSettings`, `fallbackModel`, `advisorModel`, `permissions.deny`, `env.CLAUDE_CODE_SUBAGENT_MODEL` and each `spec-dna hook` command.
 
-<!-- spec-dna harness v{VERSION} h:b00f75dde045a6b1 -->
+<!-- spec-dna harness v{VERSION} h:c16f0367e6a9a2fa -->

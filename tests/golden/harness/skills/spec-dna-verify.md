@@ -17,6 +17,6 @@ Check: Each command ends with exit code 0, and the check gives no error. `finish
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:974595530a7cf940 -->
+<!-- spec-dna harness v{VERSION} h:75b5464f20d0c349 -->

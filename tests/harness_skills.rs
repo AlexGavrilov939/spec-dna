@@ -54,8 +54,13 @@ const PARTS: [&str; 5] = [
     "If the check fails:",
 ];
 
+/// The sentence of the rule of Q5, in the same words in the line of
+/// `AGENTS.md` and in each skill.
+const APPROVAL_SENTENCE: &str =
+    "An agent writes an approval commit only when the owner says so explicitly in the chat.";
+
 /// The rule of Q5, in the same words in each skill.
-const APPROVAL_RULE: &str = "Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.";
+const APPROVAL_RULE: &str = "Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.";
 
 fn path(name: &str) -> String {
     format!(".claude/skills/spec-dna-{name}/SKILL.md")
@@ -775,7 +780,9 @@ fn the_line_of_agents_md_names_the_rules_the_skill_command_and_the_approval_rule
     for w in ["tdd", "debug", "verify", "review", "execute"] {
         assert!(line.contains(w), "{w}: {line}");
     }
-    assert!(line.contains("approv"), "{line}");
+    // The same sentence as in each skill (question C of the review).
+    assert!(line.contains(APPROVAL_SENTENCE), "{line}");
+    assert!(APPROVAL_RULE.contains(APPROVAL_SENTENCE));
 }
 
 #[test]

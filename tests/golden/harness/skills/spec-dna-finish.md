@@ -17,6 +17,6 @@ Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --bas
 
 If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. Do not delete the folder by hand.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:5b651324010595c6 -->
+<!-- spec-dna harness v{VERSION} h:c4b56c65b77af32d -->

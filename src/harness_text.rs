@@ -16,11 +16,16 @@
 //!
 //! The golden file of a skill is `tests/golden/harness/skills/spec-dna-<name>.md`.
 
+use crate::adapters::approval_sentence;
 use crate::harness::Skill;
 
 /// The rule of Q5. Each skill body ends with it, in the same words. The line
 /// of `AGENTS.md` and `CONTRIBUTING.md` of the build state the same rule.
-pub const APPROVAL_RULE: &str = "Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.";
+pub const APPROVAL_RULE: &str = concat!(
+    "Never set `accepted` or `approved`. ",
+    approval_sentence!(),
+    " An approval commit changes only the `status` line."
+);
 
 /// The review policy. `REVIEW.md` and the skill `spec-dna-review` both hold it.
 pub const REVIEW_POLICY: &str = r"## Passes

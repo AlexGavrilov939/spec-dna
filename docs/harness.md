@@ -141,7 +141,7 @@ The floor is a check that fails when the artifact is wrong. It does not check wh
 - The 7 skills that are on by default are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. The 4 skills that are off have no check of what they add. `init` writes them only when `skills` lists them, and the level `full` proposes them.
 - Each body has 5 parts in this order: when to use the skill, the commands, the artifact, the check, and the action when the check fails.
 - The text of a skill is static. It holds no value of the configuration, so the file is the same in each project. The binary holds the text, so the pin fixes it.
-- A skill never sets `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line, and the agent makes that commit only when the approver says so explicitly in the session. [The change guide](guides/change.md#choose-the-class) gives who approves each document.
+- A skill never sets `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat, and that commit changes only the `status` line. The line of `AGENTS.md` has the same words. [The change guide](guides/change.md#choose-the-class) gives who approves each document.
 - `execute` starts one fresh subagent for each task. Then 2 reviews follow: compliance with the task and `spec.md`, then quality. At the level `full`, `implementer` builds and `code-simplifier` runs the quality review. At the level `lean`, a general subagent builds and `verifier` runs both reviews.
 - The adapter skill `.claude/skills/spec-dna/SKILL.md` is separate. It has its own marker and exists with or without a harness ([init.md](init.md)).
 

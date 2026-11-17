@@ -18,6 +18,6 @@ Check: `spec-dna check --base origin/HEAD` gives no SD306 (a placeholder stays).
 
 If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run the check again.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:4e8bfbb098343c95 -->
+<!-- spec-dna harness v{VERSION} h:c26359bb4bff612f -->

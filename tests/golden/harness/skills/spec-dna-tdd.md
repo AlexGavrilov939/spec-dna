@@ -17,6 +17,6 @@ Check: `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is
 
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.
 
-Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:44c5d55c6e6ffbb2 -->
+<!-- spec-dna harness v{VERSION} h:e0e01fc962907ac3 -->
