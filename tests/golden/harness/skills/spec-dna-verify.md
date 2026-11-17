@@ -13,10 +13,10 @@ Commands:
 
 Artifact: The output of the `Proof` commands and of `spec-dna check`.
 
-Check: Each command ends with exit code 0, and `spec-dna check` gives no error. `finish` stops on SD915 (the result of the delta is not in the tree) and on SD916 (a requirement with no evidence).
+Check: Each command ends with exit code 0, and `spec-dna check` gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence).
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:16686b952bd5a689 -->
+<!-- spec-dna harness v{VERSION} h:182a017837325a06 -->

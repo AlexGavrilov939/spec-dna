@@ -69,7 +69,7 @@ Commands:
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check` gives no SD914 (a delta or interface item) and no SD920 (a decision that is absent or not accepted).
+Check: `spec-dna check` gives no SD914 and no SD920. SD914 is an invalid delta or interface item. SD920 is a decision that is absent or not accepted.
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run `spec-dna check` again.";
 
@@ -84,7 +84,7 @@ Commands:
 
 Artifact: `Concerns` and `Open questions` of `spec.md`, each item answered.
 
-Check: `spec-dna check` gives no SD919 (an open concern), no SD922 (an open question) and no SD925 (an item with no box).
+Check: `spec-dna check` gives no SD919, SD922 and SD925. SD919 is an open concern, SD922 is an open question, and SD925 is an item with no box.
 
 If the check fails: Ask the person about the item that the message names. Do not mark an item that has no answer. Add a box to an item that has none.";
 
@@ -100,7 +100,7 @@ Commands:
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: `spec-dna check` gives no SD913 (a file that `Files` does not list), no SD923 (a task with no exact `Files:` or no `Verify:`) and no SD924 (a task with too many paths).
+Check: `spec-dna check` gives no SD913, SD923 and SD924. SD913 is a file that `Files` does not list. SD923 is a task with no exact `Files:` or no `Verify:`. SD924 is a task with too many paths.
 
 If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run `spec-dna check` again.";
 
@@ -158,7 +158,7 @@ Commands:
 
 Artifact: The output of the `Proof` commands and of `spec-dna check`.
 
-Check: Each command ends with exit code 0, and `spec-dna check` gives no error. `finish` stops on SD915 (the result of the delta is not in the tree) and on SD916 (a requirement with no evidence).
+Check: Each command ends with exit code 0, and `spec-dna check` gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence).
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.";
 
@@ -168,7 +168,7 @@ Commands:
 
 1. Run `spec-dna finish <slug> --dry-run`. Read each step and each stop.
 2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
-3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message, and keep it in the squash message.
+3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message. Keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 

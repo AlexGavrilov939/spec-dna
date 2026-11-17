@@ -9,7 +9,7 @@ Commands:
 
 1. Run `spec-dna finish <slug> --dry-run`. Read each step and each stop.
 2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
-3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message, and keep it in the squash message.
+3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message. Keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
@@ -19,4 +19,4 @@ If the check fails: `finish` names the step that stopped it, and it changes noth
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:ee4c77ffa169c487 -->
+<!-- spec-dna harness v{VERSION} h:4c0db80502afd31d -->

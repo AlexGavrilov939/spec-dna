@@ -16,10 +16,10 @@ Commands:
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check` gives no SD914 (a delta or interface item) and no SD920 (a decision that is absent or not accepted).
+Check: `spec-dna check` gives no SD914 and no SD920. SD914 is an invalid delta or interface item. SD920 is a decision that is absent or not accepted.
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run `spec-dna check` again.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:9067a6e82faf13cb -->
+<!-- spec-dna harness v{VERSION} h:441fcf3e0498690e -->
