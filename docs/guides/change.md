@@ -132,11 +132,13 @@ A `draft` spec or plan needs no approval of the artifact before it. The approval
 
 ## A routine change
 
-A routine change has no spec and no delta. It has 3 pull requests:
+A routine change has no spec and no delta. With `approval = "base"`, it has 3 pull requests:
 
 1. The intent, with `class: routine` and `status: accepted`.
 2. The plan. The agent sets `status: approved`.
 3. The code. Edit the requirements in the same pull request as the code. Then run `spec-dna finish <slug>`.
+
+With `approval = "branch"`, the intent, its approval commit, the plan, its approval commit and the code can be in one pull request. `finish` follows in a later pull request ([the approval commit](#the-approval-commit)).
 
 For a routine change, `finish` checks the evidence of each requirement whose hash is different from the base.
 

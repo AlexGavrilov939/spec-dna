@@ -372,7 +372,7 @@ The key `gate` sets the severity of SD910. The order of the sources for SD910 is
 3. The key `gate`: `block` is an error, `warn` is a warning, `off` is off.
 4. The profile ([profiles.md](profiles.md)): a warning in `lite`, an error in `standard` and `strict`.
 
-With `gate = "block"`, a change to the artifact of a stage needs the base tree to show approval of the earlier artifact.
+With `gate = "block"`, a change to the artifact of a stage needs the approval of the earlier artifact. With `approval = "base"`, the base tree must show it. With `approval = "branch"`, an approval commit of an approver in the branch also counts.
 
 `high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905.
 
