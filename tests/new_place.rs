@@ -165,8 +165,11 @@ fn intent_writes_its_folder_and_spec_and_plan_need_it() {
         let path = format!("docs/intent/add-drip-lines/{ty}.md");
         let text = r.read(&path);
         assert!(!text.contains("type:"), "{text}");
-        // The title is the slug, not the file name.
-        assert!(text.contains("\n# Add drip lines\n"), "{text}");
+        // The title is a placeholder: no rule makes a title from a slug.
+        assert!(
+            text.contains("\n# {{The title of the change.}}\n"),
+            "{text}"
+        );
         assert_eq!(r.type_of(&path), ty);
     }
     // A file that exists stops the command. A slug has one name.

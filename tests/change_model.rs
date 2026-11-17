@@ -53,7 +53,9 @@ fn new_intent_writes_class_routine_for_each_of_the_3_templates() {
         assert_eq!(code, 0, "{args:?}: {out}{err}");
         let text = r.read("docs/intent/drip/intent.md");
         assert!(
-            text.starts_with("---\nstatus: draft\nclass: routine\n---\n# Drip\n"),
+            text.starts_with(
+                "---\nstatus: draft\nclass: routine\n---\n# {{The title of the change.}}\n"
+            ),
             "{args:?}: {text}"
         );
         // The new document has no problem with its front matter.
@@ -99,14 +101,13 @@ fn a_project_template_of_an_intent_keeps_its_own_front_matter() {
     );
     assert_eq!(r.run(&["new", "intent", "a", "--template", "hr"]).0, 0);
     assert_eq!(r.run(&["new", "intent", "b", "--template", "plain"]).0, 0);
-    assert!(
-        r.read("docs/intent/a/intent.md")
-            .starts_with("---\nclass: higher-risk\nstatus: draft\n---\n# A\n")
-    );
+    assert!(r.read("docs/intent/a/intent.md").starts_with(
+        "---\nclass: higher-risk\nstatus: draft\n---\n# {{The title of the change.}}\n"
+    ));
     // A template with no `class` stays without it: an absent class is routine.
     assert!(
         r.read("docs/intent/b/intent.md")
-            .starts_with("---\nstatus: draft\n---\n# B\n")
+            .starts_with("---\nstatus: draft\n---\n# {{The title of the change.}}\n")
     );
 }
 

@@ -234,7 +234,7 @@ Chosen option: {{option}}, because {{reason}}.
 
 ## Concerns
 
-- {{An open concern.}}
+- [ ] {{An open concern.}}
 
 ## Open questions
 
@@ -507,6 +507,11 @@ pub fn instantiate(text: &str, ty: DocType, title: &str, with_type: bool) -> Str
     out.push_str(&rest);
     out
 }
+
+/// The H1 of a new `intent.md`, `spec.md` or `plan.md`. A slug is a short
+/// folder name, and no rule makes a title from it, so the author writes the
+/// title. SD306 reports the placeholder until then (design 0.7.0, section 15).
+pub const CHANGE_TITLE: &str = "{{The title of the change.}}";
 
 /// Makes a title from the last segment of an id: `cache-policy` gives
 /// "Cache policy".

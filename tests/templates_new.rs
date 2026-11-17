@@ -220,7 +220,7 @@ fn spec_and_plan_have_their_required_sections() {
         assert!(text.contains(section), "{text}");
         assert!(text.len() < 700, "{ty}: {} bytes", text.len());
         assert!(
-            text.starts_with("---\nstatus: draft\n---\n# Drip\n"),
+            text.starts_with("---\nstatus: draft\n---\n# {{The title of the change.}}\n"),
             "{text}"
         );
     }

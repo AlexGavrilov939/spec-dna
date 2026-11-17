@@ -1958,7 +1958,7 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 }
                 (
                     format!("{dir}/{slug}/{}.md", ty.name()),
-                    templates::title_of(slug),
+                    templates::CHANGE_TITLE.to_string(),
                 )
             }
             Some(dir) => {
