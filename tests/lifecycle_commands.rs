@@ -1257,3 +1257,206 @@ fn the_help_of_the_commands_names_the_skills_and_the_exit_codes() {
         "{out}"
     );
 }
+
+// A paragraph under `Files` (design 0.7.0, D28)
+
+const D28_LINE: &str = "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`";
+
+#[test]
+fn a_none_paragraph_under_files_states_no_files() {
+    for para in [
+        "None.",
+        "none",
+        "NONE: this change is research.",
+        "None: the change edits no file.",
+    ] {
+        let r = start();
+        stage(
+            &r,
+            &[
+                (INTENT, &intent("accepted", "routine", "")),
+                (
+                    PLAN,
+                    &plan_with_item("approved", para, "- [x] t1: Read the code."),
+                ),
+            ],
+        );
+        let text = next_text(&r);
+        assert_stage(&r, "deploy");
+        assert!(
+            text.contains("[x] the plan lists no files: the change edits no file"),
+            "{para}: {text}"
+        );
+        assert!(!text.contains("lists none"), "{para}: {text}");
+        assert!(!text.contains(D28_LINE), "{para}: {text}");
+    }
+    // An open task keeps the stage at build, and the paragraph is no wrong text.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item("approved", "None.", "- [ ] t1: Read the code."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(!text.contains(D28_LINE), "{text}");
+    assert!(
+        items(&text).last().unwrap().starts_with("[ ] task t1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn another_paragraph_under_files_gives_the_line_of_d28() {
+    // "None of the old files stay" is no `none` paragraph: the next character
+    // after the word is a space.
+    for para in [
+        "The dose code and its test.",
+        "None of the old files stay.",
+        "nonexistent.md",
+    ] {
+        let r = start();
+        stage(
+            &r,
+            &[
+                (INTENT, &intent("accepted", "routine", "")),
+                (PLAN, &plan_with_item("approved", para, "- [x] t1: Done.")),
+            ],
+        );
+        let text = next_text(&r);
+        assert_stage(&r, "build");
+        // The line is the last line, in place of the line "it lists none".
+        assert_eq!(
+            *items(&text).last().unwrap(),
+            format!("[ ] {D28_LINE} [skill: execute]"),
+            "{para}: {text}"
+        );
+        assert!(!text.contains("it lists none"), "{para}: {text}");
+        assert!(!text.contains("the plan lists no files"), "{para}: {text}");
+        let json = next_json(&r);
+        assert_eq!(field(&json, "next"), D28_LINE, "{para}: {json}");
+        let (code, status, err) = r.run(&["status"]);
+        assert_eq!(code, 0, "{status}{err}");
+        assert!(status.contains(&format!("next: {D28_LINE}")), "{status}");
+    }
+}
+
+#[test]
+fn a_draft_plan_with_a_paragraph_under_files_gives_the_line_before_the_approval() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item("draft", "The dose code.", "- [ ] t1: Edit the code."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_in_order(
+        &text,
+        &[
+            D28_LINE,
+            "tasks of `Order`: 0 of 1 done",
+            "task t1: Edit the code",
+            "set `status: approved` in docs/intent/dose/plan.md",
+        ],
+    );
+    // The approval line stays the last line.
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with("[ ] set `status: approved` in docs/intent/dose/plan.md"),
+        "{text}"
+    );
+    let json = next_json(&r);
+    assert!(
+        field(&json, "next").starts_with("set `status: approved`"),
+        "{json}"
+    );
+    // A draft plan with a `none` paragraph has no such line.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item("draft", "None.", "- [ ] t1: Edit the code."),
+            ),
+        ],
+    );
+    assert!(!next_text(&r).contains(D28_LINE));
+}
+
+#[test]
+fn a_list_item_under_files_decides_over_a_paragraph() {
+    // The paragraph is text before the list. The list gives the paths.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item(
+                    "approved",
+                    "The files of the work.\n\n- `src/dose.py`",
+                    "- [x] t1: Done.",
+                ),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert!(!text.contains(D28_LINE), "{text}");
+    assert!(
+        text.contains("change a file that `Files` of docs/intent/dose/plan.md lists"),
+        "{text}"
+    );
+    // A `none` paragraph and a path in the list: the plan lists a path.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item("approved", "None.\n\n- `src/dose.py`", "- [x] t1: Done."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert!(!text.contains("the plan lists no files"), "{text}");
+    assert!(!text.contains(D28_LINE), "{text}");
+}
+
+#[test]
+fn a_higher_risk_plan_with_a_paragraph_under_files_gives_the_line_of_d28() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan_with_item("approved", "The dose code.", "- [x] t1: Done."),
+            ),
+        ],
+    );
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert_eq!(
+        *items(&text).last().unwrap(),
+        format!("[ ] {D28_LINE} [skill: execute]"),
+        "{text}"
+    );
+}
