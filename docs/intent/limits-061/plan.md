@@ -36,7 +36,7 @@ status: approved
 - [x] t5: Write the failing tests of a plain `git mv`, the near copies, the whole folder and the case that stays. Change the test that expects a plain `git mv` to end the change (`core-engineer`). Files: `tests/lifecycle_log.rs`. Verify: `cargo test --test lifecycle_log` fails on the new cases.
 - [x] t6: Give a generated index the status of its place, and stop for a place with no type (`hygiene-engineer`). Files: `src/registry.rs`, `src/main.rs`, `src/finish.rs`. Verify: `cargo test --test cli --test finish`.
 - [x] t7: Compare the area names in lowercase ASCII in the reader, and stop `new` (`core-engineer`). Files: `src/config.rs`, `src/main.rs`. Verify: `cargo test --test new_place`.
-- [ ] t8: Stop `mv` for an area that differs only in case (`hygiene-engineer`). Files: `src/mv.rs`. Verify: `cargo test --test cli mv`.
+- [x] t8: Stop `mv` for an area that differs only in case (`hygiene-engineer`). Files: `src/mv.rs`. Verify: `cargo test --test cli mv`.
 - [ ] t9: Stop the plan of `upgrade --layout --areas` for a pair, with exit code 1 (`hygiene-engineer`). Files: `src/upgrade_docs.rs`. Verify: `cargo test --test upgrade_cli`.
 - [ ] t10: Propose one name of a pair in `init`, with a note (`init-engineer`). Files: `src/detect.rs`, `src/init.rs`. Verify: `cargo test --test init_graph`.
 - [ ] t11: Read a rename out of the intent folder by the 3 conditions of D31 (`core-engineer`). Files: `src/git.rs`, `src/sdlc.rs`. Verify: `cargo test --test lifecycle_log`.

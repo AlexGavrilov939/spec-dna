@@ -5086,6 +5086,15 @@ fn mv_stops_for_an_area_that_differs_from_a_name_of_areas_only_in_case() {
     );
     assert_eq!(git(&r.dir, &["status", "--short"]), "");
     assert!(r.dir.join("docs/requirements/valves/closing.md").exists());
+    // The destination of a split is a new document in the same area.
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/valves/closing#close",
+        "requirements/Valves/other",
+    ]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("only in case"), "{err}");
+    assert_eq!(git(&r.dir, &["status", "--short"]), "");
     // A move inside the area, and a move out of every area, are fine.
     let (code, out, err) = r.run(&[
         "mv",
