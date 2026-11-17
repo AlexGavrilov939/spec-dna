@@ -19,11 +19,15 @@ use crate::json::{self, Obj, Value};
 use crate::repo::Fatal;
 use crate::verdict::{self, Pair};
 use std::collections::BTreeSet;
+use std::io::Read;
 
 /// The most runs of one pair in a record.
 const MAX_RUN: f64 = 100.0;
 /// The most models of one record.
 const MAX_MODELS: usize = 8;
+/// The largest result file that the command reads: 16 MiB. A result of the
+/// full run is about 100 KB.
+const MAX_FILE: u64 = 16 * 1024 * 1024;
 /// The tolerance of a cost sum: the records keep costs of 6 decimals.
 const COST_TOLERANCE: f64 = 1e-5 + 1e-9;
 /// The tolerance of the interval of the cost ratio.
@@ -32,10 +36,34 @@ const RATIO_TOLERANCE: f64 = 1e-4 + 1e-9;
 /// 6 decimals.
 const DIFFERENCE_TOLERANCE: f64 = 1.5e-6;
 
+/// True if a string has the shape of a secret or of a path of a machine: an
+/// API key, a token of a host, an access key, a private key, a home folder or
+/// an address. The forms below accept the characters of such values, so a
+/// record refuses them by shape too.
+fn secret_shaped(s: &str) -> bool {
+    s.starts_with("sk-")
+        || s.contains("-sk-")
+        || [
+            "ghp_",
+            "gho_",
+            "ghs_",
+            "ghu_",
+            "github_pat_",
+            "AKIA",
+            "-----BEGIN",
+        ]
+        .iter()
+        .any(|p| s.contains(p))
+        || ["Users/", "/private/", "/home/", "@"]
+            .iter()
+            .any(|p| s.contains(p))
+}
+
 /// True for an eval id: `^[a-z][a-z0-9-]{0,39}$`.
 pub fn valid_eval_id(s: &str) -> bool {
     let b = s.as_bytes();
     (1..=40).contains(&b.len())
+        && !secret_shaped(s)
         && b[0].is_ascii_lowercase()
         && b.iter()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
@@ -50,11 +78,13 @@ pub fn valid_model(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || b"._:-[]/".contains(&c))
         && !s.contains("..")
         && !s.starts_with('/')
+        && !secret_shaped(s)
 }
 
 /// True for a version of Claude Code: `^[0-9A-Za-z.+-]{1,32}$`.
 pub fn valid_claude_code(s: &str) -> bool {
     (1..=32).contains(&s.len())
+        && !secret_shaped(s)
         && s.bytes()
             .all(|c| c.is_ascii_alphanumeric() || b".+-".contains(&c))
 }
@@ -409,12 +439,30 @@ pub fn records(bytes: &[u8]) -> Result<(Vec<String>, Vec<String>), Fatal> {
 
 /// `eval records <file>`: prints the records and the summary.
 pub fn run(path: &str) -> Result<u8, Fatal> {
-    let bytes = std::fs::read(path).map_err(|e| {
+    let unreadable = |e: std::io::Error| {
         Fatal::Config(format!(
             "eval records: cannot read the result file ({})",
             e.kind()
         ))
-    })?;
+    };
+    let file = std::fs::File::open(path).map_err(unreadable)?;
+    let too_big = || {
+        Fatal::Config(
+            "eval records: the result file is over 16 MiB; it is no result of `eval run --ab`"
+                .into(),
+        )
+    };
+    if file.metadata().map_err(unreadable)?.len() > MAX_FILE {
+        return Err(too_big());
+    }
+    // The limit holds also for a file that grows or has no size.
+    let mut bytes = Vec::new();
+    std::io::Read::take(file, MAX_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(unreadable)?;
+    if bytes.len() as u64 > MAX_FILE {
+        return Err(too_big());
+    }
     let (lines, names) = records(&bytes)?;
     let mut out = lines.join("\n");
     out.push('\n');

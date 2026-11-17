@@ -280,3 +280,47 @@ fn a_model_name_with_brackets_and_a_slash_round_trips() {
         );
     }
 }
+
+#[test]
+fn a_secret_shaped_value_in_a_string_field_stops_the_import() {
+    // Each value is inside the character set of its form, so only the shape
+    // of a secret or a path can refuse it. The message names the key.
+    let cases = [
+        ("\"claude-b\"", "\"sk-ant-api03-AAAA\"", "models"),
+        ("\"claude-b\"", "\"ghp_abcdefghijkl\"", "models"),
+        ("\"claude-b\"", "\"AKIAIOSFODNN7EXAMPLE\"", "models"),
+        ("\"claude-b\"", "\"x/Users/me\"", "models"),
+        ("\"claude-b\"", "\"x/private/me\"", "models"),
+        ("\"claude-b\"", "\"x/home/me\"", "models"),
+        ("\"claude-b\"", "\"a@b\"", "models"),
+        ("\"2.1.326\"", "\"sk-ant-1\"", "claude_code"),
+        ("\"2.1.326\"", "\"ghp_x\"", "claude_code"),
+        ("\"tdd-2\"", "\"sk-ant-2\"", "eval"),
+        ("\"tdd-2\"", "\"a@b-2\"", "eval"),
+    ];
+    for (from, to, key) in cases {
+        let (code, out, err) = records_of(&small().replace(from, to));
+        assert_eq!(code, 3, "{to}: {out}{err}");
+        assert!(out.is_empty(), "{to}: {out}");
+        assert!(err.contains(key), "{to}: {err}");
+        assert!(
+            !err.contains(to.trim_matches('"')),
+            "the message holds the value: {err}"
+        );
+    }
+    // A plain eval id with the letters `sk-` inside a word is fine.
+    let (code, out, err) = records_of(&small().replace("\"tdd-2\"", "\"task-2\""));
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn a_file_over_16_mib_stops_the_import_before_it_is_read() {
+    let dir = Repo::empty();
+    let path = dir.dir.join("big.json");
+    let f = fs::File::create(&path).unwrap();
+    f.set_len(16 * 1024 * 1024 + 1).unwrap();
+    let (code, out, err) = dir.run(&["eval", "records", "big.json"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(out.is_empty());
+    assert!(err.contains("16 MiB"), "{err}");
+}
