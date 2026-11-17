@@ -5,6 +5,8 @@ status: approved
 
 ## Files
 
+- `src/approval.rs` The walk of the commits of the branch rule (a module of its own, instead of a long `src/lifecycle.rs`).
+- `examples/one-change/README.md` The text of `status` changed, so the example output changes.
 - `tests/branch_approval.rs` The integration tests of the branch rule: the 5 lab variants and the other cases of the test plan.
 - `tests/common/mod.rs` A helper that commits with a given author e-mail.
 - `tests/change_config.rs` The values and the errors of the keys `approval` and `approvers`.
@@ -36,23 +38,23 @@ status: approved
 
 ## Order
 
-- [ ] t1: Write the helper that commits with an author e-mail, and one failing test for each lab variant: `ok`, `late`, `stranger`, `mixed` and `backdoor` (`test-engineer`, `diagnostics-engineer`). Files: `tests/branch_approval.rs`, `tests/common/mod.rs`. Verify: `cargo test --test branch_approval` fails on each variant.
-- [ ] t2: Write the failing tests of the stops of D13 and of D16 (`diagnostics-engineer`). The cases are a shallow clone, a merge of the base into the branch, a test merge of a host, a merge queue commit, and a change added and finished in one branch (reason 7). Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on each new case.
-- [ ] t3: Write the failing tests of the other cases of an approval commit (`diagnostics-engineer`). The cases are an approver commit that edits another file, the case of an e-mail and a `noreply` e-mail. More cases are a path added to `Files` after the approval, a status set back to `draft`, and a rebase that reorders the commits. Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on each new case.
-- [ ] t4: Write the failing tests of the output in branch mode (`diagnostics-engineer`, `core-engineer`). The cases are the line of D7 in `next`, the source of D8 (`base` or `branch <short sha>`) in the text of `status` and in `approved_in`, and the items of `approvals` in `check --json`. Add the squash replays of a higher-risk change and of a routine change. Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on each new case.
-- [ ] t5: Write the failing tests of the keys: an empty `approvers` and `strict` with `branch` give exit code 3 (`core-engineer`). Files: `tests/change_config.rs`. Verify: `cargo test --test change_config` fails on each new case.
-- [ ] t6: Write the failing tests of items 1 and 2 and of the skill `post-mortem` in `status`, and change the 5 tests that assert the old rule (`diagnostics-engineer`, `core-engineer`). Files: `tests/lifecycle_base.rs`, `tests/lifecycle_commands.rs`. Verify: `cargo test --test lifecycle_base --test lifecycle_commands` fails on these tests only.
-- [ ] t7: Write the failing tests of the keys that `init` writes for each profile, also with no `user.email` (`init-engineer`). Files: `tests/init_change.rs`. Verify: `cargo test --test init_change` fails on the new tests only.
-- [ ] t8: Add the keys `approval` and `approvers` with the errors of D14 and D15 (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`, `docs/config.md`. Verify: `cargo test --test change_config` passes.
-- [ ] t9: Add the walk of `base..HEAD` to git access (`core-engineer`): the commits from the oldest, with the parents, the author e-mail, the changed paths and the shallow state. Files: `src/git.rs`. Verify: `cargo test --bin spec-dna git::` passes.
-- [ ] t10: Apply the draft rule of item 1 to SD910 (`diagnostics-engineer`). Files: `src/lifecycle.rs`. Verify: `cargo test --test lifecycle_base` passes.
-- [ ] t11: Add the rule of D11, the stops of D13, the case of D16 and the 8 reasons of D17 (`diagnostics-engineer`). Files: `src/lifecycle.rs`, `src/diag.rs`. Verify: the tests of t1 to t3 pass.
-- [ ] t12: Add the field `approvals` to `check --json` (`diagnostics-engineer`). Files: `src/main.rs`, `tests/golden/check-all.json`. Verify: `cargo test --test cli` passes.
-- [ ] t13: Give `next` and `status` the class of item 2, the approval line only for a file that exists, the line of D7 and the source of D8 (`core-engineer`). Add `[skill: post-mortem]` to each open follow-up. Files: `src/model.rs`, `src/change.rs`, `src/stage.rs`. Verify: `cargo test --test lifecycle_commands --test branch_approval` passes.
-- [ ] t14: Make `init` write the keys of D15 (`init-engineer`; `core-engineer` for the read of `user.email` in git access). With no `user.email`, `init` writes `approval = "base"` and prints a note. Files: `src/init.rs`, `src/git.rs`, `docs/init.md`. Verify: `cargo test --test init_change` passes.
-- [ ] t15: Update the docs of SD910, the profiles and the commands. Files: `docs/diagnostics.md`, `docs/profiles.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t16: Update the guide, the glossary and the change log. Files: `docs/guides/change.md`, `docs/glossary.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t17: Write the rule of Q5 and the owner of the new test file (`architect`; the owner accepts the conventions). Files: `AGENTS.md`, `CONTRIBUTING.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t1: Write the helper that commits with an author e-mail, and one failing test for each lab variant: `ok`, `late`, `stranger`, `mixed` and `backdoor` (`test-engineer`, `diagnostics-engineer`). Files: `tests/branch_approval.rs`, `tests/common/mod.rs`. Verify: `cargo test --test branch_approval` fails on each variant.
+- [x] t2: Write the failing tests of the stops of D13 and of D16 (`diagnostics-engineer`). The cases are a shallow clone, a merge of the base into the branch, a test merge of a host, a merge queue commit, and a change added and finished in one branch (reason 7). Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on each new case.
+- [x] t3: Write the failing tests of the other cases of an approval commit (`diagnostics-engineer`). The cases are an approver commit that edits another file, the case of an e-mail and a `noreply` e-mail. More cases are a path added to `Files` after the approval, a status set back to `draft`, and a rebase that reorders the commits. Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on each new case.
+- [x] t4: Write the failing tests of the output in branch mode (`diagnostics-engineer`, `core-engineer`). The cases are the line of D7 in `next`, the source of D8 (`base` or `branch <short sha>`) in the text of `status` and in `approved_in`, and the items of `approvals` in `check --json`. Add the squash replays of a higher-risk change and of a routine change. Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on each new case.
+- [x] t5: Write the failing tests of the keys: an empty `approvers` and `strict` with `branch` give exit code 3 (`core-engineer`). Files: `tests/change_config.rs`. Verify: `cargo test --test change_config` fails on each new case.
+- [x] t6: Write the failing tests of items 1 and 2 and of the skill `post-mortem` in `status`, and change the 5 tests that assert the old rule (`diagnostics-engineer`, `core-engineer`). Files: `tests/lifecycle_base.rs`, `tests/lifecycle_commands.rs`. Verify: `cargo test --test lifecycle_base --test lifecycle_commands` fails on these tests only.
+- [x] t7: Write the failing tests of the keys that `init` writes for each profile, also with no `user.email` (`init-engineer`). Files: `tests/init_change.rs`. Verify: `cargo test --test init_change` fails on the new tests only.
+- [x] t8: Add the keys `approval` and `approvers` with the errors of D14 and D15 (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`, `docs/config.md`. Verify: `cargo test --test change_config` passes.
+- [x] t9: Add the walk of `base..HEAD` to git access (`core-engineer`): the commits from the oldest, with the parents, the author e-mail, the changed paths and the shallow state. Files: `src/git.rs`. Verify: `cargo test --bin spec-dna git::` passes.
+- [x] t10: Apply the draft rule of item 1 to SD910 (`diagnostics-engineer`). Files: `src/lifecycle.rs`. Verify: `cargo test --test lifecycle_base` passes.
+- [x] t11: Add the rule of D11, the stops of D13, the case of D16 and the 8 reasons of D17 (`diagnostics-engineer`). Files: `src/lifecycle.rs`, `src/diag.rs`. Verify: the tests of t1 to t3 pass.
+- [x] t12: Add the field `approvals` to `check --json` (`diagnostics-engineer`). Files: `src/main.rs`, `tests/golden/check-all.json`. Verify: `cargo test --test cli` passes.
+- [x] t13: Give `next` and `status` the class of item 2, the approval line only for a file that exists, the line of D7 and the source of D8 (`core-engineer`). Add `[skill: post-mortem]` to each open follow-up. Files: `src/model.rs`, `src/change.rs`, `src/stage.rs`. Verify: `cargo test --test lifecycle_commands --test branch_approval` passes.
+- [x] t14: Make `init` write the keys of D15 (`init-engineer`; `core-engineer` for the read of `user.email` in git access). With no `user.email`, `init` writes `approval = "base"` and prints a note. Files: `src/init.rs`, `src/git.rs`, `docs/init.md`. Verify: `cargo test --test init_change` passes.
+- [x] t15: Update the docs of SD910, the profiles and the commands. Files: `docs/diagnostics.md`, `docs/profiles.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t16: Update the guide, the glossary and the change log. Files: `docs/guides/change.md`, `docs/glossary.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t17: Write the rule of Q5 and the owner of the new test file (`architect`; the owner accepts the conventions). Files: `AGENTS.md`, `CONTRIBUTING.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
 
 ## Risks
 
