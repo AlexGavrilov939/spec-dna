@@ -191,7 +191,11 @@ Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>
             ),
             (
                 "docs/counts.md",
-                r#"# Counts
+                r#"---
+status: active
+verified-by: tests/test_smoke.py
+---
+# Counts
 
 The counts of a text.
 

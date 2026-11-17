@@ -219,3 +219,44 @@ fn a_name_that_is_not_a_skill_or_agents_line_stops_the_import() {
     assert_eq!(code, 3, "{err}");
     assert!(!err.contains("secret"), "{err}");
 }
+
+#[test]
+fn a_run_with_no_cost_counts_the_budget_of_its_eval_in_the_pack() {
+    // The first run of `tdd-1` has no cost. `tdd-1` is in the pack, with the
+    // budget 1.5, so the sum of the arm is 2.5 - 0.5 + 1.5 = 3.5.
+    let text = small()
+        .replacen("\"cost_usd\": 0.5,", "\"cost_usd\": null,", 1)
+        .replacen("\"cost_usd\": 2.5", "\"cost_usd\": 3.5", 1)
+        .replacen(
+            "\"cost_per_correct_usd\": 0.625",
+            "\"cost_per_correct_usd\": 0.875",
+            1,
+        );
+    let (code, out, err) = records_of(&text);
+    assert_eq!(code, 0, "{out}{err}");
+    let first = out.lines().next().unwrap();
+    assert!(
+        first
+            .contains("\"eval\":\"tdd-1\",\"run\":1,\"arm\":\"with\",\"pass\":true,\"cost\":null,"),
+        "{first}"
+    );
+    // The summary of the file must repeat: the old sum is wrong.
+    let (code, _, err) =
+        records_of(&small().replacen("\"cost_usd\": 0.5,", "\"cost_usd\": null,", 1));
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("cost_usd"), "{err}");
+}
+
+#[test]
+fn a_run_with_no_cost_of_an_eval_that_the_pack_lacks_stops_the_import() {
+    let text = small().replace("\"tdd-2\"", "\"nothing-2\"").replacen(
+        "\"cost_usd\": 0.75,",
+        "\"cost_usd\": null,",
+        1,
+    );
+    let (code, out, err) = records_of(&text);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(out.is_empty(), "{out}");
+    assert!(err.contains("no cost") && err.contains("`tdd`"), "{err}");
+    assert!(!err.contains("nothing-2"), "{err}");
+}

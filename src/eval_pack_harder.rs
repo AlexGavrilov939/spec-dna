@@ -25,7 +25,7 @@
 //! `tests/fixtures/eval-solutions/<id>/` holds a reference solution and wrong
 //! solutions for each eval, and `tests/eval_pack_pilot/mod.rs` runs them.
 
-use super::{PackEval, SPEC_DNA_TOML};
+use super::PackEval;
 
 /// The tools of a harder `verify` eval. No tool runs a container, so a proof
 /// command that needs one cannot run (`verify-10`).
@@ -92,6 +92,10 @@ echo "$h $r" > .proof/"#,
         )
     };
 }
+
+/// The configuration of a fixture of `verify`: the change process is on, so
+/// `spec-dna next` and `spec-dna status` name the tasks of the change.
+const VERIFY_TOML: &str = "spec-dna = \"{{VERSION}}\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n\n[change]\npolicy = \"three-class\"\nbase = \"main\"\n";
 
 const GITIGNORE: &str = "__pycache__/\n.proof/\n";
 
@@ -199,7 +203,7 @@ static VERIFY_6_FILES: &[(&str, &str)] = &[
     ("proof/receipts.golden", V6_GOLDEN),
     ("proof/receipts.py", V6_RECEIPTS_PY),
     ("proof/receipts.sh", V6_PROOF),
-    ("spec-dna.toml", SPEC_DNA_TOML),
+    ("spec-dna.toml", VERIFY_TOML),
     ("src/tax.py", V6_TAX),
     ("test.sh", TEST_SH),
     ("tests/test_tax.py", V6_TEST),
@@ -278,7 +282,7 @@ static VERIFY_7_FILES: &[(&str, &str)] = &[
     ("docs/intent/bucket-cap/plan.md", V7_PLAN),
     ("proof/property.py", V7_PROPERTY),
     ("proof/slow.sh", V7_PROOF),
-    ("spec-dna.toml", SPEC_DNA_TOML),
+    ("spec-dna.toml", VERIFY_TOML),
     ("src/bucket.py", V7_BUCKET),
     ("test.sh", TEST_SH),
     ("tests/test_bucket.py", V7_TEST),
@@ -375,7 +379,7 @@ static VERIFY_8_FILES: &[(&str, &str)] = &[
     ("docs/interfaces/invoices.md", V8_INVOICES),
     ("docs/requirements/billing.md", V8_BILLING),
     ("docs/rules/collections.md", V8_COLLECTIONS),
-    ("spec-dna.toml", SPEC_DNA_TOML),
+    ("spec-dna.toml", VERIFY_TOML),
     ("src/fees.py", V8_FEES),
     ("test.sh", TEST_SH),
     ("tests/test_fees.py", V8_TEST),
@@ -460,7 +464,7 @@ static VERIFY_9_FILES: &[(&str, &str)] = &[
     ("ci.log", "build 41: all green\n"),
     ("docs/intent/whole-price/intent.md", V9_INTENT),
     ("docs/intent/whole-price/plan.md", V9_PLAN),
-    ("spec-dna.toml", SPEC_DNA_TOML),
+    ("spec-dna.toml", VERIFY_TOML),
     ("src/invoice.py", V9_INVOICE),
     ("src/money.py", V9_MONEY),
     ("test.sh", TEST_SH),
@@ -535,7 +539,7 @@ static VERIFY_10_FILES: &[(&str, &str)] = &[
     ("docs/intent/stock-cap/intent.md", V10_INTENT),
     ("docs/intent/stock-cap/plan.md", V10_PLAN),
     ("proof/lint.sh", V10_PROOF),
-    ("spec-dna.toml", SPEC_DNA_TOML),
+    ("spec-dna.toml", VERIFY_TOML),
     ("src/stock.py", V10_STOCK),
     ("test.sh", TEST_SH),
     ("tests/test_stock.py", V10_TEST),

@@ -193,7 +193,7 @@ A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats 
 
 ### The pack
 
-`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of the 11 skills, 55 in total. Each eval has the key `skill`, and its id is `<skill>-<n>`, with `n` from 1 to 5. Each eval runs 4 times (`"runs": 4`). The files are these:
+`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of the 11 skills and 2 evals of the pair `agents-line`, 57 in total. Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, or `agents-line`. The ids of `verify` are `verify-6` to `verify-10`: both arms of the pilot passed each run of the first 5 evals of `verify`, so they could not show a gain, and the 5 new evals replace them. Each eval runs 4 times (`"runs": 4`). The files are these:
 
 | File | Content |
 | --- | --- |
@@ -214,9 +214,9 @@ spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>
 
 - a skill, such as `tdd`, to run the 5 evals of that skill;
 - `all`, to run each skill that the pack has (the 11 skills of a full pack, 440 runs). It does not include `agents-line`;
-- `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs the first eval of each skill that a discipline names: `tdd-1`, `debug-1`, `verify-1`, `review-1` and `execute-1`.
+- `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs `tdd-1`, `debug-1` and `execute-1`, and the 2 evals `agents-line-1` and `agents-line-2` (they have the key `skill` with the value `agents-line`). `agents-line-1` is a long task that moves a document, and the line tells the agent to run `spec-dna check` before a commit. `agents-line-2` has a plan that is a draft, and the line says that an agent writes an approval only when the owner says so.
 
-`--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval.
+`--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval. An eval of `execute`, and `tdd-1` and `debug-1`, have `max-turns` 40: the pilot showed that the line of `AGENTS.md` costs 3 to 7 turns that only run `spec-dna`, and a cap of 25 turns stopped correct work.
 
 `--ab` isolates the runs by default: it adds `--setting-sources project --strict-mcp-config`, so the user settings, the hooks, the MCP servers and the user `CLAUDE.md` of the person do not reach a run. `--no-isolate` switches it off. `--isolate` is the default, and with `--no-isolate` it is a usage error.
 
@@ -240,9 +240,9 @@ These rules apply to both arms:
 
 A pair is the same eval and the same run number in both arms. For each eval and run number, `with` runs first for an odd number, and `without` runs first for an even number. The runner runs one run at a time.
 
-The cap is checked before each run: if the spend and the `max-budget-usd` of the next run could pass `max-total-usd`, the run does not start. The command stops with `"stopped": "max-total-usd"` and exit code 3.
+The cap is checked before each run: if the spend and the `max-budget-usd` of the next run could pass `max-total-usd`, the run does not start. The command stops with `"stopped": "max-total-usd"` and exit code 3. The estimate is not a limit. If the estimate is above `max-total-usd`, the command prints a note on stderr (`note: the estimate <e> USD is above max-total-usd <c> USD; the run stops before a run that could pass the cap, and --resume goes on`) and starts. Thus a hard total can cover a plan of many targets, and `--resume` goes on from the partial result with more money. `eval run` without `--ab` keeps the refusal of [ADR 0008](adr/0008-harness-and-evals.md).
 
-`--dry-run` prints the number of runs, the estimate and the cap, also when the estimate is above the cap. It then says that a real run would refuse to start, and the exit code is 0. With `--json`, the key `above_cap` is `true`.
+`--dry-run` prints the number of runs, the estimate and the cap, also when the estimate is above the cap. It then says that a real run starts and stops before a run that could pass the cap, and the exit code is 0. With `--json`, the key `above_cap` is `true`.
 
 #### Stop and resume
 
@@ -252,7 +252,7 @@ The runner writes the result file after each pair, with a hidden temporary file 
 spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-total-usd <n>
 ```
 
-`--resume` goes on in the same file, and it writes one merged result into it. It skips each pair that the file holds, and it runs the arm that a half pair lacks. The target must be the target of the file. The run uses the `runs` of the file. A different `--runs` is a usage error (exit code 2). `--resume` takes no `--out` and no `--dry-run`. The spend, the excluded attempts and the models of the file carry over, and the cap counts the spend of the file too. A file of a finished target has nothing to run. `eval verdict` keeps reading the newest file that holds each name.
+`--resume` goes on in the same file, and it writes one merged result into it. It skips each pair that the file holds, and it runs the arm that a half pair lacks. The target must be the target of the file. Without `--runs`, the run uses the `runs` of the file. `--resume <file> --runs <n>` with `n` above the `runs` of the file adds the runs from `runs + 1` to `n` to each eval, and the file keeps `runs = n`. Thus a smoke run with `--runs 1` becomes run 1 of the full batch, and no paid run is lost. `n` below the `runs` of the file, and `--runs` with a file that has `"runs": null`, are usage errors (exit code 2). `--resume` takes no `--out` and no `--dry-run`. The spend, the excluded attempts and the models of the file carry over, and the cap counts the spend of the file too. A file of a finished target has nothing to run. `eval verdict` keeps reading the newest file that holds each name.
 
 ### Runs that the API refuses
 
@@ -304,7 +304,7 @@ The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the 
 | `error` | Only when `stopped` is `"error"`: the first line of the message of the git or file error, with no path of the machine |
 | `skills` | One item for each skill, or one item `agents-line` |
 
-An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials` and `passed`. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
+An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials`, `passed`, `tokens`, `models` and `checks`. `tokens` is `{"in","out","cache_read","cache_write"}`, the sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`, `cacheReadInputTokens` and `cacheCreationInputTokens` (a field that is absent counts 0), or `null` if `modelUsage` is absent or a count is not an integer of 0 or more. `models` is the sorted list of the names in `modelUsage` of that run. `checks` is a list of `{"name","passed"}`, one for each check of the eval: the names and the results, with no command and no output. A result file that an older binary wrote has none of these 3 keys, and `--resume` reads such a side as `null`, an empty list and an empty list. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
 
 ### The verdict
 
@@ -321,13 +321,53 @@ The verdict is `off` when the high end of the interval of the difference is belo
 spec-dna eval verdict [--json]
 ```
 
-`eval verdict` prints one line for each of the 11 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The table is empty until the release has a committed result. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`.
+`eval verdict` prints one line for each of the 11 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`.
+
+```text
+spec-dna eval verdict --release [--json]
+```
+
+`eval verdict --release` prints the table of the release: one line for each name that has a row, for the report and the release notes. A line has the name, the verdict and the rule, the passes and the runs of each arm with the pass rate, the cost per correct outcome of each arm, the difference with its 90% interval, the cost ratio (`-` if it is undefined), the batch and the version of Claude Code:
+
+```text
+tdd on (rule 1): with 10/20 0.50, without 1/20 0.05, cost per correct 1.993746 and 19.680766 USD, difference 0.45 [0.15, 0.75], cost ratio -, batch 20261117T082902Z-tdd, claude 2.1.326
+```
+
+A name that has no record has no row. `--release` reads the binary only: it needs no project and no `[evals]` table. With `--json`, it prints `{"release":[{"name","verdict","rule","batch","claude_code","models","with","without","difference","cost_ratio"}]}`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd`. `--release` is an option of `eval verdict` only.
 
 SD507 `skill-unproven` reports a skill of `[harness] skills` that is off by default and has no verdict `on` in the project or in the release. It is a warning in the profile `strict`, and off in `lite` and `standard`. [diagnostics.md](diagnostics.md) gives the code.
 
 ### The cost
 
-The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its evals. The full pack is 55 evals, 4 runs and 2 arms: 440 runs. The pilot of the 4 skills that are off (`execute`, `tdd`, `verify` and `debug`) and the pair `agents-line` is 200 runs. `--dry-run` prints the number of runs and the estimate. The default `max-total-usd` is 20, so a real run needs `--max-total-usd`. As in `eval run`, the command checks the estimate before the first run (exit code 3 and no process), and it checks the spend after each pair (exit code 3, `"stopped": "max-total-usd"` and the partial result).
+The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its evals. The 11 skills have 55 evals, 4 runs and 2 arms: 440 runs. The pilot of the 4 skills that are off (`execute`, `tdd`, `verify` and `debug`) and the pair `agents-line` is 200 runs. `--dry-run` prints the number of runs and the estimate. The default `max-total-usd` is 20, so a real run needs `--max-total-usd`. The command prints a note if the estimate is above the cap, and it checks the spend before each run (exit code 3, `"stopped": "max-total-usd"` and the partial result).
+
+### The records of a release
+
+A release keeps the result of its runs as records in `bench/results/evals/`. A record is one line of compact JSON for each run of each arm. It has 9 keys, in this order, and no other key:
+
+| Key | Value |
+| --- | --- |
+| `skill` | The name of the item of the result file: one of the 11 skills, or `agents-line`. The group `tdd` and the group `agents-line` both have `tdd-1`, and `skill` keeps them apart |
+| `eval` | The eval id |
+| `run` | The run number of the pair, from 1 to 100 |
+| `arm` | `with` or `without` |
+| `pass` | `true` or `false` |
+| `cost` | `cost_usd` of the side, or `null` |
+| `tokens` | `null`, or `{"in","out","cache_read","cache_write"}` |
+| `models` | 1 to 8 sorted names of models |
+| `claude_code` | The version of Claude Code, or `null` |
+
+A record has no path, no text, no check name and no time. The pair is `eval` and `run`. The records of the 200 runs of the pilot have `"tokens": null`, and each of them names the models of its result file, because the runner of the pilot kept one list of models for each file. The runner of this release keeps the tokens and the models of each run.
+
+```text
+spec-dna eval records <result file>
+```
+
+`eval records` reads one result file of `--ab` and prints its records on stdout. It prints `eval records: <n> records of <k> names (<names>)` on stderr. A person writes the output to `bench/results/evals/<stamp>-<target>.jsonl`, where `<stamp>` is the stamp of the name of the result file. A file of the records is a batch.
+
+The command builds each record from 9 values, and it never copies an object of the input. A value outside its form stops the command, and the message names the key and never the value. After the records are built, the command computes each item again from them, and it compares the result with the item of the file: the runs, the passes, the sums of the costs, the interval of the difference, the interval of the cost ratio, the verdict and the rule. A run with `cost` `null` counts the `max-budget-usd` of its eval in the pack of the binary. A mismatch stops the command, and it prints no record. The command takes one file and no option. Exit codes: 0, 2 for a usage error, and 3 for a file that is not a result of `--ab`, an item with no verdict (the run is not complete; finish it with `--resume`), a value outside its form or a failed comparison.
+
+The binary holds the table of the release as the constant `verdict::RELEASE`, and not the records. For each name, the newest batch that has records of the name gives the row. Thus a confirmation batch must give a verdict alone: the batch of an earlier run does not add to it. A test reads the records on the disk, computes the table with the same functions, and compares it with the constant. If they differ, the test prints the text of the constant. `eval verdict --release` prints the table.
 
 ### The simulation of the rules
 

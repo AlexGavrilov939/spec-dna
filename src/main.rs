@@ -316,7 +316,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -324,7 +324,7 @@ sources <dir>/check.sh of the project, never the copy. An eval passes when at
 least pass-at of its runs pass. The suite passes when the share of evals that
 pass is at least min-pass-rate. It refuses to start when runs x
 max-budget-usd is above max-total-usd, and it stops when the spend is above
-it. --runs, --min-pass-rate and --max-total-usd replace the values of the
+it (`eval run --ab` starts and stops before a run that could pass the cap). --runs, --min-pass-rate and --max-total-usd replace the values of the
 files and of the table. --out writes the result to <dir>/eval-<time>.json
 (counts, costs and check names only). --dry-run starts no process. --isolate
 adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
@@ -349,15 +349,19 @@ SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
 waits up to 6 hours. A run that takes more than 25 minutes (a check, 5 minutes)
 is killed and counts as failed. The result is written after each pair.
 SIGHUP, SIGINT and SIGTERM write it and exit with 129, 130 and 143, and
---resume <result file> goes on in it. --dry-run prints the estimate also above
-the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
+--resume <result file> goes on in it, and with a higher --runs it adds runs to
+each eval. An estimate above the cap prints a note, and the run starts and stops
+at the cap. --dry-run prints the estimate also above the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
 pack file, a stop by the cap or by api-error, 4 git or file error, 129, 130
 and 143 a signal.
 
-`eval pack` writes the pack of 55 evals and their fixtures to <dir>/pack/. It
+`eval pack` writes the pack of 57 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
 
-`eval verdict` prints one line for each of the 11 skills and for agents-line:
+`eval verdict --release` prints the table of the release, one line for each name
+that has a row. `eval records <result file>` prints the records of the runs of a
+result file of --ab as JSON Lines (9 keys, no path, no text), and it computes each
+item again from them. `eval verdict` prints one line for each of the 11 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",

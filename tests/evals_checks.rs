@@ -845,9 +845,10 @@ fn sd507_is_off_in_lite_and_standard_and_a_warning_in_strict() {
     for (profile, want) in [
         ("lite", vec![]),
         ("standard", vec![]),
-        ("strict", vec!["tdd".to_string(), "verify".to_string()]),
+        ("strict", vec!["execute".to_string(), "verify".to_string()]),
     ] {
-        let r = sd507_repo(profile, &["brainstorm", "tdd", "verify"]);
+        // `execute` and `verify` are `inconclusive` in the table of the release.
+        let r = sd507_repo(profile, &["brainstorm", "execute", "verify"]);
         let (_, out) = check_all(&r);
         assert_eq!(unproven(&out), want, "{profile}: {out}");
         if profile == "strict" {
@@ -859,6 +860,14 @@ fn sd507_is_off_in_lite_and_standard_and_a_warning_in_strict() {
             assert!(out.contains("SD507 fix: "), "{out}");
         }
     }
+}
+
+#[test]
+fn a_skill_that_the_table_of_the_release_holds_on_is_not_reported() {
+    // The release holds `tdd` as `on` (rule 1, the records of the pilot).
+    let r = sd507_repo("strict", &["brainstorm", "tdd"]);
+    let (_, out) = check_all(&r);
+    assert!(unproven(&out).is_empty(), "{out}");
 }
 
 #[test]
@@ -938,14 +947,14 @@ fn sd507_reads_the_result_files_of_the_working_tree_and_ignores_other_files() {
 
 #[test]
 fn sd507_needs_no_evals_table_and_a_rule_changes_its_severity() {
-    let r = sd507_repo("strict", &["tdd"]);
+    let r = sd507_repo("strict", &["execute"]);
     let toml = r
         .read("spec-dna.toml")
         .replace("[evals]\ndir = \"evals\"\n\n", "");
     r.write("spec-dna.toml", &toml);
     r.commit("no table");
     let (_, out) = check_all(&r);
-    assert_eq!(unproven(&out), ["tdd"], "{out}");
+    assert_eq!(unproven(&out), ["execute"], "{out}");
     let toml = r
         .read("spec-dna.toml")
         .replace("[rules]\n", "[rules]\nSD507 = \"off\"\n");
