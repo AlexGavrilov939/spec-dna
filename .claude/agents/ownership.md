@@ -212,7 +212,7 @@ tests/sd202.rs                       DIA
 tests/layers_checks.rs, tests/sd921.rs, tests/task_checks.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
 tests/finish.rs                      HYG
 tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
-tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
+tests/change_model.rs, tests/change_config.rs, tests/tree_binary.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
 tests/common/mod.rs, tests/common_helpers.rs   TST: the shared git fixtures. Every agent uses them
 tests/init_change.rs, tests/init_language.rs   INI
 tests/init_graph.rs                  INI

@@ -26,8 +26,8 @@ Option 2.
 
 - The compare of the pin line reads `\r\n` as `\n` in both texts. The TOML meaning of the 2 texts is the same.
 - A `Cargo.toml` that is a symbolic link makes no tree binary, in the working tree and with `--staged`. SD503 then counts the pin line.
-- An approval from an approval commit of the branch clears work only while the artifact keeps its approval status at the head. Else SD910 gives reason 9: a later commit took the approval back. Work after that commit, and before a new approval commit, also gives reason 9. An artifact that the head does not have, such as a folder that `finish` deleted, keeps its approval. An approval from the base tree keeps the rule of 0.6, and SD401 reports the move back.
-- The walk reads the paths of all commits of the branch with a fixed number of git processes.
+- An approval from an approval commit of the branch clears work only while the artifact keeps its approval status at the head. Else SD910 gives reason 9: a later commit took the approval back. Work after that commit, and before a new approval commit, also gives reason 9. An artifact that the head does not have, such as a folder that `finish` deleted, keeps its approval. An approval from the base tree keeps the rule of 0.6, and SD401 reports the move back. The message names the first commit that changed the status after the approval commit. If only the working tree (or the index) set it back, the message names the working tree.
+- The walk reads the paths of all commits of the branch with a fixed number of git processes: one `log` for the commits, one `diff-tree --stdin` for the paths, and 2 more for the merge base and the shallow test. The parse of the paths uses `-z` and the place of each record, so no path is read as a commit header.
 
 ### Rejected
 
