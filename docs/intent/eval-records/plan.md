@@ -24,7 +24,7 @@ status: approved
 - [x] t5: Write `tokens`, `models` and `checks` in each side, and read them with `--resume` (`core-engineer`). Files: `src/eval_ab.rs`. Verify: `cargo test --test eval_ab` passes on the cases of the sides.
 - [x] t6: Let `--resume` take a higher `--runs`, and let `--ab` start below its estimate (`core-engineer`). Files: `src/eval_ab.rs`. Verify: `cargo test --test eval_ab` passes.
 - [x] t7: Accept `agents-line` in the key `skill` (`core-engineer`). Files: `src/evals.rs`. Verify: `cargo test --test evals_checks` passes.
-- [ ] t8: Add `eval records` with the allowlist and the self-check (`core-engineer`). Files: `src/eval_records.rs`, `src/main.rs`. Verify: `cargo test --test eval_records` passes.
+- [x] t8: Add `eval records` with the allowlist and the self-check (`core-engineer`). Files: `src/eval_records.rs`, `src/main.rs`. Verify: `cargo test --test eval_records` passes.
 - [ ] t9: Write `verify-6` to `verify-10`, and remove `verify-1` to `verify-5` (`init-engineer`). Files: `src/eval_pack_harder.rs`, `src/eval_pack_pilot.rs`, `src/eval_pack.rs`. Verify: `cargo test --test eval_pack` passes on the cases of `verify`.
 - [ ] t10: Write `agents-line-1` and `agents-line-2`, and set the set of `agents-line` (`init-engineer`; `core-engineer`). Files: `src/eval_pack_harder.rs`, `src/eval_ab.rs`. Verify: `cargo test --test eval_pack --test eval_ab` passes.
 - [ ] t11: Write the solutions of the 7 new evals, and remove those of `verify-1` to `verify-5` (`init-engineer`). Files: `tests/eval_pack_pilot/mod.rs`. Verify: `cargo test --test eval_pack` passes.

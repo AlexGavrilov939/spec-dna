@@ -31,6 +31,7 @@ mod eval_ab;
 mod eval_pack;
 mod eval_pack_fixtures_rest;
 mod eval_pack_rest;
+mod eval_records;
 mod eval_run;
 mod evals;
 mod evidence;
@@ -477,6 +478,7 @@ struct Args {
     ab: bool,
     no_isolate: bool,
     resume: Option<String>,
+    release: bool,
 }
 
 /// The options of `layer add`.
@@ -558,6 +560,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         ab: false,
         no_isolate: false,
         resume: None,
+        release: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -600,6 +603,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--ab" => a.ab = true,
             "--no-isolate" => a.no_isolate = true,
             "--resume" => a.resume = Some(value("--resume")?),
+            "--release" => a.release = true,
             "--out" => a.out = Some(value("--out")?),
             "--runs" => {
                 let v = value("--runs")?;
@@ -761,6 +765,11 @@ fn run(a: Args) -> Result<u8, Fatal> {
     }
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
+    }
+    if a.command != "eval" && a.release {
+        return Err(Fatal::Usage(
+            "--release is an option of `eval verdict`".into(),
+        ));
     }
     if a.command != "eval" {
         for (given, name) in [
@@ -3002,11 +3011,36 @@ fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
 /// it, as it stops `check` and `finish`.
 fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     let sub = a.positional.first().map(String::as_str);
-    if !matches!(sub, Some("run" | "pack" | "verdict")) {
+    if !matches!(sub, Some("run" | "pack" | "verdict" | "records")) {
         return Err(Fatal::Usage(
-            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack` or `spec-dna eval verdict`"
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack`, `spec-dna eval verdict` or `spec-dna eval records <result file>`"
                 .into(),
         ));
+    }
+    if sub == Some("records") {
+        // `records` reads one file that can be outside the repository. It takes
+        // no option, and it needs no configuration.
+        let option = [
+            a.json,
+            a.runs.is_some(),
+            a.min_pass_rate.is_some(),
+            a.max_total_usd.is_some(),
+            a.out.is_some(),
+            a.isolate,
+            a.ab,
+            a.no_isolate,
+            a.resume.is_some(),
+            a.dry_run,
+            a.release,
+        ]
+        .contains(&true);
+        if a.positional.len() != 2 || option {
+            return Err(Fatal::Usage(
+                "`eval records` takes one result file and no option: `spec-dna eval records <result file>`"
+                    .into(),
+            ));
+        }
+        return eval_records::run(&a.positional[1]);
     }
     if sub != Some("run") {
         // `pack` and `verdict` take no option of `run`, and no argument.
@@ -3024,6 +3058,11 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
             }
+        }
+        if a.release && sub != Some("verdict") {
+            return Err(Fatal::Usage(
+                "--release is an option of `eval verdict`".into(),
+            ));
         }
         if a.positional.len() > 1 {
             return Err(Fatal::Usage(format!(
