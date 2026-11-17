@@ -21,7 +21,7 @@ status: approved
 ## Order
 
 - [x] t1: Write the failing tests of a skipped task in `next` and `status` (`core-engineer`). Files: `tests/lifecycle_commands.rs`. Verify: `cargo test --test lifecycle_commands` fails on the new tests only.
-- [ ] t2: Write the failing tests of the hours of the tasks in `finish`: a sum, a range, a skipped task, a task with no `Hours:`, a bad value and the JSON (`hygiene-engineer`). Files: `tests/finish.rs`. Verify: `cargo test --test finish` fails on the new tests only.
+- [x] t2: Write the failing tests of the hours of the tasks in `finish`: a sum, a range, a skipped task, a task with no `Hours:`, a bad value and the JSON (`hygiene-engineer`). Files: `tests/finish.rs`. Verify: `cargo test --test finish` fails on the new tests only.
 - [ ] t3: Write the failing tests of a range in `log` and `stats --sdlc` (`core-engineer`). Files: `tests/lifecycle_log.rs`. Verify: `cargo test --test lifecycle_log` fails on the new tests only.
 - [ ] t4: Write the failing tests of SD923 for an empty `Skip:`, and of no SD910 for a `Skip:` edit (`diagnostics-engineer`). Files: `tests/task_checks.rs`, `tests/branch_approval.rs`. Verify: `cargo test --test task_checks --test branch_approval` fails on the new tests only.
 - [ ] t5: Read the labels `Hours:` and `Skip:`, and give the state of a task (`core-engineer`). Files: `src/change.rs`. Verify: `cargo test --bin spec-dna change::` passes.
