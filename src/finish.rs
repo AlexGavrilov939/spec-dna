@@ -76,29 +76,52 @@ pub struct Plan {
     pub folder: String,
     /// The delta lines that the plan applies: `ADD`, `CHANGE`, `REMOVE`.
     pub applied: (usize, usize, usize),
-    /// The items of the section `Hours` of the plan of the change.
+
+    /// The hours of the tasks of the plan of the change.
     pub hours: Hours,
 }
 
-/// The items of the section `Hours` of a plan (design 0.7.0, section 15). An
-/// item starts with a number of hours: up to 4 digits, and up to 2 decimals
-/// after a `.`. An optional `h` follows. Then the item ends, or it has `:` or a
-/// space and free text.
+/// The hours of the tasks of a plan (design 0.7.0, section 15). Each task that
+/// is not a duplicate and is not skipped counts. Its label `Hours:` gives a
+/// number or a range ([`change::parse_hours`]).
 #[derive(Debug, Default, PartialEq)]
 pub struct Hours {
-    /// The total in hundredths of an hour. It is `None` if the plan has no
-    /// item of `Hours`, or if an item has no number. The sum of integers has
-    /// no rounding error.
-    pub total: Option<u64>,
-    /// The text of each item that has no number.
-    pub bad: Vec<String>,
+    /// The total as (low, high) in hundredths of an hour: the sums of the low
+    /// ends and of the high ends. It is `None` if no counted task has the label
+    /// `Hours:`, or if a value is invalid. The sum of integers has no rounding
+    /// error.
+    pub total: Option<(u64, u64)>,
+    /// The id and the text of each counted task with an invalid value.
+    pub invalid: Vec<(String, String)>,
+    /// The ids of the counted tasks that have no `Hours:`. It is empty if no
+    /// counted task has one, or if a value is invalid: the notes of those
+    /// cases are other notes.
+    pub missing: Vec<String>,
 }
 
 impl Hours {
-    /// The total as the line `Hours: <total>` and the field `hours` write it:
-    /// no zero after the last digit.
+    /// The total as the line `Hours: <total>` writes it: `<low>` if the ends
+    /// are equal, else `<low>-<high>`, with no zero after the last digit.
     pub fn text(&self) -> Option<String> {
-        self.total.map(format_hours)
+        self.total.map(|(low, high)| {
+            if low == high {
+                format_hours(low)
+            } else {
+                format!("{}-{}", format_hours(low), format_hours(high))
+            }
+        })
+    }
+
+    /// The total as the value of `hours` in `--json`: `{"low", "high"}`, or
+    /// `null`.
+    pub fn json(&self) -> String {
+        match self.total {
+            Some((low, high)) => crate::json::Obj::new()
+                .raw("low", &format_hours(low))
+                .raw("high", &format_hours(high))
+                .end(),
+            None => "null".to_string(),
+        }
     }
 }
 
@@ -113,51 +136,29 @@ pub fn format_hours(hundredths: u64) -> String {
     }
 }
 
-/// The hundredths of an hour that an item of `Hours` starts with, or `None` if
-/// the item has another form.
-fn item_hours(text: &str) -> Option<u64> {
-    let b = text.as_bytes();
-    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
-    if !(1..=4).contains(&digits) {
-        return None;
-    }
-    let mut hundredths = text[..digits].parse::<u64>().ok()? * 100;
-    let mut at = digits;
-    if b.get(at) == Some(&b'.') {
-        let frac = b[at + 1..]
-            .iter()
-            .take_while(|c| c.is_ascii_digit())
-            .count();
-        if !(1..=2).contains(&frac) {
-            return None;
-        }
-        let value: u64 = text[at + 1..at + 1 + frac].parse().ok()?;
-        hundredths += if frac == 1 { value * 10 } else { value };
-        at += 1 + frac;
-    }
-    if b.get(at) == Some(&b'h') {
-        at += 1;
-    }
-    match b.get(at) {
-        None | Some(b':') | Some(b' ') | Some(b'\t') | Some(b'\n') => Some(hundredths),
-        _ => None,
-    }
-}
-
-/// Adds the items of `Hours` of a plan document.
-fn plan_hours(plan: &Doc) -> Hours {
+/// Adds the hours of the tasks of a plan.
+fn task_hours(tasks: &[change::PlanTask]) -> Hours {
     let mut out = Hours::default();
-    let mut total = 0u64;
+    let (mut low, mut high) = (0u64, 0u64);
     let mut any = false;
-    for item in change::section_items(plan, ItemSection::Hours) {
+    let mut missing = Vec::new();
+    for t in tasks.iter().filter(|t| !t.duplicate && !t.skipped()) {
+        let Some(value) = &t.hours else {
+            missing.push(t.id.clone());
+            continue;
+        };
         any = true;
-        match item_hours(&item.text) {
-            Some(h) => total += h,
-            None => out.bad.push(lifecycle::short(&item.text)),
+        match change::parse_hours(value) {
+            Some((l, h)) => {
+                low += l;
+                high += h;
+            }
+            None => out.invalid.push((t.id.clone(), lifecycle::short(value))),
         }
     }
-    if any && out.bad.is_empty() {
-        out.total = Some(total);
+    if any && out.invalid.is_empty() {
+        out.total = Some((low, high));
+        out.missing = missing;
     }
     out
 }
@@ -243,11 +244,7 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     let mut out = Plan {
         removes: sorted(cx.folder_files),
         folder: cx.folder.to_string(),
-        hours: ch
-            .plan
-            .as_ref()
-            .map(|a| plan_hours(&head.docs[a.doc as usize]))
-            .unwrap_or_default(),
+        hours: task_hours(&ch.tasks(head)),
         ..Plan::default()
     };
     if ch.intent_status() == "closed" {
@@ -2064,25 +2061,49 @@ mod tests {
     }
 
     #[test]
-    fn an_item_of_hours_starts_with_a_number() {
-        for (text, want) in [
-            ("2", Some(200)),
-            ("1.5: code", Some(150)),
-            ("0.25h", Some(25)),
-            ("12.5h: review", Some(1250)),
-            ("2 hours", Some(200)),
-            ("9999", Some(999_900)),
-            ("1.5:", Some(150)),
-            ("12345", None),
-            ("1.234", None),
-            ("1.", None),
-            (".5", None),
-            ("2hours", None),
-            ("about 2", None),
-            ("", None),
-        ] {
-            assert_eq!(item_hours(text), want, "{text:?}");
-        }
+    fn the_hours_of_the_tasks_add_up_as_a_range() {
+        let tasks = |lines: &[&str]| {
+            let src = format!("# P\n\n## Order\n\n{}\n", lines.join("\n"));
+            let mut seen = HashSet::new();
+            let mut tasks: Vec<_> = parse(&src)
+                .items
+                .iter()
+                .filter(|i| i.section == ItemSection::Order)
+                .filter_map(change::parse_task)
+                .collect();
+            for t in &mut tasks {
+                t.duplicate = !seen.insert(t.id.clone());
+            }
+            tasks
+        };
+        let h = |lines: &[&str]| task_hours(&tasks(lines));
+        let t = h(&["- [x] a: A. Hours: 1-2.", "- [ ] b: B. Hours: 1.5."]);
+        assert_eq!(t.total, Some((250, 350)));
+        assert_eq!(t.text().as_deref(), Some("2.5-3.5"));
+        assert_eq!(t.json(), "{\"low\":2.5,\"high\":3.5}");
+        // A skipped task and a duplicate id add nothing.
+        let t = h(&[
+            "- [x] a: A. Hours: 2.",
+            "- [x] b: B. Hours: 9. Skip: no.",
+            "- [x] a: C. Hours: 5.",
+        ]);
+        assert_eq!(t.text().as_deref(), Some("2"));
+        assert!(t.missing.is_empty() && t.invalid.is_empty());
+        // The notes: a task with no value, and a bad value.
+        let t = h(&["- [x] a: A. Hours: 2.", "- [x] b: B.", "- [x] c: C."]);
+        assert_eq!(t.missing, ["b", "c"]);
+        let t = h(&[
+            "- [x] a: A. Hours: 2.",
+            "- [x] b: B. Hours: soon.",
+            "- [x] c: C.",
+        ]);
+        assert_eq!(t.total, None);
+        assert_eq!(t.invalid, [("b".to_string(), "soon".to_string())]);
+        assert!(t.missing.is_empty());
+        // No value at all: no total and no note.
+        let t = h(&["- [x] a: A.", "- [x] b: B."]);
+        assert_eq!(t, Hours::default());
+        assert_eq!(t.json(), "null");
     }
 
     #[test]

@@ -228,9 +228,10 @@ with the status closed runs the first two steps and deletes the folder. The
 folder must be tracked and clean. --dry-run prints the diff of each file and
 `remove <path>` for each deleted file, and writes nothing. Without it, the
 command writes the files, deletes the folder, and stages the paths with
-`git add`. It makes no commit. If the plan has a section Hours, it adds the
-numbers and prints the line `Hours: <total>`: put the line in the commit
-message, and keep it in the squash message. It is the only command that
+`git add`. It makes no commit. It adds the label `Hours:` of each task of the
+plan that is not skipped, and prints the line `Hours: <total>` (a number, or a
+range `<low>-<high>`): put the line in the commit message, and keep it in the
+squash message. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
     ),
@@ -275,8 +276,8 @@ the intent in the parent of that commit gives the result: accepted is
 finished, and any other status is closed. For each change it prints the date,
 the result, the slug, the class, the counts of the delta lines (add, change,
 remove) of its spec, the hours, the commit and the title. The hours are the
-number of the last line `Hours: <number>` of the commit message that deleted
-the intent (a dash if there is none). A change that one pull request
+last line `Hours: <number>` or `Hours: <a>-<b>` of the commit message that
+deleted the intent (a dash if there is none). A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
 default branch, has no entry. A move of intent.md out of the intent folder
 that keeps its id as an alias (spec-dna mv) does not end a change. A plain
@@ -3369,7 +3370,7 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
                 .num("step", 6)
                 .raw("diagnostics", "[]")
                 .raw("files", &json::array(writes.chain(removes)))
-                .raw("hours", &plan.hours.text().unwrap_or("null".to_string()))
+                .raw("hours", &plan.hours.json())
                 .end()
         );
         return;
@@ -3401,8 +3402,21 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
     }
     // `finish` makes no commit, so the person or the agent that commits writes
     // the line in the message.
-    for item in &plan.hours.bad {
-        println!("note: the item \"{item}\" of Hours has no number of hours; no total");
+    for (id, value) in &plan.hours.invalid {
+        println!(
+            "note: the task `{id}` has the value \"{value}\" in `Hours:`, which is no number of hours and no range; no total"
+        );
+    }
+    match plan.hours.missing.as_slice() {
+        [] => {}
+        [id] => println!("note: the task `{id}` has no `Hours:`; the total leaves it out"),
+        ids => {
+            let list: Vec<String> = ids.iter().map(|i| format!("`{i}`")).collect();
+            println!(
+                "note: the tasks {} have no `Hours:`; the total leaves them out",
+                list.join(", ")
+            );
+        }
     }
     if let Some(total) = plan.hours.text() {
         println!("Hours: {total}");
