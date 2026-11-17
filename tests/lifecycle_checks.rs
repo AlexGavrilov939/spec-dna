@@ -1144,3 +1144,78 @@ fn a_none_item_states_nothing_in_concerns_and_open_questions() {
     let (_, out) = check(&r);
     assert_eq!(severities(&out, "SD922"), ["error", "error"], "{out}");
 }
+
+#[test]
+fn an_add_item_with_a_bad_id_gives_sd914() {
+    // A glob, `..` and an absolute path are no document id. The id would
+    // widen the scope of SD913 if it passed.
+    for id in [
+        "contracts/*",
+        "contracts/a?",
+        "contracts/[ab]",
+        "contracts/../x",
+        "/abs",
+    ] {
+        let r = repo("standard");
+        change(
+            &r,
+            "dose",
+            "draft",
+            "draft",
+            &format!("## Interfaces\n\n- ADD {id}: anything.\n"),
+        );
+        let (_, out) = check(&r);
+        let got = messages(&out, "SD914");
+        assert_eq!(got.len(), 1, "{id}: {out}");
+        assert!(
+            got[0].contains(&format!("`{id}` is not a document id")),
+            "{id}: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_place_with_no_type_is_not_named_as_requirements() {
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "draft",
+        "draft",
+        "## Interfaces\n\n- ADD foo/bar: anything.\n",
+    );
+    let (_, out) = check(&r);
+    let got = messages(&out, "SD914");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].contains("the place of `foo/bar` gives no type, not `interface`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_document_of_another_type_does_not_satisfy_an_add_item_after_the_folder_is_deleted() {
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "accepted",
+        "approved",
+        "## Interfaces\n\n- ADD contracts/new: add the contract.\n",
+    );
+    r.commit("base");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
+    r.write(
+        "docs/contracts/new.md",
+        &EVENTS.replace("status: active\n", "status: active\ntype: requirements\n"),
+    );
+    r.commit("finish dose");
+    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    let got = messages(&out, "SD914");
+    assert!(
+        got.iter()
+            .any(|l| l.contains("`contracts/new` is a `requirements` document, not an interface")),
+        "{out}"
+    );
+}

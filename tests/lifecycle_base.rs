@@ -1184,3 +1184,34 @@ fn finish_reads_the_branch_of_the_config_for_each_policy() {
         assert!(!r.dir.join("docs/intent/dose").exists(), "{policy}");
     }
 }
+
+#[test]
+fn an_add_item_with_a_glob_id_does_not_widen_the_scope_of_sd913() {
+    let r = start(|r| {
+        r.write(INTENT, &intent("accepted", "higher-risk"));
+        r.write(
+            SPEC,
+            "---\nstatus: approved\n---\n# Spec\n\n## Interfaces\n\n- ADD interfaces/*: anything.\n",
+        );
+        r.write(PLAN, &plan("approved", &["src/a.txt"]));
+    });
+    r.write(
+        INTENT,
+        &intent("accepted", "higher-risk").replace("too high", "too big"),
+    );
+    r.write("docs/interfaces/http.md", &HTTP.replace("200", "201"));
+    r.write("src/other.py", "y = 2\n");
+    let (_, out) = check(&r);
+    let found = lines(&out, "SD913");
+    assert_eq!(found.len(), 2, "{out}");
+    assert!(
+        found
+            .iter()
+            .any(|l| l.starts_with("docs/interfaces/http.md:")),
+        "{out}"
+    );
+    assert!(
+        found.iter().any(|l| l.starts_with("src/other.py:")),
+        "{out}"
+    );
+}
