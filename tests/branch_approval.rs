@@ -899,10 +899,9 @@ fn the_last_approval_gives_an_item_also_when_no_work_depends_on_it() {
     );
 }
 
-// D7 and D8 in branch mode (the code of `next` and `status` is part C, t13)
+// D7 and D8 in branch mode (the lines of `next` and `status`)
 
 #[test]
-#[ignore = "part C: t13"]
 fn next_tells_the_approver_to_commit_the_status_line_alone() {
     let r = start_branch();
     step_intent_draft(&r);
@@ -922,7 +921,6 @@ fn next_tells_the_approver_to_commit_the_status_line_alone() {
 }
 
 #[test]
-#[ignore = "part C: t13"]
 fn status_names_the_source_of_each_approval() {
     let r = start_branch();
     first_four(&r);
@@ -944,7 +942,6 @@ fn status_names_the_source_of_each_approval() {
 }
 
 #[test]
-#[ignore = "part C: t13"]
 fn status_names_base_as_the_source_of_an_approval_of_the_base_tree() {
     let r = Repo::with_config(&config(&branch_keys(&[APPROVER])));
     r.write(REQ, VALVES);

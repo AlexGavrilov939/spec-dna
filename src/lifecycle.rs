@@ -1317,6 +1317,7 @@ fn born_change(ctx: &Ctx, folder: &str) -> (Change, Box<Corpus>) {
             spec: None,
             plan: None,
             class: Class::Routine,
+            class_unset: false,
             areas: Vec::new(),
             from: None,
         });

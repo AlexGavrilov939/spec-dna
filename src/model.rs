@@ -242,6 +242,10 @@ pub struct Doc {
     /// is not a class gives SD302 and is `routine` too. Any other document
     /// has `routine` and no meaning for it.
     pub class: Class,
+    /// True if an `intent` has a valid `class`. An absent, an empty and an
+    /// invalid `class` give false (design 0.7.0, section 15). `next` and
+    /// `status` then give no class, and `check` still reads `routine`.
+    pub class_set: bool,
     /// The `areas` of an `intent`: the names of the areas that the change
     /// touches. Any other document has none.
     pub areas: Vec<String>,
@@ -791,6 +795,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             owner,
             was_type: None,
             class: Class::Routine,
+            class_set: false,
             areas: Vec::new(),
             from: None,
             issues,
@@ -914,12 +919,16 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         None => {}
     }
     let mut class = Class::Routine;
+    let mut class_set = false;
     let mut areas: Vec<String> = Vec::new();
     let mut from = None;
     if ty == DocType::Intent && !type_failed {
         if let Some((v, line)) = scalar("class", &mut issues).filter(|(v, _)| !v.is_empty()) {
             match Class::from_name(&v) {
-                Some(c) => class = c,
+                Some(c) => {
+                    class = c;
+                    class_set = true;
+                }
                 None => {
                     let hint = if v == "small-fix" {
                         "; a small fix has no intent, so delete the intent or use `routine`"
@@ -1185,6 +1194,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         owner,
         was_type: was_type.map(|(s, _)| s),
         class,
+        class_set,
         areas,
         from,
         issues,

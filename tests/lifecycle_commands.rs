@@ -612,7 +612,6 @@ fn an_incident_with_an_open_follow_up_is_listed_by_status() {
 }
 
 #[test]
-#[ignore = "part C: t13"]
 fn an_open_follow_up_names_the_skill_post_mortem() {
     let r = start();
     r.write(
@@ -650,7 +649,6 @@ fn intent_with_class_line(status: &str, raw: Option<&str>) -> String {
 const NO_CLASS: [Option<&str>; 3] = [None, Some("class:"), Some("class: urgent")];
 
 #[test]
-#[ignore = "part C: t13"]
 fn an_intent_with_no_class_has_the_class_null_and_the_stage_plan() {
     for raw in NO_CLASS {
         let r = start();
@@ -667,14 +665,13 @@ fn an_intent_with_no_class_has_the_class_null_and_the_stage_plan() {
         );
         let text = next_text(&r);
         assert!(
-            text.starts_with("change dose (none), stage plan\nbase "),
+            text.starts_with("change dose (class not set), stage plan\nbase "),
             "{raw:?}: {text}"
         );
     }
 }
 
 #[test]
-#[ignore = "part C: t13"]
 fn the_last_line_of_an_intent_with_no_class_asks_for_the_class_before_the_approval() {
     for status in ["draft", "accepted"] {
         for raw in NO_CLASS {
@@ -686,10 +683,19 @@ fn the_last_line_of_an_intent_with_no_class_asks_for_the_class_before_the_approv
                 last.contains("class") && last.contains("docs/intent/dose/intent.md"),
                 "{status} {raw:?}: {text}"
             );
-            assert!(
-                !last.contains("status: accepted"),
-                "{status} {raw:?}: {text}"
-            );
+            // A draft intent: the class comes first, then the status. An
+            // accepted intent needs no status.
+            match status {
+                "draft" => {
+                    let class_at = last.find("class: routine").unwrap();
+                    let status_at = last.find("status: accepted").unwrap();
+                    assert!(class_at < status_at, "{status} {raw:?}: {text}");
+                }
+                _ => assert!(
+                    !last.contains("status: accepted"),
+                    "{status} {raw:?}: {text}"
+                ),
+            }
             assert!(
                 last.ends_with("[skill: brainstorm]"),
                 "{status} {raw:?}: {text}"
@@ -715,7 +721,6 @@ fn check_still_reads_an_intent_with_no_class_as_routine() {
 }
 
 #[test]
-#[ignore = "part C: t13"]
 fn a_change_with_no_plan_or_no_spec_has_no_approval_line() {
     // A routine change with no `plan.md`: the line asks to write it, and no
     // line asks to approve it.
