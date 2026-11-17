@@ -254,7 +254,6 @@ fn a_glob_or_a_folder_in_files_gives_sd923() {
         ("`src/*.rs`", "the glob `src/*.rs`"),
         ("`src/**/a.rs`", "the glob `src/**/a.rs`"),
         ("`src/a?.rs`", "the glob `src/a?.rs`"),
-        ("`src/[ab].rs`", "the glob `src/[ab].rs`"),
         ("`docs/guides/`", "the folder `docs/guides/`"),
         // The tree has the folder `src`, so it is a folder with no final `/`.
         ("`src`", "the folder `src`"),
@@ -485,4 +484,46 @@ fn only_a_new_task_diagnostic_fails_the_gate() {
     let got = lines(&out, "SD923");
     assert_eq!(got.len(), 1, "{out}");
     assert!(got[0].contains("the task `t2`"), "{out}");
+}
+
+// A `[` in a path
+
+#[test]
+fn a_task_path_with_brackets_is_an_exact_path() {
+    // `[` and `]` are plain characters: the scope, SD910 and SD913 read them
+    // so, and a common web framework has such folders. A glob has `*` or `?`
+    // only.
+    for files in ["`app/[id]/page.tsx`", "`src/[ab].rs`", "app/[id]/page.tsx"] {
+        never(
+            "SD923",
+            "",
+            &format!("- [ ] t1: Write it. Files: {files}. Verify: `cargo test`."),
+        );
+    }
+}
+
+#[test]
+fn a_files_path_with_brackets_matches_the_same_path() {
+    // Guard: the base tree approves the plan, and the head edits the file of
+    // the path with brackets. The scope reads the path as it is, so no gate
+    // reports the edit.
+    let r = repo_with(&config("strict", ""));
+    r.write("app/[id]/page.tsx", "export {};\n");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\n---\n# Dose\n\n## Intent\n\nText.\n",
+    );
+    r.write(
+        "docs/intent/dose/plan.md",
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `app/[id]/page.tsx`\n\n## Order\n\n- [ ] t1: Write it. Files: `app/[id]/page.tsx`. Verify: `cargo test`.\n\n## Proof\n\n- A test.\n",
+    );
+    r.commit("base");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("app/[id]/page.tsx", "export const a = 1;\n");
+    r.commit("edit");
+    let (code, out, err) = r.run(&["check", "--base", "main"]);
+    for c in ["SD910", "SD913", "SD923"] {
+        assert!(lines(&out, c).is_empty(), "{c}: {out}{err}");
+    }
+    assert_eq!(code, 0, "{out}{err}");
 }

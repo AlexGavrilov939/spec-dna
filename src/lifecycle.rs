@@ -802,7 +802,9 @@ fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
                 }
                 for p in &t.files {
                     let dir = p.trim_start_matches("./").trim_end_matches('/');
-                    if p.contains(['*', '?', '[']) {
+                    // One definition of a glob: `*` or `?`. `[` and `]` are plain
+                    // characters, as in the scope of the change (ADR 0019).
+                    if crate::glob::is_glob(p) {
                         problems.push(format!("its `Files:` has the glob `{p}`"));
                     } else if p.ends_with('/') || c.dirs.contains(dir) {
                         problems.push(format!("its `Files:` has the folder `{p}`"));
@@ -1678,8 +1680,8 @@ fn sd910_tail(branch: Option<&Branch>, base_text: &str, fail: &Fail) -> String {
 /// under the `Files` of a change, and no such change has an `approved` plan in
 /// the base tree. With `approval = "branch"`, an approval commit of the branch
 /// before the work also counts (D11), the statuses that the branch sets need an
-/// approval commit (the last approval), and the message names one reason of 8
-/// (D17). The second value is the approval commits that cleared a gate.
+/// approval commit (the last approval), and the message names one reason of 9
+/// (D17 and ADR 0019). The second value is the approval commits that cleared a gate.
 fn approval_missing(
     ctx: &Ctx,
     changes: &[DiffChange],
@@ -1704,7 +1706,7 @@ fn approval_missing(
                 Some(_) => format!(
                     "the change `{}` was added and finished in this branch, and the base tree has no approval of it; {}",
                     c.slug,
-                    Reason::Born.sentence(None)
+                    Reason::Born.sentence(None, None)
                 ),
                 None => format!(
                     "the change `{}` was added and finished in this branch, and the base tree has no approval of it; get the approval of each artifact into the base first (reason {})",

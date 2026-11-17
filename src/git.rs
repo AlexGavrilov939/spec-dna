@@ -106,6 +106,13 @@ pub struct BranchWalk {
     pub shallow: bool,
 }
 
+/// True if `token` is the status of a record of `diff-tree --name-status`:
+/// capital letters only, one for each parent. A commit id has digits and small
+/// letters, so it is no status.
+fn is_status(token: &[u8]) -> bool {
+    !token.is_empty() && token.iter().all(|b| b"ACDMRTUXB".contains(b))
+}
+
 #[derive(Default)]
 pub struct Status {
     /// Tracked files whose working-tree content differs from the index.
@@ -552,53 +559,57 @@ impl Git {
     /// repository has: it never fetches. `base` and `head` are revisions, such
     /// as a commit id.
     ///
-    /// The walk reads 3 things apart, and it never parses a path and a commit
-    /// header from one stream. A file name can hold any byte but NUL, so a
-    /// name can look like a header. `rev-list` gives the commits and their
-    /// parents, one commit on each line. `log` gives the e-mail of each
-    /// commit, and the commit must be in the first list. `diff-tree` gives the
-    /// paths of one commit at a time, as NUL-separated records. For a merge
+    /// The walk runs a fixed number of git processes, whatever the number of
+    /// commits (ADR 0019): `log` gives the commits with their parents and
+    /// e-mails, and one `diff-tree --stdin` gives the paths of all commits.
+    /// `merge-base` and `rev-parse --is-shallow-repository` are the other 2.
+    ///
+    /// The walk never parses a path and a commit header from one stream
+    /// without a rule. A file name can hold any byte but NUL, so a name can
+    /// look like a header. `log -z` gives 3 NUL-separated fields for each
+    /// commit: the id, the parents and the e-mail. `diff-tree --stdin -z` gets
+    /// the ids from the walk, one for each line, and gives for each commit its
+    /// id, then the records of its paths: a status, then a path. A record is
+    /// read by its place. A token that is in the place of a status is a status
+    /// (letters only) or a commit id of the walk, and the token after a status
+    /// is always a path, so no name is read as a header. A commit with no
+    /// path, such as an empty commit, has no header in the output. For a merge
     /// commit the paths are the ones that differ from each parent: the work
     /// that the merge itself does (a conflict fix, or a new file), not the
     /// changes that it takes from a parent.
     pub fn branch_walk(&self, base: &str, head: &str) -> Result<BranchWalk, String> {
         let range = format!("{base}..{head}");
         let listed = self.run_offline(&[
-            "rev-list",
+            "log",
             "--reverse",
             "--topo-order",
-            "--parents",
+            "-z",
+            "--format=%H%x00%P%x00%ae",
             &range,
             "--",
         ])?;
         let mut commits: Vec<BranchCommit> = Vec::new();
-        for line in String::from_utf8_lossy(&listed).lines() {
-            let mut ids = line.split(' ').filter(|p| !p.is_empty());
-            let Some(commit) = ids.next() else { continue };
+        let mut fields = listed.split(|b| *b == 0);
+        // The email of the author is as the commit stores it. `-z` ends each
+        // record with NUL, so the last field is empty.
+        while let (Some(id), Some(parents), Some(email)) =
+            (fields.next(), fields.next(), fields.next())
+        {
+            if id.is_empty() {
+                return Err("git gave an empty commit id".to_string());
+            }
             commits.push(BranchCommit {
-                commit: commit.to_string(),
-                parents: ids.map(str::to_string).collect(),
-                author_email: String::new(),
+                commit: String::from_utf8_lossy(id).into_owned(),
+                parents: String::from_utf8_lossy(parents)
+                    .split(' ')
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                author_email: String::from_utf8_lossy(email).into_owned(),
                 paths: Vec::new(),
             });
         }
-        // The e-mail of the author, as the commit stores it. A line is
-        // `<id> <e-mail>`: an e-mail has no line feed.
-        let emails = self.run_offline(&["log", "--format=%H %ae", &range, "--"])?;
-        let mut email_of: HashMap<&str, &str> = HashMap::new();
-        let emails = String::from_utf8_lossy(&emails).into_owned();
-        for line in emails.lines() {
-            if let Some((id, email)) = line.split_once(' ') {
-                email_of.insert(id, email);
-            }
-        }
-        for c in &mut commits {
-            c.author_email = email_of
-                .get(c.commit.as_str())
-                .ok_or_else(|| format!("git gave no author for the commit {}", c.commit))?
-                .to_string();
-            c.paths = self.commit_paths(c)?;
-        }
+        self.batch_paths(&mut commits)?;
         Ok(BranchWalk {
             commits,
             merge_base: self.merge_base(base, head),
@@ -606,14 +617,75 @@ impl Git {
         })
     }
 
-    /// The paths that a commit of the walk changed (`branch_walk`).
-    fn commit_paths(&self, c: &BranchCommit) -> Result<Vec<(String, PathChange)>, String> {
+    /// Fills the paths of the commits with one `git diff-tree --stdin`. A
+    /// single commit is compared with its parent (a root commit with the empty
+    /// tree), so the kinds have the direction of the commit. A merge commit
+    /// lists the paths that differ from each parent (`-c`), all with the kind
+    /// `Modified`. The diff has no rename detection.
+    fn batch_paths(&self, commits: &mut [BranchCommit]) -> Result<(), String> {
+        if commits.is_empty() {
+            return Ok(());
+        }
+        let ids: String = commits.iter().map(|c| format!("{}\n", c.commit)).collect();
+        let out = self.run_with_input(
+            &[
+                "diff-tree",
+                "--stdin",
+                "-r",
+                "-z",
+                "--root",
+                "--no-renames",
+                "--name-status",
+                "-c",
+            ],
+            ids,
+        )?;
+        let index: HashMap<&str, usize> = commits
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.commit.as_str(), i))
+            .collect();
+        let mut found: Vec<Vec<(String, PathChange)>> = vec![Vec::new(); commits.len()];
+        let mut at: Option<usize> = None;
+        let mut tokens = out.split(|b| *b == 0).filter(|t| !t.is_empty());
+        while let Some(token) = tokens.next() {
+            if is_status(token) {
+                // The token after a status is a path, whatever its text.
+                let (Some(i), Some(path)) = (at, tokens.next()) else {
+                    return Err("git gave a path with no commit".to_string());
+                };
+                let kind = match token.first() {
+                    _ if commits[i].parents.len() > 1 => PathChange::Modified,
+                    Some(b'A') => PathChange::Added,
+                    Some(b'D') => PathChange::Deleted,
+                    _ => PathChange::Modified,
+                };
+                found[i].push((String::from_utf8_lossy(path).into_owned(), kind));
+            } else if let Some(i) = std::str::from_utf8(token).ok().and_then(|t| index.get(t)) {
+                at = Some(*i);
+            } else {
+                return Err("git gave a record that is no commit and no status".to_string());
+            }
+        }
+        for (c, paths) in commits.iter_mut().zip(found) {
+            c.paths = paths;
+        }
+        Ok(())
+    }
+
+    /// The paths that a commit changed, from one process for the commit. The
+    /// batched walk must give the same result (test oracle).
+    #[cfg(test)]
+    fn commit_paths_each(&self, c: &BranchCommit) -> Result<Vec<(String, PathChange)>, String> {
+        // The `--` ends the revisions. The form of 0.7.0 part A had none, so
+        // a file named like a commit id of the branch stopped the walk.
         let mut args: Vec<&str> = vec!["diff-tree", "-r", "-z", "--no-commit-id"];
         match c.parents.as_slice() {
             [] => args.extend(["--root", "--name-status", "--no-renames", &c.commit]),
             [parent] => args.extend(["--name-status", "--no-renames", parent, &c.commit]),
             _ => args.extend(["-c", "--name-only", &c.commit]),
         }
+        args.push("--");
         let out = self.run_offline(&args)?;
         let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
         let mut paths = Vec::new();
@@ -1183,6 +1255,21 @@ impl Git {
             return Ok(got.into_iter().next().flatten());
         }
         Ok(std::fs::read(self.root.join(path)).ok())
+    }
+
+    /// True if the head entry of `path` is a symbolic link: the file of the
+    /// working tree, or the entry of the git index (mode 120000) for a
+    /// `staged` `Git`. The path is from the repository root. A path that is
+    /// absent gives `false`. The 2 modes give one answer for a link, where
+    /// `head_file` gives the target in the working tree and the link text in
+    /// the index (ADR 0019).
+    pub fn head_is_symlink(&self, path: &str) -> bool {
+        if self.staged {
+            return self
+                .run(&["ls-files", "-s", "-z", "--", path])
+                .is_ok_and(|out| out.starts_with(b"120000 "));
+        }
+        std::fs::symlink_metadata(self.root.join(path)).is_ok_and(|m| m.file_type().is_symlink())
     }
 
     /// Runs a git command with `input` on its standard input.
@@ -1806,6 +1893,130 @@ mod tests {
         }
     }
 
+    /// Adds a file with a name that is not UTF-8 to the index (unix only).
+    #[cfg(unix)]
+    fn add_odd_name(t: &Tmp) {
+        use std::ffi::{OsStr, OsString};
+        use std::os::unix::ffi::OsStrExt;
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&t.dir)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let oid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let mut spec = OsString::from(format!("100644,{oid},"));
+        spec.push(OsStr::from_bytes(b"odd\xffname.txt"));
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&t.dir)
+            .args(["update-index", "--add", "--cacheinfo"])
+            .arg(spec)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn the_batched_walk_gives_the_paths_of_each_commit() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        // A branch with its own root commit, so that the range lists it.
+        t.git(&["checkout", "-q", "--orphan", "work"]);
+        t.git(&["rm", "-q", "-r", "-f", "."]);
+        // Names that look like the records of the output of git: an id, a
+        // status letter, and a name with a space and a line feed.
+        t.write(&base, "x\n");
+        t.write("M", "x\n");
+        t.write("MM", "x\n");
+        t.write("sp ace.txt", "x\n");
+        t.write("line\nfeed.txt", "x\n");
+        #[cfg(unix)]
+        add_odd_name(&t);
+        let root = t.commit("root@example.test", "root");
+        // A modify, an add, a delete and a rename.
+        t.write("M", "y\n");
+        t.write("new.txt", "n\n");
+        t.git(&["rm", "-q", "MM"]);
+        t.git(&["mv", "sp ace.txt", "moved name.txt"]);
+        let edit = t.commit("edit@example.test", "edit");
+        // An empty commit has no path.
+        let empty = t.commit("empty@example.test", "empty");
+        // A neutral merge of a branch that adds one file, and a merge that adds
+        // a file of its own.
+        t.git(&["checkout", "-q", "-b", "side", &base]);
+        t.write("side.txt", "s\n");
+        t.commit("side@example.test", "side");
+        t.git(&["checkout", "-q", "work"]);
+        t.git(&[
+            "merge",
+            "-q",
+            "--no-ff",
+            "--allow-unrelated-histories",
+            "-m",
+            "merge side",
+            "side",
+        ]);
+        t.git(&["checkout", "-q", "-b", "side2", &edit]);
+        t.write("side2.txt", "s\n");
+        t.commit("side2@example.test", "side2");
+        t.git(&["checkout", "-q", "work"]);
+        t.git(&[
+            "merge",
+            "-q",
+            "--no-ff",
+            "--no-commit",
+            "-m",
+            "merge side2",
+            "side2",
+        ]);
+        t.write("merge-work.txt", "w\n");
+        t.git(&["add", "-A"]);
+        t.git(&["commit", "-q", "--no-edit"]);
+        t.write("last.txt", "l\n");
+        t.commit("last@example.test", "last");
+        let g = Git::new(&t.dir);
+        let w = g.branch_walk(&base, "HEAD").unwrap();
+        assert!(w.commits.len() >= 8, "{}", w.commits.len());
+        assert!(w.commits.iter().any(|c| c.commit == root));
+        assert!(w.commits.iter().any(|c| c.commit == empty));
+        assert!(w.commits.iter().any(|c| c.parents.len() > 1));
+        // Each commit has the paths of the form with one process for each
+        // commit, with the same kinds and the same order.
+        for c in &w.commits {
+            let old = g.commit_paths_each(c).unwrap();
+            assert_eq!(c.paths, old, "commit {} ({})", c.commit, c.author_email);
+        }
+        let by = |id: &str| w.commits.iter().find(|c| c.commit == id).unwrap();
+        assert!(by(&empty).paths.is_empty());
+        let edit_paths: Vec<(&str, PathChange)> = by(&edit)
+            .paths
+            .iter()
+            .map(|(p, k)| (p.as_str(), *k))
+            .collect();
+        assert!(edit_paths.contains(&("MM", PathChange::Deleted)));
+        assert!(edit_paths.contains(&("new.txt", PathChange::Added)));
+        assert!(edit_paths.contains(&("M", PathChange::Modified)));
+        // The rename is a deletion and an addition.
+        assert!(edit_paths.contains(&("sp ace.txt", PathChange::Deleted)));
+        assert!(edit_paths.contains(&("moved name.txt", PathChange::Added)));
+        // The names that look like a header are paths of the root commit.
+        let root_paths: Vec<&str> = by(&root).paths.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(root_paths.contains(&base.as_str()));
+        assert!(root_paths.contains(&"line\nfeed.txt"));
+        assert!(by(&root).paths.iter().all(|(_, k)| *k == PathChange::Added));
+        // The merge of its own work lists that file, with the kind `Modified`.
+        let merge = w
+            .commits
+            .iter()
+            .find(|c| c.paths.iter().any(|(p, _)| p == "merge-work.txt"))
+            .unwrap();
+        assert!(merge.parents.len() > 1);
+        assert!(merge.paths.iter().all(|(_, k)| *k == PathChange::Modified));
+    }
+
     #[test]
     fn the_walk_goes_from_the_oldest_with_email_parents_and_paths() {
         let t = Tmp::new();
@@ -2042,6 +2253,21 @@ mod tests {
         assert_eq!(w.merge_base, None);
         // The boundary commit of the head has no parent in the listing.
         assert!(w.commits.iter().any(|c| c.parents.is_empty()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn head_is_symlink_gives_one_answer_in_both_modes() {
+        let t = Tmp::new();
+        t.write("real.txt", "a\n");
+        std::os::unix::fs::symlink("real.txt", t.dir.join("link.txt")).unwrap();
+        t.commit("a@example.test", "base");
+        let g = Git::new(&t.dir);
+        for g in [g.staged(), g] {
+            assert!(g.head_is_symlink("link.txt"));
+            assert!(!g.head_is_symlink("real.txt"));
+            assert!(!g.head_is_symlink("absent.txt"));
+        }
     }
 
     #[test]

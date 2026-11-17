@@ -189,6 +189,8 @@ The rules are about the form only. A token such as `n/a` or `**src/a.py**` passe
 
 A plain path has the same meaning as the same text in a code span. A final `/` matches the folder and all files in it.
 
+A glob has `*` or `?`. `[` and `]` are plain characters in a path: `app/[id]/page.tsx` names that file, and the scope, SD910, SD913 and SD923 read it so. Write a path with `[` in a code span. An unbalanced `[` in a plain path stops the split of a `Files:` label at a comma.
+
 The patterns of a plan are the paths of its section `Files`, then the `Files:` paths of its tasks of `Order`, with no repeat. Each reader of the scope uses this list: the checks SD905, SD910, SD911, SD913, SD915, SD916, SD917 and SD921, `finish`, `stats --sdlc`, `status` and `next`. A plan can list its paths only in its tasks.
 
 A plan can state that the work edits no file. The `Files` section then has one item only, a list item, and the item starts with the word `none` in any case, such as `- none: research only`. The word ends at the first character that is not a letter or a digit, so `nonexistent` is not the word. Such a plan lists no file when no task of `Order` has a path in `Files:`. In that case, the item is not a wrong item: `next` and `status` do not name it, and the messages of SD913 and SD915 do not name it. For a routine change, `next` and `status` then show `[x] the plan lists no files: the change edits no file` in place of the step of the files ([commands.md](commands.md#next)). A higher-risk change keeps the step of the files, because its spec has a delta.

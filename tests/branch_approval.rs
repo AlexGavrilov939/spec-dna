@@ -889,7 +889,8 @@ fn a_status_set_back_to_draft_takes_the_approval_away() {
     step_code(&r);
     let (code, out, found) = check(&r);
     // A `draft` plan needs no approval, but the code needs an approved plan.
-    assert_eq!(found, want(&[(CODE, 2), (TEST, 2)]), "{out}");
+    // The step back names reason 9 (ADR 0019), where 0.7.0 part A gave reason 2.
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
@@ -1543,9 +1544,12 @@ fn a_plan_set_back_to_draft_and_approved_again_takes_its_new_files() {
         "spec back to draft, delta edit",
         &[(SPEC, &edited)],
     );
+    // Between the step back and the new approval commit, the approved plan
+    // has no approved spec at the head (reason 9, ADR 0019). The approval
+    // commit below clears it.
     let (code, out, found) = check(&r);
-    assert_eq!(found, want(&[]), "{out}");
-    assert_eq!(code, 0, "{out}");
+    assert_eq!(found, want(&[(PLAN, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
     let edited = spec("approved").replace(ADD, ADD_AFTER_SPIKE);
     step(&r, APPROVER, "approve spec again", &[(SPEC, &edited)]);
     // The plan lists one more path. The same 2 commits approve it.
@@ -1566,4 +1570,228 @@ fn a_plan_set_back_to_draft_and_approved_again_takes_its_new_files() {
     let (code, out, found) = check(&r);
     assert_eq!(found, want(&[]), "{out}");
     assert_eq!(code, 0, "{out}");
+}
+
+// A step back after the approval (reason 9)
+
+/// The commits up to the approval commit of the plan (no code).
+fn approved_plan(r: &Repo) {
+    first_four(r);
+    step_plan_draft(r);
+    step_plan_approved(r, APPROVER);
+}
+
+/// A commit of the agent that sets the plan back to `draft`.
+fn step_plan_back(r: &Repo) {
+    step(
+        r,
+        AGENT,
+        "plan back to draft",
+        &[(PLAN, &plan("draft", &FILES))],
+    );
+}
+
+/// The first 12 characters of the id of `HEAD`.
+fn short_head(r: &Repo) -> String {
+    r.git_out(&["rev-parse", "HEAD"])[..12].to_string()
+}
+
+#[test]
+fn a_plan_set_back_to_draft_after_the_code_gives_reason_9() {
+    // The branch approves the plan, adds the code and sets the plan back to
+    // `draft`. A squash merge would put the code and a `draft` plan on the
+    // default branch, as `approval = "base"` reports (reason 1).
+    let r = start_branch();
+    ok_flow(&r);
+    step_plan_back(&r);
+    let back = short_head(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+    let msg = &findings_of(&out)[0].1;
+    assert!(msg.contains(&format!("the commit {back} set `{PLAN}` back to `draft`")));
+    assert!(msg.contains("after its approval"), "{msg}");
+    assert!(
+        msg.contains("approve it again with an approval commit"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn code_after_a_plan_set_back_to_draft_gives_reason_9() {
+    let r = start_branch();
+    approved_plan(&r);
+    step_plan_back(&r);
+    let back = short_head(&r);
+    step_code(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+    assert!(findings_of(&out)[0].1.contains(&back), "{out}");
+}
+
+#[test]
+fn work_between_a_draft_and_a_new_approval_gives_sd910() {
+    // The code comes after the step back and before the new approval commit.
+    // The head plan is `approved`, but no approval holds at the commit of the
+    // code.
+    let r = start_branch();
+    approved_plan(&r);
+    step_plan_back(&r);
+    step_code(&r);
+    step_plan_approved(&r, APPROVER);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_plan_approved_again_clears_the_work_after_the_new_approval() {
+    // Guard: the new approval commit clears the work after it, and the
+    // earlier commits stay as they were.
+    let r = start_branch();
+    approved_plan(&r);
+    step_plan_back(&r);
+    step_plan_approved(&r, APPROVER);
+    step_code(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_plan_set_back_to_draft_in_the_working_tree_gives_reason_9() {
+    // No commit holds the step back, so the message names the working tree.
+    let r = start_branch();
+    ok_flow(&r);
+    r.write(PLAN, &plan("draft", &FILES));
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        findings_of(&out)[0]
+            .1
+            .contains(&format!("the working tree set `{PLAN}` back to `draft`")),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_intent_set_back_to_draft_after_its_spec_gives_reason_9() {
+    let r = start_branch();
+    first_four(&r);
+    step_intent_back(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(SPEC, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+fn step_intent_back(r: &Repo) {
+    step(
+        r,
+        AGENT,
+        "intent back to draft",
+        &[(INTENT, &intent("draft", "higher-risk"))],
+    );
+}
+
+/// A repository whose base tree holds the change with an `accepted` intent, an
+/// `approved` spec and an `approved` plan. The branch is `feature`.
+fn start_with_approved_base() -> Repo {
+    let r = Repo::with_config(&config(&branch_keys(&[APPROVER])));
+    r.write(REQ, VALVES);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write(INTENT, &intent("accepted", "higher-risk"));
+    r.write(SPEC, &spec("approved"));
+    r.write(PLAN, &plan("approved", &FILES));
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r
+}
+
+#[test]
+fn a_base_plan_set_back_to_draft_gives_sd401_and_no_reason_9() {
+    // Guard: an approval of the base tree keeps the result of 0.6. The code
+    // comes before the step back and stays clear, and SD401 reports the move.
+    let r = start_with_approved_base();
+    step_code(&r);
+    step_plan_back(&r);
+    // SD401 compares the 2 trees, so it needs the explicit base.
+    let (code, out, err) = r.run(&["check", "--base", "main"]);
+    assert!(findings_of(&out).is_empty(), "{out}{err}");
+    assert!(out.contains("SD401 status-transition"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn finish_in_the_branch_keeps_the_approval_of_a_deleted_artifact() {
+    // Guard: the base tree has the change with an `accepted` intent and 2
+    // drafts. The branch approves the spec and the plan, adds the code and
+    // deletes the folder of the change. The head has no artifact, so the head
+    // rule reads none.
+    let r = Repo::with_config(&config(&branch_keys(&[APPROVER])));
+    r.write(REQ, VALVES);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write(INTENT, &intent("accepted", "higher-risk"));
+    r.write(SPEC, &spec("draft"));
+    r.write(PLAN, &plan("draft", &FILES));
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    step_spec_approved(&r, APPROVER);
+    step_plan_approved(&r, APPROVER);
+    step_code(&r);
+    r.git(&["rm", "-q", "-r", DIR]);
+    r.commit_as("finish", AGENT);
+    let (_, out, found) = check(&r);
+    assert!(found.iter().all(|(_, n)| *n != 9), "{out}");
+    assert_eq!(found, want(&[]), "{out}");
+}
+
+// The git access of the walk
+
+#[test]
+fn the_walk_runs_the_same_number_of_git_processes_for_each_branch() {
+    // A fixed number of processes: the commits of the branch do not count.
+    // The trace of git lists each process that `check` starts.
+    let count = |commits: usize| {
+        let r = start_branch();
+        step_intent_draft(&r);
+        for i in 0..commits {
+            step(
+                &r,
+                AGENT,
+                "edit",
+                &[("README.md", &format!("# Valves {i}\n"))],
+            );
+        }
+        let trace = r.dir.join("trace.json");
+        let (code, out, err) = r.run_env(
+            &["check", "--no-cache"],
+            &[("GIT_TRACE2_EVENT", trace.to_str().unwrap())],
+            &[],
+        );
+        assert!(code == 0 || code == 1, "{out}{err}");
+        let text = std::fs::read_to_string(&trace).unwrap();
+        let all = text
+            .lines()
+            .filter(|l| l.contains("\"event\":\"start\""))
+            .count();
+        let diff_tree = text
+            .lines()
+            .filter(|l| l.contains("\"event\":\"start\"") && l.contains("\"diff-tree\""))
+            .count();
+        (all, diff_tree)
+    };
+    let (few, few_diff_tree) = count(3);
+    let (many, many_diff_tree) = count(30);
+    assert_eq!(few_diff_tree, 1);
+    assert_eq!(many_diff_tree, 1);
+    assert_eq!(
+        few, many,
+        "the number of git processes depends on the commits"
+    );
 }

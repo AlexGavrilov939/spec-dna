@@ -10,6 +10,12 @@
 //! approval of the artifact come before it? The order is the order of the
 //! ancestry, never the date of a commit.
 //!
+//! An approval of the branch holds only while the artifact keeps its approval
+//! status at the head (ADR 0019, reason 9). A later commit, or the working
+//! tree, that sets it back takes the approval away from the work that used it,
+//! and from the work between the step back and a new approval commit. An
+//! approval of the base tree is not read so: SD401 reports its step back.
+//!
 //! The rule fails closed (D13). A shallow clone with an incomplete range and
 //! a merge commit that is not neutral stop it: the branch then gives no
 //! approval, and SD910 reports as in 0.6. A working tree that differs from
@@ -25,7 +31,7 @@ use crate::parse::{ParsedDoc, parse};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// The reason of an SD910 finding (D17). Each message names one of the 8.
+/// The reason of an SD910 finding (D17). Each message names one of the 9.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
     /// 1: no approval in the base tree.
@@ -44,10 +50,12 @@ pub enum Reason {
     Born,
     /// 8: the path is not in the `Files` of the plan at the approval commit.
     Scope,
+    /// 9: a later commit set the artifact back after its approval.
+    TookBack,
 }
 
 impl Reason {
-    /// The number of the reason, from 1 to 8.
+    /// The number of the reason, from 1 to 9.
     pub fn number(self) -> u8 {
         match self {
             Reason::NoBase => 1,
@@ -58,12 +66,14 @@ impl Reason {
             Reason::Merge => 6,
             Reason::Born => 7,
             Reason::Scope => 8,
+            Reason::TookBack => 9,
         }
     }
 
     /// The end of a message: the number of the reason, what it means and its
     /// fix. `commit` is the commit that the reason names, if it has one.
-    pub fn sentence(self, commit: Option<&str>) -> String {
+    /// `back` is the artifact and the status of reason 9.
+    pub fn sentence(self, commit: Option<&str>, back: Option<&(String, String)>) -> String {
         let sha = commit.map_or(String::new(), |c| c[..c.len().min(12)].to_string());
         let n = self.number();
         match self {
@@ -91,6 +101,20 @@ impl Reason {
             Reason::Scope => format!(
                 "reason {n}: the path is not in the `Files` of the plan at the approval commit {sha}; put it in `Files` before the approval commit, or move the edit to a change of its own"
             ),
+            Reason::TookBack => {
+                let (path, status) = back.map_or(("the artifact", "its first status"), |(p, s)| {
+                    (p.as_str(), s.as_str())
+                });
+                // The working tree has no commit: it sets the status itself.
+                let who = if commit.is_some() {
+                    format!("the commit {sha}")
+                } else {
+                    "the working tree".to_string()
+                };
+                format!(
+                    "reason {n}: {who} set `{path}` back to `{status}` after its approval; approve it again with an approval commit before the work, or take the work out of the branch"
+                )
+            }
         }
     }
 }
@@ -100,6 +124,8 @@ impl Reason {
 pub struct Fail {
     pub reason: Reason,
     pub commit: Option<String>,
+    /// For reason 9: the artifact and the status that it was set back to.
+    back: Option<(String, String)>,
 }
 
 impl Fail {
@@ -107,6 +133,7 @@ impl Fail {
         Fail {
             reason,
             commit: None,
+            back: None,
         }
     }
 
@@ -114,12 +141,24 @@ impl Fail {
         Fail {
             reason,
             commit: Some(commit.to_string()),
+            back: None,
+        }
+    }
+
+    /// Reason 9: `commit` (or the working tree, with `None`) set `path` back
+    /// to `status`.
+    fn took_back(commit: Option<&str>, path: &str, status: &str) -> Fail {
+        Fail {
+            reason: Reason::TookBack,
+            commit: commit.map(str::to_string),
+            back: Some((path.to_string(), status.to_string())),
         }
     }
 
     /// The end of a message (`Reason::sentence`).
     pub fn sentence(&self) -> String {
-        self.reason.sentence(self.commit.as_deref())
+        self.reason
+            .sentence(self.commit.as_deref(), self.back.as_ref())
     }
 }
 
@@ -191,6 +230,9 @@ pub struct Branch {
     touches: HashMap<String, Vec<usize>>,
     /// The status of each artifact in the base tree.
     base: HashMap<String, String>,
+    /// The status of each artifact at the head: the working tree, or the index
+    /// with `--staged`. An artifact that the head does not have is not here.
+    head: HashMap<String, String>,
 }
 
 impl Branch {
@@ -209,7 +251,8 @@ impl Branch {
             n: 0,
             entries: HashMap::new(),
             touches: HashMap::new(),
-            base: base_statuses(base),
+            base: statuses(base),
+            head: statuses(head),
         };
         let walk = match git.branch_walk(base_rev, "HEAD") {
             Ok(w) => w,
@@ -320,7 +363,7 @@ impl Branch {
                             only_status_differs(&String::from_utf8_lossy(old), &new)
                         });
                 let how = if status != kind.wanted() {
-                    How::Unapproved(Fail::new(Reason::NoCommit))
+                    b.step_back(p, i, Some(c.commit.as_str()), &status)
                 } else if !author_ok {
                     How::Unapproved(Fail::at(Reason::Author, &c.commit))
                 } else if !status_only {
@@ -351,7 +394,10 @@ impl Branch {
         let n = b.n;
         for (p, k) in git.diff_paths("HEAD", true).unwrap_or_default() {
             b.touches.entry(p.clone()).or_default().push(n);
-            if kind_of(&dirs, &p).is_none() || k == PathChange::Deleted {
+            let Some(kind) = kind_of(&dirs, &p) else {
+                continue;
+            };
+            if k == PathChange::Deleted {
                 continue;
             }
             let Some(doc) = head.docs.iter().find(|d| d.path == p) else {
@@ -359,14 +405,31 @@ impl Branch {
             };
             let status = doc.status_str().to_string();
             if b.status_of(&p, n) != Some(status.as_str()) {
+                let how = if status != kind.wanted() {
+                    b.step_back(&p, n, None, &status)
+                } else {
+                    How::Unapproved(Fail::new(Reason::NoCommit))
+                };
                 b.entries.entry(p).or_default().push(Entry {
                     idx: n,
                     status,
-                    how: How::Unapproved(Fail::new(Reason::NoCommit)),
+                    how,
                 });
             }
         }
         b
+    }
+
+    /// The `how` of a change to a status that is not the approval status, at
+    /// the index `i` (reason 9). It is a step back when an approval commit of
+    /// the branch held the artifact before, or when an earlier step back has
+    /// not been approved again. Else no approval commit set the status.
+    fn step_back(&self, path: &str, i: usize, commit: Option<&str>, status: &str) -> How {
+        match self.entry_before(path, i).map(|e| &e.how) {
+            Some(How::Approved(_)) => How::Unapproved(Fail::took_back(commit, path, status)),
+            Some(How::Unapproved(f)) if f.reason == Reason::TookBack => How::Unapproved(f.clone()),
+            _ => How::Unapproved(Fail::new(Reason::NoCommit)),
+        }
     }
 
     /// The reason that stops the rule, or `None`.
@@ -407,12 +470,36 @@ impl Branch {
     fn need(&self, need_path: &str, status: &str, i: usize) -> Result<Source, Fail> {
         match self.entry_before(need_path, i) {
             Some(e) if e.status == status => match &e.how {
-                How::Approved(a) => Ok(Source::Branch(a.clone())),
+                How::Approved(a) => self.at_head(need_path, status, a),
                 How::Unapproved(f) => Err(f.clone()),
             },
+            // A step back that follows an approval commit of the branch.
+            Some(Entry {
+                how: How::Unapproved(f),
+                ..
+            }) if f.reason == Reason::TookBack => Err(f.clone()),
             Some(_) => Err(self.why_not(need_path, status, i)),
             None if self.base_status(need_path) == Some(status) => Ok(Source::Base),
             None => Err(self.why_not(need_path, status, i)),
+        }
+    }
+
+    /// The head rule: an approval commit holds while the artifact keeps the
+    /// status at the head. An artifact that the head does not have (`finish`
+    /// deleted its folder) keeps its approval. The reason names the first
+    /// change of the status after the approval commit.
+    fn at_head(&self, path: &str, status: &str, a: &Approval) -> Result<Source, Fail> {
+        match self.head.get(path) {
+            Some(now) if now != status => Err(self
+                .entries
+                .get(path)
+                .and_then(|v| v.iter().find(|e| e.idx > a.order))
+                .and_then(|e| match &e.how {
+                    How::Unapproved(f) if f.reason == Reason::TookBack => Some(f.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| Fail::took_back(None, path, now))),
+            _ => Ok(Source::Branch(a.clone())),
         }
     }
 
@@ -488,8 +575,8 @@ impl Branch {
     }
 }
 
-/// The status of each artifact of the base tree, by path.
-fn base_statuses(base: &Corpus) -> HashMap<String, String> {
+/// The status of each artifact of a tree, by path.
+fn statuses(base: &Corpus) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for ch in change::collect(base) {
         for a in [&ch.intent, &ch.spec, &ch.plan].into_iter().flatten() {
@@ -605,6 +692,20 @@ mod tests {
     }
 
     #[test]
+    fn reason_9_names_the_commit_or_the_working_tree_and_the_artifact() {
+        let f = Fail::took_back(Some("0123456789abcdef"), "docs/a/plan.md", "draft");
+        assert_eq!(
+            f.sentence(),
+            "reason 9: the commit 0123456789ab set `docs/a/plan.md` back to `draft` after its approval; approve it again with an approval commit before the work, or take the work out of the branch"
+        );
+        let f = Fail::took_back(None, "docs/a/plan.md", "draft");
+        assert!(
+            f.sentence()
+                .starts_with("reason 9: the working tree set `docs/a/plan.md` back to `draft`")
+        );
+    }
+
+    #[test]
     fn each_reason_has_a_number_and_names_it() {
         let all = [
             Reason::NoBase,
@@ -615,11 +716,12 @@ mod tests {
             Reason::Merge,
             Reason::Born,
             Reason::Scope,
+            Reason::TookBack,
         ];
         for (i, r) in all.iter().enumerate() {
             assert_eq!(r.number() as usize, i + 1);
             assert!(
-                r.sentence(Some("0123456789abcdef"))
+                r.sentence(Some("0123456789abcdef"), None)
                     .starts_with(&format!("reason {}:", i + 1))
             );
         }
