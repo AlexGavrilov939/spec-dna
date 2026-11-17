@@ -400,6 +400,25 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                     match done {
                         Done::Counted(side) => {
                             *pairs[gi][at].side_mut(arm) = Some(side);
+                            // The result is on the disk after each arm, so a
+                            // kill that nothing can trap (SIGKILL, a power
+                            // loss) loses no paid arm. The file says
+                            // `interrupted` until the end.
+                            if let Err(e) = persist(
+                                repo,
+                                &meta,
+                                &groups,
+                                &pairs,
+                                &state,
+                                Some(Stop::Interrupted),
+                                None,
+                                &mut written,
+                            ) {
+                                eprintln!(
+                                    "eval run: cannot write the partial result: {}",
+                                    e.message()
+                                );
+                            }
                         }
                         Done::Stop(s) => {
                             stopped = Some(s);
@@ -407,9 +426,8 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                         }
                     }
                 }
-                // The result is on the disk after each pair, so a crash or a
-                // kill loses no paid run. The file says `interrupted` until
-                // the end.
+                // The pair is complete: write the file again, so a half pair
+                // that the loop above kept is on the disk too.
                 if let Err(e) = persist(
                     repo,
                     &meta,

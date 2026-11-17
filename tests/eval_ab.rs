@@ -109,6 +109,7 @@ case "$mode" in
     sighup) kill -HUP $PPID; sleep 30 ;;
     sigint) kill -INT $PPID; sleep 30 ;;
     sigterm) kill -TERM $PPID; sleep 30 ;;
+    sigkill) kill -KILL $PPID; sleep 30 ;;
     snap) cp "$STUB_RESULTS"/skills-*.json "$STUB_DIR/snap-$n.json" 2>/dev/null ;;
     denied)
         echo 'status: done' > notes.txt
@@ -463,6 +464,28 @@ fn the_spend_above_the_cap_stops_the_run_and_writes_the_partial_result() {
     // No verdict for an incomplete skill.
     assert!(out.contains("\"verdict\":null"), "{out}");
     fx.assert_clean();
+}
+
+#[test]
+fn a_kill_after_the_first_arm_keeps_the_paid_arm_in_the_result_file() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The second call kills the runner with SIGKILL. The first call, the arm
+    // `with` of `tdd-1`, is paid, and the file must hold it.
+    fx.modes(&["ok", "sigkill"]);
+    let (code, _, _) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_ne!(code, 0);
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let text: String = fs::read_to_string(fx.repo.dir.join("evals/results").join(&names[0]))
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    assert!(text.contains("\"stopped\":\"interrupted\""), "{text}");
+    assert!(
+        text.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0"),
+        "{text}"
+    );
+    assert!(text.contains("\"without\":null"), "{text}");
 }
 
 // The tokens, the models and the checks of each side (eval-records, R1 and R4).

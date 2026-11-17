@@ -347,7 +347,7 @@ SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
 --min-pass-rate is a usage error with --ab. --ab isolates the runs by default
 (--no-isolate switches it off). An account limit, a credit or a login problem
 waits up to 6 hours. A run that takes more than 25 minutes (a check, 5 minutes)
-is killed and counts as failed. The result is written after each pair.
+is killed and counts as failed. The result is written after each arm of a pair.
 SIGHUP, SIGINT and SIGTERM write it and exit with 129, 130 and 143, and
 --resume <result file> goes on in it, and with a higher --runs it adds runs to
 each eval. An estimate above the cap prints a note, and the run starts and stops
