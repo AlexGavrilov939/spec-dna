@@ -276,8 +276,7 @@ fn assert_no_end(r: &Repo, what: &str) {
     assert_eq!(entries(&out), 0, "{what}: {out}");
     let (_, text, _) = r.run(&["stats", "--sdlc"]);
     assert!(
-        text.starts_with("1 change in the history: 0 finished, 0 closed, 1 open\n")
-            || text.starts_with("0 changes in the history: 0 finished, 0 closed, 0 open\n"),
+        text.starts_with("0 changes in the history: 0 finished, 0 closed, 0 open\n"),
         "{what}: {text}"
     );
 }
