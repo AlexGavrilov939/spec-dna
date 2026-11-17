@@ -51,7 +51,7 @@ status: approved
 - [x] t9: Add the key `protect-approvals` and the hook entry (`init-engineer`). Files: `src/harness.rs`, `src/init.rs`. Verify: `cargo test --test harness`.
 - [x] t10: Add the hook `protect-approvals` (`init-engineer`). Files: `src/hook.rs`. Verify: `cargo test --test hook_approvals`.
 - [x] t11: Update the commands (`core-engineer`; `init-engineer` for the hook). Files: `docs/commands.md`. Verify: `pre-commit run --all-files`.
-- [ ] t12: Update the docs of `init`, the harness and the quickstart (`init-engineer`). Files: `docs/init.md`, `docs/harness.md`, `docs/quickstart.md`. Verify: `pre-commit run --all-files`.
+- [x] t12: Update the docs of `init`, the harness and the quickstart (`init-engineer`). Files: `docs/init.md`, `docs/harness.md`, `docs/quickstart.md`. Verify: `pre-commit run --all-files`.
 - [ ] t13: Update the codes and the profiles (`diagnostics-engineer`). Files: `docs/diagnostics.md`, `docs/profiles.md`. Verify: `pre-commit run --all-files`.
 - [ ] t14: Make the guide and the glossary agree with the default rule (`architect`; `docs-editor` for the language). Files: `docs/guides/change.md`, `docs/glossary.md`. Verify: `pre-commit run --all-files`.
 - [ ] t15: Update the conventions and the owners of the new files (`architect`; the owner accepts). Files: `AGENTS.md`, `CONTRIBUTING.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files`.

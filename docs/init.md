@@ -12,6 +12,7 @@ spec-dna init --dry-run         # the preview only
 spec-dna init --non-interactive # the detected defaults
 spec-dna init --answers a.toml  # the answers of a file
 spec-dna init --reconfigure     # the questions again, with the current values as defaults
+spec-dna init --approver you@example.test   # the approver of the branch rule; the flag can repeat
 ```
 
 Without a terminal (for example, when an agent runs `init`), `init` uses the detected defaults, as `--non-interactive` does. If `spec-dna.toml` exists and you do not set `--reconfigure`, `init` updates the agent adapters, as in 0.1. If the file has a `[harness]` table, it also updates the harness files ([Upgrade](#upgrade)). `spec-dna upgrade` writes the same files when it moves the pin.
@@ -93,7 +94,7 @@ If the files show no type, the type is the type of the root that contains the fo
 
 `init` asks the questions in this order. It skips a question that does not apply. Questions 12, 13 and 14 configure the Claude Code adapter: the [harness](harness.md) and the [evals](evals.md). They write files for Claude Code only. For another agent, answer `none` to question 12. Then `init` does not ask the questions 13 and 14.
 
-Question 12 has 2 prompts: the level and the parts.
+Question 5 has 2 prompts: the gate and the approvers. Question 12 has 2 prompts: the level and the parts.
 
 | # | Question | Default |
 | --- | --- | --- |
@@ -101,7 +102,7 @@ Question 12 has 2 prompts: the level and the parts.
 | 2 | The layer graph: `small`, `default` or `custom`. The question shows the number of documents and the types that the small graph has no layer for. `custom` keeps the `[layers]` tables of the current `spec-dna.toml`, so it is only for `--reconfigure` | By the number of documents: fewer than 30 gives `small`, 30 or more gives `default`. In `--reconfigure`, `custom` |
 | 3 | The areas of `requirements/`: folder names, or `none` for one folder. The question shows the detected areas | The detected areas, at most 8. `none` if fewer than 2 are detected |
 | 4 | The change policy: `three-class`, `two-class` or `none` ([config.md](config.md#the-table-change)) | `three-class` in a new project. In `--reconfigure`, the current policy; `none` for a file with no `[change]` table |
-| 5 | The gate: `block`, `warn` or `off`. It sets the severity of SD910. `init` does not ask the question if the policy is `none` | `block`. In `--reconfigure`, the current gate |
+| 5 | The gate: `block`, `warn` or `off`. It sets the severity of SD910. Then the approvers: the e-mails whose approval commits count, or `none` ([The approvers](#the-approvers)). `init` does not ask the question if the policy is `none`, and it does not ask the approvers for the profile `strict` | `block`. In `--reconfigure`, the current gate. For the approvers, see [The approvers](#the-approvers) |
 | 6 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 7 | The language of normative text, as a BCP 47 tag, and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected language and aliases. `en` if detection finds none |
 | 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
@@ -118,14 +119,32 @@ Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the
 
 Questions 4 and 5 write the table `[change]` with 5 keys (and the 2 keys of the approval, below): `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`) and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
 
-The table also has the keys `approval` and `approvers` (see [Approval in the branch](config.md#approval-in-the-branch)). No question asks for them. `init` writes them from the profile:
+The table also has the keys `approval` and `approvers` (see [Approval in the branch](config.md#approval-in-the-branch)). The second prompt of question 5 asks for them, as [The approvers](#the-approvers) says.
 
-| Profile | `git config user.email` is set | The e-mail is not set |
+### The approvers
+
+`approvers` lists the e-mails of the persons whose approval commits count. `init` never writes the address of an agent or a bot, because an agent can commit with it. The list of these addresses is in the binary: `noreply@anthropic.com`, and each address that ends with `[bot]@users.noreply.github.com`. The hidden address of a person, such as `1234+name@users.noreply.github.com`, is not on the list.
+
+`init` takes the approvers from the first of these sources that gives a list:
+
+1. `--approver <e-mail>`. The flag can repeat, and `--approver=<e-mail>` is the same.
+2. The answers key `approvers`, an array of strings. `[]` means no approvers.
+3. The answer to the second prompt of question 5: e-mails with commas, or `none`. The default is the list of the next sources.
+4. For `--reconfigure` of a file that has the key `approval`: the current list.
+5. `git config user.email`, if it is set and it is not the address of an agent or a bot.
+
+An item of the sources 1 to 3 must have an `@` and no `*`. If it is the address of an agent or a bot, `init` stops with exit code 2 and writes nothing. The prompt runs for `lite` and `standard`, and only when the policy is not `none`. Without a terminal, `init` acts as `--non-interactive`: it asks nothing.
+
+| Profile | A list from the sources 1 to 5 | No list |
 | --- | --- | --- |
-| `lite`, `standard` | `approval = "branch"` and `approvers = ["<the e-mail>"]` | `approval = "base"`, no `approvers`, and a note that names the 2 keys |
-| `strict` | `approval = "base"` | `approval = "base"` |
+| `lite`, `standard` | `approval = "branch"` and `approvers = [<the list>]` | `approval = "base"`, no `approvers`, and a note |
+| `strict` | `approval = "base"`. A list from a source 1 to 3 is not written, and a note says so | `approval = "base"` |
 
-`strict` reads the approvals of the base only, so `init` never writes `branch` for it. An empty `approvers` with `approval = "branch"` is an error, so `init` never writes that pair. With `--reconfigure`, a file that has the key `approval` keeps `approval` and `approvers`, except that `strict` writes `base`. A file with no `approval` key, such as a file of 0.6, gets the keys of its profile. The workflow that `init` generates to run `check` uses `fetch-depth: 0`, because the rule of `branch` reads the commits of the branch.
+The note for no list says why. If the e-mail of git is the address of an agent or a bot, the note names it and gives the command `spec-dna init --reconfigure --approver <your e-mail>`. If git has no e-mail, the note names the 2 keys. `strict` reads the approvals of the base only, so `init` never writes `branch` for it. An empty `approvers` with `approval = "branch"` is an error, so `init` never writes that pair.
+
+With `--reconfigure`, a file that has the key `approval` keeps `approval` and `approvers`, except that `strict` writes `base`. A list from a source 1 to 3 replaces `approvers` and sets `approval = "branch"`, but not for `strict`. A kept list with an agent address gives a note, and `check` gives SD926. A file with no `approval` key, such as a file of 0.6, gets the keys of its profile. `--approver` with a `spec-dna.toml` that exists and no `--reconfigure` changes nothing, as `--answers` does. The workflow that `init` generates to run `check` uses `fetch-depth: 0`, because the rule of `branch` reads the commits of the branch.
+
+Run the approval of each document with `spec-dna approve <slug> <artifact>` in a terminal of your own ([commands.md](commands.md#approve)).
 
 A file that has no `[change]` table has the policy `none`. For it, the answer `none` writes no table, and another policy writes the table. With `--reconfigure`, the current values are the defaults. `init` keeps `high-risk-paths`, `max-fanout` and the layers of `high-risk-layers` that the graph has. If the file has a `[change]` table with no `gate`, the profile sets SD910. Question 5 then proposes the gate with the same severity: `warn` for `lite`, `block` for the other profiles.
 
@@ -160,6 +179,7 @@ The second prompt of question 12 sets 3 keys of `[harness]`. An omitted word kee
 - In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of a new project. So `init --reconfigure` offers the new parts to a project that has none of them.
 - A `REVIEW.md` with no harness marker gives `review-md=false`. A skill file with no marker leaves that skill out of the default. A note names each such file, and `init` does not change it. A skill file of 0.6 for a name that ended (`spec-dna-intent`, `spec-dna-spec` or `spec-dna-plan`) is different: if it has a marker and you did not edit it, `init` removes it. If you edited it, `init` keeps it and names it with `kept <path>: edited by hand (SD501)`. An answer that asks for such a file stops `init` with exit code 2.
 - The answer keys are `harness-skills` (an array of names, `[]` for none), `harness-review-md` (`true` or `false`) and `harness-protect-tests`. They need a harness level other than `none`.
+- The key `protect-approvals` is no part of the prompt, and no answers key sets it. `init` writes `protect-approvals = true` for the profile `strict` in a new configuration, and in a file that has no such key. A file that has the key keeps its value. The key adds the hook that denies an approval by an agent ([harness.md](harness.md#spec-dna-hook-protect-approvals)).
 
 ### Evals
 
@@ -193,7 +213,7 @@ Then the preview shows the full `spec-dna.toml` and each file to create or chang
 
 The harness block of the preview shows each harness file with `create`, `change` or `remove` and a note. It also shows the warnings and the reasons for disabled roles. When `init` creates or changes `.claude/agents/Explore.md`, a note says that the file replaces the built-in `Explore` subagent of Claude Code. The note also says how to remove it: `researcher = { claude-code = "none" }` and `init --reconfigure`.
 
-The block shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code. The block also has a note on the hooks. The note names 0.6.0 if `protect-tests` writes its hook entry, which is the default of a new project. Otherwise, the note is `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.`
+The block shows the bytes that the harness adds to each request of the main session. After a write, `init` tells you to restart Claude Code. The block also has a note on the hooks. The note names 0.7.0 if `protect-approvals` writes its hook entry, which is the default of the profile `strict`. It names 0.6.0 if `protect-tests` writes its hook entry, which is the default of a new project. Otherwise, the note is `Each teammate needs spec-dna 0.5.0 or later on PATH for the hooks.`
 
 After the list, the preview gives the diff of each file other than `spec-dna.toml`. This includes the harness files and the files that `init` removes. A new file shows as a diff against `/dev/null`. A file that `init` removes shows as a diff to `/dev/null`.
 
@@ -229,6 +249,7 @@ graph = "default"               # "small", "default" or "custom"
 areas = ["valves", "sensors"]   # folders of requirements/; [] or "none": one folder
 change-policy = "three-class"   # "three-class", "two-class" or "none"
 gate = "block"                  # "block", "warn" or "off"; not used with the policy "none"
+approvers = ["you@example.test"]  # persons only; [] for none; an agent address gives exit code 2
 evidence = "warning"            # "profile", "off", "warning" or "error"
 evidence-style = "both"         # "covers", "verified-by" or "both"
 language = "en"
