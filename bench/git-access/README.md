@@ -6,6 +6,7 @@ Benchmark for [ADR 0002](../../docs/adr/0002-language.md), confirmation step 2. 
 | --- | --- |
 | `src/main.rs` | The benchmark binary, with the modes `cli`, `cli-par` and `gix`. |
 | `run.py` | The harness. `prepare` builds a test repository from a snapshot. `measure` runs and compares the modes. |
+| `walk.sh` | A shell script for the branch walk of `spec-dna check` with `approval = "branch"` ([ADR 0012](../../docs/adr/0012-approval-in-the-branch.md)). See [The walk of the branch](#the-walk-of-the-branch). |
 | `results.md` | Results for the synthetic corpora and the public corpus. `measure --out` writes the raw JSON. The JSON stays in `bench/work/`, which git ignores. |
 
 ## What it measures
@@ -65,6 +66,24 @@ Remove the old binary before you copy a new one to the same path. On macOS, if y
 - After a pause, it refreshes the index one time, so that no entry is racily clean.
 
 `measure` runs 1 warm-up for each mode, then `--runs` runs for each mode. The modes alternate in each round, and the first mode of each round changes.
+
+## The walk of the branch
+
+`walk.sh` measures the cost of the walk that `check` runs with `approval = "branch"`. This is not the benchmark of the prototype above: it runs the real `spec-dna` binary.
+
+```sh
+cargo build --release
+bash bench/git-access/walk.sh [binary] [files] [commits] [dir]
+```
+
+With no argument, it uses `target/release/spec-dna`, a fixture of 2,000 files and a branch of 500 commits (2 edited files in each), in a folder from `mktemp -d` that it deletes at the end. The script builds the fixture, then it does these steps:
+
+- It times the git forms that read the paths of the commits: one `diff-tree` for each commit (the form of 0.7.0 part A), one `diff-tree --stdin`, and one `log --name-status`. It also checks that the 2 first forms give the same paths.
+- It runs `check --base main` once, and stops if the exit code is not 0 or 1. A pin that differs from the binary gives exit code 3, which is fast and says nothing.
+- It times `check --base main` with `approval = "branch"` and with `approval = "base"` (no walk). The 2 modes alternate in each of 5 rounds, so a change of the load hits both. It prints the median of each and their ratio. The target is a ratio of 2 or less on one machine. A time in ms depends on the host, and the ratio does not.
+- It counts the git processes that one `check` starts, from `GIT_TRACE2_EVENT`.
+
+Use a release build. The results are in [results.md](results.md#the-walk-of-the-branch).
 
 ## Limits
 

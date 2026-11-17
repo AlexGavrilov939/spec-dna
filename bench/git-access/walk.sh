@@ -186,6 +186,12 @@ for _ in $(seq 1 "$runs"); do
   st+=("$(timed_check)")
 done
 git checkout -q -- spec-dna.toml
+# The git processes that one `check` starts, from the trace of git.
+trace=$(mktemp)
+GIT_TRACE2_EVENT="$trace" "$bin" check --base main --no-cache >/dev/null 2>&1 || true
+echo "git processes of one check, approval = branch: $(grep -c '"event":"start"' "$trace")"
+echo "  of them diff-tree: $(grep '"event":"start"' "$trace" | grep -c '"diff-tree"')"
+rm -f "$trace"
 branch_ms=$(printf '%s\n' "${bt[@]}" | median)
 base_ms=$(printf '%s\n' "${st[@]}" | median)
 printf '%-44s %6s ms (runs: %s)\n' "check --base main, approval = branch" "$branch_ms" "${bt[*]}"

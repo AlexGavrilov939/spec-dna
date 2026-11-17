@@ -124,3 +124,38 @@ Each variant ran 7 times after 1 discarded run, interleaved with the other varia
 - Step 1 (index and status) takes 4.8, 40.1 and 15.4 ms in gix. In `cli-direct`, it takes 10.3, 52.8 and 21.4 ms, with about 4 ms of process start. On the large corpus, the status of gix itself is faster.
 - The rest of the CLI gap is probably process start. Here, each direct git process costs about 4 ms, and the critical path of `cli-par` has 2 to 3 process lifetimes (estimated, not profiled).
 - The cost of gix is 111 crates, an 8.3 times larger binary (3.65 against 0.44 MB) and a 12 to 15 times longer clean build.
+
+## The walk of the branch
+
+This section measures the walk of `check` with `approval = "branch"` ([ADR 0012](../../docs/adr/0012-approval-in-the-branch.md), [ADR 0019](../../docs/adr/0019-limits-of-0-7-0-part-a.md)). Method: [README.md](README.md#the-walk-of-the-branch). The fixture has 2,000 files and a branch of 500 commits with 2 edited files in each. The values are the median of 5 runs, in ms.
+
+### Before the change (2026-11-17, architect)
+
+Host: Apple M4 Max, 16 cores, macOS, git 2.50.1 (Apple Git-155), release build of master `c2d6b91`, low load. Each commit has its own `git diff-tree` process.
+
+| Form | `/usr/bin/git` (`xcrun` shim) | Xcode git, direct |
+| --- | ---: | ---: |
+| `git diff-tree` for each commit, 500 processes (the walk of part A) | 7,262 | 2,924 |
+| One `git diff-tree --stdin` | 161 | 154 |
+| One `git log --name-status -z` | 154 | 148 |
+| `rev-list` and `log %ae` (the walk of part A) | 87 | 117 |
+| `check --base main`, `approval = "branch"` | 7,709 | 3,091 |
+| `check --base main`, `approval = "base"` (no walk) | 645 | 543 |
+| Ratio, branch against base | 11.9 | 5.7 |
+
+The walk was 85 to 92% of `check` on this branch, 5.8 to 14.5 ms for each commit.
+
+### Before and after, one machine (2026-11-17, `walk.sh`)
+
+Host: the same, but with a very high load from other work (load average 137 to 295 during the runs), so the times are 3 to 6 times higher than above. Only the ratio is a result: the 2 modes alternate in each round. Release builds, `/usr/bin/git` (the shim). "Before" is the binary of the commit `46b53d1`. "After" is the commit that batches the walk.
+
+| Measure | Before | After |
+| --- | ---: | ---: |
+| `check`, `approval = "branch"` | 14,463 | 3,115 |
+| `check`, `approval = "base"` | 884 | 1,964 |
+| Ratio, branch against base | 16.36 | 1.59 |
+| `git diff-tree` processes of one `check` | about 500 (one for each commit) | 1 |
+| Git processes of the walk | about 504 | 4 (`log`, `diff-tree --stdin`, `merge-base`, `rev-parse --is-shallow-repository`) |
+| Git processes of one `check`, total | not counted | 25 |
+
+The target of the spec is a ratio of 2 or less. The ratio after the change is 1.59. The runs of the "after" column have a wide spread (1,756 to 5,268 for the branch mode, and 1,807 to 6,494 for the base mode) because of the load. A run on a quiet host gives a smaller spread. The same paths: the paths of `diff-tree --stdin` equal the paths of the per-commit form (`same paths: yes`), and the unit test `the_batched_walk_gives_the_paths_of_each_commit` compares them for a root commit, an empty commit, 2 merge commits, an add, a modify, a delete, a rename and names with a space, a line feed, an id and a byte that is not UTF-8.
