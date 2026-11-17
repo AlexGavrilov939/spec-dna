@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # Import of a Spec Kit or OpenSpec project
