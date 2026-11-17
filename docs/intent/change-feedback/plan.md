@@ -39,8 +39,8 @@ status: approved
 
 ## Order
 
-- [ ] t1: Write the failing tests of SD913 before a plan, and replace `a_change_with_no_plan_has_the_folder_as_its_scope` (`diagnostics-engineer`). Files: `tests/lifecycle_base.rs`. Verify: `cargo test --test lifecycle_base` fails on the new tests only.
-- [ ] t2: Run SD913 only when a change of the diff has a `plan.md` (`diagnostics-engineer`). Files: `src/lifecycle.rs`. Verify: `cargo test --test lifecycle_base --test finish_sd913` passes.
+- [x] t1: Write the failing tests of SD913 before a plan, and replace `a_change_with_no_plan_has_the_folder_as_its_scope` (`diagnostics-engineer`). Files: `tests/lifecycle_base.rs`. Verify: `cargo test --test lifecycle_base` fails on the new tests only.
+- [x] t2: Run SD913 only when a change of the diff has a `plan.md` (`diagnostics-engineer`). Files: `src/lifecycle.rs`. Verify: `cargo test --test lifecycle_base --test finish_sd913` passes.
 - [ ] t3: Add the guards of a delta edit after a spike: no new approval in the first pull request, a plan approved again, a stop of `finish` (`diagnostics-engineer`, `hygiene-engineer`). Files: `tests/branch_approval.rs`, `tests/finish.rs`. Verify: `cargo test --test branch_approval --test finish` passes.
 - [ ] t4: Write the failing tests of the partial tag: SD608, SD105, `show`, SD916, `next` and `status` (`diagnostics-engineer`, `context-engineer`, `core-engineer`). Files: `tests/cli.rs`, `tests/lifecycle_finished.rs`, `tests/lifecycle_commands.rs`. Verify: `cargo test --test cli --test lifecycle_finished --test lifecycle_commands partial` fails on the new tests only.
 - [ ] t5: Write the failing test of the row of `stats --sdlc`, and add the row to the goldens (`core-engineer`). Files: `tests/stats_evals.rs`, `tests/golden/stats-sdlc.txt`, `tests/golden/stats-sdlc-evals.txt`. Verify: `cargo test --test stats_evals --test lifecycle_log` fails on the new test and the goldens only.

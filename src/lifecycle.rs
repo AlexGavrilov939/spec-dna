@@ -1438,6 +1438,8 @@ fn diff_changes(ctx: &Ctx) -> Result<Vec<DiffChange>, String> {
 
 /// What the newest text of a change on the branch adds to the scope of SD913.
 struct BranchScope {
+    /// True if the newest text of the branch has a `plan.md`.
+    has_plan: bool,
     /// The patterns of the plan of the branch.
     files: Vec<String>,
     /// The items of `Files` of the plan of the branch that are not paths.
@@ -1463,6 +1465,7 @@ impl DiffChange {
                 let mut scope = Vec::new();
                 scope_paths(ctx, &newest, &corpus, &mut scope, None);
                 Some(BranchScope {
+                    has_plan: newest.plan.is_some(),
                     files: newest.files(&corpus),
                     not_paths: newest.files_not_paths(&corpus),
                     paragraph: newest.files_paragraph_only(&corpus),
@@ -1470,6 +1473,15 @@ impl DiffChange {
                 })
             })
             .as_ref()
+    }
+
+    /// True if the change has a `plan.md` in the tree that the checks read for
+    /// it. A change that `Files` matched has one: its `Files` come from its
+    /// plan. The branch is read only if the base tree has no plan.
+    fn has_plan(&self, ctx: &Ctx) -> bool {
+        self.origin == Origin::FilesMatch
+            || self.change.plan.is_some()
+            || self.branch(ctx).is_some_and(|b| b.has_plan)
     }
 
     /// True if `path` is in the scope of SD913. The first test reads the tree
@@ -1886,8 +1898,10 @@ fn approval_missing(
 }
 
 /// SD913: a path of the diff is outside the scope of each change of the diff.
+/// It runs only if a change of the diff has a plan: before a plan exists, a
+/// change has no `Files`, so it has no scope to check against.
 fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
-    if changes.is_empty() {
+    if !changes.iter().any(|c| c.has_plan(ctx)) {
         return Vec::new();
     }
     let mut out = Vec::new();

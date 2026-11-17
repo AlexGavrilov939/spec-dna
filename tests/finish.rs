@@ -559,6 +559,39 @@ fn a_delta_hash_that_changed_after_the_approval_gives_sd914_and_writes_nothing()
 }
 
 #[test]
+fn a_delta_edit_with_a_new_approval_commit_in_the_pull_request_of_finish_stops_at_step_3() {
+    let r = Fx {
+        delta: &[CHANGE_CLOSE],
+        ..Fx::default()
+    }
+    .start();
+    // `approval = "branch"`: the pull request sets the spec back to `draft`,
+    // and an approver commits the status line alone. A squash merge keeps no
+    // commit of the branch, so `finish` still compares with the base tree.
+    let config = r.read("spec-dna.toml").replace(
+        "gate = \"block\"\n",
+        "gate = \"block\"\napproval = \"branch\"\napprovers = [\"approver@example.com\"]\n",
+    );
+    r.write("spec-dna.toml", &config);
+    r.commit("turn the approval in the branch on");
+    let edited = r.read(SPEC).replace("in 4 seconds", "in 3 seconds");
+    r.write(SPEC, &edited.replace("status: approved", "status: draft"));
+    r.commit_as("delta after the spike", "agent@example.com");
+    r.write(SPEC, &edited);
+    r.commit_as("approve spec again", "approver@example.com");
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    let before = tree(&r);
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(": error SD914 ") && out.contains("approved delta"),
+        "{out}"
+    );
+    assert!(err.contains("step 3"), "{err}");
+    assert_eq!(tree(&r), before);
+}
+
+#[test]
 fn a_delta_that_changed_after_it_was_approved_in_the_base_stops_finish() {
     let r = Fx {
         delta: &[CHANGE_CLOSE],

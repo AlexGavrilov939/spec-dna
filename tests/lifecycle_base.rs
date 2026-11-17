@@ -504,14 +504,67 @@ fn a_routine_change_needs_its_requirement_document_in_files() {
 }
 
 #[test]
-fn a_change_with_no_plan_has_the_folder_as_its_scope() {
+fn a_change_with_no_plan_gives_no_sd913() {
     let r = start(nothing);
     r.write(INTENT, &intent("draft", "routine"));
     r.write("src/dose.py", "x = 2\n");
-    let (_, out) = check(&r);
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD913"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+/// The edits of `clarify`: a draft spec, 2 notes that no delta names, and a
+/// spike.
+fn clarify_edits(r: &Repo) {
+    r.write(
+        SPEC,
+        &spec(
+            "draft",
+            &["- ADD requirements/valves#open: The controller SHALL open the valve."],
+        ),
+    );
+    r.write("notes/questions.md", "# Questions\n\n- Which valve?\n");
+    r.write("notes/roadmap.md", "# Roadmap\n\n- Next: valves.\n");
+    r.write("src/spike.py", "s = 1\n");
+}
+
+#[test]
+fn sd913_is_silent_before_a_plan_exists() {
+    let r = start(|r| r.write(INTENT, &intent("accepted", "higher-risk")));
+    clarify_edits(&r);
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD913"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn sd913_reads_each_path_once_a_draft_plan_exists() {
+    let r = start(|r| r.write(INTENT, &intent("accepted", "higher-risk")));
+    clarify_edits(&r);
+    r.write(PLAN, &plan("draft", &["src/dose.py"]));
+    let (code, out) = check(&r);
+    let found = lines(&out, "SD913");
+    assert_eq!(found.len(), 3, "{out}");
+    for path in ["notes/questions.md", "notes/roadmap.md", "src/spike.py"] {
+        assert!(
+            found.iter().any(|l| l.starts_with(&format!("{path}:1:"))),
+            "{path}: {out}"
+        );
+    }
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_change_with_no_plan_beside_a_change_with_a_plan_keeps_sd913() {
+    let r = start(|r| approved_change(r, &["src/dose.py"]));
+    r.write("src/dose.py", "x = 2\n");
+    r.write("docs/intent/flow/intent.md", &intent("draft", "routine"));
+    r.write("README.md", "Read me.\n");
+    let (code, out) = check(&r);
     let found = lines(&out, "SD913");
     assert_eq!(found.len(), 1, "{out}");
-    assert!(found[0].starts_with("src/dose.py:1:"), "{out}");
+    assert!(found[0].starts_with("README.md:1:"), "{out}");
+    assert_eq!(code, 0, "{out}");
 }
 
 #[test]
