@@ -29,6 +29,8 @@ stale-days = 14
 [change]
 policy = "three-class"
 gate = "warn"
+approval = "branch"
+approvers = ["alexgavrilov939@gmail.com", "5443983+AlexGavrilov939@users.noreply.github.com"]
 
 [evidence]
 tests = []  # the tests hold `covers:` tags as test data, and no document has requirements
