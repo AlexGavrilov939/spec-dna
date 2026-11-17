@@ -89,7 +89,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Approval in the branch (ADR 0012) | `src/approval.rs`; the function `approval_missing` in `src/lifecycle.rs` and the texts of SD910 in `src/diag.rs`; the keys `approval` and `approvers` (the row "Config key"); the field `approvals` of `check --json` and its golden file; `tests/branch_approval.rs`; the SD910 part of `docs/diagnostics.md` and `docs/profiles.md`; `CHANGELOG.md` | ARC | DIA | COR, INI, TST | DOC, REL |
 | Harness role or generated file | `src/harness.rs` and `src/harness_text.rs`; `docs/harness.md`; `tests/golden/harness/`; the harness tests; `CHANGELOG.md` | ARC | INI, and DIA for the function `check` | COR, TST, DOC | REL |
 | Hook | `src/hook.rs`; the `hook` section of `docs/commands.md`; the hooks section of `docs/harness.md`; `tests/hook*.rs` | ARC | INI | TST | REL |
-| Eval file form or runner | `src/evals.rs` and `src/eval_run.rs`; the `eval` section and the exit codes of `docs/commands.md`; `docs/evals.md`; `tests/eval_run.rs`; SD506 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
+| Eval file form or runner | `src/evals.rs`, `src/eval_run.rs`, `src/eval_ab.rs` and `src/verdict.rs`; the `eval` section and the exit codes of `docs/commands.md`; `docs/evals.md`; `tests/eval_run.rs` and `tests/eval_ab.rs`; SD506 and SD507 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
 | Eval skeleton or workflow | `src/skeleton.rs`; question 14 in `src/init.rs`; `tests/golden/evals/`; `docs/init.md` | ARC | INI | COR, DIA, REL | DOC |
 | Upgrade plan | `src/upgrade.rs`, `src/upgrade_old.rs`, `src/upgrade_config.rs`, `src/upgrade_docs.rs`, `src/upgrade_proof.rs` and `src/config_text.rs`; `tests/upgrade_*.rs`, `tests/fixtures/upgrade/` and `tests/golden/upgrade/`; the doc page of the command, when it exists; `CHANGELOG.md` | ARC | INI (the command), COR (the configuration) and HYG (the documents) | DIA, TST | DOC, REL |
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
@@ -168,7 +168,10 @@ src/upgrade_old.rs, src/upgrade_config.rs   COR: the 0.5 reader and the plan of 
 src/upgrade_docs.rs, src/upgrade_proof.rs   HYG: the plan of the documents (front matter, moves) and the proof
 src/config_text.rs                   COR: the edits of TOML text by path
 src/evals.rs                         COR: the eval file form and its rules, which SD506 and `eval run` share
-src/eval_run.rs                      COR: `eval run`
+src/eval_run.rs                      COR: `eval run`, and the attempt that `--ab` uses (the refused run, the back-off)
+src/eval_ab.rs                       COR: `eval run --ab`: the arms, the pairs and the result file
+src/verdict.rs                       COR: the bootstrap, the rules of the verdict, the table of the release and the reader of the results (`eval verdict`, SD507)
+src/eval_pack.rs                     INI: the evals of the pack, their fixtures and `eval pack`
 src/harness.rs                       INI: the roles, the generated files, the settings merge. DIA: the function `check` (SD501, SD502, SD504, SD505)
 src/harness_text.rs                  INI: the texts of the 11 skills of the workflow pack and `REVIEW.md`
 src/hook.rs                          INI
@@ -216,7 +219,8 @@ tests/harness.rs, tests/hook.rs      INI
 tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/init_evals.rs   INI
 tests/skill_cmd.rs                   INI: the cases of `skill list` and `skill show`. COR: the arguments and the help
 tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
-tests/config_step4.rs, tests/eval_run.rs, tests/stats_evals.rs   COR
+tests/config_step4.rs, tests/eval_run.rs, tests/eval_ab.rs, tests/stats_evals.rs   COR
+tests/eval_pack.rs                   INI
 tests/context_layers.rs              CTX
 tests/upgrade_cli.rs, tests/upgrade_review_fixes.rs   INI
 tests/upgrade_config.rs, tests/upgrade_pin.rs   COR
