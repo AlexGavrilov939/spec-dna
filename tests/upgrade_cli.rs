@@ -1941,3 +1941,39 @@ fn a_skills_list_of_many_lines_with_an_old_name_stops_upgrade_with_the_new_list(
     // The file stays as it was.
     assert_eq!(repo.read("spec-dna.toml"), toml);
 }
+
+#[test]
+fn upgrade_removes_an_unedited_skill_file_of_0_6_with_its_empty_folder() {
+    let repo = project_06(None);
+    let toml = repo.read("spec-dna.toml").replace(
+        "[harness]\nlevel = \"none\"\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n",
+    );
+    repo.write("spec-dna.toml", &toml);
+    let old =
+        include_str!("golden/harness/old-skills/spec-dna-intent.md").replace("{VERSION}", "0.6.1");
+    repo.write(".claude/skills/spec-dna-intent/SKILL.md", &old);
+    repo.write(
+        ".claude/skills/spec-dna-spec/SKILL.md",
+        &format!("{old}Own note.\n"),
+    );
+    repo.write(
+        ".claude/skills/spec-dna-spec/notes.md",
+        "A file of the project.\n",
+    );
+    repo.commit("old skills");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!repo.dir.join(".claude/skills/spec-dna-intent").exists());
+    // A folder that still has a file stays, with the file.
+    assert!(
+        repo.dir
+            .join(".claude/skills/spec-dna-spec/SKILL.md")
+            .exists()
+    );
+    assert!(
+        repo.dir
+            .join(".claude/skills/spec-dna-spec/notes.md")
+            .exists()
+    );
+}

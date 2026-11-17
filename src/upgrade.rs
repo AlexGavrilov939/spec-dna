@@ -1351,6 +1351,7 @@ fn write_all(repo: &Repo, plan: &Plan) -> Result<(), Fatal> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(fail(format!("{path}: {e}"))),
         }
+        harness::remove_empty_skill_dir(&repo.root, path);
     }
     // Each folder that a move left empty goes (D32). The folders are no part
     // of the tree of git, so no output lists them, and no error stops the

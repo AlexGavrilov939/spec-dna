@@ -3599,6 +3599,7 @@ fn apply(repo: &Repo, changes: &[Change]) -> Result<Vec<String>, Fatal> {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(Fatal::Io(format!("{}: {e}", p.display()))),
             }
+            harness::remove_empty_skill_dir(&repo.root, &c.path);
             written.push(c.path.clone());
             continue;
         }

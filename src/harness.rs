@@ -1385,6 +1385,17 @@ pub fn wanted(path: &str) -> bool {
             .is_some_and(|r| r.ends_with(".md") && !r.contains('/'))
 }
 
+/// After the removal of a skill file, removes its folder
+/// (`.claude/skills/spec-dna-intent/`) if the folder is empty. A folder with
+/// another file stays, and so does any error.
+pub(crate) fn remove_empty_skill_dir(root: &std::path::Path, path: &str) {
+    if is_skill_path(path)
+        && let Some(dir) = std::path::Path::new(path).parent()
+    {
+        let _ = std::fs::remove_dir(root.join(dir));
+    }
+}
+
 /// The agent files that 0.5 wrote and 0.6 does not: `checker.md` became
 /// `verifier.md`, and `spec-writer.md` ended. `init --reconfigure` removes an
 /// unedited one, so a change of the configuration with it is still its own.

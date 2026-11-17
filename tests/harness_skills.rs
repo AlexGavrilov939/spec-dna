@@ -7,6 +7,7 @@ mod common;
 
 use common::{Repo, VERSION, normalize_marker};
 use std::fs;
+use std::path::Path;
 
 /// The 11 names, in the order of D2.
 const NAMES: [&str; 11] = [
@@ -593,6 +594,13 @@ fn reconfigure_removes_an_unedited_skill_and_review_md_that_the_configuration_dr
         .chain(["REVIEW.md"])
     {
         assert!(!r.dir.join(f).exists(), "{f}\n{out}");
+        // `--reconfigure` also removes the folder of a skill file, if empty.
+        if let Some(dir) = Path::new(f)
+            .parent()
+            .filter(|d| d.starts_with(".claude/skills"))
+        {
+            assert!(!r.dir.join(dir).exists(), "the folder of {f}");
+        }
         assert!(
             out.contains(&format!("remove {f}")) || out.contains(f),
             "{out}"
@@ -863,9 +871,16 @@ fn init_removes_an_unedited_old_skill_file_and_keeps_an_edited_one() {
     assert_eq!(code, 0, "{out}{err}");
     for n in ["intent", "spec"] {
         assert!(!r.dir.join(path(n)).exists(), "{n}\n{out}");
+        // The empty folder of the skill goes too.
+        assert!(
+            !r.dir.join(format!(".claude/skills/spec-dna-{n}")).exists(),
+            "the folder of {n}"
+        );
         assert!(out.contains(&path(n)), "{n}: {out}");
     }
     assert!(r.dir.join(path("plan")).exists());
+    // The folder of a kept file stays, and so does a folder with another file.
+    assert!(r.dir.join(".claude/skills/spec-dna-plan").is_dir());
     assert!(
         out.contains(&format!("kept {}: edited by hand (SD501)", path("plan"))),
         "{out}"
