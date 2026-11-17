@@ -495,3 +495,42 @@ fn a_held_line_is_no_dropped_line_in_the_baseline() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(!out.contains("dropped"), "{out}");
 }
+
+// --- the third check ---
+
+#[test]
+fn a_heading_with_a_bcp_14_word_is_no_loss() {
+    let repo = fx::openspec();
+    let spec = fx::OS_SPEC_AUTH.replace(
+        "#### Scenario: Idle session\n",
+        "#### Scenario: Admin MAY end a session\n",
+    );
+    let spec = spec.replace(
+        "### Requirement: Session Expiry",
+        "### Requirement: Admin MAY end a session",
+    );
+    repo.write("openspec/specs/auth/spec.md", &spec);
+    repo.commit("headings with a BCP 14 word");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn the_links_of_a_delta_sentence_and_of_its_purpose_go_to_the_target() {
+    let repo = fx::openspec();
+    let delta = fx::OS_DELTA_REPORTS.replace(
+        "The system SHALL give a report of the invoices of one month.",
+        "The system SHALL give a report of the invoices of one month. See [the design](../../design.md).",
+    );
+    let delta = format!("## Purpose\n\nSee [the design](../../design.md).\n\n{delta}");
+    repo.write("openspec/changes/add-reports/specs/reports/spec.md", &delta);
+    repo.write(
+        "openspec/changes/add-reports/design.md",
+        "## Context\n\nThe design.\n",
+    );
+    repo.commit("links in a delta");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = repo.read("docs/intent/add-reports/spec.md");
+    assert_eq!(t.matches("[the design](plan.md)").count(), 2, "{t}");
+}

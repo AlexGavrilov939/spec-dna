@@ -502,8 +502,19 @@ fn shift_headings(text: &str, shift: usize) -> String {
 fn order_lines(tasks: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut n = 0;
-    for line in tasks.lines() {
-        if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
+    let heads = crate::import_docs::headings_by_line(tasks);
+    let mut open = false;
+    for (line_no, line) in tasks.lines().enumerate() {
+        let fence = line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~");
+        let inside = open || fence;
+        if fence {
+            open = !open;
+        }
+        if inside {
+            out.push(line.trim_end().to_string());
+            continue;
+        }
+        if let Some((lvl, text)) = heads[line_no].clone() {
             if lvl >= 2 {
                 out.push(String::new());
                 out.push(format!("**{text}**"));
@@ -739,12 +750,15 @@ fn change(ctx: &Ctx, read: &mut Read, name: &str, files: &[&str]) -> Result<(), 
                 scen.push(vec![
                     format!("### {}", sp.domain),
                     String::new(),
-                    collapse(&sp.other),
+                    collapse(&(ctx.link)(&sp.other, &sp.path, &spec_to)),
                 ]);
                 count += count_scenarios(&sp.other);
             }
             for b in &sp.blocks {
-                let one = b.sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+                let one = (ctx.link)(&b.sentence, &sp.path, &spec_to)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 let base = if b.verb == "ADD" {
                     None
                 } else {
@@ -1451,6 +1465,64 @@ mod tests {
         let t = r.target("docs/intent/x/plan.md");
         assert!(
             t.contains("## Order\n\nIntro.\n\n**1. A**\n\n- [ ] t1-1: Do it.\n\nCheckpoint: it MUST pass.\n"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn a_code_block_of_tasks_md_stays_as_it_is_in_openspec_too() {
+        let tasks = "## 1. A\n\n- [ ] 1.1 Do it\n\n```bash\n# a comment\n## not a heading\n```\n";
+        let r = run(&base(&[
+            ("openspec/changes/x/proposal.md", "## Why\n\nx\n"),
+            ("openspec/changes/x/tasks.md", tasks),
+        ]));
+        let t = r.target("docs/intent/x/plan.md");
+        assert!(
+            t.contains("```bash\n# a comment\n## not a heading\n```\n"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_links_of_a_sentence_and_of_the_other_text_of_a_delta_spec_are_rewritten() {
+        let delta = "## Purpose\n\nSee [the design](../../design.md).\n\n## ADDED Requirements\n\n### Requirement: Report\n\nThe system SHALL report. See [the design](../../design.md).\n";
+        let files = base(&[
+            ("openspec/changes/add-reports/proposal.md", "## Why\n\nx\n"),
+            ("openspec/changes/add-reports/specs/reports/spec.md", delta),
+        ]);
+        let mut all: Vec<(&str, &str)> = vec![("spec-dna.toml", CFG)];
+        all.extend_from_slice(&files);
+        let tree = TreeData::from_map(
+            all.iter()
+                .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
+                .collect(),
+        );
+        let cfg = Config::parse(CFG).unwrap();
+        let places = Places::of(&cfg);
+        let r = tree
+            .with(|t| {
+                let (before, _) = corpus_of(t, &cfg)?;
+                read(&Ctx {
+                    tree: t,
+                    cfg: &cfg,
+                    places: &places,
+                    areas: &[],
+                    skip_open: false,
+                    keep_research: false,
+                    link: &|text, _, _| text.replace("../../design.md", "plan.md"),
+                    before: &before,
+                })
+            })
+            .unwrap();
+        let t = &r
+            .targets
+            .iter()
+            .find(|t| t.path == "docs/intent/add-reports/spec.md")
+            .unwrap()
+            .text;
+        assert!(t.contains("- ADD requirements/reports#report: The system SHALL report. See [the design](plan.md)."), "{t}");
+        assert!(
+            t.contains("### reports\n\nSee [the design](plan.md)."),
             "{t}"
         );
     }

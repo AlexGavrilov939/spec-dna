@@ -139,6 +139,9 @@ pub fn prove(
             ));
             return Ok(proof);
         }
+        // The plan moved the last file out of `.specify/` or `openspec/`: no
+        // layout is left to read, so nothing is left to change.
+        Err(Fatal::Config(_)) => return Ok(proof),
         Err(e) => return Err(e),
     };
     if !again.is_empty() {
@@ -377,12 +380,17 @@ fn units(text: &str) -> String {
         }
         para.clear();
     };
-    for l in text.lines() {
+    let heads = crate::import_docs::headings_by_line(text);
+    for (n, l) in text.lines().enumerate() {
         if l.trim().is_empty() {
             flush(&mut para, &mut out);
             continue;
         }
-        let f = line_form(line_body(l));
+        // A heading is compared on its text, with no `#`.
+        let f = match &heads[n] {
+            Some((_, t)) => line_form(t),
+            None => line_form(line_body(l)),
+        };
         out.push_str(&f);
         out.push('\u{1}');
         para.push(f);
@@ -444,16 +452,35 @@ fn text_loss(
             hay.push_str(&line_form(&p.sentence));
             hay.push('\u{1}');
         }
+        let keys: Vec<String> = plan
+            .pairs
+            .iter()
+            .filter(|p| p.from.starts_with(&prefix))
+            .map(|p| p.key.to_lowercase())
+            .filter(|k| k.len() >= 3)
+            .collect();
+        let heads = crate::import_docs::headings_by_line(&source);
         for (i, line) in source.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
             let bcp = has_bcp14(trimmed);
-            if crate::import_docs::heading_of(line).is_some() && !bcp {
+            let heading = heads[i].as_ref().map(|(_, t)| t.as_str());
+            if heading.is_some() && !bcp {
                 continue;
             }
-            let form = if is_task_line(line) {
+            let form = if let Some(t) = heading {
+                // A heading of a section that the reader keeps as text is held
+                // as a title, a bold line or a list item. A heading of a
+                // requirement or a principle is the key of its pair.
+                let form = line_form(t);
+                let slug = crate::import_docs::slug(t);
+                if keys.iter().any(|k| slug.contains(k.as_str())) {
+                    continue;
+                }
+                form
+            } else if is_task_line(line) {
                 line_form(task_text(line).trim_end_matches('.'))
             } else {
                 line_form(line_body(line))
@@ -517,7 +544,17 @@ fn ids(proof: &mut Proof, plan: &Plan, before: &Corpus, after: &Corpus) {
                 continue;
             };
             let was = &before.docs[bi as usize].path;
-            let want = moved.get(was.as_str()).copied().unwrap_or(was.as_str());
+            // A source that became a stub: its id is an alias of the target. The
+            // ids of its requirements go: the delta of the target adds them.
+            let stub = plan.stubs.get(was.as_str());
+            if stub.is_some() && id.contains('#') {
+                continue;
+            }
+            let want = moved
+                .get(was.as_str())
+                .copied()
+                .or(stub.map(String::as_str))
+                .unwrap_or(was.as_str());
             proof.ids += 1;
             // A heading of a moved document can become a list item or a
             // title: its anchor is gone on purpose. A requirement key stays.
@@ -1013,5 +1050,79 @@ mod tests {
         let mut plan = moved_plan(text);
         plan.pairs.clear();
         plan
+    }
+
+    #[test]
+    fn a_heading_with_a_bcp_14_word_is_compared_on_its_text() {
+        let heading = "### Tests for User Story 1 (OPTIONAL - only if tests requested)";
+        let source = format!("{SOURCE}\n{heading}\n");
+        // A bold line, a list item and a plain line hold the text.
+        for held in [
+            "**Tests for User Story 1 (OPTIONAL - only if tests requested)**",
+            "- Tests for User Story 1 (OPTIONAL - only if tests requested)",
+            "Tests for User Story 1 (OPTIONAL - only if tests requested)",
+            "## Tests for User Story 1 (OPTIONAL - only if tests requested)",
+        ] {
+            let text = format!("{}\n{held}\n", planned_text());
+            let p = with_source(&text, &source);
+            assert!(p.ok(), "{held}: {:?}", p.failures);
+        }
+        // No target holds it.
+        let p = with_source(&planned_text(), &source);
+        assert!(
+            p.failures.join("\n").contains("src/feature.md:6"),
+            "{:?}",
+            p.failures
+        );
+        // A heading with other words is no copy.
+        let text = format!(
+            "{}\n## Tests for User Story 2 (OPTIONAL - only if tests requested)\n",
+            planned_text()
+        );
+        assert!(!with_source(&text, &source).ok());
+    }
+
+    #[test]
+    fn a_scenario_heading_becomes_a_list_item_and_a_key_heading_becomes_a_key() {
+        let source = format!(
+            "{SOURCE}\n#### Scenario: Admin MAY end a session\n\n### Requirement: door-opens MAY be tested\n"
+        );
+        let text = format!("{}\n- Scenario: Admin MAY end a session\n", planned_text());
+        let plan = moved_plan(&text);
+        let p = run(&plan, &[("src/feature.md", &source)]);
+        assert!(
+            !p.failures.join("\n").contains("src/feature.md:7"),
+            "{:?}",
+            p.failures
+        );
+        assert!(p.ok(), "{:?}", p.failures);
+    }
+
+    #[test]
+    fn a_line_in_a_code_block_is_no_heading() {
+        // `# comment MUST x` is a line of code. It must be in a target.
+        let source = format!("{SOURCE}\n```bash\n# comment MUST x\n```\n");
+        let p = with_source(&planned_text(), &source);
+        assert!(
+            p.failures.join("\n").contains("src/feature.md:7"),
+            "{:?}",
+            p.failures
+        );
+        let text = format!("{}\n```bash\n# comment MUST x\n```\n", planned_text());
+        assert!(with_source(&text, &source).ok());
+    }
+
+    #[test]
+    fn a_layout_that_is_gone_on_the_planned_tree_is_no_failure_of_step_5() {
+        let plan = moved_plan(&planned_text());
+        let t = tree(&[("src/feature.md", SOURCE)]);
+        let p = t
+            .with(|t| {
+                prove(t, &plan, &fin(), &|_| {
+                    Err(Fatal::Config("`.specify/` is not in the tree".into()))
+                })
+            })
+            .unwrap();
+        assert!(p.ok(), "{:?}", p.failures);
     }
 }

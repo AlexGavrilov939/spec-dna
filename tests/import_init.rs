@@ -92,8 +92,13 @@ fn a_run_after_the_printed_git_rm_changes_nothing() {
         let args: Vec<&str> = line.split_whitespace().skip(2).collect();
         let mut git = vec!["rm", "-q"];
         git.extend(args);
+        let before_rm = repo.git_out(&["rev-parse", "HEAD"]);
         repo.git(&git);
         repo.commit("remove the sources");
+        // The removed sources keep their ids as aliases of the targets.
+        let (code, out, err) = repo.run(&["check", "--base", &before_rm]);
+        assert_eq!(code, 0, "{source}: {out}{err}");
+        assert!(out.contains("0 new errors"), "{source}: {out}");
         let (code, out, err) = repo.run(&["import", source]);
         assert_eq!(code, 0, "{source}: {out}{err}");
         assert_eq!(out.trim(), "spec-dna import: nothing to change", "{source}");

@@ -669,3 +669,46 @@ fn a_held_line_is_no_dropped_line_in_the_baseline() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(!out.contains("dropped"), "{out}");
 }
+
+// --- the third check ---
+
+#[test]
+fn a_heading_with_a_bcp_14_word_of_tasks_md_or_of_the_constitution_is_no_loss() {
+    let repo = fx::speckit();
+    let tasks = format!(
+        "{}\n### Tests for User Story 1 (OPTIONAL - only if tests requested) \u{26a0}\u{fe0f}\n\n- [ ] T004 Write the test in tests/a.py\n",
+        fx::SK_TASKS_3
+    );
+    repo.write("specs/003-album-export/tasks.md", &tasks);
+    let constitution =
+        fx::SK_CONSTITUTION.replace("### I. Library-First", "### I. Libraries MUST stay small");
+    repo.write(".specify/memory/constitution.md", &constitution);
+    repo.commit("headings with a BCP 14 word");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let plan = repo.read("docs/intent/album-export/plan.md");
+    assert!(
+        plan.contains(
+            "**Tests for User Story 1 (OPTIONAL - only if tests requested) \u{26a0}\u{fe0f}**"
+        ),
+        "{plan}"
+    );
+}
+
+#[test]
+fn a_code_block_of_tasks_md_stays_as_it_is() {
+    let repo = fx::speckit();
+    let tasks = format!(
+        "{}\n```bash\n# a comment\n## not a heading\nmake test\n```\n",
+        fx::SK_TASKS_3
+    );
+    repo.write("specs/003-album-export/tasks.md", &tasks);
+    repo.commit("a code block");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let plan = repo.read("docs/intent/album-export/plan.md");
+    assert!(
+        plan.contains("```bash\n# a comment\n## not a heading\nmake test\n```\n"),
+        "{plan}"
+    );
+}

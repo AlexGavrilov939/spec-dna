@@ -136,6 +136,21 @@ pub fn plan_task(rest: &str) -> (String, Option<String>) {
     (rest, None)
 }
 
+/// True if line `n` of a text is in a fenced code block (or is a fence line).
+fn fence_state(text: &str, n: usize) -> bool {
+    let mut open = false;
+    for (i, l) in text.lines().enumerate() {
+        let fence = l.trim_start().starts_with("```") || l.trim_start().starts_with("~~~");
+        if i == n {
+            return open || fence;
+        }
+        if fence {
+            open = !open;
+        }
+    }
+    false
+}
+
 /// A folder of `specs/`: `<digits>-<name>` with a slug as name.
 fn feature_name(folder: &str) -> Option<&str> {
     let (digits, name) = folder.split_once('-')?;
@@ -788,8 +803,9 @@ fn open_feature(
         let linked_tasks = (ctx.link)(t, &tasks_path, &plan_to);
         let mut files: Vec<String> = Vec::new();
         let mut order: Vec<String> = Vec::new();
-        for line in linked_tasks.lines() {
-            if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
+        let heads = crate::import_docs::headings_by_line(&linked_tasks);
+        for (n, line) in linked_tasks.lines().enumerate() {
+            if let Some((lvl, text)) = heads[n].clone() {
                 if lvl >= 2 {
                     order.push(String::new());
                     order.push(format!("**{}**", plain_heading(&text)));
@@ -797,7 +813,8 @@ fn open_feature(
                 }
                 continue;
             }
-            let Some(task) = task_line(line) else {
+            let in_fence = fence_state(&linked_tasks, n);
+            let Some(task) = task_line(line).filter(|_| !in_fence) else {
                 // A line that is no task stays as it is.
                 order.push(line.trim_end().to_string());
                 continue;
@@ -1562,5 +1579,19 @@ mod tests {
             "{i}"
         );
         assert!(i.contains("- Another item.\n\nNote: a lazy line."), "{i}");
+    }
+
+    #[test]
+    fn a_code_block_of_tasks_md_stays_as_it_is() {
+        let tasks = "# Tasks\n\n## Phase 1\n\n- [ ] T001 Run it in src/a.py\n\n```bash\n# a comment\n## not a heading\nmake test\n```\n";
+        let r = run(&tool(&[
+            ("specs/003-x/spec.md", SPEC_OPEN),
+            ("specs/003-x/tasks.md", tasks),
+        ]));
+        let t = r.target("docs/intent/x/plan.md");
+        assert!(
+            t.contains("```bash\n# a comment\n## not a heading\nmake test\n```\n"),
+            "{t}"
+        );
     }
 }

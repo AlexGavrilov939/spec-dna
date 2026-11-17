@@ -188,6 +188,11 @@ pub struct Plan {
     pub removes: Vec<String>,
     /// True if `removes` has a folder (`git rm -r`).
     pub removes_recursive: bool,
+    /// A source that is a document of the project, and the target that keeps
+    /// its id: the plan writes `moved-to` in the source, so its id is no
+    /// duplicate of the alias of the target, and the removal of the source
+    /// is no lost id (SD202).
+    pub stubs: BTreeMap<String, String>,
     pub universe: Vec<String>,
 }
 
@@ -441,6 +446,27 @@ fn fence_of(line: &str) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// The heading of each line of a text: `None` for a line that is no heading,
+/// and for each line of a fenced code block (a `#` there starts a comment).
+pub fn headings_by_line(text: &str) -> Vec<Option<(usize, String)>> {
+    let mut fence: Option<String> = None;
+    text.lines()
+        .map(|l| {
+            if let Some(f) = &fence {
+                if fence_of(l).is_some_and(|g| g.starts_with(f.as_str())) {
+                    fence = None;
+                }
+                return None;
+            }
+            if let Some(f) = fence_of(l) {
+                fence = Some(f.to_string());
+                return None;
+            }
+            heading_of(l)
+        })
+        .collect()
 }
 
 /// The ATX heading of a line: its level and its text, with no closing `#`.
@@ -758,6 +784,39 @@ fn crlf_front(source: &str, out: String) -> String {
     }
 }
 
+/// The text of a source without the line `moved-to` that an earlier run
+/// wrote at the start of its front matter, so a second run reads the text of
+/// the first run.
+pub fn strip_stub(text: &str) -> String {
+    for eol in ["\n", "\r\n"] {
+        let open = format!("---{eol}moved-to: ");
+        if let Some(rest) = text.strip_prefix(&open) {
+            let Some(end) = rest.find(eol) else { break };
+            let rest = &rest[end + eol.len()..];
+            return match rest.strip_prefix(&format!("---{eol}")) {
+                Some(body) => body.to_string(),
+                None => format!("---{eol}{rest}"),
+            };
+        }
+    }
+    text.to_string()
+}
+
+/// The text with the line `moved-to` at the start of its front matter.
+pub fn with_moved_to(text: &str, id: &str) -> String {
+    if strip_stub(text) != text {
+        return text.to_string();
+    }
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let open = format!("---{eol}");
+    match text.strip_prefix(&open) {
+        Some(rest) if frontmatter::split(text).is_some() => {
+            format!("{open}moved-to: {id}{eol}{rest}")
+        }
+        _ => format!("{open}moved-to: {id}{eol}---{eol}{text}"),
+    }
+}
+
 /// The stop for a file that is not valid UTF-8.
 pub fn not_utf8(path: &str) -> Fatal {
     Fatal::Refused(format!(
@@ -801,7 +860,9 @@ impl Ctx<'_> {
         let bytes = got
             .get(path)
             .ok_or_else(|| Fatal::Io(format!("{path}: not in the tree")))?;
-        String::from_utf8(bytes.clone()).map_err(|_| not_utf8(path))
+        String::from_utf8(bytes.clone())
+            .map(|t| strip_stub(&t))
+            .map_err(|_| not_utf8(path))
     }
 
     /// The files of the tree below a folder (`prefix` ends with `/`), in path
@@ -994,13 +1055,30 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
             end += 1;
         }
     }
+    // A source that is a document of the project keeps its id as an alias of
+    // the first target that it gives, and it becomes a stub (`moved-to`).
+    let mut targets: Vec<Target> = read.targets.clone();
+    let mut stubs: BTreeMap<String, String> = BTreeMap::new();
+    for t in targets.iter().filter(|t| t.moved_from.is_none()) {
+        for src in &t.sources {
+            if existing.contains(src.as_str()) && is_document(fin, src) {
+                stubs.entry(src.clone()).or_insert_with(|| t.path.clone());
+            }
+        }
+    }
+    for (src, to) in &stubs {
+        let Some(id) = id_of(fin, src) else { continue };
+        if let Some(t) = targets.iter_mut().find(|t| t.path == *to) {
+            t.text = add_aliases_eol(&t.text, &[id]);
+        }
+    }
     let removes_hint = removes_of(&read.sources, &read.removes, tree.files);
     let (corpus, texts) = corpus_of(tree, fin)?;
     let map = link_map(read);
     let mut moves: Vec<(String, String)> = Vec::new();
     let mut writes: BTreeMap<String, String> = BTreeMap::new();
     let mut sources = read.sources.clone();
-    for t in &read.targets {
+    for t in &targets {
         let planned = t.text.clone();
         let exists = existing.contains(t.path.as_str());
         match &t.moved_from {
@@ -1072,6 +1150,19 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
         }
     }
     edited.sort();
+    // The stubs: the source of a target, if it is a document.
+    for (src, to) in &stubs {
+        let Some(id) = id_of(fin, to) else { continue };
+        let current = writes
+            .get(src)
+            .cloned()
+            .or_else(|| texts.get(src).cloned())
+            .unwrap_or_default();
+        let new = with_moved_to(&current, &id);
+        if new != current {
+            writes.insert(src.clone(), new);
+        }
+    }
     // A kept file whose links changed is written, not kept.
     for s in &mut sources {
         if s.state == State::Kept && edited.contains(&s.path) {
@@ -1116,7 +1207,7 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
         config,
         moves,
         writes,
-        targets: read.targets.clone(),
+        targets,
         sources,
         pairs: read.pairs.clone(),
         edited,
@@ -1124,6 +1215,7 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
         notes: read.notes.clone(),
         removes,
         removes_recursive: recursive,
+        stubs,
         universe: read.universe.clone(),
     })
 }
