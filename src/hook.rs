@@ -1433,6 +1433,8 @@ impl ApprovalsOpts {
 /// `&&` and `||` split too), then at white space. It is a text scan, not a
 /// shell parser: `sh -c "a; b"` gives the words of `a` and `b`.
 fn command_segments(command: &str) -> Vec<Vec<String>> {
+    // A backslash before a line feed joins the 2 lines, as a shell reads it.
+    let command = command.replace("\\\n", " ").replace("\\\r\n", " ");
     let text: String = command
         .chars()
         .filter(|c| !matches!(c, '"' | '\''))

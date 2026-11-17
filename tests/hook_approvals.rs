@@ -400,3 +400,13 @@ fn an_unresolved_folder_inspects_the_cwd_and_the_project() {
     let (code, out, _) = hook_in(&clean.dir, Some(&clean.dir), None, ev.as_bytes());
     assert_eq!((code, out.as_str()), (0, ""));
 }
+
+#[test]
+fn a_line_continuation_between_git_and_commit_is_one_segment() {
+    let r = project();
+    r.write(INTENT, &intent("accepted"));
+    let out = answer(&r, "git \\\n  commit -am x");
+    assert_denies(&out, &[INTENT]);
+    let out = answer(&r, "git -c user.name=x \\\n  -C . commit -am x");
+    assert_denies(&out, &[INTENT]);
+}
