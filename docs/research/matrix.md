@@ -1,6 +1,6 @@
 # Research matrix: standards and prior art
 
-- Date: 2026-11-07. This is also the access date of all sources.
+- Date: 2026-11-07. This is also the access date of the sources, except for Spec Kit, OpenSpec and Superpowers. Their versions are of 2026-11-17 (UTC), from the release data of the GitHub API.
 - Scope: which standards and tools spec-dna adopts, adapts, cites or rejects.
 - Method: primary sources first (standards bodies, official repositories, release pages). A claim marked **unverified** has no confirmation from a primary source. iso.org, incose.org and asd-ste100.org returned HTTP 403 to automated fetches. Thus, some statements about them come from official previews or search snippets.
 - Ratings (H high, M medium, L low) are the assessment of this project, not measurements. For "complexity" and "adoption cost", L is better.
@@ -51,8 +51,8 @@ Consequence: the spec-dna standard uses its own words, under the repository lice
 
 | Tool | Latest release | Licence | Canonical storage | Change model | Deterministic checks | Lifecycle | Footprint |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| GitHub Spec Kit | v1.4.1, 2026-11-16 | MIT | `specs/NNN-feature/{spec,plan,tasks,...}.md`, `.specify/memory/constitution.md` | One folder per change; retention is a team convention | None for spec content in core; `analyze` and `converge` are LLM prompts | No archive or supersede command | Python 3.11+, uv; per-agent command files |
-| OpenSpec | v2.0.0, 2026-11-11 | MIT | `openspec/specs/<domain>/spec.md` as current truth; `openspec/changes/<name>/` with deltas | Delta specs (ADDED, MODIFIED, REMOVED, RENAMED) that OpenSpec merges on archive | `openspec validate --strict --json`: sections, SHALL/MUST, scenario per requirement, delta grammar | `archive` moves changes to a dated folder | TypeScript; binary or Node 22.12+; telemetry on by default |
+| GitHub Spec Kit | v1.4.2, 2026-11-17 | MIT | `specs/NNN-feature/{spec,plan,tasks,...}.md`, `.specify/memory/constitution.md` | One folder per change; retention is a team convention | None for spec content in core; `analyze` and `converge` are LLM prompts | No archive or supersede command | Python 3.11+, uv; per-agent command files |
+| OpenSpec | v2.1.0, 2026-11-17 | MIT | `openspec/specs/<domain>/spec.md` as current truth; `openspec/changes/<name>/` with deltas | Delta specs (ADDED, MODIFIED, REMOVED, RENAMED) that OpenSpec merges on archive | `openspec validate --strict --json`: sections, SHALL/MUST, scenario per requirement, delta grammar | `archive` moves changes to a dated folder | TypeScript; binary or Node 22.20.0+; telemetry on by default; from v2.1.0, `init` installs the skills of a new repository for the whole machine |
 | Superpowers | v7.0.2, 2026-11-03 | MIT | `docs/superpowers/specs/<date>-<topic>-design.md` and `docs/superpowers/plans/<date>-<feature>.md`; no store of current truth | A design page, then a plan page; no delta | None: skills are prompts, and a hard gate in the text of `brainstorming` waits for the approval of the design | Skills `finishing-a-development-branch` and `using-git-worktrees`; no archive | A plugin of 15 skills; a SessionStart hook injects the entry skill in each session; no runtime of its own |
 | BMAD Method | v6.12.4, 2026-10-14 (v7 in alpha) | MIT code, trade-marked names | `_bmad-output/` plan files for each initiative | Persona-driven workflow; epics and stories | No gate for spec content; narrow helper scripts | Retrospectives; no supersede metadata | Node 20.12+, Python 3.10+, 30+ skills per tool |
 
@@ -61,6 +61,10 @@ Consequence: the spec-dna standard uses its own words, under the repository lice
 | Spec Kit | M (greenfield features) | L (no merged current spec, a `NNN` number for each project, no link checker) | M | M (5 releases in 10 days rewrite managed files) | L | M | M |
 | OpenSpec | H (brownfield-first) | M (flat namespaces; parallel MODIFIED deltas can drop scenarios, as the project documents; current fix **unverified**) | M | M | H for its own grammar | H (index of spec id, purpose, fetch command) | M |
 | BMAD | L (process, not a spec store) | L | H | L (the stable line is frozen; main is an incompatible alpha) | L | L (persona prompts) | H |
+
+The import of [ADR 0014](../adr/0014-import.md) reads the layouts of Spec Kit v1.4.1 and OpenSpec v2.0.0. On 2026-11-17, the release notes of Spec Kit v1.4.2 and OpenSpec v2.1.0, and the compare of each tag with the tag before it, showed no change of these layouts. Spec Kit v1.4.2 changes the text of its commands `tasks` and `analyze`. OpenSpec v2.1.0 changes the place of its skills, and its notes say that its workflows did not change. No test ran the import on a project of these 2 versions. Superpowers v7.0.2 was still the latest release.
+
+[ADR 0017](../adr/0017-profiles.md#what-each-tool-maps-to) maps each part of the 3 tools to the profiles and the parts of spec-dna.
 
 Other approaches in the study:
 
@@ -169,9 +173,9 @@ The GtWR rule ids come from the v4 rule list, as secondary sources cite it. This
 | <https://spec.openapis.org/oas/latest.html> | OpenAPI | 3.2.1, 2026-09-10 |
 | <https://www.asyncapi.com/docs/reference/specification/latest> | AsyncAPI | 3.1.0 |
 | <https://llmstxt.org/> | llms.txt | proposal 2024-09-03 |
-| <https://github.com/github/spec-kit> | Spec Kit repository | v1.4.1, 2026-11-16 (the layout and the commands of the import in ADR 0014 follow this tag) |
-| <https://github.com/Fission-AI/OpenSpec> | OpenSpec repository | v2.0.0, 2026-11-11 (the layout of the import in ADR 0014 follows this tag) |
-| <https://github.com/obra/superpowers> | Superpowers repository | v7.0.2, 2026-11-03 (the skills of the pack in ADR 0010; the text of spec-dna is its own) |
+| <https://github.com/github/spec-kit> and <https://github.com/github/spec-kit/releases> | Spec Kit repository and releases | v1.4.2, 2026-11-17, the latest release on 2026-11-17. The layout and the commands of the import in ADR 0014 follow v1.4.1, 2026-11-16 |
+| <https://github.com/Fission-AI/OpenSpec> and <https://github.com/Fission-AI/OpenSpec/releases> | OpenSpec repository and releases | v2.1.0, 2026-11-17, the latest release on 2026-11-17. The layout of the import in ADR 0014 follows v2.0.0, 2026-11-11 |
+| <https://github.com/obra/superpowers> and <https://github.com/obra/superpowers/releases> | Superpowers repository and releases | v7.0.2, 2026-11-03, the latest release on 2026-11-17 (the skills of the pack in ADR 0010; the text of spec-dna is its own) |
 | <https://github.com/bmad-code-org/BMAD-METHOD> | BMAD repository | v6.12.4, HEAD e734d3ac3c0f |
 | <https://github.com/kubernetes/enhancements> | KEP process and tooling | HEAD 72907deaa85e, 2026-11-06 |
 | <https://kiro.dev/docs/specs/> | Kiro specs | page updated 2026-10-15 |
