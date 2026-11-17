@@ -2137,6 +2137,12 @@ pub(crate) fn harness_run(
     {
         notes.push(EXPLORE_NOTE.to_string());
     }
+    if new.level != Level::None
+        && let Some((_, t)) = existing.iter().find(|e| e.0 == harness::SETTINGS)
+        && has_workflow_plugin(t)
+    {
+        notes.push(WORKFLOW_PLUGIN_NOTE.to_string());
+    }
     Ok(HarnessRun {
         level: new.level,
         hooks_version: harness::hooks_version(new),
@@ -2160,7 +2166,7 @@ fn settle_parts(plan: &mut Plan) {
         } else {
             // The 7 skills that are on by default (D2). The level `full` also
             // proposes the 4 that are off (D39).
-            Skill::default_on_list()
+            proposed_skills(plan.harness.level)
                 .into_iter()
                 .filter(|s| !plan.parts.unmarked_skills.contains(s))
                 .collect()
@@ -2304,11 +2310,41 @@ fn apply_parts(plan: &mut Plan, words: &[String]) -> Result<(), String> {
 
 /// The bytes of the skill listing that `skills` adds to each request. It
 /// counts the skills that are on by default.
-fn skill_listing_bytes() -> usize {
-    Skill::default_on_list()
-        .into_iter()
-        .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(s)).len())
+fn skill_listing_bytes(skills: &[Skill]) -> usize {
+    skills
+        .iter()
+        .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
         .sum()
+}
+
+/// The skills that a level proposes (D39): the 7 that are on by default, and
+/// at the level `full` also the 4 that are off.
+fn proposed_skills(level: Level) -> Vec<Skill> {
+    if level == Level::Full {
+        Skill::ALL.to_vec()
+    } else {
+        Skill::default_on_list()
+    }
+}
+
+/// The note for a project that also has the plugin Superpowers (D5). A spec-dna
+/// skill and a skill of the plugin for the same stage compete.
+const WORKFLOW_PLUGIN_NOTE: &str = "`.claude/settings.json` enables a plugin with the word `superpowers`. The description of each spec-dna skill starts with \"In a spec-dna project\", and the adapter skill `spec-dna` states that a spec-dna skill replaces a general skill of the same stage (for `write-plan`, `writing-plans`). Nothing proves that Claude Code selects the spec-dna skill first. `init` does not move a file that the plugin writes, such as `docs/superpowers/specs/`: exclude that folder from the roots.";
+
+/// Returns true if `enabledPlugins` of a `.claude/settings.json` names a
+/// plugin with the word `superpowers`, in any case, and does not set it to
+/// `false`. `init` reads this file of the project only, never a file of the
+/// home folder (D5).
+fn has_workflow_plugin(settings: &str) -> bool {
+    let Ok(doc) = json::parse(settings) else {
+        return false;
+    };
+    match doc.get("enabledPlugins") {
+        json::Value::Obj(items) => items.iter().any(|(k, v)| {
+            k.to_ascii_lowercase().contains("superpowers") && *v != json::Value::Bool(false)
+        }),
+        _ => false,
+    }
 }
 
 /// The note for `.claude/agents/Explore.md`. Only an agent with the name
@@ -2997,10 +3033,12 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     settle_evals(plan);
     if plan.harness.level != Level::None {
         settle_parts(plan);
+        // The level `full` proposes the 4 skills that are off too (D39).
+        let proposed = proposed_skills(plan.harness.level);
         io.say(&format!(
             "    The {} skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
-            Skill::default_on_list().len(),
-            skill_listing_bytes()
+            proposed.len(),
+            skill_listing_bytes(&proposed)
         ));
         let a = io.line(
             &Question::Harness.prompt(
@@ -4227,8 +4265,24 @@ mod tests {
 
     #[test]
     fn the_listing_of_the_7_skills_that_are_on_has_at_most_1250_bytes() {
-        let n = skill_listing_bytes();
+        let n = skill_listing_bytes(&proposed_skills(Level::Lean));
         assert!(n > 588 && n <= 1250, "{n} bytes");
+        // The 11 skills of the level `full` have 1,900 bytes or fewer.
+        let n = skill_listing_bytes(&proposed_skills(Level::Full));
+        assert!(n <= 1900, "{n} bytes");
+    }
+
+    #[test]
+    fn a_plugin_with_the_word_superpowers_gives_the_note_of_d5() {
+        let on = |k: &str| format!("{{\"enabledPlugins\":{{\"{k}\":true}}}}");
+        assert!(has_workflow_plugin(&on("superpowers@x")));
+        assert!(has_workflow_plugin(&on("my-Superpowers-fork@y")));
+        assert!(!has_workflow_plugin(&on("other@x")));
+        assert!(!has_workflow_plugin(
+            "{\"enabledPlugins\":{\"superpowers@x\":false}}"
+        ));
+        assert!(!has_workflow_plugin("{\"permissions\":{}}"));
+        assert!(!has_workflow_plugin("not json"));
     }
 
     #[test]

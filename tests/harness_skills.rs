@@ -722,11 +722,10 @@ fn a_pin_change_with_the_new_and_the_old_skill_paths_gives_no_sd503() {
     assert!(out.contains("SD503"), "{out}{err}");
 }
 
-// --- The tests below wait on later tasks of the change `workflow-pack`. Each
-// --- `ignore` names the task that makes it pass.
+// --- The tests of the adapter block, the levels, the old files and the note of
+// --- D5.
 
 #[test]
-#[ignore = "workflow-pack t15"]
 fn the_adapter_skill_holds_the_discipline_block_and_the_replace_rule() {
     let r = project_with("[harness]\nlevel = \"lean\"\n");
     let (code, out, err) = r.run(&["init"]);
@@ -761,7 +760,6 @@ fn the_adapter_skill_holds_the_discipline_block_and_the_replace_rule() {
 }
 
 #[test]
-#[ignore = "workflow-pack t15"]
 fn the_line_of_agents_md_names_the_rules_the_skill_command_and_the_approval_rule() {
     let r = project_with("[harness]\nlevel = \"lean\"\n");
     let (code, out, err) = r.run(&["init"]);
@@ -781,7 +779,6 @@ fn the_line_of_agents_md_names_the_rules_the_skill_command_and_the_approval_rule
 }
 
 #[test]
-#[ignore = "workflow-pack t16"]
 fn level_full_proposes_the_4_skills_that_are_off() {
     let r = Repo::new();
     let (code, out, err) = init_with(&r, "harness = \"full\"\n", &[]);
@@ -805,7 +802,6 @@ fn level_full_proposes_the_4_skills_that_are_off() {
 }
 
 #[test]
-#[ignore = "workflow-pack t16"]
 fn init_prints_the_note_of_d5_for_a_plugin_with_the_word_superpowers() {
     let r = Repo::new();
     r.write(
@@ -828,7 +824,6 @@ fn init_prints_the_note_of_d5_for_a_plugin_with_the_word_superpowers() {
 }
 
 #[test]
-#[ignore = "workflow-pack t16"]
 fn init_removes_an_unedited_old_skill_file_and_keeps_an_edited_one() {
     let r = project_with(&format!(
         "[harness]\nlevel = \"lean\"\nskills = {}\n",

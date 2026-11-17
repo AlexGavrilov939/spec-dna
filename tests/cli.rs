@@ -1482,13 +1482,15 @@ fn init_on_an_existing_project_adds_one_line() {
     let added = claude.strip_prefix(own).expect("the own text stays first");
     assert_eq!(added.trim_start().lines().count(), 1, "{claude}");
     assert!(!claude.contains('@'), "no import: {claude}");
-    assert!(added.len() <= 160, "{} bytes", added.len());
+    // The line has 400 bytes or fewer with its marker (D6).
+    assert!(added.trim().len() <= 400, "{} bytes", added.trim().len());
     assert!(
         !r.dir.join("AGENTS.md").exists(),
         "no new AGENTS.md when CLAUDE.md exists"
     );
+    // The line of 400 bytes or fewer, a line feed and the skill description.
     let bytes = prefix_bytes(&out);
-    assert!(bytes <= 300, "{out}");
+    assert!(bytes <= 401 + 111, "{out}");
     assert!(out.contains(", 0 bytes for AGENTS.md"), "{out}");
     let (code, out, _) = r.run(&["init", "--json"]);
     assert_eq!(code, 0);
@@ -3076,7 +3078,7 @@ fn init_asks_on_a_terminal() {
         "9. Budget level (default, relaxed, tight, off) [default]: ",
         "11. CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
         "12. Agent harness (none, lean, full) [lean]: ",
-        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,review,finish,post-mortem review-md=true protect-tests=fix-branches]: ",
+        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,execute,tdd,review,verify,finish,debug,post-mortem review-md=true protect-tests=fix-branches]: ",
         "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high code-simplifier=sonnet:high]: ",
         "14. Evals (none, skeleton) [skeleton]: ",
         "Agent harness: full (for Claude Code)",

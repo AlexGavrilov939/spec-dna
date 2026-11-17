@@ -3,7 +3,7 @@ name: spec-dna
 description: Loads and checks the specs for a task. Use it before you change code or docs, and before a commit.
 ---
 
-<!-- spec-dna:begin skill v{VERSION} h:6f4706425788387c -->
+<!-- spec-dna:begin skill v{VERSION} h:0c3c279efe7cb458 -->
 # spec-dna
 
 1. If the task changes code or docs, run `spec-dna context <file>...` once. Give all the files that you plan to change (or a document id). Do not run it for a question without edits. The output gives the sections in priority order: rules, the entry, the sections that cite the files, their decisions. Each section has an id.
@@ -18,4 +18,16 @@ description: Loads and checks the specs for a task. Use it before you change cod
 7. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
 8. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), do one of these actions: put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`. Then the old ids stay as aliases.
 9. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner. `check` reports a change of `spec-dna.toml` together with other files as SD503.
+
+## Disciplines
+
+Each rule names the skill with the detail. Run `spec-dna skill show <name>` to read it, also when the skill is off.
+
+- Test first: write a test that fails before the code (`tdd`).
+- Cause first: find the cause of a failure before the fix. After 3 failed fixes, stop and ask (`debug`).
+- Proof before done: run the proof and read its output before you say "done" (`verify`).
+- Review is data: check each review comment against the code before you act on it (`review`).
+- Isolated work: do each change in its own git worktree or branch (`execute`).
+
+A spec-dna skill replaces a general skill of the same stage. For `write-plan` it replaces `writing-plans`.
 <!-- spec-dna:end skill -->

@@ -1982,7 +1982,8 @@ pub struct FileChange {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// `init` with an existing configuration. It writes and never removes.
+    /// `init` with an existing configuration. It writes, and it removes only
+    /// an unedited skill file of 0.6 that 0.7.0 does not write.
     Upgrade,
     /// A new configuration, or `init --reconfigure`. It also removes the
     /// generated files that the configuration no longer produces.
@@ -2152,6 +2153,25 @@ pub fn plan(
                 });
             } else {
                 plan.kept.push(format!("kept {p}: edited by hand (SD501)"));
+            }
+        }
+    }
+    // `init` with an existing configuration also removes an unedited skill
+    // file of 0.6 (D4). A hand-edited file stays, and `check` reports it.
+    // `Mode::Reconfigure` removes it in the loop above.
+    if mode == Mode::Upgrade {
+        for p in OLD_SKILL_PATHS {
+            let Some(t) = get(p) else { continue };
+            let Some(m) = file_marker(t) else { continue };
+            if m.edited() {
+                plan.kept.push(format!("kept {p}: edited by hand (SD501)"));
+            } else {
+                plan.changes.push(FileChange {
+                    path: p.to_string(),
+                    action: Action::Remove,
+                    note: "the skill ended in 0.7.0".into(),
+                    text: String::new(),
+                });
             }
         }
     }
