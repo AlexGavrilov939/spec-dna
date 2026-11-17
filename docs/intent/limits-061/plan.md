@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Limits of 0.6.1: index, area names and a plain move: plan
 
