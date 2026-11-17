@@ -265,7 +265,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "part B: t12-t17"]
     fn the_pack_has_5_evals_for_each_of_the_11_skills() {
         let evals = all();
         assert_eq!(evals.len(), 55);

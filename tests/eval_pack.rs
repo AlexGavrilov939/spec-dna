@@ -1,7 +1,7 @@
 //! Tests of `spec-dna eval pack` (ADR 0016, 0.7.0 slice 5). The command
 //! writes the shipped evals and their small fixtures to `<[evals] dir>/pack/`.
-//! A test that needs the whole pack of 55 evals is ignored until the evals of
-//! the slice (tasks t12 to t17) are in the binary. The other tests read the
+//! A test checks that the pack holds the 55 evals of the 11 skills. The other
+//! tests read the
 //! files that the binary writes, whatever their number, and check the rules
 //! that hold for each of them. No test starts an agent.
 
@@ -266,7 +266,6 @@ fn the_fixture_names_no_consumer_project_and_pins_the_version_of_the_binary() {
 // The tests that need the 55 evals of the pack.
 
 #[test]
-#[ignore = "part B: t12-t17"]
 fn the_pack_has_5_evals_for_each_of_the_11_skills() {
     let r = project("[evals]\n");
     let (code, out, err) = pack(&r);
@@ -295,7 +294,6 @@ fn the_pack_has_5_evals_for_each_of_the_11_skills() {
 }
 
 #[test]
-#[ignore = "part B: t12-t17"]
 fn a_dry_run_of_a_skill_and_of_the_agents_line_each_print_40_runs_and_an_estimate() {
     let r = project("[evals]\n");
     pack(&r);
