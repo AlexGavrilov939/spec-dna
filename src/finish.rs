@@ -76,6 +76,90 @@ pub struct Plan {
     pub folder: String,
     /// The delta lines that the plan applies: `ADD`, `CHANGE`, `REMOVE`.
     pub applied: (usize, usize, usize),
+    /// The items of the section `Hours` of the plan of the change.
+    pub hours: Hours,
+}
+
+/// The items of the section `Hours` of a plan (design 0.7.0, section 15). An
+/// item starts with a number of hours: up to 4 digits, and up to 2 decimals
+/// after a `.`. An optional `h` follows. Then the item ends, or it has `:` or a
+/// space and free text.
+#[derive(Debug, Default, PartialEq)]
+pub struct Hours {
+    /// The total in hundredths of an hour. It is `None` if the plan has no
+    /// item of `Hours`, or if an item has no number. The sum of integers has
+    /// no rounding error.
+    pub total: Option<u64>,
+    /// The text of each item that has no number.
+    pub bad: Vec<String>,
+}
+
+impl Hours {
+    /// The total as the line `Hours: <total>` and the field `hours` write it:
+    /// no zero after the last digit.
+    pub fn text(&self) -> Option<String> {
+        self.total.map(format_hours)
+    }
+}
+
+/// A number of hundredths as a number of hours, with no zero after the last
+/// digit: `350` is `3.5`, and `400` is `4`.
+pub fn format_hours(hundredths: u64) -> String {
+    let (whole, frac) = (hundredths / 100, hundredths % 100);
+    match frac {
+        0 => whole.to_string(),
+        f if f % 10 == 0 => format!("{whole}.{}", f / 10),
+        f => format!("{whole}.{f:02}"),
+    }
+}
+
+/// The hundredths of an hour that an item of `Hours` starts with, or `None` if
+/// the item has another form.
+fn item_hours(text: &str) -> Option<u64> {
+    let b = text.as_bytes();
+    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    if !(1..=4).contains(&digits) {
+        return None;
+    }
+    let mut hundredths = text[..digits].parse::<u64>().ok()? * 100;
+    let mut at = digits;
+    if b.get(at) == Some(&b'.') {
+        let frac = b[at + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        if !(1..=2).contains(&frac) {
+            return None;
+        }
+        let value: u64 = text[at + 1..at + 1 + frac].parse().ok()?;
+        hundredths += if frac == 1 { value * 10 } else { value };
+        at += 1 + frac;
+    }
+    if b.get(at) == Some(&b'h') {
+        at += 1;
+    }
+    match b.get(at) {
+        None | Some(b':') | Some(b' ') | Some(b'\t') | Some(b'\n') => Some(hundredths),
+        _ => None,
+    }
+}
+
+/// Adds the items of `Hours` of a plan document.
+fn plan_hours(plan: &Doc) -> Hours {
+    let mut out = Hours::default();
+    let mut total = 0u64;
+    let mut any = false;
+    for item in change::section_items(plan, ItemSection::Hours) {
+        any = true;
+        match item_hours(&item.text) {
+            Some(h) => total += h,
+            None => out.bad.push(lifecycle::short(&item.text)),
+        }
+    }
+    if any && out.bad.is_empty() {
+        out.total = Some(total);
+    }
+    out
 }
 
 /// A stop: the step of the design and the reason.
@@ -159,6 +243,11 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     let mut out = Plan {
         removes: sorted(cx.folder_files),
         folder: cx.folder.to_string(),
+        hours: ch
+            .plan
+            .as_ref()
+            .map(|a| plan_hours(&head.docs[a.doc as usize]))
+            .unwrap_or_default(),
         ..Plan::default()
     };
     if ch.intent_status() == "closed" {
@@ -1923,5 +2012,40 @@ mod tests {
             "{}",
             st.reason
         );
+    }
+
+    #[test]
+    fn an_item_of_hours_starts_with_a_number() {
+        for (text, want) in [
+            ("2", Some(200)),
+            ("1.5: code", Some(150)),
+            ("0.25h", Some(25)),
+            ("12.5h: review", Some(1250)),
+            ("2 hours", Some(200)),
+            ("9999", Some(999_900)),
+            ("1.5:", Some(150)),
+            ("12345", None),
+            ("1.234", None),
+            ("1.", None),
+            (".5", None),
+            ("2hours", None),
+            ("about 2", None),
+            ("", None),
+        ] {
+            assert_eq!(item_hours(text), want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_total_has_no_zero_after_the_last_digit() {
+        for (hundredths, want) in [
+            (350, "3.5"),
+            (400, "4"),
+            (30, "0.3"),
+            (205, "2.05"),
+            (0, "0"),
+        ] {
+            assert_eq!(format_hours(hundredths), want);
+        }
     }
 }
