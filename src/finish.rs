@@ -1352,7 +1352,9 @@ fn finish_indexes(
         let title = Some(d.parsed.title.clone())
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| split::title_of(parent(&d.path)));
-        let new_text = registry::render(&d.path, &new, Some(&text), &title);
+        // A place that gives no type keeps the front matter as it is.
+        let status = registry::index_status(cx.config, &d.path, Some(&text)).unwrap_or(None);
+        let new_text = registry::render(&d.path, &new, Some(&text), &title, status);
         more.push(Write {
             path: d.path.clone(),
             old: Some(text),

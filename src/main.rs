@@ -2708,7 +2708,14 @@ fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .map(|o| o.parsed.title.clone())
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| templates::title_of(mv::parent(&path)));
-    let text = registry::render(&path, &entries, existing.as_deref(), &title);
+    let status = registry::index_status(&cfg, &path, existing.as_deref()).map_err(|_| {
+        let dir = mv::parent(&path);
+        Fatal::Usage(format!(
+            "the place `{}` gives no type; index a folder of a layer, or set `default-type` of the root",
+            if dir.is_empty() { "." } else { dir }
+        ))
+    })?;
+    let text = registry::render(&path, &entries, existing.as_deref(), &title, status);
     let mut changed = std::collections::HashMap::from([(path.clone(), text)]);
     // Links to a section of the old file that names an entry go to the entry.
     let mut rewritten = 0;
