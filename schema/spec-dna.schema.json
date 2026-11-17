@@ -37,7 +37,7 @@
       "default": "en"
     },
     "change": {
-      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD922 are off, and no rule can turn them on).",
+      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD925 are off, and no rule can turn them on).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -45,7 +45,7 @@
       ],
       "properties": {
         "policy": {
-          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD922 are off and no rule can turn them on.",
+          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD925 are off and no rule can turn them on.",
           "enum": [
             "three-class",
             "two-class",
@@ -82,6 +82,13 @@
           "type": "integer",
           "minimum": 0,
           "default": 8
+        },
+        "max-task-files": {
+          "description": "The most paths that one task of an approved plan lists in its label `Files:` before SD924. An integer from 1 to 20. Default 3.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 3
         },
         "base": {
           "description": "The name of a local branch. It is the base of the change checks when `--base` and `refs/remotes/origin/HEAD` give none. Use it in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \\`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. If the branch does not exist, the base is unknown, and the commands print a note. Without the key, there is no such base.",

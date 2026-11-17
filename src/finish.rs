@@ -239,7 +239,15 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
                 None => todo.push(d),
             }
         }
-        lifecycle::interfaces(head, spec, &mut diags);
+        lifecycle::interfaces(cx.config, head, spec, &mut diags);
+        // A new interface needs its document, or a delta line that adds it.
+        let added: HashSet<String> = lines
+            .iter()
+            .filter_map(|l| l.parsed.as_ref().ok())
+            .filter(|d| d.verb == Verb::Add)
+            .map(|d| d.id.clone())
+            .collect();
+        diags.extend(lifecycle::interfaces_absent(head, spec, &added));
         let diff = cx.diff;
         let own: HashSet<String> = todo.iter().map(|d| target_path(cx, ch, d)).collect();
         let changed = |p: &str| diff.is_some_and(|d| d.kind(p).is_some()) || own.contains(p);

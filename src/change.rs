@@ -269,7 +269,7 @@ fn usable_code(code: &str) -> bool {
 }
 
 /// The text on one line, with at most 80 characters, for a message.
-fn shown(text: &str) -> String {
+pub(crate) fn shown(text: &str) -> String {
     let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.chars().count() > 80 {
         format!("{}...", t.chars().take(77).collect::<String>().trim_end())
@@ -562,6 +562,10 @@ pub struct PlanTask {
     /// spans, and the plain paths of the entries that have no code span
     /// ([`plain_path`]).
     pub files: Vec<String>,
+    /// The text after the label `Files:`, on one line, with one final `.`
+    /// removed. `None` if the label is absent. A label with no text gives an
+    /// empty string. SD923 reads it (design 0.7.0, D40).
+    pub files_text: Option<String>,
     /// The text after the label `Verify:`, on one line. One final `.` is
     /// removed. `None` if the label is absent or has no text.
     pub verify: Option<String>,
@@ -607,11 +611,13 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         return None;
     }
     let mut files = None;
+    let mut files_text = None;
     let mut verify = None;
     for (n, &(_, end, is_files)) in labels.iter().enumerate() {
         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
         let seg = &text[end..stop];
         if is_files {
+            files_text.get_or_insert_with(|| one_line(seg));
             files.get_or_insert_with(|| label_paths(seg));
         } else if verify.is_none() {
             let v = one_line(seg);
@@ -623,6 +629,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         done,
         text: one_line(after),
         files: files.unwrap_or_default(),
+        files_text,
         verify: verify.flatten(),
         line: item.line,
         range: item.range.clone(),

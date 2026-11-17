@@ -340,6 +340,9 @@ pub fn tree_checks(
             Code::ConcernOpen,
             Code::QuestionOpen,
             Code::DecisionNeededUnaccepted,
+            Code::TaskIncomplete,
+            Code::TaskTooLarge,
+            Code::CheckboxMissing,
         ]
         .iter()
         .all(|&k| config.is_off(k))
@@ -355,9 +358,11 @@ pub fn tree_checks(
         if ch.intent_status() == "closed" {
             continue;
         }
+        task_diags(config, c, ch, &mut out);
         let Some(spec) = &ch.spec else { continue };
         let d = &c.docs[spec.doc as usize];
         out.extend(question_diags(c, ch));
+        boxes_missing(d, &mut out);
         if spec.status == "approved" {
             concerns(d, &mut out);
             decisions(c, d, &mut out);
@@ -395,7 +400,7 @@ pub fn tree_checks(
                 ));
             }
         }
-        interfaces(c, d, &mut out);
+        interfaces(config, c, d, &mut out);
         let limit = config.max_fanout as usize;
         if targets.len() > limit {
             out.push(crate::check::diag(
@@ -547,10 +552,16 @@ pub(crate) fn delta_problem(
     }
 }
 
-/// SD914 for the items of `Interfaces`: `CHANGE <interface id>: <text>`. An
-/// item with another form, an absent document and a document that is not an
-/// interface give SD914.
-pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+/// SD914 for the items of `Interfaces`: `CHANGE <interface id>: <text>` for an
+/// interface that exists, `ADD <interface id>: <text>` for a new interface, or
+/// one item `none` (design 0.7.0, section 15). An item with another form, an
+/// absent document of a `CHANGE` item, a document that is not an interface and
+/// a place of an `ADD` item that gives another type give SD914. A section that
+/// states "nothing" gives none.
+pub(crate) fn interfaces(config: &Config, c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+    if change::states_nothing(spec, ItemSection::Interfaces) {
+        return;
+    }
     for item in change::section_items(spec, ItemSection::Interfaces) {
         let mut push = |target: String, message: String| {
             out.push(crate::check::diag(
@@ -561,10 +572,10 @@ pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
                 message,
             ))
         };
-        let Some(id) = interface_id(item) else {
+        let Some((verb, id)) = interface_item(item) else {
             push(
                 short(&item.text),
-                "an item of `Interfaces` is `CHANGE <interface id>: <text>`".to_string(),
+                "an item of `Interfaces` is `CHANGE <interface id>: <text>`, `ADD <interface id>: <text>` or `none`".to_string(),
             );
             continue;
         };
@@ -581,12 +592,75 @@ pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
                 id.to_string(),
                 format!("`{id}` names {} documents", v.len()),
             ),
+            Res::Missing if verb == Verb::Add => {
+                if id.ends_with(".md") {
+                    push(
+                        id.to_string(),
+                        format!(
+                            "`{id}` ends in `.md`, and `finish` adds `.md` to the id of a new document; write the id without `.md`"
+                        ),
+                    );
+                    continue;
+                }
+                // A new document: it is at the place of its id.
+                let ty = config
+                    .layers
+                    .place_type(&format!("{id}.md"))
+                    .unwrap_or(DocType::Requirements);
+                if ty != DocType::Interface {
+                    push(
+                        id.to_string(),
+                        format!(
+                            "the place of `{id}` gives the type `{}`, not `interface`",
+                            ty.name()
+                        ),
+                    );
+                }
+            }
             _ => push(
                 id.to_string(),
                 format!("`{id}` names no interface document"),
             ),
         }
     }
+}
+
+/// SD914 for an `ADD` item of `Interfaces` whose document the tree does not
+/// have. `finish` and a pull request that deletes the folder of the change need
+/// the document: it exists, or a delta line `ADD <id>#<key>` adds it. `head` is
+/// the tree that must have the document, and `added` the ids of the valid `ADD`
+/// lines of the delta.
+pub fn interfaces_absent(head: &Corpus, spec: &Doc, added: &HashSet<String>) -> Vec<Diag> {
+    let mut out = Vec::new();
+    for item in change::section_items(spec, ItemSection::Interfaces) {
+        let Some((Verb::Add, id)) = interface_item(item) else {
+            continue;
+        };
+        if !matches!(head.resolve(id), Res::Missing) || added.contains(id) {
+            continue;
+        }
+        out.push(crate::check::diag(
+            spec,
+            item.line,
+            Code::DeltaInvalid,
+            id,
+            format!(
+                "the spec adds the interface `{id}`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD {id}#<key>` lines"
+            ),
+        ));
+    }
+    out
+}
+
+/// The ids of the valid `ADD` lines of the delta of a change, as the lines
+/// write them.
+pub fn added_ids(ch: &Change, corpus: &Corpus) -> HashSet<String> {
+    ch.delta(corpus)
+        .into_iter()
+        .filter_map(|l| l.parsed.ok())
+        .filter(|d| d.verb == Verb::Add)
+        .map(|d| d.id)
+        .collect()
 }
 
 /// SD914 for an interface of `Interfaces` that the diff does not change: the
@@ -633,16 +707,126 @@ pub fn interfaces_unchanged(c: &Corpus, spec: &Doc, changed: &dyn Fn(&str) -> bo
     out
 }
 
-/// The id of an item of `Interfaces`, or `None` if the item is not in the form
-/// `CHANGE <interface id>: <text>`. The id can be in `[[ ]]` or in a code span.
-fn interface_id(item: &ListItem) -> Option<&str> {
-    let rest = item.text.strip_prefix("CHANGE")?;
+/// The verb and the id of an item of `Interfaces`, or `None` if the item is not
+/// in the form `CHANGE <interface id>: <text>` or `ADD <interface id>: <text>`.
+/// The id can be in `[[ ]]` or in a code span.
+fn interface_item(item: &ListItem) -> Option<(Verb, &str)> {
+    let (verb, rest) = match item.text.strip_prefix("CHANGE") {
+        Some(rest) => (Verb::Change, rest),
+        None => (Verb::Add, item.text.strip_prefix("ADD")?),
+    };
     if !rest.starts_with(char::is_whitespace) {
         return None;
     }
     let (id, text) = rest.split_once(':')?;
     let id = id.trim().trim_matches(['[', ']', '`']);
-    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty()).then_some(id)
+    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty())
+        .then_some((verb, id))
+}
+
+/// The id of an item of `Interfaces` in the form of [`interface_item`].
+pub(crate) fn interface_id(item: &ListItem) -> Option<&str> {
+    interface_item(item).map(|(_, id)| id)
+}
+
+/// SD923 and SD924: the tasks of an `approved` plan. A task needs the label
+/// `Files:` with exact paths (`none` is a value), and the label `Verify:`
+/// (SD923). It lists at most `max-task-files` paths (SD924). A draft plan is
+/// not checked. A task whose id an earlier task has is not checked: the first
+/// task with an id counts. One diagnostic of SD923 names every problem of the
+/// task. The target of both codes is the id of the task.
+fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
+    let Some(plan) = &ch.plan else { return };
+    if plan.status != "approved" {
+        return;
+    }
+    let doc = &c.docs[plan.doc as usize];
+    let limit = config.max_task_files as usize;
+    for t in ch.tasks(c).iter().filter(|t| !t.duplicate) {
+        let mut problems: Vec<String> = Vec::new();
+        match &t.files_text {
+            None => problems.push("it has no `Files:`".to_string()),
+            Some(text) => {
+                if t.files.is_empty() && !change::is_none_text(text) {
+                    problems.push(
+                        "its `Files:` lists no path; write each exact path, or `none`".to_string(),
+                    );
+                }
+                for p in &t.files {
+                    let dir = p.trim_start_matches("./").trim_end_matches('/');
+                    if p.contains(['*', '?', '[']) {
+                        problems.push(format!("its `Files:` has the glob `{p}`"));
+                    } else if p.ends_with('/') || c.dirs.contains(dir) {
+                        problems.push(format!("its `Files:` has the folder `{p}`"));
+                    }
+                }
+            }
+        }
+        if t.verify.is_none() {
+            problems.push("it has no `Verify:`".to_string());
+        }
+        if !problems.is_empty() {
+            out.push(crate::check::diag(
+                doc,
+                t.line,
+                Code::TaskIncomplete,
+                &t.id,
+                format!(
+                    "the plan is `approved`, and the task `{}` is incomplete: {}; write the exact paths in `Files:` and the check in `Verify:`",
+                    t.id,
+                    problems.join("; ")
+                ),
+            ));
+        }
+        let mut paths: Vec<&String> = t.files.iter().collect();
+        paths.sort();
+        paths.dedup();
+        if paths.len() > limit {
+            out.push(crate::check::diag(
+                doc,
+                t.line,
+                Code::TaskTooLarge,
+                &t.id,
+                format!(
+                    "the plan is `approved`, and the task `{}` lists {} paths, more than `max-task-files = {limit}`; split the task",
+                    t.id,
+                    paths.len()
+                ),
+            ));
+        }
+    }
+}
+
+/// SD925: each item of `Concerns` and `Open questions` of a spec that has no
+/// task box. SD919 and SD922 read the box, so they cannot see such an item. A
+/// section that states "nothing" (`- none`) gives none. The check reads a spec
+/// of each status. The caller skips the spec of a `closed` change.
+fn boxes_missing(spec: &Doc, out: &mut Vec<Diag>) {
+    for (section, name, code, what) in [
+        (ItemSection::Concerns, "Concerns", "SD919", "concern"),
+        (
+            ItemSection::OpenQuestions,
+            "Open questions",
+            "SD922",
+            "question",
+        ),
+    ] {
+        if change::states_nothing(spec, section) {
+            continue;
+        }
+        for item in change::section_items(spec, section).filter(|i| i.task.is_none()) {
+            let text = change::shown(&item.text);
+            out.push(crate::check::diag(
+                spec,
+                item.line,
+                Code::CheckboxMissing,
+                &text,
+                format!(
+                    "an item of `{name}` has no task box, so {code} cannot see if it is open; write `- [ ]` for an open {what} or `- [x]` for a resolved one"
+                ),
+            ));
+        }
+    }
 }
 
 /// SD919: each open concern (`- [ ]`) of a spec that is `approved`. The
@@ -1919,6 +2103,9 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             let spec = &ctx.base.docs[a.doc as usize];
             let changed = |p: &str| ctx.diff.kind(p).is_some();
             out.extend(interfaces_unchanged(ctx.base, spec, &changed));
+            // A new interface needs its document in the head tree.
+            let added = added_ids(&ch.change, ctx.base);
+            out.extend(interfaces_absent(ctx.head, spec, &added));
         }
     }
     out

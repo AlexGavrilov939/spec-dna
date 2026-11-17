@@ -1020,14 +1020,17 @@ fn an_item_with_no_box_in_concerns_gives_sd925() {
         "dose",
         "accepted",
         "approved",
-        "## Concerns\n\n- The cache can grow without a limit.\n",
+        &format!(
+            "{}\n## Concerns\n\n- The cache can grow without a limit.\n",
+            delta(&["- ADD requirements/valves#flush: The controller SHALL flush the line."])
+        ),
     );
     let (code, out) = check(&r);
     assert_eq!(code, 0, "a warning does not fail check: {out}");
     let got = messages(&out, "SD925");
     assert_eq!(got.len(), 1, "{out}");
     assert!(
-        got[0].starts_with("docs/intent/dose/spec.md:8: warning SD925 checkbox-missing: "),
+        got[0].starts_with("docs/intent/dose/spec.md:12: warning SD925 checkbox-missing: "),
         "{out}"
     );
     assert!(

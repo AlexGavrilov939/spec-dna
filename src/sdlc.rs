@@ -24,7 +24,7 @@ use crate::git::{ArtifactTouch, DeletedIntent, Git, PathChange};
 use crate::json::{self, Obj};
 use crate::lifecycle;
 use crate::model::{Class, Corpus, DocType};
-use crate::parse::{ItemSection, ListItem, parse};
+use crate::parse::{ItemSection, parse};
 use crate::registry;
 use crate::repo::{self, Fatal, Repo, Snapshot};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -182,7 +182,7 @@ fn facts(cfg: &Config, folder: &str, tree: &Tree) -> Facts {
     if let Some(a) = &ch.spec {
         let doc = &corpus.docs[a.doc as usize];
         for item in change::section_items(doc, ItemSection::Interfaces) {
-            if let Some(id) = interface_id(item) {
+            if let Some(id) = crate::lifecycle::interface_id(item) {
                 out.named.extend(named_paths(cfg, id));
             }
         }
@@ -191,19 +191,6 @@ fn facts(cfg: &Config, folder: &str, tree: &Tree) -> Facts {
         out.files = Some(ch.files(&corpus));
     }
     out
-}
-
-/// The id of an item of `Interfaces`: `CHANGE <interface id>: <text>`. The id
-/// can be in `[[ ]]` or in a code span. This is a copy of `interface_id` in
-/// `lifecycle.rs`, which is private there. Keep the two the same.
-fn interface_id(item: &ListItem) -> Option<&str> {
-    let rest = item.text.strip_prefix("CHANGE")?;
-    if !rest.starts_with(char::is_whitespace) {
-        return None;
-    }
-    let (id, text) = rest.split_once(':')?;
-    let id = id.trim().trim_matches(['[', ']', '`']);
-    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty()).then_some(id)
 }
 
 /// The date of a time in seconds, as `YYYY-MM-DD` in UTC.

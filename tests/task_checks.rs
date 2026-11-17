@@ -19,6 +19,7 @@ fn config(profile: &str, change: &str) -> String {
 fn repo_with(cfg: &str) -> Repo {
     let r = Repo::with_config(cfg);
     r.write("src/a.rs", "fn a() {}\n");
+    r.git(&["add", "src/a.rs"]);
     r
 }
 
