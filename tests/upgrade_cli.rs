@@ -1869,7 +1869,6 @@ fn a_document_whose_id_names_2_documents_is_no_top_file() {
 // --- the rename of the skills of 0.6 (0.7.0, D41) ---
 
 #[test]
-#[ignore = "workflow-pack t18"]
 fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
     let repo = project_06(None);
     let toml = repo.read("spec-dna.toml").replace(
@@ -1899,9 +1898,19 @@ fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
         ),
         "{toml}"
     );
+    // The words `intent`, `spec` and `plan` also name types, and the list
+    // `types` keeps them. Only the list `skills` loses the old names.
     assert!(
-        !toml.contains("\"intent\", \"spec\""),
+        toml.lines()
+            .filter(|l| l.starts_with("skills = "))
+            .all(|l| !l.contains("\"intent\"")
+                && !l.contains("\"spec\"")
+                && !l.contains("\"plan\"")),
         "no old name stays: {toml}"
+    );
+    assert!(
+        toml.contains("types = [\"intent\", \"spec\", \"plan\"]"),
+        "{toml}"
     );
     repo.commit("upgrade");
     // A second run has nothing to change, and the project checks clean.

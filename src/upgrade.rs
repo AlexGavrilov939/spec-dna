@@ -240,6 +240,10 @@ pub enum Source {
 /// exit code 3.
 pub fn source_of(text: &str) -> Result<Source, Fatal> {
     let file = config::FILE_NAME;
+    // The names of 0.6 in `[harness] skills` give exit code 3 in the parser,
+    // so `upgrade` renames them first (D4).
+    let renamed = upgrade_config::rename_skills(text).text;
+    let text = renamed.as_str();
     let Some(pin) = config::scan_pin(text) else {
         let why = match Config::parse(text) {
             Err(e) => e,
@@ -414,13 +418,16 @@ const AREAS_ON_06: &str = "`--areas` moves documents of a 0.5 project; in a 0.6 
 /// (exit code 1); a text that the plan cannot edit is `Fatal::Config` (exit
 /// code 3).
 pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
-    let text = tree_text(tree, config::FILE_NAME).map_err(|e| match e {
+    let original = tree_text(tree, config::FILE_NAME).map_err(|e| match e {
         Fatal::Io(_) => Fatal::Config(format!(
             "no {} in the tree; upgrade moves a project that has one",
             config::FILE_NAME
         )),
         other => other,
     })?;
+    // The skill names of 0.6 change before the first parse (D4).
+    let rename = upgrade_config::rename_skills(&original);
+    let text = rename.text.clone();
     let copts = ConfigOpts {
         pin: opts.pin.clone(),
         sums: opts.sums.clone(),
@@ -520,7 +527,7 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
         .filter(|p| in_tree(tree, p))
         .cloned()
         .collect();
-    let config = (final_text != text).then(|| final_text.clone());
+    let config = (final_text != original).then(|| final_text.clone());
     if let Some(t) = &config {
         writes.insert(config::FILE_NAME.to_string(), t.clone());
     }
@@ -537,8 +544,8 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
         writes,
         removes,
         from_old,
-        edits: repairs.edits,
-        by_hand: repairs.by_hand,
+        edits: [rename.edits, repairs.edits].concat(),
+        by_hand: [rename.by_hand, repairs.by_hand].concat(),
     })
 }
 
