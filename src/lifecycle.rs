@@ -579,6 +579,15 @@ pub(crate) fn interfaces(config: &Config, c: &Corpus, spec: &Doc, out: &mut Vec<
             );
             continue;
         };
+        if bad_interface_id(id) {
+            push(
+                id.to_string(),
+                format!(
+                    "`{id}` is not a document id (no `*`, `?` or `[`, no `..` and no leading `/`)"
+                ),
+            );
+            continue;
+        }
         match c.resolve(id) {
             Res::Found(i, None, _) if c.docs[i as usize].ty == DocType::Interface => {}
             Res::Found(i, None, _) => push(
@@ -603,18 +612,19 @@ pub(crate) fn interfaces(config: &Config, c: &Corpus, spec: &Doc, out: &mut Vec<
                     continue;
                 }
                 // A new document: it is at the place of its id.
-                let ty = config
-                    .layers
-                    .place_type(&format!("{id}.md"))
-                    .unwrap_or(DocType::Requirements);
-                if ty != DocType::Interface {
-                    push(
+                match config.layers.place_type(&format!("{id}.md")) {
+                    Some(DocType::Interface) => {}
+                    Some(ty) => push(
                         id.to_string(),
                         format!(
                             "the place of `{id}` gives the type `{}`, not `interface`",
                             ty.name()
                         ),
-                    );
+                    ),
+                    None => push(
+                        id.to_string(),
+                        format!("the place of `{id}` gives no type, not `interface`"),
+                    ),
                 }
             }
             _ => push(
@@ -636,8 +646,26 @@ pub fn interfaces_absent(head: &Corpus, spec: &Doc, added: &HashSet<String>) -> 
         let Some((Verb::Add, id)) = interface_item(item) else {
             continue;
         };
-        if !matches!(head.resolve(id), Res::Missing) || added.contains(id) {
+        if bad_interface_id(id) {
             continue;
+        }
+        match head.resolve(id) {
+            // A document of another type is no interface: it is absent.
+            Res::Found(i, None, _) if head.docs[i as usize].ty != DocType::Interface => {
+                out.push(crate::check::diag(
+                    spec,
+                    item.line,
+                    Code::DeltaInvalid,
+                    id,
+                    format!(
+                        "the spec adds the interface `{id}`, and `{id}` is a `{}` document, not an interface",
+                        head.docs[i as usize].ty.name()
+                    ),
+                ));
+                continue;
+            }
+            Res::Missing if !added.contains(id) => {}
+            _ => continue,
         }
         out.push(crate::check::diag(
             spec,
@@ -719,14 +747,34 @@ fn interface_item(item: &ListItem) -> Option<(Verb, &str)> {
         return None;
     }
     let (id, text) = rest.split_once(':')?;
-    let id = id.trim().trim_matches(['[', ']', '`']);
+    // Strip a pair of backticks, then a pair of `[[ ]]`. A single `[` stays in
+    // the id, so a glob `[ab]` is not cut.
+    let id = id.trim();
+    let id = id
+        .strip_prefix('`')
+        .and_then(|r| r.strip_suffix('`'))
+        .unwrap_or(id);
+    let id = id
+        .strip_prefix("[[")
+        .and_then(|r| r.strip_suffix("]]"))
+        .unwrap_or(id);
     (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty())
         .then_some((verb, id))
 }
 
-/// The id of an item of `Interfaces` in the form of [`interface_item`].
+/// True if `id` cannot be a document id: it has a glob character (`*`, `?`,
+/// `[`), a `..` segment, or a leading `/`. Such an id would match more than one
+/// path, so it never gets into the scope of SD913.
+fn bad_interface_id(id: &str) -> bool {
+    id.contains(['*', '?', '[']) || id.starts_with('/') || id.split('/').any(|s| s == "..")
+}
+
+/// The id of an item of `Interfaces` in the form of [`interface_item`], if the
+/// id can be a document id. A bad id is `None`, and `interfaces` reports it.
 pub(crate) fn interface_id(item: &ListItem) -> Option<&str> {
-    interface_item(item).map(|(_, id)| id)
+    interface_item(item)
+        .map(|(_, id)| id)
+        .filter(|id| !bad_interface_id(id))
 }
 
 /// SD923 and SD924: the tasks of an `approved` plan. A task needs the label
