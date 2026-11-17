@@ -480,6 +480,43 @@ fn a_requirement_that_the_delta_changes_needs_evidence() {
 }
 
 #[test]
+fn a_partial_tag_alone_gives_sd916_and_stops_finish() {
+    let partial = "# covers: partial requirements/valves#close\n";
+    let fx = || Fx {
+        delta: &[CHANGE_CLOSE],
+        ..Fx::default()
+    };
+    // `check` on the result of `finish`.
+    let r = fx().start();
+    r.write("docs/requirements/valves.md", &valves_with(CLOSE_4));
+    r.write("tests/test_valves.py", partial);
+    finish(&r);
+    let (code, out) = check(&r);
+    let found = lines(&out, "SD916");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("adds or changes the requirement `requirements/valves#close`, and only a partial `covers:` tag names it (tests/test_valves.py:1); add a test that covers all of it"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+    // The command stops at step 5 and writes nothing.
+    let r = fx().start();
+    r.write("tests/test_valves.py", partial);
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("step 5"), "{err}");
+    assert!(
+        out.contains("only a partial `covers:` tag names it"),
+        "{out}"
+    );
+    assert!(r.dir.join(FOLDER).exists());
+    // A full tag next to the partial tag is evidence.
+    r.write("tests/test_full.py", COVERS);
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
 fn a_requirement_that_a_routine_change_edits_needs_evidence() {
     let r = Fx::default().start();
     r.write("docs/requirements/valves.md", &valves_with(CLOSE_4));

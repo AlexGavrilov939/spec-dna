@@ -1,5 +1,6 @@
-//! Proofs of the 20 pilot evals of the pack (`execute`, `tdd`, `verify` and
-//! `debug`). For each eval, `tests/fixtures/eval-solutions/<id>/` has one
+//! Proofs of the evals of the pack that have a reference solution: the pilot
+//! evals (`execute`, `tdd` and `debug`), the harder evals of `verify` and the 2
+//! evals of `agents-line`. For each eval, `tests/fixtures/eval-solutions/<id>/` has one
 //! folder for each scenario:
 //!
 //! - `expect` says what the checks must give. `all-pass`: each check passes.
@@ -137,9 +138,14 @@ fn checks_of(json: &str) -> Vec<(String, bool)> {
 
 /// Runs each scenario of each eval of `skill`.
 fn prove(skill: &str) {
+    prove_n(skill, 5);
+}
+
+/// Runs each scenario of each of the `n` evals of `skill`.
+fn prove_n(skill: &str, n: usize) {
     let lab = Lab::new();
     let ids = lab.ids(skill);
-    assert_eq!(ids.len(), 5, "the pack needs 5 evals of {skill}: {ids:?}");
+    assert_eq!(ids.len(), n, "the pack needs {n} evals of {skill}: {ids:?}");
     let mut seen_reference = 0;
     for id in &ids {
         let dir = solutions().join(id);
@@ -225,6 +231,11 @@ fn the_execute_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() 
     prove("execute");
 }
 
+#[test]
+fn the_agents_line_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
+    prove_n("agents-line", 2);
+}
+
 /// The number after `"<key>": ` in the text of an eval file.
 fn number(text: &str, key: &str) -> f64 {
     let at = text
@@ -257,7 +268,7 @@ fn the_pilot_evals_keep_the_limits_of_the_design_and_name_no_skill_in_the_task()
                 fs::read_to_string(lab.repo.dir.join(format!("evals/pack/{id}.json"))).unwrap();
             let turns = number(&text, "max-turns");
             let budget = number(&text, "max-budget-usd");
-            assert!((12.0..=25.0).contains(&turns), "{id}: {turns} turns");
+            assert!((12.0..=40.0).contains(&turns), "{id}: {turns} turns");
             assert!((1.5..=2.0).contains(&budget), "{id}: {budget} USD");
             let task = text
                 .split("\"task\": \"")

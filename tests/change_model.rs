@@ -322,17 +322,17 @@ fn sd915_names_a_paragraph_under_files() {
 }
 
 #[test]
-fn the_cache_header_has_format_2_and_parser_version_14() {
+fn the_cache_header_has_format_2_and_parser_version_15() {
     let r = repo();
     r.write(
         "docs/intent/drip/plan.md",
-        "---\nstatus: draft\n---\n# Plan\n\n## Files\n\nNone.\n\n## Hours\n\n- 1.5: code\n",
+        "---\nstatus: draft\n---\n# Plan\n\n## Files\n\nNone.\n\n## Order\n\n- [ ] t1: Code. Hours: 1.5.\n",
     );
     assert_eq!(check(&r).0, 0);
     let cache = r.dir.join(".git/spec-dna/index-v1.bin");
     let bytes = std::fs::read(&cache).unwrap();
     assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
-    assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 14);
+    assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 15);
     // A cache of format 1 is not used. The run replaces it.
     let mut old = bytes.clone();
     old[8..12].copy_from_slice(&1u32.to_le_bytes());

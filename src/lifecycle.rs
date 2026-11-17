@@ -779,7 +779,7 @@ pub(crate) fn interface_id(item: &ListItem) -> Option<&str> {
 
 /// SD923 and SD924: the tasks of an `approved` plan. A task needs the label
 /// `Files:` with exact paths (`none` is a value), and the label `Verify:`
-/// (SD923). It lists at most `max-task-files` paths (SD924). A draft plan is
+/// (SD923). A `Skip:` with no reason is a problem too (design 0.7.0, D40). It lists at most `max-task-files` paths (SD924). A draft plan is
 /// not checked. A task whose id an earlier task has is not checked: the first
 /// task with an id counts. One diagnostic of SD923 names every problem of the
 /// task. The target of both codes is the id of the task.
@@ -815,16 +815,29 @@ fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
         if t.verify.is_none() {
             problems.push("it has no `Verify:`".to_string());
         }
+        let labels_problem = !problems.is_empty();
+        let skip_problem = t.skip.as_deref() == Some("");
+        if skip_problem {
+            problems.push("its `Skip:` has no reason".to_string());
+        }
         if !problems.is_empty() {
+            let mut fixes = Vec::new();
+            if labels_problem {
+                fixes.push("write the exact paths in `Files:` and the check in `Verify:`");
+            }
+            if skip_problem {
+                fixes.push("write the reason after `Skip:`");
+            }
             out.push(crate::check::diag(
                 doc,
                 t.line,
                 Code::TaskIncomplete,
                 &t.id,
                 format!(
-                    "the plan is `approved`, and the task `{}` is incomplete: {}; write the exact paths in `Files:` and the check in `Verify:`",
+                    "the plan is `approved`, and the task `{}` is incomplete: {}; {}",
                     t.id,
-                    problems.join("; ")
+                    problems.join("; "),
+                    fixes.join("; ")
                 ),
             ));
         }
@@ -1427,6 +1440,8 @@ fn diff_changes(ctx: &Ctx) -> Result<Vec<DiffChange>, String> {
 
 /// What the newest text of a change on the branch adds to the scope of SD913.
 struct BranchScope {
+    /// True if the newest text of the branch has a `plan.md`.
+    has_plan: bool,
     /// The patterns of the plan of the branch.
     files: Vec<String>,
     /// The items of `Files` of the plan of the branch that are not paths.
@@ -1452,6 +1467,7 @@ impl DiffChange {
                 let mut scope = Vec::new();
                 scope_paths(ctx, &newest, &corpus, &mut scope, None);
                 Some(BranchScope {
+                    has_plan: newest.plan.is_some(),
                     files: newest.files(&corpus),
                     not_paths: newest.files_not_paths(&corpus),
                     paragraph: newest.files_paragraph_only(&corpus),
@@ -1459,6 +1475,21 @@ impl DiffChange {
                 })
             })
             .as_ref()
+    }
+
+    /// True if the change has a `plan.md` in the tree that the checks read for
+    /// it, or in the base tree. A change that `Files` matched has one: its
+    /// `Files` come from its plan. A branch that deletes the `plan.md` of the
+    /// base does not turn SD913 off. The branch is read only if no tree has a
+    /// plan.
+    fn has_plan(&self, ctx: &Ctx) -> bool {
+        self.origin == Origin::FilesMatch
+            || self.change.plan.is_some()
+            || ctx
+                .base
+                .by_path
+                .contains_key(&format!("{}/plan.md", self.change.dir))
+            || self.branch(ctx).is_some_and(|b| b.has_plan)
     }
 
     /// True if `path` is in the scope of SD913. The first test reads the tree
@@ -1875,8 +1906,10 @@ fn approval_missing(
 }
 
 /// SD913: a path of the diff is outside the scope of each change of the diff.
+/// It runs only if a change of the diff has a plan: before a plan exists, a
+/// change has no `Files`, so it has no scope to check against.
 fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
-    if changes.is_empty() {
+    if !changes.iter().any(|c| c.has_plan(ctx)) {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -2305,15 +2338,22 @@ pub fn evidence_missing(
         let doc = &head.docs[di as usize];
         let req = &doc.parsed.reqs[ri];
         if ev.of(di, doc, ri).is_empty() {
+            let message = match ev.partial_of(di, ri).first() {
+                Some(at) => format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and only a partial `covers:` tag names it ({at}); add a test that covers all of it",
+                    ch.slug, doc.id, req.key
+                ),
+                None => format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
+                    ch.slug, doc.id, req.key
+                ),
+            };
             out.push(crate::check::diag(
                 doc,
                 req.line,
                 Code::DeltaEvidenceMissing,
                 format!("{}#{}", doc.id, req.key),
-                format!(
-                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
-                    ch.slug, doc.id, req.key
-                ),
+                message,
             ));
         }
     }

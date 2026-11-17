@@ -1365,9 +1365,16 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         "document" => doc.reqs.clone(),
         _ => Vec::new(),
     };
-    let evidence: Vec<(String, Vec<String>)> = shown_reqs
+    // The full evidence, and the partial `covers:` tags apart from it.
+    let evidence: Vec<(String, Vec<String>, Vec<String>)> = shown_reqs
         .iter()
-        .map(|&r| (doc.parsed.reqs[r].key.clone(), ev.of(d, doc, r)))
+        .map(|&r| {
+            (
+                doc.parsed.reqs[r].key.clone(),
+                ev.of(d, doc, r),
+                ev.partial_of(d, r).to_vec(),
+            )
+        })
         .collect();
     if as_json {
         let units = items.iter().map(|(id, h, line, t)| {
@@ -1390,11 +1397,13 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
                 .strs("requirements", &keys)
                 .raw(
                     "evidence",
-                    &json::array(
-                        evidence
-                            .iter()
-                            .map(|(k, v)| Obj::new().str("key", k).strs("sources", v).end()),
-                    ),
+                    &json::array(evidence.iter().map(|(k, v, p)| {
+                        Obj::new()
+                            .str("key", k)
+                            .strs("sources", v)
+                            .strs("partial", p)
+                            .end()
+                    }),),
                 )
                 .raw("units", &json::array(units))
                 .end()
@@ -1422,12 +1431,15 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
     }
     if !evidence.is_empty() {
         out.push_str("<!-- evidence -->\n");
-        for (k, v) in &evidence {
-            let v = if v.is_empty() {
+        for (k, v, p) in &evidence {
+            let mut v = if v.is_empty() {
                 "none".to_string()
             } else {
                 v.join(", ")
             };
+            if !p.is_empty() {
+                v.push_str(&format!("; partial: {}", p.join(", ")));
+            }
             out.push_str(&format!("- {}#{k}: {v}\n", doc.id));
         }
     }

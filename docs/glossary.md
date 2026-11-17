@@ -15,6 +15,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | area | A topic folder under `requirements/` | | [config](config.md) |
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch | | [concepts](concepts.md#the-change-lifecycle) |
+| batch | The records of one result file of `eval run --ab`, in one file `bench/results/evals/<stamp>-<target>.jsonl`. For each name, the newest batch that has records of the name gives the row of the table of the release | | [evals](evals.md#the-records-of-a-release) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
 | change class | The weight of a change: `small-fix`, `routine` or `higher-risk` | | [change guide](guides/change.md#choose-the-class) |
@@ -53,6 +54,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | locked | The state of the text of an accepted decision outside its amendment, history and live sections. SD405 checks it | frozen | [diagnostics](diagnostics.md) |
 | mixed root | A root with documents of more than one type. The place or the front matter gives the type of each document | | [types](types.md#place-gives-the-type) |
 | `moves-to` | An edge of the layer graph: the text of the source layer matures into the target layer | | [concepts](concepts.md#layers-and-the-graph) |
+| partial tag | A tag `covers: partial <doc-id>#<key>` in a test. It records that the test proves a part of a requirement. It is not evidence | | [config](config.md#a-partial-tag) |
 | pass rate | The share of evals that pass | | [evals](evals.md) |
 | pending | The layer of the top files `roadmap.md` and `questions.md` | | [concepts](concepts.md#layers-and-the-graph) |
 | pin | The version of spec-dna in `spec-dna.toml` (`spec-dna = "<version>"`), with the sums of its binaries as an option | | [config](config.md#the-pin-comes-first) |
@@ -60,6 +62,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | plan | `plan.md`: the approved plan of one change, with its files, order, risks and proof | | [change guide](guides/change.md) |
 | procedure | A guide or a runbook, in `procedures/` | types `guide`, `runbook` | [types](types.md) |
 | profile | A set of default severities of the diagnostic codes: `lite`, `standard` or `strict` | | [profiles](profiles.md) |
+| record | One line of JSON for each run of each arm of an eval run, with the 9 keys `skill`, `eval`, `run`, `arm`, `pass`, `cost`, `tokens`, `models` and `claude_code`. `eval records` writes it. It has no path and no text | | [evals](evals.md#the-records-of-a-release) |
 | requirement | A list item with a bold key and a BCP 14 keyword, such as SHALL | | [concepts](concepts.md#ids-and-requirements) |
 | requirement id | `<document id>#<key>`: the global form of a requirement | | [concepts](concepts.md#ids-and-requirements) |
 | `requirements` | The type of a document that holds the requirements of one capability | type `spec` | [types](types.md) |
@@ -71,9 +74,11 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |
 | section id | `<document id>#<heading slug>`: the unit that `context` gives to an agent | | [concepts](concepts.md#context) |
 | skill | A `SKILL.md` folder that gives a procedure to the agent. `spec-dna skill show <name>` prints the text of a skill of the workflow pack | | [harness](harness.md) |
+| skipped task | A task of a plan with the label `Skip:` and a reason. It is not needed. `next`, `status` and the counts treat it as closed, and `finish` leaves its hours out | | [types](types.md#tasks-of-a-plan) |
 | slug | The name of a change or a document in an id, in lowercase words with hyphens, such as `sensor-timeout` | | [change guide](guides/change.md) |
 | `small-fix` | A change class with no intent: a pull request only | | [change guide](guides/change.md#choose-the-class) |
 | spec | `spec.md`: the delta, the interfaces, the decisions, the concerns and the open questions of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
+| spike | A short piece of work that tries more than one way to build a change. Write one task for each way. After the spike, mark each task that is not needed as a skipped task | | [change guide](guides/change.md#a-spike) |
 | stable layer | A layer of level 0, such as `rules` or `decisions`. The current truth is in stable layers | | [concepts](concepts.md#layers-and-the-graph) |
 | stage | One of Plan, Design, Build, Test, Deploy and Closed. spec-dna derives the stage of a change from its files and git | | [change guide](guides/change.md) |
 | stage skill | A skill that `next` names for a step of a change, for example `write-plan`. The workflow pack has 9 stage skills | | [harness](harness.md#the-workflow-pack-and-reviewmd) |

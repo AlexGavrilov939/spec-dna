@@ -137,7 +137,7 @@ sonnet = "high"
 | `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
 | `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
-| `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
+| `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. Two names that differ only in case (`valves` and `Valves`) are an error (exit code 3), because a file system that ignores case gives one folder for both. The compare changes only the letters A to Z. `new` and `mv` stop with exit code 2 for a path whose area differs from a name of `areas` only in case. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
 | `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](#default-graph). See [The table `layers`](#the-table-layers). |
 | `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
@@ -326,7 +326,7 @@ Each layer of the small graph keeps its `keep`, `context` and limit keys from th
 
 ## Areas and groups
 
-An area is a folder under `requirements/`. The key `areas` lists the areas. `init` proposes them when it detects 2 or more. A group is a named set of areas:
+An area is a folder under `requirements/`. The key `areas` lists the areas. `init` proposes them when it detects 2 or more. Two names of `areas` never differ only in case. A group is a named set of areas:
 
 ```toml
 areas = ["valves", "sensors", "reports"]
@@ -524,10 +524,12 @@ The default budgets are (soft and hard, in characters):
 - `procedure`: 14,000 and 28,000
 - `decision`: 7,000 and 14,000
 - `rule`: 3,000 and 6,000
-- `incident`, `intent` and `plan`: 6,000 and 12,000
-- `research`: none
+- `incident` and `intent`: 6,000 and 12,000
+- `research` and `plan`: none. A plan of small tasks grows with the size of the change, and `finish` deletes it. `[budgets.plan]` sets a budget
 
 A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
+
+`soft = 0` turns off SD701 and SD703 for a type. `hard = 0` turns off SD702 and SD704, and it needs `soft = 0`, because a `hard` below `soft` is a configuration error (exit code 3). So `soft = 0` and `hard = 0` give a type no budget. `[budgets.plan]` with 2 values above 0 gives a plan the rules of SD701 to SD704. A `[budgets.plan]` table with one key only takes the other key from the default of 0.6.1 (6,000 for `soft`, 12,000 for `hard`). An explicit `soft` above 12,000 gives `hard` the same value, and an explicit `hard` below 6,000 gives `soft` the same value, so the table is never a configuration error. A project that has an explicit `[budgets.plan]` keeps it. Delete the table to take the new default.
 
 A document over the soft budget gives a warning (SD701). If it also grew against the base, it gives SD703. The hard budget compares the document with the base ([ADR 0001](adr/0001-information-model.md), "Amendments"). These rules apply:
 
@@ -562,7 +564,17 @@ The tag is plain text, so it works in a comment of any language. Examples: `// c
 
 A `verified-by` path that is not in the git tree gives SD103. A tag that names no requirement gives SD105. An active requirement (of a `requirements`, `interface` or `rule` document with the status `active`) without evidence gives SD608. The profile sets the severities.
 
-`show` lists the evidence of each requirement. A moved requirement keeps its tags, because its old id is an alias. spec-dna does not run the tests.
+`show` lists the evidence of each requirement. A moved requirement keeps its tags, because its old id is an alias. spec-dna does not run the tests. A tag `covers: partial <doc-id>#<key>` records that a test proves a part of a requirement. It is not evidence ([A partial tag](#a-partial-tag)).
+
+### A partial tag
+
+The word `partial` comes first after `covers:` (in any ASCII case, with or without one colon after it), and it applies to each id of the tag: `# covers: partial loans#renew, loans#fines`. The word `partial` after an id is not this form: it ends the tag, as any other word, and the tag stays full.
+
+- Alone, a partial tag does not clear SD608 or SD916, and it does not clear the stage `test` of `next` and `status`. The messages name it.
+- A full tag or a `verified-by` of the same requirement is evidence, also next to a partial tag.
+- A partial tag that names no requirement gives SD105, as a full tag does.
+- `show` lists the partial tags apart from the sources, `status` gives the token `partial <n>`, and `stats --sdlc` gives the share of requirements that have a partial tag and no full evidence.
+- A binary before 0.7.0 reads no id after the word `partial`, so it reads no evidence from such a tag.
 
 ## Patterns and globs
 

@@ -244,7 +244,7 @@ status: approved
 
 ## Order
 
-- [x] t1: Write the audit lines to their own file. Files: `src/audit.sh`, `tests/test_audit.sh`. Verify: `sh tests/test_audit.sh`.
+- [x] t1: Write the audit lines to their own file. Files: `src/audit.sh`, `tests/test_audit.sh`. Verify: `sh tests/test_audit.sh`. Hours: 3.
 
 ## Risks
 
@@ -253,11 +253,6 @@ status: approved
 ## Proof
 
 - `sh tests/test_audit.sh` covers requirements/inventory#audit-file.
-
-## Hours
-
-- 1: plan
-- 2: code
 "##;
 
 /// `docs/intent/audit-file/spec.md`.
@@ -565,8 +560,8 @@ status: approved
 
 ## Order
 
-- [x] t1: Change the threshold. Files: `src/stock.sh`. Verify: `sh tests/test_stock.sh`.
-- [x] t2: Test the new threshold. Files: `tests/test_stock.sh`. Verify: `sh tests/test_stock.sh`.
+- [x] t1: Change the threshold. Files: `src/stock.sh`. Verify: `sh tests/test_stock.sh`. Hours: 2.5.
+- [x] t2: Test the new threshold. Files: `tests/test_stock.sh`. Verify: `sh tests/test_stock.sh`. Hours: 2.
 
 ## Risks
 
@@ -575,12 +570,32 @@ status: approved
 ## Proof
 
 - `sh tests/test_stock.sh` covers requirements/inventory#low-stock.
+"##;
 
-## Hours
+/// `docs/intent/low-stock-10/plan.md` of `finish-3`: a skipped task that adds no hours.
+pub const FINISH_3_DOCS_INTENT_LOW_STOCK_10_PLAN_MD: &str = r##"---
+status: approved
+---
+# Raise the low-stock threshold to 10
 
-- 1.5: plan
-- 2: code
-- 1: review
+## Files
+
+- `src/stock.sh` The threshold.
+- `tests/test_stock.sh` The test of the threshold.
+
+## Order
+
+- [x] t1: Change the threshold. Files: `src/stock.sh`. Verify: `sh tests/test_stock.sh`. Hours: 2.5.
+- [x] t2: Test the new threshold. Files: `tests/test_stock.sh`. Verify: `sh tests/test_stock.sh`. Hours: 2.
+- [x] t3: Raise the alert level. Files: `src/alert.sh`. Verify: `sh tests/test_stock.sh`. Hours: 1-2. Skip: the store keeps the old alert.
+
+## Risks
+
+- A count of 9 is now low.
+
+## Proof
+
+- `sh tests/test_stock.sh` covers requirements/inventory#low-stock.
 "##;
 
 /// `docs/intent/low-stock-10/plan.md`.
@@ -2207,7 +2222,7 @@ pub static FINISH_3_FILES: &[(&str, &str)] = &[
     ),
     (
         "docs/intent/low-stock-10/plan.md",
-        DOCS_INTENT_LOW_STOCK_10_PLAN_MD_V1,
+        FINISH_3_DOCS_INTENT_LOW_STOCK_10_PLAN_MD,
     ),
     (
         "docs/intent/low-stock-10/spec.md",

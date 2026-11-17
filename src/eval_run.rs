@@ -75,6 +75,17 @@ pub(crate) struct RunResult {
     pub(crate) interrupted: bool,
     /// The names of the models in `modelUsage` of the result of `claude`.
     pub(crate) models: Vec<String>,
+    /// The sums of the token counts over `modelUsage`, or `None`.
+    pub(crate) tokens: Option<Tokens>,
+}
+
+/// The token counts of one run: the sums over the entries of `modelUsage`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Tokens {
+    pub(crate) input: u64,
+    pub(crate) output: u64,
+    pub(crate) cache_read: u64,
+    pub(crate) cache_write: u64,
 }
 
 /// The runs of one eval.
@@ -773,6 +784,7 @@ pub(crate) fn one_attempt(
             denials: None,
             interrupted: true,
             models: Vec::new(),
+            tokens: None,
         });
     }
     let timed_out = ended == Ended::TimedOut;
@@ -791,6 +803,7 @@ pub(crate) fn one_attempt(
         subtype = Some("timeout".to_string());
     }
     let models = result_models(&stdout);
+    let tokens = result_tokens(&stdout);
 
     let mut checks = Vec::new();
     for c in &p.eval.checks {
@@ -829,6 +842,7 @@ pub(crate) fn one_attempt(
                 denials,
                 interrupted: true,
                 models,
+                tokens,
             });
         }
         if ended == Ended::TimedOut {
@@ -849,6 +863,7 @@ pub(crate) fn one_attempt(
         denials,
         interrupted: false,
         models,
+        tokens,
     })
 }
 
@@ -1104,7 +1119,7 @@ fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
 }
 
 /// The sorted names of the models of `modelUsage` in the result of `claude`.
-/// It reads names only, and a name has at most 64 characters of a safe set.
+/// It reads names only, and a name has the form of a model name of a record.
 fn result_models(stdout: &[u8]) -> Vec<String> {
     let Some(Value::Obj(fields)) = result_object(stdout).map(|o| o.get("modelUsage").clone())
     else {
@@ -1113,14 +1128,50 @@ fn result_models(stdout: &[u8]) -> Vec<String> {
     let mut names: Vec<String> = fields
         .into_iter()
         .map(|(k, _)| k)
-        .filter(|k| {
-            (1..=64).contains(&k.len())
-                && k.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-:[]/".contains(&b))
-        })
+        .filter(|k| crate::eval_records::valid_model(k))
         .collect();
     names.sort();
     names
+}
+
+/// The sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`,
+/// `cacheReadInputTokens` and `cacheCreationInputTokens`. A field that an
+/// entry does not have counts 0. The result is `None` if `modelUsage` is
+/// absent or empty, an entry is no object, or a count is not an integer of 0
+/// or more. Other fields (such as `thinkingTokens`) are not read.
+pub(crate) fn result_tokens(stdout: &[u8]) -> Option<Tokens> {
+    let Value::Obj(entries) = result_object(stdout)?.get("modelUsage").clone() else {
+        return None;
+    };
+    if entries.is_empty() {
+        return None;
+    }
+    let mut sums = [0u64; 4];
+    for (_, entry) in &entries {
+        if !matches!(entry, Value::Obj(_)) {
+            return None;
+        }
+        for (sum, key) in sums.iter_mut().zip([
+            "inputTokens",
+            "outputTokens",
+            "cacheReadInputTokens",
+            "cacheCreationInputTokens",
+        ]) {
+            match entry.get(key) {
+                Value::Null => {}
+                Value::Num(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n < 9e15 => {
+                    *sum = sum.checked_add(*n as u64)?;
+                }
+                _ => return None,
+            }
+        }
+    }
+    Some(Tokens {
+        input: sums[0],
+        output: sums[1],
+        cache_read: sums[2],
+        cache_write: sums[3],
+    })
 }
 
 /// The most bytes of the text of an answer that is a refusal of the API. A
@@ -1694,6 +1745,7 @@ mod tests {
                     denials: None,
                     interrupted: false,
                     models: Vec::new(),
+                    tokens: None,
                 })
                 .collect(),
         }
@@ -2021,6 +2073,39 @@ mod tests {
         assert_eq!(result_models(out), ["claude-a-2", "claude-b-1"]);
         assert!(result_models(b"{}").is_empty());
         assert!(result_models(b"x").is_empty());
+        // The tokens: sums over the models; an absent field is 0; `thinkingTokens`
+        // is not added.
+        let t = result_tokens(
+        br#"{"modelUsage":{"a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":3,"cacheCreationInputTokens":4,"thinkingTokens":9},"b":{"inputTokens":10}}}"#,
+    );
+        assert_eq!(
+            t,
+            Some(Tokens {
+                input: 11,
+                output: 2,
+                cache_read: 3,
+                cache_write: 4
+            })
+        );
+        for bad in [
+            &br#"{}"#[..],
+            b"x",
+            br#"{"modelUsage":{}}"#,
+            br#"{"modelUsage":[]}"#,
+            br#"{"modelUsage":{"a":3}}"#,
+            br#"{"modelUsage":{"a":{"inputTokens":-1}}}"#,
+            br#"{"modelUsage":{"a":{"inputTokens":1.5}}}"#,
+            br#"{"modelUsage":{"a":{"inputTokens":"1"}}}"#,
+        ] {
+            assert_eq!(result_tokens(bad), None, "{}", String::from_utf8_lossy(bad));
+        }
         assert!(result_models(br#"{"modelUsage":{"a b":{}}}"#).is_empty());
+        // A name with brackets or a slash is kept; a path-like name is not.
+        assert_eq!(
+            result_models(
+                br#"{"modelUsage":{"claude-fable-5-2[1m]":{},"v/m:1":{},"a..b":{},"/etc/x":{}}}"#
+            ),
+            ["claude-fable-5-2[1m]", "v/m:1"]
+        );
     }
 }

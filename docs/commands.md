@@ -237,7 +237,7 @@ spec-dna show --conventions <type>
 `show <id>` prints a document, a section with its subsections, or one requirement, with ids and hashes. For a requirements, interface or rule document, it also prints these items:
 
 - the number of recognized requirements (`--json`: their keys);
-- the evidence of each requirement: its `verified-by` paths and the `covers:` tags of the tests.
+- the evidence of each requirement: its `verified-by` paths and the full `covers:` tags of the tests. The partial tags (`covers: partial <doc-id>#<key>`) follow after `partial:`, as in `- loans#fines: none; partial: tests/test_fines.py:1`. `--json` gives each item of `evidence` the field `sources` (the full evidence) and the field `partial` (a list of `<path>:<line>`, empty if there is none).
 
 `show --conventions <type>` prints the conventions for documents of the type. These are the sections of project documents that `[conventions]` in `spec-dna.toml` names. The output also gives the names of the amendment and live sections of the type. When a target of `context` is a document of that type, `context` serves the same sections first.
 
@@ -254,6 +254,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 - Another type writes `<root>/<dir>/<id>.md` in a mixed root. `<dir>` is the folder of the layer of the type, and the id is relative to it. For example, `new requirements valves/closing` writes `<root>/requirements/valves/closing.md`.
 - In a root of one type, the file is `<root>/<id>.md`.
 - A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
+- The area of a new path is its first folder under the folder of the layer of `requirements`. If it equals a name of `areas` in lowercase ASCII and differs from it in bytes, `new` stops with exit code 2 and writes nothing. The message names the area and the name of `areas`. With an empty `areas`, `new` checks no area.
 
 `--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, including the default template. For example, a file `madr.md` replaces the default template of `decision`.
 
@@ -301,7 +302,7 @@ A change has no stage field. The stage is the first row of this table that match
 | `plan` | `intent.md` is absent, or its status is not `accepted`, or its `class` is not set | Set `status: accepted` in `intent.md`, or write the `class` |
 | `design` | The class is `higher-risk`, and `spec.md` is absent or not `approved` | Set `status: approved` in `spec.md` |
 | `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base. A routine change with an approved plan that lists no files is in `build` while a task of `Order` is open | Set `status: approved` in `plan.md`, or change a file of `Files` |
-| `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
+| `test` | A requirement that the change adds or changes has no full evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
 - An intent with no `class` stays in the stage `plan`, because the class decides the next artifact. If its status is `draft`, the last line asks for the class first and then for the status. If its status is `accepted`, the last line asks for the class, and says that `check` reads the change as `routine` until then. `check` does not change: it reads a change with no class as `routine`.
@@ -313,10 +314,11 @@ A change has no stage field. The stage is the first row of this table that match
 - A file of `Files` differs from the base if the diff against the base has a path that a `Files` item matches. The diff is the diff of the working tree. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
 - A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
+- A partial tag (`covers: partial <doc-id>#<key>`) is not evidence ([A partial tag](config.md#a-partial-tag)). Suppose a partial tag names a requirement that has no full evidence. Then the summary line of `next` says "no full evidence" in place of "no evidence", and it ends with "; N of them have a partial covers: tag only" (N is a number). The item of that requirement names its id, and it says "has a partial covers: tag only", the place of the tag, and "add a test that covers all of it". With no partial tag, the lines are the lines of 0.6.
 - The change that the default branch finished is no longer in the tree, so it has no stage. `spec-dna log` lists it.
 - The stage Maintain is not the stage of a change. `status` lists an open follow-up of an incident ([status](#status)).
 
-In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done. The first open task is the next task.
+In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done and the tasks that are skipped (a task with a reason in `Skip:`, which is not needed and is closed). With a skipped task, the line of the tasks ends with `, <n> not needed`. The first task that is not closed is the next task.
 
 ### Skills
 
@@ -410,18 +412,22 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
     - A relative link of a delta line moves to the path of the target document.
     - The result keeps CRLF, a BOM and the final newline of each file.
     - A line that the tree applies already is skipped, so a second run changes nothing.
-6. Step 5: each requirement that the delta adds or changes has evidence (SD916). For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
+6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
 
 If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code.
 
-If the plan has a section `Hours` ([types.md](types.md#sections-that-carry-list-items)), `finish` adds its items and prints the line `Hours: <total>` (also with `--dry-run`), with no zero after the last digit (`3.5`, `4`). The next line says to add this line to the commit message of the change and to keep it in the squash message, because `finish` makes no commit. An item that has no number of hours gives the note `the item "<text>" of Hours has no number of hours; no total`, and no `Hours:` line. A plan with no `Hours` item prints nothing. `log` and `stats --sdlc` read the line from the commit that deletes `intent.md`. Nothing checks the value: the line is a record.
+`finish` adds the label `Hours:` of each task of the plan that is not a duplicate and is not skipped ([types.md](types.md#tasks-of-a-plan)). It prints the line `Hours: <low>` or `Hours: <low>-<high>` (also with `--dry-run`), with no zero after the last digit (`3.5`, `4`). A task with a number counts as the range of equal ends, so a plan with `Hours: 1-2` and `Hours: 1.5` gives `Hours: 2.5-3.5`. The next line says to add this line to the commit message of the change and to keep it in the squash message, because `finish` makes no commit. No task and no value of `Hours:` stops `finish`. It prints these notes:
 
-These rules apply to `Hours`:
+- A task has a value that is no number and no range, for example `soon` or `3-1`: the note ``the task `<id>` has the value "<value>" in `Hours:`, which is no number of hours and no range; no total``, one for each such task, and no `Hours:` line.
+- A task has no `Hours:`, and no value is invalid: the note ``the tasks `<id>`, `<id>` have no `Hours:`; the total leaves them out``. The total of the other tasks still prints. For one task, the note is ``the task `<id>` has no `Hours:`; the total leaves it out``.
+- No task has `Hours:`: no line and no note.
 
-- A nested item under an item of `Hours` is not counted. Only the top-level items are.
-- Two sections `Hours` in one plan are added together.
-- `finish` reads an item with an optional `h` (`1.5h`). The line `Hours:` of a commit message has no `h`: `Hours: 3.5h` is not read, and the value is absent.
-- A number of the line `Hours:` has up to 7 digits before the `.` and up to 2 after it. A longer number is not read.
+`log` and `stats --sdlc` read the line from the commit that deletes `intent.md`. Nothing checks the value: the line is a record. The section `Hours` of a plan is not read.
+
+These rules apply to `Hours:`:
+
+- The label `Hours:` of a task has a number or a range ([Tasks of a plan](types.md#tasks-of-a-plan)). The number can end with `h` (`1.5h`). The line `Hours:` of a commit message has no `h`: `Hours: 3.5h` is not read, and the value is absent.
+- A number of the line `Hours:` of a commit message has up to 7 digits before the `.` and up to 2 after it. A longer number is not read. A range of the line is `<a>-<b>` with `a` not above `b`, and spaces or tabs can be around the `-`.
 - `log` reads the commit that deletes `intent.md`. For a merge-commit merge, that is the commit of the branch, so the line must be in that commit and not only in the message of the merge commit.
 
 These rules apply to the files:
@@ -437,10 +443,10 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 `--dry-run` writes nothing. It prints the diff of each file that `finish` would write, and `remove <path>` for each file that it would delete. With `--json`, the output is one object:
 
 ```json
-{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}],"hours":3.5}
+{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}],"hours":{"low":2.5,"high":3.5}}
 ```
 
-`hours` is the total of the section `Hours`, or `null`. A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty, and the output has no `hours`. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
+`hours` is the total of the `Hours:` labels of the tasks as `{"low","high"}` (equal for a number), or `null`. A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty, and the output has no `hours`. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
 
 `finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
 
@@ -450,7 +456,7 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 spec-dna status [--group <name>] [--base <rev>]
 ```
 
-`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total` and the id of the next open task). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
+`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total`, `skipped <n>` if a task is skipped, and the id of the next open task), and the token `partial <n>` when `<n>` requirements of the change have a partial `covers:` tag and no full evidence (`status --json`: the integer field `partial`, 0 if there is none). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
 
 Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text, and it ends with `[skill: post-mortem]`. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
 
@@ -471,10 +477,10 @@ The area of a delta target is the first folder under the folder of the layer of 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 
 ```json
-{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
+{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"skipped":0,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}},"partial":0}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
 ```
 
-A status is `null` if the file is absent. `class` is `null` if the intent has no valid class, and the text shows the token `none`. `approved_in` gives the source of the approval of each artifact: `"base"` (the base tree has the same status), `"branch <short sha>"` (the approval commit that set the status, with `[change] approval = "branch"`) or `null` (the status is not `accepted` or `approved`, the file is absent, or no approval counts). The short sha has 12 characters. With `approval = "branch"`, the text adds `(base)` or `(branch <short sha>)` after each `accepted` or `approved` status. With `approval = "base"`, the text does not change. Each item of `follow_ups` has `"skill":"post-mortem"`. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
+A status is `null` if the file is absent. `class` is `null` if the intent has no valid class, and the text shows the token `none`. `approved_in` gives the source of the approval of each artifact: `"base"` (the base tree has the same status), `"branch <short sha>"` (the approval commit that set the status, with `[change] approval = "branch"`) or `null` (the status is not `accepted` or `approved`, the file is absent, or no approval counts). The short sha has 12 characters. With `approval = "branch"`, the text adds `(base)` or `(branch <short sha>)` after each `accepted` or `approved` status. With `approval = "base"`, the text does not change. Each item of `follow_ups` has `"skill":"post-mortem"`. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.done` counts the tasks with `- [x]` and no reason in `Skip:`, and `tasks.skipped` counts the skipped tasks. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
 
 Exit codes: 0 done; 2 usage, or an unknown group; 3 configuration, or a `--base` that is not a commit; 4 git.
 
@@ -493,7 +499,7 @@ The status of the intent in the parent of that commit gives the result:
 | `accepted` | `finished` |
 | any other status, also `draft` | `closed` |
 
-For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the hours, the commit and the title. The counts and the class come from the parent tree too. The hours are the number of the last line `Hours: <number>` of the message of that commit. The line can be in any paragraph, because a host can write the messages of a squash as a list. A line with other text after the number is not such a line. `finish` prints the line, and the person or the agent that commits puts it in the message. With no such line, the hours are absent: `-` in the text and `null` in `--json`. One git process reads the messages of all the listed commits. A line that has no valid form is not counted. The newest change comes first.
+For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the hours, the commit and the title. The counts and the class come from the parent tree too. The hours are the last line `Hours: <number>` or `Hours: <a>-<b>` of the message of that commit. The line can be in any paragraph, because a host can write the messages of a squash as a list. A line with other text after the number is not such a line. `finish` prints the line, and the person or the agent that commits puts it in the message. The text shows `4.5` or `5-9`. In `--json`, `hours` is `{"low","high"}`, with equal ends for a number. With no such line, the hours are absent: `-` in the text and `null` in `--json`. One git process reads the messages of all the listed commits. A line that has no valid form is not counted. The newest change comes first.
 
 ```text
 2024-04-05 finished dose-limit higher-risk add 1 change 2 remove 0 hours 3.5 3f2a9c1b7e0d Dose limit
@@ -506,19 +512,22 @@ A change has an entry only if the folder came to the default branch in an earlie
 
 A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion. The entry comes later, under the new name.
 
-A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end a change. `log` gives no entry for it, because the id still resolves. For each deleted `intent.md`, `log` asks git for the diff of the commit against its first parent, with no path limit. The deletion is a move out only if both conditions are true:
+A move of `intent.md` out of the `intent` folder does not end a change. `log` gives no entry for it, because the file still exists. For each deleted `intent.md`, `log` asks git for the diff of the commit against its first parent, with no path limit. It runs one git process for each deleted file. The deletion is a move out only if all 3 conditions are true:
 
 1. The diff renames the deleted `intent.md` to a new path.
-2. The front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
+2. The rename is `R100`, which means that the new file has the same text. Else the front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
+3. The same diff has no other record that deletes or renames a file of the change folder.
 
-A plain `git mv` writes no alias, so it still reads as a deletion. Assume that a commit of `finish` adds a near copy of the intent, and the copy has the old id in its `aliases`. Then the commit reads as a move, and `log` gives no entry for that change.
+A plain `git mv` of `intent.md` is `R100`, so it is a move. A `git mv` of a whole folder out of the `intent` folder renames each file of the folder. If the folder holds a spec or a plan too, condition 3 is false: the folder left the layer, and the change ended. If the folder holds only `intent.md`, the move of the folder is the same single `R100` rename as a plain `git mv`, so it is a move. A commit of `finish` that removes the spec and the plan ends the change in the same way, also if it adds a near copy of the intent with the old id in its `aliases`. A near copy with no alias is not `R100`, so it does not meet condition 2.
+
+2 cases stay as they were in 0.6.1, and both read as a move. In both, the folder holds only `intent.md`, so the commit has no other record of the folder and `log` gives no entry for that change. The first case is a commit of `finish` that adds a near copy with the old id in its `aliases`. The second case is a `git mv` of the whole folder out of the `intent` folder. A move that changes more than half of the text is no rename for git, so it ends the change.
 
 In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
 
 With `--json`, the output is one object:
 
 ```json
-{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"hours":3.5,"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
+{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"hours":{"low":3.5,"high":3.5},"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
 ```
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--since` that is not a commit; 4 git.
@@ -538,7 +547,7 @@ The command rebuilds the life of each change from the commits that touched its `
 - A span that would be negative is not counted.
 - The durations use the committer dates.
 - A rename of the folder inside the `intent` folder keeps the life under the new name.
-- A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end the life, because the id still resolves. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 2 conditions of a move out.
+- A move of `intent.md` out of the `intent` folder does not end the life, because the file still exists. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 3 conditions of a move out, and the 2 cases that read as a move although the folder left the layer.
 
 | Play | Kind | Indicator | Value |
 | --- | --- | --- | --- |
@@ -549,11 +558,12 @@ The command rebuilds the life of each change from the commits that touched its `
 | Build | leading | Time from plan approval to the merged pull request | The median days from the first commit that sets the plan `approved` to the commit that deleted the folder. It counts finished changes. |
 | Build | leading | Share of changes that merge from the first implementation pass | `n/a`: it needs pull request metadata. |
 | Build | lagging | How often the merged diff still matches the committed `plan.md` | The percent of finished changes whose diff has no path that SD913 reports for the scope of the plan. |
-| Build | lagging | Hours of work per finished change | The median of the hours of the finished changes. The hours are the last line `Hours: <number>` of the message of the commit that deleted the `intent.md` (the commit that [`log`](#log) lists). Unit `hours`. The count is the number of finished changes that have such a line, and the note gives the total. A change with no line does not count. |
+| Build | lagging | Hours of work per finished change | The median of the hours of the finished changes. The hours are the last line `Hours: <number>` or `Hours: <a>-<b>` of the message of the commit that deleted the `intent.md` (the commit that [`log`](#log) lists). A range counts as its midpoint. Unit `hours`. The count is the number of finished changes that have such a line, and the note gives the total (a range `<low>-<high>` if a change has a range). A change with no line does not count. |
 | Build | lagging | Rework cycles per change | `n/a`: it needs pull request metadata. |
 | Test | leading | The eval pass rate over time | The `pass_rate` of the newest result file in `<[evals] dir>/results`, in percent. `n/a` without `[evals]`. |
 | Test | leading | How long a production incident takes to become a permanent eval | The median days from the commit that added an incident to the commit that added the eval that its `Eval` section names. `n/a` without `[evals]`. |
 | Test | lagging | Regressions caught in CI against regressions found in production | `n/a`: it needs the incident tracker. |
+| Test | lagging | Share of requirements with partial evidence only | The percent of the requirements that need evidence (an `active` `requirements`, `interface` or `rule` document) in the tree of `HEAD` that have a partial `covers:` tag and no full evidence. Unit `percent`. The count is the number of such requirements, and the note gives the partial and the bare count. `n/a` if the tree has no active requirement, or if `[evidence] tests` is empty. |
 | Maintain | leading | Time from band breach to an `intent.md` in the triage queue | `n/a`: spec-dna has no bands. |
 | Maintain | lagging | Repeat incidents of the same class | `n/a`: an incident has no class field. |
 | Deploy | both | The other indicators of the playbook | `n/a`: they need CI logs, telemetry or an incident tracker. |
@@ -575,7 +585,7 @@ A shallow clone can miss old changes, so each indicator that it computes from th
 
 With `[change] policy = "none"`, `stats` says that the change process is off and gives no indicator. It warns on a pin mismatch.
 
-The 2 Test indicators read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. They are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file and an incident belong to no change.
+The 2 leading Test indicators and the share of partial evidence read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. The 2 leading rows are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file, an incident and a requirement belong to no change. The share of partial evidence needs no `[evals]`, and a shallow clone adds no note to it.
 
 The pass rate reads each `*.json` file that is directly in `<[evals] dir>/results`.
 
@@ -606,7 +616,7 @@ Plan lagging: Survival rate: the share of intent.md files that are accepted rath
 Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
 ```
 
-With `--json`, the output is one object with the 15 indicators of the table, in its order:
+With `--json`, the output is one object with the 16 indicators of the table, in its order. The table of 0.6 had 15 rows, so a script reads a row by its `name`, not by its place:
 
 ```json
 {"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
@@ -614,7 +624,7 @@ With `--json`, the output is one object with the 15 indicators of the table, in 
 
 - `value` is a number with 1 decimal, or `null` for an indicator with no value. The row of the hours has up to 2 decimals and no zero after the last digit (`2.25`, `3.5`, `6`).
 - `unit` is `days`, `percent`, `commits per change` or `hours`.
-- `count` is the number of changes that the value counts. For the 2 Test indicators, it is the number of result files and incidents. It is `null` for an indicator that git cannot give.
+- `count` is the number of changes that the value counts. For the 2 leading Test indicators, it is the number of result files and incidents. For the share of partial evidence, it is the number of requirements that need evidence. It is `null` for an indicator that git cannot give.
 - `reason` is `null` for a full value. Each `null` value has a reason.
 
 Exit codes: 0 done; 2 usage, an unknown group, or no `--sdlc`; 3 configuration; 4 git.
@@ -706,6 +716,7 @@ These rules apply to the move of a whole document:
 - If the new type has no status, `mv` removes the `status` line. If the status is not a status of the new type (after `status-map`), `mv` writes the first status of the new type, and the output names it: `status: accepted -> draft`. All other fields stay.
 - If the new place gives no type, and the old type came from the old place, `mv` writes the `type` line, unless `default-type` of the new root is that type. A move never changes a type with no line in the output.
 - In a root of one type, `mv` changes no `type` and no `status` line.
+- The area of the new path is its first folder under the folder of the layer of `requirements`. If it equals a name of `areas` in lowercase ASCII and differs from it in bytes, `mv` stops with exit code 2 and changes nothing. The message names the area and the name of `areas`. This also applies to the new document of a split. With an empty `areas`, `mv` checks no area.
 - After the move, `mv` removes each folder that the move left empty, from the deepest folder to the highest. A folder with a file stays, and so does a folder with an ignored file. The root folder of the document stays. With `--stub`, the stub keeps the folder.
 
 The second form splits a document of any type. It moves requirements, or whole sections with their subsections, into one of these documents:
@@ -750,16 +761,19 @@ spec-dna index <dir or file> [--replace]
 
 `index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. A cell with no text, such as a missing status, is written as `| |`. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
 
+`index` gives the file the type of its place, as `check` reads it: the `type` line that the old file keeps, the type of the root, the type of the layer folder, or the `default-type` of the root. If that type needs a status, and the old file has none, and the root gives none, `index` writes the first status of the type before the line `generated`. That is `draft`, or `proposed` for a decision. A status that the old file has stays. A root with `default-type` and `status` gets no line. If the place gives no type (for example `index docs` in a mixed root with no `default-type`), `index` stops with exit code 2 and writes nothing. The message is ``the place `<dir>` gives no type; index a folder of a layer, or set `default-type` of the root``. For the folder of a layer that holds more than one type, such as the `intent` folder (`intent`, `spec` and `plan`), the message names the layer and its types, because the folder gives no single type. The index that `finish` writes again follows the same rule, and for a place with no type it keeps the front matter as it is.
+
 ## eval
 
 ```text
 spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]
 spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
 spec-dna eval pack
-spec-dna eval verdict
+spec-dna eval verdict [--release] [--json]
+spec-dna eval records <result file>
 ```
 
-`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts the headless agent of the Claude Code adapter (`claude -p`) on a copy of a fixture. Then it runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand than `run`, `pack` and `verdict`, is a usage error. [evals.md](evals.md) is the guide to the start, the cost and the CI job.
+`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts the headless agent of the Claude Code adapter (`claude -p`) on a copy of a fixture. Then it runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand than `run`, `pack`, `verdict` and `records`, is a usage error. [evals.md](evals.md) is the guide to the start, the cost and the CI job.
 
 spec-dna itself makes no network call. `claude` makes network calls, and each run costs money. A pin that differs from the version of the binary stops the command, as it stops `check`. The runner has no time limit of its own. In CI, `timeout-minutes` of the workflow limits the job.
 
@@ -793,23 +807,29 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 
 `eval run --ab <target>` measures a skill against no skill ([ADR 0016](adr/0016-skill-evals.md)). The target is a skill, `all` or `agents-line`. It reads the pack in `<[evals] dir>/pack/`, runs each eval in the arms `with` and `without` in pairs, and writes `<[evals] dir>/results/skills-<YYYYMMDD>T<HHMMSS>Z.json` (or the folder of `--out`). The result has the pass rates, the costs, the difference and the cost ratio with a 90% interval, and a verdict. [evals.md](evals.md#the-pack-and-the-measure-of-a-skill) gives the arms, the rules of the verdict and the result file.
 
-`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`, and `--resume` rejects a different `--runs`. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
+`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. `--resume <file> --runs <n>` with `n` above the `runs` of the file adds runs to each eval. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`. `--resume` rejects a lower `--runs`, and `--runs` with a file that kept the runs of each eval. An estimate above the cap does not stop the command: it prints a note and starts, and the check before each run stops it at the cap. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
 
 | Code | Meaning of `eval run --ab` |
 | --- | --- |
 | 0 | The target is complete, with any verdict. Also `--dry-run`, also with an estimate above the cap |
 | 2 | Usage error: no target, more than one target, an unknown target, `--min-pass-rate`, or a bad value of `SPEC_DNA_EVAL_BACKOFF` |
-| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
+| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
 | 4 | A git or file error: the temporary folder, the copy, the base commit or the result file. After the first run, the command writes the partial result (`"stopped": "error"`) before it exits |
 | 129, 130, 143 | SIGHUP, SIGINT or SIGTERM. The partial result is written first |
 
 ### eval pack
 
-`eval pack` writes the 55 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
+`eval pack` writes the 57 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
 
 ### eval verdict
 
 `eval verdict` prints one line for each of the 11 skills and for `agents-line`: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source (`project <file>`, `release` or `-`). For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name, and then the table of the release that the binary holds. It starts no agent and needs no `[evals]` table. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`. Exit code 0, or 3 for a configuration error.
+
+`eval verdict --release` prints the table of the release instead: one line for each name that has a row, with the verdict, the rule, the runs and passes of each arm, the costs, the 2 intervals, the batch and the version of Claude Code. With `--json`, it prints `{"release":[...]}`. It reads the binary only, and it needs no project. [evals.md](evals.md#the-records-of-a-release) gives the form.
+
+### eval records
+
+`eval records <result file>` reads one result file of `eval run --ab`, and prints one record for each run of each arm, as JSON Lines on stdout. A record has the 9 keys `skill`, `eval`, `run`, `arm`, `pass`, `cost`, `tokens`, `models` and `claude_code`, and no other key. The command builds each record from these 9 values, so no path and no text of the file reaches the output. It computes each item again from its records, and it compares the result with the item of the file. It prints the number of records on stderr. It takes one file and no option. Exit code 0, 2 for a usage error, or 3 for a file that is not a result of `--ab`, an item with no verdict, a value outside its form or a result that the records do not repeat. [evals.md](evals.md#the-records-of-a-release) gives the form of a record.
 
 ## transcript
 
@@ -941,7 +961,7 @@ A document qualifies only if all these are true:
 
 The moved file has no `type` line, no `status` line and no `was-type` line, because its place gives the type. Its old id is an alias, the key `types` (if the project has it) gets the type, and the graph gets the layer `foundation` or `pending`. If 2 documents want the same top file, or the top file exists, or the id of the top file is the id or an alias of another document (also in another root), or the id of the document names more than one document already, or a document is over the budget, that document is no top file. The report has one `kept` line that names the paths, and each such document follows the other rules of `upgrade`: a change moves to the intent layer, and `--layout` renames its folder. The upgrade does not stop. A 0.6 project gets no move to a top file, because SD503 forbids a move of a document in the pull request of the pin. For a 0.6 project, see [After the upgrade: top files and areas](guides/upgrade-0.5.md#after-the-upgrade-top-files-and-areas).
 
-`--areas <file>` moves the documents that the file maps. The file has one table, `[areas]`, and each entry is `"<id of the document in the 0.5 tree>" = "<area>"`. A mapped document goes to `<root>/<folder of the requirements layer>/<area>/<slug>.md` in its own root, with its old id as an alias. The plan adds each area to the key `areas`, sorted, and writes the key if the file has none. An unknown id, a document that is not a `requirements` document in 0.6, an area that is not one folder name (letters, digits, `-` and `_`), a target that exists and 2 documents with one target stop the plan (exit code 1), and nothing is written. A file that does not parse, that has no table `[areas]` or that has a value that is not a string is exit code 3. `--areas` without `--layout` is exit code 2. A 0.6 project with `--areas` is exit code 2: `` `--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own ``.
+`--areas <file>` moves the documents that the file maps. The file has one table, `[areas]`, and each entry is `"<id of the document in the 0.5 tree>" = "<area>"`. A mapped document goes to `<root>/<folder of the requirements layer>/<area>/<slug>.md` in its own root, with its old id as an alias. The plan adds each area to the key `areas`, sorted, and writes the key if the file has none. An unknown id, a document that is not a `requirements` document in 0.6, an area that is not one folder name (letters, digits, `-` and `_`), 2 areas that differ only in case, a target that exists and 2 documents with one target stop the plan (exit code 1), and nothing is written. A file that does not parse, that has no table `[areas]` or that has a value that is not a string is exit code 3. `--areas` without `--layout` is exit code 2. A 0.6 project with `--areas` is exit code 2: `` `--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own ``.
 
 After the moves, `upgrade` removes each folder that a move left empty, from the deepest folder to the highest. A folder with any file stays, also an ignored file, and the root folder of the document stays. Git does not track folders, so the output does not list them. `--dry-run` removes no folder.
 
@@ -1032,8 +1052,8 @@ These limits apply:
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `upgrade` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, and an unknown id of `eval run` |
-| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id of `eval run`, an `index` of a place that gives no type, and a `new` or `mv` into an area that differs from a name of `areas` only in case |
+| 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `eval run`: the temporary folder, the copy, the base commit or the result file |
 | 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
 

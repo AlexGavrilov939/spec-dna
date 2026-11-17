@@ -837,13 +837,19 @@ pub(crate) fn valid_area(area: &str) -> bool {
 
 /// The areas that the plan writes to `areas` (D47): sorted, no area twice. An
 /// area that is not one folder name is left out: the plan of the moves stops
-/// on it (D46), and the key would not load.
+/// on it (D46), and the key would not load. Of 2 areas that differ only in
+/// case, the plan keeps the first of the file: the plan of the moves stops on
+/// the pair (D30 of 0.7.0).
 pub(crate) fn areas_of(areas: &[(String, String)]) -> BTreeSet<String> {
-    areas
-        .iter()
-        .map(|(_, a)| a.clone())
-        .filter(|a| valid_area(a))
-        .collect()
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for (_, a) in areas.iter().filter(|(_, a)| valid_area(a)) {
+        // The reader stops a pair that differs only in case, so the plan keeps
+        // the first name. `plan_areas` stops on the pair (exit code 1).
+        if !out.iter().any(|o| crate::config::same_area_name(o, a)) || out.contains(a) {
+            out.insert(a.clone());
+        }
+    }
+    out
 }
 
 /// The 0.6 type of a document of a 0.5 file, as the proof expects it.
@@ -884,6 +890,19 @@ fn plan_areas(
             .entry(canonical(&id_of(fin, c.root, &c.path)))
             .or_default()
             .push(c);
+    }
+    // A pair of areas that differ only in case stops the plan, as the reader
+    // would. The plan of the configuration keeps one name of the pair, so the
+    // parse of the new file does not give exit code 3 first.
+    let names: Vec<&str> = areas
+        .iter()
+        .map(|(_, a)| a.as_str())
+        .filter(|a| valid_area(a))
+        .collect();
+    if let Some((a, b)) = crate::config::area_case_pair(names) {
+        problems.push(format!(
+            "the areas `{a}` and `{b}` of the file of `--areas` differ only in case. Use one of them in the file."
+        ));
     }
     let mut seen: Vec<&str> = Vec::new();
     for (id, area) in areas {

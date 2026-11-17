@@ -19,6 +19,7 @@
 use crate::change::{self, Verb};
 use crate::config::{ChangePolicy, Config, Evals};
 use crate::evals;
+use crate::evidence;
 use crate::frontmatter::{self, Value};
 use crate::git::{ArtifactTouch, DeletedIntent, Git, PathChange};
 use crate::json::{self, Obj};
@@ -223,7 +224,8 @@ fn off(json: bool, empty: &str) -> u8 {
 
 /// The commits that deleted an `intent.md` under `dir`, the newest first, as
 /// `log` lists them. `dir` is a folder of the `intent` layer, from the
-/// repository root. A move out that keeps the id as an alias is not an end.
+/// repository root. A move out of `intent.md` that meets the 3 conditions of
+/// `Git::moved_out` is not an end.
 /// With `only`, the list keeps the deletions of these folders (from the
 /// repository root) and nothing else: the check for a move out and the reads
 /// that follow run for them only. `log` and the pointer of a locked link
@@ -293,28 +295,78 @@ pub fn ended_changes(git: &Git, dir: &str, folders: &[String]) -> Result<Vec<End
         .collect())
 }
 
-/// The number of the last line `Hours: <number>` of a commit message. The line
-/// can be in any paragraph, because a host can write the messages of a squash
-/// as a list. A line with other text after the number is not such a line. The
-/// number has up to 7 digits, and up to 2 decimals after a `.`. A longer number
-/// would lose digits or read as `inf` in JSON, so the line gives no value.
-fn hours_line(message: &str) -> Option<f64> {
-    message.lines().rev().find_map(|line| {
-        let number = line.strip_prefix("Hours:")?.trim_matches([' ', '\t']);
-        let (whole, frac) = match number.split_once('.') {
+/// The hours of a commit message: a number (low = high) or a range.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HoursRange {
+    low: f64,
+    high: f64,
+}
+
+impl HoursRange {
+    /// True if the ends differ.
+    fn is_range(self) -> bool {
+        self.low != self.high
+    }
+
+    fn midpoint(self) -> f64 {
+        (self.low + self.high) / 2.0
+    }
+
+    /// `<n>` or `<low>-<high>`, as the line of the commit message has it.
+    fn text(self) -> String {
+        if self.is_range() {
+            format!("{}-{}", self.low, self.high)
+        } else {
+            self.low.to_string()
+        }
+    }
+
+    /// The value of the field `hours` of `log --json`.
+    fn json(self) -> String {
+        Obj::new()
+            .raw("low", &self.low.to_string())
+            .raw("high", &self.high.to_string())
+            .end()
+    }
+}
+
+/// The last line of a commit message that is `Hours: <number>` or
+/// `Hours: <a>-<b>`. The line can be in any paragraph, because a host can write
+/// the messages of a squash as a list. A line with other text after the value
+/// is not such a line. A number has up to 7 digits, and up to 2 decimals after
+/// a `.`. A longer number would lose digits or read as `inf` in JSON, so the
+/// line gives no value. A range has spaces or tabs around its `-` or none, and
+/// `a <= b`.
+fn hours_line(message: &str) -> Option<HoursRange> {
+    fn number(t: &str) -> Option<f64> {
+        let (whole, frac) = match t.split_once('.') {
             Some((w, f)) => (w, Some(f)),
-            None => (number, None),
+            None => (t, None),
         };
         let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
         (digits(whole) && whole.len() <= 7 && frac.is_none_or(|f| digits(f) && f.len() <= 2))
-            .then(|| number.parse().ok())
+            .then(|| t.parse().ok())
             .flatten()
+    }
+    message.lines().rev().find_map(|line| {
+        let value = line.strip_prefix("Hours:")?.trim_matches([' ', '\t']);
+        let (low, high) = match value.split_once('-') {
+            None => {
+                let n = number(value)?;
+                (n, n)
+            }
+            Some((a, b)) => (
+                number(a.trim_matches([' ', '\t']))?,
+                number(b.trim_matches([' ', '\t']))?,
+            ),
+        };
+        (low <= high).then_some(HoursRange { low, high })
     })
 }
 
 /// The hours of the commits, by commit: the value of the last `Hours:` line of
 /// the message. A commit with no such line is not in the map.
-fn hours_of(git: &Git, commits: &[String]) -> Result<HashMap<String, f64>, Fatal> {
+fn hours_of(git: &Git, commits: &[String]) -> Result<HashMap<String, HoursRange>, Fatal> {
     let messages = git.commit_messages(commits).map_err(Fatal::Io)?;
     Ok(commits
         .iter()
@@ -331,7 +383,7 @@ struct Entry {
     commit: String,
     time: i64,
     /// The hours of the line `Hours:` of the commit message.
-    hours: Option<f64>,
+    hours: Option<HoursRange>,
 }
 
 /// `spec-dna log [--since <rev>]`: the finished and the closed changes.
@@ -401,10 +453,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
                 .str("title", &e.facts.title)
                 .str("result", e.outcome.name())
                 .raw("delta", &delta)
-                .raw(
-                    "hours",
-                    &e.hours.map_or("null".to_string(), |h| h.to_string()),
-                )
+                .raw("hours", &e.hours.map_or("null".to_string(), |h| h.json()))
                 .str("commit", &e.commit)
                 .str("date", &utc_date(e.time))
                 .end()
@@ -431,7 +480,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
             e.facts.delta[0],
             e.facts.delta[1],
             e.facts.delta[2],
-            e.hours.map_or("-".to_string(), |h| h.to_string()),
+            e.hours.map_or("-".to_string(), |h| h.text()),
             short(&e.commit),
             e.facts.title
         );
@@ -484,7 +533,9 @@ fn folder_of(path: &str) -> &str {
 fn lives(git: &Git, dirs: &[String]) -> Result<Vec<Life>, Fatal> {
     let mut touches = Vec::new();
     // The commit and the path of each `intent.md` that a commit moved out of
-    // its folder with the id as an alias. Such a deletion is not an end.
+    // its folder with the 3 conditions of `Git::moved_out` true (a copy or an
+    // alias, and no other file of the folder removed). Such a deletion is not
+    // an end.
     let mut moved: HashSet<(String, String)> = HashSet::new();
     for d in dirs {
         let found = git.artifact_touches(d).map_err(Fatal::Io)?;
@@ -631,8 +682,9 @@ struct Measured {
     /// deleting commit.
     merged: Option<(String, Option<String>, i64)>,
     /// The hours of the line `Hours:` in the message of the commit that
-    /// deleted the `intent.md` (`life.end`), the commit that `log` lists.
-    hours: Option<f64>,
+    /// deleted the `intent.md` (`life.end`), the commit that `log` lists. A
+    /// number has equal ends.
+    hours: Option<HoursRange>,
 }
 
 /// One row of the indicator table.
@@ -1050,16 +1102,28 @@ fn indicators(
         shallow,
     ));
     // Build, lagging: the line `Hours:` of the commit message.
-    let v: Vec<f64> = ms.iter().filter(finished).filter_map(|m| m.hours).collect();
-    let total = v.iter().sum::<f64>();
+    let h: Vec<HoursRange> = ms.iter().filter(finished).filter_map(|m| m.hours).collect();
+    let v: Vec<f64> = h.iter().map(|h| h.midpoint()).collect();
+    let (low, high) = (
+        h.iter().map(|h| h.low).sum::<f64>(),
+        h.iter().map(|h| h.high).sum::<f64>(),
+    );
+    let total = if h.iter().any(|h| h.is_range()) {
+        format!(
+            "a range counts as its midpoint; the total is {}-{} hours",
+            hours_text(low),
+            hours_text(high)
+        )
+    } else {
+        format!("the total is {} hours", hours_text(low))
+    };
     rows.push(computed(
         ("Build", "lagging", "Hours of work per finished change"),
         median(v.clone()),
         "hours",
         v.len(),
         &format!(
-            "the value is the median of the finished changes that have a line `Hours:` in the commit that deletes the folder; the total is {} hours",
-            hours_text(total)
+            "the value is the median of the finished changes that have a line `Hours:` in the commit that deletes the folder; {total}"
         ),
         "no finished change has an `Hours:` line in the commit that deletes its folder",
         shallow,
@@ -1079,6 +1143,7 @@ fn indicators(
         "Regressions caught in CI against regressions found in production",
         "it needs the incident tracker",
     ));
+    rows.push(partial_row(repo, cfg)?);
     rows.push(na(
         "Maintain",
         "leading",
@@ -1141,6 +1206,68 @@ fn test_rows(repo: &Repo, cfg: &Config, shallow: bool) -> Result<Vec<Indicator>,
         pass_rate_row(&repo.git, evals, &tree)?,
         incident_time_row(repo, cfg, evals, head.as_deref(), &tree, shallow)?,
     ])
+}
+
+const PARTIAL: (&str, &str, &str) = (
+    "Test",
+    "lagging",
+    "Share of requirements with partial evidence only",
+);
+
+/// The share of the requirements that need evidence and have a partial
+/// `covers:` tag and no full evidence. It reads the committed tree of `HEAD`
+/// and its tags, as the 2 leading rows of the Test play do. A `--group` filter
+/// does not change it, and a shallow clone adds no note.
+fn partial_row(repo: &Repo, cfg: &Config) -> Result<Indicator, Fatal> {
+    let row = |value: Option<f64>, count: usize, note: &str, empty: &str| {
+        computed(PARTIAL, value, "percent", count, note, empty, false)
+            .counting(("requirement", "requirements"))
+    };
+    let none = "the tree of HEAD has no active requirement";
+    let Some(head) = repo.head_commit() else {
+        return Ok(row(None, 0, "", none));
+    };
+    let snap = Snapshot::at(repo, &head)?;
+    let mut corpus = repo::load(repo, cfg, &[&snap], true, false)?
+        .corpora
+        .remove(0);
+    corpus.covers = evidence::load(repo, cfg, Some(&head), false)?;
+    let (ev, _) = evidence::Evidence::build(&corpus);
+    let (mut n, mut partial, mut bare) = (0, 0, 0);
+    for (di, d) in corpus.docs.iter().enumerate() {
+        if !evidence::needs_evidence(d) {
+            continue;
+        }
+        for &ri in &d.reqs {
+            n += 1;
+            if ev.of(di as u32, d, ri).is_empty() {
+                if ev.partial_of(di as u32, ri).is_empty() {
+                    bare += 1;
+                } else {
+                    partial += 1;
+                }
+            }
+        }
+    }
+    if n == 0 {
+        return Ok(row(None, 0, "", none));
+    }
+    if cfg.evidence_tests.is_empty() {
+        return Ok(row(
+            None,
+            n,
+            "",
+            "`[evidence] tests` is empty, so no `covers:` tag counts",
+        ));
+    }
+    Ok(row(
+        Some(100.0 * partial as f64 / n as f64),
+        n,
+        &format!(
+            "{partial} of {n} requirements have a partial covers: tag only; {bare} have no evidence"
+        ),
+        "",
+    ))
 }
 
 /// The started time and the pass rate of a complete result file: a JSON object
@@ -1504,7 +1631,41 @@ mod tests {
             ("Hours: ", None),
             ("", None),
         ] {
-            assert_eq!(hours_line(message), want, "{message:?}");
+            assert_eq!(
+                hours_line(message).map(|h| (h.low, h.high)),
+                want.map(|n| (n, n)),
+                "{message:?}"
+            );
         }
+    }
+
+    #[test]
+    fn the_hours_line_can_have_a_range() {
+        for (message, want) in [
+            ("Hours: 5-9", Some((5.0, 9.0))),
+            ("Hours: 2.5 \t- 3.25", Some((2.5, 3.25))),
+            ("Hours:1-2\t", Some((1.0, 2.0))),
+            ("Hours: 3-3", Some((3.0, 3.0))),
+            ("Hours: 1\nHours: 2-4\n", Some((2.0, 4.0))),
+            ("Hours: 0-1234567", Some((0.0, 1_234_567.0))),
+            ("Hours: 9-5", None),
+            ("Hours: 5-", None),
+            ("Hours: -9", None),
+            ("Hours: 5-9-12", None),
+            ("Hours: 5--9", None),
+            ("Hours: 5-9h", None),
+            ("Hours: 1.234-5", None),
+            ("Hours: 5-12345678", None),
+        ] {
+            assert_eq!(
+                hours_line(message).map(|h| (h.low, h.high)),
+                want,
+                "{message:?}"
+            );
+        }
+        let r = hours_line("Hours: 5-9").unwrap();
+        assert_eq!((r.text(), r.midpoint()), ("5-9".to_string(), 7.0));
+        assert_eq!(r.json(), "{\"low\":5,\"high\":9}");
+        assert_eq!(hours_line("Hours: 3-3").unwrap().text(), "3");
     }
 }

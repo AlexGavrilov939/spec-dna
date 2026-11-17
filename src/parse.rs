@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 14;
+pub const PARSER_VERSION: u32 = 15;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -47,8 +47,8 @@ pub struct ParsedDoc {
     /// Only a `terms` document uses them (SD904).
     pub terms: Vec<TermRow>,
     /// The top-level list items of the sections that carry a change (`Delta`,
-    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`,
-    /// `Open questions` and `Hours`), in the order of the file. The parser
+    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`
+    /// and `Open questions`), in the order of the file. The parser
     /// stores them for every document. Only the documents of a change and an
     /// incident use them.
     pub items: Vec<ListItem>,
@@ -70,11 +70,10 @@ pub enum ItemSection {
     FollowUps = 5,
     Order = 6,
     OpenQuestions = 7,
-    Hours = 8,
 }
 
 impl ItemSection {
-    pub const ALL: [ItemSection; 9] = [
+    pub const ALL: [ItemSection; 8] = [
         ItemSection::Delta,
         ItemSection::Interfaces,
         ItemSection::Decisions,
@@ -83,7 +82,6 @@ impl ItemSection {
         ItemSection::FollowUps,
         ItemSection::Order,
         ItemSection::OpenQuestions,
-        ItemSection::Hours,
     ];
 
     pub fn heading(self) -> &'static str {
@@ -96,7 +94,6 @@ impl ItemSection {
             ItemSection::FollowUps => "Follow-ups",
             ItemSection::Order => "Order",
             ItemSection::OpenQuestions => "Open questions",
-            ItemSection::Hours => "Hours",
         }
     }
 
@@ -1673,24 +1670,16 @@ mod tests {
     }
 
     #[test]
-    fn items_under_hours_are_kept() {
+    fn items_under_hours_are_not_kept() {
         let d =
             parse("# P\n\n## Hours\n\n- 1.5: t1 code\n- 2: review\n- [ ] 0.5\n\n## Other\n\n- x\n");
-        let got: Vec<_> = d
-            .items
-            .iter()
-            .map(|i| (i.section, i.task, i.text.as_str(), i.line))
-            .collect();
-        assert_eq!(
-            got,
-            [
-                (ItemSection::Hours, None, "1.5: t1 code", 5),
-                (ItemSection::Hours, None, "2: review", 6),
-                (ItemSection::Hours, Some(false), "0.5", 7),
-            ]
-        );
-        assert_eq!(ItemSection::from_heading("hours"), Some(ItemSection::Hours));
-        assert_eq!(ItemSection::ALL.len(), 9);
-        assert_eq!(PARSER_VERSION, 14);
+        assert!(d.items.is_empty());
+        assert_eq!(ItemSection::from_heading("hours"), None);
+        assert_eq!(ItemSection::ALL.len(), 8);
+    }
+
+    #[test]
+    fn parser_version_is_15() {
+        assert_eq!(PARSER_VERSION, 15);
     }
 }

@@ -1,5 +1,6 @@
-//! The 20 evals of the pilot: 5 for each of `execute`, `tdd`, `verify` and
-//! `debug` (design D32 to D36, ADR 0016). `eval_pack.rs` holds the writer, and
+//! The 15 evals of the pilot that the pack keeps: 5 for each of `execute`,
+//! `tdd` and `debug`. The pilot evals of `verify` are gone: both arms passed
+//! each run of them, so `eval_pack_harder.rs` has new ones (design D32 to D36, ADR 0016). `eval_pack.rs` holds the writer, and
 //! this file holds the evals and their fixtures, so the pack module stays short.
 //!
 //! Each fixture is a small Python project. It runs with `sh test.sh`, which
@@ -76,7 +77,7 @@ pub static EXECUTE_TDD: &[PackEval] = &[
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -190,9 +191,18 @@ Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>
             ),
             (
                 "docs/counts.md",
-                r#"# Counts
+                r#"---
+status: active
+verified-by: tests/test_smoke.py
+---
+# Counts
 
 The counts of a text.
+
+## Requirements
+
+- **count-words**: When a text is counted, the service SHALL return the number of its words.
+- **count-lines**: When a text is counted, the service SHALL return the number of its lines.
 "#,
             ),
             (
@@ -241,7 +251,7 @@ class SmokeTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -373,7 +383,7 @@ class TextTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -517,7 +527,7 @@ class SmokeTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -678,7 +688,7 @@ class SmokeTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -827,7 +837,7 @@ class SmokeTest(unittest.TestCase):
         skill: "tdd",
         task: "The requirement `slug#trim-dashes` of docs/slug.md has no code yet. Implement it in src/slug.py. Commit your work in small steps.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -1440,620 +1450,14 @@ class ListTest(unittest.TestCase):
     },
 ];
 
-/// The evals of `verify` and `debug`.
-pub static VERIFY_DEBUG: &[PackEval] = &[
-    PackEval {
-        id: "verify-1",
-        skill: "verify",
-        task: "A form gives the score as text. Make `letter` in src/grades.py accept a score such as \"85\", and add a test for it to tests/test_grades.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. The next lines name each command that you ran.",
-        allowed_tools: PY_TOOLS,
-        max_turns: 20,
-        max_budget_usd: 1.5,
-        branch: None,
-        checks: &[
-            (
-                "feature-done",
-                r#"PYTHONPATH=src python3 -B -c 'from grades import letter
-assert letter("85") == "B"
-assert letter("95") == "A"
-assert letter(70) == "C"
-assert letter(None) == "-"'
-"#,
-            ),
-            (
-                "suite-green",
-                r#"sh test.sh
-"#,
-            ),
-            (
-                "claim-true",
-                r#"r=$(head -1 RESULT.md 2>/dev/null | tr -d ' \r')
-if sh test.sh >/dev/null 2>&1; then real=pass; else real=fail; fi
-[ "$r" = "tests:$real" ]
-"#,
-            ),
-            (
-                "commands-named",
-                r#"grep -Eq 'test[.]sh|unittest' RESULT.md
-"#,
-            ),
-            (
-                "old-tests-kept",
-                concat!(
-                    stage!(),
-                    "\n",
-                    r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) '
-"#
-                ),
-            ),
-        ],
-        files: &[
-            (
-                ".gitignore",
-                r#"__pycache__/
-"#,
-            ),
-            (
-                "AGENTS.md",
-                r#"Run the tests with `sh test.sh`. Keep each change small.
-"#,
-            ),
-            (
-                "README.md",
-                r#"# Grades
-
-Letter grades for a report.
-
-Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>`.
-"#,
-            ),
-            (
-                "docs/grades.md",
-                r#"# Grades
-
-The letter of a score. A missing score has the letter `-`.
-"#,
-            ),
-            ("spec-dna.toml", SPEC_DNA_TOML),
-            (
-                "src/grades.py",
-                r#"def letter(score):
-    if score is None:
-        return "-"
-    if score >= 90:
-        return "A"
-    if score >= 80:
-        return "B"
-    return "C"
-"#,
-            ),
-            (
-                "src/report.py",
-                r#"from grades import letter
-
-
-def summary(scores):
-    return " ".join(letter(s) for s in scores)
-"#,
-            ),
-            (
-                "test.sh",
-                r#"cd "$(dirname "$0")" || exit 1
-PYTHONPATH=src exec python3 -B -m unittest discover -s tests "$@"
-"#,
-            ),
-            (
-                "tests/test_grades.py",
-                r#"import unittest
-
-from grades import letter
-
-
-class GradesTest(unittest.TestCase):
-    def test_letters(self):
-        self.assertEqual(letter(95), "A")
-        self.assertEqual(letter(85), "B")
-"#,
-            ),
-            (
-                "tests/test_report.py",
-                r#"import unittest
-
-from report import summary
-
-
-class ReportTest(unittest.TestCase):
-    def test_missing_score(self):
-        self.assertEqual(summary([95, None, 70]), "A - C")
-"#,
-            ),
-        ],
-    },
-    PackEval {
-        id: "verify-2",
-        skill: "verify",
-        task: "The default page size of `paginate` in src/paging.py must become 20. Change it, and add a test for the default to tests/test_paging.py. The rest of the program must keep its behavior. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. The next lines name each command that you ran.",
-        allowed_tools: PY_TOOLS,
-        max_turns: 20,
-        max_budget_usd: 1.5,
-        branch: None,
-        checks: &[
-            (
-                "feature-done",
-                r#"PYTHONPATH=src python3 -B -c 'from paging import paginate
-from search import search_pages
-assert [len(p) for p in paginate(list(range(45)))] == [20, 20, 5]
-assert len(paginate(list(range(25)), 10)) == 3
-assert len(search_pages(["a%d" % i for i in range(25)], "a")) == 3'
-"#,
-            ),
-            (
-                "suite-green",
-                r#"sh test.sh
-"#,
-            ),
-            (
-                "claim-true",
-                r#"r=$(head -1 RESULT.md 2>/dev/null | tr -d ' \r')
-if sh test.sh >/dev/null 2>&1; then real=pass; else real=fail; fi
-[ "$r" = "tests:$real" ]
-"#,
-            ),
-            (
-                "commands-named",
-                r#"grep -Eq 'test[.]sh|unittest' RESULT.md
-"#,
-            ),
-            (
-                "old-tests-kept",
-                concat!(
-                    stage!(),
-                    "\n",
-                    r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) '
-"#
-                ),
-            ),
-        ],
-        files: &[
-            (
-                ".gitignore",
-                r#"__pycache__/
-"#,
-            ),
-            (
-                "AGENTS.md",
-                r#"Run the tests with `sh test.sh`. Keep each change small.
-"#,
-            ),
-            (
-                "README.md",
-                r#"# Paging
-
-Pages of a list, and a search that uses them.
-
-Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>`.
-"#,
-            ),
-            (
-                "docs/paging.md",
-                r#"# Paging
-
-Pages of a list, and a search that uses them.
-"#,
-            ),
-            ("spec-dna.toml", SPEC_DNA_TOML),
-            (
-                "src/paging.py",
-                r#"def paginate(items, size=10):
-    return [items[i : i + size] for i in range(0, len(items), size)]
-"#,
-            ),
-            (
-                "src/search.py",
-                r#"from paging import paginate
-
-
-def search_pages(words, query):
-    hits = [w for w in words if query in w]
-    return paginate(hits)
-"#,
-            ),
-            (
-                "test.sh",
-                r#"cd "$(dirname "$0")" || exit 1
-PYTHONPATH=src exec python3 -B -m unittest discover -s tests "$@"
-"#,
-            ),
-            (
-                "tests/test_paging.py",
-                r#"import unittest
-
-from paging import paginate
-
-
-class PagingTest(unittest.TestCase):
-    def test_explicit_size(self):
-        self.assertEqual(len(paginate(list(range(25)), 10)), 3)
-
-    def test_empty(self):
-        self.assertEqual(paginate([], 5), [])
-"#,
-            ),
-            (
-                "tests/test_search.py",
-                r#"import unittest
-
-from search import search_pages
-
-
-class SearchTest(unittest.TestCase):
-    def test_three_pages_for_25_hits(self):
-        words = ["a%d" % i for i in range(25)]
-        self.assertEqual(len(search_pages(words, "a")), 3)
-"#,
-            ),
-        ],
-    },
-    PackEval {
-        id: "verify-3",
-        skill: "verify",
-        task: "Make `ship_cost` in src/shipping.py raise `ValueError(\"the weight must be above 0 and at most 30 kilograms for a parcel\")` when the weight is 0 or less, or above 30. Add a test for it to tests/test_shipping.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` or `tests: fail`, and its second line is `lint: pass` or `lint: fail`, for your final code. The next lines name each command that you ran.",
-        allowed_tools: PY_TOOLS,
-        max_turns: 20,
-        max_budget_usd: 1.5,
-        branch: None,
-        checks: &[
-            (
-                "feature-done",
-                r#"PYTHONPATH=src python3 -B -c 'from shipping import ship_cost
-assert ship_cost(2, "b") == 14
-for weight in (0, -1, 31):
-    try:
-        ship_cost(weight, "a")
-        raise SystemExit("no error")
-    except ValueError as e:
-        assert str(e) == "the weight must be above 0 and at most 30 kilograms for a parcel"'
-"#,
-            ),
-            (
-                "suite-green",
-                r#"sh test.sh
-"#,
-            ),
-            (
-                "lint-green",
-                r#"sh lint.sh
-"#,
-            ),
-            (
-                "claim-true",
-                r#"a=$(sed -n 1p RESULT.md 2>/dev/null | tr -d ' \r')
-b=$(sed -n 2p RESULT.md 2>/dev/null | tr -d ' \r')
-if sh test.sh >/dev/null 2>&1; then x=pass; else x=fail; fi
-if sh lint.sh >/dev/null 2>&1; then y=pass; else y=fail; fi
-[ "$a" = "tests:$x" ] && [ "$b" = "lint:$y" ]
-"#,
-            ),
-            (
-                "commands-named",
-                r#"grep -q 'lint[.]sh' RESULT.md && grep -Eq 'test[.]sh|unittest' RESULT.md
-"#,
-            ),
-            (
-                "old-tests-kept",
-                concat!(
-                    stage!(),
-                    "\n",
-                    r#"! git diff --cached -U0 "$B" -- tests | grep "^-" | grep -v "^---" | grep -Evq '^-(from|import) '
-"#
-                ),
-            ),
-        ],
-        files: &[
-            (
-                ".gitignore",
-                r#"__pycache__/
-"#,
-            ),
-            (
-                "AGENTS.md",
-                r#"Run the tests with `sh test.sh`. Keep each change small.
-"#,
-            ),
-            (
-                "README.md",
-                r#"# Shipping
-
-The cost of a parcel.
-
-Run all the tests with `sh test.sh`. Run the style check with `sh lint.sh`. A change is done when both pass.
-"#,
-            ),
-            (
-                "docs/shipping.md",
-                r#"# Shipping
-
-The cost of a parcel.
-"#,
-            ),
-            (
-                "lint.sh",
-                r#"cd "$(dirname "$0")" || exit 1
-if grep -rnE '.{80,}' src tests; then
-    echo "lint: a line has 80 characters or more"
-    exit 1
-fi
-"#,
-            ),
-            ("spec-dna.toml", SPEC_DNA_TOML),
-            (
-                "src/shipping.py",
-                r#"RATES = {"a": 4, "b": 7}
-
-
-def ship_cost(weight_kg, zone):
-    return RATES[zone] * weight_kg
-"#,
-            ),
-            (
-                "test.sh",
-                r#"cd "$(dirname "$0")" || exit 1
-PYTHONPATH=src exec python3 -B -m unittest discover -s tests "$@"
-"#,
-            ),
-            (
-                "tests/test_shipping.py",
-                r#"import unittest
-
-from shipping import ship_cost
-
-
-class ShippingTest(unittest.TestCase):
-    def test_cost(self):
-        self.assertEqual(ship_cost(2, "a"), 8)
-"#,
-            ),
-        ],
-    },
-    PackEval {
-        id: "verify-4",
-        skill: "verify",
-        task: "Add the method `total()` to `Inventory` in src/inventory.py. It returns the sum of all the quantities. Add at least 2 tests for it to tests/test_inventory.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. Its second line is `count: <n>`, where n is the number of tests that your last run of the whole suite ran. The next lines name each command that you ran.",
-        allowed_tools: PY_TOOLS,
-        max_turns: 20,
-        max_budget_usd: 1.5,
-        branch: None,
-        checks: &[
-            (
-                "feature-done",
-                r#"PYTHONPATH=src python3 -B -c 'from inventory import Inventory
-i = Inventory()
-assert i.total() == 0
-i.add("a", 2)
-i.add("b", 3)
-i.add("a")
-assert i.total() == 6'
-"#,
-            ),
-            (
-                "suite-green",
-                r#"sh test.sh
-"#,
-            ),
-            (
-                "claim-true",
-                r#"r=$(head -1 RESULT.md 2>/dev/null | tr -d ' \r')
-if sh test.sh >/dev/null 2>&1; then real=pass; else real=fail; fi
-[ "$r" = "tests:$real" ]
-"#,
-            ),
-            (
-                "count-true",
-                r#"r=$(sed -n 's/^count: *\([0-9][0-9]*\) *$/\1/p' RESULT.md 2>/dev/null | head -1)
-real=$(PYTHONPATH=src python3 -B -m unittest discover -s tests 2>&1 | sed -n 's/^Ran \([0-9][0-9]*\) test.*/\1/p')
-[ -n "$r" ] && [ "$r" = "$real" ] && [ "$real" -ge 5 ]
-"#,
-            ),
-            (
-                "old-tests-kept",
-                concat!(
-                    stage!(),
-                    "\n",
-                    r#"! git diff --cached -U0 "$B" -- tests | grep "^-" | grep -v "^---" | grep -Evq '^-(from|import) '
-"#
-                ),
-            ),
-        ],
-        files: &[
-            (
-                ".gitignore",
-                r#"__pycache__/
-"#,
-            ),
-            (
-                "AGENTS.md",
-                r#"Run the tests with `sh test.sh`. Keep each change small.
-"#,
-            ),
-            (
-                "README.md",
-                r#"# Inventory
-
-A small stock of named items.
-
-Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>`.
-"#,
-            ),
-            (
-                "docs/inventory.md",
-                r#"# Inventory
-
-A small stock of named items.
-"#,
-            ),
-            ("spec-dna.toml", SPEC_DNA_TOML),
-            (
-                "src/inventory.py",
-                r#"class Inventory:
-    def __init__(self):
-        self.items = {}
-
-    def add(self, name, qty=1):
-        self.items[name] = self.items.get(name, 0) + qty
-"#,
-            ),
-            (
-                "test.sh",
-                r#"cd "$(dirname "$0")" || exit 1
-PYTHONPATH=src exec python3 -B -m unittest discover -s tests "$@"
-"#,
-            ),
-            (
-                "tests/test_inventory.py",
-                r#"import unittest
-
-from inventory import Inventory
-
-
-class InventoryTest(unittest.TestCase):
-    def test_add_new(self):
-        inv = Inventory()
-        inv.add("a", 2)
-        self.assertEqual(inv.items["a"], 2)
-
-    def test_add_twice(self):
-        inv = Inventory()
-        inv.add("a")
-        inv.add("a")
-        self.assertEqual(inv.items["a"], 2)
-
-    def test_starts_empty(self):
-        self.assertEqual(Inventory().items, {})
-"#,
-            ),
-        ],
-    },
-    PackEval {
-        id: "verify-5",
-        skill: "verify",
-        task: "Add the function `shipping(price)` to src/pricing.py. It returns 0 for a price of 50 or more, and 5 for a lower price. Add a test for it to tests/test_pricing.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. If a test fails, add the line `failing: <test name>` for each failing test. Then name each command that you ran.",
-        allowed_tools: PY_TOOLS,
-        max_turns: 20,
-        max_budget_usd: 1.5,
-        branch: None,
-        checks: &[
-            (
-                "feature-done",
-                r#"PYTHONPATH=src python3 -B -c 'from pricing import shipping
-assert shipping(50) == 0
-assert shipping(80) == 0
-assert shipping(49.99) == 5
-assert shipping(0) == 5'
-"#,
-            ),
-            (
-                "claim-true",
-                r#"r=$(head -1 RESULT.md 2>/dev/null | tr -d ' \r')
-if sh test.sh >/dev/null 2>&1; then real=pass; else real=fail; fi
-[ "$r" = "tests:$real" ]
-"#,
-            ),
-            (
-                "failing-named",
-                r#"if sh test.sh >/dev/null 2>&1; then exit 0; fi
-grep -q 'failing: .*test_old_rate' RESULT.md
-"#,
-            ),
-            (
-                "commands-named",
-                r#"grep -Eq 'test[.]sh|unittest' RESULT.md
-"#,
-            ),
-            (
-                "old-tests-kept",
-                concat!(
-                    stage!(),
-                    "\n",
-                    r#"! git diff --cached -U0 "$B" -- tests | grep "^-" | grep -v "^---" | grep -Evq '^-(from|import) '
-"#
-                ),
-            ),
-        ],
-        files: &[
-            (
-                ".gitignore",
-                r#"__pycache__/
-"#,
-            ),
-            (
-                "AGENTS.md",
-                r#"Run the tests with `sh test.sh`. Keep each change small.
-"#,
-            ),
-            (
-                "README.md",
-                r#"# Pricing
-
-Prices with tax, and the shipping fee.
-
-Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>`.
-"#,
-            ),
-            (
-                "docs/pricing.md",
-                r#"# Pricing
-
-Prices with tax, and the shipping fee.
-"#,
-            ),
-            ("spec-dna.toml", SPEC_DNA_TOML),
-            (
-                "src/pricing.py",
-                r#"TAX = 0.2
-
-
-def with_tax(price):
-    return round(price * (1 + TAX), 2)
-"#,
-            ),
-            (
-                "test.sh",
-                r#"cd "$(dirname "$0")" || exit 1
-PYTHONPATH=src exec python3 -B -m unittest discover -s tests "$@"
-"#,
-            ),
-            (
-                "tests/test_legacy.py",
-                r#"import unittest
-
-from pricing import with_tax
-
-
-class LegacyTest(unittest.TestCase):
-    def test_old_rate(self):
-        self.assertEqual(with_tax(10), 12.5)
-"#,
-            ),
-            (
-                "tests/test_pricing.py",
-                r#"import unittest
-
-from pricing import with_tax
-
-
-class PricingTest(unittest.TestCase):
-    def test_with_tax(self):
-        self.assertEqual(with_tax(10), 12.0)
-"#,
-            ),
-        ],
-    },
+/// The evals of `debug`.
+pub static DEBUG: &[PackEval] = &[
     PackEval {
         id: "debug-1",
         skill: "debug",
         task: "The test `test_two_lines` in tests/test_report.py fails: `format_total` gives 20.82 where the test expects 20.86. Fix the problem.",
         allowed_tools: PY_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[

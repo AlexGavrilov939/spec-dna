@@ -355,6 +355,60 @@ fn an_add_line_without_evidence_is_in_the_stage_test_until_a_tag_names_it() {
 }
 
 #[test]
+fn next_and_status_name_a_partial_tag_at_the_stage_test() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+            ("src/dose.py", "x = 2\n"),
+            (
+                "tests/test_valves.py",
+                "# covers: partial requirements/valves/closing#flush\n",
+            ),
+        ],
+    );
+    // A partial tag is not evidence: the stage stays `test`.
+    assert_stage(&r, "test");
+    let text = next_text(&r);
+    assert!(
+        text.contains("1 of 1 requirement(s) that the change adds or changes have no full evidence; 1 of them have a partial `covers:` tag only"),
+        "{text}"
+    );
+    assert_eq!(
+        items(&text).last().copied().unwrap(),
+        "[ ] `requirements/valves/closing#flush` has a partial `covers:` tag only (tests/test_valves.py:1); add a test that covers all of it [skill: tdd]"
+    );
+    // `status` shows the count in a token, also with a target of no tag.
+    let (code, out, err) = r.run(&["status"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(" tasks 0/1 next-task t1 partial 1 areas"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(out.contains("\"partial\":1"), "{out}");
+    // A full tag next to it is evidence.
+    stage(
+        &r,
+        &[(
+            "tests/test_all.py",
+            "# covers: requirements/valves/closing#flush\n",
+        )],
+    );
+    assert_stage(&r, "deploy");
+    let (_, out, _) = r.run(&["status"]);
+    assert!(!out.contains("partial"), "{out}");
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(out.contains("\"partial\":0"), "{out}");
+}
+
+#[test]
 fn a_routine_requirement_with_a_new_hash_and_no_evidence_is_in_the_stage_test() {
     let r = start();
     stage(
@@ -786,7 +840,9 @@ fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
     let (code, out, err) = r.run(&["status", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("\"tasks\":{\"done\":1,\"total\":3,\"next_task\":{\"id\":\"t2\""),
+        out.contains(
+            "\"tasks\":{\"done\":1,\"skipped\":0,\"total\":3,\"next_task\":{\"id\":\"t2\""
+        ),
         "{out}"
     );
     let (_, text, _) = r.run(&["status"]);
@@ -801,7 +857,7 @@ fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
     );
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
-        out.contains("\"tasks\":{\"done\":0,\"total\":0,\"next_task\":null}"),
+        out.contains("\"tasks\":{\"done\":0,\"skipped\":0,\"total\":0,\"next_task\":null}"),
         "{out}"
     );
     // The task of a done plan is not the next task: a duplicate id does not
@@ -819,7 +875,159 @@ fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
     );
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
-        out.contains("\"tasks\":{\"done\":2,\"total\":2,\"next_task\":null}"),
+        out.contains("\"tasks\":{\"done\":2,\"skipped\":0,\"total\":2,\"next_task\":null}"),
+        "{out}"
+    );
+}
+
+// A task that is not needed
+
+const SKIPPED_TASKS: &str = "- [x] t1: Write the test. Files: `tests/test_valves.py`. Verify: the test fails.\n- [x] t2: Try the timer. Files: `src/dose.py`. Verify: read the log. Hours: 1-2. Skip: the valve has no timer.\n- [ ] t3: Close the valve. Files: `src/dose.py`. Verify: `pytest`.";
+
+#[test]
+fn a_skipped_task_is_closed_for_next_and_status() {
+    let r = start();
+    // The box of a skipped task does not matter: `- [ ]` and `- [x]` both close it.
+    let order = SKIPPED_TASKS.replace("- [x] t2", "- [ ] t2");
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], &order)),
+        ],
+    );
+    let json = next_json(&r);
+    assert!(json.contains("\"next_task\":{\"id\":\"t3\""), "{json}");
+    let text = next_text(&r);
+    assert!(
+        text.contains("tasks of `Order`: 1 of 3 done, 1 not needed"),
+        "{text}"
+    );
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            "\"tasks\":{\"done\":1,\"skipped\":1,\"total\":3,\"next_task\":{\"id\":\"t3\""
+        ),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["status"]);
+    assert!(text.contains("tasks 1/3 skipped 1 next-task t3"), "{text}");
+    // A task with `- [x]` and `Skip:` is skipped too. With t3 done, no task is open.
+    let order = SKIPPED_TASKS.replace("- [ ] t3", "- [x] t3");
+    stage(&r, &[(PLAN, &plan("approved", &["src/dose.py"], &order))]);
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains("\"tasks\":{\"done\":2,\"skipped\":1,\"total\":3,\"next_task\":null}"),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["status"]);
+    assert!(
+        text.contains("tasks 2/3 skipped 1\n") || text.contains("tasks 2/3 skipped 1 "),
+        "{text}"
+    );
+    assert!(!text.contains("next-task"), "{text}");
+}
+
+#[test]
+fn the_counts_name_the_skipped_tasks() {
+    // The line of the tasks has no tail when no task is skipped.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], TASKS)),
+        ],
+    );
+    let text = next_text(&r);
+    assert!(
+        text.contains("tasks of `Order`: 1 of 3 done [skill: execute]"),
+        "{text}"
+    );
+    assert!(!text.contains("not needed"), "{text}");
+    let (_, text, _) = r.run(&["status"]);
+    assert!(!text.contains("skipped"), "{text}");
+    // The item is checked when done + skipped = total, and a routine plan
+    // that lists no files is built then.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan_with_item(
+                "approved",
+                "None.",
+                "- [x] t1: Read the code.\n- [ ] t2: Try it. Skip: the code is clear.",
+            ),
+        )],
+    );
+    assert_stage(&r, "deploy");
+    // With files, the stage stays at build, and the item is checked.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [x] t1: Read the code.\n- [ ] t2: Try it. Skip: the code is clear.",
+            ),
+        )],
+    );
+    let text = next_text(&r);
+    assert!(
+        text.contains("[x] tasks of `Order`: 1 of 2 done, 1 not needed"),
+        "{text}"
+    );
+    assert_stage(&r, "build");
+}
+
+#[test]
+fn a_skip_with_no_reason_does_not_close_the_task() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan(
+                    "approved",
+                    &["src/dose.py"],
+                    "- [ ] t1: Close the valve. Files: `src/dose.py`. Verify: `pytest`. Skip: .\n- [ ] t2: Two. Skip:",
+                ),
+            ),
+        ],
+    );
+    let json = next_json(&r);
+    assert!(json.contains("\"next_task\":{\"id\":\"t1\""), "{json}");
+    let text = next_text(&r);
+    assert!(
+        text.contains("tasks of `Order`: 0 of 2 done [skill: execute]"),
+        "{text}"
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains("\"tasks\":{\"done\":0,\"skipped\":0,\"total\":2,"),
+        "{out}"
+    );
+    // An empty `Skip:` and a box `- [x]` is a done task.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [x] t1: One. Skip:\n- [ ] t2: Two.",
+            ),
+        )],
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains(
+            "\"tasks\":{\"done\":1,\"skipped\":0,\"total\":2,\"next_task\":{\"id\":\"t2\""
+        ),
         "{out}"
     );
 }
@@ -999,7 +1207,7 @@ fn the_json_of_status_has_the_fields_in_order() {
             "\"next\":\"set `status: approved` in docs/intent/dose/plan.md\"",
             "\"stale\":false",
             "\"areas\":[\"valves\"]",
-            "\"tasks\":{\"done\":0,\"total\":1,\"next_task\":{\"id\":\"t1\"",
+            "\"tasks\":{\"done\":0,\"skipped\":0,\"total\":1,\"next_task\":{\"id\":\"t1\"",
             "\"follow_ups\":[]}",
         ],
     );

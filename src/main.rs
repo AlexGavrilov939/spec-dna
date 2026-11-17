@@ -31,6 +31,7 @@ mod eval_ab;
 mod eval_pack;
 mod eval_pack_fixtures_rest;
 mod eval_pack_rest;
+mod eval_records;
 mod eval_run;
 mod evals;
 mod evidence;
@@ -228,9 +229,10 @@ with the status closed runs the first two steps and deletes the folder. The
 folder must be tracked and clean. --dry-run prints the diff of each file and
 `remove <path>` for each deleted file, and writes nothing. Without it, the
 command writes the files, deletes the folder, and stages the paths with
-`git add`. It makes no commit. If the plan has a section Hours, it adds the
-numbers and prints the line `Hours: <total>`: put the line in the commit
-message, and keep it in the squash message. It is the only command that
+`git add`. It makes no commit. It adds the label `Hours:` of each task of the
+plan that is not skipped, and prints the line `Hours: <total>` (a number, or a
+range `<low>-<high>`): put the line in the commit message, and keep it in the
+squash message. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
     ),
@@ -275,12 +277,19 @@ the intent in the parent of that commit gives the result: accepted is
 finished, and any other status is closed. For each change it prints the date,
 the result, the slug, the class, the counts of the delta lines (add, change,
 remove) of its spec, the hours, the commit and the title. The hours are the
-number of the last line `Hours: <number>` of the commit message that deleted
-the intent (a dash if there is none). A change that one pull request
+last line `Hours: <number>` or `Hours: <a>-<b>` of the commit message that
+deleted the intent (a dash if there is none). A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
 default branch, has no entry. A move of intent.md out of the intent folder
-that keeps its id as an alias (spec-dna mv) does not end a change. A plain
-git mv, which writes no alias, still reads as a deletion. --since limits the walk to the commits after <rev>. In a
+does not end a change if 3 conditions are true. Git finds the rename. The
+new file is the same text, or it has the old id in its aliases
+(spec-dna mv writes it). The same commit removes no other file of the
+change folder. Thus a plain git mv of intent.md is a move, and a git mv of
+the whole folder, or a finish that removes the spec and the plan, ends the
+change. 2 cases stay as they were in 0.6.1 and read as a move: a folder
+that holds only intent.md, moved with git mv, and a finish that adds a near
+copy with the old id in its aliases to such a folder. --since limits the walk
+to the commits after <rev>. In a
 shallow clone, a note says that older changes can be missing, and --json has
 shallow: true. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
@@ -293,9 +302,13 @@ not a commit, 4 git.",
 playbook names. It reads git and the committed files only: the plan and
 design times, the survival rate of the intents, the spec commits after the
 first plan commit, the time from plan approval to the merged pull request,
-and how often the merged diff stays inside the plan (SD913). A move of
-intent.md out of the intent folder that keeps its id as an alias (spec-dna
-mv) does not end a life: stats drops that change. An indicator
+how often the merged diff stays inside the plan (SD913), and the share of
+requirements that have a partial covers: tag and no full evidence (it reads
+the tree of HEAD, and no group filter changes it). A move of
+intent.md out of the intent folder does not end a life if git finds the
+rename, the new file is the same text or has the old id in its aliases, and
+the same commit removes no other file of the folder (see log): stats drops
+that change. An indicator
 that git cannot give prints n/a with the reason, and --json has value null
 and a reason. With --group, it counts only the changes that have an area of
 the group. An unknown group is a usage error, and so is stats without --sdlc.
@@ -305,7 +318,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -313,7 +326,7 @@ sources <dir>/check.sh of the project, never the copy. An eval passes when at
 least pass-at of its runs pass. The suite passes when the share of evals that
 pass is at least min-pass-rate. It refuses to start when runs x
 max-budget-usd is above max-total-usd, and it stops when the spend is above
-it. --runs, --min-pass-rate and --max-total-usd replace the values of the
+it (`eval run --ab` starts and stops before a run that could pass the cap). --runs, --min-pass-rate and --max-total-usd replace the values of the
 files and of the table. --out writes the result to <dir>/eval-<time>.json
 (counts, costs and check names only). --dry-run starts no process. --isolate
 adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
@@ -336,17 +349,21 @@ SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
 --min-pass-rate is a usage error with --ab. --ab isolates the runs by default
 (--no-isolate switches it off). An account limit, a credit or a login problem
 waits up to 6 hours. A run that takes more than 25 minutes (a check, 5 minutes)
-is killed and counts as failed. The result is written after each pair.
+is killed and counts as failed. The result is written after each arm of a pair.
 SIGHUP, SIGINT and SIGTERM write it and exit with 129, 130 and 143, and
---resume <result file> goes on in it. --dry-run prints the estimate also above
-the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
+--resume <result file> goes on in it, and with a higher --runs it adds runs to
+each eval. An estimate above the cap prints a note, and the run starts and stops
+at the cap. --dry-run prints the estimate also above the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
 pack file, a stop by the cap or by api-error, 4 git or file error, 129, 130
 and 143 a signal.
 
-`eval pack` writes the pack of 55 evals and their fixtures to <dir>/pack/. It
+`eval pack` writes the pack of 57 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
 
-`eval verdict` prints one line for each of the 11 skills and for agents-line:
+`eval verdict --release` prints the table of the release, one line for each name
+that has a row. `eval records <result file>` prints the records of the runs of a
+result file of --ab as JSON Lines (9 keys, no path, no text), and it computes each
+item again from them. `eval verdict` prints one line for each of the 11 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",
@@ -467,6 +484,7 @@ struct Args {
     ab: bool,
     no_isolate: bool,
     resume: Option<String>,
+    release: bool,
 }
 
 /// The options of `layer add`.
@@ -548,6 +566,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         ab: false,
         no_isolate: false,
         resume: None,
+        release: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -590,6 +609,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--ab" => a.ab = true,
             "--no-isolate" => a.no_isolate = true,
             "--resume" => a.resume = Some(value("--resume")?),
+            "--release" => a.release = true,
             "--out" => a.out = Some(value("--out")?),
             "--runs" => {
                 let v = value("--runs")?;
@@ -751,6 +771,11 @@ fn run(a: Args) -> Result<u8, Fatal> {
     }
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
+    }
+    if a.command != "eval" && a.release {
+        return Err(Fatal::Usage(
+            "--release is an option of `eval verdict`".into(),
+        ));
     }
     if a.command != "eval" {
         for (given, name) in [
@@ -2164,6 +2189,11 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "`{path}` is in another root or excluded; use --root"
         )));
     }
+    if let Some((area, name)) = cfg.area_case_clash(&path) {
+        return Err(Fatal::Usage(format!(
+            "the area `{area}` of `{path}` differs from the area `{name}` of `areas` only in case; use `{name}`"
+        )));
+    }
     let file = repo.root.join(&path);
     if file.exists() {
         return Err(Fatal::Usage(format!("`{path}` exists")));
@@ -2702,7 +2732,33 @@ fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .map(|o| o.parsed.title.clone())
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| templates::title_of(mv::parent(&path)));
-    let text = registry::render(&path, &entries, existing.as_deref(), &title);
+    let status = registry::index_status(&cfg, &path, existing.as_deref()).map_err(|_| {
+        let dir = mv::parent(&path);
+        let base = cfg.roots[root].path.as_str();
+        let rel = dir
+            .strip_prefix(base)
+            .map_or(dir, |r| r.trim_start_matches('/'));
+        let layer = cfg
+            .layers
+            .layers()
+            .iter()
+            .find(|l| l.types.len() > 1 && l.dir() == Some(rel));
+        Fatal::Usage(match layer {
+            Some(l) => {
+                let names: Vec<&str> = l.types.iter().map(|t| t.name()).collect();
+                format!(
+                    "the folder `{dir}` is the folder of the layer `{}`, which holds more than one type ({}), so the place gives no type; index a folder under another layer, or set `default-type` of the root",
+                    l.name,
+                    names.join(", ")
+                )
+            }
+            None => format!(
+                "the place `{}` gives no type; index a folder of a layer, or set `default-type` of the root",
+                if dir.is_empty() { "." } else { dir }
+            ),
+        })
+    })?;
+    let text = registry::render(&path, &entries, existing.as_deref(), &title, status);
     let mut changed = std::collections::HashMap::from([(path.clone(), text)]);
     // Links to a section of the old file that names an entry go to the entry.
     let mut rewritten = 0;
@@ -2961,11 +3017,41 @@ fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
 /// it, as it stops `check` and `finish`.
 fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     let sub = a.positional.first().map(String::as_str);
-    if !matches!(sub, Some("run" | "pack" | "verdict")) {
+    if !matches!(sub, Some("run" | "pack" | "verdict" | "records")) {
         return Err(Fatal::Usage(
-            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack` or `spec-dna eval verdict`"
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack`, `spec-dna eval verdict` or `spec-dna eval records <result file>`"
                 .into(),
         ));
+    }
+    if a.release && sub != Some("verdict") {
+        return Err(Fatal::Usage(
+            "--release is an option of `eval verdict`".into(),
+        ));
+    }
+    if sub == Some("records") {
+        // `records` reads one file that can be outside the repository. It takes
+        // no option, and it needs no configuration.
+        let option = [
+            a.json,
+            a.runs.is_some(),
+            a.min_pass_rate.is_some(),
+            a.max_total_usd.is_some(),
+            a.out.is_some(),
+            a.isolate,
+            a.ab,
+            a.no_isolate,
+            a.resume.is_some(),
+            a.dry_run,
+            a.release,
+        ]
+        .contains(&true);
+        if a.positional.len() != 2 || option {
+            return Err(Fatal::Usage(
+                "`eval records` takes one result file and no option: `spec-dna eval records <result file>`"
+                    .into(),
+            ));
+        }
+        return eval_records::run(&a.positional[1]);
     }
     if sub != Some("run") {
         // `pack` and `verdict` take no option of `run`, and no argument.
@@ -2990,6 +3076,10 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                 a.positional[0]
             )));
         }
+    }
+    if a.release {
+        // The table of the release is in the binary. It needs no project.
+        return Ok(eval_release_cmd(a.json));
     }
     let repo = Repo::discover(cwd)?;
     let cfg = repo.load_config()?;
@@ -3117,6 +3207,19 @@ fn eval_pack_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8, Fa
         table.dir
     );
     Ok(0)
+}
+
+/// `eval verdict --release`: the table of the release (`verdict::RELEASE`),
+/// one line for each name that has a row. It reads no file and starts no agent.
+fn eval_release_cmd(json: bool) -> u8 {
+    if json {
+        println!("{}", verdict::release_json(verdict::RELEASE));
+    } else {
+        for row in verdict::RELEASE {
+            println!("{}", verdict::release_line(row));
+        }
+    }
+    0
 }
 
 /// `eval verdict`: the verdict of each skill and of `agents-line`. It reads
@@ -3369,7 +3472,7 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
                 .num("step", 6)
                 .raw("diagnostics", "[]")
                 .raw("files", &json::array(writes.chain(removes)))
-                .raw("hours", &plan.hours.text().unwrap_or("null".to_string()))
+                .raw("hours", &plan.hours.json())
                 .end()
         );
         return;
@@ -3401,8 +3504,21 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
     }
     // `finish` makes no commit, so the person or the agent that commits writes
     // the line in the message.
-    for item in &plan.hours.bad {
-        println!("note: the item \"{item}\" of Hours has no number of hours; no total");
+    for (id, value) in &plan.hours.invalid {
+        println!(
+            "note: the task `{id}` has the value \"{value}\" in `Hours:`, which is no number of hours and no range; no total"
+        );
+    }
+    match plan.hours.missing.as_slice() {
+        [] => {}
+        [id] => println!("note: the task `{id}` has no `Hours:`; the total leaves it out"),
+        ids => {
+            let list: Vec<String> = ids.iter().map(|i| format!("`{i}`")).collect();
+            println!(
+                "note: the tasks {} have no `Hours:`; the total leaves them out",
+                list.join(", ")
+            );
+        }
     }
     if let Some(total) = plan.hours.text() {
         println!("Hours: {total}");

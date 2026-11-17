@@ -12,7 +12,7 @@ Commands:
 3. Under `Files`, list each path of the scope. Write each path in a code span.
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
-6. A plan can have a section `## Hours` with the items `- <number of hours>: <what>`. `spec-dna finish` prints their total as the line `Hours: <total>`.
+6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
@@ -22,4 +22,4 @@ If the check fails: Split a task that lists more than `max-task-files` paths. Gi
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:0080299b2ef19888 -->
+<!-- spec-dna harness v{VERSION} h:291bb8821e942534 -->

@@ -114,7 +114,7 @@
       }
     },
     "areas": {
-      "description": "The areas of the project: the names of the folders of `requirements/`. Each name is one folder name.",
+      "description": "The areas of the project: the names of the folders of `requirements/`. Each name is one folder name. Two names that differ only in case are an error.",
       "type": "array",
       "items": {
         "type": "string",
@@ -693,6 +693,7 @@
       "pattern": "^[^{}]*\\{n\\}[^{}]*$"
     },
     "budget": {
+      "description": "The soft and hard budget of a document type, in Unicode characters of body text. `soft = 0` turns off SD701 and SD703. `hard = 0` turns off SD702 and SD704, and it needs `soft = 0`, because `hard` below `soft` is a configuration error. So `soft = 0` and `hard = 0` give the type no budget. The types `research` and `plan` have no default budget.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

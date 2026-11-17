@@ -737,3 +737,75 @@ fn the_result_of_eval_run_ab_is_no_complete_result() {
         "{out}"
     );
 }
+
+// The share of requirements with a partial tag only
+
+const PARTIAL_LINE: &str = "Test lagging: Share of requirements with partial evidence only: ";
+
+#[test]
+fn stats_gives_the_share_of_requirements_with_a_partial_tag_only() {
+    let r = repo("");
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **period**: The library SHALL set the due date 14 days later.\n- **renew**: The library SHALL allow 1 renewal.\n- **fines**: The library SHALL collect fines daily.\n- **holds**: The library SHALL keep a hold for 3 days.\n",
+    );
+    r.write(
+        "tests/test_loans.py",
+        "# covers: loans#period\n# covers: partial loans#renew, loans#fines\n",
+    );
+    r.write("tests/test_more.py", "# covers: partial loans#period\n");
+    r.commit_at("requirements and tests", &at("02-01"));
+    let out = stats(&r);
+    assert_eq!(
+        line(&out, PARTIAL_LINE),
+        format!("{PARTIAL_LINE}50.0 percent (4 requirements)")
+    );
+    assert_eq!(
+        note_after(&out, PARTIAL_LINE),
+        Some("  note: 2 of 4 requirements have a partial covers: tag only; 1 have no evidence")
+    );
+    let json = stats_json(&r, &[]);
+    let ind = row(&json, "Share of requirements with partial");
+    for part in [
+        "\"play\":\"Test\"",
+        "\"kind\":\"lagging\"",
+        "\"value\":50.0",
+        "\"unit\":\"percent\"",
+        "\"count\":4",
+    ] {
+        assert!(ind.contains(part), "`{part}` not in {ind}");
+    }
+    // The row stands after the 2 leading rows and before the Maintain rows.
+    let names: Vec<&str> = json.split("\"name\":\"").skip(1).collect();
+    assert_eq!(names.len(), 16, "{json}");
+    assert!(names[11].starts_with("Regressions caught"), "{json}");
+    assert!(names[12].starts_with("Share of requirements"), "{json}");
+    // A committed tree is read: an untracked tag does not count.
+    r.write("tests/test_untracked.py", "# covers: loans#renew\n");
+    let out = stats(&r);
+    assert!(
+        line(&out, PARTIAL_LINE).contains("50.0 percent (4 requirements)"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_partial_share_is_na_without_a_requirement_or_without_test_globs() {
+    let r = repo("");
+    let out = stats(&r);
+    assert_eq!(
+        line(&out, PARTIAL_LINE),
+        format!("{PARTIAL_LINE}n/a (the tree of HEAD has no active requirement)")
+    );
+    let r = repo("[evidence]\ntests = []\n");
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **period**: The library SHALL set the due date 14 days later.\n",
+    );
+    r.commit_at("requirement", &at("02-01"));
+    let out = stats(&r);
+    assert_eq!(
+        line(&out, PARTIAL_LINE),
+        format!("{PARTIAL_LINE}n/a (`[evidence] tests` is empty, so no `covers:` tag counts)")
+    );
+}

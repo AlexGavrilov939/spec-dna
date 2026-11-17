@@ -2443,6 +2443,101 @@ fn evidence_resolves_covers_tags_and_verified_by() {
     assert!(!out.contains("SD105"), "{out}");
 }
 
+/// `profile_repo` with a partial tag on `loans#fines`, which has no other
+/// evidence.
+fn partial_repo(tag: &str) -> Repo {
+    let r = profile_repo("");
+    r.write(
+        "tests/test_fines.py",
+        &format!("{tag}\ndef test_fines():\n    pass\n"),
+    );
+    r.commit("partial");
+    r
+}
+
+#[test]
+fn a_partial_tag_alone_gives_sd608_that_names_it() {
+    let r = partial_repo("# covers: partial loans#fines");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "a warning: {out}");
+    assert!(
+        out.contains("docs/loans.md:7: warning SD608 requirement-unverified: `loans#fines` is active, and only a partial `covers:` tag names it (tests/test_fines.py:1); add a test that covers all of it, or a `verified-by`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("A `covers: partial` tag alone is not evidence."),
+        "{out}"
+    );
+    // The tag of another requirement stays full evidence.
+    assert!(!out.contains("`loans#loan-period` is active"), "{out}");
+}
+
+#[test]
+fn a_partial_tag_that_names_no_requirement_gives_sd105() {
+    let r = partial_repo("# covers: partial loans#fine, loans#fines");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("tests/test_fines.py:1: error SD105 covers-unresolved: `covers:` tag: `loans` has no requirement `fine`"),
+        "{out}"
+    );
+    // The word `partial` applies to each id of the tag.
+    assert_eq!(out.matches("error SD105").count(), 1, "{out}");
+}
+
+#[test]
+fn a_full_tag_beside_a_partial_tag_is_evidence() {
+    let r = partial_repo("# covers: partial loans#fines");
+    r.write("tests/test_all.py", "# covers: loans#fines\n");
+    r.commit("full");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD608"), "{out}");
+    let (_, out, _) = r.run(&["show", "loans#fines"]);
+    assert!(
+        out.contains("- loans#fines: tests/test_all.py:1\n")
+            || out.contains("- loans#fines: tests/test_all.py:1;"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_word_partial_after_the_ids_keeps_the_tag_full() {
+    let r = partial_repo("# covers: loans#fines partial");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD608"), "{out}");
+}
+
+#[test]
+fn show_gives_the_field_partial_apart_from_the_sources() {
+    let r = partial_repo("# covers: partial loans#fines");
+    r.write("tests/test_p.py", "# covers: partial loans#loan-period\n");
+    r.commit("more");
+    let (code, out, _) = r.run(&["show", "loans#fines"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("<!-- evidence -->\n- loans#fines: none; partial: tests/test_fines.py:1"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "loans#loan-period"]);
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1; partial: tests/test_p.py:1"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "loans#fines", "--json"]);
+    assert!(
+        out.contains("\"evidence\":[{\"key\":\"fines\",\"sources\":[],\"partial\":[\"tests/test_fines.py:1\"]}]"),
+        "{out}"
+    );
+    // The field is always there, also with no partial tag.
+    let (_, out, _) = r.run(&["show", "loans#renew-limit", "--json"]);
+    assert!(
+        out.contains("\"sources\":[\"tests/renew.py\"],\"partial\":[]"),
+        "{out}"
+    );
+}
+
 #[test]
 fn knowledge_types_have_templates_sections_and_context_rules() {
     let r = Repo::empty();
@@ -4921,5 +5016,206 @@ fn eval_pack_and_eval_run_ab_need_the_evals_table_and_eval_verdict_does_not() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(out.lines().count(), 12, "{out}");
     assert!(out.starts_with("brainstorm unmeasured -\n"), "{out}");
-    assert!(out.ends_with("agents-line unmeasured -\n"), "{out}");
+    assert!(out.ends_with("agents-line inconclusive release\n"), "{out}");
+}
+
+// The status of a generated index (D29 of 0.7.0)
+
+const RULE_DOC: &str = "---\nstatus: draft\n---\n# No secrets\n\n## Rules\n\n- **no-secrets**: The service SHALL keep no secret in the repository.\n";
+const DECISION_DOC: &str =
+    "---\nstatus: accepted\n---\n# Use a timer\n\n## Decision Outcome\n\nUse a timer.\n";
+
+/// A project with the default layer graph and one mixed root. A document of
+/// the folder `docs/rules` and one of `docs/decisions` have a type that needs
+/// a status.
+fn index_project(root_extra: &str) -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"0.1.0\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n{root_extra}"
+        ),
+    );
+    r.write("docs/rules/no-secrets.md", RULE_DOC);
+    r.write("docs/decisions/use-timer.md", DECISION_DOC);
+    r.commit("start");
+    r
+}
+
+#[test]
+fn index_of_a_rule_folder_writes_the_first_status_of_the_type() {
+    let r = index_project("");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["index", "docs/rules"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let index = r.read("docs/rules/README.md");
+    assert!(
+        index.starts_with("---\nstatus: draft\ngenerated: spec-dna index h:"),
+        "{index}"
+    );
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn index_of_a_decision_folder_writes_proposed() {
+    let r = index_project("");
+    let (code, out, err) = r.run(&["index", "docs/decisions"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let index = r.read("docs/decisions/README.md");
+    assert!(
+        index.starts_with("---\nstatus: proposed\ngenerated:"),
+        "{index}"
+    );
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn index_in_a_root_of_one_type_writes_the_status() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n\n[[roots]]\npath = \"rules\"\ntype = \"rule\"\n",
+    );
+    r.write("rules/no-secrets.md", RULE_DOC);
+    r.commit("start");
+    let (code, out, err) = r.run(&["index", "rules"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read("rules/README.md")
+            .starts_with("---\nstatus: draft\ngenerated:"),
+        "{}",
+        r.read("rules/README.md")
+    );
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn index_replace_writes_a_status_over_a_file_that_has_none() {
+    let r = index_project("");
+    r.write("docs/rules/README.md", "# Rules\n\nThe list of rules.\n");
+    r.commit("a hand-kept index");
+    let (code, out, err) = r.run(&["index", "docs/rules", "--replace"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let index = r.read("docs/rules/README.md");
+    assert_eq!(index.matches("status:").count(), 1, "{index}");
+    assert!(index.contains("status: draft\n"), "{index}");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn index_replace_keeps_the_status_of_the_file() {
+    let r = index_project("");
+    r.write(
+        "docs/rules/README.md",
+        "---\nstatus: active\n---\n# Rules\n\nThe list of rules.\n",
+    );
+    r.commit("a hand-kept index");
+    let (code, out, err) = r.run(&["index", "docs/rules", "--replace"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let index = r.read("docs/rules/README.md");
+    assert_eq!(index.matches("status:").count(), 1, "{index}");
+    assert!(index.contains("status: active\n"), "{index}");
+}
+
+#[test]
+fn index_writes_no_status_line_when_the_root_gives_the_status() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"rule\"\nstatus = \"draft\"\n",
+    );
+    r.write("docs/misc/no-secrets.md", RULE_DOC);
+    r.commit("start");
+    let (code, out, err) = r.run(&["index", "docs/misc"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let index = r.read("docs/misc/README.md");
+    assert!(
+        index.starts_with("---\ngenerated: spec-dna index h:"),
+        "{index}"
+    );
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn index_of_a_place_with_no_type_stops_with_exit_code_2_and_writes_nothing() {
+    let r = index_project("");
+    let (code, out, err) = r.run(&["index", "docs"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("the place `docs` gives no type; index a folder of a layer, or set `default-type` of the root"),
+        "{err}"
+    );
+    assert!(!r.dir.join("docs/README.md").exists());
+    assert_eq!(git(&r.dir, &["status", "--short"]), "");
+}
+
+// A move into an area that differs only in case (D30 of 0.7.0)
+
+#[test]
+fn mv_stops_for_an_area_that_differs_from_a_name_of_areas_only_in_case() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\nareas = [\"valves\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    r.write(
+        "docs/requirements/valves/closing.md",
+        "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close**: The controller SHALL close the valve in 5 seconds.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/valves/closing",
+        "requirements/Valves/closing",
+    ]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`Valves`") && err.contains("`valves`") && err.contains("only in case"),
+        "{err}"
+    );
+    assert_eq!(git(&r.dir, &["status", "--short"]), "");
+    assert!(r.dir.join("docs/requirements/valves/closing.md").exists());
+    // The destination of a split is a new document in the same area.
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/valves/closing#close",
+        "requirements/Valves/other",
+    ]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("only in case"), "{err}");
+    assert_eq!(git(&r.dir, &["status", "--short"]), "");
+    // A move inside the area, and a move out of every area, are fine.
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/valves/closing",
+        "requirements/valves/shut",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["mv", "requirements/valves/shut", "requirements/Shut"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn index_of_the_folder_of_a_layer_with_many_types_names_the_layer() {
+    let r = index_project("");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n",
+    );
+    r.commit("a change");
+    let (code, out, err) = r.run(&["index", "docs/intent"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("the folder `docs/intent` is the folder of the layer `intent`")
+            && err.contains("intent, spec, plan")
+            && !err.contains("index a folder of a layer"),
+        "{err}"
+    );
+    assert!(!r.dir.join("docs/intent/README.md").exists());
 }

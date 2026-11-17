@@ -27,6 +27,7 @@ const VALVES_PATH: &str = "docs/requirements/valves.md";
 const CHANGE_CLOSE: &str = "- CHANGE requirements/valves#close@{close}: The controller SHALL close the valve in 4 seconds.";
 const ADD_FLUSH: &str =
     "- ADD requirements/valves#flush: The controller SHALL flush the line before it closes.";
+const ADD_PUMP: &str = "- ADD requirements/pump#start: The pump SHALL start the flow.";
 const REMOVE_OPEN: &str = "- REMOVE requirements/valves#open@{open}";
 const COVERS_CLOSE_FLUSH: &str =
     "# covers: requirements/valves#close\n# covers: requirements/valves#flush\n";
@@ -558,6 +559,39 @@ fn a_delta_hash_that_changed_after_the_approval_gives_sd914_and_writes_nothing()
 }
 
 #[test]
+fn a_delta_edit_with_a_new_approval_commit_in_the_pull_request_of_finish_stops_at_step_3() {
+    let r = Fx {
+        delta: &[CHANGE_CLOSE],
+        ..Fx::default()
+    }
+    .start();
+    // `approval = "branch"`: the pull request sets the spec back to `draft`,
+    // and an approver commits the status line alone. A squash merge keeps no
+    // commit of the branch, so `finish` still compares with the base tree.
+    let config = r.read("spec-dna.toml").replace(
+        "gate = \"block\"\n",
+        "gate = \"block\"\napproval = \"branch\"\napprovers = [\"approver@example.com\"]\n",
+    );
+    r.write("spec-dna.toml", &config);
+    r.commit("turn the approval in the branch on");
+    let edited = r.read(SPEC).replace("in 4 seconds", "in 3 seconds");
+    r.write(SPEC, &edited.replace("status: approved", "status: draft"));
+    r.commit_as("delta after the spike", "agent@example.com");
+    r.write(SPEC, &edited);
+    r.commit_as("approve spec again", "approver@example.com");
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    let before = tree(&r);
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(": error SD914 ") && out.contains("approved delta"),
+        "{out}"
+    );
+    assert!(err.contains("step 3"), "{err}");
+    assert_eq!(tree(&r), before);
+}
+
+#[test]
 fn a_delta_that_changed_after_it_was_approved_in_the_base_stops_finish() {
     let r = Fx {
         delta: &[CHANGE_CLOSE],
@@ -1061,6 +1095,31 @@ fn a_generated_index_that_lists_the_folder_is_written_again() {
     assert_eq!(code, 0, "{out}");
 }
 
+#[test]
+fn the_refresh_of_a_generated_index_writes_the_status_of_its_place() {
+    // An index of the folder `requirements` with no status and an old hash. The
+    // change adds a document to the folder, so `finish` writes the index again.
+    let r = Fx {
+        delta: &[ADD_PUMP],
+        extra: &[(
+            "docs/requirements/README.md",
+            "---\ngenerated: spec-dna index h:0000000000000000\n---\n# Requirements\n\n| Entry | Title | Status |\n| --- | --- | --- |\n| [valves](valves.md) | Valves | active |\n",
+        )],
+        ..Fx::default()
+    }
+    .start();
+    r.write("tests/test_pump.py", "# covers: requirements/pump#start\n");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("wrote docs/requirements/README.md"), "{out}");
+    let index = r.read("docs/requirements/README.md");
+    assert!(
+        index.starts_with("---\nstatus: draft\ngenerated: spec-dna index h:"),
+        "{index}"
+    );
+    assert!(index.contains("pump.md"), "{index}");
+}
+
 // The merge kinds
 
 /// The finish pull request on the branch `finish`, and a `main` that moved.
@@ -1230,24 +1289,42 @@ fn a_write_error_exits_with_4_and_changes_nothing() {
 
 // The hours of the change
 
-/// The plan of `Fx`, with a section `Hours` after `Order`.
-fn plan_with_hours(hours: &str) -> String {
+/// The plan of `Fx`, with the tasks `order` in `Order` and the section `extra`
+/// after `Order`.
+fn plan_with_tasks(order: &str, extra: &str) -> String {
     format!(
-        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Hours\n\n{hours}\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n- `tests/test_valves.py`\n\n## Order\n\n{order}\n\n{extra}## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
     )
 }
 
-/// A fixture whose plan has the given `Hours` items, committed on `feature`.
-fn with_hours(hours: &str) -> Repo {
+/// A fixture whose plan has the tasks `order`, committed on `feature`.
+fn with_tasks(order: &str) -> Repo {
     let r = Fx::default().start();
-    r.write(PLAN, &plan_with_hours(hours));
-    r.commit("hours");
+    r.write(PLAN, &plan_with_tasks(order, ""));
+    r.commit("tasks");
     r
 }
 
+/// The task line with the label `Hours:` or `Skip:` that `labels` gives.
+fn task(id: &str, done: bool, labels: &str) -> String {
+    format!(
+        "- [{}] {id}: Do it. Files: `src/dose.py`. Verify: `pytest`. {labels}",
+        if done { "x" } else { " " }
+    )
+}
+
+fn hours_line(out: &str) -> Option<&str> {
+    out.lines().find(|l| l.starts_with("Hours:"))
+}
+
 #[test]
-fn finish_prints_the_total_of_the_hours() {
-    let r = with_hours("- 1.5: code\n- 2: review");
+fn finish_adds_the_hours_of_the_tasks() {
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 1.5."),
+        task("t2", false, "Hours: 2.")
+    );
+    let r = with_tasks(&order);
     // A dry run prints the line, and it writes nothing.
     let (code, out, err) = fin(&r, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -1258,60 +1335,213 @@ fn finish_prints_the_total_of_the_hours() {
         ),
         "{out}"
     );
+    assert!(!out.contains("note:"), "{out}");
     let (code, out, err) = fin(&r, &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("\"hours\":3.5"), "{out}");
+    assert!(
+        out.contains("\"hours\":{\"low\":3.5,\"high\":3.5}"),
+        "{out}"
+    );
     assert_eq!(out.trim_end().lines().count(), 1, "{out}");
     // A run prints it too. `finish` makes no commit.
     let (code, out, err) = fin(&r, &[]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.lines().any(|l| l == "Hours: 3.5"), "{out}");
     assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "2");
+    // The total has no zero after the last digit, a number can end with `h`,
+    // and the sum of 0.1 and 0.2 is exact.
+    let order = format!(
+        "{}\n{}\n{}",
+        task("t1", true, "Hours: 1.25h."),
+        task("t2", true, "Hours: 0.75."),
+        task("t3", true, "Hours: 1.")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert!(out.lines().any(|l| l == "Hours: 3"), "{out}");
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 0.1."),
+        task("t2", true, "Hours: 0.2.")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert!(out.lines().any(|l| l == "Hours: 0.3"), "{out}");
+    // The labels have a free order, and a duplicate id counts once.
+    let order = format!(
+        "- [x] t1: Do it. Hours: 2. Files: `src/dose.py`. Verify: `pytest`.\n{}",
+        task("t1", false, "Hours: 5.")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert!(out.lines().any(|l| l == "Hours: 2"), "{out}");
 }
 
 #[test]
-fn the_total_of_the_hours_has_no_zero_after_the_last_digit() {
-    // 1.25 and 0.75 give a whole number. The `h` and a task box are allowed.
-    let r = with_hours("- 1.25h\n- [x] 0.75 for the review\n- 1");
+fn a_range_of_hours_gives_a_range_total() {
+    let order = format!(
+        "{}\n{}\n{}",
+        task("t1", true, "Hours: 1-2."),
+        task("t2", true, "Hours: 1.5."),
+        task("t3", false, "Hours: 0 - 0.5h.")
+    );
+    let r = with_tasks(&order);
     let (code, out, err) = fin(&r, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.lines().any(|l| l == "Hours: 3"), "{out}");
+    assert_eq!(hours_line(&out), Some("Hours: 2.5-4"), "{out}");
     let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
     assert!(
-        json.contains("\"hours\":3}") || json.contains("\"hours\":3,"),
+        json.contains("\"hours\":{\"low\":2.5,\"high\":4}"),
         "{json}"
     );
-    // The sum of 0.1 and 0.2 is exact.
-    let r = with_hours("- 0.1\n- 0.2");
-    let (_, out, _) = fin(&r, &["--dry-run"]);
-    assert!(out.lines().any(|l| l == "Hours: 0.3"), "{out}");
+    // A range with two equal numbers is a number.
+    let (_, out, _) = fin(
+        &with_tasks(&task("t1", true, "Hours: 3-3.")),
+        &["--dry-run"],
+    );
+    assert_eq!(hours_line(&out), Some("Hours: 3"), "{out}");
 }
 
 #[test]
-fn an_item_of_hours_with_no_number_gives_a_note_and_no_total() {
-    let r = with_hours("- 2: review\n- some time\n- 12345: too many digits");
+fn a_skipped_task_adds_no_hours() {
+    let order = format!(
+        "{}\n{}\n{}",
+        task("t1", true, "Hours: 1-2."),
+        task("t2", true, "Hours: 1.5."),
+        task("t3", true, "Hours: 4. Skip: the store keeps the old alert.")
+    );
+    let r = with_tasks(&order);
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(hours_line(&out), Some("Hours: 2.5-3.5"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
+    // The box of a skipped task does not matter, and a skipped task with no
+    // `Hours:` gives no note.
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 2."),
+        task("t2", false, "Skip: not needed.")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(hours_line(&out), Some("Hours: 2"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
+    // A task with an empty `Skip:` is not skipped.
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 2."),
+        task("t2", true, "Hours: 1. Skip:")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(hours_line(&out), Some("Hours: 3"), "{out}");
+}
+
+#[test]
+fn a_task_with_no_hours_gives_a_note_and_the_total_of_the_others() {
+    let order = format!(
+        "{}\n{}\n{}\n{}",
+        task("t1", true, "Hours: 2."),
+        task("t2", true, ""),
+        task("t3", true, "Hours: 1."),
+        task("t4", false, "")
+    );
+    let r = with_tasks(&order);
     let (code, out, err) = fin(&r, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("note: the item \"some time\" of Hours has no number of hours; no total"),
+        out.contains("note: the tasks `t2`, `t4` have no `Hours:`; the total leaves them out\n"),
         "{out}"
     );
+    assert_eq!(hours_line(&out), Some("Hours: 3"), "{out}");
+    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
+    assert!(json.contains("\"hours\":{\"low\":3,\"high\":3}"), "{json}");
+    // One task with no `Hours:` gives the singular form.
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 2."),
+        task("t2", true, "")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
     assert!(
-        out.contains("note: the item \"12345: too many digits\" of Hours has no number of hours"),
+        out.contains("note: the task `t2` has no `Hours:`; the total leaves it out\n"),
         "{out}"
     );
-    assert!(!out.lines().any(|l| l.starts_with("Hours:")), "{out}");
+    // A plan with tasks and no `Hours:` at all prints no line and no note.
+    let (_, out, _) = fin(&with_tasks(&task("t1", true, "")), &["--dry-run"]);
+    assert!(!out.contains("Hours"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
+    let (_, json, _) = fin(&with_tasks(&task("t1", true, "")), &["--dry-run", "--json"]);
+    assert!(json.contains("\"hours\":null"), "{json}");
+}
+
+#[test]
+fn an_invalid_hours_value_gives_a_note_and_no_total() {
+    let order = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        task("t1", true, "Hours: 2."),
+        task("t2", true, "Hours: soon."),
+        task("t3", true, "Hours: 3-1."),
+        task("t4", true, ""),
+        task("t5", true, "Hours: 12345.")
+    );
+    let r = with_tasks(&order);
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for (id, value) in [("t2", "soon"), ("t3", "3-1"), ("t5", "12345")] {
+        assert!(
+            out.contains(&format!(
+                "note: the task `{id}` has the value \"{value}\" in `Hours:`, which is no number of hours and no range; no total\n"
+            )),
+            "{out}"
+        );
+    }
+    assert!(hours_line(&out).is_none(), "{out}");
+    // An invalid value leaves out the note of the missing hours.
+    assert!(!out.contains("have no `Hours:`"), "{out}");
     let (code, json, _) = fin(&r, &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{json}");
     assert!(json.contains("\"hours\":null"), "{json}");
+    // A skipped task with a bad value is not counted.
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 2."),
+        task("t2", true, "Hours: soon. Skip: no.")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(hours_line(&out), Some("Hours: 2"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
 }
 
 #[test]
-fn a_plan_with_no_hours_prints_no_hours_line() {
+fn the_section_hours_is_not_read() {
     let r = Fx::default().start();
+    r.write(
+        PLAN,
+        &plan_with_tasks(
+            &task("t1", true, ""),
+            "## Hours\n\n- 1.5: code\n- 2: review\n\n",
+        ),
+    );
+    r.commit("hours section");
     let (code, out, err) = fin(&r, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(!out.contains("Hours"), "{out}");
+    assert!(!out.contains("Hours:"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
     let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
     assert!(json.contains("\"hours\":null"), "{json}");
+}
+
+#[test]
+fn finish_json_gives_hours_as_low_and_high() {
+    let r = Fx::default().start();
+    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
+    assert!(json.contains("\"hours\":null"), "{json}");
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 1-2."),
+        task("t2", true, "Hours: 0.25.")
+    );
+    let (code, json, err) = fin(&with_tasks(&order), &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(
+        json.trim_end()
+            .ends_with("\"hours\":{\"low\":1.25,\"high\":2.25}}"),
+        "{json}"
+    );
 }

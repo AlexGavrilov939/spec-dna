@@ -112,6 +112,85 @@ fn a_task_with_no_verify_label_gives_sd923() {
 }
 
 #[test]
+fn a_skip_with_no_reason_gives_sd923() {
+    for order in [
+        "- [ ] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`. Skip:",
+        "- [x] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`. Skip: .",
+        "- [x] t1: Write it. Skip:   . Files: `src/a.rs`. Verify: `cargo test`.",
+    ] {
+        matrix("SD923", [None, Some("warning"), Some("error")], "", order);
+    }
+    let r = repo_with(&config("standard", ""));
+    change(
+        &r,
+        "accepted",
+        "approved",
+        "- [ ] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`. Skip:",
+    );
+    let (_, out) = check(&r);
+    let got = lines(&out, "SD923");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(got[0].contains("its `Skip:` has no reason"), "{out}");
+    assert!(got[0].contains("write the reason after `Skip:`"), "{out}");
+    // The text of the other problems stays.
+    assert!(
+        !got[0].contains("no `Files:`") && !got[0].contains("no `Verify:`"),
+        "{out}"
+    );
+    // A reason, and a `Hours:` label, are no problem.
+    never(
+        "SD923",
+        "",
+        "- [x] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`. Hours: 1-2. Skip: the store keeps it.",
+    );
+    never(
+        "SD923",
+        "",
+        "- [ ] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`. Hours: 2.",
+    );
+    // The word `Skip:` in a code span is no label.
+    never(
+        "SD923",
+        "",
+        "- [ ] t1: Write `Skip:` it. Files: `src/a.rs`. Verify: `cargo test`.",
+    );
+}
+
+#[test]
+fn a_skipped_task_still_needs_files_and_verify() {
+    let r = repo_with(&config("standard", ""));
+    change(
+        &r,
+        "accepted",
+        "approved",
+        "- [x] t1: Write it. Skip: the store keeps it.",
+    );
+    let (_, out) = check(&r);
+    let got = lines(&out, "SD923");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].contains("it has no `Files:`") && got[0].contains("it has no `Verify:`"),
+        "{out}"
+    );
+    assert!(!got[0].contains("`Skip:` has no reason"), "{out}");
+    // Both problems at once: one diagnostic, and both fixes.
+    let r = repo_with(&config("standard", ""));
+    change(&r, "accepted", "approved", "- [x] t1: Write it. Skip:");
+    let (_, out) = check(&r);
+    let got = lines(&out, "SD923");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].contains("it has no `Files:`; it has no `Verify:`; its `Skip:` has no reason"),
+        "{out}"
+    );
+    assert!(
+        got[0].contains("write the exact paths in `Files:` and the check in `Verify:`"),
+        "{out}"
+    );
+    assert!(got[0].contains("write the reason after `Skip:`"), "{out}");
+}
+
+#[test]
 fn a_task_that_misses_both_labels_gives_one_diagnostic_with_both_reasons() {
     let r = repo_with(&config("standard", ""));
     change(&r, "accepted", "approved", "- [ ] t1: Write it.");

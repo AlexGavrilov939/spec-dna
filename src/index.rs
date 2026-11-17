@@ -453,8 +453,8 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_keeps_the_paragraph_of_files_and_the_hours() {
-        let text = "---\nstatus: draft\n---\n# P\n\n## Files\n\nNone: research.\n\n## Hours\n\n- 1.5: code\n- 2: review\n";
+    fn round_trip_keeps_the_paragraph_of_files() {
+        let text = "---\nstatus: draft\n---\n# P\n\n## Files\n\nNone: research.\n";
         let mut m = HashMap::new();
         m.insert("p".to_string(), Arc::new(crate::parse::parse(text)));
         m.insert("q".to_string(), Arc::new(crate::parse::parse("# Q\n")));
@@ -465,13 +465,6 @@ mod tests {
         assert_eq!(*back["p"], *m["p"]);
         assert_eq!(*back["q"], *m["q"]);
         assert_eq!(back["p"].files_paragraph, Some(para));
-        let hours: Vec<_> = back["p"]
-            .items
-            .iter()
-            .filter(|i| i.section == ItemSection::Hours)
-            .map(|i| i.text.as_str())
-            .collect();
-        assert_eq!(hours, ["1.5: code", "2: review"]);
     }
 
     #[test]

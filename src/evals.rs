@@ -8,6 +8,7 @@
 use crate::config::Evals;
 use crate::harness::Skill;
 use crate::json::{self, Value};
+use crate::verdict::AGENTS_LINE;
 
 /// The most bytes of an eval file.
 pub const MAX_BYTES: usize = 64 * 1024;
@@ -55,8 +56,8 @@ pub struct Eval {
     pub max_budget_usd: f64,
     pub runs: u32,
     pub pass_at: u32,
-    /// The skill of the pack that the eval measures (`--ab`), if the file
-    /// names one.
+    /// The skill of the pack that the eval measures (`--ab`), or the group
+    /// `agents-line`, if the file names one.
     pub skill: Option<String>,
     pub checks: Vec<Check>,
 }
@@ -288,12 +289,12 @@ pub fn parse_eval(
 
     let skill = match field(fields, "skill") {
         None => None,
-        Some(Value::Str(s)) if Skill::from_key(s).is_some() => Some(s.clone()),
+        Some(Value::Str(s)) if Skill::from_key(s).is_some() || s == AGENTS_LINE => Some(s.clone()),
         Some(Value::Str(_)) => {
             return err(
                 "skill",
                 format!(
-                    "`skill` must name a skill of the pack; use {}",
+                    "`skill` must name a skill of the pack or `{AGENTS_LINE}`; use {}, or `{AGENTS_LINE}`",
                     crate::harness::skill_keys()
                 ),
             );
@@ -483,10 +484,17 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(e.skill.as_deref(), Some("write-plan"));
+        // The group `agents-line` is no skill, and its evals name it.
+        let e = parse(&with(
+            "\"max-budget-usd\"",
+            "\"skill\":\"agents-line\",\"max-budget-usd\"",
+        ))
+        .unwrap();
+        assert_eq!(e.skill.as_deref(), Some("agents-line"));
         for bad in [
             "\"intent\"",
             "\"spec-dna-tdd\"",
-            "\"agents-line\"",
+            "\"agents-line-1\"",
             "\"\"",
             "1",
             "[]",

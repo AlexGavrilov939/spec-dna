@@ -927,19 +927,28 @@ impl Git {
     /// the file instead. `dir` is the folder of the `intent` layer, as for
     /// `deleted_intents`. The result has one item for each entry, in order.
     ///
-    /// An entry is a move out only if both conditions are true:
+    /// An entry is a move out only if all 3 conditions are true (design 0.7.0,
+    /// D31):
     ///
     /// 1. The deleted file is the source of a rename in the diff of the
     ///    commit against its (first) parent. The diff has no pathspec, so the
     ///    new path can be anywhere.
-    /// 2. The front matter `aliases` of the new file, in the tree of the
-    ///    commit, holds the old id of the intent. `spec-dna mv` and `upgrade`
-    ///    write it. `finish` never does. Git can pair a deletion with a new
-    ///    file of the same commit that copies much of its text, so condition 1
-    ///    alone is not enough (design 0.6.1, D10).
+    /// 2. The rename is `R100`: the new file is the same text. Else the front
+    ///    matter `aliases` of the new file, in the tree of the commit, holds
+    ///    the old id of the intent. `spec-dna mv` and `upgrade` write it.
+    ///    `finish` never does. Git can pair a deletion with a new file of the
+    ///    same commit that copies much of its text, so condition 1 alone is not
+    ///    enough (design 0.6.1, D10).
+    /// 3. The same diff has no other record that deletes or renames a file of
+    ///    the change folder (the folder of the `intent.md`). A commit of
+    ///    `finish` removes the other files of the folder, and a `git mv` of the
+    ///    whole folder renames them: in both cases the folder leaves the
+    ///    layer, so the change ended.
     ///
-    /// The old id is the path with no `.md`, from a root. A root is the
-    /// folder `dir` or one of its parents, so the code tries each of them.
+    /// The code reads the records of the one `git diff-tree` that it runs for
+    /// each entry. The old id is the path with no `.md`, from a root. A root
+    /// is the folder `dir` or one of its parents, so the code tries each of
+    /// them.
     pub fn moved_out(&self, dir: &str, entries: &[DeletedIntent]) -> Result<Vec<bool>, String> {
         let mut result = vec![false; entries.len()];
         let mut wanted: Vec<(usize, (String, String))> = Vec::new();
@@ -954,7 +963,20 @@ impl Git {
                 parent,
                 &e.commit,
             ])?;
-            if let Some(to) = renamed_to(&out, &e.path) {
+            let records = diff_records(&out);
+            let Some(rename) = records
+                .iter()
+                .find(|r| r.status.starts_with('R') && r.old == e.path)
+            else {
+                continue;
+            };
+            if folder_leaves(&records, &e.path) {
+                continue;
+            }
+            let to = rename.new.clone().unwrap_or_default();
+            if rename.status == "R100" {
+                result[i] = true;
+            } else {
                 wanted.push((i, (e.commit.clone(), to)));
             }
         }
@@ -1569,26 +1591,50 @@ impl Git {
     }
 }
 
-/// Reads `<id> <parents>|<seconds>` of a commit header.
-/// Finds the new path of `old` in the output of
-/// `git diff-tree -r -M --name-status -z`, if the diff renames it.
-fn renamed_to(out: &[u8], old: &str) -> Option<String> {
+/// One record of `git diff-tree -r -M --name-status -z`.
+struct DiffRecord {
+    /// The status, such as `D`, `A`, `M` or `R100`.
+    status: String,
+    /// The path, or the old path of a rename.
+    old: String,
+    /// The new path of a rename or a copy.
+    new: Option<String>,
+}
+
+/// Reads the records of the output of `git diff-tree -r -M --name-status -z`.
+fn diff_records(out: &[u8]) -> Vec<DiffRecord> {
     let mut recs = out
         .split(|b| *b == 0)
         .filter(|r| !r.is_empty())
         .map(String::from_utf8_lossy);
+    let mut found = Vec::new();
     while let Some(status) = recs.next() {
-        let paths = if status.starts_with(['R', 'C']) { 2 } else { 1 };
-        let first = recs.next()?;
-        if paths == 1 {
-            continue;
-        }
-        let second = recs.next()?;
-        if status.starts_with('R') && first == old {
-            return Some(second.into_owned());
-        }
+        let Some(old) = recs.next() else { break };
+        let new = if status.starts_with(['R', 'C']) {
+            let Some(n) = recs.next() else { break };
+            Some(n.into_owned())
+        } else {
+            None
+        };
+        found.push(DiffRecord {
+            status: status.into_owned(),
+            old: old.into_owned(),
+            new,
+        });
     }
-    None
+    found
+}
+
+/// True if the diff deletes or renames a file of the folder of `intent`
+/// (the path of an `intent.md`) other than `intent` itself.
+fn folder_leaves(records: &[DiffRecord], intent: &str) -> bool {
+    let folder = intent.rsplit_once('/').map_or("", |(d, _)| d);
+    let prefix = format!("{folder}/");
+    records.iter().any(|r| {
+        r.old != intent
+            && (r.status.starts_with('D') || r.status.starts_with('R'))
+            && (folder.is_empty() || r.old.starts_with(&prefix))
+    })
 }
 
 /// The ids that the file `path` had before a move: the path with no `.md`,
@@ -1639,6 +1685,7 @@ fn front_matter_aliases(text: &str) -> Vec<String> {
     found
 }
 
+/// Reads `<id> <parents>|<seconds>` of a commit header.
 fn parse_commit_header(h: &str) -> Option<(String, Vec<String>, i64)> {
     let (ids, time) = h.trim().rsplit_once('|')?;
     let mut parts = ids.split(' ').filter(|p| !p.is_empty());

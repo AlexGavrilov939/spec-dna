@@ -157,3 +157,9 @@ spec-dna: finish `sensor-timeout` stopped at step 5: a requirement that the chan
 ```
 
 `finish` stops at the first step that fails, and it changes nothing. The lines before this message give the cause. At step 5, add a `covers: <requirement id>` comment in a test file for each requirement of the delta. `spec-dna next <slug>` lists the open steps ([example 3](../examples/one-change/README.md)).
+
+## Known limits
+
+- The compare of area names changes only the letters A to Z. `Été` and `été` are 2 areas for `areas`, `new` and `mv`.
+- On a file system that ignores case, a folder whose name on the disk differs in case from the name in `areas` is the same folder for the system. `new` and `mv` compare the path that you give, not the name on the disk, so they can stop for a path that the disk would accept.
+- A rename that changes only the case of an area (`valves` to `Valves`) needs 2 steps. First, write the new name in `areas`, because `mv` stops for a path whose area differs from a name of `areas` only in case. Then run `spec-dna mv` through a temporary name: each document goes to a temporary area, then to the new area. On a file system that ignores case, a one-step move stops with `already exists`.

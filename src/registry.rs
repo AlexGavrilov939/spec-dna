@@ -5,9 +5,11 @@
 //! index h:<hash>` marks the file. `check` gives SD610 when the entries
 //! changed after the last run, or when the rows have a manual edit.
 
+use crate::config::Config;
 use crate::hash::{hash_normalized, hex};
 use crate::model::{Corpus, Doc, LinkRes};
 use crate::mv::{parent, relative};
+use std::sync::Arc;
 
 /// The value of the `generated` front matter field, before the hash.
 pub const MARKER: &str = "spec-dna index";
@@ -97,9 +99,49 @@ pub fn hash(entries: &[Entry]) -> String {
     hex(&hash_normalized(&text))
 }
 
+/// The place of an index gives no type, so no status rule applies to it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NoType;
+
+/// The status line that a generated index at `index_path` needs. The type
+/// of the index is the one that `check` reads: the front matter `type` that
+/// `existing` keeps, the type of the root, the type of the place, or the
+/// `default-type` of the root. `Ok(Some(status))` is the first status of that
+/// type, for a type that needs a status when the kept front matter has none
+/// and the root gives none. `Ok(None)` is no line. `Err(NoType)` is a place
+/// that gives no type.
+pub fn index_status(
+    config: &Config,
+    index_path: &str,
+    existing: Option<&str>,
+) -> Result<Option<&'static str>, NoType> {
+    // The text with no status line, as `render` writes it.
+    let text = render(index_path, &[], existing, "", None);
+    let one = Corpus::build(
+        config,
+        vec![index_path.to_string()],
+        vec![(index_path.to_string(), Arc::new(crate::parse::parse(&text)))],
+    );
+    let d = &one.docs[0];
+    if d.untyped {
+        return Err(NoType);
+    }
+    if d.type_failed || d.status.is_some() || !d.ty.has_status() {
+        return Ok(None);
+    }
+    Ok(crate::templates::first_status(d.ty))
+}
+
 /// The full text of the generated index. It keeps the front matter fields of
-/// `existing` (other than `generated`) and its title.
-pub fn render(index_path: &str, entries: &[Entry], existing: Option<&str>, title: &str) -> String {
+/// `existing` (other than `generated`) and its title. `status` is a line
+/// that `index_status` gave: it comes before the line `generated`.
+pub fn render(
+    index_path: &str,
+    entries: &[Entry],
+    existing: Option<&str>,
+    title: &str,
+    status: Option<&str>,
+) -> String {
     let mut fm = String::new();
     if let Some(text) = existing
         && let Some((block, _)) = crate::frontmatter::split(text)
@@ -117,6 +159,9 @@ pub fn render(index_path: &str, entries: &[Entry], existing: Option<&str>, title
         if !fm.is_empty() && !fm.ends_with('\n') {
             fm.push('\n');
         }
+    }
+    if let Some(status) = status {
+        fm.push_str(&format!("status: {status}\n"));
     }
     fm.push_str(&format!("generated: {MARKER} h:{}\n", hash(entries)));
     let dir = parent(index_path);
