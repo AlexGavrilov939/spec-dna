@@ -585,7 +585,7 @@ A shallow clone can miss old changes, so each indicator that it computes from th
 
 With `[change] policy = "none"`, `stats` says that the change process is off and gives no indicator. It warns on a pin mismatch.
 
-The 2 leading Test indicators and the share of partial evidence read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. They are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file, an incident and a requirement belong to no change. The share of partial evidence needs no `[evals]`, and a shallow clone adds no note to it.
+The 2 leading Test indicators and the share of partial evidence read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. The 2 leading rows are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file, an incident and a requirement belong to no change. The share of partial evidence needs no `[evals]`, and a shallow clone adds no note to it.
 
 The pass rate reads each `*.json` file that is directly in `<[evals] dir>/results`.
 

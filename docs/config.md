@@ -560,9 +560,11 @@ A requirement has evidence if a test or a verification record links to it. `chec
 - an inline marker at the end of a requirement: `- **renew**: The library SHALL ... <!-- verified-by: tests/renew.py -->`
 - a `covers: <doc-id>#<key>` tag in a test file (`evidence.tests`)
 
-A tag `covers: partial <doc-id>#<key>` records that a test proves a part of a requirement. It is not evidence ([A partial tag](#a-partial-tag)).
-
 The tag is plain text, so it works in a comment of any language. Examples: `// covers: loans#renew` and `# covers: loans#renew, loans#fines`. The ids follow the tag, separated by commas or spaces. The first word that is not an id ends the tag.
+
+A `verified-by` path that is not in the git tree gives SD103. A tag that names no requirement gives SD105. An active requirement (of a `requirements`, `interface` or `rule` document with the status `active`) without evidence gives SD608. The profile sets the severities.
+
+`show` lists the evidence of each requirement. A moved requirement keeps its tags, because its old id is an alias. spec-dna does not run the tests. A tag `covers: partial <doc-id>#<key>` records that a test proves a part of a requirement. It is not evidence ([A partial tag](#a-partial-tag)).
 
 ### A partial tag
 
@@ -573,10 +575,6 @@ The word `partial` comes first after `covers:` (in any ASCII case), and it appli
 - A partial tag that names no requirement gives SD105, as a full tag does.
 - `show` lists the partial tags apart from the sources, `status` gives the token `partial <n>`, and `stats --sdlc` gives the share of requirements that have a partial tag and no full evidence.
 - A binary before 0.7.0 reads no id after the word `partial`, so it reads no evidence from such a tag.
-
-A `verified-by` path that is not in the git tree gives SD103. A tag that names no requirement gives SD105. An active requirement (of a `requirements`, `interface` or `rule` document with the status `active`) without evidence gives SD608. The profile sets the severities.
-
-`show` lists the evidence of each requirement. A moved requirement keeps its tags, because its old id is an alias. spec-dna does not run the tests.
 
 ## Patterns and globs
 

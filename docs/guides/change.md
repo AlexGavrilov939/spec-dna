@@ -95,18 +95,6 @@ A `covers:` tag can name an `ADD` requirement before `finish` writes it. If the 
 
 The code can come in more than one pull request. Run `finish` in the last pull request. The pull request of `finish` deletes the folder, so the checks read the spec and the plan from the base tree. Correct `Files` or the delta in an earlier pull request.
 
-### A delta that depends on a spike
-
-A spike is a short task that tries or measures one option before you decide. Sometimes the text of a delta line depends on its result. `finish` applies the delta of the base tree, and it stops when the pull request of `finish` changes the delta (SD914, step 3). Thus the edit of the delta must merge before the pull request of `finish`.
-
-- Run the spike before the approval of the spec when you can. Before a plan exists, a spike gives no SD913. When the plan comes in the same branch, SD913 reports the file of the spike: list it in `Files`, or merge the spike in a pull request of its own.
-- An approved spec stays `approved` after a text edit. `check` asks for no new approval of the edit.
-- With `approval = "branch"`, run the spike in the first pull request, after the approval commit of the plan. Edit the delta in the same pull request. The count stays 2 pull requests.
-- With `approval = "base"`, edit the delta in a pull request before the pull request of `finish`, for example the pull request of the spike.
-- If the approver must read the new delta, set the spec to `draft` in the commit of the edit. Then the approver commits `status: approved` alone. With `approval = "branch"`, that commit is the approval. With `"base"`, only the merge records the review. If the base tree already has the spec `approved`, `check` gives SD401 for the commit with `draft` until the approval commit follows.
-- To add a path to `Files` of a plan that an approval commit approved, use the same 2 commits. Else the new path gives SD910 (reason 8).
-- Do not edit the delta in the pull request of `finish`. A new approval commit there does not help, because the squash merge keeps no commit of the branch.
-
 Before you open the pull request, run:
 
 ```sh
@@ -120,6 +108,18 @@ spec-dna finish sensor-timeout
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
 `finish` adds the `Hours:` labels of the tasks that are not skipped, and prints the line `Hours: <total>`. The total is a number, or a range `<low>-<high>` if a task has a range. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
+
+### A delta that depends on a spike
+
+A spike is a short task that tries or measures one option before you decide. Sometimes the text of a delta line depends on its result. `finish` applies the delta of the base tree, and it stops when the pull request of `finish` changes the delta (SD914, step 3). Thus the edit of the delta must merge before the pull request of `finish`.
+
+- Run the spike before the approval of the spec when you can. Before a plan exists, a spike gives no SD913. When the plan comes in the same branch, SD913 reports the file of the spike: list it in `Files`, or merge the spike in a pull request of its own.
+- An approved spec stays `approved` after a text edit. `check` asks for no new approval of the edit.
+- With `approval = "branch"`, run the spike in the first pull request, after the approval commit of the plan. Edit the delta in the same pull request. The count stays 2 pull requests.
+- With `approval = "base"`, edit the delta in a pull request before the pull request of `finish`, for example the pull request of the spike.
+- If the approver must read the new delta, set the spec to `draft` in the commit of the edit. Then the approver commits `status: approved` alone. With `approval = "branch"`, that commit is the approval. With `"base"`, only the merge records the review. If the base tree already has the spec `approved`, `check` gives SD401 for the commit with `draft` until the approval commit follows.
+- To add a path to `Files` of a plan that an approval commit approved, use the same 2 commits. Else the new path gives SD910 (reason 8).
+- Do not edit the delta in the pull request of `finish`. A new approval commit there does not help, because the squash merge keeps no commit of the branch.
 
 ## The approval commit
 
