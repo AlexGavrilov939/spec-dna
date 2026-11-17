@@ -569,6 +569,14 @@ pub struct PlanTask {
     /// The text after the label `Verify:`, on one line. One final `.` is
     /// removed. `None` if the label is absent or has no text.
     pub verify: Option<String>,
+    /// The text after the label `Hours:`, on one line, with one final `.`
+    /// removed. `None` if the label is absent or has no text. [`parse_hours`]
+    /// reads the value (design 0.7.0, D28, D41).
+    pub hours: Option<String>,
+    /// The text after the label `Skip:`, on one line, with one final `.`
+    /// removed. `None` if the label is absent. A label with no text gives an
+    /// empty string: the task is not skipped, and SD923 reports it.
+    pub skip: Option<String>,
     pub line: u32,
     /// The byte range of the item in the source of the plan.
     pub range: Range<u32>,
@@ -577,23 +585,93 @@ pub struct PlanTask {
     pub duplicate: bool,
 }
 
+impl PlanTask {
+    /// True if the task has the label `Skip:` with a reason. It is not needed,
+    /// and its box does not matter (design 0.7.0, D40).
+    pub fn skipped(&self) -> bool {
+        self.skip.as_deref().is_some_and(|r| !r.is_empty())
+    }
+
+    /// True for `- [x]` and no reason in `Skip:`.
+    pub fn is_done(&self) -> bool {
+        self.done && !self.skipped()
+    }
+
+    /// True if the task is done or skipped.
+    pub fn closed(&self) -> bool {
+        self.done || self.skipped()
+    }
+}
+
+/// The range of hours of the value of the label `Hours:`, as 2 numbers of
+/// hundredths of an hour (low and high), or `None` if the value is invalid.
+/// The value is `<n>` or `<a>-<b>` with `a <= b`. A number `<n>` has 1 to 4
+/// digits, then 1 or 2 decimals after a `.` (optional), then an `h`
+/// (optional). Spaces or tabs can be around the `-`.
+pub fn parse_hours(value: &str) -> Option<(u64, u64)> {
+    fn number(t: &str) -> Option<u64> {
+        let t = t.strip_suffix('h').unwrap_or(t);
+        let (whole, frac) = match t.split_once('.') {
+            Some((w, f)) => (w, Some(f)),
+            None => (t, None),
+        };
+        let digits = |x: &str, max: usize| {
+            (1..=max).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_digit())
+        };
+        if !digits(whole, 4) || frac.is_some_and(|f| !digits(f, 2)) {
+            return None;
+        }
+        let mut v = whole.parse::<u64>().ok()? * 100;
+        if let Some(f) = frac {
+            let n: u64 = f.parse().ok()?;
+            v += if f.len() == 1 { n * 10 } else { n };
+        }
+        Some(v)
+    }
+    match value.split_once('-') {
+        None => number(value).map(|n| (n, n)),
+        Some((a, b)) => {
+            let (a, b) = (
+                number(a.trim_matches([' ', '\t']))?,
+                number(b.trim_matches([' ', '\t']))?,
+            );
+            (a <= b).then_some((a, b))
+        }
+    }
+}
+
+/// The labels of a task line.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Label {
+    Files,
+    Verify,
+    Hours,
+    Skip,
+}
+
 /// Parses one item of the `Order` section as a task. Returns `None` if the
 /// item is not a task (`duplicate` is false: `plan_tasks` sets it). The
-/// labels `Files:` and `Verify:` are case-sensitive, they follow white space
-/// or the start of the text, and a code span does not hold a label. Each is
+/// labels `Files:`, `Verify:`, `Hours:` and `Skip:` are case-sensitive, they
+/// follow white space or the start of the text, and a code span does not hold
+/// a label. Each is
 /// optional and ends at the next label.
 pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
     let done = item.task?;
     let text = item.text.as_str();
-    // The labels outside code spans: (start, end, is the label `Files:`).
-    let mut labels: Vec<(usize, usize, bool)> = Vec::new();
+    // The labels outside code spans: (start, end, the label).
+    let mut labels: Vec<(usize, usize, Label)> = Vec::new();
     for (start, end) in plain_pieces(text) {
-        for (label, files) in [("Files:", true), ("Verify:", false)] {
+        for (label, kind) in [
+            ("Files:", Label::Files),
+            ("Verify:", Label::Verify),
+            ("Hours:", Label::Hours),
+            ("Skip:", Label::Skip),
+        ] {
             let mut from = start;
             while let Some(i) = text[from..end].find(label) {
                 let pos = from + i;
                 if pos == 0 || text[..pos].ends_with(char::is_whitespace) {
-                    labels.push((pos, pos + label.len(), files));
+                    labels.push((pos, pos + label.len(), kind));
                 }
                 from = pos + label.len();
             }
@@ -613,15 +691,28 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
     let mut files = None;
     let mut files_text = None;
     let mut verify = None;
-    for (n, &(_, end, is_files)) in labels.iter().enumerate() {
+    let mut hours = None;
+    let mut skip = None;
+    for (n, &(_, end, kind)) in labels.iter().enumerate() {
         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
         let seg = &text[end..stop];
-        if is_files {
-            files_text.get_or_insert_with(|| one_line(seg));
-            files.get_or_insert_with(|| label_paths(seg));
-        } else if verify.is_none() {
-            let v = one_line(seg);
-            verify = Some((!v.is_empty()).then_some(v));
+        match kind {
+            Label::Files => {
+                files_text.get_or_insert_with(|| one_line(seg));
+                files.get_or_insert_with(|| label_paths(seg));
+            }
+            Label::Verify if verify.is_none() => {
+                let v = one_line(seg);
+                verify = Some((!v.is_empty()).then_some(v));
+            }
+            Label::Hours if hours.is_none() => {
+                let v = one_line(seg);
+                hours = Some((!v.is_empty()).then_some(v));
+            }
+            Label::Skip => {
+                skip.get_or_insert_with(|| one_line(seg));
+            }
+            _ => {}
         }
     }
     Some(PlanTask {
@@ -631,6 +722,8 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         files: files.unwrap_or_default(),
         files_text,
         verify: verify.flatten(),
+        hours: hours.flatten(),
+        skip,
         line: item.line,
         range: item.range.clone(),
         duplicate: false,
@@ -792,9 +885,10 @@ fn tasks_of<'a>(items: impl Iterator<Item = &'a ListItem>) -> Vec<PlanTask> {
     tasks
 }
 
-/// The first task that is not done and is not a duplicate.
+/// The first task that is not closed (not done and not skipped) and is not a
+/// duplicate.
 pub fn next_open_task(tasks: &[PlanTask]) -> Option<&PlanTask> {
-    tasks.iter().find(|t| !t.done && !t.duplicate)
+    tasks.iter().find(|t| !t.closed() && !t.duplicate)
 }
 
 impl Change {
@@ -1176,6 +1270,107 @@ mod tests {
         );
         assert_eq!(t[0].files, ["src/a.py", "src/b.py"]);
         assert_eq!(t[1].files, ["src/c.py"]);
+    }
+
+    #[test]
+    fn the_labels_hours_and_skip_are_read() {
+        let t = tasks(&[
+            "- [ ] t1: Text. Files: `a`. Verify: ok. Hours: 1.5. Skip: not needed.",
+            "- [ ] t2: Text. Skip: reason one. Hours: 1-2. Files: `a`.",
+            "- [ ] t3: Text. Hours:  3 \t h",
+            "- [ ] t4: Text. Hours: . Skip:",
+            "- [x] t5: Text. hours: 2. skip: no.",
+            "- [ ] t6: Text with `Hours: 9` and `Skip: x` in code.",
+            "- [ ] t7: Text. Hours: 1. Hours: 2. Skip: a. Skip: b.",
+            "- [ ] t8: Text.Hours: 1.",
+            "- [x] t9: Text.\n  Skip: the second\n  line.",
+        ]);
+        let h = |n: usize| t[n].hours.as_deref();
+        let k = |n: usize| t[n].skip.as_deref();
+        assert_eq!((h(0), k(0)), (Some("1.5"), Some("not needed")));
+        assert_eq!((h(1), k(1)), (Some("1-2"), Some("reason one")));
+        assert_eq!(t[1].files, ["a"]);
+        assert_eq!(h(2), Some("3 h"));
+        // An empty `Hours:` is no value, and an empty `Skip:` is an empty reason.
+        assert_eq!((h(3), k(3)), (None, Some("")));
+        // A label is case-sensitive, and a code span does not hold one.
+        assert_eq!((h(4), k(4)), (None, None));
+        assert_eq!((h(5), k(5)), (None, None));
+        // The first label of each kind counts.
+        assert_eq!((h(6), k(6)), (Some("1"), Some("a")));
+        assert_eq!((h(7), k(7)), (None, None));
+        assert_eq!(k(8), Some("the second line"));
+        // The state: a non-empty `Skip:` closes the task, whatever its box.
+        assert!(t[0].skipped() && t[0].closed() && !t[0].is_done());
+        assert!(t[1].skipped() && !t[1].is_done());
+        assert!(!t[3].skipped() && !t[3].closed() && !t[3].is_done());
+        assert!(t[4].is_done() && t[4].closed() && !t[4].skipped());
+        assert!(!t[2].closed());
+    }
+
+    #[test]
+    fn the_next_open_task_skips_a_skipped_task() {
+        let t = tasks(&[
+            "- [ ] t1: One. Skip: not needed.",
+            "- [ ] t2: Two. Skip:",
+            "- [ ] t3: Three.",
+        ]);
+        assert_eq!(next_open_task(&t).unwrap().id, "t2");
+        let t = tasks(&["- [x] t1: One.", "- [ ] t2: Two. Skip: no."]);
+        assert!(next_open_task(&t).is_none());
+    }
+
+    #[test]
+    fn a_label_hours_ends_the_verify_text() {
+        let t = tasks(&[
+            "- [ ] t1: Text. Verify: `cargo test`. Hours: 2.",
+            "- [ ] t2: Text. Hours: 2. Verify: read the log.",
+            "- [ ] t3: Text. Files: `a`. Hours: 1. Skip: the branch is gone. Verify: ok.",
+        ]);
+        assert_eq!(t[0].verify.as_deref(), Some("`cargo test`"));
+        assert_eq!(t[0].hours.as_deref(), Some("2"));
+        assert_eq!(t[1].verify.as_deref(), Some("read the log"));
+        assert_eq!(t[1].text, "Text");
+        assert_eq!(t[2].files, ["a"]);
+        assert_eq!(t[2].files_text.as_deref(), Some("`a`"));
+        assert_eq!(t[2].skip.as_deref(), Some("the branch is gone"));
+        assert_eq!(t[2].verify.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn a_value_of_hours_is_a_number_or_a_range() {
+        let h = |s: &str| parse_hours(s);
+        assert_eq!(h("2"), Some((200, 200)));
+        assert_eq!(h("1.5"), Some((150, 150)));
+        assert_eq!(h("0.05h"), Some((5, 5)));
+        assert_eq!(h("9999.99"), Some((999_999, 999_999)));
+        assert_eq!(h("1-2"), Some((100, 200)));
+        assert_eq!(h("1.5 - 2.25h"), Some((150, 225)));
+        assert_eq!(h("3 \t-\t 3"), Some((300, 300)));
+        assert_eq!(h("0-0.5h"), Some((0, 50)));
+        for bad in [
+            "",
+            "soon",
+            "2 (estimate)",
+            "3-1",
+            "1-",
+            "-1",
+            "1--2",
+            "1-2-3",
+            "12345",
+            "1.",
+            ".5",
+            "1.234",
+            "2 h",
+            "2hours",
+            "1,5",
+            "1 2",
+            "1-2x",
+            "+1",
+            "1e2",
+        ] {
+            assert_eq!(h(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

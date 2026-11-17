@@ -24,7 +24,7 @@ status: approved
 - [x] t2: Write the failing tests of the hours of the tasks in `finish`: a sum, a range, a skipped task, a task with no `Hours:`, a bad value and the JSON (`hygiene-engineer`). Files: `tests/finish.rs`. Verify: `cargo test --test finish` fails on the new tests only.
 - [x] t3: Write the failing tests of a range in `log` and `stats --sdlc` (`core-engineer`). Files: `tests/lifecycle_log.rs`. Verify: `cargo test --test lifecycle_log` fails on the new tests only.
 - [x] t4: Write the failing tests of SD923 for an empty `Skip:`, and of no SD910 for a `Skip:` edit (`diagnostics-engineer`). Files: `tests/task_checks.rs`, `tests/branch_approval.rs`. Verify: `cargo test --test task_checks --test branch_approval` fails on the new tests only.
-- [ ] t5: Read the labels `Hours:` and `Skip:`, and give the state of a task (`core-engineer`). Files: `src/change.rs`. Verify: `cargo test --bin spec-dna change::` passes.
+- [x] t5: Read the labels `Hours:` and `Skip:`, and give the state of a task (`core-engineer`). Files: `src/change.rs`. Verify: `cargo test --bin spec-dna change::` passes.
 - [ ] t6: Add the hours of the tasks to `finish`, with the notes and `hours` as `{"low", "high"}` (`hygiene-engineer`). Files: `src/finish.rs`, `src/main.rs`. Verify: `cargo test --test finish` passes.
 - [ ] t7: Remove `ItemSection::Hours`, and set `PARSER_VERSION` to 15 (`core-engineer`). Files: `src/parse.rs`, `src/index.rs`. Verify: `cargo test --bin spec-dna` passes.
 - [ ] t8: Count a skipped task as closed in `next` and `status` (`core-engineer`). Files: `src/stage.rs`. Verify: `cargo test --test lifecycle_commands` passes.
