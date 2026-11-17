@@ -30,7 +30,7 @@ status: approved
 - [x] t8: Count a skipped task as closed in `next` and `status` (`core-engineer`). Files: `src/stage.rs`. Verify: `cargo test --test lifecycle_commands` passes.
 - [x] t9: Read a range of hours in `log` and `stats --sdlc` (`core-engineer`). Files: `src/sdlc.rs`. Verify: `cargo test --test lifecycle_log --test stats_evals` passes.
 - [x] t10: Add the problem of an empty `Skip:` to SD923 (`diagnostics-engineer`). Files: `src/lifecycle.rs`. Verify: `cargo test --test task_checks --test branch_approval` passes.
-- [ ] t11: Write step 6 of `write-plan` with the labels (`init-engineer`). Files: `src/harness_text.rs`, `tests/golden/harness/skills/spec-dna-write-plan.md`. Verify: `cargo test --test harness_skills` passes.
+- [x] t11: Write step 6 of `write-plan` with the labels (`init-engineer`). Files: `src/harness_text.rs`, `tests/golden/harness/skills/spec-dna-write-plan.md`. Verify: `cargo test --test harness_skills` passes.
 - [ ] t12: Put the hours of the `finish` evals on the tasks (total 4.5), give `finish-3` a skipped task, and remove the fallback line of the reference solutions (`init-engineer`). Files: `src/eval_pack_fixtures_rest.rs`, `tests/fixtures/eval-solutions/finish-1/good.sh`, `tests/fixtures/eval-solutions/finish-3/good.sh`. Verify: `cargo test --test eval_pack` passes.
 - [ ] t13: Write the line with no space before its marker, and test the version `99.99.99` (`init-engineer`). Files: `src/adapters.rs`. Verify: `cargo test --bin spec-dna adapters` passes.
 - [ ] t14: Update the docs of the plan type and of the commands (`core-engineer`; `hygiene-engineer` for `finish`). Files: `docs/types.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
