@@ -1601,6 +1601,7 @@ mod tests {
                 path: "tests/test_valves.py".to_string(),
                 line: i as u32 + 1,
                 target: t.to_string(),
+                partial: false,
             })
             .collect();
         let base = corpus(cfg, base_files);

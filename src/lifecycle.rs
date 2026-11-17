@@ -2330,15 +2330,22 @@ pub fn evidence_missing(
         let doc = &head.docs[di as usize];
         let req = &doc.parsed.reqs[ri];
         if ev.of(di, doc, ri).is_empty() {
+            let message = match ev.partial_of(di, ri).first() {
+                Some(at) => format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and only a partial `covers:` tag names it ({at}); add a test that covers all of it",
+                    ch.slug, doc.id, req.key
+                ),
+                None => format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
+                    ch.slug, doc.id, req.key
+                ),
+            };
             out.push(crate::check::diag(
                 doc,
                 req.line,
                 Code::DeltaEvidenceMissing,
                 format!("{}#{}", doc.id, req.key),
-                format!(
-                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
-                    ch.slug, doc.id, req.key
-                ),
+                message,
             ));
         }
     }

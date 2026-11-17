@@ -244,8 +244,11 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
 struct Proof {
     /// The number of such requirements.
     total: usize,
-    /// The targets `<id>#<key>` that have no evidence.
+    /// The targets `<id>#<key>` that have no full evidence.
     missing: Vec<String>,
+    /// The targets of `missing` that a partial `covers:` tag names, each with
+    /// the first tag as `<path>:<line>`.
+    partial: Vec<(String, String)>,
 }
 
 pub struct Ctx<'a> {
@@ -309,34 +312,60 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        let missing = targets
-            .iter()
-            .filter(|(id, key)| !self.has_evidence(id, key))
-            .map(|(id, key)| format!("{id}#{key}"))
-            .collect();
+        let mut missing = Vec::new();
+        let mut partial = Vec::new();
+        for (id, key) in &targets {
+            let (full, part) = self.evidence_of(id, key);
+            if full {
+                continue;
+            }
+            let target = format!("{id}#{key}");
+            if let Some(at) = part {
+                partial.push((target.clone(), at));
+            }
+            missing.push(target);
+        }
         Proof {
             total: targets.len(),
             missing,
+            partial,
         }
     }
 
-    /// True if a requirement has evidence: a `covers:` tag, a `verified-by`
-    /// marker, or the `verified-by` of its document. A requirement that the
-    /// tree does not have yet (an `ADD` line) has evidence if a `covers:` tag
-    /// names it.
-    fn has_evidence(&self, id: &str, key: &str) -> bool {
+    /// The number of requirements that the change adds or changes, that have a
+    /// partial `covers:` tag, and that have no full evidence. It counts at each
+    /// stage.
+    pub fn partial(&self, ch: &Change) -> usize {
+        self.proof(ch).partial.len()
+    }
+
+    /// The evidence of a requirement: true if it has full evidence (a full
+    /// `covers:` tag, a `verified-by` marker, or the `verified-by` of its
+    /// document), and the first partial `covers:` tag as `<path>:<line>`. A
+    /// requirement that the tree does not have yet (an `ADD` line) has full
+    /// evidence if a full `covers:` tag names it.
+    fn evidence_of(&self, id: &str, key: &str) -> (bool, Option<String>) {
         let head = &self.view.head;
         let ev = self.evidence.get_or_init(|| Evidence::build(head).0);
         if let Res::Found(d, None, _) = head.resolve(id) {
             let doc = &head.docs[d as usize];
             if let Some(r) = doc.req(key) {
-                return !ev.of(d, doc, r).is_empty();
+                return (
+                    !ev.of(d, doc, r).is_empty(),
+                    ev.partial_of(d, r).first().cloned(),
+                );
             }
         }
         let want = same_target(head, &format!("{id}#{key}"));
-        head.covers
+        let mut tags = head
+            .covers
             .iter()
-            .any(|c| same_target(head, &c.target) == want)
+            .filter(|c| same_target(head, &c.target) == want);
+        let full = tags.clone().any(|c| !c.partial);
+        let part = tags
+            .find(|c| c.partial)
+            .map(|c| format!("{}:{}", c.path, c.line));
+        (full, part)
     }
 
     /// The items for the open concerns (SD919) and the open questions (SD922)
@@ -605,20 +634,31 @@ impl<'a> Ctx<'a> {
         ));
         let proof = self.proof(ch);
         if !proof.missing.is_empty() {
+            let (m, n, p) = (proof.missing.len(), proof.total, proof.partial.len());
             items.push(item(
                 false,
                 Step::Test,
-                format!(
-                    "{} of {} requirement(s) that the change adds or changes have no evidence",
-                    proof.missing.len(),
-                    proof.total
-                ),
+                if p == 0 {
+                    format!(
+                        "{m} of {n} requirement(s) that the change adds or changes have no evidence"
+                    )
+                } else {
+                    format!(
+                        "{m} of {n} requirement(s) that the change adds or changes have no full evidence; {p} of them have a partial `covers:` tag only"
+                    )
+                },
             ));
             for target in proof.missing.iter().take(5) {
+                let at = proof.partial.iter().find(|(t, _)| t == target);
                 items.push(item(
                     false,
                     Step::Test,
-                    format!("add `covers: {target}` in a test file"),
+                    match at {
+                        Some((_, at)) => format!(
+                            "`{target}` has a partial `covers:` tag only ({at}); add a test that covers all of it"
+                        ),
+                        None => format!("add `covers: {target}` in a test file"),
+                    },
                 ));
             }
             return report(Stage::Test, items, None);
@@ -959,6 +999,7 @@ pub fn status(
         ch: &'a Change,
         report: Report,
         tasks: Tasks,
+        partial: usize,
         areas: Vec<String>,
         stale: bool,
         sources: [Option<String>; 3],
@@ -977,6 +1018,7 @@ pub fn status(
                 ch,
                 report: cx.derive(ch),
                 tasks: tasks(ch, &view.head),
+                partial: cx.partial(ch),
                 areas,
                 stale: stale.contains(&ch.slug),
                 sources: sources_of(&view, ch, walk.as_ref()),
@@ -1017,6 +1059,7 @@ pub fn status(
                 .bool("stale", r.stale)
                 .strs("areas", &r.areas)
                 .raw("tasks", &tasks)
+                .num("partial", r.partial)
                 .end()
         });
         let follow_ups = follow.iter().map(|f| {
@@ -1094,6 +1137,9 @@ pub fn status(
             if let Some(t) = &r.tasks.next {
                 line.push_str(&format!(" next-task {}", t.id));
             }
+        }
+        if r.partial > 0 {
+            line.push_str(&format!(" partial {}", r.partial));
         }
         if !r.areas.is_empty() {
             line.push_str(&format!(" areas {}", r.areas.join(",")));
