@@ -41,11 +41,15 @@ pub fn valid_eval_id(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
-/// True for a model name: `^[A-Za-z0-9._:-]{1,64}$`.
+/// True for a model name: 1 to 64 characters from `A-Z a-z 0-9 . _ : - [ ] /`,
+/// with no `..` and no `/` at the start. Claude Code writes names such as
+/// `claude-fable-5-2[1m]`. A path-like value is not a name.
 pub fn valid_model(s: &str) -> bool {
     (1..=64).contains(&s.len())
         && s.bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+            .all(|c| c.is_ascii_alphanumeric() || b"._:-[]/".contains(&c))
+        && !s.contains("..")
+        && !s.starts_with('/')
 }
 
 /// True for a version of Claude Code: `^[0-9A-Za-z.+-]{1,32}$`.
@@ -132,7 +136,8 @@ fn count(v: &Value) -> Option<u64> {
 /// The names of a list of models, each checked, or `None` if the key is
 /// absent or `null`.
 fn models_of(v: &Value) -> Result<Option<Vec<String>>, Fatal> {
-    const FORM: &str = "a list of 1 to 8 names of 1 to 64 characters from A-Z a-z 0-9 . _ : -";
+    const FORM: &str =
+        "a list of 1 to 8 names of 1 to 64 characters from A-Z a-z 0-9 . _ : - [ ] /, with no `..`";
     let Value::Arr(items) = v else {
         return match v {
             Value::Null => Ok(None),

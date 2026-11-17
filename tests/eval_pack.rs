@@ -485,3 +485,27 @@ fn the_fixture_of_execute_1_has_a_requirement_that_a_covers_tag_can_name() {
     let (_, out, _) = p.run(&["check", "--all"]);
     assert!(out.contains("SD105"), "{out}");
 }
+
+#[test]
+fn verify_8_runs_on_a_branch_so_that_the_proof_check_base_main_has_a_base() {
+    // The proof of `verify-8` is `spec-dna check --base main`. If the agent
+    // committed on `main`, the base would move and the proof would report no
+    // new error. So the eval runs on a branch, and `main` stays at the base.
+    let r = project("[evals]\n");
+    pack(&r);
+    let text = r.read("evals/pack/verify-8.json");
+    assert!(text.contains("\"branch\": \"feature/overdue-fee\""), "{text}");
+}
+
+#[test]
+fn finish_1_and_finish_3_have_the_check_hours_line_that_a_result_lists_by_name() {
+    // The check reads `Hours: 4.5` in the commit message. Each side of a result
+    // of `eval run --ab` lists the check names, so a run shows if it failed.
+    let r = project("[evals]\n");
+    pack(&r);
+    for id in ["finish-1", "finish-3"] {
+        let text = r.read(&format!("evals/pack/{id}.json"));
+        assert!(text.contains("\"name\": \"hours-line\""), "{id}");
+        assert!(text.contains("^Hours: 4\\\\.5( |$)"), "{id}");
+    }
+}

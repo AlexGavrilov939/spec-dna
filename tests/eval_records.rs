@@ -116,7 +116,13 @@ fn eval_records_copies_no_other_field_of_a_poisoned_file() {
 
 #[test]
 fn a_model_name_outside_the_form_stops_the_import() {
-    for bad in ["a/b".to_string(), "a".repeat(65), "x y".to_string()] {
+    for bad in [
+        "a..b".to_string(),
+        "/etc/x".to_string(),
+        "a".repeat(65),
+        "x y".to_string(),
+        "a\\nb".to_string(),
+    ] {
         let text = small().replace("\"claude-b\"", &format!("\"{bad}\""));
         let (code, out, err) = records_of(&text);
         assert_eq!(code, 3, "{bad}: {out}{err}");
@@ -127,10 +133,10 @@ fn a_model_name_outside_the_form_stops_the_import() {
     // A name in a side is checked too: the 2nd `"claude-a"` is in the first pair.
     let at = small().match_indices("\"claude-a\"").nth(1).unwrap().0;
     let mut text = small();
-    text.replace_range(at..at + 10, "\"a/b\"");
+    text.replace_range(at..at + 10, "\"a..b\"");
     let (code, _, err) = records_of(&text);
     assert_eq!(code, 3, "{err}");
-    assert!(err.contains("models") && !err.contains("a/b"), "{err}");
+    assert!(err.contains("models") && !err.contains("a..b"), "{err}");
     // A bad version of Claude Code and a bad eval id stop the import too.
     for (from, to, key) in [
         ("\"2.1.326\"", "\"2.1 326\"", "claude_code"),
@@ -259,4 +265,18 @@ fn a_run_with_no_cost_of_an_eval_that_the_pack_lacks_stops_the_import() {
     assert!(out.is_empty(), "{out}");
     assert!(err.contains("no cost") && err.contains("`tdd`"), "{err}");
     assert!(!err.contains("nothing-2"), "{err}");
+}
+
+#[test]
+fn a_model_name_with_brackets_and_a_slash_round_trips() {
+    // `claude-fable-5-2[1m]` is a name that Claude Code can write in `modelUsage`.
+    for name in ["claude-fable-5-2[1m]", "vendor/model-1:beta"] {
+        let text = small().replace("\"claude-b\"", &format!("\"{name}\""));
+        let (code, out, err) = records_of(&text);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(
+            out.contains(&format!("\"models\":[\"claude-a\",\"{name}\"]")),
+            "{out}"
+        );
+    }
 }

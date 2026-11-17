@@ -1119,7 +1119,7 @@ fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
 }
 
 /// The sorted names of the models of `modelUsage` in the result of `claude`.
-/// It reads names only, and a name has at most 64 characters of a safe set.
+/// It reads names only, and a name has the form of a model name of a record.
 fn result_models(stdout: &[u8]) -> Vec<String> {
     let Some(Value::Obj(fields)) = result_object(stdout).map(|o| o.get("modelUsage").clone())
     else {
@@ -1128,11 +1128,7 @@ fn result_models(stdout: &[u8]) -> Vec<String> {
     let mut names: Vec<String> = fields
         .into_iter()
         .map(|(k, _)| k)
-        .filter(|k| {
-            (1..=64).contains(&k.len())
-                && k.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-:[]/".contains(&b))
-        })
+        .filter(|k| crate::eval_records::valid_model(k))
         .collect();
     names.sort();
     names
@@ -2104,5 +2100,12 @@ mod tests {
             assert_eq!(result_tokens(bad), None, "{}", String::from_utf8_lossy(bad));
         }
         assert!(result_models(br#"{"modelUsage":{"a b":{}}}"#).is_empty());
+        // A name with brackets or a slash is kept; a path-like name is not.
+        assert_eq!(
+            result_models(
+                br#"{"modelUsage":{"claude-fable-5-2[1m]":{},"v/m:1":{},"a..b":{},"/etc/x":{}}}"#
+            ),
+            ["claude-fable-5-2[1m]", "v/m:1"]
+        );
     }
 }

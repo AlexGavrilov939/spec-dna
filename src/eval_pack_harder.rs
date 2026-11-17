@@ -831,7 +831,7 @@ rm -rf "$t"
         allowed_tools: HARDER_TOOLS,
         max_turns: 20,
         max_budget_usd: 1.5,
-        branch: None,
+        branch: Some("feature/overdue-fee"),
         checks: &[
             (
                 "feature-done",

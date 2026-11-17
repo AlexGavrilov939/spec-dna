@@ -354,7 +354,7 @@ A release keeps the result of its runs as records in `bench/results/evals/`. A r
 | `pass` | `true` or `false` |
 | `cost` | `cost_usd` of the side, or `null` |
 | `tokens` | `null`, or `{"in","out","cache_read","cache_write"}` |
-| `models` | 1 to 8 sorted names of models |
+| `models` | 1 to 8 sorted names of models. A name has 1 to 64 characters from `A-Z a-z 0-9 . _ : - [ ] /`, with no `..` and no `/` at the start, such as `claude-fable-5-2[1m]` |
 | `claude_code` | The version of Claude Code, or `null` |
 
 A record has no path, no text, no check name and no time. The pair is `eval` and `run`. The records of the 200 runs of the pilot have `"tokens": null`, and each of them names the models of its result file, because the runner of the pilot kept one list of models for each file. The runner of this release keeps the tokens and the models of each run.

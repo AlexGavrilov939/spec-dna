@@ -1268,7 +1268,7 @@ mod tests {
             // The text has no path, no address and no mail.
             let text =
                 std::fs::read_to_string(records_dir().join(format!("{stem}.jsonl"))).unwrap();
-            for bad in ["/", "\\", "@", "http"] {
+            for bad in ["\"/", "..", "\\", "@", "http"] {
                 assert!(!text.contains(bad), "{stem}: `{bad}`");
             }
         }
