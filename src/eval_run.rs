@@ -67,8 +67,6 @@ pub(crate) struct RunResult {
     /// `eval run` without `--ab` ignores it, and counts the run as it is
     /// (ADR 0008).
     pub(crate) class: Option<Refusal>,
-    /// True if the result object of `claude` has `"is_error": true`.
-    pub(crate) is_error: bool,
     /// The number of `permission_denials` of the result object, if it has the
     /// list.
     pub(crate) denials: Option<u32>,
@@ -639,6 +637,9 @@ fn git_in(dir: &Path, args: &[&str]) -> Result<String, Fatal> {
         .env("GIT_COMMITTER_DATE", BASE_DATE)
         .env("LC_ALL", "C")
         .stdin(Stdio::null());
+    // A Ctrl-C of the terminal must not kill a git helper: the interrupt would
+    // look like a git error.
+    own_process_group(&mut cmd);
     let out = cmd
         .output()
         .map_err(|e| Fatal::Io(format!("cannot run git: {e}")))?;
@@ -769,7 +770,6 @@ pub(crate) fn one_attempt(
             checks: Vec::new(),
             passed: false,
             class: None,
-            is_error: false,
             denials: None,
             interrupted: true,
             models: Vec::new(),
@@ -781,7 +781,7 @@ pub(crate) fn one_attempt(
         _ => -1,
     };
     let (cost, mut subtype) = read_result(&stdout);
-    let (is_error, denials) = result_flags(&stdout);
+    let denials = result_denials(&stdout);
     let class = if timed_out {
         None
     } else {
@@ -826,7 +826,6 @@ pub(crate) fn one_attempt(
                 checks,
                 passed: false,
                 class: None,
-                is_error,
                 denials,
                 interrupted: true,
                 models,
@@ -847,7 +846,6 @@ pub(crate) fn one_attempt(
         checks,
         passed,
         class,
-        is_error,
         denials,
         interrupted: false,
         models,
@@ -976,25 +974,33 @@ extern "C" fn on_signal(sig: i32) {
     INTERRUPT.store(sig, Ordering::SeqCst);
 }
 
-/// Catches SIGINT and SIGTERM. A runner of `--ab` then kills the agent, removes
+/// Catches SIGHUP, SIGINT and SIGTERM. A runner of `--ab` then kills the agent, removes
 /// the copy, writes the result and exits with 128 plus the signal.
 pub(crate) fn catch_interrupts() {
     #[cfg(unix)]
     // SAFETY: `signal` is the C function. The handler only stores an integer
     // in an atomic, which is safe in a signal handler.
     unsafe {
+        signal(1, on_signal);
         signal(2, on_signal);
         signal(15, on_signal);
     }
 }
 
-/// Kills the process group of a child that `own_process_group` made.
-fn kill_group(child: &mut Child) {
+/// Kills the process group that `own_process_group` made for the pid.
+fn kill_group_of(pid: u32) {
     #[cfg(unix)]
     // SAFETY: `kill` is the C function. A negative pid names the group.
     unsafe {
-        kill(-(child.id() as i32), 9);
+        kill(-(pid as i32), 9);
     }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+/// Kills the process group of a child that `own_process_group` made.
+fn kill_group(child: &mut Child) {
+    kill_group_of(child.id());
     let _ = child.kill();
 }
 
@@ -1013,6 +1019,9 @@ fn wait_limited(child: &mut Child, limit: Duration) -> std::io::Result<Ended> {
     let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait()? {
+            // A child of the process that is still alive must not hold the
+            // pipes that the readers wait on. ESRCH (no process) is no error.
+            kill_group_of(child.id());
             return Ok(Ended::Exited(status.code().unwrap_or(-1)));
         }
         if interrupt_signal().is_some() {
@@ -1126,6 +1135,11 @@ const REFUSAL_TEXT_MAX: usize = 600;
 pub(crate) enum Refusal {
     Account,
     Other,
+    /// An error with no marker and no cost: a result object with an error
+    /// and a cost of 0, or a plain text or no output with a non-zero exit. A
+    /// real run of an agent never costs 0, so it is no run. The short ladder
+    /// applies, and 5 in a row stop the command.
+    Silent,
 }
 
 /// The phrases of a refusal of the account, in lower case.
@@ -1184,12 +1198,17 @@ fn is_refusal_status(status: u32) -> bool {
 ///    marker is a refusal. The text is its `result`.
 /// 3. With no result object and an empty stdout, a non-zero exit is a refusal
 ///    (decision D1). The stderr gives the class.
-/// 4. With no result object and a short stdout, a marker makes a refusal.
+/// 4. With no result object and a stdout, a non-zero exit is a refusal. A
+///    short text with a marker gives the class. Else it is `Silent`: an agent
+///    never ends with a plain text and no cost.
+/// 5. A result object with an error, no marker and a cost of 0 is `Silent`.
 ///
 /// A marker is `API Error:` with a status of rule 1, the word `429`, `hit
-/// your ... limit` (at most 40 characters between), or a phrase of
-/// `ACCOUNT_PHRASES` or `OTHER_PHRASES`, in any case. A failed check and an
-/// error with no marker are runs.
+/// your ... limit` (at most 40 characters between), `limit reached` with
+/// `reset`, a window of the account (`5-hour limit`, `weekly limit`, `session
+/// limit`, `opus limit`), or a phrase of `ACCOUNT_PHRASES` or `OTHER_PHRASES`,
+/// in any case. A failed check and an error with a cost and no marker are
+/// runs.
 ///
 /// A real output looks like this (Claude Code 2.1.x):
 /// `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","total_cost_usd":0.5}`.
@@ -1220,14 +1239,22 @@ pub(crate) fn refusal(claude_exit: i32, stdout: &[u8], stderr: &[u8]) -> Option<
         {
             return Some(by_text.unwrap_or(Refusal::Other));
         }
-        return by_text;
+        if by_text.is_some() {
+            return by_text;
+        }
+        // An error with a cost of 0 or no cost: no agent ran.
+        let cost = match o.get("total_cost_usd") {
+            json::Value::Num(n) => *n,
+            _ => 0.0,
+        };
+        return (is_error && cost == 0.0).then_some(Refusal::Silent);
     }
     let out = String::from_utf8_lossy(stdout);
     if out.trim().is_empty() {
         let err = String::from_utf8_lossy(stderr);
-        return Some(short(&err).unwrap_or(Refusal::Other));
+        return Some(short(&err).unwrap_or(Refusal::Silent));
     }
-    short(&out)
+    Some(short(&out).unwrap_or(Refusal::Silent))
 }
 
 /// True if the attempt was refused.
@@ -1239,7 +1266,17 @@ fn is_refused(claude_exit: i32, stdout: &[u8]) -> bool {
 /// The class of a short text, or `None` if it has no marker.
 fn marker_class(text: &str) -> Option<Refusal> {
     let lower = text.to_ascii_lowercase();
+    let window_named = [
+        "5-hour limit",
+        "weekly limit",
+        "session limit",
+        "opus limit",
+    ]
+    .iter()
+    .any(|p| lower.contains(p));
     let account = ACCOUNT_PHRASES.iter().any(|p| lower.contains(p))
+        || window_named
+        || (lower.contains("limit reached") && lower.contains("reset"))
         || lower.find("hit your ").is_some_and(|at| {
             let tail = &lower[at + "hit your ".len()..];
             let window: String = tail.chars().take(40 + "limit".len()).collect();
@@ -1289,17 +1326,13 @@ fn has_status_marker(text: &str) -> bool {
     false
 }
 
-/// The flag `is_error` and the number of `permission_denials` of the result
-/// object of `claude`.
-fn result_flags(stdout: &[u8]) -> (bool, Option<u32>) {
-    let Some(o) = result_object(stdout) else {
-        return (false, None);
-    };
-    let denials = match o.get("permission_denials") {
+/// The number of `permission_denials` of the result object of `claude`, if it
+/// has the list.
+fn result_denials(stdout: &[u8]) -> Option<u32> {
+    match result_object(stdout)?.get("permission_denials") {
         Value::Arr(items) => Some(items.len() as u32),
         _ => None,
-    };
-    (o.get("is_error").is_true(), denials)
+    }
 }
 
 /// The number of retries of a refused attempt of `--ab` with the short ladder.
@@ -1658,7 +1691,6 @@ mod tests {
                     checks: Vec::new(),
                     passed: *p,
                     class: None,
-                    is_error: false,
                     denials: None,
                     interrupted: false,
                     models: Vec::new(),
@@ -1795,6 +1827,36 @@ mod tests {
         assert!(is_refused(1, b""));
         assert!(is_refused(-1, b""));
         assert!(!is_refused(0, b""));
+        // The windows of an account that `claude` names with a reset time.
+        for text in [
+            "5-hour limit reached ∙ resets 3pm",
+            "Weekly limit reached ∙ resets Mon 9am",
+            "Session limit reached, resets at 4pm",
+            "Opus limit reached",
+            "You have used your weekly limit",
+        ] {
+            assert_eq!(
+                refusal(1, &failed(text), b""),
+                Some(Refusal::Account),
+                "{text}"
+            );
+            assert_eq!(
+                refusal(1, text.as_bytes(), b""),
+                Some(Refusal::Account),
+                "{text}"
+            );
+            let plain = format!("{{\"type\":\"result\",\"is_error\":true,\"result\":\"{text}\"}}");
+            assert_eq!(
+                refusal(1, plain.as_bytes(), b""),
+                Some(Refusal::Account),
+                "{text}"
+            );
+        }
+        assert!(refusal(1, &failed("Token limit reached for this file"), b"").is_none());
+        assert!(
+            refusal(1, b"Token limit reached for this file", b"")
+                .is_some_and(|c| c != Refusal::Account)
+        );
         // A limit of the context of the agent is no refusal: a run.
         assert!(!is_refused(1, &failed("Context limit reached")));
         assert!(!is_refused(1, &failed("Token limit reached for this file")));
@@ -1810,7 +1872,22 @@ mod tests {
         ));
         assert!(!is_refused(1, &failed("cost 0.429 USD, 429.5 tokens")));
         assert!(is_refused(1, &failed("Too many requests, 429.")));
-        assert!(!is_refused(-1, b"not json"));
+        // A plain text with a non-zero exit and no marker: no agent ran.
+        assert_eq!(refusal(-1, b"not json", b""), Some(Refusal::Silent));
+        assert_eq!(
+            refusal(1, b"Segmentation fault", b""),
+            Some(Refusal::Silent)
+        );
+        // An error with a cost of 0 is silent, and an error with a cost is a run.
+        let zero = br#"{"type":"result","is_error":true,"result":"Failed","total_cost_usd":0}"#;
+        assert_eq!(refusal(1, zero, b""), Some(Refusal::Silent));
+        let nocost = br#"{"type":"result","is_error":true,"result":"Failed"}"#;
+        assert_eq!(refusal(1, nocost, b""), Some(Refusal::Silent));
+        let cost = br#"{"type":"result","is_error":true,"result":"Failed","total_cost_usd":0.2}"#;
+        assert_eq!(refusal(1, cost, b""), None);
+        let max =
+            br#"{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0}"#;
+        assert_eq!(refusal(1, max, b""), None);
         // A status that is not a refusal, or that is not a whole word.
         // The agent ran out of turns or budget: a run, with any text.
         for subtype in ["error_max_turns", "error_max_budget_usd"] {
@@ -1821,9 +1898,9 @@ mod tests {
         }
         // A status that is not a refusal, with no error flag, or on a result with exit code 0.
         for out in [
-            r#"{"type":"result","is_error":true,"api_error_status":400,"result":"Bad request"}"#,
-            r#"{"type":"result","is_error":true,"api_error_status":404,"result":"Not found"}"#,
-            r#"{"type":"result","is_error":true,"api_error_status":null,"result":"Failed"}"#,
+            r#"{"type":"result","is_error":true,"api_error_status":400,"result":"Bad request","total_cost_usd":0.2}"#,
+            r#"{"type":"result","is_error":true,"api_error_status":404,"result":"Not found","total_cost_usd":0.2}"#,
+            r#"{"type":"result","is_error":true,"api_error_status":null,"result":"Failed","total_cost_usd":0.2}"#,
         ] {
             assert!(!is_refused(1, out.as_bytes()), "{out}");
         }
@@ -1831,7 +1908,6 @@ mod tests {
             0,
             br#"{"type":"result","is_error":false,"api_error_status":429,"result":"done"}"#
         ));
-        assert!(!is_refused(1, b"Segmentation fault"));
         let far = format!("hit your target {} limit", "x".repeat(60));
         assert!(!is_refused(1, &failed(&far)));
         assert!(!is_refused(1, &failed("API Error: 400 Bad request")));
@@ -1860,13 +1936,16 @@ mod tests {
         assert!(
             refusal(
                 1,
-                br#"{"type":"result","is_error":true,"result":"Failed"}"#,
+                br#"{"type":"result","is_error":true,"result":"Failed","total_cost_usd":0.2}"#,
                 b"ECONNRESET"
             )
             .is_none()
         );
         assert!(refusal(0, b"", b"ECONNRESET").is_none());
-        assert!(refusal(1, b"Segmentation fault", b"ECONNRESET").is_none());
+        assert_eq!(
+            refusal(1, b"Segmentation fault", b"ECONNRESET"),
+            Some(Refusal::Silent)
+        );
     }
 
     #[test]

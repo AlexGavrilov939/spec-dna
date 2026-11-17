@@ -96,6 +96,17 @@ case "$mode" in
         printf '{"type":"result","subtype":"success","is_error":true,"result":"Something odd","total_cost_usd":0}\n'
         exit 1 ;;
     hang) sleep 30 ;;
+    limit5) account "5-hour limit reached ∙ resets 3pm" ;;
+    limitweek) account "Weekly limit reached ∙ resets Mon 9am" ;;
+    limitplain) printf 'Weekly limit reached ∙ resets Mon 9am\n'; exit 1 ;;
+    toklimit)
+        printf '{"type":"result","subtype":"success","is_error":true,"result":"Token limit reached for this file","total_cost_usd":0.1}\n'
+        exit 1 ;;
+    plainbreak) printf 'Error: something broke\n'; exit 1 ;;
+    bg)
+        sleep 40 &
+        ;;
+    sighup) kill -HUP $PPID; sleep 30 ;;
     sigint) kill -INT $PPID; sleep 30 ;;
     sigterm) kill -TERM $PPID; sleep 30 ;;
     snap) cp "$STUB_RESULTS"/skills-*.json "$STUB_DIR/snap-$n.json" 2>/dev/null ;;
@@ -863,6 +874,11 @@ fn an_account_limit_a_timeout_and_a_5xx_status_are_refusals() {
         "s503long",
         "netpage",
         "emptyexit",
+        "plainfail",
+        "plainbreak",
+        "limit5",
+        "limitweek",
+        "limitplain",
         "stderrnet",
         "login",
         "credit",
@@ -889,14 +905,7 @@ fn an_account_limit_a_timeout_and_a_5xx_status_are_refusals() {
 
 #[test]
 fn a_run_out_of_turns_or_budget_and_a_status_that_is_no_refusal_count() {
-    for mode in [
-        "maxbudget",
-        "turnsnotext",
-        "s400",
-        "s429noerr",
-        "ctxlimit",
-        "plainfail",
-    ] {
+    for mode in ["maxbudget", "turnsnotext", "s400", "s429noerr", "ctxlimit"] {
         let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
         fx.modes(&[mode]);
         let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
@@ -1178,14 +1187,125 @@ fn five_counted_runs_in_a_row_with_an_error_and_no_cost_stop_the_command() {
     assert_eq!(fx.calls().len(), 5, "the 5th run stops the command");
     assert!(out.contains("\"stopped\":\"api-error\""), "{out}");
     assert_eq!(fx.results().len(), 1, "the partial result is written");
-    // A run with a cost, or with `error_max_turns`, does not count in the row.
+}
+
+#[test]
+fn a_run_that_fails_with_no_cost_is_excluded_and_a_real_run_resets_the_row() {
+    // 2 such results, a real run, and 2 more: 4 attempts are excluded, and
+    // none counts. The 3rd result is a run, so the row starts again.
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
-    fx.modes(&[
-        "odd", "odd", "turns", "odd", "odd", "odd", "odd", "ctxlimit", "odd", "odd",
-    ]);
+    fx.modes(&["odd", "odd", "ok", "odd", "odd"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 14, "10 runs and 4 excluded attempts");
+    assert!(
+        out.contains("\"excluded\":{\"with\":2,\"without\":2}"),
+        "{out}"
+    );
+    assert!(out.contains("\"with\":{\"runs\":5,"), "{out}");
+    // An error with a cost, and `error_max_turns`, are runs.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["turns", "ctxlimit", "toklimit"]);
     let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(fx.calls().len(), 10);
+    assert!(
+        out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_plain_text_error_is_excluded_never_counted_and_never_charged() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["plainbreak"; 20]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 5);
+    assert!(out.contains("\"stopped\":\"api-error\""), "{out}");
+    assert!(out.contains("\"with\":{\"runs\":0,"), "{out}");
+    assert!(out.contains("\"verdict\":null"), "{out}");
+    assert_eq!(field(&out, "spend_usd"), "0", "{out}");
+    // The same for an account limit as plain text: no cost, no charge.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["limitplain"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1", "{out}");
+}
+
+#[test]
+fn the_result_has_runs_and_resume_uses_it() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "2", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"runs\":2,"), "{out}");
+    let top = &out[..out.find("\"skills\":").unwrap()];
+    assert!(top.contains("\"runs\":2"), "{top}");
+    // Without `--runs`, the file says `null`: each eval keeps its own runs.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (_, out, _) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    let top = &out[..out.find("\"skills\":").unwrap()];
+    assert!(top.contains("\"runs\":null"), "{top}");
+
+    // Interrupt a run of `--runs 2`, then resume.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    fx.modes(&["ok", "ok", "ok", "ok", "sigint"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "2", "--json"]);
+    assert_eq!(code, 130, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    let (code, _, err) = fx.run(&["tdd", "--resume", &file, "--runs", "1"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--runs"), "{err}");
+    let (code, out, err) = fx.run(&["tdd", "--resume", &file, "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // 5 calls before, and the 16 runs that are left of 20.
+    assert_eq!(fx.calls().len(), 5 + 16);
+    assert!(out.contains("\"with\":{\"runs\":10,"), "{out}");
+    // The same value of `--runs` is accepted.
+    let (code, _, err) = fx.run(&["tdd", "--resume", &file, "--runs", "2"]);
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn an_interrupt_during_the_checks_keeps_the_cost_of_the_paid_agent_run() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let eval = pack_eval("tdd-1", "tdd", 1).replace(
+        "\"checks\":[",
+        "\"checks\":[{\"name\":\"stop\",\"run\":\"kill -INT $PPID; sleep 30\"},",
+    );
+    fx.repo.write("evals/pack/tdd-1.json", &eval);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 130, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "0.1", "{out}");
+    fx.assert_clean();
+}
+
+#[test]
+fn a_background_child_of_the_agent_does_not_hold_the_runner() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["bg"]);
+    let start = std::time::Instant::now();
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("SPEC_DNA_EVAL_TIMEOUT", "3")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        start.elapsed().as_secs() < 30,
+        "the runner waited for a child of the agent"
+    );
+}
+
+#[test]
+fn sighup_is_trapped_like_sigterm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["ok", "ok", "sighup"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 129, "{out}{err}");
+    assert!(out.contains("\"stopped\":\"interrupted\""), "{out}");
+    assert_eq!(fx.results().len(), 1);
+    fx.assert_clean();
 }
 
 #[test]

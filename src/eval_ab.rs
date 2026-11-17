@@ -214,7 +214,32 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             evals::CHECK_FILE
         )));
     }
-    let groups = select(repo, all, &target, o.runs, &pack_dir)?;
+    // `--resume` goes on with the `runs` of its file. A different `--runs` is
+    // a usage error, because the pairs of the file would not fit the plan.
+    let resumed = match &o.resume {
+        Some(file) => Some(read_resume_file(repo, file, &o.target)?),
+        None => None,
+    };
+    let runs = match &resumed {
+        Some(v) => {
+            let file_runs = match v.get("runs") {
+                json::Value::Num(n) => Some(*n as u32),
+                _ => None,
+            };
+            if o.runs.is_some() && o.runs != file_runs {
+                return Err(Fatal::Usage(match file_runs {
+                    Some(n) => format!(
+                        "--runs {} differs from the file of --resume, which has --runs {n}; leave --runs out",
+                        o.runs.unwrap_or(0)
+                    ),
+                    None => "--runs differs from the file of --resume, which kept the runs of each eval; leave --runs out".to_string(),
+                }));
+            }
+            file_runs
+        }
+        None => o.runs,
+    };
+    let groups = select(repo, all, &target, runs, &pack_dir)?;
 
     let total_runs: u32 = groups
         .iter()
@@ -245,12 +270,11 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         excluded: [0, 0],
         models: BTreeSet::new(),
         streak: 0,
-        pending_stop: None,
     };
     let mut started = utc_time(now_secs());
     let mut written: Option<String> = None;
-    if let Some(file) = &o.resume {
-        let prior = read_prior(repo, file, &o.target, &groups)?;
+    if let (Some(file), Some(v)) = (&o.resume, &resumed) {
+        let prior = read_prior(v, &groups);
         started = prior.started;
         state.spend = prior.spend;
         state.excluded = prior.excluded;
@@ -304,6 +328,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         claude_code,
         started: started.clone(),
         target: o.target.clone(),
+        runs,
         cap,
         estimate,
         out_dir,
@@ -345,6 +370,12 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                     }
                     let done = match run_arm(&mut ctx, &mut state, g, p, arm, n) {
                         Ok(d) => d,
+                        // A signal can break a git command of the runner. It is
+                        // an interrupt, not an error.
+                        Err(_) if interrupt_signal().is_some() => {
+                            stopped = Some(Stop::Interrupted);
+                            break 'groups;
+                        }
                         Err(e) => {
                             stopped = Some(Stop::Error);
                             failed = Some(e);
@@ -354,10 +385,6 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                     match done {
                         Done::Counted(side) => {
                             *pairs[gi][at].side_mut(arm) = Some(side);
-                            if let Some(s) = state.pending_stop.take() {
-                                stopped = Some(s);
-                                break 'groups;
-                            }
                         }
                         Done::Stop(s) => {
                             stopped = Some(s);
@@ -429,7 +456,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         Some(Stop::Error) => unreachable!("an error returns above"),
         Some(Stop::ApiError) => {
             eprintln!(
-                "eval run: stopped (api-error): the API refused the attempts, or each run failed with an error and no cost, and the waits are over; the partial result is written. Run the target again later with --resume {path}"
+                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the target again later with --resume {path}"
             );
             Ok(3)
         }
@@ -448,6 +475,8 @@ struct Meta {
     claude_code: Option<String>,
     started: String,
     target: String,
+    /// The value of `--runs`, or `None` if each eval keeps its own runs.
+    runs: Option<u32>,
     cap: f64,
     estimate: f64,
     out_dir: String,
@@ -463,14 +492,12 @@ struct State {
     /// The excluded attempts of each arm.
     excluded: [u32; 2],
     models: BTreeSet<String>,
-    /// The counted runs in a row with an error, no cost and no stop by the
-    /// turns or the budget. A row of 5 means that each run fails the same way.
+    /// The excluded attempts in a row that are errors with no cost and no
+    /// marker (`Refusal::Silent`). A real run resets it.
     streak: u32,
-    /// A stop that follows the run that was just counted.
-    pending_stop: Option<Stop>,
 }
 
-/// The counted runs in a row with an error and no cost that stop the command.
+/// The excluded errors with no cost in a row that stop the command.
 const STREAK_STOP: u32 = 5;
 
 enum Done {
@@ -492,6 +519,7 @@ fn build_result(
         models: state.models.iter().cloned().collect(),
         started: meta.started.clone(),
         target: meta.target.clone(),
+        runs: meta.runs,
         cap: meta.cap,
         estimate: meta.estimate,
         spend: state.spend,
@@ -582,23 +610,14 @@ fn run_arm(
         let edit = |dir: &Path| prepare(dir, g.kind, arm);
         let r: RunResult = one_attempt(ctx, p, &edit, deny)?;
         if r.interrupted {
+            // An agent run that ended before a check was interrupted is paid.
+            state.spend += r.cost.unwrap_or(0.0);
             return Ok(Done::Stop(Stop::Interrupted));
         }
         state.models.extend(r.models.iter().cloned());
         let Some(class) = r.class else {
             state.spend += r.charged;
-            let no_stop = !r
-                .subtype
-                .as_deref()
-                .is_some_and(|t| t.starts_with("error_max_"));
-            if r.is_error && r.cost.unwrap_or(0.0) == 0.0 && no_stop {
-                state.streak += 1;
-                if state.streak >= STREAK_STOP {
-                    state.pending_stop = Some(Stop::ApiError);
-                }
-            } else {
-                state.streak = 0;
-            }
+            state.streak = 0;
             return Ok(Done::Counted(Side {
                 claude_exit: r.claude_exit,
                 subtype: r.subtype,
@@ -612,6 +631,12 @@ fn run_arm(
         state.excluded[arm.index()] += 1;
         excluded += 1;
         account |= class == Refusal::Account;
+        if class == Refusal::Silent {
+            state.streak += 1;
+            if state.streak >= STREAK_STOP {
+                return Ok(Done::Stop(Stop::ApiError));
+            }
+        }
         let ladder = retry_waits(state.first, account);
         if state.spend + p.eval.max_budget_usd > state.cap + EPS {
             return Ok(Done::Stop(Stop::MaxTotal));
@@ -644,30 +669,7 @@ struct Prior {
 /// Reads the result file of an earlier run of the same target. `file` is a
 /// path of the repository, with no `..`. The pairs go to the groups of the
 /// plan, and a pair of an eval that the plan has no more is dropped.
-fn read_prior(repo: &Repo, file: &str, target: &str, groups: &[Group]) -> Result<Prior, Fatal> {
-    let bad = |m: String| Fatal::Usage(format!("--resume `{file}`: {m}"));
-    if file.is_empty()
-        || file.starts_with('/')
-        || file.contains('\\')
-        || file
-            .split('/')
-            .any(|s| s.is_empty() || s == "." || s == "..")
-        || !file.ends_with(".json")
-    {
-        return Err(bad(
-            "give a result file below the repository root, with no `..` and the end `.json`".into(),
-        ));
-    }
-    let path = repo.root.join(file);
-    let text = fs::read(&path).map_err(|e| bad(format!("cannot read it ({e})")))?;
-    let text = String::from_utf8(text).map_err(|_| bad("it is not UTF-8".into()))?;
-    let v = json::parse(&text).map_err(|e| bad(format!("it is not valid JSON ({e})")))?;
-    if v.get("target").as_str() != Some(target) {
-        return Err(bad(format!(
-            "the file is the result of the target `{}`, not of `{target}`",
-            v.get("target").as_str().unwrap_or("?")
-        )));
-    }
+fn read_prior(v: &json::Value, groups: &[Group]) -> Prior {
     let num = |v: &json::Value| match v {
         json::Value::Num(n) => Some(*n),
         _ => None,
@@ -712,7 +714,7 @@ fn read_prior(repo: &Repo, file: &str, target: &str, groups: &[Group]) -> Result
         }
     }
     let ex = v.get("excluded");
-    Ok(Prior {
+    Prior {
         started: v
             .get("started")
             .as_str()
@@ -730,7 +732,35 @@ fn read_prior(repo: &Repo, file: &str, target: &str, groups: &[Group]) -> Result
             .filter_map(|m| m.as_str().map(str::to_string))
             .collect(),
         pairs,
-    })
+    }
+}
+
+/// Reads and checks the result file of `--resume`: a path of the repository
+/// with no `..`, valid JSON, and the result of the same target.
+fn read_resume_file(repo: &Repo, file: &str, target: &str) -> Result<json::Value, Fatal> {
+    let bad = |m: String| Fatal::Usage(format!("--resume `{file}`: {m}"));
+    if file.is_empty()
+        || file.starts_with('/')
+        || file.contains('\\')
+        || file
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..")
+        || !file.ends_with(".json")
+    {
+        return Err(bad(
+            "give a result file below the repository root, with no `..` and the end `.json`".into(),
+        ));
+    }
+    let text = fs::read(repo.root.join(file)).map_err(|e| bad(format!("cannot read it ({e})")))?;
+    let text = String::from_utf8(text).map_err(|_| bad("it is not UTF-8".into()))?;
+    let v = json::parse(&text).map_err(|e| bad(format!("it is not valid JSON ({e})")))?;
+    if v.get("target").as_str() != Some(target) {
+        return Err(bad(format!(
+            "the file is the result of the target `{}`, not of `{target}`",
+            v.get("target").as_str().unwrap_or("?")
+        )));
+    }
+    Ok(v)
 }
 
 /// Chooses the evals of the target, and the files of each fixture.
@@ -985,6 +1015,7 @@ struct ResultFile {
     models: Vec<String>,
     started: String,
     target: String,
+    runs: Option<u32>,
     cap: f64,
     estimate: f64,
     spend: f64,
@@ -1106,7 +1137,12 @@ fn result_json(r: &ResultFile) -> String {
         .opt_str("claude_code", r.claude_code.as_deref())
         .raw("models", &models)
         .str("started", &r.started)
-        .str("target", &r.target)
+        .str("target", &r.target);
+    let obj = match r.runs {
+        Some(n) => obj.num("runs", n),
+        None => obj.raw("runs", "null"),
+    };
+    let obj = obj
         .num("seed", verdict::SEED)
         .num("resamples", verdict::RESAMPLES)
         .num("max_total_usd", r6(r.cap))

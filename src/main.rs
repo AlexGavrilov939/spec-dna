@@ -337,11 +337,11 @@ SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
 (--no-isolate switches it off). An account limit, a credit or a login problem
 waits up to 6 hours. A run that takes more than 25 minutes (a check, 5 minutes)
 is killed and counts as failed. The result is written after each pair.
-SIGINT and SIGTERM write it and exit with 130 and 143, and
+SIGHUP, SIGINT and SIGTERM write it and exit with 129, 130 and 143, and
 --resume <result file> goes on in it. --dry-run prints the estimate also above
 the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
-pack file, a stop by the cap or by api-error, 4 git or file error, 130 and 143
-a signal.
+pack file, a stop by the cap or by api-error, 4 git or file error, 129, 130
+and 143 a signal.
 
 `eval pack` writes the pack of 55 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
