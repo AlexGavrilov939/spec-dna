@@ -622,7 +622,14 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         git_email: None,
         documents,
         root: docs_root.to_string(),
-        notes: language_note.into_iter().collect(),
+        notes: language_note
+            .into_iter()
+            .chain(facts.areas_dropped.iter().map(|(kept, other)| {
+                format!(
+                    "the folders `{other}` and `{kept}` of `requirements/` differ only in case, and the reader of `spec-dna.toml` stops such a pair. `areas` lists `{kept}`, which has more documents or the first name. Rename `{other}`, or move its documents with `spec-dna mv`, and add it to `areas` by hand if you want it"
+                )
+            }))
+            .collect(),
         kept_types: Vec::new(),
         evidence: None,
         style: Style::Both,
