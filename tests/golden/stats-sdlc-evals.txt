@@ -12,6 +12,7 @@ Test leading: The eval pass rate over time: 80.0 percent (2 result files)
   note: the value is the pass rate of the newest result file (2026-02-20T10:00:00Z); the committed files hold the history; 1 file skipped: not a complete result
 Test leading: How long a production incident takes to become a permanent eval: 4.5 days (2 incidents)
 Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
+Test lagging: Share of requirements with partial evidence only: n/a (the tree of HEAD has no active requirement)
 Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
 Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)
 Deploy both: The other indicators of the playbook: n/a (they need CI logs, telemetry or an incident tracker)
