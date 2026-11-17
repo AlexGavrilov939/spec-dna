@@ -29,7 +29,7 @@ status: approved
 
 - [x] t1: Write the failing tests of the CRLF compare and of a symlinked `Cargo.toml` (`core-engineer`). Files: `tests/tree_binary.rs`. Verify: `cargo test --test tree_binary` fails on the new cases.
 - [x] t2: Write the failing tests of a plan and an intent set back to `draft`, with the guards (`diagnostics-engineer`). Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on the new cases.
-- [ ] t3: Write the failing test of a task path with `[` and the guard of the scope (`diagnostics-engineer`). Files: `tests/task_checks.rs`. Verify: `cargo test --test task_checks` fails on the new case.
+- [x] t3: Write the failing test of a task path with `[` and the guard of the scope (`diagnostics-engineer`). Files: `tests/task_checks.rs`. Verify: `cargo test --test task_checks` fails on the new case.
 - [ ] t4: Add the walk script and measure the walk before the change (`architect`). Files: `bench/git-access/walk.sh`, `bench/git-access/results.md`, `bench/git-access/README.md`. Verify: `bash bench/git-access/walk.sh`.
 - [ ] t5: Read `\r\n` as `\n` in the pin compare (`core-engineer`). Files: `src/config.rs`. Verify: `cargo test --test tree_binary`.
 - [ ] t6: Make a symlinked `Cargo.toml` no tree binary in both modes (`core-engineer`). Files: `src/repo.rs`, `src/git.rs`. Verify: `cargo test --test tree_binary`.
