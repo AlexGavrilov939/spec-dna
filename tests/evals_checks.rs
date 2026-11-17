@@ -847,8 +847,21 @@ fn sd507_is_off_in_lite_and_standard_and_a_warning_in_strict() {
         ("standard", vec![]),
         ("strict", vec!["execute".to_string(), "verify".to_string()]),
     ] {
-        // `execute` and `verify` are `inconclusive` in the table of the release.
+        // A result of the project gives each skill its verdict, so the table
+        // of the release and the constant of ADR 0023 do not decide the case.
         let r = sd507_repo(profile, &["brainstorm", "execute", "verify"]);
+        r.write(
+            "evals/results/skills-20261120T100000Z.json",
+            &skills_file(
+                &[
+                    ("brainstorm", "\"on\""),
+                    ("execute", "\"inconclusive\""),
+                    ("verify", "\"inconclusive\""),
+                ],
+                "null",
+            ),
+        );
+        r.commit("result");
         let (_, out) = check_all(&r);
         assert_eq!(unproven(&out), want, "{profile}: {out}");
         if profile == "strict" {
@@ -864,28 +877,71 @@ fn sd507_is_off_in_lite_and_standard_and_a_warning_in_strict() {
 
 #[test]
 fn a_skill_that_the_table_of_the_release_holds_on_is_not_reported() {
-    // The release holds `tdd` as `on` (rule 1, the records of the pilot).
-    let r = sd507_repo("strict", &["brainstorm", "tdd"]);
+    // The names with the verdict `on` in the table of this build. The test
+    // names no skill, so a new table changes nothing in it.
+    let r = sd507_repo("strict", &[]);
+    let (code, out, err) = r.run(&["eval", "verdict", "--release", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let on: Vec<&str> = out
+        .split("{\"name\":\"")
+        .skip(1)
+        .filter(|item| item.contains("\"verdict\":\"on\""))
+        .map(|item| item.split('"').next().unwrap())
+        .collect();
+    let all = [
+        "brainstorm",
+        "specify",
+        "clarify",
+        "write-plan",
+        "execute",
+        "tdd",
+        "review",
+        "verify",
+        "finish",
+        "debug",
+        "post-mortem",
+    ];
+    let r = sd507_repo("strict", &all);
+    let (_, out) = check_all(&r);
+    for name in on {
+        assert!(!unproven(&out).contains(&name.to_string()), "{name}: {out}");
+    }
+}
+
+#[test]
+fn a_skill_with_the_verdict_on_in_the_project_is_not_reported() {
+    let d2 = [
+        "brainstorm",
+        "specify",
+        "clarify",
+        "write-plan",
+        "review",
+        "finish",
+        "post-mortem",
+    ];
+    let r = sd507_repo("strict", &d2);
+    let items: Vec<(&str, &str)> = d2.iter().map(|n| (*n, "\"on\"")).collect();
+    r.write(
+        "evals/results/skills-20261120T100000Z.json",
+        &skills_file(&items, "null"),
+    );
+    r.commit("result");
     let (_, out) = check_all(&r);
     assert!(unproven(&out).is_empty(), "{out}");
 }
 
+/// ADR 0023: a skill of D2 with the verdict `off` is not on by default, for
+/// each value of the constant. The verdict of the project comes first.
 #[test]
-fn a_skill_that_is_on_in_the_design_is_exempt() {
-    let r = sd507_repo(
-        "strict",
-        &[
-            "brainstorm",
-            "specify",
-            "clarify",
-            "write-plan",
-            "review",
-            "finish",
-            "post-mortem",
-        ],
+fn a_skill_of_d2_with_a_project_verdict_off_gives_sd507() {
+    let r = sd507_repo("strict", &["brainstorm", "specify"]);
+    r.write(
+        "evals/results/skills-20261120T100000Z.json",
+        &skills_file(&[("brainstorm", "\"off\""), ("specify", "\"on\"")], "null"),
     );
+    r.commit("result");
     let (_, out) = check_all(&r);
-    assert!(unproven(&out).is_empty(), "{out}");
+    assert_eq!(unproven(&out), ["brainstorm"], "{out}");
 }
 
 #[test]

@@ -23,14 +23,14 @@ status: approved
 - [x] t2: Write the failing tests of the skills of each profile and level with a fake table (`init-engineer`). Files: `src/init.rs`. Verify: `cargo test --bin spec-dna init::tests` fails on them. Hours: 0.5.
 - [x] t3: Write the failing tests of the rename with a fake table (`core-engineer`). Files: `src/upgrade_config.rs`. Verify: `cargo test --bin spec-dna upgrade_config` fails on them. Hours: 0.25.
 - [x] t4: Write the tests of `init` for each profile (`init-engineer`). Files: `tests/init_profiles.rs`. Verify: `cargo test --test init_profiles` fails on `lite`, the note and `--reconfigure`. Hours: 0.75.
-- [ ] t5: Write the failing case of SD507 for a skill of D2 with the verdict `off` (`diagnostics-engineer`). Files: `tests/evals_checks.rs`. Verify: `cargo test --test evals_checks sd507` fails on it only. Hours: 0.5.
+- [x] t5: Write the failing case of SD507 for a skill of D2 with the verdict `off` (`diagnostics-engineer`). Files: `tests/evals_checks.rs`. Verify: `cargo test --test evals_checks sd507` fails on it only. Hours: 0.5.
 - [x] t6: Record the fixture of 0.6.1 with the real binary 0.6.1 (`test-engineer`). Files: `tests/fixtures/upgrade/make.sh`, `tests/fixtures/upgrade/recorded/v061.txt`, `tests/fixtures/upgrade/v061/spec-dna.toml`. Verify: a second run of `tests/fixtures/upgrade/make.sh` leaves `git status --short tests/fixtures/upgrade` empty. Hours: 1.
 - [x] t7: Write the cases of the upgrade of the fixture (`test-engineer`). Files: `tests/upgrade_v061.rs`. Verify: `cargo test --test upgrade_v061`. Hours: 1.
 - [x] t8: Add the rule and the constant `DEFAULT_ON_NEEDS_VERDICT_ON = true` (`core-engineer`). Files: `src/verdict.rs`. Verify: `cargo test --bin spec-dna verdict`. Hours: 0.25.
 - [x] t9: Split the 7 skills of D2 from the default (`init-engineer`). Files: `src/harness.rs`, `src/harness_text.rs`. Verify: `cargo test --bin spec-dna harness`. Hours: 0.5.
 - [x] t10: Add the preset of each profile to `init` (`init-engineer`). Files: `src/init.rs`. Verify: `cargo test --test init_profiles --test init_change`. Hours: 1.5.
 - [x] t11: Rename by the rule, with a line in `edits` for each left-out name (`core-engineer`; `init-engineer`). Files: `src/upgrade_config.rs`, `src/upgrade.rs`. Verify: `cargo test --test upgrade_v061`. Hours: 0.75.
-- [ ] t12: Give SD507 the rule (`diagnostics-engineer`). Files: `src/check.rs`. Verify: `cargo test --test evals_checks`. Hours: 0.25.
+- [x] t12: Give SD507 the rule (`diagnostics-engineer`). Files: `src/check.rs`. Verify: `cargo test --test evals_checks`. Hours: 0.25.
 - [x] t13: Make the tests of the CLI, the upgrade and the evals of `init` read the default skills (`test-engineer`). Files: `tests/cli.rs`, `tests/upgrade_cli.rs`, `tests/init_evals.rs`. Verify: `cargo test --test cli --test upgrade_cli --test init_evals`. Hours: 0.5.
 - [x] t14: Make the tests of the skills and of `init` read the default skills (`init-engineer`). Files: `tests/harness_skills.rs`, `tests/skill_cmd.rs`, `tests/init_change.rs`. Verify: `cargo test --test harness_skills --test skill_cmd --test init_change`. Hours: 0.5.
 - [ ] t15: Make the demo read the default skills (`init-engineer`). Files: `scripts/demo-replay.sh`. Verify: `scripts/demo-replay.sh`. Hours: 0.25.
