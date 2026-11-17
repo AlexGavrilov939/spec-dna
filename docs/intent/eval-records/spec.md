@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Eval records, the release table and harder evals for the full run: spec
 
