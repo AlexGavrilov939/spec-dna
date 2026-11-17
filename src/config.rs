@@ -116,6 +116,25 @@ pub struct Config {
     pub change_approvers: Vec<String>,
 }
 
+/// The author addresses of agents and bots (owner review of 0.7.0, item 1).
+/// An entry with a leading `*` matches each address that ends with the rest.
+/// Another entry matches the whole address. The compare ignores ASCII case.
+pub const AGENT_ADDRESSES: [&str; 2] = ["noreply@anthropic.com", "*[bot]@users.noreply.github.com"];
+
+/// True if `email` is the address of an agent or a bot (`AGENT_ADDRESSES`).
+/// The function trims the value first.
+pub fn is_agent_address(email: &str) -> bool {
+    let email = email.trim().to_ascii_lowercase();
+    AGENT_ADDRESSES.iter().any(|entry| {
+        let entry = entry.to_ascii_lowercase();
+        match entry.strip_prefix('*') {
+            // A suffix entry needs at least 1 character before the suffix.
+            Some(suffix) => email.len() > suffix.len() && email.ends_with(suffix),
+            None => email == entry,
+        }
+    })
+}
+
 /// The default folder of the evals.
 pub const DEFAULT_EVALS_DIR: &str = "evals";
 pub const DEFAULT_EVALS_MIN_PASS_RATE: f64 = 0.8;
@@ -896,7 +915,7 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
     ),
 ];
 
-/// True for a code of the group `changes`: SD905 and SD910 to SD925.
+/// True for a code of the group `changes`: SD905 and SD910 to SD926.
 fn is_change_code(code: Code) -> bool {
     GROUPS
         .iter()
@@ -2835,6 +2854,44 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
+    fn agent_addresses_match_the_list_and_not_a_person() {
+        for yes in [
+            "noreply@anthropic.com",
+            "NoReply@Anthropic.com",
+            " noreply@anthropic.com ",
+            "41898282+github-actions[bot]@users.noreply.github.com",
+            "dependabot[bot]@users.noreply.github.com",
+            "49699333+dependabot[bot]@users.noreply.github.com",
+        ] {
+            assert!(is_agent_address(yes), "{yes}");
+        }
+        for no in [
+            "1234+someone@users.noreply.github.com",
+            "bot@users.noreply.github.com",
+            "x[bot]@example.com",
+            "owner@example.test",
+            "",
+            "noreply@anthropic.com.example.test",
+            "[bot]@users.noreply.github.com.example.test",
+        ] {
+            assert!(!is_agent_address(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn no_approver_of_this_repository_is_an_agent_address() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/spec-dna.toml");
+        let text = std::fs::read_to_string(path).unwrap();
+        let t: toml::Table = text.parse().unwrap();
+        let approvers = t["change"]["approvers"].as_array().unwrap();
+        assert!(!approvers.is_empty());
+        for a in approvers {
+            let a = a.as_str().unwrap();
+            assert!(!is_agent_address(a), "{a}");
+        }
+    }
+
+    #[test]
     fn no_layers_table_gives_the_implied_graph() {
         let c = Config::parse(BASE).unwrap();
         assert!(!c.layers_declared);
@@ -3282,7 +3339,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert_eq!(Code::from_code(code.code()), Some(code));
         }
         // The group `layers` holds SD901 to SD904. The group `changes` holds
-        // SD905 and SD910 to SD925.
+        // SD905 and SD910 to SD926.
         let c = with(
             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
             "[change]\npolicy = \"two-class\"\n",

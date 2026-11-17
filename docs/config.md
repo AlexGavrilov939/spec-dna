@@ -105,6 +105,7 @@ fanout-cap = 10                 # agents that a workflow can start before the ho
 skills = ["brainstorm", "specify", "clarify", "write-plan", "review", "finish", "post-mortem"]  # the skills to write (default [])
 review-md = true                # write REVIEW.md (default false)
 protect-tests = "fix-branches"  # "fix-branches", "always" or "off" (default "off")
+protect-approvals = true        # the hook `protect-approvals` denies an approval by an agent (default false)
 
 [harness.roles]                 # a role that is not here takes its default
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
@@ -124,10 +125,10 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD925. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
-| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD925 are off, and no rule can enable them. |
+| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
 | `change.gate` | string | none | `"block"`, `"warn"` or `"off"`. It sets the severity of SD910: error, warning or off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority. |
 | `change.high-risk-layers` | array of strings | `["interfaces", "rules"]`, without the names that the graph does not have | The layers whose documents make a change higher-risk. Each name must be a layer of the graph, or the exit code is 3. |
 | `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
@@ -197,6 +198,7 @@ sonnet = "high"
 | `harness.skills` | list of strings | `[]` | The skills of the workflow pack that `init` writes. Each value is one of the 11 names `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`, and each is listed once. The order of the list does not matter: spec-dna uses the order of this sentence. Each skill is the file `.claude/skills/spec-dna-<skill>/SKILL.md`. The names `intent`, `spec` and `plan` of 0.6 give exit code 3, and `spec-dna upgrade` renames them. With `none`, spec-dna reads the key and ignores it. |
 | `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
+| `harness.protect-approvals` | boolean | `false` | `true`: the harness writes the hook `protect-approvals`. The hook denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value ([harness.md](harness.md#spec-dna-hook-protect-approvals)). `init` writes `true` for `strict`, and it keeps the key of a file that has it. The hook needs a layer of the type `intent`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
 | `harness.efforts` | table | `{ sonnet = "high" }` | Claude Code adapter. The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 
@@ -365,7 +367,7 @@ The table `[change]` sets the change process: the change classes that the projec
 | `two-class` | `routine`, `higher-risk` | Each change has an intent. It runs the same checks as `three-class`. |
 | `none` | none | No change process: the layers and their checks only. |
 
-With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD925) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
+With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD926) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
 
 The key `gate` sets the severity of SD910. The order of the sources for SD910 is:
 
@@ -397,7 +399,7 @@ A change of `base` edits `spec-dna.toml`, so SD503 applies: make it a change of 
 | `base` | Only the base tree holds approvals. This is the default and the rule of 0.6. |
 | `branch` | An approval commit of an approver in the branch also counts, if it comes before the work that it approves. |
 
-`approvers` lists the author e-mails of such a commit. The compare ignores case and needs an exact match, so a person who hides an e-mail on the code host lists the `noreply` address too. An e-mail is not a proof of identity. [ADR 0012](adr/0012-approval-in-the-branch.md) states the limit: the code host is the control.
+`approvers` lists the author e-mails of such a commit. The compare ignores case and needs an exact match, so a person who hides an e-mail on the code host lists the `noreply` address too. List persons only. The address of an agent or a bot, such as `noreply@anthropic.com` or an address that ends with `[bot]@users.noreply.github.com`, gives the warning SD926 (`approver-agent`), because a commit of that author can come from an agent. An e-mail is not a proof of identity. [ADR 0012](adr/0012-approval-in-the-branch.md) states the limit: the code host is the control.
 
 These values are an error (exit code 3):
 
@@ -407,7 +409,7 @@ These values are an error (exit code 3):
 
 `approval = "branch"` needs the full history of the branch. A shallow clone gives the result of `base`, and when the merge base is not reachable SD910 reports reason 5. Use `fetch-depth: 0` in a workflow that runs `check`.
 
-`init` writes `approval = "branch"` and your `git config user.email` as the one approver for `lite` and `standard`. It writes `approval = "base"` for `strict`. If git has no `user.email`, it writes `approval = "base"` and no `approvers`, and it prints a note. An upgraded project keeps `base`. A change of these keys edits `spec-dna.toml`, so SD503 applies.
+`init` writes `approval = "branch"` for `lite` and `standard`. The approvers come from `--approver <e-mail>` (it can repeat), the key `approvers` of an answers file, or the answer to the approvers prompt of question 5. If none of them gives a list, `init` uses your `git config user.email`, but never the address of an agent or a bot. It writes `approval = "base"` for `strict`. If there is no person to list (git has no `user.email`, or its e-mail is the address of an agent or a bot), it writes `approval = "base"` and no `approvers`, and it prints a note. An address of an agent or a bot in `--approver` or in the answers gives exit code 2. An upgraded project keeps `base`. A change of these keys edits `spec-dna.toml`, so SD503 applies.
 
 ## The table `templates`
 
