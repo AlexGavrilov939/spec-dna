@@ -212,7 +212,7 @@ fn a_feature_with_no_tasks_file_is_open_and_another_folder_is_skipped() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(repo.dir.join("docs/intent/album-sharing/spec.md").exists());
     assert!(
-        out.contains("skipped specs/notes: not a feature folder (`<digits>-<name>`)"),
+        out.contains("skipped specs/notes/: not a feature folder (`<digits>-<name>`)"),
         "{out}"
     );
 }

@@ -671,6 +671,113 @@ pub fn with_front_matter(
     out
 }
 
+// --- what a reader gets ---
+
+/// What a reader (`import_speckit`, `import_openspec`) gets.
+pub struct Ctx<'a> {
+    pub tree: &'a Tree<'a>,
+    /// The final configuration: it gives the roots, the layers and the ids.
+    pub cfg: &'a Config,
+    pub places: &'a Places,
+    /// `--areas`: the name of a source folder and its area.
+    pub areas: &'a [(String, String)],
+    pub skip_open: bool,
+    pub keep_research: bool,
+    /// The text with its links for a file that moves from `from` to `to`
+    /// (`rewrite_links` with the moves of the run). The text, `from`, `to`.
+    pub link: &'a dyn Fn(&str, &str, &str) -> String,
+    /// The corpus of the tree before the import.
+    pub before: &'a Corpus,
+}
+
+impl Ctx<'_> {
+    /// The area of a source folder, if `--areas` names it.
+    pub fn area_of(&self, name: &str) -> Option<&str> {
+        self.areas
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, a)| a.as_str())
+    }
+
+    /// The text of a file of the tree. A file that is not UTF-8 is read with
+    /// the replacement character, and the proof then fails on a changed
+    /// sentence.
+    pub fn text(&self, path: &str) -> Result<String, Fatal> {
+        let got = (self.tree.read)(&[path.to_string()])?;
+        got.get(path)
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .ok_or_else(|| Fatal::Io(format!("{path}: not in the tree")))
+    }
+
+    /// The files of the tree below a folder (`prefix` ends with `/`), in path
+    /// order.
+    pub fn under(&self, prefix: &str) -> Vec<&str> {
+        self.tree
+            .files
+            .iter()
+            .map(String::as_str)
+            .filter(|f| f.starts_with(prefix))
+            .collect()
+    }
+
+    /// The old id of a source that is a document of the project already: it
+    /// stays as an alias of the target (decision I4).
+    pub fn old_alias(&self, path: &str, new_id: &str) -> Option<String> {
+        if !is_document(self.cfg, path) {
+            return None;
+        }
+        id_of(self.cfg, path).filter(|id| id != new_id)
+    }
+
+    /// Reads an extra file of a feature or of a change: it moves to the
+    /// research layer with `--keep research`, else it stays (decisions I15).
+    /// `folder` is the name of the source folder, and `rel` the path of the
+    /// file in it.
+    pub fn extra(
+        &self,
+        read: &mut Read,
+        path: &str,
+        folder: &str,
+        rel: &str,
+        keep_reason: &str,
+    ) -> Result<(), Fatal> {
+        if !is_doc_path(path) {
+            read.sources
+                .push(SourceFile::kept(path, "not a Markdown file"));
+        } else if self.keep_research {
+            let to = format!("{}/imported/{folder}/{rel}", self.places.research_dir()?);
+            let text = (self.link)(&self.text(path)?, path, &to);
+            read.sources.push(SourceFile {
+                path: path.to_string(),
+                state: State::Moved,
+                to: vec![to.clone()],
+                reason: "a research document".to_string(),
+            });
+            read.targets.push(Target {
+                path: to,
+                text,
+                moved_from: Some(path.to_string()),
+                sources: vec![path.to_string()],
+                link_of: None,
+                scenarios: None,
+            });
+        } else {
+            read.sources.push(SourceFile::kept(path, keep_reason));
+        }
+        Ok(())
+    }
+}
+
+/// A title from a name: `album-export` is `Album export`.
+pub fn humanize(name: &str) -> String {
+    let t = name.replace(['-', '_'], " ");
+    let mut c = t.trim().chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
 // --- the plan of the documents ---
 
 /// What `plan_docs` needs besides the tree and the final configuration.

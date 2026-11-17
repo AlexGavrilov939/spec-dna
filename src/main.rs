@@ -48,6 +48,7 @@ mod import;
 mod import_config;
 mod import_docs;
 mod import_proof;
+mod import_speckit;
 mod index;
 mod init;
 mod json;
