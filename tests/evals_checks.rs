@@ -755,6 +755,20 @@ fn the_key_skill_takes_the_name_of_a_skill_of_the_pack() {
 }
 
 #[test]
+fn the_key_skill_accepts_agents_line() {
+    // `agents-line` is no skill, but the pair `agents-line` of `eval run --ab`
+    // has evals of its own, and they name this group.
+    let r = repo("standard", "");
+    r.write(
+        "evals/line.json",
+        &eval("line", &[("skill", Some("\"agents-line\""))]),
+    );
+    let (code, out) = check_all(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(lines(&out, "SD506").is_empty(), "{out}");
+}
+
+#[test]
 fn a_bad_value_of_the_key_skill_gives_sd506_with_the_key_as_the_target() {
     let r = repo("standard", "");
     for (stem, value) in [
@@ -765,7 +779,7 @@ fn a_bad_value_of_the_key_skill_gives_sd506_with_the_key_as_the_target() {
         ("empty", "\"\""),
         ("number", "1"),
         ("list", "[\"tdd\"]"),
-        ("agents-line", "\"agents-line\""),
+        ("agents-line-prefix", "\"agents-line-1\""),
     ] {
         r.write(
             &format!("evals/{stem}.json"),

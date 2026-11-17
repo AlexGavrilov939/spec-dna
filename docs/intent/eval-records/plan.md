@@ -17,9 +17,9 @@ status: approved
 
 ## Order
 
-- [ ] t1: Write the failing tests of the runner: `tokens`, `models` and `checks` of a side, `--resume` with more runs, and the start below the cap (`core-engineer`). Files: `tests/eval_ab.rs`. Verify: `cargo test --test eval_ab` fails on the new tests only.
-- [ ] t2: Write the failing tests of `eval records`: the 9 keys, a poisoned file, a bad model name, no verdict, a failed self-check and the usage errors (`core-engineer`). Files: `tests/eval_records.rs`, `tests/fixtures/eval-records/poisoned.json`, `tests/fixtures/eval-records/small.json`. Verify: `cargo test --test eval_records` fails on each test.
-- [ ] t3: Write the failing tests of the 57 evals, the set of `agents-line` and the key `skill = "agents-line"` (`init-engineer`; `core-engineer`). Files: `tests/eval_pack.rs`, `tests/evals_checks.rs`. Verify: `cargo test --test eval_pack --test evals_checks` fails on the new tests only.
+- [x] t1: Write the failing tests of the runner: `tokens`, `models` and `checks` of a side, `--resume` with more runs, and the start below the cap (`core-engineer`). Files: `tests/eval_ab.rs`. Verify: `cargo test --test eval_ab` fails on the new tests only.
+- [x] t2: Write the failing tests of `eval records`: the 9 keys, a poisoned file, a bad model name, no verdict, a failed self-check and the usage errors (`core-engineer`). Files: `tests/eval_records.rs`, `tests/fixtures/eval-records/poisoned.json`, `tests/fixtures/eval-records/small.json`. Verify: `cargo test --test eval_records` fails on each test.
+- [x] t3: Write the failing tests of the 57 evals, the set of `agents-line` and the key `skill = "agents-line"` (`init-engineer`; `core-engineer`). Files: `tests/eval_pack.rs`, `tests/evals_checks.rs`. Verify: `cargo test --test eval_pack --test evals_checks` fails on the new tests only.
 - [ ] t4: Read the tokens and the models of each run from `modelUsage` (`core-engineer`). Files: `src/eval_run.rs`. Verify: `cargo test --bin spec-dna eval_run` passes.
 - [ ] t5: Write `tokens`, `models` and `checks` in each side, and read them with `--resume` (`core-engineer`). Files: `src/eval_ab.rs`. Verify: `cargo test --test eval_ab` passes on the cases of the sides.
 - [ ] t6: Let `--resume` take a higher `--runs`, and let `--ab` start below its estimate (`core-engineer`). Files: `src/eval_ab.rs`. Verify: `cargo test --test eval_ab` passes.
