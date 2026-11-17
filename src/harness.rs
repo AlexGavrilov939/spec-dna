@@ -339,6 +339,19 @@ pub fn gone_skill_message(name: &str) -> Option<String> {
     })
 }
 
+/// The error for a name of 0.6 in an answer of `init` (the answers file, or
+/// the parts line of question 12). `upgrade` never changes an answers file,
+/// so the message names the new names only.
+pub fn gone_skill_answer_message(name: &str) -> Option<String> {
+    let to = match name {
+        "intent" => "`brainstorm`",
+        "spec" => "`specify` and `clarify`",
+        "plan" => "`write-plan`",
+        _ => return None,
+    };
+    Some(format!("the skill `{name}` ended in 0.7.0; use {to}"))
+}
+
 impl Skill {
     pub const ALL: [Skill; 11] = [
         Skill::Brainstorm,

@@ -513,11 +513,25 @@ fn an_old_name_in_the_answers_of_init_gives_exit_code_2() {
     let r = Repo::new();
     let (code, out, err) = init_with(&r, "harness-skills = [\"intent\"]\n", &[]);
     assert_eq!(code, 2, "{out}{err}");
+    // `upgrade` never reads an answers file, so the message names the new
+    // name and not the command.
     assert!(
-        err.contains("brainstorm") && err.contains("spec-dna upgrade"),
+        err.contains("use `brainstorm`") && !err.contains("spec-dna upgrade"),
         "{err}"
     );
     assert!(!r.dir.join("spec-dna.toml").exists());
+    for (old, new) in [
+        ("spec", "use `specify` and `clarify`"),
+        ("plan", "use `write-plan`"),
+    ] {
+        let r = Repo::new();
+        let (code, out, err) = init_with(&r, &format!("harness-skills = [\"{old}\"]\n"), &[]);
+        assert_eq!(code, 2, "{out}{err}");
+        assert!(
+            err.contains(new) && !err.contains("spec-dna upgrade"),
+            "{err}"
+        );
+    }
 }
 
 #[test]

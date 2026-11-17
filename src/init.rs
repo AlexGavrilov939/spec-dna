@@ -2248,7 +2248,7 @@ fn parse_skills(names: &[String]) -> Result<Vec<Skill>, String> {
     let mut out: Vec<Skill> = Vec::new();
     for n in names {
         let s = Skill::from_key(n).ok_or_else(|| {
-            harness::gone_skill_message(n)
+            harness::gone_skill_answer_message(n)
                 .unwrap_or_else(|| format!("unknown skill `{n}`; use {}", harness::skill_keys()))
         })?;
         if out.contains(&s) {
@@ -4234,7 +4234,7 @@ mod tests {
         for (w, want) in [
             ("skills=build", "unknown skill `build`"),
             ("skills=specify,specify", "`specify` more than once"),
-            ("skills=intent", "spec-dna upgrade"),
+            ("skills=intent", "use `brainstorm`"),
             ("review-md=yes", "true or false"),
             ("protect-tests=never", "fix-branches, always or off"),
             ("models=none", "unknown part `models`"),
