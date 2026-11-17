@@ -254,6 +254,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 - Another type writes `<root>/<dir>/<id>.md` in a mixed root. `<dir>` is the folder of the layer of the type, and the id is relative to it. For example, `new requirements valves/closing` writes `<root>/requirements/valves/closing.md`.
 - In a root of one type, the file is `<root>/<id>.md`.
 - A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
+- The area of a new path is its first folder under the folder of the layer of `requirements`. If it equals a name of `areas` in lowercase ASCII and differs from it in bytes, `new` stops with exit code 2 and writes nothing. The message names the area and the name of `areas`. With an empty `areas`, `new` checks no area.
 
 `--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, including the default template. For example, a file `madr.md` replaces the default template of `decision`.
 
@@ -510,12 +511,15 @@ A change has an entry only if the folder came to the default branch in an earlie
 
 A rename of the folder out of the `intent` folder reads as a deletion, because git cannot follow the file outside of its path limit. A rename inside the `intent` folder is not a deletion. The entry comes later, under the new name.
 
-A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end a change. `log` gives no entry for it, because the id still resolves. For each deleted `intent.md`, `log` asks git for the diff of the commit against its first parent, with no path limit. The deletion is a move out only if both conditions are true:
+A move of `intent.md` out of the `intent` folder does not end a change. `log` gives no entry for it, because the file still exists. For each deleted `intent.md`, `log` asks git for the diff of the commit against its first parent, with no path limit. It runs one git process for each deleted file. The deletion is a move out only if all 3 conditions are true:
 
 1. The diff renames the deleted `intent.md` to a new path.
-2. The front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
+2. The rename is `R100`, which means that the new file has the same text. Else the front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
+3. The same diff has no other record that deletes or renames a file of the change folder.
 
-A plain `git mv` writes no alias, so it still reads as a deletion. Assume that a commit of `finish` adds a near copy of the intent, and the copy has the old id in its `aliases`. Then the commit reads as a move, and `log` gives no entry for that change.
+A plain `git mv` of `intent.md` is `R100`, so it is a move. A `git mv` of the whole folder out of the `intent` folder renames each file of the folder, so condition 3 is false: the folder left the layer, and the change ended. A commit of `finish` that removes the spec and the plan ends the change in the same way, also if it adds a near copy of the intent with the old id in its `aliases`. A near copy with no alias is not `R100`, so it does not meet condition 2.
+
+One case stays as it was in 0.6.1. A folder that holds only `intent.md`, and a commit of `finish` that adds a near copy with the old id in its `aliases`, read as a move. The commit has no other record of the folder, so `log` gives no entry for that change. A move that changes more than half of the text is no rename for git, so it ends the change.
 
 In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
 
@@ -542,7 +546,7 @@ The command rebuilds the life of each change from the commits that touched its `
 - A span that would be negative is not counted.
 - The durations use the committer dates.
 - A rename of the folder inside the `intent` folder keeps the life under the new name.
-- A move of `intent.md` out of the `intent` folder that keeps its id as an alias (`spec-dna mv`) does not end the life, because the id still resolves. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 2 conditions of a move out.
+- A move of `intent.md` out of the `intent` folder does not end the life, because the file still exists. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 3 conditions of a move out.
 
 | Play | Kind | Indicator | Value |
 | --- | --- | --- | --- |
@@ -710,6 +714,7 @@ These rules apply to the move of a whole document:
 - If the new type has no status, `mv` removes the `status` line. If the status is not a status of the new type (after `status-map`), `mv` writes the first status of the new type, and the output names it: `status: accepted -> draft`. All other fields stay.
 - If the new place gives no type, and the old type came from the old place, `mv` writes the `type` line, unless `default-type` of the new root is that type. A move never changes a type with no line in the output.
 - In a root of one type, `mv` changes no `type` and no `status` line.
+- The area of the new path is its first folder under the folder of the layer of `requirements`. If it equals a name of `areas` in lowercase ASCII and differs from it in bytes, `mv` stops with exit code 2 and changes nothing. The message names the area and the name of `areas`. This also applies to the new document of a split. With an empty `areas`, `mv` checks no area.
 - After the move, `mv` removes each folder that the move left empty, from the deepest folder to the highest. A folder with a file stays, and so does a folder with an ignored file. The root folder of the document stays. With `--stub`, the stub keeps the folder.
 
 The second form splits a document of any type. It moves requirements, or whole sections with their subsections, into one of these documents:
@@ -753,6 +758,8 @@ spec-dna index <dir or file> [--replace]
 ```
 
 `index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. A cell with no text, such as a missing status, is written as `| |`. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
+
+`index` gives the file the type of its place, as `check` reads it: the `type` line that the old file keeps, the type of the root, the type of the layer folder, or the `default-type` of the root. If that type needs a status, and the old file has none, and the root gives none, `index` writes the first status of the type before the line `generated`. That is `draft`, or `proposed` for a decision. A status that the old file has stays. A root with `default-type` and `status` gets no line. If the place gives no type (for example `index docs` in a mixed root with no `default-type`), `index` stops with exit code 2 and writes nothing. The message is ``the place `<dir>` gives no type; index a folder of a layer, or set `default-type` of the root``. The index that `finish` writes again follows the same rule, and for a place with no type it keeps the front matter as it is.
 
 ## eval
 
@@ -945,7 +952,7 @@ A document qualifies only if all these are true:
 
 The moved file has no `type` line, no `status` line and no `was-type` line, because its place gives the type. Its old id is an alias, the key `types` (if the project has it) gets the type, and the graph gets the layer `foundation` or `pending`. If 2 documents want the same top file, or the top file exists, or the id of the top file is the id or an alias of another document (also in another root), or the id of the document names more than one document already, or a document is over the budget, that document is no top file. The report has one `kept` line that names the paths, and each such document follows the other rules of `upgrade`: a change moves to the intent layer, and `--layout` renames its folder. The upgrade does not stop. A 0.6 project gets no move to a top file, because SD503 forbids a move of a document in the pull request of the pin. For a 0.6 project, see [After the upgrade: top files and areas](guides/upgrade-0.5.md#after-the-upgrade-top-files-and-areas).
 
-`--areas <file>` moves the documents that the file maps. The file has one table, `[areas]`, and each entry is `"<id of the document in the 0.5 tree>" = "<area>"`. A mapped document goes to `<root>/<folder of the requirements layer>/<area>/<slug>.md` in its own root, with its old id as an alias. The plan adds each area to the key `areas`, sorted, and writes the key if the file has none. An unknown id, a document that is not a `requirements` document in 0.6, an area that is not one folder name (letters, digits, `-` and `_`), a target that exists and 2 documents with one target stop the plan (exit code 1), and nothing is written. A file that does not parse, that has no table `[areas]` or that has a value that is not a string is exit code 3. `--areas` without `--layout` is exit code 2. A 0.6 project with `--areas` is exit code 2: `` `--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own ``.
+`--areas <file>` moves the documents that the file maps. The file has one table, `[areas]`, and each entry is `"<id of the document in the 0.5 tree>" = "<area>"`. A mapped document goes to `<root>/<folder of the requirements layer>/<area>/<slug>.md` in its own root, with its old id as an alias. The plan adds each area to the key `areas`, sorted, and writes the key if the file has none. An unknown id, a document that is not a `requirements` document in 0.6, an area that is not one folder name (letters, digits, `-` and `_`), 2 areas that differ only in case, a target that exists and 2 documents with one target stop the plan (exit code 1), and nothing is written. A file that does not parse, that has no table `[areas]` or that has a value that is not a string is exit code 3. `--areas` without `--layout` is exit code 2. A 0.6 project with `--areas` is exit code 2: `` `--areas` moves documents of a 0.5 project; in a 0.6 project, run `spec-dna mv` in a pull request of its own ``.
 
 After the moves, `upgrade` removes each folder that a move left empty, from the deepest folder to the highest. A folder with any file stays, also an ignored file, and the root folder of the document stays. Git does not track folders, so the output does not list them. `--dry-run` removes no folder.
 
@@ -1036,8 +1043,8 @@ These limits apply:
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `upgrade` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, and an unknown id of `eval run` |
-| 3 | Configuration error: no valid `spec-dna.toml`, a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id of `eval run`, an `index` of a place that gives no type, and a `new` or `mv` into an area that differs from a name of `areas` only in case |
+| 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `eval run`: the temporary folder, the copy, the base commit or the result file |
 | 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
 
