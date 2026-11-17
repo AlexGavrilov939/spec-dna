@@ -77,6 +77,16 @@ pub fn git_out(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim_end().to_string()
 }
 
+/// Like `git`, with the environment variables `env` set for the command (a
+/// name and a value).
+pub fn git_env(dir: &Path, args: &[&str], env: &[(&str, &str)]) {
+    let mut cmd = git_cmd(dir);
+    for (name, value) in env {
+        cmd.env(name, value);
+    }
+    finish(cmd, args);
+}
+
 /// Like `git`, with the author date and the committer date set to `date`
 /// (ISO 8601, for example `2024-01-15T12:00:00+00:00`).
 pub fn git_at(dir: &Path, args: &[&str], date: &str) {
@@ -239,6 +249,21 @@ impl Repo {
     /// Stages all files and commits them.
     pub fn commit(&self, msg: &str) {
         commit_all(&self.dir, msg);
+    }
+
+    /// Like `commit`, with the e-mail of the author set to `author`. The
+    /// committer keeps the e-mail of the fixture, so the commit has an author
+    /// that differs from its committer, as a commit of the web editor of a
+    /// code host has.
+    pub fn commit_as(&self, msg: &str, author: &str) {
+        self.commit_env(msg, &[("GIT_AUTHOR_EMAIL", author)]);
+    }
+
+    /// Like `commit`, with the environment variables `env` set for the commit
+    /// (for example `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL`).
+    pub fn commit_env(&self, msg: &str, env: &[(&str, &str)]) {
+        git(&self.dir, &["add", "-A"]);
+        git_env(&self.dir, &["commit", "-q", "-m", msg], env);
     }
 
     /// Like `commit`, with the author date and the committer date `date`.

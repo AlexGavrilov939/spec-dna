@@ -262,13 +262,6 @@ fn the_stage_build_has_3_sub_cases() {
     assert_stage(&r, "build");
     assert!(text.contains("stage build"), "{text}");
     assert!(text.contains("spec-dna new plan dose"), "{text}");
-    assert!(
-        items(&text)
-            .last()
-            .unwrap()
-            .starts_with("[ ] set `status: approved` in docs/intent/dose/plan.md"),
-        "{text}"
-    );
     assert!(skills(&next_json(&r)).contains(&"write-plan"));
     // A draft plan, and code that changed.
     stage(
@@ -605,7 +598,7 @@ fn an_incident_with_an_open_follow_up_is_listed_by_status() {
     assert_eq!(code, 0, "{out}{err}");
     let follow = out.split("\"follow_ups\":").nth(1).unwrap();
     assert!(
-        follow.starts_with("[{\"incident\":\"incidents/valve-stuck\",\"path\":\"docs/incidents/valve-stuck.md\",\"line\":13,\"text\":\"Add an alarm for a stuck valve. It must page the owner.\"}]"),
+        follow.starts_with("[{\"incident\":\"incidents/valve-stuck\",\"path\":\"docs/incidents/valve-stuck.md\",\"line\":13,\"text\":\"Add an alarm for a stuck valve. It must page the owner.\""),
         "{follow}"
     );
     assert!(!follow.contains("Replace the valve"), "{follow}");
@@ -614,6 +607,147 @@ fn an_incident_with_an_open_follow_up_is_listed_by_status() {
         text.contains(
             "follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm"
         ),
+        "{text}"
+    );
+}
+
+#[test]
+#[ignore = "part C: t13"]
+fn an_open_follow_up_names_the_skill_post_mortem() {
+    let r = start();
+    r.write(
+        "docs/incidents/valve-stuck.md",
+        "---\nstatus: active\n---\n# Valve stuck\n\n## Summary\n\nA valve stuck.\n\n## Follow-ups\n\n- [x] Replace the valve.\n- [ ] Add an alarm for a stuck valve.\n  It must page the owner.\n",
+    );
+    r.commit("incident");
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let follow = out.split("\"follow_ups\":").nth(1).unwrap();
+    assert!(
+        follow.starts_with("[{\"incident\":\"incidents/valve-stuck\",\"path\":\"docs/incidents/valve-stuck.md\",\"line\":13,\"text\":\"Add an alarm for a stuck valve. It must page the owner.\",\"skill\":\"post-mortem\"}]"),
+        "{follow}"
+    );
+    let (_, text, _) = r.run(&["status"]);
+    assert!(
+        text.contains(
+            "follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm for a stuck valve. It must page the owner. [skill: post-mortem]\n"
+        ),
+        "{text}"
+    );
+}
+
+// An intent with no class (design 0.7.0, section 15, item 2)
+
+/// The text of an intent with a `class` line that `raw` gives, or with none.
+fn intent_with_class_line(status: &str, raw: Option<&str>) -> String {
+    let line = raw.map(|l| format!("{l}\n")).unwrap_or_default();
+    format!(
+        "---\nstatus: {status}\n{line}---\n# Dose limit\n\n## Intent\n\nThe dose is too high.\n"
+    )
+}
+
+/// The 3 forms of no class: absent, empty and invalid.
+const NO_CLASS: [Option<&str>; 3] = [None, Some("class:"), Some("class: urgent")];
+
+#[test]
+#[ignore = "part C: t13"]
+fn an_intent_with_no_class_has_the_class_null_and_the_stage_plan() {
+    for raw in NO_CLASS {
+        let r = start();
+        stage(&r, &[(INTENT, &intent_with_class_line("accepted", raw))]);
+        let json = next_json(&r);
+        assert!(json.contains("\"class\":null"), "{raw:?}: {json}");
+        assert_stage(&r, "plan");
+        let (_, out, _) = r.run(&["status", "--json"]);
+        assert!(out.contains("\"class\":null"), "{raw:?}: {out}");
+        let (_, text, _) = r.run(&["status"]);
+        assert!(
+            text.contains("\ndose none plan intent accepted spec - plan -"),
+            "{raw:?}: {text}"
+        );
+        let text = next_text(&r);
+        assert!(
+            text.starts_with("change dose (none), stage plan\nbase "),
+            "{raw:?}: {text}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "part C: t13"]
+fn the_last_line_of_an_intent_with_no_class_asks_for_the_class_before_the_approval() {
+    for status in ["draft", "accepted"] {
+        for raw in NO_CLASS {
+            let r = start();
+            stage(&r, &[(INTENT, &intent_with_class_line(status, raw))]);
+            let text = next_text(&r);
+            let last = items(&text).last().copied().unwrap();
+            assert!(
+                last.contains("class") && last.contains("docs/intent/dose/intent.md"),
+                "{status} {raw:?}: {text}"
+            );
+            assert!(
+                !last.contains("status: accepted"),
+                "{status} {raw:?}: {text}"
+            );
+            assert!(
+                last.ends_with("[skill: brainstorm]"),
+                "{status} {raw:?}: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn check_still_reads_an_intent_with_no_class_as_routine() {
+    // The plan of a routine change needs an accepted intent only, so the plan
+    // below gives no SD910 in a base that has the accepted intent.
+    let r = start();
+    stage(&r, &[(INTENT, &intent_with_class_line("accepted", None))]);
+    r.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    stage(
+        &r,
+        &[(PLAN, &plan("approved", &["src/dose.py"], "- [ ] t1: Edit."))],
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert!(!out.contains("SD910"), "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+#[ignore = "part C: t13"]
+fn a_change_with_no_plan_or_no_spec_has_no_approval_line() {
+    // A routine change with no `plan.md`: the line asks to write it, and no
+    // line asks to approve it.
+    let r = start();
+    stage(&r, &[(INTENT, &intent("accepted", "routine", ""))]);
+    let text = next_text(&r);
+    assert!(!text.contains("status: approved"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert!(
+        last.contains("spec-dna new plan dose") && last.ends_with("[skill: write-plan]"),
+        "{text}"
+    );
+    let json = next_json(&r);
+    assert!(
+        json.contains("\"next\":\"write `docs/intent/dose/plan.md` with `spec-dna new plan dose`"),
+        "{json}"
+    );
+    // A higher-risk change with no `spec.md`.
+    let r = start();
+    stage(&r, &[(INTENT, &intent("accepted", "higher-risk", ""))]);
+    let text = next_text(&r);
+    assert!(!text.contains("status: approved"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert!(last.contains("spec-dna new spec dose"), "{text}");
+    // With the file, the line comes back.
+    stage(&r, &[(SPEC, &spec("draft", ADD_FLUSH))]);
+    let text = next_text(&r);
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with("[ ] set `status: approved` in docs/intent/dose/spec.md"),
         "{text}"
     );
 }
@@ -818,7 +952,7 @@ fn the_json_of_next_has_the_fields_in_order() {
             "\"base\":\"",
             "\"items\":[{\"done\":true,\"text\":\"the intent is accepted\",\"skill\":\"brainstorm\"}",
             "\"next_task\":null",
-            "\"next\":\"set `status: approved` in docs/intent/dose/plan.md\"",
+            "\"next\":\"",
             "\"notes\":[]}",
         ],
     );

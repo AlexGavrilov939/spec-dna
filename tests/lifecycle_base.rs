@@ -108,7 +108,7 @@ fn an_intent_is_the_first_artifact_and_needs_no_approval() {
 fn a_spec_needs_an_accepted_intent_in_the_base() {
     for (status, fires) in [("draft", true), ("accepted", false), ("closed", true)] {
         let r = start(|r| r.write(INTENT, &intent(status, "higher-risk")));
-        r.write(SPEC, &spec("draft", &[]));
+        r.write(SPEC, &spec("approved", &[]));
         let (code, out) = check(&r);
         let found = lines(&out, "SD910");
         if fires {
@@ -130,7 +130,7 @@ fn a_spec_needs_an_accepted_intent_in_the_base() {
 fn a_plan_of_a_routine_change_needs_an_accepted_intent() {
     for (status, fires) in [("draft", true), ("accepted", false)] {
         let r = start(|r| r.write(INTENT, &intent(status, "routine")));
-        r.write(PLAN, &plan("draft", &["src/dose.py"]));
+        r.write(PLAN, &plan("approved", &["src/dose.py"]));
         let (_, out) = check(&r);
         assert_eq!(has(&out, "SD910"), fires, "{status}: {out}");
         if fires {
@@ -147,7 +147,7 @@ fn a_plan_of_a_higher_risk_change_needs_an_approved_spec() {
             r.write(INTENT, &intent("accepted", "higher-risk"));
             r.write(SPEC, &spec(spec_status, &[]));
         });
-        r.write(PLAN, &plan("draft", &["src/dose.py"]));
+        r.write(PLAN, &plan("approved", &["src/dose.py"]));
         let (_, out) = check(&r);
         assert_eq!(has(&out, "SD910"), fires, "{spec_status}: {out}");
         if fires {
@@ -237,7 +237,7 @@ fn the_gate_sets_the_severity_of_sd910() {
     let base = |r: &Repo| r.write(INTENT, &intent("draft", "routine"));
     for (gate, code, word) in [("block", 1, "error"), ("warn", 0, "warning")] {
         let r = start_with("standard", &format!("gate = \"{gate}\"\n"), base);
-        r.write(PLAN, &plan("draft", &["src/dose.py"]));
+        r.write(PLAN, &plan("approved", &["src/dose.py"]));
         let (exit, out) = check(&r);
         let found = lines(&out, "SD910");
         assert_eq!(found.len(), 1, "{gate}: {out}");
@@ -248,7 +248,7 @@ fn the_gate_sets_the_severity_of_sd910() {
         assert_eq!(exit, code, "{gate}: {out}");
     }
     let r = start_with("standard", "gate = \"off\"\n", base);
-    r.write(PLAN, &plan("draft", &["src/dose.py"]));
+    r.write(PLAN, &plan("approved", &["src/dose.py"]));
     let (exit, out) = check(&r);
     assert!(!has(&out, "SD910"), "{out}");
     assert_eq!(exit, 0, "{out}");
@@ -264,7 +264,7 @@ fn a_stacked_pull_request_trusts_its_base() {
     r.commit("accept");
     r.git(&["branch", "a"]);
     r.git(&["checkout", "-q", "-b", "b"]);
-    r.write(SPEC, &spec("draft", &[]));
+    r.write(SPEC, &spec("approved", &[]));
     r.commit("spec");
     let (code, out, _) = r.run(&["check", "--base", "main"]);
     assert_eq!(lines(&out, "SD910").len(), 1, "{out}");
@@ -284,6 +284,66 @@ fn a_diff_with_no_change_is_a_small_fix() {
         assert!(!has(&out, c), "{c}: {out}");
     }
     assert_eq!(code, 0, "{out}");
+}
+
+// SD910 and a draft (design 0.7.0, section 15, item 1)
+
+#[test]
+fn a_draft_spec_needs_no_approval_of_the_intent() {
+    // The intent is `draft` in the base. The spec is `draft`, so SD910 stays
+    // silent. A spec with another status gives SD910.
+    for (status, fires) in [("draft", false), ("approved", true), ("closed", true)] {
+        let r = start(|r| r.write(INTENT, &intent("draft", "higher-risk")));
+        r.write(SPEC, &spec(status, &[]));
+        let (_, out) = check(&r);
+        assert_eq!(has(&out, "SD910"), fires, "{status}: {out}");
+    }
+}
+
+#[test]
+fn a_draft_plan_needs_no_approval_of_the_artifact_before_it() {
+    // Routine: the intent is `draft`. Higher risk: the spec is `draft`.
+    for (class, base) in [("routine", INTENT), ("higher-risk", SPEC)] {
+        for (status, fires) in [("draft", false), ("approved", true)] {
+            let r = start(|r| {
+                r.write(INTENT, &intent("accepted", class));
+                if base == INTENT {
+                    r.write(INTENT, &intent("draft", class));
+                } else {
+                    r.write(SPEC, &spec("draft", &[]));
+                }
+            });
+            r.write(PLAN, &plan(status, &["src/dose.py"]));
+            let (_, out) = check(&r);
+            assert_eq!(has(&out, "SD910"), fires, "{class} {status}: {out}");
+        }
+    }
+}
+
+#[test]
+fn the_code_of_a_draft_plan_in_the_same_diff_still_gives_sd910() {
+    // The plan is new and `draft`, so it needs no approval. The code under
+    // its `Files` needs an `approved` plan in the base.
+    let r = start(|r| r.write(INTENT, &intent("accepted", "routine")));
+    r.write(PLAN, &plan("draft", &["src/dose.py"]));
+    r.write("src/dose.py", "x = 2\n");
+    let (code, out) = check(&r);
+    let found = lines(&out, "SD910");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].starts_with("src/dose.py:1: error SD910 "), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn the_draft_rule_holds_with_approval_base_and_with_the_gate_warn() {
+    for change in ["approval = \"base\"\n", "gate = \"warn\"\n"] {
+        let r = start_with("standard", change, nothing);
+        r.write(INTENT, &intent("draft", "routine"));
+        r.write(PLAN, &plan("draft", &["src/dose.py"]));
+        let (code, out) = check(&r);
+        assert!(!has(&out, "SD910"), "{change}: {out}");
+        assert_eq!(code, 0, "{change}: {out}");
+    }
 }
 
 // B5: a change that the branch added and finished
