@@ -493,4 +493,307 @@ mod tests {
         assert_eq!(s.state, State::Skipped);
         assert!(s.reason.contains("not a slug"), "{}", s.reason);
     }
+
+    // --- the open changes ---
+
+    const PROPOSAL: &str = "## Why\n\nPasswords alone are weak.\n\n## What Changes\n\n- Add a second factor.\n\n## Capabilities\n\n### Modified Capabilities\n\n- auth\n\n## Impact\n\nClients need an update. See the [design](./design.md).\n";
+    const DESIGN: &str = "## Context\n\nA 6 digit code.\n\n### Detail\n\nMore.\n";
+    const TASKS: &str = "## 1. Backend\n\n- [ ] 1.1 Add the table\n- [x] 1.2 Add the check\n\n## 2. Clients\n\n- [ ] 2.3.1 Ask for the code\n- [ ] Update the help\n";
+    const DELTA: &str = "## ADDED Requirements\n\n### Requirement: Second Factor\n\nThe system SHALL ask for a code.\n\nThe code MUST come from a device.\n\n#### Scenario: Valid code\n\n- **WHEN** the code is right\n- **THEN** a session opens\n\n## MODIFIED Requirements\n\n### Requirement: Password Sign In\n\nThe system SHALL accept a valid password and then ask for a code.\n\n#### Scenario: Valid password\n\n- **WHEN** a password is valid\n- **THEN** the system asks for a code\n\n## REMOVED Requirements\n\n### Requirement: Session Expiry\n\n**Reason**: The code ends a session.\n\n**Migration**: Use the code expiry.\n";
+
+    fn change(extra: &[(&'static str, &'static str)]) -> Vec<(&'static str, &'static str)> {
+        let mut v = base(&[
+            ("openspec/specs/auth/spec.md", AUTH),
+            ("openspec/changes/add-two-factor/proposal.md", PROPOSAL),
+            ("openspec/changes/add-two-factor/design.md", DESIGN),
+            ("openspec/changes/add-two-factor/tasks.md", TASKS),
+            ("openspec/changes/add-two-factor/specs/auth/spec.md", DELTA),
+        ]);
+        v.extend_from_slice(extra);
+        v
+    }
+
+    #[test]
+    fn a_change_gives_a_draft_intent_spec_and_plan_and_its_sources_stay() {
+        let r = run(&change(&[]));
+        for f in ["intent", "spec", "plan"] {
+            r.target(&format!("docs/intent/add-two-factor/{f}.md"));
+        }
+        let to = |p: &str| r.source(p).to.clone();
+        let c = "openspec/changes/add-two-factor";
+        assert_eq!(
+            to(&format!("{c}/proposal.md")),
+            ["docs/intent/add-two-factor/intent.md"]
+        );
+        assert_eq!(
+            to(&format!("{c}/design.md")),
+            ["docs/intent/add-two-factor/plan.md"]
+        );
+        assert_eq!(
+            to(&format!("{c}/tasks.md")),
+            ["docs/intent/add-two-factor/plan.md"]
+        );
+        assert_eq!(
+            to(&format!("{c}/specs/auth/spec.md")),
+            ["docs/intent/add-two-factor/spec.md"]
+        );
+        assert_eq!(r.source(&format!("{c}/tasks.md")).state, State::Written);
+        assert_eq!(r.ok().removes, [c]);
+        let link: Vec<(&str, Option<&str>)> = r
+            .ok()
+            .targets
+            .iter()
+            .filter(|t| t.moved_from.is_none())
+            .map(|t| (t.path.as_str(), t.link_of.as_deref()))
+            .collect();
+        assert!(
+            link.contains(&(
+                "docs/intent/add-two-factor/intent.md",
+                Some("openspec/changes/add-two-factor/proposal.md")
+            )),
+            "{link:?}"
+        );
+        assert!(
+            link.contains(&(
+                "docs/intent/add-two-factor/spec.md",
+                Some("openspec/changes/add-two-factor/specs/auth/spec.md")
+            )),
+            "{link:?}"
+        );
+    }
+
+    #[test]
+    fn the_proposal_gives_why_now_and_the_intent() {
+        let r = run(&change(&[]));
+        let t = r.target("docs/intent/add-two-factor/intent.md");
+        let want = "---\nstatus: draft\nclass: higher-risk\n---\n# Add two factor\n\n## Intent\n\n- Add a second factor.\n\nClients need an update. See the [design](./design.md).\n\n### Capabilities\n\n#### Modified Capabilities\n\n- auth\n\n## Why now\n\nPasswords alone are weak.\n";
+        assert_eq!(t, want);
+    }
+
+    #[test]
+    fn a_proposal_with_none_of_the_headings_is_the_intent_as_a_whole() {
+        let r = run(&base(&[
+            (
+                "openspec/changes/x/proposal.md",
+                "Some text.\n\n## Other\n\nMore.\n",
+            ),
+            ("openspec/changes/x/tasks.md", "- [ ] 1.1 A\n"),
+        ]));
+        let t = r.target("docs/intent/x/intent.md");
+        assert!(
+            t.contains("\n## Intent\n\nSome text.\n\n## Other\n\nMore.\n"),
+            "{t}"
+        );
+        assert!(
+            t.starts_with("---\nstatus: draft\nclass: routine\n---\n"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_design_and_the_tasks_give_the_sections_of_the_plan() {
+        let r = run(&change(&[]));
+        let t = r.target("docs/intent/add-two-factor/plan.md");
+        let want = "---\nstatus: draft\n---\n# Add two factor\n\n## Files\n\n- none\n\n## Design\n\n### Context\n\nA 6 digit code.\n\n#### Detail\n\nMore.\n\n## Order\n\n**1. Backend**\n\n- [ ] t1-1: Add the table.\n- [x] t1-2: Add the check.\n\n**2. Clients**\n\n- [ ] t2-3-1: Ask for the code.\n- [ ] t4: Update the help.\n";
+        assert_eq!(t, want);
+    }
+
+    #[test]
+    fn the_delta_has_a_line_for_each_block_and_the_hash_of_the_imported_text() {
+        let r = run(&change(&[]));
+        let t = r.target("docs/intent/add-two-factor/spec.md");
+        let doc = crate::parse::parse(r.target("docs/requirements/auth.md"));
+        let h = |k: &str| crate::hash::hex(&doc.reqs.iter().find(|r| r.key == k).unwrap().hash);
+        let want = format!(
+            "---\nstatus: draft\n---\n# Add two factor\n\n## Delta\n\n- ADD requirements/auth#second-factor: The system SHALL ask for a code. The code MUST come from a device.\n- CHANGE requirements/auth#password-sign-in@{}: The system SHALL accept a valid password and then ask for a code.\n- REMOVE requirements/auth#session-expiry@{}\n\n## Scenarios\n\n### auth#second-factor\n\n#### Scenario: Valid code\n\n- **WHEN** the code is right\n- **THEN** a session opens\n\n### auth#password-sign-in\n\n#### Scenario: Valid password\n\n- **WHEN** a password is valid\n- **THEN** the system asks for a code\n\n### auth#session-expiry\n\n**Reason**: The code ends a session.\n\n**Migration**: Use the code expiry.\n\n## Open questions\n\n- none.\n\n## Concerns\n\n- none.\n",
+            h("password-sign-in"),
+            h("session-expiry")
+        );
+        assert_eq!(t, want);
+        let tg = r
+            .ok()
+            .targets
+            .iter()
+            .find(|t| t.path.ends_with("add-two-factor/spec.md"))
+            .unwrap();
+        assert_eq!(tg.scenarios, Some(2));
+        let p: Vec<(&str, Option<&str>)> = r
+            .ok()
+            .pairs
+            .iter()
+            .filter(|p| p.delta.is_some())
+            .map(|p| (p.id.as_str(), p.verb))
+            .collect();
+        assert_eq!(
+            p,
+            [
+                ("requirements/auth#second-factor", Some("ADD")),
+                ("requirements/auth#password-sign-in", Some("CHANGE")),
+                ("requirements/auth#session-expiry", Some("REMOVE")),
+            ]
+        );
+        let first = r.ok().pairs.iter().find(|p| p.delta.is_some()).unwrap();
+        assert_eq!(
+            first.sentence,
+            "The system SHALL ask for a code.\n\nThe code MUST come from a device."
+        );
+    }
+
+    #[test]
+    fn a_purpose_of_a_delta_spec_goes_to_the_scenarios_under_its_domain() {
+        let delta = "## Purpose\n\nWhy this domain.\n\n## ADDED Requirements\n\n### Requirement: Report\n\nThe system SHALL report.\n";
+        let r = run(&base(&[
+            ("openspec/changes/add-reports/proposal.md", "## Why\n\nx\n"),
+            ("openspec/changes/add-reports/specs/reports/spec.md", delta),
+        ]));
+        let t = r.target("docs/intent/add-reports/spec.md");
+        assert!(
+            t.contains("- ADD requirements/reports#report: The system SHALL report.\n"),
+            "{t}"
+        );
+        assert!(
+            t.contains("\n## Scenarios\n\n### reports\n\nWhy this domain.\n"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn a_change_with_renamed_or_with_no_base_requirement_stays_in_place() {
+        let renamed =
+            "## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n";
+        let r = run(&change(&[
+            ("openspec/changes/rn/proposal.md", PROPOSAL),
+            ("openspec/changes/rn/specs/auth/spec.md", renamed),
+        ]));
+        let s = r.source("openspec/changes/rn/specs/auth/spec.md");
+        assert_eq!(
+            (s.state, s.reason.as_str()),
+            (State::Kept, "the change has `RENAMED`")
+        );
+        assert_eq!(
+            r.source("openspec/changes/rn/proposal.md").state,
+            State::Kept
+        );
+        assert!(r.ok().targets.iter().all(|t| !t.path.contains("/rn/")));
+        let orphan = "## MODIFIED Requirements\n\n### Requirement: Rate Limit\n\nThe system SHALL limit it.\n";
+        let r = run(&base(&[
+            ("openspec/changes/lim/proposal.md", PROPOSAL),
+            ("openspec/changes/lim/specs/security/spec.md", orphan),
+        ]));
+        let s = r.source("openspec/changes/lim/specs/security/spec.md");
+        assert_eq!(s.reason, "no base requirement for `rate-limit`");
+        assert_eq!(s.state, State::Kept);
+        assert_eq!(
+            r.source("openspec/changes/lim/proposal.md").state,
+            State::Kept
+        );
+        // A base in a document of the tree is a base too.
+        let doc = "---\nstatus: active\naliases:\n  - security\n---\n# S\n\n- **rate-limit**: The system SHALL limit.\n";
+        let r = run(&base(&[
+            ("docs/requirements/security.md", doc),
+            ("openspec/changes/lim/proposal.md", PROPOSAL),
+            ("openspec/changes/lim/specs/security/spec.md", orphan),
+        ]));
+        let t = r.target("docs/intent/lim/spec.md");
+        assert!(
+            t.contains("- CHANGE requirements/security#rate-limit@"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn a_delta_spec_with_no_requirement_stops_the_import() {
+        let r = run(&base(&[
+            ("openspec/changes/x/proposal.md", PROPOSAL),
+            (
+                "openspec/changes/x/specs/auth/spec.md",
+                "## ADDED Requirements\n\nNone.\n",
+            ),
+        ]));
+        let m = r.err().message().to_string();
+        assert!(matches!(r.err(), Fatal::Config(_)));
+        assert!(
+            m.contains("openspec/changes/x/specs/auth/spec.md") && m.contains("no requirement"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn skip_open_does_not_read_a_change() {
+        let files = base(&[
+            ("openspec/changes/x/proposal.md", PROPOSAL),
+            (
+                "openspec/changes/x/specs/auth/spec.md",
+                "## ADDED Requirements\n\nNone.\n",
+            ),
+        ]);
+        assert!(run(&files).read.is_err());
+        let r = run_with(&files, true, false, &[]);
+        let s = r.source("openspec/changes/x/proposal.md");
+        assert_eq!(s.state, State::Skipped);
+        assert!(s.reason.contains("--skip-open"), "{}", s.reason);
+    }
+
+    #[test]
+    fn the_archive_stays_with_a_count_or_moves_to_research() {
+        let files = base(&[
+            (
+                "openspec/changes/archive/2026-01-10-first/proposal.md",
+                PROPOSAL,
+            ),
+            ("openspec/changes/archive/2026-01-10-first/tasks.md", TASKS),
+            (
+                "openspec/changes/archive/2026-01-10-first/data.json",
+                "{}\n",
+            ),
+        ]);
+        let r = run(&files);
+        let s = r.source("openspec/changes/archive/2026-01-10-first/");
+        assert_eq!(
+            (s.state, s.reason.as_str()),
+            (State::Kept, "an archived change (3 files)")
+        );
+        let r = run_with(&files, false, true, &[]);
+        r.target("docs/research/imported/2026-01-10-first/proposal.md");
+        let s = r.source("openspec/changes/archive/2026-01-10-first/tasks.md");
+        assert_eq!(s.state, State::Moved);
+        assert_eq!(
+            r.source("openspec/changes/archive/2026-01-10-first/data.json")
+                .reason,
+            "not a Markdown file"
+        );
+        // A skip of the open changes keeps the archive in place.
+        let r = run_with(&files, true, false, &[]);
+        assert_eq!(
+            r.source("openspec/changes/archive/2026-01-10-first/").state,
+            State::Kept
+        );
+    }
+
+    #[test]
+    fn the_extra_files_of_a_change_stay_and_an_area_places_the_delta_id() {
+        let r = run_with(
+            &change(&[
+                ("openspec/changes/add-two-factor/notes.md", "# N\n"),
+                ("openspec/changes/add-two-factor/.openspec.yaml", "a: 1\n"),
+            ]),
+            false,
+            false,
+            &[("auth", "media")],
+        );
+        assert_eq!(
+            r.source("openspec/changes/add-two-factor/notes.md").state,
+            State::Kept
+        );
+        assert_eq!(
+            r.source("openspec/changes/add-two-factor/.openspec.yaml")
+                .state,
+            State::Kept
+        );
+        let t = r.target("docs/intent/add-two-factor/spec.md");
+        assert!(
+            t.contains("- ADD requirements/media/auth#second-factor:"),
+            "{t}"
+        );
+    }
 }
