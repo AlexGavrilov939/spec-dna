@@ -8,15 +8,18 @@ When to use: The intent is `accepted` and its class is `higher-risk`.
 Commands:
 
 1. Run `spec-dna new spec <slug>`.
-2. Under `Delta`, write one item for each requirement that the change adds, changes or removes. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
-3. Write the interfaces under `Interfaces` and the decisions under `Decisions`.
+2. Under `Delta`, write one line for each requirement that the change adds, changes or removes: `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`.
+3. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
+4. Under `Interfaces`, write `- none`, or one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
+5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
+6. Write each item of `Concerns` and `Open questions` with a box: `- [ ]` is open. If none applies, write one item `- none`.
 
-Artifact: `spec.md` with `Delta`, `Interfaces` and `Decisions`.
+Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check` gives no SD914 (a delta line) and no SD920 (a decision).
+Check: `spec-dna check` gives no SD914 (a delta or interface item) and no SD920 (a decision that is absent or not accepted).
 
-If the check fails: Fix each item that the message names. Run `spec-dna check` again.
+If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run `spec-dna check` again.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:d59601ae3178228d -->
+<!-- spec-dna harness v{VERSION} h:9067a6e82faf13cb -->

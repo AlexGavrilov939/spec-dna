@@ -46,28 +46,32 @@ const BRAINSTORM_PARTS: &str = r"When to use: A request starts a change.
 Commands:
 
 1. Run `spec-dna new intent <slug>`. Add `--template prd` for a product requirement, or `--template rfc` for a design proposal.
-2. Write what the change gives, why now and what it does not do, in the words of the request. Set `class` to `routine` or `higher-risk`. If you are not sure, use `higher-risk`.
-3. Run `spec-dna next <slug>`.
+2. Replace each placeholder, also in the title. Write the intent, why now and what is out of scope, in the words of the request.
+3. Set `class` in the front matter to `routine` or `higher-risk`. If you are not sure, use `higher-risk`. Set it before the approval commit, because that commit changes the `status` line only.
+4. Run `spec-dna next <slug>`. It names the next step.
 
-Artifact: `intent.md` with its class.
+Artifact: `intent.md` with the intent, why now, out of scope and its class.
 
 Check: `spec-dna check` gives no SD306 (a placeholder stays).
 
-If the check fails: Replace each placeholder. Ask the person for each fact that the request does not give. Run `spec-dna check` again.";
+If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run `spec-dna check` again.";
 
 const SPECIFY_PARTS: &str = r"When to use: The intent is `accepted` and its class is `higher-risk`.
 
 Commands:
 
 1. Run `spec-dna new spec <slug>`.
-2. Under `Delta`, write one item for each requirement that the change adds, changes or removes. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
-3. Write the interfaces under `Interfaces` and the decisions under `Decisions`.
+2. Under `Delta`, write one line for each requirement that the change adds, changes or removes: `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`.
+3. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
+4. Under `Interfaces`, write `- none`, or one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
+5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
+6. Write each item of `Concerns` and `Open questions` with a box: `- [ ]` is open. If none applies, write one item `- none`.
 
-Artifact: `spec.md` with `Delta`, `Interfaces` and `Decisions`.
+Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check` gives no SD914 (a delta line) and no SD920 (a decision).
+Check: `spec-dna check` gives no SD914 (a delta or interface item) and no SD920 (a decision that is absent or not accepted).
 
-If the check fails: Fix each item that the message names. Run `spec-dna check` again.";
+If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run `spec-dna check` again.";
 
 const CLARIFY_PARTS: &str = r"When to use: `spec.md` has an open concern or an open question.
 
