@@ -123,4 +123,4 @@ ADR 0008 is accepted, and its text is locked. Read its section "Evals" with thes
 
 ### 2026-11-17
 
-See ADR 0021.
+See ADR 0021 and ADR 0023.
