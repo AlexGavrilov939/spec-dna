@@ -30,7 +30,7 @@ status: approved
 - [x] t10: Read the constitution and the done features of Spec Kit (`hygiene-engineer`; the unit tests come first). Files: `src/import_speckit.rs`. Verify: `cargo test --bin spec-dna import_speckit`.
 - [x] t11: Read the open features of Spec Kit: the intent, the delta, the questions and the tasks (`hygiene-engineer`; the unit tests come first). Files: `src/import_speckit.rs`. Verify: `cargo test --bin spec-dna import_speckit`.
 - [x] t12: Read the domain specs of OpenSpec (`hygiene-engineer`; the unit tests come first). Files: `src/import_openspec.rs`. Verify: `cargo test --bin spec-dna import_openspec`.
-- [ ] t13: Read the open changes, the delta specs and the archive of OpenSpec (`hygiene-engineer`; the unit tests come first). Files: `src/import_openspec.rs`. Verify: `cargo test --bin spec-dna import_openspec`.
+- [x] t13: Read the open changes, the delta specs and the archive of OpenSpec (`hygiene-engineer`; the unit tests come first). Files: `src/import_openspec.rs`. Verify: `cargo test --bin spec-dna import_openspec`.
 - [ ] t14: Run the import: the project, the clean tree, D25, the first run of the configuration, the proof and the write (`init-engineer`). Files: `src/import.rs`. Verify: `cargo test --test import_speckit --test import_openspec`.
 - [ ] t15: Add `--keep research`, the report, the text output and `--json` (`init-engineer`). Files: `src/import.rs`. Verify: `cargo test --test import_cli`.
 - [ ] t16: Write the section `import`, the summary, the exit codes and the entry of the change (`init-engineer`; `core-engineer` for the summary and the exit codes). Files: `docs/commands.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`.

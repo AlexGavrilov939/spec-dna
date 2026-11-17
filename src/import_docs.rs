@@ -148,6 +148,9 @@ pub struct Read {
     /// The files under the folders of the source tool that the reader read
     /// or classified. The proof checks that each has one state.
     pub universe: Vec<String>,
+    /// More links: a written source and the target that its links go to (a
+    /// target has one primary source in `Target::link_of`).
+    pub links: Vec<(String, String)>,
 }
 
 /// The change of `spec-dna.toml`.
@@ -800,6 +803,9 @@ pub fn link_map(read: &Read) -> HashMap<String, String> {
         if let Some(from) = t.moved_from.as_ref().or(t.link_of.as_ref()) {
             map.insert(from.clone(), t.path.clone());
         }
+    }
+    for (from, to) in &read.links {
+        map.insert(from.clone(), to.clone());
     }
     map
 }

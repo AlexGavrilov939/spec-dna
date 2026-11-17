@@ -83,12 +83,7 @@ pub fn read(ctx: &Ctx) -> Result<Read, Fatal> {
     for (domain, files) in by_domain {
         domain_spec(ctx, &mut read, domain, &files)?;
     }
-    for f in &changes {
-        read.sources.push(SourceFile::kept(
-            f,
-            "a change; the import does not read it yet",
-        ));
-    }
+    changes_of(ctx, &mut read, &changes)?;
     read.sources.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(read)
 }
@@ -258,6 +253,571 @@ fn domain_spec(ctx: &Ctx, read: &mut Read, domain: &str, files: &[&str]) -> Resu
         scenarios: Some(count_scenarios(&orig)),
     });
     Ok(())
+}
+
+// --- the changes ---
+
+const CHANGES: &str = "openspec/changes/";
+
+fn changes_of(ctx: &Ctx, read: &mut Read, files: &[&str]) -> Result<(), Fatal> {
+    let mut folders: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for f in files {
+        match f[CHANGES.len()..].split_once('/') {
+            Some((name, rest)) => folders.entry(name).or_default().push(rest),
+            None => read
+                .sources
+                .push(SourceFile::kept(f, "not in a change folder")),
+        }
+    }
+    for (name, rest) in folders {
+        if name == "archive" {
+            archive(ctx, read, &rest)?;
+        } else {
+            change(ctx, read, name, &rest)?;
+        }
+    }
+    Ok(())
+}
+
+fn archive(ctx: &Ctx, read: &mut Read, files: &[&str]) -> Result<(), Fatal> {
+    let mut folders: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for f in files {
+        match f.split_once('/') {
+            Some((name, rest)) => folders.entry(name).or_default().push(rest),
+            None => read.sources.push(SourceFile::kept(
+                &format!("{CHANGES}archive/{f}"),
+                "not in an archived change",
+            )),
+        }
+    }
+    for (name, rest) in folders {
+        if ctx.keep_research {
+            for f in &rest {
+                let p = format!("{CHANGES}archive/{name}/{f}");
+                ctx.extra(read, &p, name, f, "an archived change")?;
+            }
+        } else {
+            read.sources.push(SourceFile::kept(
+                &format!("{CHANGES}archive/{name}/"),
+                &format!("an archived change ({} files)", rest.len()),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A block of a delta spec.
+struct Delta {
+    verb: &'static str,
+    key: String,
+    line: usize,
+    /// The text before the first sub-heading (ADDED and MODIFIED).
+    sentence: String,
+    /// The scenarios, or the whole text of a REMOVED block.
+    more: String,
+}
+
+/// A delta spec: its blocks, its purpose, and whether it has `RENAMED`.
+struct DeltaSpec {
+    domain: String,
+    path: String,
+    blocks: Vec<Delta>,
+    purpose: Option<String>,
+    renamed: bool,
+}
+
+fn delta_spec(ctx: &Ctx, path: &str, domain: &str) -> Result<DeltaSpec, Fatal> {
+    let text = ctx.text(path)?;
+    let l = Lines::new(&text);
+    let mut spec = DeltaSpec {
+        domain: domain.to_string(),
+        path: path.to_string(),
+        blocks: Vec::new(),
+        purpose: None,
+        renamed: false,
+    };
+    for (i, h) in l.headings.iter().enumerate() {
+        if h.level != 2 {
+            continue;
+        }
+        let word = h
+            .text
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_uppercase();
+        let verb = match word.as_str() {
+            "ADDED" => "ADD",
+            "MODIFIED" => "CHANGE",
+            "REMOVED" => "REMOVE",
+            "RENAMED" => {
+                spec.renamed = true;
+                continue;
+            }
+            "PURPOSE" => {
+                let t = l.block(h.line + 1, l.tree_end(i));
+                if !t.is_empty() {
+                    spec.purpose = Some(t);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        let end = l.tree_end(i);
+        for (j, b) in l.headings.iter().enumerate().skip(i + 1) {
+            if b.line >= end {
+                break;
+            }
+            if b.level != 3 {
+                continue;
+            }
+            let Some(name) = requirement_name(&b.text) else {
+                continue;
+            };
+            let key = slug(name);
+            if key.is_empty() {
+                return Err(Fatal::Refused(format!(
+                    "{path}:{}: cannot make a key from the requirement name `{name}` (it has no letter or digit); rename it, commit, then run import again",
+                    b.line + 1
+                )));
+            }
+            let own_end = l.own_end(j);
+            let tree_end = l.tree_end(j);
+            let (sentence, more) = if verb == "REMOVE" {
+                (String::new(), l.block(b.line + 1, tree_end))
+            } else {
+                (l.block(b.line + 1, own_end), l.block(own_end, tree_end))
+            };
+            spec.blocks.push(Delta {
+                verb,
+                key,
+                line: b.line,
+                sentence,
+                more,
+            });
+        }
+    }
+    if spec.blocks.is_empty() && !spec.renamed {
+        return Err(Fatal::Config(format!(
+            "{path}: the delta spec has no requirement (no `### Requirement:` heading); the import supports {VERSION}"
+        )));
+    }
+    Ok(spec)
+}
+
+/// The id and the hash of a requirement that a MODIFIED or REMOVED block
+/// names: a requirement of a document that this run writes, or of a document
+/// of the tree that has the domain as its id or its alias.
+fn base_of(ctx: &Ctx, read: &Read, domain: &str, key: &str) -> Option<(String, String)> {
+    let to = requirements_path(
+        ctx.places.requirements_dir().ok()?,
+        ctx.area_of(domain),
+        domain,
+    );
+    if let Some(t) = read.targets.iter().find(|t| t.path == to) {
+        let doc = crate::parse::parse(&t.text);
+        let r = doc.reqs.iter().find(|r| r.key == key)?;
+        return Some((id_of(ctx.cfg, &to)?, crate::hash::hex(&r.hash)));
+    }
+    if let crate::model::Res::Found(di, _, _) = ctx.before.resolve(domain) {
+        let d = &ctx.before.docs[di as usize];
+        let r = &d.parsed.reqs[d.req(key)?];
+        return Some((d.id.clone(), crate::hash::hex(&r.hash)));
+    }
+    None
+}
+
+/// The id of the document of a domain: this run's, the one of the tree, or the
+/// id that its path would have.
+fn domain_id(ctx: &Ctx, domain: &str) -> Result<String, Fatal> {
+    let to = requirements_path(ctx.places.requirements_dir()?, ctx.area_of(domain), domain);
+    if let crate::model::Res::Found(di, _, _) = ctx.before.resolve(domain) {
+        return Ok(ctx.before.docs[di as usize].id.clone());
+    }
+    Ok(id_of(ctx.cfg, &to).unwrap_or_default())
+}
+
+/// The lines of a text with each heading `shift` levels down.
+fn shift_headings(text: &str, shift: usize) -> String {
+    let l = Lines::new(text);
+    let mut lines: Vec<String> = l.lines.iter().map(|x| x.to_string()).collect();
+    for h in &l.headings {
+        lines[h.line] = format!("{} {}", "#".repeat((h.level + shift).min(6)), h.text);
+    }
+    lines.join("\n")
+}
+
+/// The text of a task file as the lines of `Order`: a group heading is a
+/// bold line, and a box line is a task (decision I13).
+fn order_blocks(tasks: &str) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut items: Vec<String> = Vec::new();
+    let mut n = 0;
+    for line in tasks.lines() {
+        if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
+            if lvl >= 2 {
+                if !items.is_empty() {
+                    out.push(std::mem::take(&mut items));
+                }
+                out.push(vec![format!("**{text}**")]);
+            }
+            continue;
+        }
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("- [") else {
+            continue;
+        };
+        let done = match rest.chars().next() {
+            Some(' ') => false,
+            Some('x' | 'X') => true,
+            _ => continue,
+        };
+        let Some(rest) = rest[1..].strip_prefix("] ") else {
+            continue;
+        };
+        n += 1;
+        let rest = rest.trim();
+        let word = rest.split_whitespace().next().unwrap_or("");
+        let num = word.trim_end_matches('.');
+        let numbered = !num.is_empty()
+            && num
+                .split('.')
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            && num.bytes().next().is_some_and(|b| b.is_ascii_digit());
+        let (id, text) = if numbered {
+            (
+                format!("t{}", num.replace('.', "-")),
+                rest[word.len()..].trim(),
+            )
+        } else {
+            (format!("t{n}"), rest)
+        };
+        items.push(format!(
+            "- [{}] {id}: {}.",
+            if done { "x" } else { " " },
+            text.trim_end_matches('.').trim()
+        ));
+    }
+    if !items.is_empty() {
+        out.push(items);
+    }
+    out
+}
+
+fn change(ctx: &Ctx, read: &mut Read, name: &str, files: &[&str]) -> Result<(), Fatal> {
+    let path = |f: &str| format!("{CHANGES}{name}/{f}");
+    if !is_slug(name) {
+        read.sources.push(SourceFile::skipped(
+            &format!("{CHANGES}{name}/"),
+            "the change name is not a slug (lowercase letters and digits joined by hyphens)",
+        ));
+        return Ok(());
+    }
+    if ctx.skip_open {
+        for f in files {
+            read.sources.push(SourceFile::skipped(
+                &path(f),
+                "an open change; --skip-open does not read it",
+            ));
+        }
+        return Ok(());
+    }
+    // The delta specs.
+    let mut specs: Vec<DeltaSpec> = Vec::new();
+    for f in files {
+        let parts: Vec<&str> = f.split('/').collect();
+        if let ["specs", domain, "spec.md"] = parts.as_slice() {
+            specs.push(delta_spec(ctx, &path(f), domain)?);
+        }
+    }
+    // A reason to keep the change in place.
+    let mut stay: Option<(String, String)> = None;
+    for sp in &specs {
+        if sp.renamed {
+            stay = Some((sp.path.clone(), "the change has `RENAMED`".to_string()));
+            break;
+        }
+        if !is_slug(&sp.domain) {
+            stay = Some((
+                sp.path.clone(),
+                format!("the domain name `{}` is not a slug", sp.domain),
+            ));
+            break;
+        }
+        if let Some(b) = sp
+            .blocks
+            .iter()
+            .find(|b| b.verb != "ADD" && base_of(ctx, read, &sp.domain, &b.key).is_none())
+        {
+            stay = Some((
+                sp.path.clone(),
+                format!("no base requirement for `{}`", b.key),
+            ));
+            break;
+        }
+    }
+    if let Some((file, why)) = stay {
+        for f in files {
+            let p = path(f);
+            let reason = if p == file {
+                why.clone()
+            } else {
+                format!("the change stays in place (see `{file}`)")
+            };
+            read.sources.push(SourceFile::kept(&p, &reason));
+        }
+        return Ok(());
+    }
+    let dir = format!("{}/{name}", ctx.places.intent_dir()?);
+    let (intent_to, spec_to, plan_to) = (
+        format!("{dir}/intent.md"),
+        format!("{dir}/spec.md"),
+        format!("{dir}/plan.md"),
+    );
+    let title = crate::import_docs::humanize(name);
+    let mut targets: Vec<Target> = Vec::new();
+    let mut put =
+        |path: String, text: String, sources: Vec<String>, link_of: Option<String>, scenarios| {
+            targets.push(Target {
+                path,
+                text,
+                moved_from: None,
+                sources,
+                link_of,
+                scenarios,
+            });
+        };
+
+    // intent.md
+    let proposal = path("proposal.md");
+    let has = |f: &str| files.contains(&f);
+    let (body, why) = if has("proposal.md") {
+        let linked = (ctx.link)(&ctx.text(&proposal)?, &proposal, &intent_to);
+        proposal_parts(&linked)
+    } else {
+        (
+            vec![vec!["The change has no proposal file.".to_string()]],
+            None,
+        )
+    };
+    let mut blocks: Vec<Vec<String>> =
+        vec![vec![format!("# {title}")], vec!["## Intent".to_string()]];
+    blocks.extend(body);
+    let mut intent_blocks: Vec<Vec<String>> = blocks;
+    if let Some(w) = why {
+        intent_blocks.push(vec!["## Why now".to_string()]);
+        intent_blocks.push(vec![w]);
+    }
+    let class = if specs.is_empty() {
+        "routine"
+    } else {
+        "higher-risk"
+    };
+    let intent_text = with_front_matter(
+        &crate::import_speckit::join_blocks(&intent_blocks),
+        "draft",
+        &[("class", class)],
+        &[],
+    );
+    put(
+        intent_to.clone(),
+        intent_text,
+        if has("proposal.md") {
+            vec![proposal.clone()]
+        } else {
+            Vec::new()
+        },
+        has("proposal.md").then(|| proposal.clone()),
+        None,
+    );
+    let mut written: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if has("proposal.md") {
+        written.insert(proposal.clone(), vec![intent_to.clone()]);
+    }
+
+    // plan.md
+    let (design, tasks) = (path("design.md"), path("tasks.md"));
+    if has("design.md") || has("tasks.md") {
+        let mut pb: Vec<Vec<String>> = vec![
+            vec![format!("# {title}")],
+            vec!["## Files".to_string()],
+            vec!["- none".to_string()],
+        ];
+        let mut sources = Vec::new();
+        if has("design.md") {
+            let linked = (ctx.link)(&ctx.text(&design)?, &design, &plan_to);
+            let l = Lines::new(&linked);
+            let min = l.headings.iter().map(|h| h.level).min().unwrap_or(3);
+            let shifted = shift_headings(&linked, 3usize.saturating_sub(min));
+            pb.push(vec!["## Design".to_string()]);
+            pb.push(vec![crate::import_docs::trim_blank(&shifted)]);
+            sources.push(design.clone());
+            written.insert(design.clone(), vec![plan_to.clone()]);
+        }
+        if has("tasks.md") {
+            let linked = (ctx.link)(&ctx.text(&tasks)?, &tasks, &plan_to);
+            pb.push(vec!["## Order".to_string()]);
+            pb.extend(order_blocks(&linked));
+            sources.push(tasks.clone());
+            written.insert(tasks.clone(), vec![plan_to.clone()]);
+        }
+        let text = with_front_matter(&crate::import_speckit::join_blocks(&pb), "draft", &[], &[]);
+        let primary = sources.first().cloned();
+        for s in sources.iter().skip(1) {
+            read.links.push((s.clone(), plan_to.clone()));
+        }
+        put(plan_to.clone(), text, sources, primary, None);
+    }
+
+    // spec.md
+    if !specs.is_empty() {
+        let mut delta: Vec<String> = Vec::new();
+        let mut scen: Vec<Vec<String>> = Vec::new();
+        let mut count = 0;
+        let mut sources = Vec::new();
+        let mut pairs = Vec::new();
+        for sp in &specs {
+            let linked_path = &sp.path;
+            let id = domain_id(ctx, &sp.domain)?;
+            if let Some(p) = &sp.purpose {
+                scen.push(vec![format!("### {}", sp.domain), String::new(), p.clone()]);
+                count += count_scenarios(p);
+            }
+            for b in &sp.blocks {
+                let one = b.sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+                let base = if b.verb == "ADD" {
+                    None
+                } else {
+                    base_of(ctx, read, &sp.domain, &b.key)
+                };
+                let line = match (b.verb, &base) {
+                    ("ADD", _) => format!("- ADD {id}#{}: {one}", b.key),
+                    ("CHANGE", Some((bid, h))) => format!("- CHANGE {bid}#{}@{h}: {one}", b.key),
+                    (_, Some((bid, h))) => format!("- REMOVE {bid}#{}@{h}", b.key),
+                    _ => unreachable!("a block with no base keeps the change in place"),
+                };
+                delta.push(line);
+                if !b.more.is_empty() {
+                    let more = (ctx.link)(&b.more, linked_path, &spec_to);
+                    scen.push(vec![
+                        format!("### {}#{}", sp.domain, b.key),
+                        String::new(),
+                        more,
+                    ]);
+                    count += count_scenarios(&b.more);
+                }
+                pairs.push(Pair {
+                    from: format!("{linked_path}:{}", b.line + 1),
+                    id: format!(
+                        "{}#{}",
+                        base.as_ref().map_or(id.as_str(), |x| x.0.as_str()),
+                        b.key
+                    ),
+                    delta: Some(name.to_string()),
+                    target: spec_to.clone(),
+                    key: b.key.clone(),
+                    kind: PairKind::Delta,
+                    sentence: b.sentence.clone(),
+                    question: None,
+                    verb: Some(b.verb),
+                });
+            }
+            sources.push(sp.path.clone());
+            written.insert(sp.path.clone(), vec![spec_to.clone()]);
+        }
+        let mut sb: Vec<Vec<String>> = vec![
+            vec![format!("# {title}")],
+            vec!["## Delta".to_string()],
+            delta,
+        ];
+        if !scen.is_empty() {
+            sb.push(vec!["## Scenarios".to_string()]);
+            sb.extend(scen);
+        }
+        sb.push(vec!["## Open questions".to_string()]);
+        sb.push(vec!["- none.".to_string()]);
+        sb.push(vec!["## Concerns".to_string()]);
+        sb.push(vec!["- none.".to_string()]);
+        let text = with_front_matter(&crate::import_speckit::join_blocks(&sb), "draft", &[], &[]);
+        let primary = sources.first().cloned();
+        for s in sources.iter().skip(1) {
+            read.links.push((s.clone(), spec_to.clone()));
+        }
+        read.pairs.extend(pairs);
+        put(spec_to.clone(), text, sources, primary, Some(count));
+    }
+    read.targets.extend(targets);
+    for f in files {
+        let p = path(f);
+        if let Some(to) = written.remove(&p) {
+            read.sources.push(SourceFile {
+                path: p,
+                state: State::Written,
+                to,
+                reason: "an open change".to_string(),
+            });
+        } else if *f == ".openspec.yaml" {
+            read.sources
+                .push(SourceFile::kept(&p, "not read by the import"));
+        } else {
+            ctx.extra(read, &p, name, f, "an extra file of the change")?;
+        }
+    }
+    read.removes.push(format!("{CHANGES}{name}"));
+    Ok(())
+}
+
+/// The intent text of a proposal and the text of `Why`: `What Changes` and
+/// `Impact` are the intent, another heading is a sub-section, and a proposal
+/// with none of the 4 headings is the intent as a whole.
+fn proposal_parts(text: &str) -> (Vec<Vec<String>>, Option<String>) {
+    let l = Lines::new(text);
+    let known = ["why", "what changes", "capabilities", "impact"];
+    let h2: Vec<usize> = (0..l.headings.len())
+        .filter(|&i| l.headings[i].level == 2)
+        .collect();
+    let has_known = h2
+        .iter()
+        .any(|&i| known.contains(&l.headings[i].text.trim().to_lowercase().as_str()));
+    if !has_known {
+        return (vec![vec![crate::import_docs::trim_blank(text)]], None);
+    }
+    let first = l.headings[h2[0]].line;
+    let h1 = l
+        .headings
+        .iter()
+        .find(|h| h.level == 1)
+        .map_or(0, |h| h.line + 1);
+    let mut intent: Vec<String> = Vec::new();
+    let pre = l.block(h1.min(first), first);
+    if !pre.is_empty() {
+        intent.push(pre);
+    }
+    let mut subs: Vec<Vec<String>> = Vec::new();
+    let mut why = None;
+    for &i in &h2 {
+        let h = &l.headings[i];
+        let end = l.tree_end(i);
+        match h.text.trim().to_lowercase().as_str() {
+            "why" => why = Some(l.block(h.line + 1, end)),
+            "what changes" | "impact" => {
+                let b = l.block(h.line + 1, end);
+                if !b.is_empty() {
+                    intent.push(b);
+                }
+            }
+            _ => subs.push(crate::import_speckit::section_lines(
+                &l,
+                h.line + 1,
+                end,
+                &h.text,
+                3,
+            )),
+        }
+    }
+    let mut out = vec![vec![intent.join("\n\n")]];
+    out.extend(subs);
+    (out, why)
 }
 
 #[cfg(test)]

@@ -501,7 +501,7 @@ fn is_fr_item(line: &str) -> bool {
 /// heading goes one level down and loses its annotation, and a requirement
 /// line `FR-nnn` is not in the text (it is in the delta). A heading with no
 /// text under it goes too.
-fn section_lines(l: &Lines, from: usize, to: usize, title: &str, level: usize) -> Vec<String> {
+pub fn section_lines(l: &Lines, from: usize, to: usize, title: &str, level: usize) -> Vec<String> {
     let mut blocks: Vec<(usize, Vec<String>)> =
         vec![(level, vec![format!("{} {title}", "#".repeat(level))])];
     let mut fence = false;
@@ -555,7 +555,7 @@ fn section_lines(l: &Lines, from: usize, to: usize, title: &str, level: usize) -
 }
 
 /// Joins blocks of lines with one blank line between them.
-fn join_blocks(blocks: &[Vec<String>]) -> String {
+pub fn join_blocks(blocks: &[Vec<String>]) -> String {
     let mut out = String::new();
     for b in blocks {
         let t = crate::import_docs::trim_blank(&b.join("\n"));
