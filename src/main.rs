@@ -2165,6 +2165,11 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "`{path}` is in another root or excluded; use --root"
         )));
     }
+    if let Some((area, name)) = cfg.area_case_clash(&path) {
+        return Err(Fatal::Usage(format!(
+            "the area `{area}` of `{path}` differs from the area `{name}` of `areas` only in case; use `{name}`"
+        )));
+    }
     let file = repo.root.join(&path);
     if file.exists() {
         return Err(Fatal::Usage(format!("`{path}` exists")));
