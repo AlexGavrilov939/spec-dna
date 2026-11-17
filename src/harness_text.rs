@@ -162,33 +162,34 @@ Check: Each command ends with exit code 0, and `spec-dna check` gives no error. 
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.";
 
-const FINISH_PARTS: &str = r"When to use: The change is ready to apply.
+const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its tasks are done, and its `Proof` passes.
 
 Commands:
 
-1. Run `spec-dna finish <slug> --dry-run`.
-2. Run `spec-dna finish <slug>`.
-3. Commit the result.
+1. Run `spec-dna finish <slug> --dry-run`. Read each step and each stop.
+2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
+3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message, and keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
-Check: `spec-dna finish` ends with exit code 0, and `spec-dna check` gives no error.
+Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check` gives no error.
 
-If the check fails: `finish` names the step that stopped it. Fix that step, and run `spec-dna finish <slug>` again.";
+If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. Do not delete the folder by hand.";
 
 const DEBUG_PARTS: &str = r"When to use: A test or a command fails, and you do not know the cause.
 
 Commands:
 
-1. Make the failure repeat with one command.
-2. Find the cause. Do not change the code yet.
-3. Write a regression test for the cause, then make one fix. After 3 failed fixes, stop and ask the person.
+1. Make the failure repeat with one command. Keep the command and its output.
+2. Find the cause. Read the code and the output. Do not change the behavior yet.
+3. Write a regression test that fails for this cause. Run it.
+4. Make one fix. Run the regression test and the earlier tests.
 
 Artifact: A reproduction, a regression test and one fix.
 
-Check: The regression test and the earlier tests pass.
+Check: The regression test passes, and the earlier tests pass.
 
-If the check fails: Go back to the cause. Do not try a new fix without a new cause.";
+If the check fails: Go back to step 2. Make no new fix without a new cause. After 3 failed fixes, stop and ask the person.";
 
 const POST_MORTEM_PARTS: &str = r"When to use: An `incident` has an open follow-up.
 
