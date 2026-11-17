@@ -305,7 +305,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval pack\neval verdict",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -333,9 +333,15 @@ refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is retried after
 60, 120, 240, 480, 960 and 1,920 seconds, and no result counts it. After the
 last wait the command stops: exit code 3 and `stopped` api-error.
 SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
---min-pass-rate is a usage error with --ab. Exit codes of --ab: 0 complete,
-2 usage, 3 configuration, an invalid pack file, a stop by the cap or by
-api-error, 4 git or file error.
+--min-pass-rate is a usage error with --ab. --ab isolates the runs by default
+(--no-isolate switches it off). An account limit, a credit or a login problem
+waits up to 6 hours. A run that takes more than 25 minutes (a check, 5 minutes)
+is killed and counts as failed. The result is written after each pair.
+SIGINT and SIGTERM write it and exit with 130 and 143, and
+--resume <result file> goes on in it. --dry-run prints the estimate also above
+the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
+pack file, a stop by the cap or by api-error, 4 git or file error, 130 and 143
+a signal.
 
 `eval pack` writes the pack of 55 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
@@ -459,6 +465,8 @@ struct Args {
     out: Option<String>,
     isolate: bool,
     ab: bool,
+    no_isolate: bool,
+    resume: Option<String>,
 }
 
 /// The options of `layer add`.
@@ -538,6 +546,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         out: None,
         isolate: false,
         ab: false,
+        no_isolate: false,
+        resume: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -578,6 +588,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--sdlc" => a.sdlc = true,
             "--isolate" => a.isolate = true,
             "--ab" => a.ab = true,
+            "--no-isolate" => a.no_isolate = true,
+            "--resume" => a.resume = Some(value("--resume")?),
             "--out" => a.out = Some(value("--out")?),
             "--runs" => {
                 let v = value("--runs")?;
@@ -748,6 +760,8 @@ fn run(a: Args) -> Result<u8, Fatal> {
             (a.out.is_some(), "--out"),
             (a.isolate, "--isolate"),
             (a.ab, "--ab"),
+            (a.no_isolate, "--no-isolate"),
+            (a.resume.is_some(), "--resume"),
         ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
@@ -2962,6 +2976,8 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             (a.out.is_some(), "--out"),
             (a.isolate, "--isolate"),
             (a.ab, "--ab"),
+            (a.no_isolate, "--no-isolate"),
+            (a.resume.is_some(), "--resume"),
             (a.dry_run, "--dry-run"),
         ] {
             if given {
@@ -2985,7 +3001,24 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
         }
         _ => {}
     }
+    if !a.ab {
+        for (given, name) in [
+            (a.no_isolate, "--no-isolate"),
+            (a.resume.is_some(), "--resume"),
+        ] {
+            if given {
+                return Err(Fatal::Usage(format!(
+                    "{name} is an option of `eval run --ab`"
+                )));
+            }
+        }
+    }
     if a.ab {
+        if a.isolate && a.no_isolate {
+            return Err(Fatal::Usage(
+                "--isolate and --no-isolate exclude each other".into(),
+            ));
+        }
         let target = match a.positional.len() {
             2 => a.positional[1].clone(),
             n => {
@@ -3014,8 +3047,11 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                 max_total_usd: a.max_total_usd,
                 out: a.out.clone(),
                 dry_run: a.dry_run,
-                isolate: a.isolate,
+                // `--ab` isolates the runs by default, so no setting, hook, MCP
+                // server or `CLAUDE.md` of the person reaches a run.
+                isolate: !a.no_isolate,
                 json: a.json,
+                resume: a.resume.clone(),
             },
         );
     }

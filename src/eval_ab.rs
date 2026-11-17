@@ -18,8 +18,9 @@
 use crate::adapters::{self, VERSION};
 use crate::config::{Config, Evals};
 use crate::eval_run::{
-    Ctx, EPS, Planned, RETRIES, RunResult, claude_version, copy_list, first_wait, harness_list,
-    load_evals_in, make_out_dir, normalize_out, now_secs, one_attempt, r6, utc_time, wait_seconds,
+    Ctx, EPS, Limits, Planned, Refusal, RunResult, catch_interrupts, claude_version, copy_list,
+    first_wait, harness_list, interrupt_signal, load_evals_in, make_out_dir, normalize_out,
+    now_secs, one_attempt, r6, replace_result, retry_waits, utc_time,
 };
 use crate::evals::{self, Eval};
 use crate::harness::Skill;
@@ -48,6 +49,8 @@ pub struct Opts {
     pub dry_run: bool,
     pub isolate: bool,
     pub json: bool,
+    /// The result file of an earlier run of the same target to go on with.
+    pub resume: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,20 +90,46 @@ struct Group {
 }
 
 /// The side of one pair: the last attempt of one arm.
+#[derive(Clone)]
 struct Side {
     claude_exit: i32,
     subtype: Option<String>,
+    /// The `total_cost_usd` of `claude`, if it gave one. A run with no cost
+    /// counts the budget of its eval.
     cost: Option<f64>,
-    charged: f64,
     excluded: u32,
+    denials: Option<u32>,
     passed: bool,
 }
 
+/// One eval and run number, with the 2 arms. An arm that did not run is
+/// `None`: the run stopped, or it is still to do.
+#[derive(Clone)]
 struct PairRec {
     eval: String,
     run: u32,
-    with: Side,
-    without: Side,
+    with: Option<Side>,
+    without: Option<Side>,
+}
+
+impl PairRec {
+    fn side(&self, arm: Arm) -> &Option<Side> {
+        match arm {
+            Arm::With => &self.with,
+            Arm::Without => &self.without,
+        }
+    }
+
+    fn side_mut(&mut self, arm: Arm) -> &mut Option<Side> {
+        match arm {
+            Arm::With => &mut self.with,
+            Arm::Without => &mut self.without,
+        }
+    }
+
+    fn complete(&self) -> bool {
+        self.with.is_some() && self.without.is_some()
+    }
 }
 
 /// Why a run stopped.
@@ -110,6 +139,8 @@ enum Stop {
     ApiError,
     /// A git or file error ended the run. The error is in the result.
     Error,
+    /// SIGINT or SIGTERM ended the run.
+    Interrupted,
 }
 
 impl Stop {
@@ -118,6 +149,7 @@ impl Stop {
             Stop::MaxTotal => "max-total-usd",
             Stop::ApiError => "api-error",
             Stop::Error => "error",
+            Stop::Interrupted => "interrupted",
         }
     }
 }
@@ -152,6 +184,12 @@ impl Target {
 pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     let target = Target::parse(&o.target)?;
     let first = first_wait()?;
+    let limits = Limits::from_env()?;
+    if o.resume.is_some() && (o.dry_run || o.out.is_some()) {
+        return Err(Fatal::Usage(
+            "--resume goes on in its own file; it takes no --dry-run and no --out".into(),
+        ));
+    }
     let table = cfg.evals.as_ref().ok_or_else(|| {
         Fatal::Config(
             "spec-dna.toml has no [evals] table, and `eval run --ab` needs it; add the table (docs/config.md)"
@@ -189,11 +227,6 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         .map(|p| f64::from(p.runs) * 2.0 * p.eval.max_budget_usd)
         .sum();
     let n_evals: usize = groups.iter().map(|g| g.evals.len()).sum();
-    if estimate > cap + EPS {
-        return Err(Fatal::Config(format!(
-            "the estimate {estimate:.2} USD (runs x 2 arms x max-budget-usd) is above max-total-usd {cap:.2} USD; no run started. Lower the runs, or raise max-total-usd"
-        )));
-    }
     let header =
         format!("{n_evals} evals, {total_runs} runs, estimate {estimate:.2} USD, cap {cap:.2} USD");
     if o.dry_run {
@@ -203,6 +236,54 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         return Ok(0);
     }
 
+    // The earlier run, if there is one.
+    let mut pairs: Vec<Vec<PairRec>> = groups.iter().map(|_| Vec::new()).collect();
+    let mut state = State {
+        cap,
+        first,
+        spend: 0.0,
+        excluded: [0, 0],
+        models: BTreeSet::new(),
+        streak: 0,
+        pending_stop: None,
+    };
+    let mut started = utc_time(now_secs());
+    let mut written: Option<String> = None;
+    if let Some(file) = &o.resume {
+        let prior = read_prior(repo, file, &o.target, &groups)?;
+        started = prior.started;
+        state.spend = prior.spend;
+        state.excluded = prior.excluded;
+        state.models = prior.models;
+        pairs = prior.pairs;
+        written = Some(file.clone());
+    }
+    let remaining: f64 = groups
+        .iter()
+        .zip(&pairs)
+        .flat_map(|(g, ps)| {
+            g.evals.iter().map(move |p| {
+                let done: u32 = ps
+                    .iter()
+                    .filter(|r| r.eval == p.eval.id)
+                    .map(|r| u32::from(r.with.is_some()) + u32::from(r.without.is_some()))
+                    .sum();
+                f64::from((p.runs * 2).saturating_sub(done)) * p.eval.max_budget_usd
+            })
+        })
+        .sum();
+    if state.spend + remaining > cap + EPS {
+        return Err(Fatal::Config(format!(
+            "the estimate {:.2} USD ({}runs x 2 arms x max-budget-usd) is above max-total-usd {cap:.2} USD; no run started. Lower the runs, or raise max-total-usd",
+            state.spend + remaining,
+            if o.resume.is_some() {
+                "the spend so far and the runs that are left, "
+            } else {
+                ""
+            }
+        )));
+    }
+
     // A bad `--out` must stop the command before the first run spends money.
     make_out_dir(repo, &out_dir)?;
     let claude_code = claude_version()?;
@@ -210,38 +291,58 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     if !o.json {
         println!("eval run --ab {}: {header}", o.target);
     }
-    let started = utc_time(now_secs());
+    catch_interrupts();
     let mut ctx = Ctx {
+        limits,
+        merge_instructions: true,
         harness,
         check_sh,
         isolate: o.isolate,
         counter: 0,
     };
-    let mut state = State {
+    let meta = Meta {
+        claude_code,
+        started: started.clone(),
+        target: o.target.clone(),
         cap,
-        first,
-        spend: 0.0,
-        excluded: [0, 0],
-        models: BTreeSet::new(),
+        estimate,
+        out_dir,
     };
-    let mut pairs: Vec<Vec<PairRec>> = groups.iter().map(|_| Vec::new()).collect();
     let mut stopped: Option<Stop> = None;
     // A git or file error ends the loop, but the paid runs are not lost: the
     // result is written before the command exits.
     let mut failed: Option<Fatal> = None;
-    let planned_pairs: u32 = total_runs / 2;
-    let mut done_pairs = 0;
     'groups: for (gi, g) in groups.iter().enumerate() {
         for p in &g.evals {
             for n in 1..=p.runs {
+                let at = match pairs[gi]
+                    .iter()
+                    .position(|r| r.eval == p.eval.id && r.run == n)
+                {
+                    Some(at) => at,
+                    None => {
+                        pairs[gi].push(PairRec {
+                            eval: p.eval.id.clone(),
+                            run: n,
+                            with: None,
+                            without: None,
+                        });
+                        pairs[gi].len() - 1
+                    }
+                };
+                if pairs[gi][at].complete() {
+                    continue;
+                }
                 // `with` runs first for an odd number, `without` for an even one.
                 let order = if n % 2 == 1 {
                     [Arm::With, Arm::Without]
                 } else {
                     [Arm::Without, Arm::With]
                 };
-                let mut sides: [Option<Side>; 2] = [None, None];
                 for arm in order {
+                    if pairs[gi][at].side(arm).is_some() {
+                        continue;
+                    }
                     let done = match run_arm(&mut ctx, &mut state, g, p, arm, n) {
                         Ok(d) => d,
                         Err(e) => {
@@ -251,49 +352,40 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                         }
                     };
                     match done {
-                        Done::Counted(side) => sides[arm.index()] = Some(side),
+                        Done::Counted(side) => {
+                            *pairs[gi][at].side_mut(arm) = Some(side);
+                            if let Some(s) = state.pending_stop.take() {
+                                stopped = Some(s);
+                                break 'groups;
+                            }
+                        }
                         Done::Stop(s) => {
                             stopped = Some(s);
                             break 'groups;
                         }
                     }
                 }
-                let [Some(with), Some(without)] = sides else {
-                    unreachable!("both arms are done")
-                };
-                pairs[gi].push(PairRec {
-                    eval: p.eval.id.clone(),
-                    run: n,
-                    with,
-                    without,
-                });
-                done_pairs += 1;
-                if state.spend > cap + EPS && done_pairs < planned_pairs {
-                    stopped = Some(Stop::MaxTotal);
-                    break 'groups;
+                // The result is on the disk after each pair, so a crash or a
+                // kill loses no paid run. The file says `interrupted` until
+                // the end.
+                if let Err(e) = persist(
+                    repo,
+                    &meta,
+                    &groups,
+                    &pairs,
+                    &state,
+                    Some(Stop::Interrupted),
+                    None,
+                    &mut written,
+                ) {
+                    eprintln!("eval run: cannot write the partial result: {}", e.message());
                 }
             }
         }
     }
 
-    let items: Vec<Item> = groups
-        .iter()
-        .zip(&pairs)
-        .map(|(g, ps)| item(g, ps))
-        .collect();
-    let result = ResultFile {
-        claude_code,
-        models: state.models.iter().cloned().collect(),
-        started: started.clone(),
-        target: o.target.clone(),
-        cap,
-        estimate,
-        spend: state.spend,
-        excluded: state.excluded,
-        stopped,
-        error: failed.as_ref().map(|e| error_text(repo, e.message())),
-        items,
-    };
+    let error = failed.as_ref().map(|e| error_text(repo, e.message()));
+    let result = build_result(&meta, &groups, &pairs, &state, stopped, error.clone());
     let compact = result_json(&result);
     if o.json {
         println!("{compact}");
@@ -302,7 +394,16 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             println!("{line}");
         }
     }
-    let path = write_result(repo, &out_dir, &started, &compact);
+    let path = persist(
+        repo,
+        &meta,
+        &groups,
+        &pairs,
+        &state,
+        stopped,
+        error,
+        &mut written,
+    );
     if let Some(e) = failed {
         // The error of the run comes first. A failed write is only a note.
         match &path {
@@ -320,7 +421,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         None => Ok(0),
         Some(Stop::MaxTotal) => {
             eprintln!(
-                "eval run: stopped: the spend {:.2} USD is above max-total-usd {cap:.2} USD; the partial result is written",
+                "eval run: stopped: the next run could pass max-total-usd {cap:.2} USD (the spend is {:.2} USD); the partial result is written",
                 state.spend
             );
             Ok(3)
@@ -328,12 +429,28 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         Some(Stop::Error) => unreachable!("an error returns above"),
         Some(Stop::ApiError) => {
             eprintln!(
-                "eval run: stopped (api-error): the API refused the attempt {} times in a row, and the waits are over; the partial result is written. Run the target again later",
-                RETRIES + 1
+                "eval run: stopped (api-error): the API refused the attempts, or each run failed with an error and no cost, and the waits are over; the partial result is written. Run the target again later with --resume {path}"
             );
             Ok(3)
         }
+        Some(Stop::Interrupted) => {
+            let sig = interrupt_signal().unwrap_or(2);
+            eprintln!(
+                "eval run: interrupted; the partial result is written. Go on with --resume {path}"
+            );
+            Ok((128 + sig) as u8)
+        }
     }
+}
+
+/// The values of a run that do not change.
+struct Meta {
+    claude_code: Option<String>,
+    started: String,
+    target: String,
+    cap: f64,
+    estimate: f64,
+    out_dir: String,
 }
 
 /// The values that change during the runs.
@@ -346,16 +463,96 @@ struct State {
     /// The excluded attempts of each arm.
     excluded: [u32; 2],
     models: BTreeSet<String>,
+    /// The counted runs in a row with an error, no cost and no stop by the
+    /// turns or the budget. A row of 5 means that each run fails the same way.
+    streak: u32,
+    /// A stop that follows the run that was just counted.
+    pending_stop: Option<Stop>,
 }
+
+/// The counted runs in a row with an error and no cost that stop the command.
+const STREAK_STOP: u32 = 5;
 
 enum Done {
     Counted(Side),
     Stop(Stop),
 }
 
+/// Builds the result from the state.
+fn build_result(
+    meta: &Meta,
+    groups: &[Group],
+    pairs: &[Vec<PairRec>],
+    state: &State,
+    stopped: Option<Stop>,
+    error: Option<String>,
+) -> ResultFile {
+    ResultFile {
+        claude_code: meta.claude_code.clone(),
+        models: state.models.iter().cloned().collect(),
+        started: meta.started.clone(),
+        target: meta.target.clone(),
+        cap: meta.cap,
+        estimate: meta.estimate,
+        spend: state.spend,
+        excluded: state.excluded,
+        stopped,
+        error,
+        items: groups
+            .iter()
+            .zip(pairs)
+            .map(|(g, ps)| item(g, ps))
+            .collect(),
+    }
+}
+
+/// Writes the result to the disk. The first call picks a free name in the
+/// folder of the results. The next calls replace that file with a rename.
+#[allow(clippy::too_many_arguments)]
+fn persist(
+    repo: &Repo,
+    meta: &Meta,
+    groups: &[Group],
+    pairs: &[Vec<PairRec>],
+    state: &State,
+    stopped: Option<Stop>,
+    error: Option<String>,
+    written: &mut Option<String>,
+) -> Result<String, Fatal> {
+    let compact = result_json(&build_result(meta, groups, pairs, state, stopped, error));
+    match written {
+        Some(path) => {
+            replace_result(repo, path, &compact)?;
+            Ok(path.clone())
+        }
+        None => {
+            let path = write_result(repo, &meta.out_dir, &meta.started, &compact)?;
+            *written = Some(path.clone());
+            Ok(path)
+        }
+    }
+}
+
+/// Waits for `seconds`, and ends early if SIGINT or SIGTERM comes. Returns
+/// false in that case.
+fn sleep_unless_interrupted(seconds: u64) -> bool {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    while std::time::Instant::now() < end {
+        if interrupt_signal().is_some() {
+            return false;
+        }
+        std::thread::sleep(
+            std::time::Duration::from_millis(50).min(end - std::time::Instant::now()),
+        );
+    }
+    interrupt_signal().is_none()
+}
+
 /// Runs one arm of one pair. An attempt that the API refused is excluded: no
 /// result counts it, and the spend gets the cost that it reports (0 if it
 /// reports none). The retry makes a new copy, with the same eval, arm and run.
+/// The cap is checked before each attempt: if the spend and the budget of the
+/// next run could pass it, the run does not start.
 fn run_arm(
     ctx: &mut Ctx,
     state: &mut State,
@@ -366,7 +563,15 @@ fn run_arm(
 ) -> Result<Done, Fatal> {
     let deny = (arm == Arm::Without).then_some(DENIED);
     let mut excluded = 0;
+    // An account limit gets the long ladder, and it stays long after it.
+    let mut account = false;
     loop {
+        if interrupt_signal().is_some() {
+            return Ok(Done::Stop(Stop::Interrupted));
+        }
+        if state.spend + p.eval.max_budget_usd > state.cap + EPS {
+            return Ok(Done::Stop(Stop::MaxTotal));
+        }
         eprintln!(
             "eval run: {} {} run {n} of {} ({})",
             g.name,
@@ -376,36 +581,156 @@ fn run_arm(
         );
         let edit = |dir: &Path| prepare(dir, g.kind, arm);
         let r: RunResult = one_attempt(ctx, p, &edit, deny)?;
+        if r.interrupted {
+            return Ok(Done::Stop(Stop::Interrupted));
+        }
         state.models.extend(r.models.iter().cloned());
-        if !r.refused {
+        let Some(class) = r.class else {
             state.spend += r.charged;
+            let no_stop = !r
+                .subtype
+                .as_deref()
+                .is_some_and(|t| t.starts_with("error_max_"));
+            if r.is_error && r.cost.unwrap_or(0.0) == 0.0 && no_stop {
+                state.streak += 1;
+                if state.streak >= STREAK_STOP {
+                    state.pending_stop = Some(Stop::ApiError);
+                }
+            } else {
+                state.streak = 0;
+            }
             return Ok(Done::Counted(Side {
                 claude_exit: r.claude_exit,
                 subtype: r.subtype,
                 cost: r.cost,
-                charged: r.charged,
                 excluded,
+                denials: r.denials,
                 passed: r.passed,
             }));
-        }
+        };
         state.spend += r.cost.unwrap_or(0.0);
         state.excluded[arm.index()] += 1;
         excluded += 1;
-        if state.spend > state.cap + EPS {
+        account |= class == Refusal::Account;
+        let ladder = retry_waits(state.first, account);
+        if state.spend + p.eval.max_budget_usd > state.cap + EPS {
             return Ok(Done::Stop(Stop::MaxTotal));
         }
-        if excluded > RETRIES {
+        if excluded as usize > ladder.len() {
             return Ok(Done::Stop(Stop::ApiError));
         }
-        let wait = wait_seconds(state.first, excluded - 1);
+        let wait = ladder[excluded as usize - 1];
         eprintln!(
             "eval run: the API refused the attempt ({} {} run {n}, {}); it is excluded. wait {wait} seconds, then try again",
             g.name,
             p.eval.id,
             arm.name()
         );
-        std::thread::sleep(std::time::Duration::from_secs(wait));
+        if !sleep_unless_interrupted(wait) {
+            return Ok(Done::Stop(Stop::Interrupted));
+        }
     }
+}
+
+/// The result of an earlier run.
+struct Prior {
+    started: String,
+    spend: f64,
+    excluded: [u32; 2],
+    models: BTreeSet<String>,
+    pairs: Vec<Vec<PairRec>>,
+}
+
+/// Reads the result file of an earlier run of the same target. `file` is a
+/// path of the repository, with no `..`. The pairs go to the groups of the
+/// plan, and a pair of an eval that the plan has no more is dropped.
+fn read_prior(repo: &Repo, file: &str, target: &str, groups: &[Group]) -> Result<Prior, Fatal> {
+    let bad = |m: String| Fatal::Usage(format!("--resume `{file}`: {m}"));
+    if file.is_empty()
+        || file.starts_with('/')
+        || file.contains('\\')
+        || file
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..")
+        || !file.ends_with(".json")
+    {
+        return Err(bad(
+            "give a result file below the repository root, with no `..` and the end `.json`".into(),
+        ));
+    }
+    let path = repo.root.join(file);
+    let text = fs::read(&path).map_err(|e| bad(format!("cannot read it ({e})")))?;
+    let text = String::from_utf8(text).map_err(|_| bad("it is not UTF-8".into()))?;
+    let v = json::parse(&text).map_err(|e| bad(format!("it is not valid JSON ({e})")))?;
+    if v.get("target").as_str() != Some(target) {
+        return Err(bad(format!(
+            "the file is the result of the target `{}`, not of `{target}`",
+            v.get("target").as_str().unwrap_or("?")
+        )));
+    }
+    let num = |v: &json::Value| match v {
+        json::Value::Num(n) => Some(*n),
+        _ => None,
+    };
+    let side = |v: &json::Value| -> Option<Side> {
+        if !matches!(v, json::Value::Obj(_)) {
+            return None;
+        }
+        Some(Side {
+            claude_exit: num(v.get("claude_exit")).unwrap_or(-1.0) as i32,
+            subtype: v.get("subtype").as_str().map(str::to_string),
+            cost: num(v.get("cost_usd")),
+            excluded: num(v.get("excluded")).unwrap_or(0.0) as u32,
+            denials: num(v.get("permission_denials")).map(|n| n as u32),
+            passed: v.get("passed").is_true(),
+        })
+    };
+    let mut pairs: Vec<Vec<PairRec>> = groups.iter().map(|_| Vec::new()).collect();
+    for item in v.get("skills").as_arr() {
+        let Some(gi) = groups
+            .iter()
+            .position(|g| Some(g.name.as_str()) == item.get("name").as_str())
+        else {
+            continue;
+        };
+        for pr in item.get("pairs").as_arr() {
+            let Some(eval) = pr.get("eval").as_str() else {
+                continue;
+            };
+            if !groups[gi].evals.iter().any(|p| p.eval.id == eval) {
+                continue;
+            }
+            let rec = PairRec {
+                eval: eval.to_string(),
+                run: num(pr.get("run")).unwrap_or(0.0) as u32,
+                with: side(pr.get("with")),
+                without: side(pr.get("without")),
+            };
+            if rec.run > 0 {
+                pairs[gi].push(rec);
+            }
+        }
+    }
+    let ex = v.get("excluded");
+    Ok(Prior {
+        started: v
+            .get("started")
+            .as_str()
+            .unwrap_or("1970-01-01T00:00:00Z")
+            .to_string(),
+        spend: num(v.get("spend_usd")).unwrap_or(0.0),
+        excluded: [
+            num(ex.get("with")).unwrap_or(0.0) as u32,
+            num(ex.get("without")).unwrap_or(0.0) as u32,
+        ],
+        models: v
+            .get("models")
+            .as_arr()
+            .iter()
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect(),
+        pairs,
+    })
 }
 
 /// Chooses the evals of the target, and the files of each fixture.
@@ -416,7 +741,12 @@ fn select(
     runs: Option<u32>,
     pack_dir: &str,
 ) -> Result<Vec<Group>, Fatal> {
-    let plan = |eval: Eval| -> Result<Planned, Fatal> {
+    let plan = |mut eval: Eval| -> Result<Planned, Fatal> {
+        // The arm `with` needs the tool `Skill` under `--permission-mode
+        // dontAsk`, and both arms get the same tools.
+        if !eval.allowed_tools.iter().any(|t| t == "Skill") {
+            eval.allowed_tools.push("Skill".to_string());
+        }
         let runs = runs.unwrap_or(eval.runs);
         let pass_at = eval.pass_at.min(runs);
         let fixture = copy_list(
@@ -596,36 +926,11 @@ fn skill_file(skill: Skill) -> String {
 struct Item {
     name: String,
     evals: usize,
-    pairs: Vec<PairView>,
+    pairs: Vec<PairRec>,
     /// `None` when no pair is done.
     analysis: Option<Analysis>,
     /// True when each planned pair is done.
     complete: bool,
-}
-
-struct PairView {
-    eval: String,
-    run: u32,
-    with: SideView,
-    without: SideView,
-}
-
-struct SideView {
-    claude_exit: i32,
-    subtype: Option<String>,
-    cost: Option<f64>,
-    excluded: u32,
-    passed: bool,
-}
-
-fn view(s: &Side) -> SideView {
-    SideView {
-        claude_exit: s.claude_exit,
-        subtype: s.subtype.clone(),
-        cost: s.cost,
-        excluded: s.excluded,
-        passed: s.passed,
-    }
 }
 
 fn item(g: &Group, pairs: &[PairRec]) -> Item {
@@ -636,31 +941,42 @@ fn item(g: &Group, pairs: &[PairRec]) -> Item {
             pairs
                 .iter()
                 .filter(|r| r.eval == p.eval.id)
-                .map(|r| Pair {
-                    with_passed: r.with.passed,
-                    with_cost: r.with.charged,
-                    without_passed: r.without.passed,
-                    without_cost: r.without.charged,
+                .filter_map(|r| {
+                    let (w, o) = (r.with.as_ref()?, r.without.as_ref()?);
+                    Some(Pair {
+                        with_passed: w.passed,
+                        with_cost: w.cost.unwrap_or(p.eval.max_budget_usd),
+                        without_passed: o.passed,
+                        without_cost: o.cost.unwrap_or(p.eval.max_budget_usd),
+                    })
                 })
                 .collect()
         })
         .collect();
     let planned: u32 = g.evals.iter().map(|p| p.runs).sum();
-    let complete = pairs.len() as u32 == planned;
+    let done = pairs.iter().filter(|r| r.complete()).count() as u32;
+    // The pairs in the order of the plan, also after a resume.
+    let order = |r: &PairRec| {
+        (
+            g.evals
+                .iter()
+                .position(|p| p.eval.id == r.eval)
+                .unwrap_or(usize::MAX),
+            r.run,
+        )
+    };
+    let mut shown: Vec<PairRec> = pairs
+        .iter()
+        .filter(|r| r.with.is_some() || r.without.is_some())
+        .cloned()
+        .collect();
+    shown.sort_by_key(order);
     Item {
         name: g.name.clone(),
         evals: g.evals.len(),
-        pairs: pairs
-            .iter()
-            .map(|r| PairView {
-                eval: r.eval.clone(),
-                run: r.run,
-                with: view(&r.with),
-                without: view(&r.without),
-            })
-            .collect(),
-        analysis: (!pairs.is_empty()).then(|| verdict::analyze(&by_eval)),
-        complete,
+        pairs: shown,
+        analysis: (done > 0).then(|| verdict::analyze(&by_eval)),
+        complete: done == planned,
     }
 }
 
@@ -723,7 +1039,10 @@ fn arm_json(a: Option<&verdict::Arm>) -> String {
     .end()
 }
 
-fn side_json(s: &SideView) -> String {
+fn side_json(s: &Option<Side>) -> String {
+    let Some(s) = s else {
+        return "null".to_string();
+    };
     let obj = Obj::new()
         .num("claude_exit", s.claude_exit)
         .opt_str("subtype", s.subtype.as_deref());
@@ -731,9 +1050,13 @@ fn side_json(s: &SideView) -> String {
         Some(c) => obj.num("cost_usd", r6(c)),
         None => obj.raw("cost_usd", "null"),
     };
-    obj.num("excluded", s.excluded)
-        .bool("passed", s.passed)
-        .end()
+    let obj = obj.num("excluded", s.excluded);
+    match s.denials {
+        Some(n) => obj.num("permission_denials", n),
+        None => obj.raw("permission_denials", "null"),
+    }
+    .bool("passed", s.passed)
+    .end()
 }
 
 fn item_json(it: &Item) -> String {
@@ -883,12 +1206,18 @@ fn dry_run(
                 .num("max_total_usd", r6(cap))
                 .num("estimate_usd", r6(estimate))
                 .num("runs", total_runs)
+                .bool("above_cap", estimate > cap + EPS)
                 .raw("evals", &list)
                 .end()
         );
         return;
     }
     println!("eval run --ab {target} (dry run): {header}");
+    if estimate > cap + EPS {
+        println!(
+            "a real run would refuse to start: the estimate {estimate:.2} USD is above max-total-usd {cap:.2} USD; raise it with --max-total-usd"
+        );
+    }
     for p in evals {
         println!(
             "{}: {} runs, max-budget-usd {:.2}, estimate {:.2} USD",

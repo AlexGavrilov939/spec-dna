@@ -23,6 +23,7 @@ n=$((n+1))
 echo "$n" > "$STUB_DIR/n"
 {
     echo "CALL $n"
+    echo "WHICH $(command -v spec-dna)"
     for a in "$@"; do echo "ARG $a"; done
     find .claude -type f 2>/dev/null | sort | sed 's/^/FILE /'
     for f in AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md; do
@@ -80,7 +81,28 @@ case "$mode" in
     s429noerr)
         printf '{"type":"result","subtype":"success","is_error":false,"api_error_status":429,"result":"done","total_cost_usd":0.1}\n'
         exit 0 ;;
-    empty) exit 1 ;;
+    emptyexit) exit 1 ;;
+    login) account "Not logged in · Please run /login" ;;
+    credit) account "Credit balance is too low" ;;
+    outusage) account "You're out of usage credits" ;;
+    outextra) account "You're out of extra usage" ;;
+    unable) account "API Error: Unable to connect to API" ;;
+    connerr) account "Connection error." ;;
+    stderrnet) echo "Error: read ECONNRESET" >&2; exit 1 ;;
+    ctxlimit)
+        printf '{"type":"result","subtype":"success","is_error":true,"result":"Context limit reached","total_cost_usd":0.1}\n'
+        exit 1 ;;
+    odd)
+        printf '{"type":"result","subtype":"success","is_error":true,"result":"Something odd","total_cost_usd":0}\n'
+        exit 1 ;;
+    hang) sleep 30 ;;
+    sigint) kill -INT $PPID; sleep 30 ;;
+    sigterm) kill -TERM $PPID; sleep 30 ;;
+    snap) cp "$STUB_RESULTS"/skills-*.json "$STUB_DIR/snap-$n.json" 2>/dev/null ;;
+    denied)
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"permission_denials":[{"tool_name":"Skill"},{"tool_name":"Bash"}],"result":"ok"}\n'
+        exit 0 ;;
     plainfail) printf 'Segmentation fault\n'; exit 139 ;;
     break)
         rm -f "$STUB_BREAK_FILE"
@@ -100,7 +122,7 @@ case "$STUB_PASS" in
     *) pass=1 ;;
 esac
 [ "$pass" = 1 ] && echo 'status: done' > notes.txt
-printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"modelUsage":{"claude-test-1":{}},"result":"ok"}\n' "${STUB_COST:-0.1}"
+printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"modelUsage":{"claude-test-1":{}},"permission_denials":[],"result":"ok"}\n' "${STUB_COST:-0.1}"
 "#;
 
 const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
@@ -181,7 +203,10 @@ impl Fx {
         let bin = path_with(&self.path("bin"));
         let dir = self.stubs.dir.to_string_lossy().into_owned();
         let tmp = self.path("tmp").to_string_lossy().into_owned();
+        let results = self.repo.dir.join("evals/results");
+        let results = results.to_string_lossy().into_owned();
         let mut set: Vec<(&str, &str)> = vec![
+            ("STUB_RESULTS", &results),
             ("PATH", &bin),
             ("STUB_DIR", &dir),
             ("TMPDIR", &tmp),
@@ -358,8 +383,24 @@ fn an_estimate_above_the_cap_gives_exit_code_3_and_no_process() {
     assert_eq!(code, 3, "{out}{err}");
     assert!(err.contains("estimate 40.00 USD"), "{err}");
     assert!(fx.calls().is_empty());
-    let (code, _, err) = fx.run(&["tdd", "--dry-run"]);
-    assert_eq!(code, 3, "{err}");
+}
+
+#[test]
+fn a_dry_run_prints_the_estimate_above_the_cap_and_says_that_a_real_run_refuses() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    let (code, out, err) = fx.run(&["tdd", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("5 evals, 40 runs, estimate 40.00 USD, cap 20.00 USD"),
+        "{out}"
+    );
+    assert!(out.contains("a real run would refuse to start"), "{out}");
+    let (code, out, _) = fx.run(&["tdd", "--dry-run", "--json"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("\"above_cap\":true"), "{out}");
+    let (_, out, _) = fx.run(&["tdd", "--dry-run", "--max-total-usd", "100"]);
+    assert!(!out.contains("would refuse"), "{out}");
+    assert!(fx.calls().is_empty());
 }
 
 #[test]
@@ -461,7 +502,7 @@ fn the_arm_without_has_no_skill_no_discipline_and_denies_the_command() {
         "-p",
         "Change draft to done.",
         "--allowedTools",
-        "Read,Edit",
+        "Read,Edit,Skill",
         "--disallowedTools",
         "Bash(spec-dna skill:*)",
         "--output-format",
@@ -472,6 +513,9 @@ fn the_arm_without_has_no_skill_no_discipline_and_denies_the_command() {
         "1",
         "--permission-mode",
         "dontAsk",
+        "--setting-sources",
+        "project",
+        "--strict-mcp-config",
     ];
     assert_eq!(fx.args(without), want);
     let mut with_args: Vec<String> = want.iter().map(ToString::to_string).collect();
@@ -631,7 +675,7 @@ fn the_result_has_the_arms_the_pairs_the_interval_and_the_verdict() {
         "\"verdict\":\"on\"",
         "\"rule\":1",
         "\"cost_ratio\":null",
-        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"passed\":true},\"without\":{\"claude_exit\":0,",
+        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true},\"without\":{\"claude_exit\":0,",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -759,7 +803,7 @@ fn a_refused_attempt_of_each_class_is_retried_and_never_counted() {
         );
         // The pair that was retried counts the excluded attempt.
         assert!(
-            out.contains("\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":1,\"passed\":true}"),
+            out.contains("\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":1,\"permission_denials\":0,\"passed\":true}"),
             "{mode}: {out}"
         );
         // The cost of the arm has the 5 counted runs only. The spend has the
@@ -818,6 +862,14 @@ fn an_account_limit_a_timeout_and_a_5xx_status_are_refusals() {
         "s529",
         "s503long",
         "netpage",
+        "emptyexit",
+        "stderrnet",
+        "login",
+        "credit",
+        "outusage",
+        "outextra",
+        "unable",
+        "connerr",
     ] {
         let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
         fx.modes(&[mode]);
@@ -842,7 +894,7 @@ fn a_run_out_of_turns_or_budget_and_a_status_that_is_no_refusal_count() {
         "turnsnotext",
         "s400",
         "s429noerr",
-        "empty",
+        "ctxlimit",
         "plainfail",
     ] {
         let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
@@ -923,7 +975,7 @@ fn the_agent_and_the_checks_commit_with_a_neutral_identity_and_no_signature() {
         assert!(!who.contains("real@example.org"), "{who}");
     }
     assert!(
-        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"passed\":true},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"passed\":true}"),
+        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true}"),
         "{out}"
     );
 }
@@ -1098,4 +1150,348 @@ fn eval_without_a_subcommand_names_run_pack_and_verdict() {
     assert!(err.contains("eval run"), "{err}");
     assert!(err.contains("eval pack"), "{err}");
     assert!(err.contains("eval verdict"), "{err}");
+}
+
+// The owner rule, the limits and the stop of a run (the checks of the slice).
+
+#[test]
+fn an_empty_output_with_a_failed_exit_is_a_refusal_and_a_context_limit_is_a_run() {
+    // Covered by the lists of the 2 tests above; this test names the decision:
+    // an empty output with a non-zero exit is retried and never counted.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["emptyexit"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 11);
+    assert!(
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn five_counted_runs_in_a_row_with_an_error_and_no_cost_stop_the_command() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["odd"; 8]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 5, "the 5th run stops the command");
+    assert!(out.contains("\"stopped\":\"api-error\""), "{out}");
+    assert_eq!(fx.results().len(), 1, "the partial result is written");
+    // A run with a cost, or with `error_max_turns`, does not count in the row.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&[
+        "odd", "odd", "turns", "odd", "odd", "odd", "odd", "ctxlimit", "odd", "odd",
+    ]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10);
+}
+
+#[test]
+fn an_account_limit_gets_the_long_ladder_and_another_refusal_the_short_one() {
+    // 1 attempt and 16 retries (6 waits of the short ladder, 10 more).
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["login"; 40]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "1000", "--json"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 17);
+    assert!(out.contains("\"stopped\":\"api-error\""), "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":17,\"without\":0}"),
+        "{out}"
+    );
+    // A 503 keeps the ladder of 6 retries.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["503"; 40]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "1000", "--json"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 7);
+}
+
+#[test]
+fn the_agent_and_the_checks_find_the_binary_under_test_first_on_path() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // A fake `spec-dna` is earlier on `PATH` than the binary under test.
+    stub_bin(
+        &fx.stubs.dir.join("bin"),
+        "spec-dna",
+        "#!/bin/sh\necho fake\n",
+    );
+    let eval = pack_eval("tdd-1", "tdd", 1).replace(
+        "\"checks\":[",
+        "\"checks\":[{\"name\":\"which\",\"run\":\"command -v spec-dna > \\\"$STUB_DIR/check-which\\\"\"},",
+    );
+    fx.repo.write("evals/pack/tdd-1.json", &eval);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let want = format!("WHICH {}", common::BIN);
+    for call in fx.calls() {
+        assert!(call.contains(&want), "{want} not in {call:?}");
+    }
+    let which = fs::read_to_string(fx.path("check-which")).unwrap();
+    assert_eq!(which.trim(), common::BIN);
+}
+
+#[test]
+fn the_result_is_written_after_each_pair() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // Call 5 is the first call of the 3rd pair. It copies the result file.
+    fx.modes(&["ok", "ok", "ok", "ok", "snap"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let snap = fs::read_to_string(fx.path("snap-5.json")).expect("a file after 2 pairs");
+    assert!(snap.contains("\"eval\": \"tdd-2\""), "{snap}");
+    assert!(!snap.contains("\"eval\": \"tdd-3\""), "{snap}");
+    assert!(snap.contains("\"verdict\": null"), "{snap}");
+    // One file at the end, and no temporary file.
+    assert_eq!(fx.results().len(), 1, "{:?}", fx.results());
+}
+
+/// The part of a result from `"skills":` on, which has no time and no spend.
+fn skills_of(json: &str) -> &str {
+    &json[json.find("\"skills\":").expect("skills")..]
+}
+
+#[test]
+fn an_interrupt_writes_the_result_and_resume_gives_the_totals_of_an_uninterrupted_run() {
+    for (mode, exit) in [("sigint", 130), ("sigterm", 143)] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        // Call 5 is the first call of the 3rd pair: it sends the signal.
+        fx.modes(&["ok", "ok", "ok", "ok", mode]);
+        let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, exit, "{mode}: {out}{err}");
+        assert!(out.contains("\"stopped\":\"interrupted\""), "{mode}: {out}");
+        let names = fx.results();
+        assert_eq!(names.len(), 1, "{mode}: {names:?}");
+        let file = format!("evals/results/{}", names[0]);
+        let text = fs::read_to_string(fx.repo.dir.join(&file)).unwrap();
+        assert!(text.contains("\"eval\": \"tdd-2\""), "{mode}: {text}");
+        assert!(!text.contains("\"eval\": \"tdd-3\""), "{mode}: {text}");
+        fx.assert_clean();
+        // The 5th call was killed with its process group: one call only.
+        assert_eq!(fx.calls().len(), 5, "{mode}");
+
+        let (code, resumed, err) =
+            fx.run(&["tdd", "--resume", &file, "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, 0, "{mode}: {resumed}{err}");
+        // 6 runs are left for the 3 evals that are not done: 10 - 4 = 6.
+        assert_eq!(fx.calls().len(), 5 + 6, "{mode}: only the missing runs run");
+        assert_eq!(fx.results().len(), 1, "{mode}: one merged file");
+        assert!(resumed.contains("\"stopped\":null"), "{mode}: {resumed}");
+
+        let whole = Fx::new(&["brainstorm"], &["tdd"], 1);
+        let (code, full, err) = whole.run(&["tdd", "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, 0, "{full}{err}");
+        assert_eq!(skills_of(&resumed), skills_of(&full), "{mode}");
+        assert_eq!(field(&resumed, "spend_usd"), field(&full, "spend_usd"));
+        // The first arm that the signal killed was not counted, and not charged.
+        fx.assert_clean();
+    }
+}
+
+#[test]
+fn resume_checks_its_file_and_its_target() {
+    let fx = Fx::new(&["brainstorm"], &["tdd", "debug"], 1);
+    let (code, _, err) = fx.run(&["tdd", "--resume", "evals/results/absent.json"]);
+    assert_eq!(code, 2, "{err}");
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    // Another target, `--out` and `--dry-run` with `--resume` are usage errors.
+    for args in [
+        vec!["debug", "--resume", &file],
+        vec!["tdd", "--resume", &file, "--out", "evals/other"],
+        vec!["tdd", "--resume", &file, "--dry-run"],
+        vec!["tdd", "--resume", "../x.json"],
+    ] {
+        let (code, _, err) = fx.run(&args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+    }
+    // A complete file: nothing is left to run.
+    let before = fx.calls().len();
+    let (code, _, err) = fx.run(&["tdd", "--resume", &file, "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fx.calls().len(), before);
+}
+
+#[test]
+fn an_agent_that_runs_too_long_is_killed_and_counts_as_a_failed_run() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["hang"]);
+    let start = std::time::Instant::now();
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("SPEC_DNA_EVAL_TIMEOUT", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(start.elapsed().as_secs() < 25, "the hang was not cut");
+    assert_eq!(fx.calls().len(), 10, "no retry: a timeout is no refusal");
+    assert!(
+        out.contains("\"with\":{\"claude_exit\":-1,\"subtype\":\"timeout\",\"cost_usd\":null,\"excluded\":0,\"permission_denials\":null,\"passed\":false}"),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+        "{out}"
+    );
+    fx.assert_clean();
+    // A bad value is a usage error.
+    for bad in ["0", "abc", "", "-5"] {
+        let (code, _, err) = fx.run_env(
+            &["tdd", "--max-total-usd", "100"],
+            &[("SPEC_DNA_EVAL_TIMEOUT", bad)],
+        );
+        assert_eq!(code, 2, "{bad}: {err}");
+    }
+}
+
+#[test]
+fn a_check_that_runs_too_long_is_killed_and_fails() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let eval = pack_eval("tdd-1", "tdd", 1).replace(
+        "\"checks\":[",
+        "\"checks\":[{\"name\":\"slow\",\"run\":\"sleep 30\"},",
+    );
+    fx.repo.write("evals/pack/tdd-1.json", &eval);
+    let start = std::time::Instant::now();
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("SPEC_DNA_EVAL_CHECK_TIMEOUT", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(start.elapsed().as_secs() < 25);
+    assert!(
+        out.contains(
+            "\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"timeout\""
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_fixture_text_of_the_instruction_files_stays_in_both_arms() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.repo.write(
+        "evals/pack/fixtures/tdd-1/AGENTS.md",
+        "Fixture rule: run sh tests/t.sh.\n",
+    );
+    fx.repo
+        .write("evals/pack/fixtures/tdd-1/CLAUDE.md", "Fixture notes.\n");
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Call 0 is `with` and call 1 is `without` of `tdd-1`.
+    for n in [0, 1] {
+        assert!(
+            fx.text(n, "AGENTS.md")
+                .contains("Fixture rule: run sh tests/t.sh."),
+            "{n}"
+        );
+        assert!(fx.text(n, "CLAUDE.md").contains("Fixture notes."), "{n}");
+    }
+    assert!(fx.text(0, "AGENTS.md").contains("test first (tdd)"));
+    assert!(!fx.text(1, "AGENTS.md").contains("(tdd)"));
+    assert!(fx.text(1, "AGENTS.md").contains("cause first (debug)"));
+}
+
+#[test]
+fn the_agents_line_arms_keep_the_fixture_text_too() {
+    let fx = Fx::new(&["brainstorm"], &DISCIPLINED, 1);
+    fx.repo.write(
+        "evals/pack/fixtures/tdd-1/AGENTS.md",
+        "Fixture rule: run sh tests/t.sh.\n",
+    );
+    let (code, out, err) = fx.run(&["agents-line", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // `tdd-1` is the first eval of the pair, `with` first.
+    assert!(
+        fx.text(0, "AGENTS.md")
+            .contains("Fixture rule: run sh tests/t.sh.")
+    );
+    assert!(fx.text(0, "AGENTS.md").contains("spec-dna context"));
+    assert!(
+        fx.text(1, "AGENTS.md")
+            .contains("Fixture rule: run sh tests/t.sh.")
+    );
+    assert!(!fx.text(1, "AGENTS.md").contains("spec-dna context"));
+}
+
+#[test]
+fn the_cap_is_checked_before_each_run_and_the_first_arm_of_a_pair_is_kept() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The budget is 1 USD and each run costs 1.5 USD. The spend is 9 USD
+    // after 6 runs, and 10.5 USD after the 7th: the 8th run could pass the
+    // cap of 10.5 USD, so it does not start.
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "10.5", "--json"],
+        &[("STUB_COST", "1.5")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 7);
+    assert!(out.contains("\"stopped\":\"max-total-usd\""), "{out}");
+    // The 7th run is the first arm of the pair `tdd-4`. The file keeps it.
+    assert!(
+        out.contains("\"eval\":\"tdd-4\",\"run\":1,\"with\":{\"claude_exit\":0"),
+        "{out}"
+    );
+    assert!(out.contains("\"without\":null"), "{out}");
+    // The incomplete pair is in no count.
+    assert!(out.contains("\"with\":{\"runs\":3,"), "{out}");
+}
+
+#[test]
+fn the_arms_allow_the_tool_skill_and_the_result_counts_the_permission_denials() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["denied", "ok"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for n in [0, 1] {
+        let args = fx.args(n);
+        let at = args.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(args[at + 1], "Read,Edit,Skill", "call {n}");
+    }
+    assert!(
+        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":2,\"passed\":true},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,"),
+        "{out}"
+    );
+}
+
+#[test]
+fn isolate_is_the_default_of_ab_and_no_isolate_switches_it_off() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for n in 0..2 {
+        let args = fx.args(n);
+        let tail: Vec<&str> = args.iter().rev().take(3).map(String::as_str).collect();
+        assert_eq!(
+            tail,
+            ["--strict-mcp-config", "project", "--setting-sources"]
+        );
+    }
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--max-total-usd",
+        "100",
+        "--runs",
+        "1",
+        "--no-isolate",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    for n in 0..2 {
+        assert!(
+            !fx.args(n).contains(&"--setting-sources".to_string()),
+            "{n}"
+        );
+    }
+    let (code, _, err) = fx.run(&["tdd", "--isolate", "--no-isolate"]);
+    assert_eq!(code, 2, "{err}");
+    // `--no-isolate` is an option of `--ab` only.
+    let (code, _, err) = fx.raw(&["eval", "run", "--no-isolate"], &[]);
+    assert_eq!(code, 2, "{err}");
 }

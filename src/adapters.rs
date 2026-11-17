@@ -278,6 +278,19 @@ pub fn without_skill(text: &str, skill: &str) -> String {
     out
 }
 
+/// The generated lines of a root instruction file: the line of the adapter
+/// and the line of the harness, each with its marker. A line that only quotes
+/// the marker form is no generated line, because the marker ends the line.
+pub fn generated_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| {
+            (l.contains("<!-- spec-dna v") || l.contains("<!-- spec-dna harness v"))
+                && l.ends_with(" -->")
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 /// Returns true if the text has content that spec-dna did not generate.
 pub fn has_own_text(text: &str) -> bool {
     !remove_line(&remove_old_blocks(text)).trim().is_empty()
