@@ -924,7 +924,7 @@ assert shown(99) == 99'
             ),
             (
                 "names-the-gap",
-                r#"grep -F 'docker compose run e2e' RESULT.md >/dev/null && grep -Eqi 'not run|did not run|could not run' RESULT.md
+                r#"grep -F 'docker compose run e2e' RESULT.md >/dev/null && grep -Eqi "(not|n't|nt|never) (been |be |able to )?(run|ran|executed|execute)|(unable|cannot|can not) (to )?(run|execute)|skipped" RESULT.md
 "#,
             ),
             ("old-tests-kept", old_tests_kept!()),
