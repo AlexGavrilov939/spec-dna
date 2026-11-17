@@ -45,6 +45,7 @@ mod harness_text;
 mod hash;
 mod hook;
 mod import;
+mod import_config;
 mod index;
 mod init;
 mod json;
