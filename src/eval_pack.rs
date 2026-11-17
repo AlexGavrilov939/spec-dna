@@ -64,46 +64,15 @@ const CODE_TOOLS: &[&str] = &[
 /// A fixture file: the pin of the version, and one root of documents.
 const SPEC_DNA_TOML: &str = "spec-dna = \"{{VERSION}}\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n";
 
-/// The order of a test and its code in the history of the copy: the first
-/// commit that touches `tests/` comes before the first commit that touches
-/// `src/`. The copy has a base commit, and `$SPEC_DNA_EVAL_BASE` names it.
-const TEST_BEFORE_CODE: &str = "t=$(git log --reverse --format=%H \"$SPEC_DNA_EVAL_BASE\"..HEAD -- tests | head -1); c=$(git log --reverse --format=%H \"$SPEC_DNA_EVAL_BASE\"..HEAD -- src | head -1); [ -n \"$t\" ] && [ -n \"$c\" ] && [ \"$t\" != \"$c\" ] && git merge-base --is-ancestor \"$t\" \"$c\"";
+/// Group of t12 and t13: `execute`, `tdd`, `verify` and `debug`. The 20 evals
+/// of the pilot and their fixtures are in `eval_pack_pilot.rs`.
+#[path = "eval_pack_pilot.rs"]
+mod pilot;
 
 /// Group of t12: `execute` and `tdd`.
-static EXECUTE_TDD: &[PackEval] = &[PackEval {
-    id: "tdd-1",
-    skill: "tdd",
-    task: "In this project, `src/slug.sh` has the function `slug_lower`. Add the function `slug_trim` to the same file. It prints its first argument without the dashes at its start and at its end. Commit each step of your work.",
-    allowed_tools: CODE_TOOLS,
-    max_turns: 30,
-    max_budget_usd: 2.0,
-    branch: None,
-    checks: &[
-        ("function-exists", "grep -q 'slug_trim' src/slug.sh"),
-        (
-            "behaviour",
-            ". ./src/slug.sh && [ \"$(slug_trim '--a-b--')\" = 'a-b' ]",
-        ),
-        ("tests-pass", "sh tests/test_slug.sh"),
-        ("test-added", "grep -q 'slug_trim' tests/test_slug.sh"),
-        ("test-before-code", TEST_BEFORE_CODE),
-    ],
-    files: &[
-        ("spec-dna.toml", SPEC_DNA_TOML),
-        ("docs/slug.md", "# Slug\n\nThe helpers of the slug.\n"),
-        (
-            "src/slug.sh",
-            "slug_lower() {\n    printf '%s\\n' \"$1\" | tr 'A-Z' 'a-z'\n}\n",
-        ),
-        (
-            "tests/test_slug.sh",
-            ". \"$(dirname \"$0\")/../src/slug.sh\"\n[ \"$(slug_lower AbC)\" = abc ] || { echo 'slug_lower failed'; exit 1; }\n",
-        ),
-    ],
-}];
-
+static EXECUTE_TDD: &[PackEval] = pilot::EXECUTE_TDD;
 /// Group of t13: `verify` and `debug`.
-static VERIFY_DEBUG: &[PackEval] = &[];
+static VERIFY_DEBUG: &[PackEval] = pilot::VERIFY_DEBUG;
 /// Group of t14: `brainstorm` and `specify`.
 static BRAINSTORM_SPECIFY: &[PackEval] = &[];
 /// Group of t15: `clarify` and `write-plan`.

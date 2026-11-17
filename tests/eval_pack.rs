@@ -6,6 +6,8 @@
 //! that hold for each of them. No test starts an agent.
 
 mod common;
+#[path = "eval_pack_pilot/mod.rs"]
+mod pilot;
 
 use common::{Repo, VERSION};
 use std::fs;
