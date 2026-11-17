@@ -11,7 +11,9 @@ status: approved
 - `src/upgrade_config.rs`, `src/upgrade.rs` The rename by the rule.
 - `src/check.rs` SD507 by the rule.
 - `tests/init_profiles.rs`, `tests/upgrade_v061.rs`, `tests/evals_checks.rs`, `tests/cli.rs`, `tests/upgrade_cli.rs`, `tests/init_evals.rs`, `tests/harness_skills.rs`, `tests/skill_cmd.rs`, `tests/init_change.rs` The tests.
-- `tests/fixtures/upgrade/make.sh`, `tests/fixtures/upgrade/recorded/v061.txt`, `tests/fixtures/upgrade/v061/**` The fixture of 0.6.1.
+- `tests/fixtures/upgrade/make.sh`, `tests/fixtures/upgrade/recorded/v061.txt` The recording of the fixture of 0.6.1.
+- `tests/fixtures/upgrade/v061/**` The fixture of 0.6.1.
+- `docs/glossary.md` The words of the profiles.
 - `.markdownlint-cli2.yaml` Only if a hook changes a file of the fixture.
 - `scripts/demo-replay.sh` The demo.
 - `docs/init.md`, `docs/profiles.md`, `docs/diagnostics.md`, `docs/harness.md`, `docs/commands.md`, `docs/config.md`, `docs/quickstart.md` The docs.
