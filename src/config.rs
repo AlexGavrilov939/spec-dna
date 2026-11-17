@@ -101,6 +101,15 @@ pub struct Config {
     /// change checks when `--base` and `refs/remotes/origin/HEAD` give none
     /// (design 0.6.1, D35 and D36). `None`: the key is absent.
     pub change_base: Option<String>,
+    /// `[change] approval` (design 0.7.0, D15). `Base` is the default: only
+    /// the base tree holds approvals. `Branch` also counts the approval
+    /// commits of the branch (D11).
+    pub change_approval: Approval,
+    /// `[change] approvers`: the author e-mails whose approval commits count
+    /// with `approval = "branch"` (D11). Each item is trimmed and not empty.
+    /// The compare of an e-mail ignores case, so the list keeps the case that
+    /// the file has. With `Branch` the list has one item at least.
+    pub change_approvers: Vec<String>,
 }
 
 /// The default folder of the evals.
@@ -209,6 +218,31 @@ impl Gate {
     }
 }
 
+/// Where an approval can be (`[change] approval`, design 0.7.0, D15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Approval {
+    /// Only the base tree holds approvals (0.6).
+    #[default]
+    Base,
+    /// The base tree, and the approval commits of the branch (D11).
+    Branch,
+}
+
+impl Approval {
+    pub fn name(self) -> &'static str {
+        match self {
+            Approval::Base => "base",
+            Approval::Branch => "branch",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<Approval> {
+        [Approval::Base, Approval::Branch]
+            .into_iter()
+            .find(|a| a.name() == s)
+    }
+}
+
 /// The default of `[change] max-fanout`.
 pub const DEFAULT_MAX_FANOUT: u32 = 8;
 
@@ -224,6 +258,8 @@ struct ChangeTable {
     high_risk_paths: Vec<String>,
     max_fanout: u32,
     base: Option<String>,
+    approval: Approval,
+    approvers: Vec<String>,
 }
 
 impl ChangeTable {
@@ -236,6 +272,8 @@ impl ChangeTable {
             high_risk_paths: Vec::new(),
             max_fanout: DEFAULT_MAX_FANOUT,
             base: None,
+            approval: Approval::Base,
+            approvers: Vec::new(),
         }
     }
 }
@@ -297,6 +335,29 @@ impl ChangeTable {
                 ))
             })?;
         }
+        let approval = match f.opt_str("approval")? {
+            None => Approval::Base,
+            Some(a) => Approval::from_name(&a).ok_or_else(|| {
+                format!("`change.approval` must be \"base\" or \"branch\", not `{a}`")
+            })?,
+        };
+        let mut approvers: Vec<String> = Vec::new();
+        for a in f.opt_strs("approvers")? {
+            let a = a.trim();
+            if a.is_empty() {
+                return Err(
+                    "`change.approvers`: an item is empty; write an e-mail, such as `owner@example.test`"
+                        .into(),
+                );
+            }
+            approvers.push(a.to_string());
+        }
+        if approval == Approval::Branch && approvers.is_empty() {
+            return Err(
+                "`change.approval = \"branch\"` needs `change.approvers` with at least one e-mail, such as `approvers = [\"owner@example.test\"]`"
+                    .into(),
+            );
+        }
         f.done()?;
         Ok(ChangeTable {
             policy,
@@ -305,6 +366,8 @@ impl ChangeTable {
             high_risk_paths,
             max_fanout,
             base,
+            approval,
+            approvers,
         })
     }
 }
@@ -1259,6 +1322,14 @@ impl Config {
                 ChangeTable::parse(tbl, &layers)?
             }
         };
+        // D14: the profile `strict` reads the approvals of the base only. The
+        // profile of a root does not count here: this is the project profile.
+        if profile == Profile::Strict && change.approval == Approval::Branch {
+            return Err(
+                "`change.approval = \"branch\"` is not valid with `profile = \"strict\"`: the profile `strict` reads the approvals of the base only; set `approval = \"base\"` or change the profile"
+                    .into(),
+            );
+        }
         t.done()?;
         // The hook `protect-tests` reads the globs of the base, so the
         // harness keeps them.
@@ -1299,6 +1370,8 @@ impl Config {
             high_risk_paths: change.high_risk_paths,
             max_fanout: change.max_fanout,
             change_base: change.base,
+            change_approval: change.approval,
+            change_approvers: change.approvers,
         })
     }
 
@@ -2945,6 +3018,21 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert!(e.contains("`change.gate` must be"), "{bad}: {e}");
         }
         assert!(err("gate = true").contains("`change.gate` must be a string"));
+        // approval and approvers (design 0.7.0, D14 and D15)
+        let c = ok("");
+        assert_eq!(c.change_approval, Approval::Base);
+        assert!(c.change_approvers.is_empty());
+        let c = ok("approval = \"branch\"\napprovers = [\" A@Example.test \", \"b@example.test\"]");
+        assert_eq!(c.change_approval, Approval::Branch);
+        assert_eq!(c.change_approvers, ["A@Example.test", "b@example.test"]);
+        assert!(err("approval = \"branch\"").contains("at least one e-mail"));
+        assert!(err("approval = \"x\"").contains("`change.approval` must be"));
+        assert!(err("approvers = [\" \"]").contains("`change.approvers`: an item is empty"));
+        let strict = "profile = \"strict\"\n";
+        let branch = table("approval = \"branch\"\napprovers = [\"a@example.test\"]");
+        assert!(with(strict, &branch).unwrap_err().contains("`strict`"));
+        assert!(with("profile = \"lite\"\n", &branch).is_ok());
+        assert!(with(strict, &table("approval = \"base\"")).is_ok());
         // max-fanout
         assert_eq!(ok("max-fanout = 3").max_fanout, 3);
         assert_eq!(ok("max-fanout = 0").max_fanout, 0);
@@ -3338,6 +3426,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert_eq!(
             ckeys,
             [
+                "approval",
+                "approvers",
                 "base",
                 "gate",
                 "high-risk-layers",
@@ -3347,6 +3437,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ]
         );
         for (k, bad) in [
+            ("approval", "1"),
+            ("approvers", "1"),
             ("base", "1"),
             ("gate", "1"),
             ("high-risk-layers", "1"),

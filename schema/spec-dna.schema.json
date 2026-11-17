@@ -87,6 +87,22 @@
           "description": "The name of a local branch. It is the base of the change checks when `--base` and `refs/remotes/origin/HEAD` give none. Use it in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \\`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. If the branch does not exist, the base is unknown, and the commands print a note. Without the key, there is no such base.",
           "type": "string",
           "minLength": 1
+        },
+        "approval": {
+          "description": "Where an approval can be. `base`: only the base tree holds approvals, as in 0.6. `branch`: an approval commit of an approver in the branch also counts, if it comes before the work that it approves. `branch` needs a full git history (`fetch-depth: 0`) and a not empty `approvers`, and it is an error with `profile = \"strict\"`. Default `base`.",
+          "enum": [
+            "base",
+            "branch"
+          ],
+          "default": "base"
+        },
+        "approvers": {
+          "description": "The author e-mails of the approval commits that count with `approval = \"branch\"`. The compare ignores case. Each item is not empty. Required and not empty when `approval` is `branch`. Default: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
