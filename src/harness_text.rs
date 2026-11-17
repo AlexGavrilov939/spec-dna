@@ -195,15 +195,17 @@ const POST_MORTEM_PARTS: &str = r"When to use: An `incident` has an open follow-
 
 Commands:
 
-1. Run `spec-dna status`. Find the incident.
-2. Run `spec-dna new intent <slug>`. Write `from: <incident id>` in its front matter.
-3. Write an eval file for the incident in the evals folder.
+1. Run `spec-dna status`. It lists each open follow-up of an incident.
+2. Read the incident with `spec-dna show <id>`.
+3. Run `spec-dna new intent <slug>`. Add the line `from: <incident id>` to its front matter, and set `class`.
+4. Write the intent: what the change gives, why now and what is out of scope.
+5. Add an eval for the incident: the file `<id>.json` directly in the evals folder, `[evals] dir`.
 
-Artifact: A new `intent.md` with `from:`, and an eval file.
+Artifact: A new `intent.md` with `from:`, and an eval file for the incident.
 
-Check: `spec-dna check` gives no SD918.
+Check: `spec-dna check` gives no SD918 (no eval for the incident) and no SD101 (an incident id that names no document).
 
-If the check fails: Add or fix the eval file. Run `spec-dna check` again.";
+If the check fails: Add or fix the eval file, or fix the id in `from:`. Run `spec-dna check` again.";
 
 /// The `description` of a skill. It is in each request, so it is one short
 /// sentence. It starts with the scope of D5 and then the trigger of D2. The limits of D6 are 160
