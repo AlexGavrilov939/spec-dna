@@ -758,10 +758,11 @@ mod terminal {
     #[test]
     fn the_terminal_asks_the_parts_and_the_evals() {
         let r = Repo::new();
-        // 1 profile, 2 graph, 3 areas, 4 policy, 5 gate, 6 evidence, 7
+        // 1 profile, 2 graph, 3 areas, 4 policy, 5 gate, 5 approvers, 6 evidence, 7
         // language, 8 mapping (1 root), 9 budgets, 10 adapters, 11 CI, 12
         // level, 12 parts, 13 models, 14 evals, then the confirmation.
         let answers = [
+            "",
             "",
             "",
             "",
@@ -814,6 +815,7 @@ mod terminal {
             "",
             "",
             "",
+            "",
             "none, none, main",
             "none",
             "y",
@@ -830,6 +832,7 @@ mod terminal {
     fn a_bad_parts_word_gives_exit_code_2() {
         let r = Repo::new();
         let answers = [
+            "",
             "",
             "",
             "",

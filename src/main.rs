@@ -82,7 +82,7 @@ use std::process::ExitCode;
 const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "init",
-        "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]",
+        "init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>] [--approver <e-mail>]",
         "Detects the repository, asks at most 14 questions with the detected
 defaults, shows spec-dna.toml and the files to change, and writes them
 after a confirmation. Without a terminal, it uses the defaults. If
@@ -460,6 +460,7 @@ struct Args {
     staged: bool,
     non_interactive: bool,
     answers: Option<String>,
+    approvers: Vec<String>,
     reconfigure: bool,
     dry_run: bool,
     layout: bool,
@@ -542,6 +543,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         staged: false,
         non_interactive: false,
         answers: None,
+        approvers: Vec::new(),
         reconfigure: false,
         dry_run: false,
         layout: false,
@@ -599,6 +601,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--conventions" => a.conventions = Some(value("--conventions")?),
             "--template" => a.template = Some(value("--template")?),
             "--answers" => a.answers = Some(value("--answers")?),
+            "--approver" => a.approvers.push(value("--approver")?),
             "--base" => a.base = Some(value("--base")?),
             "--group" => a.group = Some(value("--group")?),
             "--since" => a.since = Some(value("--since")?),
@@ -868,6 +871,7 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             reconfigure: a.reconfigure,
             dry_run: a.dry_run,
             json: a.json,
+            approvers: a.approvers.clone(),
         },
     )
 }

@@ -279,7 +279,7 @@ fn approve_refuses_an_author_outside_approvers() {
     let (code, out, err) = approve(&r, "Approver@Example.com", &["valve-timeout", "intent"]);
     assert_eq!(code, 0, "{out}{err}");
     // With `approval = "base"`, the merge is the approval: no check of the author.
-    let r = start(&"approval = \"base\"\n".to_string());
+    let r = start("approval = \"base\"\n");
     step(
         &r,
         AGENT,
