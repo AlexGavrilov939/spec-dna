@@ -420,6 +420,10 @@
             "off"
           ]
         },
+        "protect-approvals": {
+          "description": "If true, the harness writes the hook `protect-approvals`: it denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value. `init` writes true for the profile `strict`. Default false.",
+          "type": "boolean"
+        },
         "roles": {
           "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",
           "type": "object",

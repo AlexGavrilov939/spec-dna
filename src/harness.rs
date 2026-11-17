@@ -484,6 +484,15 @@ pub struct Harness {
     /// True: write `REVIEW.md`.
     pub review_md: bool,
     pub protect_tests: Protect,
+    /// `[harness] protect-approvals` (owner review of 0.7.0, item 2). `None`:
+    /// the file has no such key, and the hook is off. `init` keeps the value
+    /// that a file sets, and it writes `true` for `strict` in a file that has
+    /// no key.
+    pub protect_approvals: Option<bool>,
+    /// The folders of the `intent` layer, from the repository root, one for
+    /// each root. `Config::parse` sets them, as it sets `tests`. `parse`
+    /// leaves the list empty, and `toml_section` does not write it.
+    pub intent_dirs: Vec<String>,
     /// The globs of `[evidence] tests`. `Config::parse` sets them, so the
     /// harness of a base commit has the globs of that base. `parse` leaves
     /// the list empty, and `toml_section` does not write it.
@@ -569,6 +578,8 @@ impl Harness {
             skills: Vec::new(),
             review_md: false,
             protect_tests: Protect::Off,
+            protect_approvals: None,
+            intent_dirs: Vec::new(),
             tests: Vec::new(),
         }
     }
@@ -606,6 +617,14 @@ impl Harness {
     /// not `off`, and `[evidence] tests` has a glob.
     pub fn protect_hook_on(&self) -> bool {
         self.level != Level::None && self.protect_tests != Protect::Off && !self.tests.is_empty()
+    }
+
+    /// True if the configuration writes the hook `protect-approvals`: the key
+    /// is `true`, and the project has a folder of the `intent` layer.
+    pub fn approvals_hook_on(&self) -> bool {
+        self.level != Level::None
+            && self.protect_approvals == Some(true)
+            && !self.intent_dirs.is_empty()
     }
 
     /// Reads the `[harness]` table. With level `none`, it still reads the other
@@ -684,6 +703,11 @@ impl Harness {
                     )
                 })?;
             }
+        }
+        match f.take("protect-approvals") {
+            None => {}
+            Some(Toml::Boolean(b)) => h.protect_approvals = Some(*b),
+            Some(_) => return Err("`harness.protect-approvals` must be true or false".into()),
         }
         if let Some(v) = f.take("roles") {
             let roles = v.as_table().ok_or("`harness.roles` must be a table")?;
@@ -798,6 +822,9 @@ impl Harness {
         s += &format!("skills = [{}]\n", skills.join(", "));
         s += &format!("review-md = {}\n", self.review_md);
         s += &format!("protect-tests = {}\n", quote(self.protect_tests.name()));
+        if let Some(b) = self.protect_approvals {
+            s += &format!("protect-approvals = {b}\n");
+        }
         s += "\n[harness.roles]\n";
         for r in Role::ALL.into_iter().filter(|r| self.level.includes(*r)) {
             let c = self.cfg(r);
@@ -1238,7 +1265,7 @@ fn team_page(h: &Harness) -> String {
         }
         s += "\n";
     }
-    if h.context_hook_on() || h.fanout_hook_on() || h.protect_hook_on() {
+    if h.context_hook_on() || h.fanout_hook_on() || h.protect_hook_on() || h.approvals_hook_on() {
         s += "\n## Hooks\n\n";
         if h.context_hook_on() {
             s += "`context-meter` tells an agent the size of its context once at each level. ";
@@ -1254,6 +1281,9 @@ fn team_page(h: &Harness) -> String {
                 "It asks on a branch that starts with `fix/`. "
             };
         }
+        if h.approvals_hook_on() {
+            s += "`protect-approvals` denies a call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to `accepted` or `approved`. Only a person approves. ";
+        }
         s += &format!(
             "Each teammate needs spec-dna {} or later on `PATH`. Without it, the hooks do nothing.\n",
             hooks_version(h)
@@ -1265,9 +1295,12 @@ fn team_page(h: &Harness) -> String {
 }
 
 /// The first version of spec-dna that has each hook that the configuration
-/// writes: `protect-tests` is new in 0.6.0, the other hooks are in 0.5.0.
+/// writes: `protect-approvals` is new in 0.7.0, `protect-tests` is new in
+/// 0.6.0, the other hooks are in 0.5.0.
 pub fn hooks_version(h: &Harness) -> &'static str {
-    if h.protect_hook_on() {
+    if h.approvals_hook_on() {
+        "0.7.0"
+    } else if h.protect_hook_on() {
         "0.6.0"
     } else {
         "0.5.0"
@@ -1624,6 +1657,7 @@ pub fn remove_claude_line(text: &str) -> String {
 const CONTEXT_HOOK: &str = "context-meter";
 const FANOUT_HOOK: &str = "fanout-cap";
 const PROTECT_HOOK: &str = "protect-tests";
+const APPROVALS_HOOK: &str = "protect-approvals";
 
 /// One entry that the harness expects in `.claude/settings.json`.
 #[derive(Clone, Debug, PartialEq)]
@@ -1698,6 +1732,16 @@ fn protect_command(h: &Harness) -> String {
     c + " 2>/dev/null || true"
 }
 
+/// The command of the hook `protect-approvals`: one `--intent` for each folder
+/// of the `intent` layer.
+fn approvals_command(h: &Harness) -> String {
+    let mut c = String::from("spec-dna hook protect-approvals");
+    for d in &h.intent_dirs {
+        c += &format!(" --intent {}", shell_quote(d));
+    }
+    c + " 2>/dev/null || true"
+}
+
 fn wants(h: &Harness) -> Vec<Want> {
     let mut w = Vec::new();
     if h.level != Level::None {
@@ -1756,6 +1800,12 @@ fn wants(h: &Harness) -> Vec<Want> {
         matcher: "Edit|Write",
         name: PROTECT_HOOK,
         command: h.protect_hook_on().then(|| protect_command(h)),
+    });
+    w.push(Want::Hook {
+        event: "PreToolUse",
+        matcher: "Bash",
+        name: APPROVALS_HOOK,
+        command: h.approvals_hook_on().then(|| approvals_command(h)),
     });
     w
 }
@@ -2712,11 +2762,13 @@ opus = "xhigh"
         );
         let c =
             crate::config::Config::parse(&format!("{base}[harness]\nlevel = \"full\"\n")).unwrap();
-        // `Config::parse` also sets the test globs.
+        // `Config::parse` also sets the test globs and the folders of the
+        // `intent` layer.
         let mut want = full();
         want.tests = crate::config::DEFAULT_TEST_GLOBS
             .map(str::to_string)
             .to_vec();
+        want.intent_dirs = vec!["docs/intent".to_string()];
         assert_eq!(c.harness, Some(want));
         let e =
             crate::config::Config::parse(&format!("{base}[harness]\nlevel = \"x\"\n")).unwrap_err();
@@ -2772,6 +2824,47 @@ opus = "xhigh"
         h.protect_tests = Protect::Off;
         assert!(team_page(&h).contains("spec-dna 0.5.0 or later"));
         assert!(!team_page(&h).contains("protect-tests"));
+    }
+
+    #[test]
+    fn the_approvals_hook_command_and_its_conditions() {
+        let mut h = lean();
+        h.intent_dirs = vec!["docs/intent".into(), "it's/intent".into()];
+        // Off with no key, and with `false`.
+        assert!(!h.approvals_hook_on());
+        h.protect_approvals = Some(false);
+        assert!(!h.approvals_hook_on());
+        h.protect_approvals = Some(true);
+        assert!(h.approvals_hook_on());
+        assert_eq!(
+            approvals_command(&h),
+            "spec-dna hook protect-approvals --intent 'docs/intent' --intent 'it'\\''s/intent' 2>/dev/null || true"
+        );
+        assert_eq!(hooks_version(&h), "0.7.0");
+        let command = |h: &Harness| {
+            wants(h).into_iter().find_map(|w| match w {
+                Want::Hook {
+                    name: APPROVALS_HOOK,
+                    matcher,
+                    event,
+                    command,
+                } => {
+                    assert_eq!((event, matcher), ("PreToolUse", "Bash"));
+                    Some(command)
+                }
+                _ => None,
+            })
+        };
+        assert!(command(&h).unwrap().is_some());
+        // No folder of the `intent` layer, and level none, give no handler.
+        let mut none = h.clone();
+        none.intent_dirs.clear();
+        assert_eq!(command(&none), Some(None));
+        let mut none = h.clone();
+        none.level = Level::None;
+        assert_eq!(command(&none), Some(None));
+        assert!(team_page(&h).contains("`protect-approvals` denies a call"));
+        assert!(!team_page(&none).contains("protect-approvals"));
     }
 
     #[test]

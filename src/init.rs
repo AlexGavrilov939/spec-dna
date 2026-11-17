@@ -670,6 +670,18 @@ fn ask_approvers(plan: &mut Plan, io: &mut Ask) -> Result<(), String> {
     Ok(())
 }
 
+/// `strict` gets `[harness] protect-approvals = true` in a file that has no
+/// such key, so the profile has no hidden effect (ADR 0017). A file that has
+/// the key keeps its value, and the level `none` writes no key.
+fn settle_approvals_hook(plan: &mut Plan) {
+    if plan.profile == Profile::Strict
+        && plan.harness.level != Level::None
+        && plan.harness.protect_approvals.is_none()
+    {
+        plan.harness.protect_approvals = Some(true);
+    }
+}
+
 /// The types that a graph has, in the order of `DocType::ALL`.
 fn graph_types(g: &Graph) -> Vec<DocType> {
     DocType::ALL
@@ -3544,12 +3556,14 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_approval(&mut plan);
     settle_parts(&mut plan);
     settle_evals(&mut plan);
+    settle_approvals_hook(&mut plan);
     let mut offered = before.clone();
     settle(&mut offered);
     settle_change(&mut offered);
     settle_approval(&mut offered);
     settle_parts(&mut offered);
     settle_evals(&mut offered);
+    settle_approvals_hook(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
     let parsed = Config::parse(&text)
@@ -3558,6 +3572,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // text, so `check` finds no difference.
     let mut new_harness = plan.harness.clone();
     new_harness.tests = parsed.evidence_tests.clone();
+    // The hook `protect-approvals` reads the folders of the `intent` layer, as
+    // `check` reads them from this text.
+    new_harness.intent_dirs = crate::lifecycle::intent_dirs(&parsed);
     let mut changes = Vec::new();
     let old = std::fs::read_to_string(&cfg_path).ok();
     if old.as_deref() != Some(text.as_str()) {

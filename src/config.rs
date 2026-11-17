@@ -1435,7 +1435,7 @@ impl Config {
             h.tests = evidence_tests.clone();
             h
         });
-        Ok(Config {
+        let mut cfg = Config {
             pin,
             force_lint: false,
             exclude,
@@ -1472,7 +1472,14 @@ impl Config {
             change_approval: change.approval,
             change_approvers: change.approvers,
             change_approvers_line: approvers_line(text),
-        })
+        };
+        // The hook `protect-approvals` reads the folders of the `intent`
+        // layer, so the harness keeps them.
+        let dirs = crate::lifecycle::intent_dirs(&cfg);
+        if let Some(h) = cfg.harness.as_mut() {
+            h.intent_dirs = dirs;
+        }
+        Ok(cfg)
     }
 
     /// True if the primary subtag of `language` is `en`. The word lists of the
@@ -3740,6 +3747,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "efforts",
                 "fanout-cap",
                 "level",
+                "protect-approvals",
                 "protect-tests",
                 "review-md",
                 "roles",
