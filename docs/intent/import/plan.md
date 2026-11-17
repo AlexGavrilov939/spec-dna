@@ -33,8 +33,8 @@ status: approved
 - [x] t13: Read the open changes, the delta specs and the archive of OpenSpec (`hygiene-engineer`; the unit tests come first). Files: `src/import_openspec.rs`. Verify: `cargo test --bin spec-dna import_openspec`.
 - [x] t14: Run the import: the project, the clean tree, D25, the first run of the configuration, the proof and the write (`init-engineer`). Files: `src/import.rs`. Verify: `cargo test --test import_speckit --test import_openspec`.
 - [x] t15: Add `--keep research`, the report, the text output and `--json` (`init-engineer`). Files: `src/import.rs`. Verify: `cargo test --test import_cli`.
-- [ ] t16: Write the section `import`, the summary, the exit codes and the entry of the change (`init-engineer`; `core-engineer` for the summary and the exit codes). Files: `docs/commands.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`.
-- [ ] t17: Add the term import and the owners of the new files (`architect`; the owner accepts). Files: `docs/glossary.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files`.
+- [x] t16: Write the section `import`, the summary, the exit codes and the entry of the change (`init-engineer`; `core-engineer` for the summary and the exit codes). Files: `docs/commands.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`.
+- [x] t17: Add the term import and the owners of the new files (`architect`; the owner accepts). Files: `docs/glossary.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files`.
 
 ## Risks
 

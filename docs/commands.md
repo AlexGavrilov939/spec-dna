@@ -8,6 +8,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | --- | --- | --- |
 | `init` | Examine the repository, ask up to 14 questions, write `spec-dna.toml`, the adapters and the harness | [init](#init) |
 | `upgrade` | Move a project that pins 0.4.0 or later to the version of the binary, and move the pin | [upgrade](#upgrade) |
+| `import` | Move a project of Spec Kit 1.4.1 or OpenSpec 2.0.0 into the layout of spec-dna, with a proof | [import](#import) |
 | `check` | Run the controls of the gate | [check](#check) |
 | `context` | Print the sections that an agent needs | [context](#context) |
 | `show` | Print a document, a section or a requirement | [show](#show) |
@@ -30,6 +31,8 @@ spec-dna init                       # detection, up to 14 questions, a preview, 
 spec-dna init --dry-run             # the preview only (also --non-interactive, --answers <file>, --reconfigure)
 spec-dna upgrade --dry-run --pin-file ../spec-dna-pin.toml   # the diff of the move from 0.5 to 0.6; writes nothing
 spec-dna upgrade --pin-file ../spec-dna-pin.toml             # write the move, then commit it as one change
+spec-dna import speckit --dry-run   # the plan and the proof of the move from Spec Kit; writes nothing (also openspec)
+spec-dna import openspec --skip-open   # the move from OpenSpec, with no open change
 spec-dna new decision pump-choice   # a new document from the template of its type
 spec-dna new intent sensor-timeout --template prd   # the first document of a change
 spec-dna next sensor-timeout        # the checklist to the next gate of a change
@@ -1086,6 +1089,68 @@ These limits apply:
 - `git log --follow` can lose the history of a small change that `upgrade` moves, because the same commit edits its front matter and links. [The upgrade guide](guides/upgrade-0.5.md#commit-the-result) gives the advice.
 - If the first write step fails, empty folders can stay. Git does not show them.
 - `status`, `next` and `finish` read a lifecycle base that pins a version before 0.6.0 with the rules of 0.6. `check` does not.
+
+## import
+
+```text
+spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research]
+```
+
+`import` moves a project of Spec Kit 1.4.1 or OpenSpec 2.0.0 into the layout of spec-dna, in one diff that a person can read. The reasons are in [ADR 0014](adr/0014-import.md). It needs a project that `init` made. Without `spec-dna.toml` it stops with exit code 3 and says `run spec-dna init first`. It reads the committed tree (`HEAD`), and it starts only from a clean tree, also with `--dry-run`. It computes the whole plan in memory, runs the proof, and then writes. It never deletes a file and never commits. A second run after the commit prints `spec-dna import: nothing to change`.
+
+| Option | Meaning |
+| --- | --- |
+| `--dry-run` | Print the same plan and run the same proof, and write nothing. The lines say `would move` and `would write` |
+| `--skip-open` | Do not read an open feature or an open change. They stay in place, and each of their files is `skipped`. An open feature that is still a template then does not stop the import |
+| `--areas <file>` | A TOML table `[areas]` that maps the name of a source folder to one area folder: `"001-photo-albums" = "media"` for Spec Kit, and `auth = "media"` for OpenSpec. The target is `<requirements folder>/<area>/<name>.md`, and the delta lines name the same id. The file stays outside the repository. A pair of areas that differ only in case, also against `areas` of `spec-dna.toml`, is exit code 1 |
+| `--keep none` | The default. An archived change and the extra files of a feature stay in place, and the report counts them |
+| `--keep research` | Move each Markdown file of an archived change, and each extra Markdown file of a feature, with `git mv` to `<research folder>/imported/<source folder>/<file>`, as one `research` document. A file that is not Markdown stays, and the report names it. The layer `research` must exist. Without it, the command stops with exit code 2 and names `spec-dna layer add research --types research`. The moved files stay search hits, but `context` never serves them |
+
+### What moves and what is written
+
+A source that gives one target moves with `git mv`, and the plan then edits the file in place. It keeps its old id as an alias if it was a document before (its root covers it). A target goes to the folder of the layer that holds its type, in the first root that can hold the type. With no such layer, the command stops with exit code 2 and names `spec-dna layer add <layer> --types <type>`. The current truth gets `status: active`.
+
+| Source | Target |
+| --- | --- |
+| Spec Kit: `.specify/memory/constitution.md` | `rules/constitution.md`. `Core Principles` becomes `Rules`, and each principle (a level 3 heading) is a requirement with the slug of its heading as key, with no leading numeral. A file with the template placeholders, or with no `Core Principles` heading, is skipped with its reason |
+| Spec Kit: `specs/<digits>-<name>/` with a `tasks.md` that has a task and no open task (a done feature) | `requirements/<name>.md`, moved from `spec.md`. The `FR-nnn` lines stay as they are, through the legacy key `FR-{n}`. `<digits>-<name>` is an alias. `tasks.md` stays |
+| Spec Kit: a feature with an open task, or with no task line, or with no `tasks.md` (an open feature) | `intent/<name>/intent.md` (status `draft`, class `higher-risk`), `spec.md` and `plan.md`, written. The user stories are the intent, and each other section is a sub-section. Each `FR-nnn` line is a delta line `ADD requirements/<name>#fr-nnn`. A marker `[NEEDS CLARIFICATION: text]` goes from the sentence to an item of `Open questions`. Each task `T001 [P] [US1] text in path` is `- [ ] t001: text. Files: path.`, and the task has no `Verify:` label. The sources stay |
+| OpenSpec: `openspec/specs/<domain>/spec.md` | `requirements/<domain>.md`, moved. Each `### Requirement: <Name>` is a requirement with the slug of the name as key. Each `#### Scenario:` is a nested item below it. `<domain>` is an alias |
+| OpenSpec: `openspec/changes/<name>/` | `intent/<name>/intent.md`, `spec.md` and `plan.md`, written. `Why` is `Why now`, `What Changes` and `Impact` are the intent, and another heading is a sub-section. `design.md` is the section `Design`, and `tasks.md` is `Order` (a task `1.1` is `t1-1`). The delta spec gives `ADD`, `CHANGE` and `REMOVE` lines, with the hash of the imported text, and the section `Scenarios` holds the scenarios, the reason and the migration of a removed block, and a `Purpose`. The sources stay |
+| OpenSpec: a change with `RENAMED`, or with a block that has no base requirement | Stays in place, with a report line |
+| OpenSpec: `archive/`, `config.yaml`, `project.md`, `.openspec.yaml`, `schemas/`; Spec Kit: `.specify/` files | Stay in place. `--keep research` moves the Markdown files of an archive |
+
+The import changes no sentence. A line that the target rejects stops the proof: for example `- **SC-001**: ... MUST ...` gives SD203, because the key is no slug and no legacy key. The message names the line and 2 fixes: add the pattern to `legacy-keys`, or remove the bold key in the source and commit. A link that is broken in the source gives SD102, and it stays broken. The plan edits each relative link of a moved or written file so that it goes to the same file, and each link of a document of the project to a moved file. A link of a file that is no document stays, and the report counts it.
+
+If the plan needs a change of `spec-dna.toml` (the legacy key `FR-{n}`, an area of `--areas`, or a type that the `types` list lacks), the first run writes only that file, because SD503 rejects it together with other files. Commit it in a pull request of its own, and run the command again. An open feature or an open change becomes a draft intent, spec and plan. A draft needs no approval, so it gives no SD910.
+
+### The proof
+
+The proof has 5 steps and stops the write (exit code 1) if one fails. It does not claim byte equality.
+
+1. Each requirement of a source has one target requirement or one target delta line, and the normal forms of the sentences are equal. The normal form joins the white space and removes the link destinations, the alias markers and a marker `[NEEDS CLARIFICATION: ...]`. The proof also checks that the open question holds the text of the marker. It reads the sentence of the target from the parse of the planned text.
+2. Each source file has exactly one state: `moved`, `written`, `kept` or `skipped`. A kept or skipped file is not moved and not written.
+3. Each id of the project before the import resolves to the same document.
+4. `check` on the new tree gives no new error of the codes SD101 to SD106, SD201 to SD204, SD301 to SD306 and SD401 to SD405. The report counts the other new findings, such as SD608.
+5. The plan on the planned tree is empty. A second run writes nothing.
+
+The proof also counts the scenario headings of the source and of the target of an OpenSpec spec, because no hash covers a scenario.
+
+### Output
+
+The text has one line for each source file: `moved <from> -> <to>`, `wrote <to> (from <sources>)`, `kept <path>: <reason>` or `skipped <path>: <reason>` (`would move` and `would write` for `--dry-run`). Then come one line `pair <from> -> <id>` for each requirement, the line `proof: ok (<n> requirements, <n> scenarios, <n> ids)`, the report, `to commit: git add -A -- <paths>` and `to remove the sources: git rm -r -- <paths>`. The output has no diff: run `git diff` after the write. The report says when a moved file has an edit that is too large for a git rename (a similarity below one half). With `strict`, SD608 is an error for each imported active requirement, and with `--skip-open` SD917 and SD921 are errors too. The report names them.
+
+With `--json`, the command prints one object: `version`, `source` (`speckit` or `openspec`), `dry_run`, `config_only`, `sources` (each with `path`, `state`, `to` as a list and `reason`), `pairs` (each with `from` as `<path>:<line>`, `id` and `delta`, the slug of the change or `null`), `proof` (`ok`, `requirements`, `scenarios`, `ids` and `failures`) and `report` (`errors` with `code` and `count`, `outside_links` and `notes`). A run that writes only `spec-dna.toml` has `config_only: true`, and its `sources` and `pairs` are empty. A failed proof prints the object, and the exit code is 1.
+
+An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `specs/` is absent for Spec Kit; `openspec/` is absent, or `openspec/specs/` has files and no domain folder (another major version) for OpenSpec; or a spec file that the import reads has no requirement (no `FR-nnn` line, no `### Requirement:` heading). The message names the file, the rule and the supported version. An `openspec/` folder with no `specs/` is no stop, so a second run after the move of each spec changes nothing.
+
+| Code | Meaning of `import` |
+| --- | --- |
+| 0 | A write, a dry run, or nothing to change |
+| 1 | A tree that is not clean, a stop of the plan (2 sources with one target, a target that exists with other text, a key that cannot be made, a pair of areas), or a failed proof |
+| 2 | Usage error: no source, another source, another value of `--keep`, or a type with no layer (`--keep research` with no layer `research`) |
+| 3 | An unknown layout, no project, a bad `spec-dna.toml` or a bad file of `--areas` |
+| 4 | A git or write error. The message gives the commands that restore the tree |
 
 ## Exit codes
 

@@ -42,6 +42,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | hash | The first 16 hexadecimal digits of SHA-256 over the normalized text of a requirement or a section | | [concepts](concepts.md#ids-and-requirements) |
 | `higher-risk` | A change class with an intent, a spec and a plan. The owner approves the plan | | [change guide](guides/change.md#choose-the-class) |
 | hook | A command that the agent runs on an event, for example before a tool call | | [harness](harness.md#hooks) |
+| import | The command `spec-dna import speckit\|openspec`. It moves a project of Spec Kit or OpenSpec into the layout of spec-dna with `git mv`, proves that each requirement sentence and each id stayed, and never deletes a source file | | [commands](commands.md#import) |
 | incident | A post-mortem record of one event, in `incidents/` | | [types](types.md) |
 | indicator | A measure of one stage of the playbook that `stats --sdlc` prints. It is leading or lagging | | [concepts](concepts.md#the-change-lifecycle) |
 | instruction file | The file that an agent reads at the start of each session, such as `AGENTS.md` or `CLAUDE.md` | | [agents](agents.md) |
