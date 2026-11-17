@@ -1512,3 +1512,48 @@ fn finish_in_the_branch_keeps_the_approval_of_a_deleted_artifact() {
     assert!(found.iter().all(|(_, n)| *n != 9), "{out}");
     assert_eq!(found, want(&[]), "{out}");
 }
+
+// The git access of the walk
+
+#[test]
+fn the_walk_runs_the_same_number_of_git_processes_for_each_branch() {
+    // A fixed number of processes: the commits of the branch do not count.
+    // The trace of git lists each process that `check` starts.
+    let count = |commits: usize| {
+        let r = start_branch();
+        step_intent_draft(&r);
+        for i in 0..commits {
+            step(
+                &r,
+                AGENT,
+                "edit",
+                &[("README.md", &format!("# Valves {i}\n"))],
+            );
+        }
+        let trace = r.dir.join("trace.json");
+        let (code, out, err) = r.run_env(
+            &["check", "--no-cache"],
+            &[("GIT_TRACE2_EVENT", trace.to_str().unwrap())],
+            &[],
+        );
+        assert!(code == 0 || code == 1, "{out}{err}");
+        let text = std::fs::read_to_string(&trace).unwrap();
+        let all = text
+            .lines()
+            .filter(|l| l.contains("\"event\":\"start\""))
+            .count();
+        let diff_tree = text
+            .lines()
+            .filter(|l| l.contains("\"event\":\"start\"") && l.contains("\"diff-tree\""))
+            .count();
+        (all, diff_tree)
+    };
+    let (few, few_diff_tree) = count(3);
+    let (many, many_diff_tree) = count(30);
+    assert_eq!(few_diff_tree, 1);
+    assert_eq!(many_diff_tree, 1);
+    assert_eq!(
+        few, many,
+        "the number of git processes depends on the commits"
+    );
+}
