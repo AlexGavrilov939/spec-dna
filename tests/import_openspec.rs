@@ -349,3 +349,14 @@ fn the_report_says_when_the_edit_of_a_moved_domain_spec_is_too_large_for_a_git_r
         );
     }
 }
+
+#[test]
+fn a_link_of_a_proposal_to_a_moved_spec_goes_to_the_target() {
+    let repo = imported();
+    let t = repo.read("docs/intent/add-two-factor/intent.md");
+    assert!(
+        t.contains("[the auth spec](../../requirements/auth.md)"),
+        "{t}"
+    );
+    assert!(t.contains("[design](plan.md)"), "{t}");
+}

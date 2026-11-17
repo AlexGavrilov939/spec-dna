@@ -104,8 +104,8 @@ struct Block {
     scenarios: Vec<(String, String)>,
 }
 
-/// The requirement blocks of the headings at `level`, from heading `from` to
-/// the end of its tree.
+/// The requirement blocks of a spec: each heading `### Requirement: <Name>`
+/// with its sentence and its sub-sections.
 fn blocks(l: &Lines, path: &str) -> Result<Vec<Block>, Fatal> {
     let mut out = Vec::new();
     for (i, h) in l.headings.iter().enumerate() {

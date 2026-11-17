@@ -246,7 +246,7 @@ pub const SK_SPEC_3: &str = "# Feature Specification: Album export
 
 ### User Story 1 - Export an album (Priority: P1)
 
-A person downloads an album as one archive.
+A person downloads an album as one archive. It builds on [the albums](../001-photo-albums/spec.md).
 
 ## Requirements *(mandatory)*
 
@@ -402,7 +402,7 @@ Passwords alone are weak.
 
 ## Impact
 
-Mobile clients need an update. See the [design](./design.md).
+Mobile clients need an update. See the [design](./design.md) and [the auth spec](../../specs/auth/spec.md).
 ";
 
 pub const OS_DESIGN_2FA: &str = "## Context

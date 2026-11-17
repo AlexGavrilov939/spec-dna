@@ -117,7 +117,17 @@ pub fn prove(
         files: &planned.files,
         read: &read,
     };
-    let again = replan(&tree2)?;
+    let again = match replan(&tree2) {
+        Ok(p) => p,
+        // A stop of the plan on the planned tree is a failure of step 5.
+        Err(Fatal::Refused(m)) => {
+            proof.failures.push(format!(
+                "a second run would stop, so the plan is not stable: {m}"
+            ));
+            return Ok(proof);
+        }
+        Err(e) => return Err(e),
+    };
     if !again.is_empty() {
         let mut paths = again.written_paths();
         if again.config.changed() {
@@ -654,5 +664,23 @@ mod tests {
         let bad = run(&mk("- none."), &files);
         let f = bad.failures.join("\n");
         assert!(f.contains("which formats?"), "{f}");
+    }
+
+    #[test]
+    fn a_stop_of_the_plan_on_the_planned_tree_is_a_failure_of_step_5() {
+        let plan = moved_plan(&planned_text());
+        let t = tree(&[("src/feature.md", SOURCE)]);
+        let p = t
+            .with(|t| {
+                prove(t, &plan, &fin(), &|_| {
+                    Err(Fatal::Refused("a target exists with other text".into()))
+                })
+            })
+            .unwrap();
+        let f = p.failures.join("\n");
+        assert!(
+            f.contains("second run would stop") && f.contains("other text"),
+            "{f}"
+        );
     }
 }

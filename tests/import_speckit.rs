@@ -439,3 +439,17 @@ fn git_still_sees_a_rename_for_each_moved_file() {
         );
     }
 }
+
+#[test]
+fn a_link_of_a_written_source_to_a_moved_file_goes_to_the_target_and_a_second_run_is_stable() {
+    let repo = imported();
+    let t = repo.read("docs/intent/album-export/intent.md");
+    assert!(
+        t.contains("[the albums](../../requirements/photo-albums.md)"),
+        "{t}"
+    );
+    repo.commit("import");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.trim(), "spec-dna import: nothing to change");
+}

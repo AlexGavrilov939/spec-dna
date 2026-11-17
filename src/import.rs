@@ -67,7 +67,7 @@ pub struct PlanOpts {
     pub areas: Vec<(String, String)>,
 }
 
-/// The plan, and the text of the final configuration.
+/// The plan, and the final configuration.
 pub struct Planned {
     pub plan: Plan,
     pub fin: Config,

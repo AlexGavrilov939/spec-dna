@@ -15,7 +15,7 @@ use crate::frontmatter;
 use crate::hash::nfc;
 use crate::model::{Corpus, DocType, is_doc_path, root_doc_id};
 use crate::mv::{self, add_aliases, rewrite_links};
-use crate::parse::parse;
+use crate::parse::{parse, strip_link_destinations};
 use crate::repo::Fatal;
 use crate::upgrade_docs::Tree;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -215,8 +215,9 @@ pub struct Planned {
 
 pub const CONFIG_PATH: &str = "spec-dna.toml";
 
-/// The planned tree. `whole` is false for a first run that writes only the
-/// file `spec-dna.toml`: then no move and no write of a document counts.
+/// The planned tree: the end state of the plan, with the new configuration and
+/// each move and write. The proof reads it also for a first run that writes
+/// only `spec-dna.toml`, because the second run then writes the rest.
 pub fn apply(tree: &Tree, plan: &Plan) -> Planned {
     let moved: HashMap<&str, &str> = plan
         .moves
@@ -897,9 +898,12 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
             }
             None if exists => {
                 let have = (tree.read)(std::slice::from_ref(&t.path))?;
-                let same = have
-                    .get(&t.path)
-                    .is_some_and(|b| String::from_utf8_lossy(b) == planned);
+                // The compare has no link destination: a link to a source that
+                // moved is another path when the plan runs on the planned tree.
+                let same = have.get(&t.path).is_some_and(|b| {
+                    strip_link_destinations(&String::from_utf8_lossy(b))
+                        == strip_link_destinations(&planned)
+                });
                 if !same {
                     return Err(stop(format!(
                         "`{}` exists with other text than the plan writes from `{}`. If the import is complete, remove the sources with `git rm -r -- {}` and commit; else move or remove `{}`, commit, then run import again",
