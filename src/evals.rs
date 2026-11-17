@@ -6,6 +6,7 @@
 //! function can read a working tree or a commit.
 
 use crate::config::Evals;
+use crate::harness::Skill;
 use crate::json::{self, Value};
 
 /// The most bytes of an eval file.
@@ -20,7 +21,7 @@ pub const RESULTS: &str = "results";
 pub const CHECK_FILE: &str = "check.sh";
 
 /// The keys of an eval file, in the order of the validator.
-const KEYS: [&str; 10] = [
+const KEYS: [&str; 11] = [
     "id",
     "task",
     "fixture",
@@ -30,6 +31,7 @@ const KEYS: [&str; 10] = [
     "max-budget-usd",
     "runs",
     "pass-at",
+    "skill",
     "checks",
 ];
 
@@ -53,6 +55,9 @@ pub struct Eval {
     pub max_budget_usd: f64,
     pub runs: u32,
     pub pass_at: u32,
+    /// The skill of the pack that the eval measures (`--ab`), if the file
+    /// names one.
+    pub skill: Option<String>,
     pub checks: Vec<Check>,
 }
 
@@ -281,6 +286,21 @@ pub fn parse_eval(
         },
     };
 
+    let skill = match field(fields, "skill") {
+        None => None,
+        Some(Value::Str(s)) if Skill::from_key(s).is_some() => Some(s.clone()),
+        Some(Value::Str(_)) => {
+            return err(
+                "skill",
+                format!(
+                    "`skill` must name a skill of the pack; use {}",
+                    crate::harness::skill_keys()
+                ),
+            );
+        }
+        Some(_) => return err("skill", "`skill` must be a string"),
+    };
+
     let checks = match field(fields, "checks") {
         None => return err("checks", "`checks` is required"),
         Some(Value::Arr(items)) if items.is_empty() => {
@@ -300,6 +320,7 @@ pub fn parse_eval(
         max_budget_usd,
         runs,
         pass_at,
+        skill,
         checks,
     })
 }
@@ -451,6 +472,32 @@ mod tests {
         assert_eq!((e.max_turns, e.runs, e.pass_at), (7, 4, 2));
         assert_eq!(e.max_budget_usd, 2.5);
         assert_eq!(e.checks[1].name, "b");
+    }
+
+    #[test]
+    fn the_key_skill_names_a_skill_of_the_pack() {
+        assert_eq!(parse(GOOD).unwrap().skill, None);
+        let e = parse(&with(
+            "\"max-budget-usd\"",
+            "\"skill\":\"write-plan\",\"max-budget-usd\"",
+        ))
+        .unwrap();
+        assert_eq!(e.skill.as_deref(), Some("write-plan"));
+        for bad in [
+            "\"intent\"",
+            "\"spec-dna-tdd\"",
+            "\"agents-line\"",
+            "\"\"",
+            "1",
+            "[]",
+        ] {
+            let text = with(
+                "\"max-budget-usd\"",
+                &format!("\"skill\":{bad},\"max-budget-usd\""),
+            );
+            let e = parse(&text).expect_err(&text);
+            assert_eq!(e.key, "skill", "{bad}");
+        }
     }
 
     #[test]

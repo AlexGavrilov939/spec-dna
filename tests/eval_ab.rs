@@ -1,0 +1,940 @@
+//! Tests of `spec-dna eval run --ab` and `spec-dna eval verdict` (ADR 0016,
+//! 0.7.0 slice 5). A stub `claude` replaces the real program, so no test calls
+//! the network or spends money. Each test uses a temporary repository and a
+//! temporary `TMPDIR`. No test reads or writes a file of this repository.
+//!
+//! The stub appends one record to `$STUB_DIR/log` for each call: the
+//! arguments, the files of `.claude/` in its folder and the text of the
+//! instruction files. The file `$STUB_DIR/modes` has one line for each call
+//! (`ok` if the line is absent): the way that the call ends. `STUB_PASS`
+//! selects the arm that gets the edit that the check wants.
+#![cfg(unix)]
+
+mod common;
+
+use common::{Repo, VERSION, path_with, stub_bin};
+use std::fs;
+use std::path::PathBuf;
+
+const STUB: &str = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.325 (Claude Code)"; exit 0; fi
+n=$(cat "$STUB_DIR/n" 2>/dev/null || echo 0)
+n=$((n+1))
+echo "$n" > "$STUB_DIR/n"
+{
+    echo "CALL $n"
+    for a in "$@"; do echo "ARG $a"; done
+    find .claude -type f 2>/dev/null | sort | sed 's/^/FILE /'
+    for f in AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md; do
+        [ -f "$f" ] && sed "s|^|TEXT $f: |" "$f"
+    done
+    [ -f spec-dna.toml ] && sed 's/^/TOML /' spec-dna.toml
+    echo '---'
+} >> "$STUB_DIR/log"
+mode=$(sed -n "${n}p" "$STUB_DIR/modes" 2>/dev/null)
+[ -n "$mode" ] || mode=ok
+refuse() {
+    printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":%s,"result":"%s","total_cost_usd":%s}\n' "$1" "$2" "${STUB_REFUSED_COST:-0.5}"
+    exit 1
+}
+case "$mode" in
+    401) refuse 401 "Failed to authenticate. API Error: 401 Invalid authentication credentials" ;;
+    403) refuse 403 "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare" ;;
+    429) refuse 429 "API Error: 429 Rate limit reached for requests" ;;
+    503) refuse 503 "API Error: 503 Service Unavailable" ;;
+    cf) printf '<title>Attention Required! | Cloudflare</title>\n'; exit 1 ;;
+    turns)
+        printf '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Reached max turns","total_cost_usd":0.1}\n'
+        exit 1 ;;
+    softlimit)
+        printf '{"type":"result","subtype":"success","is_error":false,"result":"You hit the rate limit of the plan","total_cost_usd":0.1}\n'
+        exit 0 ;;
+    long429)
+        pad=$(printf 'x%.0s' $(seq 1 700))
+        printf '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 429 %s","total_cost_usd":0.1}\n' "$pad"
+        exit 1 ;;
+esac
+pass=0
+case "$STUB_PASS" in
+    skill) [ -f ".claude/skills/spec-dna-$STUB_SKILL/SKILL.md" ] && pass=1 ;;
+    noskill) [ -f ".claude/skills/spec-dna-$STUB_SKILL/SKILL.md" ] || pass=1 ;;
+    line) grep -q 'spec-dna context' AGENTS.md 2>/dev/null && pass=1 ;;
+    none) ;;
+    *) pass=1 ;;
+esac
+[ "$pass" = 1 ] && echo 'status: done' > notes.txt
+printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"modelUsage":{"claude-test-1":{}},"result":"ok"}\n' "${STUB_COST:-0.1}"
+"#;
+
+const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
+
+/// The 5 skills that a discipline names, with the `agents-line` evals.
+const DISCIPLINED: [&str; 5] = ["tdd", "debug", "verify", "review", "execute"];
+
+fn pack_eval(id: &str, skill: &str, runs: u32) -> String {
+    format!(
+        "{{\"id\":\"{id}\",\"skill\":\"{skill}\",\"task\":\"Change draft to done.\",\"fixture\":\"evals/pack/fixtures/{id}\",\"allowed-tools\":[\"Read\",\"Edit\"],\"max-turns\":5,\"max-budget-usd\":1,\"runs\":{runs},\"checks\":[{{\"name\":\"notes-done\",\"run\":\"file_has notes.txt 'status: done'\"}}]}}\n"
+    )
+}
+
+struct Fx {
+    repo: Repo,
+    /// Holds the stub, its logs and the temporary folder of the runner.
+    stubs: Repo,
+}
+
+impl Fx {
+    /// A project with the skills `on` written by `init`, and a pack of 5
+    /// evals for each skill of `packed`, with `runs` runs.
+    fn new(on: &[&str], packed: &[&str], runs: u32) -> Fx {
+        let list: Vec<String> = on.iter().map(|s| format!("\"{s}\"")).collect();
+        let repo = Repo::with_config(&format!(
+            "\n[evals]\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"lean\"\nskills = [{}]\n",
+            list.join(", ")
+        ));
+        repo.write("docs/a.md", "# A\n\nText.\n");
+        repo.commit("start");
+        let (code, out, err) = repo.run(&["init"]);
+        assert_eq!(code, 0, "{out}{err}");
+        repo.write("evals/check.sh", CHECK_SH);
+        for skill in packed {
+            for n in 1..=5 {
+                let id = format!("{skill}-{n}");
+                repo.write(
+                    &format!("evals/pack/{id}.json"),
+                    &pack_eval(&id, skill, runs),
+                );
+                repo.write(
+                    &format!("evals/pack/fixtures/{id}/notes.txt"),
+                    "status: draft\n",
+                );
+                repo.write(
+                    &format!("evals/pack/fixtures/{id}/spec-dna.toml"),
+                    "spec-dna = \"0.0.1\"\n",
+                );
+            }
+        }
+        repo.commit("evals");
+        let stubs = Repo::empty();
+        stub_bin(&stubs.dir.join("bin"), "claude", STUB);
+        fs::create_dir_all(stubs.dir.join("tmp")).unwrap();
+        Fx { repo, stubs }
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.stubs.dir.join(name)
+    }
+
+    fn modes(&self, modes: &[&str]) {
+        fs::write(self.path("modes"), modes.join("\n") + "\n").unwrap();
+    }
+
+    fn run(&self, args: &[&str]) -> (i32, String, String) {
+        self.run_env(args, &[])
+    }
+
+    /// `eval run --ab <args>`, with the stub first on `PATH` and no wait.
+    fn run_env(&self, args: &[&str], extra: &[(&str, &str)]) -> (i32, String, String) {
+        let mut full = vec!["eval", "run", "--ab"];
+        full.extend_from_slice(args);
+        self.raw(&full, extra)
+    }
+
+    fn raw(&self, args: &[&str], extra: &[(&str, &str)]) -> (i32, String, String) {
+        let bin = path_with(&self.path("bin"));
+        let dir = self.stubs.dir.to_string_lossy().into_owned();
+        let tmp = self.path("tmp").to_string_lossy().into_owned();
+        let mut set: Vec<(&str, &str)> = vec![
+            ("PATH", &bin),
+            ("STUB_DIR", &dir),
+            ("TMPDIR", &tmp),
+            ("SPEC_DNA_EVAL_BACKOFF", "0"),
+        ];
+        set.extend_from_slice(extra);
+        self.repo.run_env(args, &set, &[])
+    }
+
+    /// The records of the stub, after the `--version` call.
+    fn calls(&self) -> Vec<Vec<String>> {
+        let text = fs::read_to_string(self.path("log")).unwrap_or_default();
+        let mut calls = Vec::new();
+        let mut cur = Vec::new();
+        for line in text.lines() {
+            if line == "---" {
+                calls.push(std::mem::take(&mut cur));
+            } else {
+                cur.push(line.to_string());
+            }
+        }
+        calls
+    }
+
+    /// The arguments of call `n` (0-based), without the prefix `ARG `.
+    fn args(&self, n: usize) -> Vec<String> {
+        self.calls()[n]
+            .iter()
+            .filter_map(|l| l.strip_prefix("ARG ").map(str::to_string))
+            .collect()
+    }
+
+    fn has_file(&self, n: usize, file: &str) -> bool {
+        self.calls()[n].iter().any(|l| l == &format!("FILE {file}"))
+    }
+
+    fn text(&self, n: usize, file: &str) -> String {
+        let prefix = format!("TEXT {file}: ");
+        self.calls()[n]
+            .iter()
+            .filter_map(|l| l.strip_prefix(&prefix))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn results(&self) -> Vec<String> {
+        let dir = self.repo.dir.join("evals/results");
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|d| {
+                d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    fn assert_clean(&self) {
+        let left: Vec<_> = fs::read_dir(self.path("tmp"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(left.is_empty(), "the runner left {left:?}");
+    }
+}
+
+fn skill_path(name: &str) -> String {
+    format!(".claude/skills/spec-dna-{name}/SKILL.md")
+}
+
+/// The part of a compact JSON text between `"key":` and the next `,"`, for a
+/// number or a string at the first place of the key.
+fn field<'a>(json: &'a str, key: &str) -> &'a str {
+    let at = json
+        .find(&format!("\"{key}\":"))
+        .unwrap_or_else(|| panic!("no key {key} in {json}"));
+    let rest = &json[at + key.len() + 3..];
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    &rest[..end]
+}
+
+// The usage errors.
+
+#[test]
+fn a_target_is_required_and_only_one_is_allowed() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    for args in [
+        vec![],
+        vec!["tdd", "debug"],
+        vec!["nonsense"],
+        vec!["intent"],
+        vec!["spec-dna"],
+    ] {
+        let (code, _, err) = fx.run(&args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+        assert!(err.contains("target"), "{args:?}: {err}");
+        assert!(err.contains("Run `spec-dna --help` for usage."), "{err}");
+    }
+    assert!(fx.calls().is_empty(), "no process may start");
+}
+
+#[test]
+fn min_pass_rate_and_ab_outside_eval_run_are_usage_errors() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, _, err) = fx.run(&["tdd", "--min-pass-rate", "0.5"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--min-pass-rate"), "{err}");
+    let (code, _, err) = fx.raw(&["check", "--ab"], &[]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--ab is an option of `eval run`"), "{err}");
+    let (code, _, err) = fx.raw(&["eval", "verdict", "--ab"], &[]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn the_backoff_variable_is_checked_before_any_run() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    for bad in ["", "abc", "-1", "3601", "1.5"] {
+        let (code, _, err) = fx.run_env(
+            &["tdd", "--max-total-usd", "100"],
+            &[("SPEC_DNA_EVAL_BACKOFF", bad)],
+        );
+        assert_eq!(code, 2, "{bad}: {err}");
+        assert!(err.contains("SPEC_DNA_EVAL_BACKOFF"), "{err}");
+    }
+    assert!(fx.calls().is_empty(), "no process may start");
+    let (code, out, err) = fx.run_env(&["tdd", "--dry-run"], &[("SPEC_DNA_EVAL_BACKOFF", "3600")]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+// The estimate and the cap.
+
+#[test]
+fn a_dry_run_prints_the_pairs_and_the_estimate_and_starts_nothing() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    let (code, out, err) = fx.run(&["tdd", "--dry-run", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with(
+            "eval run --ab tdd (dry run): 5 evals, 40 runs, estimate 40.00 USD, cap 100.00 USD\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("tdd-1: 4 runs, max-budget-usd 1.00, estimate 8.00 USD\n"),
+        "{out}"
+    );
+    assert!(fx.calls().is_empty());
+    assert!(fx.results().is_empty(), "a dry run writes no file");
+    let (code, out, err) = fx.run(&["tdd", "--dry-run", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for part in [
+        "\"dry_run\":true",
+        "\"target\":\"tdd\"",
+        "\"estimate_usd\":40",
+        "\"runs\":40",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    // `--runs` replaces the runs of each eval.
+    let (code, out, _) = fx.run(&["tdd", "--dry-run", "--runs", "2", "--max-total-usd", "100"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("5 evals, 20 runs, estimate 20.00 USD"),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_estimate_above_the_cap_gives_exit_code_3_and_no_process() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    // The default cap is 20, and the estimate is 40.
+    let (code, out, err) = fx.run(&["tdd"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("estimate 40.00 USD"), "{err}");
+    assert!(fx.calls().is_empty());
+    let (code, _, err) = fx.run(&["tdd", "--dry-run"]);
+    assert_eq!(code, 3, "{err}");
+}
+
+#[test]
+fn the_spend_above_the_cap_stops_the_run_and_writes_the_partial_result() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 2);
+    // 20 runs with a budget of 1 USD: the estimate is 20 USD. Each run reports
+    // 2 USD, so the spend passes the cap of 20.5 USD after 11 runs.
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "20.5", "--json"],
+        &[("STUB_COST", "2")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(out.contains("\"stopped\":\"max-total-usd\""), "{out}");
+    assert!(fx.calls().len() < 20, "the run must stop early");
+    assert_eq!(fx.results().len(), 1, "the partial result is written");
+    // No verdict for an incomplete skill.
+    assert!(out.contains("\"verdict\":null"), "{out}");
+    fx.assert_clean();
+}
+
+// The arms.
+
+#[test]
+fn the_arm_with_writes_the_skill_folder_also_when_the_skill_is_off() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    assert!(!fx.repo.dir.join(skill_path("tdd")).exists());
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10, "5 evals x 1 run x 2 arms");
+    // The first arm of run 1 is `with`, and the second is `without`.
+    assert!(fx.has_file(0, &skill_path("tdd")));
+    assert!(!fx.has_file(1, &skill_path("tdd")));
+    // The working tree never changes.
+    assert!(!fx.repo.dir.join(skill_path("tdd")).exists());
+    assert!(
+        fx.repo
+            .git_out(&["status", "--porcelain"])
+            .contains("evals/results")
+    );
+    fx.assert_clean();
+}
+
+#[test]
+fn the_skill_file_of_the_arm_with_holds_the_body_of_skill_show() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The stub copies the file into its log through a hook: read it from a run.
+    let mut stub = STUB.to_string();
+    stub = stub.replace(
+        "    echo '---'\n} >>",
+        "    [ -f .claude/skills/spec-dna-tdd/SKILL.md ] && sed 's|^|SKILL |' .claude/skills/spec-dna-tdd/SKILL.md\n    echo '---'\n} >>",
+    );
+    stub_bin(&fx.stubs.dir.join("bin"), "claude", &stub);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, shown, _) = fx.raw(&["skill", "show", "tdd"], &[]);
+    let call = fx.calls()[0].clone();
+    let skill: Vec<&str> = call
+        .iter()
+        .filter_map(|l| l.strip_prefix("SKILL "))
+        .collect();
+    let text = skill.join("\n");
+    assert!(
+        text.starts_with("---\nname: spec-dna-tdd\ndescription: "),
+        "{text}"
+    );
+    assert!(text.contains(shown.trim_matches('\n')), "{text}");
+}
+
+#[test]
+fn the_arm_without_has_no_skill_no_discipline_and_denies_the_command() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 2);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Run 1: `with` first. Run 2: `without` first.
+    let with = 0;
+    let without = 1;
+    let file = skill_path("tdd");
+    assert!(fx.has_file(with, &file));
+    assert!(!fx.has_file(without, &file));
+    // The line of `AGENTS.md` and of `CLAUDE.md` names the discipline in `with` only.
+    for f in ["AGENTS.md", "CLAUDE.md"] {
+        assert!(fx.text(with, f).contains("test first (tdd)"), "{f}");
+        let t = fx.text(without, f);
+        assert!(!t.contains("(tdd)"), "{f}: {t}");
+        assert!(!t.contains("test first"), "{f}: {t}");
+        // The other disciplines stay, and the marker is a well-formed line.
+        assert!(t.contains("cause first (debug)"), "{f}: {t}");
+        assert!(t.contains("<!-- spec-dna v"), "{f}: {t}");
+    }
+    // The adapter skill loses the bullet of the discipline, and no other one.
+    let adapter = ".claude/skills/spec-dna/SKILL.md";
+    assert!(fx.text(with, adapter).contains("- Test first:"));
+    let t = fx.text(without, adapter);
+    assert!(!t.contains("- Test first:"), "{t}");
+    assert!(!t.contains("(`tdd`)"), "{t}");
+    assert!(t.contains("- Cause first:"), "{t}");
+    // The denied command goes after the place of `--allowedTools`.
+    let want = [
+        "-p",
+        "Change draft to done.",
+        "--allowedTools",
+        "Read,Edit",
+        "--disallowedTools",
+        "Bash(spec-dna skill:*)",
+        "--output-format",
+        "json",
+        "--max-turns",
+        "5",
+        "--max-budget-usd",
+        "1",
+        "--permission-mode",
+        "dontAsk",
+    ];
+    assert_eq!(fx.args(without), want);
+    let mut with_args: Vec<String> = want.iter().map(ToString::to_string).collect();
+    with_args.drain(4..6);
+    assert_eq!(fx.args(with), with_args, "`with` denies nothing");
+    fx.assert_clean();
+}
+
+#[test]
+fn the_arm_without_keeps_a_skill_that_the_project_has_off_and_removes_a_skill_that_it_has_on() {
+    // `tdd` is on in the project: `without` removes its file, `with` keeps it.
+    let fx = Fx::new(&["brainstorm", "tdd"], &["tdd"], 1);
+    assert!(fx.repo.dir.join(skill_path("tdd")).is_file());
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(fx.has_file(0, &skill_path("tdd")));
+    assert!(!fx.has_file(1, &skill_path("tdd")));
+    // Another skill file stays in both arms.
+    assert!(fx.has_file(0, &skill_path("brainstorm")));
+    assert!(fx.has_file(1, &skill_path("brainstorm")));
+}
+
+#[test]
+fn the_arm_without_of_a_skill_with_no_discipline_changes_no_line() {
+    let fx = Fx::new(&["brainstorm"], &["specify"], 1);
+    let (code, out, err) = fx.run(&["specify", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(fx.has_file(0, &skill_path("specify")));
+    assert!(!fx.has_file(1, &skill_path("specify")));
+    assert_eq!(fx.text(0, "AGENTS.md"), fx.text(1, "AGENTS.md"));
+    assert_eq!(
+        fx.text(0, ".claude/skills/spec-dna/SKILL.md"),
+        fx.text(1, ".claude/skills/spec-dna/SKILL.md")
+    );
+}
+
+#[test]
+fn the_arm_without_of_write_plan_drops_the_replace_rule() {
+    let fx = Fx::new(&["brainstorm"], &["write-plan"], 1);
+    let (code, out, err) = fx.run(&["write-plan", "--max-total-usd", "100", "--runs", "1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let adapter = ".claude/skills/spec-dna/SKILL.md";
+    assert!(fx.text(0, adapter).contains("`write-plan`"));
+    assert!(!fx.text(1, adapter).contains("write-plan"));
+}
+
+#[test]
+fn the_pairs_alternate_the_first_arm_and_the_copy_has_the_pin_of_the_binary() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 3);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = skill_path("tdd");
+    // For each eval: run 1 with first, run 2 without first, run 3 with first.
+    let order: Vec<bool> = (0..fx.calls().len())
+        .map(|n| fx.has_file(n, &file))
+        .collect();
+    let one_eval = [true, false, false, true, true, false];
+    for chunk in order.chunks(6) {
+        assert_eq!(chunk, one_eval);
+    }
+    // The fixture pins 0.0.1, and the copy holds the version of the binary.
+    let toml = fx.calls()[0]
+        .iter()
+        .filter_map(|l| l.strip_prefix("TOML "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(toml, format!("spec-dna = \"{VERSION}\""));
+}
+
+#[test]
+fn the_target_agents_line_runs_5_evals_with_no_skill_folder_in_each_arm() {
+    let fx = Fx::new(&["brainstorm", "tdd"], &DISCIPLINED, 1);
+    let (code, out, err) = fx.run(&["agents-line", "--dry-run", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("eval run --ab agents-line (dry run): 5 evals, 10 runs"),
+        "{out}"
+    );
+    for id in ["tdd-1", "debug-1", "verify-1", "review-1", "execute-1"] {
+        assert!(out.contains(&format!("{id}: 1 runs")), "{id}: {out}");
+    }
+    assert!(!out.contains("tdd-2"), "{out}");
+    let (code, out, err) = fx.run(&["agents-line", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"target\":\"agents-line\""), "{out}");
+    assert!(out.contains("\"name\":\"agents-line\""), "{out}");
+    // No arm has a folder of `.claude/skills/`.
+    for n in 0..fx.calls().len() {
+        assert!(
+            !fx.calls()[n]
+                .iter()
+                .any(|l| l.starts_with("FILE .claude/skills/")),
+            "{:?}",
+            fx.calls()[n]
+        );
+    }
+    // `with` has the line in both files. `without` has no line and denies the command.
+    for f in ["AGENTS.md", "CLAUDE.md"] {
+        assert!(fx.text(0, f).contains("spec-dna context"), "{f}");
+        assert!(!fx.text(1, f).contains("spec-dna context"), "{f}");
+    }
+    assert!(!fx.args(0).contains(&"--disallowedTools".to_string()));
+    let args = fx.args(1);
+    let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
+    assert_eq!(args[at + 1], "Bash(spec-dna skill:*)");
+}
+
+// The result file.
+
+#[test]
+fn the_result_has_the_arms_the_pairs_the_interval_and_the_verdict() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let keys = [
+        "spec_dna",
+        "claude_code",
+        "models",
+        "started",
+        "target",
+        "seed",
+        "resamples",
+        "max_total_usd",
+        "estimate_usd",
+        "spend_usd",
+        "excluded",
+        "stopped",
+        "skills",
+    ];
+    let at: Vec<usize> = keys
+        .iter()
+        .map(|k| {
+            out.find(&format!("\"{k}\":"))
+                .unwrap_or_else(|| panic!("{k}: {out}"))
+        })
+        .collect();
+    assert!(
+        at.windows(2).all(|w| w[0] < w[1]),
+        "the keys keep their order: {out}"
+    );
+    for part in [
+        &format!("\"spec_dna\":\"{VERSION}\""),
+        "\"claude_code\":\"2.1.325\"",
+        "\"models\":[\"claude-test-1\"]",
+        "\"target\":\"tdd\"",
+        "\"seed\":24",
+        "\"resamples\":2000",
+        "\"excluded\":{\"with\":0,\"without\":0}",
+        "\"stopped\":null",
+        "\"name\":\"tdd\"",
+        "\"evals\":5",
+        "\"with\":{\"runs\":20,\"passes\":20,\"pass_rate\":1,",
+        "\"without\":{\"runs\":20,\"passes\":0,\"pass_rate\":0,",
+        "\"verdict\":\"on\"",
+        "\"rule\":1",
+        "\"cost_ratio\":null",
+        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"passed\":true},\"without\":{\"claude_exit\":0,",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    assert!(!out.contains("\"pass_rate\":null,\"passed\""), "{out}");
+    // The top level has no `pass_rate`, so `stats --sdlc` skips the file.
+    let top = &out[..out.find("\"skills\":").unwrap()];
+    assert!(!top.contains("pass_rate"), "{top}");
+    // The file is in `<[evals] dir>/results`, with the name of the start time.
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let name = &names[0];
+    assert!(
+        name.starts_with("skills-") && name.ends_with("Z.json"),
+        "{name}"
+    );
+    let stamp = &name["skills-".len()..name.len() - ".json".len()];
+    assert_eq!(stamp.len(), 16, "{stamp}");
+    assert_eq!(&stamp[8..9], "T");
+    assert!(stamp[..8].bytes().all(|b| b.is_ascii_digit()));
+    // The text is the result, as indented JSON, and has no output of `claude`.
+    let text = fs::read_to_string(fx.repo.dir.join("evals/results").join(name)).unwrap();
+    assert!(text.contains("\n  \"skills\": ["), "{text}");
+    assert!(!text.contains("\"result\""), "no output text");
+    assert!(!text.contains("Change draft"), "no task text");
+    fx.assert_clean();
+}
+
+#[test]
+fn the_verdict_is_off_when_the_skill_makes_it_worse_and_inconclusive_when_nothing_changes() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_PASS", "noskill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"verdict\":\"off\""), "{out}");
+    assert!(out.contains("\"rule\":null"), "{out}");
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"verdict\":\"inconclusive\""), "{out}");
+    assert!(
+        out.contains("\"difference\":{\"value\":0,\"low\":0,\"high\":0}"),
+        "{out}"
+    );
+    assert!(out.contains("\"cost_ratio\":{\"value\":1,"), "{out}");
+}
+
+#[test]
+fn out_replaces_the_folder_of_the_result_and_the_text_output_names_the_verdict() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--out", "evals/out"],
+        &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("eval run --ab tdd: 5 evals, 10 runs, estimate 10.00 USD"),
+        "{out}"
+    );
+    assert!(out.contains("tdd: with 5 of 5 runs passed"), "{out}");
+    assert!(out.contains("verdict on"), "{out}");
+    assert!(out.contains("spend 1.00 USD"), "{out}");
+    assert!(
+        err.contains("eval run: the result is in evals/out/skills-"),
+        "{err}"
+    );
+    assert!(fx.results().is_empty());
+    let n = fs::read_dir(fx.repo.dir.join("evals/out")).unwrap().count();
+    assert_eq!(n, 1);
+    // `--out` cannot be `[evals] dir`.
+    let (code, _, err) = fx.run(&["tdd", "--max-total-usd", "100", "--out", "evals"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn the_target_all_runs_the_skills_of_the_pack_and_not_the_agents_line() {
+    let fx = Fx::new(&["brainstorm"], &["tdd", "debug"], 1);
+    let (code, out, err) = fx.run(&["all", "--dry-run", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("10 evals, 20 runs"), "{out}");
+    let (code, out, err) = fx.run(&["all", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"name\":\"tdd\""), "{out}");
+    assert!(out.contains("\"name\":\"debug\""), "{out}");
+    assert!(!out.contains("agents-line"), "{out}");
+}
+
+#[test]
+fn a_target_with_no_eval_in_the_pack_gives_exit_code_3() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, _, err) = fx.run(&["debug", "--max-total-usd", "100"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("eval pack"), "{err}");
+    // An invalid file of the pack gives exit code 3 too.
+    fx.repo
+        .write("evals/pack/tdd-1.json", "{\"id\":\"tdd-1\"}\n");
+    let (code, _, err) = fx.run(&["tdd", "--max-total-usd", "100"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("evals/pack/tdd-1.json"), "{err}");
+    assert!(fx.calls().is_empty());
+}
+
+// The runs that the API refused.
+
+#[test]
+fn a_refused_attempt_of_each_class_is_retried_and_never_counted() {
+    for mode in ["401", "403", "429", "503", "cf"] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        // The first attempt of the first run is refused. The others work.
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        // 10 counted runs and 1 refused attempt.
+        assert_eq!(fx.calls().len(), 11, "{mode}");
+        assert!(
+            out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+            "{mode}: {out}"
+        );
+        // The retry has the same arm: the first two calls both have the skill.
+        assert!(fx.has_file(0, &skill_path("tdd")), "{mode}");
+        assert!(fx.has_file(1, &skill_path("tdd")), "{mode}");
+        assert!(
+            out.contains("\"with\":{\"runs\":5,\"passes\":5,"),
+            "{mode}: the refused attempt is no run: {out}"
+        );
+        // The pair that was retried counts the excluded attempt.
+        assert!(
+            out.contains("\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":1,\"passed\":true}"),
+            "{mode}: {out}"
+        );
+        // The cost of the arm has the 5 counted runs only. The spend has the
+        // refused attempt too: 10 x 0.1, and 0.5 for a refusal that reports it.
+        let spend = if mode == "cf" { "1" } else { "1.5" };
+        assert_eq!(field(&out, "spend_usd"), spend, "{mode}: {out}");
+        assert!(
+            out.contains("\"with\":{\"runs\":5,\"passes\":5,\"pass_rate\":1,\"cost_usd\":0.5,"),
+            "{mode}: {out}"
+        );
+        fx.assert_clean();
+    }
+}
+
+#[test]
+fn a_run_that_fails_for_another_reason_counts() {
+    // A failed check, a stop by the turns, a short answer about a limit with
+    // exit code 0, and a long error that names 429 are runs.
+    for mode in ["turns", "softlimit", "long429"] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(fx.calls().len(), 10, "{mode}: no retry");
+        assert!(
+            out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+            "{mode}: {out}"
+        );
+    }
+    // A failed check: the edit is not made.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_PASS", "none")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10);
+    assert!(out.contains("\"with\":{\"runs\":5,\"passes\":0,"), "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_refusal_of_the_arm_without_counts_in_its_own_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The second call is the arm `without` of the first pair.
+    fx.modes(&["ok", "429", "503"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 12);
+    assert!(
+        out.contains("\"excluded\":{\"with\":0,\"without\":2}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_back_off_ends_with_api_error_exit_code_3_and_the_partial_result() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // Each attempt is refused. 1 attempt and 6 retries make 7 calls.
+    fx.modes(&["429"; 20]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 7);
+    assert!(out.contains("\"stopped\":\"api-error\""), "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":7,\"without\":0}"),
+        "{out}"
+    );
+    assert!(out.contains("\"verdict\":null"), "{out}");
+    // The charged cost of a refused attempt is in the spend: 7 x 0.5.
+    assert_eq!(field(&out, "spend_usd"), "3.5");
+    assert_eq!(fx.results().len(), 1, "the partial result is written");
+    assert!(err.contains("api-error"), "{err}");
+    fx.assert_clean();
+}
+
+#[test]
+fn the_runner_waits_the_first_wait_before_the_retry() {
+    // The wait of 1 second runs once, so the test stays short. The doubling
+    // of the waits has a unit test in `eval_run.rs`.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["429"]);
+    let start = std::time::Instant::now();
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("SPEC_DNA_EVAL_BACKOFF", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let waited = start.elapsed().as_secs_f64();
+    assert!(waited >= 1.0, "waited {waited} seconds");
+    assert!(err.contains("wait 1 seconds"), "{err}");
+}
+
+// `eval verdict`.
+
+const FILE_ON: &str = "{\"spec_dna\":\"0.7.0\",\"started\":\"2026-11-20T10:00:00Z\",\"stopped\":null,\"skills\":[{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1},{\"name\":\"debug\",\"verdict\":\"off\",\"rule\":null}]}\n";
+
+fn verdicts(out: &str) -> Vec<(String, String, String)> {
+    out.lines()
+        .map(|l| {
+            let mut w = l.splitn(3, ' ');
+            (
+                w.next().unwrap().to_string(),
+                w.next().unwrap_or("").to_string(),
+                w.next().unwrap_or("").trim().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn eval_verdict_prints_unmeasured_for_each_name_when_nothing_is_measured() {
+    let fx = Fx::new(&["brainstorm"], &[], 1);
+    let (code, out, err) = fx.raw(&["eval", "verdict"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let rows = verdicts(&out);
+    let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "brainstorm",
+            "specify",
+            "clarify",
+            "write-plan",
+            "execute",
+            "tdd",
+            "review",
+            "verify",
+            "finish",
+            "debug",
+            "post-mortem",
+            "agents-line"
+        ]
+    );
+    for (name, verdict, source) in rows {
+        assert_eq!(verdict, "unmeasured", "{name}");
+        assert_eq!(source, "-", "{name}");
+    }
+    assert!(fx.calls().is_empty(), "the command starts no agent");
+    let (code, out, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("{\"name\":\"tdd\",\"verdict\":\"unmeasured\",\"source\":null,\"file\":null}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn eval_verdict_reads_the_newest_file_that_holds_each_name() {
+    let fx = Fx::new(&["brainstorm"], &[], 1);
+    fx.repo
+        .write("evals/results/skills-20261120T100000Z.json", FILE_ON);
+    // A newer file holds `debug` only, and a stopped file has no verdict.
+    fx.repo.write(
+        "evals/results/skills-20261121T100000Z.json",
+        "{\"started\":\"2026-11-21T10:00:00Z\",\"stopped\":null,\"skills\":[{\"name\":\"debug\",\"verdict\":\"inconclusive\",\"rule\":null}]}\n",
+    );
+    fx.repo.write(
+        "evals/results/skills-20261122T100000Z.json",
+        "{\"started\":\"2026-11-22T10:00:00Z\",\"stopped\":\"api-error\",\"skills\":[{\"name\":\"tdd\",\"verdict\":null,\"rule\":null},{\"name\":\"debug\",\"verdict\":null,\"rule\":null}]}\n",
+    );
+    // Not a result of `--ab`: no effect.
+    fx.repo.write(
+        "evals/results/eval-20261123T100000Z.json",
+        "{\"pass_rate\":1}\n",
+    );
+    fx.repo
+        .write("evals/results/skills-bad.json", "{ not json\n");
+    let (code, out, err) = fx.raw(&["eval", "verdict"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let rows = verdicts(&out);
+    let get = |n: &str| rows.iter().find(|r| r.0 == n).unwrap().clone();
+    assert_eq!(get("tdd").1, "on");
+    assert_eq!(
+        get("tdd").2,
+        "project evals/results/skills-20261120T100000Z.json"
+    );
+    assert_eq!(get("debug").1, "inconclusive");
+    assert_eq!(
+        get("debug").2,
+        "project evals/results/skills-20261121T100000Z.json"
+    );
+    assert_eq!(get("verify").1, "unmeasured");
+    let (_, json, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
+    assert!(
+        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"project\",\"file\":\"evals/results/skills-20261120T100000Z.json\"}"),
+        "{json}"
+    );
+}
+
+#[test]
+fn eval_verdict_works_with_no_evals_table_and_gives_3_for_a_bad_configuration() {
+    let r = Repo::with_config("\n[[roots]]\npath = \"docs\"\n");
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["eval", "verdict"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("tdd unmeasured -\n"), "{out}");
+    r.write("spec-dna.toml", "this is = not [ toml\n");
+    let (code, _, _) = r.run(&["eval", "verdict"]);
+    assert_eq!(code, 3);
+}
+
+#[test]
+fn eval_without_a_subcommand_names_run_pack_and_verdict() {
+    let fx = Fx::new(&["brainstorm"], &[], 1);
+    let (code, _, err) = fx.raw(&["eval"], &[]);
+    assert_eq!(code, 2);
+    assert!(err.contains("eval run"), "{err}");
+    assert!(err.contains("eval pack"), "{err}");
+    assert!(err.contains("eval verdict"), "{err}");
+}

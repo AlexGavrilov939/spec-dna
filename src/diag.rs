@@ -74,6 +74,7 @@ codes! {
     HarnessMissing = "SD504", "harness-missing", Error, "Run `spec-dna init` to write the harness files. To keep a file of your own at an agent path, rename its agent or set the role to \"none\" in [harness.roles]. For a skill, remove it from `skills` in [harness]. For `REVIEW.md`, set `review-md = false` in [harness].";
     HarnessSettingsInvalid = "SD505", "harness-settings-invalid", Error, "Make .claude/settings.json valid JSON, with the value types that the message names. spec-dna cannot check the harness settings in a file that it cannot read.";
     EvalsInvalid = "SD506", "evals-invalid", Error, "Fix the eval file as the message says. The message names the key of the broken rule. If `check.sh` is absent, add it to [evals] dir. `spec-dna eval run` reads the same files, and it stops with exit code 3 on the same error.";
+    SkillUnproven = "SD507", "skill-unproven", Warning, "Measure the skill with `spec-dna eval pack` and `spec-dna eval run --ab <skill>`, and commit the result file of `<[evals] dir>/results`. `spec-dna eval verdict` prints the verdict of each skill. As an alternative, remove the skill from `skills` in [harness], and run `spec-dna init --reconfigure`.";
     TokenUnresolved = "SD601", "token-unresolved", Warning, "Check the id. A bare token that names no document can be a typo, or plain text such as a ticket number.";
     AnchorMissing = "SD602", "anchor-missing", Warning, "Link to an existing heading anchor or requirement key.";
     CrossRepoUnpinned = "SD603", "cross-repo-unpinned", Warning, "A cross-repository reference resolves only against a pinned index of that repository. spec-dna does not support this yet.";
@@ -181,8 +182,10 @@ mod tests {
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
             assert_eq!(c.is_state(), c.code() == "SD911");
             // Codes from 600 up are warnings. SD702 became an error by a decision at
-            // checkpoint 2.
-            let is_warning = c.code().as_bytes()[2] >= b'6' && c.code() != "SD702";
+            // checkpoint 2. SD507 is a warning, because ADR 0016 says that it is
+            // never an error.
+            let is_warning =
+                (c.code().as_bytes()[2] >= b'6' && c.code() != "SD702") || c.code() == "SD507";
             assert_eq!(
                 is_warning,
                 c.severity() == Severity::Warning,

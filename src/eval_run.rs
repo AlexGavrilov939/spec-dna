@@ -20,7 +20,7 @@ use std::process::{Command, Stdio};
 
 /// The tolerance of a comparison of USD sums. A sum of floating-point costs
 /// such as 3 x 0.1 must not give a false refusal.
-const EPS: f64 = 1e-9;
+pub(crate) const EPS: f64 = 1e-9;
 /// The most bytes of the stdout of `claude` that the runner keeps in memory.
 const MAX_STDOUT: u64 = 16 * 1024 * 1024;
 /// The date of the base commit of each run.
@@ -43,24 +43,29 @@ pub struct Opts {
 
 /// An eval with the values that `eval run` uses: the `--runs` option replaces
 /// the runs of the file, and the pass-at cannot be more than the runs.
-struct Planned {
-    eval: Eval,
-    runs: u32,
-    pass_at: u32,
+pub(crate) struct Planned {
+    pub(crate) eval: Eval,
+    pub(crate) runs: u32,
+    pub(crate) pass_at: u32,
     /// The files of the fixture: the source, and the path in the copy.
-    fixture: Vec<(PathBuf, String)>,
+    pub(crate) fixture: Vec<(PathBuf, String)>,
 }
 
 /// The result of one run.
-struct RunResult {
-    claude_exit: i32,
-    subtype: Option<String>,
+pub(crate) struct RunResult {
+    pub(crate) claude_exit: i32,
+    pub(crate) subtype: Option<String>,
     /// The `total_cost_usd` of `claude`, if it gave one.
-    cost: Option<f64>,
+    pub(crate) cost: Option<f64>,
     /// The cost that the cap counts: the cost, or the budget of the run.
-    charged: f64,
-    checks: Vec<(String, bool)>,
-    passed: bool,
+    pub(crate) charged: f64,
+    pub(crate) checks: Vec<(String, bool)>,
+    pub(crate) passed: bool,
+    /// True if the API refused the attempt (`is_refused`). `eval run` without
+    /// `--ab` ignores it, and counts the run as it is (ADR 0008).
+    pub(crate) refused: bool,
+    /// The names of the models in `modelUsage` of the result of `claude`.
+    pub(crate) models: Vec<String>,
 }
 
 /// The runs of one eval.
@@ -278,7 +283,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         }
     }
     if let Some(dir) = out_dir {
-        let path = write_result(repo, &dir, &report.started, &compact)?;
+        let path = write_result(repo, &dir, "eval", &report.started, &compact)?;
         eprintln!("eval run: the result is in {path}");
     }
     Ok(report.exit_code())
@@ -286,7 +291,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
 
 /// Checks the value of `--out`: a folder below the repository root, and not
 /// `[evals] dir`, because the check SD506 reads each `*.json` file there.
-fn normalize_out(path: &str, dir: &str) -> Result<String, Fatal> {
+pub(crate) fn normalize_out(path: &str, dir: &str) -> Result<String, Fatal> {
     let mut s = path;
     while let Some(rest) = s.strip_prefix("./") {
         s = rest;
@@ -316,7 +321,21 @@ fn normalize_out(path: &str, dir: &str) -> Result<String, Fatal> {
 /// the untracked files that git does not ignore. It returns the evals in the
 /// order of their ids.
 fn load_evals(repo: &Repo, table: &Evals) -> Result<Vec<Eval>, Fatal> {
-    let dir = &table.dir;
+    load_evals_in(repo, table, &table.dir, &|dir| {
+        format!("no eval file in `{dir}`; an eval is the file `{dir}/<id>.json`")
+    })
+}
+
+/// Like `load_evals`, for the files `<folder>/<id>.json`. `none` gives the
+/// message for a folder with no eval. The fixture of an eval is still a
+/// folder under `[evals] dir`.
+pub(crate) fn load_evals_in(
+    repo: &Repo,
+    table: &Evals,
+    folder: &str,
+    none: &dyn Fn(&str) -> String,
+) -> Result<Vec<Eval>, Fatal> {
+    let dir = folder;
     let mut files = repo
         .git
         .list_worktree(&[format!(":(literal){dir}")])
@@ -359,15 +378,13 @@ fn load_evals(repo: &Repo, table: &Evals) -> Result<Vec<Eval>, Fatal> {
         )));
     }
     if evals.is_empty() {
-        return Err(Fatal::Config(format!(
-            "no eval file in `{dir}`; an eval is the file `{dir}/<id>.json`"
-        )));
+        return Err(Fatal::Config(none(dir)));
     }
     evals.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(evals)
 }
 
-fn read_limited(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_limited(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     fs::File::open(path)?.take(limit).read_to_end(&mut buf)?;
     Ok(buf)
@@ -391,7 +408,11 @@ fn select(all: Vec<Eval>, ids: &[String], dir: &str) -> Result<Vec<Eval>, Fatal>
 /// The files that git lists under a pathspec, as a list of copies. A symbolic
 /// link is not copied, and stderr gets a warning. `strip` is the prefix that
 /// the path in the copy does not have.
-fn copy_list(repo: &Repo, spec: &str, strip: &str) -> Result<Vec<(PathBuf, String)>, Fatal> {
+pub(crate) fn copy_list(
+    repo: &Repo,
+    spec: &str,
+    strip: &str,
+) -> Result<Vec<(PathBuf, String)>, Fatal> {
     let mut out = Vec::new();
     let paths = repo
         .git
@@ -421,7 +442,7 @@ fn copy_list(repo: &Repo, spec: &str, strip: &str) -> Result<Vec<(PathBuf, Strin
 /// the files of `.claude/`, but not `.claude/settings.local.json`, which is
 /// the local state of one person. It uses the list of git, so an ignored file
 /// is not copied.
-fn harness_list(repo: &Repo) -> Result<Vec<(PathBuf, String)>, Fatal> {
+pub(crate) fn harness_list(repo: &Repo) -> Result<Vec<(PathBuf, String)>, Fatal> {
     let specs: Vec<String> = ["CLAUDE.md", "AGENTS.md", "REVIEW.md", ".claude"]
         .iter()
         .map(|p| format!(":(literal){p}"))
@@ -493,7 +514,7 @@ fn start_failed(e: &std::io::Error) -> Fatal {
 
 /// Runs `claude --version` once. The version is the first word of stdout if
 /// it has only digits and dots.
-fn claude_version() -> Result<Option<String>, Fatal> {
+pub(crate) fn claude_version() -> Result<Option<String>, Fatal> {
     let out = Command::new("claude")
         .arg("--version")
         .stdin(Stdio::null())
@@ -512,12 +533,12 @@ fn claude_version() -> Result<Option<String>, Fatal> {
 }
 
 /// State that all runs share.
-struct Ctx {
-    harness: Vec<(PathBuf, String)>,
+pub(crate) struct Ctx {
+    pub(crate) harness: Vec<(PathBuf, String)>,
     /// The absolute path of `<dir>/check.sh` of the project.
-    check_sh: PathBuf,
-    isolate: bool,
-    counter: u32,
+    pub(crate) check_sh: PathBuf,
+    pub(crate) isolate: bool,
+    pub(crate) counter: u32,
 }
 
 /// A temporary folder. The drop removes it, also after an error.
@@ -609,10 +630,24 @@ fn copy_files(dir: &Path, files: &[(PathBuf, String)]) -> Result<(), Fatal> {
 
 /// Makes the copy, runs `claude` and the checks, and removes the copy.
 fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
+    one_attempt(ctx, p, &|_| Ok(()), None)
+}
+
+/// One attempt of a run. `edit` changes the copy after the files are copied
+/// and before the base commit (`--ab` uses it for the arm). `deny` is the
+/// value of `--disallowedTools`, which goes after the place of
+/// `--allowedTools`.
+pub(crate) fn one_attempt(
+    ctx: &mut Ctx,
+    p: &Planned,
+    edit: &dyn Fn(&Path) -> Result<(), Fatal>,
+    deny: Option<&str>,
+) -> Result<RunResult, Fatal> {
     let temp = make_temp(&mut ctx.counter)?;
     let dir = temp.0.as_path();
     copy_files(dir, &p.fixture)?;
     copy_files(dir, &ctx.harness)?;
+    edit(dir)?;
     let hooks = dir.join(".git").join("no-hooks");
     let hooks = hooks.to_string_lossy().into_owned();
     git_in(dir, &["init", "-q", "-b", "main"])?;
@@ -647,6 +682,9 @@ fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
         cmd.arg("--allowedTools")
             .arg(p.eval.allowed_tools.join(","));
     }
+    if let Some(d) = deny {
+        cmd.arg("--disallowedTools").arg(d);
+    }
     cmd.args([
         "--output-format",
         "json",
@@ -672,6 +710,8 @@ fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
         .map_err(|e| Fatal::Io(format!("cannot wait for `claude`: {e}")))?;
     let claude_exit = status.code().unwrap_or(-1);
     let (cost, subtype) = read_result(&stdout);
+    let refused = is_refused(claude_exit, &stdout);
+    let models = result_models(&stdout);
 
     let mut checks = Vec::new();
     for c in &p.eval.checks {
@@ -704,6 +744,8 @@ fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
         charged: cost.unwrap_or(p.eval.max_budget_usd),
         checks,
         passed,
+        refused,
+        models,
     })
 }
 
@@ -716,27 +758,27 @@ fn read_capped(mut r: impl Read) -> Vec<u8> {
     buf
 }
 
+/// The object `result` of the output of `claude`: the output if it is one
+/// object, or the last event `result` of a list of events.
+fn result_object(stdout: &[u8]) -> Option<Value> {
+    let text = String::from_utf8_lossy(stdout);
+    let value = json::parse(text.trim()).ok()?;
+    match value {
+        Value::Arr(items) => items
+            .into_iter()
+            .rev()
+            .find(|v| v.get("type").as_str() == Some("result")),
+        v @ Value::Obj(_) => Some(v),
+        _ => None,
+    }
+}
+
 /// Reads `total_cost_usd` and `subtype` of the result of `claude`. The result
 /// is one object, or a list of events with the object `result` at its end.
 /// Nothing else is read.
 fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
-    let text = String::from_utf8_lossy(stdout);
-    let Ok(value) = json::parse(text.trim()) else {
+    let Some(obj) = result_object(stdout) else {
         return (None, None);
-    };
-    let obj = match &value {
-        Value::Arr(items) => {
-            match items
-                .iter()
-                .rev()
-                .find(|v| v.get("type").as_str() == Some("result"))
-            {
-                Some(v) => v,
-                None => return (None, None),
-            }
-        }
-        v @ Value::Obj(_) => v,
-        _ => return (None, None),
     };
     let cost = match obj.get("total_cost_usd") {
         Value::Num(n) if n.is_finite() && *n >= 0.0 => Some(*n),
@@ -752,8 +794,137 @@ fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
     (cost, subtype)
 }
 
+/// The sorted names of the models of `modelUsage` in the result of `claude`.
+/// It reads names only, and a name has at most 64 characters of a safe set.
+fn result_models(stdout: &[u8]) -> Vec<String> {
+    let Some(Value::Obj(fields)) = result_object(stdout).map(|o| o.get("modelUsage").clone())
+    else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = fields
+        .into_iter()
+        .map(|(k, _)| k)
+        .filter(|k| {
+            (1..=64).contains(&k.len())
+                && k.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-:[]/".contains(&b))
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// The most bytes of the text of an answer that is a refusal of the API. A
+/// longer text is an answer of the agent that names a status.
+const REFUSAL_TEXT_MAX: usize = 600;
+
+/// The phrases of a refusal, in lower case.
+const REFUSAL_PHRASES: [&str; 6] = [
+    "rate limit",
+    "usage limit",
+    "overloaded",
+    "failed to authenticate",
+    "attention required",
+    "cloudflare",
+];
+
+/// The rule of the owner for `eval run --ab` (ADR 0016, amendment of
+/// 2026-11-16): the API refused the attempt, so it is no run and no result
+/// counts it. 3 conditions must hold:
+///
+/// 1. `claude` exits with a code other than 0, or the result object has
+///    `"is_error": true`.
+/// 2. The text of the answer (`result`, or the whole output if there is no
+///    result object) has fewer than 600 bytes.
+/// 3. The text has `API Error:` with the status 401, 403, 429 or 500 to 599,
+///    or the word `429`, or one of the phrases of `REFUSAL_PHRASES` in any
+///    case.
+///
+/// A real output looks like this (Claude Code 2.1.x):
+/// `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","total_cost_usd":0.73}`.
+pub(crate) fn is_refused(claude_exit: i32, stdout: &[u8]) -> bool {
+    let obj = result_object(stdout);
+    let is_error = obj.as_ref().is_some_and(|o| o.get("is_error").is_true());
+    if claude_exit == 0 && !is_error {
+        return false;
+    }
+    let text = match obj.as_ref().and_then(|o| o.get("result").as_str()) {
+        Some(t) => t.to_string(),
+        None => String::from_utf8_lossy(stdout).into_owned(),
+    };
+    text.len() < REFUSAL_TEXT_MAX && has_refusal_marker(&text)
+}
+
+/// Condition 3 of `is_refused`.
+fn has_refusal_marker(text: &str) -> bool {
+    const API_ERROR: &str = "API Error:";
+    let mut rest = text;
+    while let Some(at) = rest.find(API_ERROR) {
+        rest = &rest[at + API_ERROR.len()..];
+        let digits: String = rest
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(status) = digits.parse::<u32>()
+            && matches!(status, 401 | 403 | 429 | 500..=599)
+            && digits.len() == 3
+        {
+            return true;
+        }
+    }
+    let bytes = text.as_bytes();
+    let mut from = 0;
+    while let Some(at) = text[from..].find("429") {
+        let (a, b) = (from + at, from + at + 3);
+        let before = a == 0 || !bytes[a - 1].is_ascii_alphanumeric();
+        let after = b >= bytes.len() || !bytes[b].is_ascii_alphanumeric();
+        if before && after {
+            return true;
+        }
+        from = a + 1;
+    }
+    let lower = text.to_ascii_lowercase();
+    REFUSAL_PHRASES.iter().any(|p| lower.contains(p))
+}
+
+/// The number of retries of a refused attempt of `--ab`. The waits are the
+/// first wait, and then 2, 4, 8, 16 and 32 times it.
+pub(crate) const RETRIES: u32 = 6;
+/// The first wait, in seconds, when `SPEC_DNA_EVAL_BACKOFF` is not set. The 6
+/// waits are 60, 120, 240, 480, 960 and 1,920 seconds: 3,780 seconds, about 63
+/// minutes.
+const FIRST_WAIT: u64 = 60;
+const BACKOFF_VAR: &str = "SPEC_DNA_EVAL_BACKOFF";
+
+/// The first wait of the back-off: the value of `SPEC_DNA_EVAL_BACKOFF`, an
+/// integer of seconds from 0 to 3,600, or 60. Another value is a usage error,
+/// and `--ab` reads it before the first run.
+pub(crate) fn first_wait() -> Result<u64, Fatal> {
+    first_wait_of(std::env::var(BACKOFF_VAR).ok().as_deref())
+}
+
+fn first_wait_of(value: Option<&str>) -> Result<u64, Fatal> {
+    let Some(v) = value else {
+        return Ok(FIRST_WAIT);
+    };
+    v.parse::<u64>()
+        .ok()
+        .filter(|n| *n <= 3_600 && v.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or_else(|| {
+            Fatal::Usage(format!(
+                "{BACKOFF_VAR}: `{v}` is not an integer of seconds from 0 to 3600"
+            ))
+        })
+}
+
+/// The wait before retry `k` (from 0 to `RETRIES - 1`), in seconds.
+pub(crate) fn wait_seconds(first: u64, k: u32) -> u64 {
+    first << k
+}
+
 /// Rounds to 6 decimals, so a sum of costs has no floating-point tail.
-fn r6(x: f64) -> f64 {
+pub(crate) fn r6(x: f64) -> f64 {
     (x * 1e6).round() / 1e6
 }
 
@@ -847,7 +1018,7 @@ fn report_json(r: &Report) -> String {
 }
 
 /// Makes the folder of `--out`, and checks that it is a folder.
-fn make_out_dir(repo: &Repo, dir: &str) -> Result<(), Fatal> {
+pub(crate) fn make_out_dir(repo: &Repo, dir: &str) -> Result<(), Fatal> {
     let folder = repo.root.join(dir);
     fs::create_dir_all(&folder).map_err(|e| Fatal::Io(format!("cannot make `{dir}`: {e}")))?;
     if folder.is_dir() {
@@ -859,10 +1030,16 @@ fn make_out_dir(repo: &Repo, dir: &str) -> Result<(), Fatal> {
     }
 }
 
-/// Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json`. If the file
+/// Writes the result to `<dir>/<prefix>-<YYYYMMDD>T<HHMMSS>Z.json`. If the file
 /// exists, the name gets the first free suffix from `-2` to `-999`. Returns the path from the
 /// repository root.
-fn write_result(repo: &Repo, dir: &str, started: &str, compact: &str) -> Result<String, Fatal> {
+pub(crate) fn write_result(
+    repo: &Repo,
+    dir: &str,
+    prefix: &str,
+    started: &str,
+    compact: &str,
+) -> Result<String, Fatal> {
     let text = json::pretty(&json::parse(compact).map_err(Fatal::Io)?);
     let folder = repo.root.join(dir);
     make_out_dir(repo, dir)?;
@@ -873,9 +1050,9 @@ fn write_result(repo: &Repo, dir: &str, started: &str, compact: &str) -> Result<
         .collect();
     for n in 1..1000 {
         let name = if n == 1 {
-            format!("eval-{stamp}.json")
+            format!("{prefix}-{stamp}.json")
         } else {
-            format!("eval-{stamp}-{n}.json")
+            format!("{prefix}-{stamp}-{n}.json")
         };
         let path = folder.join(&name);
         match fs::OpenOptions::new()
@@ -898,14 +1075,14 @@ fn write_result(repo: &Repo, dir: &str, started: &str, compact: &str) -> Result<
     )))
 }
 
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// A time in seconds since 1970, as `YYYY-MM-DDTHH:MM:SSZ` in UTC.
-fn utc_time(secs: i64) -> String {
+pub(crate) fn utc_time(secs: i64) -> String {
     // "civil_from_days" (Howard Hinnant).
     let z = secs.div_euclid(86_400) + 719_468;
     let rem = secs.rem_euclid(86_400);
@@ -1020,6 +1197,8 @@ mod tests {
                     charged: 0.5,
                     checks: Vec::new(),
                     passed: *p,
+                    refused: false,
+                    models: Vec::new(),
                 })
                 .collect(),
         }
@@ -1068,5 +1247,101 @@ mod tests {
         assert!(!stopped.passed());
         assert_eq!(stopped.pass_rate(), None);
         assert_eq!(stopped.exit_code(), 3);
+    }
+
+    /// The output of `claude` for a failed result object.
+    fn failed(text: &str) -> Vec<u8> {
+        format!(
+            "{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"{text}\",\"total_cost_usd\":0.7}}"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn each_class_of_a_refusal_is_found() {
+        // The form of a real output of Claude Code is the first one.
+        for text in [
+            "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare",
+            "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+            "API Error: 429 Rate limit reached for requests",
+            "API Error: 500 Internal server error",
+            "API Error: 503 Service Unavailable",
+            "API Error: 599 something",
+            "API Error:529 Overloaded",
+            "Too many requests (429)",
+            "The server is overloaded",
+            "You reached the usage limit of the plan",
+            "You hit the RATE LIMIT",
+            "Attention Required! | Cloudflare",
+        ] {
+            assert!(is_refused(1, &failed(text)), "{text}");
+            // The error flag alone is enough, also with exit code 0.
+            assert!(is_refused(0, &failed(text)), "{text}");
+        }
+        // A page of Cloudflare, with no result object.
+        assert!(is_refused(
+            1,
+            b"<title>Attention Required! | Cloudflare</title>"
+        ));
+        assert!(is_refused(1, b"API Error: 502 Bad Gateway"));
+        // A list of events: the last result decides.
+        let events = br#"[{"type":"system"},{"type":"result","is_error":true,"result":"API Error: 503 down"}]"#;
+        assert!(is_refused(1, events));
+    }
+
+    #[test]
+    fn a_run_that_failed_for_another_reason_is_no_refusal() {
+        // Exit code 0 and no error flag: a short answer about a limit counts.
+        let ok = br#"{"type":"result","subtype":"success","is_error":false,"result":"The rate limit of the API is 5 per second"}"#;
+        assert!(!is_refused(0, ok));
+        // A failed run with no marker: a stop by the turns, a failed check.
+        assert!(!is_refused(1, &failed("Reached max turns")));
+        assert!(!is_refused(
+            1,
+            br#"{"type":"result","subtype":"error_max_turns","is_error":true}"#
+        ));
+        assert!(!is_refused(1, b""));
+        assert!(!is_refused(-1, b"not json"));
+        // A status that is not a refusal, or that is not a whole word.
+        assert!(!is_refused(1, &failed("API Error: 400 Bad request")));
+        assert!(!is_refused(1, &failed("API Error: 404 Not found")));
+        assert!(!is_refused(1, &failed("API Error: 5030 odd")));
+        assert!(!is_refused(1, &failed("API Error: 600 odd")));
+        assert!(!is_refused(1, &failed("step 14290 failed")));
+        assert!(!is_refused(1, &failed("a1429b")));
+        // A long answer that names a status counts: 600 bytes or more.
+        let long = format!("API Error: 429 {}", "x".repeat(600));
+        assert!(!is_refused(1, &failed(&long)));
+        let just_under = format!("API Error: 429 {}", "x".repeat(600 - 15 - 1));
+        assert_eq!(just_under.len(), 599);
+        assert!(is_refused(1, &failed(&just_under)));
+        let at_limit = format!("API Error: 429 {}", "x".repeat(600 - 15));
+        assert_eq!(at_limit.len(), 600);
+        assert!(!is_refused(1, &failed(&at_limit)));
+    }
+
+    #[test]
+    fn the_waits_double_and_the_variable_is_checked() {
+        let waits: Vec<u64> = (0..RETRIES).map(|k| wait_seconds(60, k)).collect();
+        assert_eq!(waits, [60, 120, 240, 480, 960, 1_920]);
+        assert_eq!(waits.iter().sum::<u64>(), 3_780, "about 63 minutes");
+        assert_eq!(first_wait_of(None).unwrap(), 60);
+        assert_eq!(first_wait_of(Some("0")).unwrap(), 0);
+        assert_eq!(first_wait_of(Some("3600")).unwrap(), 3_600);
+        for bad in ["", "-1", "3601", "1.5", "abc", "+5", " 5", "1e2"] {
+            assert!(
+                matches!(first_wait_of(Some(bad)), Err(Fatal::Usage(_))),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_models_are_the_names_of_model_usage() {
+        let out = br#"{"type":"result","modelUsage":{"claude-b-1":{"costUSD":1},"claude-a-2":{}}}"#;
+        assert_eq!(result_models(out), ["claude-a-2", "claude-b-1"]);
+        assert!(result_models(b"{}").is_empty());
+        assert!(result_models(b"x").is_empty());
+        assert!(result_models(br#"{"modelUsage":{"a b":{}}}"#).is_empty());
     }
 }

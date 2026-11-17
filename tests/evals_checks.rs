@@ -721,3 +721,221 @@ fn a_path_in_the_evals_dir_that_is_not_a_starter_file_gives_sd503() {
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("(first: `evals/second.json`)"), "{out}");
 }
+
+// The key `skill` (ADR 0016).
+
+#[test]
+fn the_key_skill_takes_the_name_of_a_skill_of_the_pack() {
+    let r = repo("standard", "");
+    for (i, skill) in [
+        "brainstorm",
+        "specify",
+        "clarify",
+        "write-plan",
+        "execute",
+        "tdd",
+        "review",
+        "verify",
+        "finish",
+        "debug",
+        "post-mortem",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let id = format!("skill-{i}");
+        r.write(
+            &format!("evals/{id}.json"),
+            &eval(&id, &[("skill", Some(&format!("\"{skill}\"")))]),
+        );
+    }
+    let (code, out) = check_all(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(lines(&out, "SD506").is_empty(), "{out}");
+}
+
+#[test]
+fn a_bad_value_of_the_key_skill_gives_sd506_with_the_key_as_the_target() {
+    let r = repo("standard", "");
+    for (stem, value) in [
+        ("old-name", "\"intent\""),
+        ("adapter", "\"spec-dna\""),
+        ("prefix", "\"spec-dna-tdd\""),
+        ("upper", "\"TDD\""),
+        ("empty", "\"\""),
+        ("number", "1"),
+        ("list", "[\"tdd\"]"),
+        ("agents-line", "\"agents-line\""),
+    ] {
+        r.write(
+            &format!("evals/{stem}.json"),
+            &eval(stem, &[("skill", Some(value))]),
+        );
+    }
+    let (code, out, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 1, "{out}");
+    let found: Vec<&str> = out
+        .split("{\"code\":")
+        .filter(|d| d.starts_with("\"SD506\""))
+        .collect();
+    assert_eq!(found.len(), 8, "{out}");
+    for d in found {
+        assert!(d.contains("\"target\":\"skill\""), "{d}");
+        assert!(d.contains("`skill`"), "{d}");
+    }
+}
+
+// SD507 `skill-unproven` (ADR 0016).
+
+fn sd507_repo(profile: &str, skills: &[&str]) -> Repo {
+    let list: Vec<String> = skills.iter().map(|s| format!("\"{s}\"")).collect();
+    let r = Repo::with_config(&format!(
+        "profile = \"{profile}\"\n\n[evals]\ndir = \"evals\"\n\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n\n[harness]\nlevel = \"lean\"\nskills = [{}]\n",
+        list.join(", ")
+    ));
+    r.write("docs/valves.md", "# Valves\n\nText.\n");
+    r.write("evals/check.sh", CHECK_SH);
+    r.commit("start");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("init");
+    r
+}
+
+fn skills_file(items: &[(&str, &str)], stopped: &str) -> String {
+    let list: Vec<String> = items
+        .iter()
+        .map(|(n, v)| format!("{{\"name\":\"{n}\",\"verdict\":{v},\"rule\":null}}"))
+        .collect();
+    format!(
+        "{{\"spec_dna\":\"0.7.0\",\"started\":\"2026-11-20T10:00:00Z\",\"stopped\":{stopped},\"skills\":[{}]}}\n",
+        list.join(",")
+    )
+}
+
+/// The skills that the lines of SD507 name.
+fn unproven(out: &str) -> Vec<String> {
+    let mut v: Vec<String> = lines(out, "SD507")
+        .iter()
+        .map(|l| {
+            let msg = l.split("skill-unproven: ").nth(1).unwrap();
+            msg.split('`').nth(1).unwrap().to_string()
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn sd507_is_off_in_lite_and_standard_and_a_warning_in_strict() {
+    for (profile, want) in [
+        ("lite", vec![]),
+        ("standard", vec![]),
+        ("strict", vec!["tdd".to_string(), "verify".to_string()]),
+    ] {
+        let r = sd507_repo(profile, &["brainstorm", "tdd", "verify"]);
+        let (_, out) = check_all(&r);
+        assert_eq!(unproven(&out), want, "{profile}: {out}");
+        if profile == "strict" {
+            assert!(lines(&out, "SD507")[0].contains("spec-dna.toml:"), "{out}");
+            assert!(
+                lines(&out, "SD507")[0].contains(": warning SD507 "),
+                "{out}"
+            );
+            assert!(out.contains("SD507 fix: "), "{out}");
+        }
+    }
+}
+
+#[test]
+fn a_skill_that_is_on_in_the_design_is_exempt() {
+    let r = sd507_repo(
+        "strict",
+        &[
+            "brainstorm",
+            "specify",
+            "clarify",
+            "write-plan",
+            "review",
+            "finish",
+            "post-mortem",
+        ],
+    );
+    let (_, out) = check_all(&r);
+    assert!(unproven(&out).is_empty(), "{out}");
+}
+
+#[test]
+fn only_the_verdict_on_of_a_committed_result_clears_sd507() {
+    let r = sd507_repo("strict", &["tdd", "verify", "debug", "execute"]);
+    r.write(
+        "evals/results/skills-20261120T100000Z.json",
+        &skills_file(
+            &[
+                ("tdd", "\"on\""),
+                ("verify", "\"inconclusive\""),
+                ("debug", "\"off\""),
+            ],
+            "null",
+        ),
+    );
+    r.commit("result");
+    let (_, out) = check_all(&r);
+    assert_eq!(unproven(&out), ["debug", "execute", "verify"], "{out}");
+}
+
+#[test]
+fn the_newest_file_that_holds_the_skill_decides_and_a_stopped_file_does_not_count() {
+    let r = sd507_repo("strict", &["tdd", "verify"]);
+    r.write(
+        "evals/results/skills-20261120T100000Z.json",
+        &skills_file(&[("tdd", "\"on\""), ("verify", "\"on\"")], "null"),
+    );
+    // Newer: `tdd` is now inconclusive, and a file of a stopped run follows.
+    r.write(
+        "evals/results/skills-20261121T100000Z.json",
+        &skills_file(&[("tdd", "\"inconclusive\"")], "null"),
+    );
+    r.write(
+        "evals/results/skills-20261122T100000Z.json",
+        &skills_file(&[("tdd", "null"), ("verify", "null")], "\"api-error\""),
+    );
+    r.commit("results");
+    let (_, out) = check_all(&r);
+    assert_eq!(unproven(&out), ["tdd"], "{out}");
+}
+
+#[test]
+fn sd507_reads_the_result_files_of_the_working_tree_and_ignores_other_files() {
+    let r = sd507_repo("strict", &["tdd"]);
+    r.write(
+        "evals/results/skills-20261120T100000Z.json",
+        &skills_file(&[("tdd", "\"on\"")], "null"),
+    );
+    // Not a result of `--ab`, and not valid JSON: no effect.
+    r.write(
+        "evals/results/eval-20261121T100000Z.json",
+        "{\"pass_rate\":1}\n",
+    );
+    r.write("evals/results/skills-bad.json", "{ not json\n");
+    let (_, out) = check_all(&r);
+    assert!(unproven(&out).is_empty(), "{out}");
+}
+
+#[test]
+fn sd507_needs_no_evals_table_and_a_rule_changes_its_severity() {
+    let r = sd507_repo("strict", &["tdd"]);
+    let toml = r
+        .read("spec-dna.toml")
+        .replace("[evals]\ndir = \"evals\"\n\n", "");
+    r.write("spec-dna.toml", &toml);
+    r.commit("no table");
+    let (_, out) = check_all(&r);
+    assert_eq!(unproven(&out), ["tdd"], "{out}");
+    let toml = r
+        .read("spec-dna.toml")
+        .replace("[rules]\n", "[rules]\nSD507 = \"off\"\n");
+    r.write("spec-dna.toml", &toml);
+    let (_, out) = check_all(&r);
+    assert!(unproven(&out).is_empty(), "{out}");
+}

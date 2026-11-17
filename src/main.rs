@@ -27,6 +27,8 @@ mod context;
 mod detect;
 mod diag;
 mod drift;
+mod eval_ab;
+mod eval_pack;
 mod eval_run;
 mod evals;
 mod evidence;
@@ -63,6 +65,7 @@ mod upgrade_config;
 mod upgrade_docs;
 mod upgrade_old;
 mod upgrade_proof;
+mod verdict;
 
 use crate::adapters::VERSION;
 use crate::diag::Severity;
@@ -300,7 +303,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval pack\neval verdict",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -313,7 +316,32 @@ files and of the table. --out writes the result to <dir>/eval-<time>.json
 (counts, costs and check names only). --dry-run starts no process. --isolate
 adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
 does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
-a stop by the cap or no `claude`, 4 git or file error.",
+a stop by the cap or no `claude`, 4 git or file error.
+
+`eval run --ab <target>` runs the evals of <dir>/pack/ in 2 arms, with the
+skill and without it, in pairs of the same eval and run number. The target is
+a skill, `all` (each skill that the pack has) or `agents-line` (the line of
+AGENTS.md, with 5 evals). In the arm `without`, the copy has no skill folder,
+no discipline of the skill in the line and in the adapter skill, and the
+command denies `Bash(spec-dna skill:*)`. It writes
+<dir>/results/skills-<time>.json (or the folder of --out) with the pass
+rates, the costs, the difference and the cost ratio with a 90 percent
+interval, and a verdict (on, off or inconclusive). An attempt that the API
+refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is retried after
+60, 120, 240, 480, 960 and 1,920 seconds, and no result counts it. After the
+last wait the command stops: exit code 3 and `stopped` api-error.
+SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
+--min-pass-rate is a usage error with --ab. Exit codes of --ab: 0 complete,
+2 usage, 3 configuration, an invalid pack file, a stop by the cap or by
+api-error, 4 git or file error.
+
+`eval pack` writes the pack of 55 evals and their fixtures to <dir>/pack/. It
+keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
+
+`eval verdict` prints one line for each of the 11 skills and for agents-line:
+the name, the verdict (on, off, inconclusive or unmeasured) and the source
+(project <file>, release or -). It reads the newest result file of --ab that
+holds the name, then the table of the release. It starts no agent.",
     ),
     (
         "skill",
@@ -428,6 +456,7 @@ struct Args {
     max_total_usd: Option<f64>,
     out: Option<String>,
     isolate: bool,
+    ab: bool,
 }
 
 /// The options of `layer add`.
@@ -506,6 +535,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         max_total_usd: None,
         out: None,
         isolate: false,
+        ab: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -545,6 +575,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--since" => a.since = Some(value("--since")?),
             "--sdlc" => a.sdlc = true,
             "--isolate" => a.isolate = true,
+            "--ab" => a.ab = true,
             "--out" => a.out = Some(value("--out")?),
             "--runs" => {
                 let v = value("--runs")?;
@@ -714,6 +745,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
             (a.max_total_usd.is_some(), "--max-total-usd"),
             (a.out.is_some(), "--out"),
             (a.isolate, "--isolate"),
+            (a.ab, "--ab"),
         ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
@@ -959,7 +991,71 @@ fn eval_tree(
             }
         }
     }
-    Ok(check::EvalTree { paths, json })
+    // The result files of `--ab` (SD507). A file that cannot be read is absent.
+    let results_prefix = format!("{prefix}{}/", evals::RESULTS);
+    let is_result = |p: &&String| {
+        p.strip_prefix(&results_prefix)
+            .is_some_and(|n| !n.contains('/') && verdict::is_result_name(n))
+    };
+    let mut results = Vec::new();
+    if snap.worktree {
+        for p in paths.iter().filter(is_result) {
+            let mut bytes = Vec::new();
+            let read = std::fs::File::open(repo.root.join(p))
+                .and_then(|f| f.take(MAX_RESULT_BYTES).read_to_end(&mut bytes));
+            if read.is_ok() {
+                results.push((p.clone(), bytes));
+            }
+        }
+    } else {
+        let want: Vec<String> = paths.iter().filter(is_result).cloned().collect();
+        let mut got = snap.read(repo, &want)?;
+        for p in want {
+            if let Some(bytes) = got.remove(&p) {
+                results.push((p, bytes));
+            }
+        }
+    }
+    Ok(check::EvalTree {
+        paths,
+        json,
+        results,
+    })
+}
+
+/// The most bytes of a result file of `--ab` that a reader takes.
+const MAX_RESULT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// SD507 for one tree: the skills of `[harness]` that need a verdict. The
+/// result files are the files of `<[evals] dir>/results` of the tree, if the
+/// configuration has `[evals]`.
+fn skill_unproven_of(
+    repo: &Repo,
+    cfg: &config::Config,
+    h: &harness::Harness,
+    snap: &Snapshot,
+    untracked: bool,
+    line: u32,
+) -> Result<Vec<diag::Diag>, Fatal> {
+    let results = match &cfg.evals {
+        Some(ev) => eval_tree(repo, snap, &ev.dir, untracked)?.results,
+        None => Vec::new(),
+    };
+    Ok(check::apply_severity(
+        cfg,
+        check::skill_unproven(h, &results, line),
+    ))
+}
+
+/// The line of the key `skills` in the text of `spec-dna.toml`, or 1.
+fn skills_line(repo: &Repo) -> u32 {
+    std::fs::read_to_string(repo.config_path())
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .position(|l| l.trim_start().starts_with("skills") && l.contains('='))
+        })
+        .map_or(1, |i| i as u32 + 1)
 }
 
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
@@ -1302,6 +1398,26 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         };
         for d in head_ev {
             let is_new = !base_ev.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
+    // SD507: a skill of `[harness] skills` that has no verdict `on`. It reads
+    // the result files of the tree, so the base findings use the base files.
+    if let Some(h) = cfg
+        .harness
+        .as_ref()
+        .filter(|h| h.level != harness::Level::None)
+        .filter(|_| !cfg.is_off(diag::Code::SkillUnproven))
+    {
+        let line = skills_line(repo);
+        let head_su = skill_unproven_of(repo, &cfg, h, &head_snap, untracked, line)?;
+        let base_su: Vec<_> = match base_harness(repo, &base_snap)? {
+            Some(bh) if use_base => skill_unproven_of(repo, &cfg, &bh, &base_snap, false, line)?,
+            _ => Vec::new(),
+        };
+        for d in head_su {
+            let is_new = !base_su.iter().any(|b| b.fingerprint() == d.fingerprint());
             outcome.head.push(d);
             outcome.new.push(is_new);
         }
@@ -2828,13 +2944,79 @@ fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
 /// spends money and runs the checks of the project, so a pin mismatch stops
 /// it, as it stops `check` and `finish`.
 fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
-    if a.positional.first().map(String::as_str) != Some("run") {
+    let sub = a.positional.first().map(String::as_str);
+    if !matches!(sub, Some("run" | "pack" | "verdict")) {
         return Err(Fatal::Usage(
-            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`".into(),
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack` or `spec-dna eval verdict`"
+                .into(),
         ));
+    }
+    if sub != Some("run") {
+        // `pack` and `verdict` take no option of `run`, and no argument.
+        for (given, name) in [
+            (a.runs.is_some(), "--runs"),
+            (a.min_pass_rate.is_some(), "--min-pass-rate"),
+            (a.max_total_usd.is_some(), "--max-total-usd"),
+            (a.out.is_some(), "--out"),
+            (a.isolate, "--isolate"),
+            (a.ab, "--ab"),
+            (a.dry_run, "--dry-run"),
+        ] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
+            }
+        }
+        if a.positional.len() > 1 {
+            return Err(Fatal::Usage(format!(
+                "`eval {}` takes no argument",
+                a.positional[0]
+            )));
+        }
     }
     let repo = Repo::discover(cwd)?;
     let cfg = repo.load_config()?;
+    match sub {
+        Some("pack") => return eval_pack_cmd(&repo, &cfg, a.json),
+        Some("verdict") => {
+            warn_pin(&cfg);
+            return eval_verdict_cmd(&repo, &cfg, a.json);
+        }
+        _ => {}
+    }
+    if a.ab {
+        let target = match a.positional.len() {
+            2 => a.positional[1].clone(),
+            n => {
+                return Err(Fatal::Usage(format!(
+                    "`eval run --ab` takes one target (a skill, `all` or `agents-line`), got {}",
+                    n - 1
+                )));
+            }
+        };
+        if a.min_pass_rate.is_some() {
+            return Err(Fatal::Usage(
+                "--min-pass-rate is not an option of `eval run --ab`; the verdict has its own rules".into(),
+            ));
+        }
+        // The target and `SPEC_DNA_EVAL_BACKOFF` are checked before the pin.
+        eval_ab::Target::parse(&target)?;
+        if cfg.pin != VERSION {
+            return Err(pin_mismatch(&cfg));
+        }
+        return eval_ab::run(
+            &repo,
+            &cfg,
+            &eval_ab::Opts {
+                target,
+                runs: a.runs,
+                max_total_usd: a.max_total_usd,
+                out: a.out.clone(),
+                dry_run: a.dry_run,
+                isolate: a.isolate,
+                json: a.json,
+            },
+        );
+    }
     if cfg.pin != VERSION {
         return Err(pin_mismatch(&cfg));
     }
@@ -2854,6 +3036,101 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             json: a.json,
         },
     )
+}
+
+/// `eval pack`: writes the evals of the pack and their fixtures
+/// (`eval_pack.rs`).
+fn eval_pack_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8, Fatal> {
+    let table = cfg.evals.as_ref().ok_or_else(|| {
+        Fatal::Config(
+            "spec-dna.toml has no [evals] table, and `eval pack` needs it; add the table (docs/config.md)"
+                .into(),
+        )
+    })?;
+    warn_pin(cfg);
+    let w = eval_pack::write(repo, &table.dir, &eval_pack::all())?;
+    if json {
+        let list = |v: &[String]| {
+            json::array(v.iter().map(|p| {
+                let mut s = String::new();
+                json::string(&mut s, p);
+                s
+            }))
+        };
+        println!(
+            "{}",
+            Obj::new()
+                .raw("written", &list(&w.written))
+                .raw("kept", &list(&w.kept))
+                .end()
+        );
+        return Ok(0);
+    }
+    for p in &w.written {
+        println!("wrote {p}");
+    }
+    for p in &w.kept {
+        println!("kept {p}");
+    }
+    println!(
+        "eval pack: {} files written, {} kept, in {}/pack",
+        w.written.len(),
+        w.kept.len(),
+        table.dir
+    );
+    Ok(0)
+}
+
+/// `eval verdict`: the verdict of each skill and of `agents-line`. It reads
+/// the result files of the working tree and the table of the release
+/// (`verdict.rs`), and it starts no agent.
+fn eval_verdict_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8, Fatal> {
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    if let Some(ev) = &cfg.evals {
+        let folder = format!("{}/{}", ev.dir, evals::RESULTS);
+        if let Ok(read) = std::fs::read_dir(repo.root.join(&folder)) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !verdict::is_result_name(&name) || !entry.path().is_file() {
+                    continue;
+                }
+                if let Ok(bytes) = std::fs::read(entry.path()) {
+                    files.push((format!("{folder}/{name}"), bytes));
+                }
+            }
+        }
+    }
+    let rows: Vec<(&str, verdict::Resolved)> = verdict::names()
+        .into_iter()
+        .map(|n| (n, verdict::resolve(n, &files)))
+        .collect();
+    let word = |r: &verdict::Resolved| r.verdict.map_or("unmeasured", verdict::Verdict::name);
+    if json {
+        let items = rows.iter().map(|(n, r)| {
+            let (source, file) = match &r.source {
+                verdict::Source::Project(f) => (Some("project"), Some(f.as_str())),
+                verdict::Source::Release => (Some("release"), None),
+                verdict::Source::None => (None, None),
+            };
+            Obj::new()
+                .str("name", n)
+                .str("verdict", word(r))
+                .opt_str("source", source)
+                .opt_str("file", file)
+                .end()
+        });
+        println!("{}", Obj::new().raw("verdicts", &json::array(items)).end());
+        return Ok(0);
+    }
+    for (n, r) in &rows {
+        let source = match &r.source {
+            verdict::Source::Project(f) => format!("project {f}"),
+            verdict::Source::Release => "release".to_string(),
+            verdict::Source::None => "-".to_string(),
+        };
+        println!("{n} {} {source}", word(r));
+    }
+    Ok(0)
 }
 
 /// `stats --sdlc [--group <name>]`: the indicators of the playbook

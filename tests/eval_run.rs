@@ -1051,3 +1051,30 @@ fn the_temporary_folder_is_removed_after_a_failure_too() {
     assert_eq!(code, 1, "{out}{err}");
     fx.assert_clean();
 }
+
+// ADR 0016, amendment of 2026-11-16: the rule of the refused run applies to
+// `--ab` only. `eval run` without `--ab` keeps ADR 0008: a refused run counts
+// as a failed run, and the runner never retries it.
+
+#[test]
+fn a_refused_run_without_ab_counts_as_a_failed_run_and_is_not_retried() {
+    let fx = Fx::with(&[ev("example")]);
+    // This stub gives the answer that the API gives for a refused request.
+    let refusing = "#!/bin/sh\n{ for a in \"$@\"; do printf '%s\\n' \"$a\"; done; echo '---'; } >> \"$STUB_LOG\"\nif [ \"$1\" = \"--version\" ]; then echo \"2.1.325 (Claude Code)\"; exit 0; fi\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"API Error: 429 Rate limit reached\",\"total_cost_usd\":0.5}\\n'\nexit 1\n";
+    stub_bin(&fx.stubs.dir.join("bin"), "claude", refusing);
+    let (code, out, err) = fx.run_env(&["--min-pass-rate", "0"], &[("SPEC_DNA_EVAL_BACKOFF", "1")]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("example: 0 of 1 runs passed, pass-at 1: fail, 0.50 USD\n"),
+        "{out}"
+    );
+    // One call of `claude`, and no wait: the rule of ADR 0008 holds.
+    assert_eq!(fx.runs().len(), 1);
+    assert!(!err.contains("wait"), "{err}");
+    // The variable is read by `--ab` only.
+    let (code, out, err) = fx.run_env(
+        &["--min-pass-rate", "0"],
+        &[("SPEC_DNA_EVAL_BACKOFF", "abc")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+}

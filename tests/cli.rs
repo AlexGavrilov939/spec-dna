@@ -4860,3 +4860,66 @@ fn mv_stops_when_a_file_is_at_the_path_of_its_own_alias() {
     assert!(err.contains("already exists"), "{err}");
     assert!(r.dir.join("docs/old/pumps.md").exists());
 }
+
+// `eval run --ab`, `eval pack` and `eval verdict` (0.7.0, slice 5).
+
+#[test]
+fn the_help_of_eval_lists_the_3_subcommands_and_the_option_ab() {
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["eval", "--help"]);
+    assert_eq!(code, 0, "{err}");
+    for part in [
+        "eval run --ab <skill|all|agents-line>",
+        "eval pack",
+        "eval verdict",
+        "SPEC_DNA_EVAL_BACKOFF",
+        "api-error",
+        "Bash(spec-dna skill:*)",
+    ] {
+        assert!(out.contains(part), "`{part}` not in the help: {out}");
+    }
+    let (code, all, _) = r.run(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(all.contains("eval verdict"), "{all}");
+}
+
+#[test]
+fn the_new_eval_forms_give_the_usage_errors_of_exit_code_2() {
+    let r = place_project();
+    r.commit("start");
+    for args in [
+        vec!["eval"],
+        vec!["eval", "bogus"],
+        vec!["eval", "run", "--ab"],
+        vec!["eval", "run", "--ab", "tdd", "debug"],
+        vec!["eval", "run", "--ab", "nonsense"],
+        vec!["eval", "run", "--ab", "tdd", "--min-pass-rate", "0.5"],
+        vec!["eval", "pack", "tdd"],
+        vec!["eval", "pack", "--runs", "2"],
+        vec!["eval", "verdict", "--dry-run"],
+        vec!["eval", "verdict", "tdd"],
+        vec!["check", "--ab"],
+    ] {
+        let (code, out, err) = r.run(&args);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert!(
+            err.contains("Run `spec-dna --help` for usage."),
+            "{args:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn eval_pack_and_eval_run_ab_need_the_evals_table_and_eval_verdict_does_not() {
+    let r = place_project();
+    r.commit("start");
+    let (code, _, err) = r.run(&["eval", "pack"]);
+    assert_eq!(code, 3, "{err}");
+    let (code, _, err) = r.run(&["eval", "run", "--ab", "tdd"]);
+    assert_eq!(code, 3, "{err}");
+    let (code, out, err) = r.run(&["eval", "verdict"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().count(), 12, "{out}");
+    assert!(out.starts_with("brainstorm unmeasured -\n"), "{out}");
+    assert!(out.ends_with("agents-line unmeasured -\n"), "{out}");
+}
