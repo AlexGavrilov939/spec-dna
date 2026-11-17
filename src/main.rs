@@ -1321,7 +1321,26 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let (new_errors, new_warnings) = (count(Severity::Error, true), count(Severity::Warning, true));
     let failed = if a.all { errors > 0 } else { new_errors > 0 };
     // Not diagnostics: no code, no severity, no effect on the exit code.
-    let locked = check::locked_links(&cfg, head);
+    // The pointer of a link into a finished change needs the history. The
+    // list is only for the info lines of `--all` and for `--json`.
+    let locked = if a.all || a.json {
+        let cache: std::cell::RefCell<std::collections::HashMap<String, Vec<sdlc::EndedChange>>> =
+            Default::default();
+        let ended = |folder: &str| {
+            let dir = folder.rsplit_once('/')?.0;
+            repo.head_commit()?;
+            cache
+                .borrow_mut()
+                .entry(dir.to_string())
+                .or_insert_with(|| sdlc::ended_changes(&repo.git, dir).unwrap_or_default())
+                .iter()
+                .find(|e| e.folder == folder)
+                .cloned()
+        };
+        check::locked_links(&cfg, head, &ended)
+    } else {
+        Vec::new()
+    };
     let mut order: Vec<usize> = (0..outcome.head.len()).collect();
     order.sort_by(|&x, &y| outcome.head[x].cmp(&outcome.head[y]));
     if a.json {
@@ -1358,6 +1377,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .num("line", l.line)
                 .str("target", &l.target)
                 .str("pointer", &l.pointer)
+                .opt_str("commit", l.commit.as_deref())
                 .end()
         });
         let approvals_json = report.approvals.iter().map(|x| {

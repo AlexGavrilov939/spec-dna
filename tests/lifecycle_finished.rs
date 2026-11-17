@@ -808,6 +808,18 @@ fn info_lines(out: &str) -> Vec<&str> {
     out.lines().filter(|l| l.contains(": info: ")).collect()
 }
 
+/// The date of the last commit in UTC, as `log` prints it.
+fn commit_date(r: &Repo) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&r.dir)
+        .args(["log", "-1", "--format=%cd", "--date=format-local:%Y-%m-%d"])
+        .env("TZ", "UTC")
+        .output()
+        .expect("git runs");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 /// A decision that links the intent `dose` in its locked text, in a commit.
 fn linked() -> Repo {
     let r = Fx::default().start();
@@ -833,11 +845,17 @@ fn check_all_names_a_dead_link_in_locked_text_after_finish() {
     // SD102), and `check --all` says how to record it.
     r.write("src/dose.py", "x = 2\n");
     finish(&r);
+    let sha = r.git_out(&["rev-parse", "HEAD"]);
+    let date = commit_date(&r);
+    let pointer = format!(
+        "the change `dose` (finished in commit {} on {date})",
+        &sha[..12]
+    );
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
     assert!(!has(&out, "SD102") && !has(&out, "SD611"), "{out}");
     let want = format!(
-        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that points to {POINTER}"
+        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to {pointer}"
     );
     assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
     // The line is before the summary line, and the counts do not change.
@@ -848,8 +866,7 @@ fn check_all_names_a_dead_link_in_locked_text_after_finish() {
     let (code, json, _) = r.run(&["check", "--all", "--json"]);
     assert_eq!(code, 0, "{json}");
     let field = format!(
-        "\"locked_links\":[{{\"path\":\"{TIMER}\",\"line\":8,\"target\":\"../intent/dose/intent.md\",\"pointer\":\"{}\"}}]",
-        POINTER
+        "\"locked_links\":[{{\"path\":\"{TIMER}\",\"line\":8,\"target\":\"../intent/dose/intent.md\",\"pointer\":\"{pointer}\",\"commit\":\"{sha}\"}}]"
     );
     assert!(json.contains(&field), "{json}");
     // Without `--all`, the human output has no such line.
@@ -872,7 +889,7 @@ fn a_dead_locked_link_of_no_intent_folder_gets_the_general_pointer() {
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
     let want = format!(
-        "{TIMER}:8: info: the locked text links `../old/notes.md`, which no longer exists; add an amendment that points to the new place of the text, or the reason for its removal"
+        "{TIMER}:8: info: the locked text links `../old/notes.md`, which no longer exists; add an amendment that names `../old/notes.md` and points to the new place of the text, or the reason for its removal"
     );
     assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
     assert!(!has(&out, "SD102"), "{out}");
@@ -898,4 +915,128 @@ fn a_dead_link_outside_locked_text_keeps_its_diagnostic_and_gets_no_info_line() 
     let (_, out, _) = r.run(&["check", "--all"]);
     assert_eq!(lines(&out, "SD102").len(), 2, "{out}");
     assert!(info_lines(&out).is_empty(), "{out}");
+}
+
+// The amendment that names the dead target, and the commit of the change
+
+/// `linked()` after `finish dose`: the helper `finish` commits the deletion.
+fn linked_and_finished() -> Repo {
+    let r = linked();
+    r.write("src/dose.py", "x = 2\n");
+    finish(&r);
+    r
+}
+
+const AMENDMENT: &str = "\n## Amendments\n\n### 2026-11-16\n\nThe change `dose` is finished.\n";
+
+#[test]
+fn an_amendment_that_names_the_dead_target_clears_the_info_line() {
+    let r = linked_and_finished();
+    let sha = r.git_out(&["rev-parse", "HEAD"]);
+    let date = commit_date(&r);
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    let want = format!(
+        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to the change `dose` (finished in commit {} on {date})",
+        &sha[..12]
+    );
+    assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
+    let (_, json, _) = r.run(&["check", "--all", "--json"]);
+    assert!(json.contains(&format!("\"commit\":\"{sha}\"")), "{json}");
+    // The amendment names the change in a code span: the line is gone.
+    let text = r.read(TIMER);
+    r.write(TIMER, &format!("{text}{AMENDMENT}"));
+    r.commit("amendment");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(info_lines(&out).is_empty(), "{out}");
+    let (_, json, _) = r.run(&["check", "--all", "--json"]);
+    assert!(json.contains("\"locked_links\":[]"), "{json}");
+}
+
+#[test]
+fn an_amendment_clears_a_line_with_the_target_the_id_or_the_path() {
+    for named in [
+        "`../intent/dose/intent.md#intent`",
+        "`intent/dose/intent`",
+        "`docs/intent/dose/intent.md`",
+        "../intent/dose/intent.md.",
+    ] {
+        let r = linked_and_finished();
+        let text = r.read(TIMER);
+        r.write(
+            TIMER,
+            &format!("{text}\n## Amendments\n\nThe place {named} is gone.\n"),
+        );
+        r.commit("amendment");
+        let (_, out, _) = r.run(&["check", "--all"]);
+        assert!(info_lines(&out).is_empty(), "{named}: {out}");
+    }
+}
+
+#[test]
+fn text_outside_an_amendment_or_another_name_does_not_clear_the_line() {
+    // The slug is in a code span of the locked text, not of an amendment.
+    let r = linked_and_finished();
+    let text = r.read(TIMER).replace("Use a timer", "Use a timer (`dose`)");
+    r.write(
+        TIMER,
+        &format!("{text}\n## Amendments\n\nThe change is finished.\n"),
+    );
+    r.commit("text");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(info_lines(&out).len(), 1, "{out}");
+    // A word of the amendment that is not a code span does not name a slug.
+    let r = linked_and_finished();
+    let text = r.read(TIMER);
+    r.write(
+        TIMER,
+        &format!("{text}\n## Amendments\n\nThe dose change is finished.\n"),
+    );
+    r.commit("text");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(info_lines(&out).len(), 1, "{out}");
+    // A link in the amendment to the dead target stays SD102.
+    let r = linked_and_finished();
+    let text = r.read(TIMER);
+    r.write(
+        TIMER,
+        &format!("{text}\n## Amendments\n\nSee [it](../intent/dose/intent.md).\n"),
+    );
+    r.commit("link");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(lines(&out, "SD102").len(), 1, "{out}");
+}
+
+#[test]
+fn a_closed_change_gives_closed_in_the_pointer() {
+    let r = linked();
+    r.write(INTENT, &intent("closed", "routine"));
+    r.commit("close");
+    r.git(&["rm", "-q", "-r", FOLDER]);
+    r.commit("delete");
+    let sha = r.git_out(&["rev-parse", "HEAD"]);
+    let (_, out, _) = r.run(&["check", "--all"]);
+    let found = info_lines(&out);
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains(&format!(
+            "points to the change `dose` (closed in commit {} on ",
+            &sha[..12]
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_deletion_with_no_commit_keeps_the_pointer_of_the_last_release() {
+    let r = linked();
+    std::fs::remove_dir_all(r.dir.join(FOLDER)).unwrap();
+    let (_, out, _) = r.run(&["check", "--all"]);
+    let want = format!(
+        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to {POINTER}"
+    );
+    assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
+    let (_, json, _) = r.run(&["check", "--all", "--json"]);
+    assert!(json.contains("\"commit\":null"), "{json}");
 }

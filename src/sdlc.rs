@@ -237,6 +237,7 @@ pub fn ended(git: &Git, dir: &str, since: Option<&str>) -> Result<Vec<DeletedInt
 }
 
 /// A change that left the default branch, for the pointer of a locked link.
+#[derive(Clone, Debug)]
 pub struct EndedChange {
     /// The folder of the change, from the repository root.
     pub folder: String,
