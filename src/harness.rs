@@ -1192,11 +1192,29 @@ fn team_page(h: &Harness) -> String {
     s += "\n## Precedence\n\nThis project file has priority over the user settings. The options `--model`, `--effort` and `--advisor`, and a resumed session, have priority over this project file.\n";
     s += "\n## Reload\n\nClaude Code reloads `advisorModel`, `fallbackModel`, `env` and the `.claude/agents` directory while it runs. Claude Code reads `model` and `modelSettings` only when a session starts.\n";
     if !h.skills.is_empty() {
-        let names: Vec<String> = h.skills.iter().map(|k| format!("`{}`", k.name())).collect();
-        s += &format!(
-            "\n## Skills\n\nspec-dna writes these stage skills: {}. Each skill runs spec-dna commands for one stage of a change.\n",
-            names.join(", ")
-        );
+        // The stage skills and the event skills are named apart (D2).
+        let named = |kind: SkillKind| -> Vec<String> {
+            h.skills
+                .iter()
+                .filter(|k| k.kind() == kind)
+                .map(|k| format!("`{}`", k.name()))
+                .collect()
+        };
+        let (stage, event) = (named(SkillKind::Stage), named(SkillKind::Event));
+        let mut text = Vec::new();
+        if !stage.is_empty() {
+            text.push(format!(
+                "spec-dna writes these stage skills: {}. Each skill runs spec-dna commands for one stage of a change.",
+                stage.join(", ")
+            ));
+        }
+        if !event.is_empty() {
+            text.push(format!(
+                "spec-dna writes these event skills: {}. A failure or an incident starts an event skill, and it has no stage.",
+                event.join(", ")
+            ));
+        }
+        s += &format!("\n## Skills\n\n{}\n", text.join(" "));
     }
     if h.review_md {
         s += &format!(
@@ -4198,6 +4216,19 @@ opus = "xhigh"
         );
         assert!(on.contains("\n## Review policy\n\n`REVIEW.md` holds"));
         assert!(!on.contains("`spec-dna-review` has the same text"));
+        // An event skill is named apart from the stage skills.
+        let ev = team_page(&with_skills(
+            "skills = [\"review\", \"debug\", \"post-mortem\"]",
+        ));
+        assert!(
+            ev.contains("\n## Skills\n\nspec-dna writes these stage skills: `spec-dna-review`. Each skill runs spec-dna commands for one stage of a change. spec-dna writes these event skills: `spec-dna-debug`, `spec-dna-post-mortem`. A failure or an incident starts an event skill, and it has no stage.\n"),
+            "{ev}"
+        );
+        let only = team_page(&with_skills("skills = [\"debug\"]"));
+        assert!(
+            only.contains("\n## Skills\n\nspec-dna writes these event skills: `spec-dna-debug`.")
+        );
+        assert!(!only.contains("stage skills"));
         let both = team_page(&with_skills("skills = [\"review\"]\nreview-md = true"));
         assert!(both.contains("The skill `spec-dna-review` has the same text."));
     }
