@@ -114,7 +114,7 @@
       }
     },
     "areas": {
-      "description": "The areas of the project: the names of the folders of `requirements/`. Each name is one folder name.",
+      "description": "The areas of the project: the names of the folders of `requirements/`. Each name is one folder name. Two names that differ only in case are an error.",
       "type": "array",
       "items": {
         "type": "string",

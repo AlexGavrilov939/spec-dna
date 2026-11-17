@@ -137,7 +137,7 @@ sonnet = "high"
 | `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
 | `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
-| `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
+| `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. Two names that differ only in case (`valves` and `Valves`) are an error (exit code 3), because a file system that ignores case gives one folder for both. The compare changes only the letters A to Z. `new` and `mv` stop with exit code 2 for a path whose area differs from a name of `areas` only in case. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
 | `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](#default-graph). See [The table `layers`](#the-table-layers). |
 | `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
@@ -326,7 +326,7 @@ Each layer of the small graph keeps its `keep`, `context` and limit keys from th
 
 ## Areas and groups
 
-An area is a folder under `requirements/`. The key `areas` lists the areas. `init` proposes them when it detects 2 or more. A group is a named set of areas:
+An area is a folder under `requirements/`. The key `areas` lists the areas. `init` proposes them when it detects 2 or more. Two names of `areas` never differ only in case. A group is a named set of areas:
 
 ```toml
 areas = ["valves", "sensors", "reports"]

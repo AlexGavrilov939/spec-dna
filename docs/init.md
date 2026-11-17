@@ -28,7 +28,7 @@ Without a terminal (for example, when an agent runs `init`), `init` uses the det
 | Document roots | The highest directories that are mostly Markdown, or that have a documentation name (`docs`, `doc`, `documentation`, `wiki`, `handbook`) |
 | Types of roots | The name of the directory. See [Types of roots](#types-of-roots) |
 | Size | The number of documents in the detected roots. Fewer than 30 documents, also in a new project, give the `small` graph. 30 documents or more give the `default` graph |
-| Areas | The top folders of the roots that hold requirements, with the most documents first. If they give fewer than 2 names, the folders of the apps (the directories of the manifests). At most 8 names, and only if there are 2 or more. A name is one visible folder name. Archive, template, image and vendored folders are no areas |
+| Areas | The top folders of the roots that hold requirements, with the most documents first. If they give fewer than 2 names, the folders of the apps (the directories of the manifests). At most 8 names, and only if there are 2 or more. A name is one visible folder name. Archive, template, image and vendored folders are no areas. If 2 folders differ only in case, `init` proposes one name (the most documents, then the name), and the preview has a note that names the other folder, because the reader of `spec-dna.toml` stops such a pair |
 | Id patterns | The names of the files. See [Id patterns](#id-patterns) |
 | Types of numbered directories | The files of the directory. See [Types of numbered directories](#types-of-numbered-directories) |
 | Requirement keys | Bold keys at the start of list items, such as `- **R-12** text`. They give `legacy-keys = ["R-{n}"]`. If some keys have a letter suffix, the pattern is `R-{n}*` |
