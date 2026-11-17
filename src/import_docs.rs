@@ -876,3 +876,306 @@ pub fn relink(
 ) -> String {
     rewrite_links(text, mv::parent(from), mv::parent(to), map, c)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::upgrade_docs::TreeData;
+
+    const CFG: &str = "spec-dna = \"0.6.1\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
+
+    fn cfg() -> Config {
+        Config::parse(CFG).unwrap()
+    }
+
+    fn tree(files: &[(&str, &str)]) -> TreeData {
+        TreeData::from_map(
+            files
+                .iter()
+                .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
+                .collect(),
+        )
+    }
+
+    fn target(path: &str, from: Option<&str>, source: &str, text: &str) -> Target {
+        Target {
+            path: path.into(),
+            text: text.into(),
+            moved_from: from.map(str::to_string),
+            sources: vec![source.into()],
+            link_of: None,
+            scenarios: None,
+        }
+    }
+
+    fn plan_of(files: &[(&str, &str)], read: &Read) -> Result<Plan, Fatal> {
+        let t = tree(files);
+        t.with(|t| {
+            plan_docs(
+                &DocsInput {
+                    tree: t,
+                    fin: &cfg(),
+                    read,
+                },
+                ConfigChange::default(),
+            )
+        })
+    }
+
+    #[test]
+    fn two_sources_with_one_target_stop_the_plan_and_name_both() {
+        let read = Read {
+            targets: vec![
+                target("docs/requirements/a.md", Some("x/a.md"), "x/a.md", "A\n"),
+                target("docs/requirements/a.md", Some("y/a.md"), "y/a.md", "B\n"),
+            ],
+            ..Read::default()
+        };
+        let e = plan_of(&[("x/a.md", "A\n"), ("y/a.md", "B\n")], &read).unwrap_err();
+        assert!(matches!(e, Fatal::Refused(_)));
+        let m = e.message();
+        assert!(m.contains("x/a.md") && m.contains("y/a.md"), "{m}");
+        assert!(
+            m.contains("docs/requirements/a.md") && m.contains("--areas"),
+            "{m}"
+        );
+        // A target that differs only in case is the same target.
+        let read = Read {
+            targets: vec![
+                target("docs/requirements/a.md", Some("x/a.md"), "x/a.md", "A\n"),
+                target("docs/requirements/A.md", Some("y/a.md"), "y/a.md", "B\n"),
+            ],
+            ..Read::default()
+        };
+        let e = plan_of(&[("x/a.md", "A\n"), ("y/a.md", "B\n")], &read).unwrap_err();
+        assert!(e.message().contains("only in case"), "{}", e.message());
+    }
+
+    #[test]
+    fn a_target_that_exists_stops_unless_it_has_the_planned_text() {
+        let mut read = Read {
+            targets: vec![target(
+                "docs/intent/c/intent.md",
+                None,
+                "src/c.md",
+                "planned\n",
+            )],
+            removes: vec!["src".into()],
+            ..Read::default()
+        };
+        read.sources.push(SourceFile {
+            path: "src/c.md".into(),
+            state: State::Written,
+            to: vec!["docs/intent/c/intent.md".into()],
+            reason: String::new(),
+        });
+        let other = [("src/c.md", "x\n"), ("docs/intent/c/intent.md", "edited\n")];
+        let e = plan_of(&other, &read).unwrap_err();
+        assert!(matches!(e, Fatal::Refused(_)));
+        assert!(
+            e.message().contains("docs/intent/c/intent.md"),
+            "{}",
+            e.message()
+        );
+        assert!(e.message().contains("git rm -r -- src"), "{}", e.message());
+        // The planned text is there already: no write, and the source is kept.
+        let same = [
+            ("src/c.md", "x\n"),
+            ("docs/intent/c/intent.md", "planned\n"),
+        ];
+        let p = plan_of(&same, &read).unwrap();
+        assert!(p.writes.is_empty() && p.moves.is_empty());
+        assert_eq!(p.sources[0].state, State::Kept);
+        assert!(p.sources[0].reason.contains("already imported"));
+        assert!(p.is_empty());
+        // A new target is a write.
+        let p = plan_of(&[("src/c.md", "x\n")], &read).unwrap();
+        assert_eq!(p.writes.len(), 1);
+        assert_eq!(p.sources[0].state, State::Written);
+    }
+
+    #[test]
+    fn a_move_to_a_path_that_exists_stops_the_plan() {
+        let read = Read {
+            targets: vec![target("docs/rules/c.md", Some("x/c.md"), "x/c.md", "A\n")],
+            ..Read::default()
+        };
+        let e = plan_of(&[("x/c.md", "A\n"), ("docs/rules/c.md", "B\n")], &read).unwrap_err();
+        assert!(matches!(e, Fatal::Refused(_)));
+        assert!(
+            e.message().contains("a file is there already"),
+            "{}",
+            e.message()
+        );
+        let p = plan_of(&[("x/c.md", "A\n")], &read).unwrap();
+        assert_eq!(
+            p.moves,
+            [("x/c.md".to_string(), "docs/rules/c.md".to_string())]
+        );
+        assert_eq!(p.writes["docs/rules/c.md"], "A\n");
+    }
+
+    #[test]
+    fn a_document_that_links_to_a_moved_file_gets_the_new_link() {
+        let doc = "---\nstatus: active\n---\n# Core\n\nSee [the spec](../../src/c.md).\n";
+        let read = Read {
+            targets: vec![target(
+                "docs/rules/c.md",
+                Some("src/c.md"),
+                "src/c.md",
+                "A\n",
+            )],
+            ..Read::default()
+        };
+        let files = [
+            ("src/c.md", "A\n"),
+            ("docs/requirements/core.md", doc),
+            ("README.md", "[spec](src/c.md) and [other](docs/x.md)\n"),
+        ];
+        let p = plan_of(&files, &read).unwrap();
+        assert_eq!(p.edited, ["docs/requirements/core.md"]);
+        assert!(
+            p.writes["docs/requirements/core.md"].contains("[the spec](../rules/c.md)"),
+            "{:?}",
+            p.writes
+        );
+        // A link of a file that is no document stays, and the plan counts it.
+        assert_eq!(
+            p.outside_links,
+            [("README.md".to_string(), "src/c.md".to_string())]
+        );
+    }
+
+    #[test]
+    fn the_link_of_a_written_source_goes_to_its_primary_target() {
+        let doc = "---\nstatus: active\n---\n# Core\n\nSee [the proposal](../../src/p.md).\n";
+        let mut t = target("docs/intent/c/intent.md", None, "src/p.md", "I\n");
+        t.link_of = Some("src/p.md".into());
+        let read = Read {
+            targets: vec![t],
+            ..Read::default()
+        };
+        let p = plan_of(
+            &[("src/p.md", "P\n"), ("docs/requirements/core.md", doc)],
+            &read,
+        )
+        .unwrap();
+        assert!(
+            p.writes["docs/requirements/core.md"].contains("(../intent/c/intent.md)"),
+            "{:?}",
+            p.writes
+        );
+    }
+
+    #[test]
+    fn the_place_of_a_target_is_the_folder_of_the_layer_of_its_type() {
+        let p = Places::of(&cfg());
+        assert_eq!(p.requirements.as_deref(), Some("docs/requirements"));
+        assert_eq!(p.rules.as_deref(), Some("docs/rules"));
+        assert_eq!(p.intent.as_deref(), Some("docs/intent"));
+        assert_eq!(p.research, None);
+        let e = p.research_dir().unwrap_err();
+        assert!(matches!(e, Fatal::Usage(_)));
+        assert!(
+            e.message()
+                .contains("spec-dna layer add research --types research"),
+            "{}",
+            e.message()
+        );
+        assert_eq!(
+            requirements_path("docs/requirements", Some("media"), "a"),
+            "docs/requirements/media/a.md"
+        );
+        // A root of one type has no layer folder, and a root before it is skipped.
+        let text = "spec-dna = \"0.6.1\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[[roots]]\npath = \"specs\"\ntype = \"requirements\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
+        let p = Places::of(&Config::parse(text).unwrap());
+        assert_eq!(p.requirements.as_deref(), Some("specs"));
+        assert_eq!(p.requirements_root, Some(0));
+    }
+
+    #[test]
+    fn the_headings_of_a_text_ignore_a_code_block() {
+        let text = "# T\n\n## A\n\ntext\n\n```\n## not a heading\n```\n\n### B\n\n## C\n";
+        let l = Lines::new(text);
+        let names: Vec<(usize, &str)> = l
+            .headings
+            .iter()
+            .map(|h| (h.level, h.text.as_str()))
+            .collect();
+        assert_eq!(names, [(1, "T"), (2, "A"), (3, "B"), (2, "C")]);
+        // The section of A holds B, and the text of A ends at B.
+        assert_eq!(l.tree_end(1), l.headings[3].line);
+        assert_eq!(l.own_end(1), l.headings[2].line);
+        assert_eq!(l.block(4, 9), "text\n\n```\n## not a heading\n```");
+    }
+
+    #[test]
+    fn a_body_splits_at_its_first_list() {
+        let (s, rest) = split_sentence("One. Two.\n\nThree.\n\n- a\n- b\n");
+        assert_eq!(s, "One. Two.\n\nThree.");
+        assert_eq!(rest, "- a\n- b");
+        let (s, rest) = split_sentence("Only a sentence.\n");
+        assert_eq!((s.as_str(), rest.as_str()), ("Only a sentence.", ""));
+        let (s, _) = split_sentence("A.\n\n```\n- not a list\n```\n\nB.\n");
+        assert_eq!(s, "A.\n\n```\n- not a list\n```\n\nB.");
+        assert_eq!(indent("a\n\nb", 2), "  a\n\n  b");
+    }
+
+    #[test]
+    fn a_key_is_the_slug_of_a_name_and_a_heading_loses_its_annotation() {
+        assert_eq!(slug("Library-First"), "library-first");
+        assert_eq!(slug("  User   Authentication! "), "user-authentication");
+        assert_eq!(slug("I/O 2"), "i-o-2");
+        assert_eq!(slug("!!!"), "");
+        assert_eq!(
+            plain_heading("Success Criteria *(mandatory)*"),
+            "Success Criteria"
+        );
+        assert_eq!(plain_heading("Plain"), "Plain");
+    }
+
+    #[test]
+    fn the_front_matter_of_a_target_keeps_the_keys_that_the_source_has() {
+        let t = with_front_matter("# T\n", "active", &[], &["old-id".to_string()]);
+        assert_eq!(
+            t,
+            "---\naliases:\n  - old-id\nstatus: active\n---\n# T\n".replace(
+                "aliases:\n  - old-id\nstatus: active\n",
+                "status: active\naliases:\n  - old-id\n"
+            )
+        );
+        let t = with_front_matter(
+            "---\nowner: me\n---\n# T\n",
+            "draft",
+            &[("class", "higher-risk")],
+            &[],
+        );
+        assert_eq!(
+            t,
+            "---\nstatus: draft\nclass: higher-risk\nowner: me\n---\n# T\n"
+        );
+        let t = with_front_matter("---\nstatus: proposed\n---\n# T\n", "draft", &[], &[]);
+        assert_eq!(t, "---\nstatus: proposed\n---\n# T\n");
+    }
+
+    #[test]
+    fn a_clarification_marker_is_cut_and_its_text_is_kept() {
+        let (s, q) = strip_clarification(
+            "The tool MUST offer [NEEDS CLARIFICATION: which formats?] as formats.",
+        );
+        assert_eq!(s, "The tool MUST offer as formats.");
+        assert_eq!(q.as_deref(), Some("which formats?"));
+        let (s, q) = strip_clarification("It MUST work [NEEDS CLARIFICATION].");
+        assert_eq!((s.as_str(), q), ("It MUST work.", None));
+        let (s, q) = strip_clarification("A [NEEDS CLARIFICATION: x] and [NEEDS CLARIFICATION: y]");
+        assert_eq!(s, "A and");
+        assert_eq!(q.as_deref(), Some("x; y"));
+        assert_eq!(strip_clarification("No marker.").0, "No marker.");
+    }
+
+    #[test]
+    fn the_scenarios_of_a_text_count_headings_and_items_outside_code() {
+        let t = "#### Scenario: A\n\n- **WHEN** x\n\n```\n#### Scenario: no\n```\n\n  - Scenario: B\n    - Scenario: C\n";
+        assert_eq!(count_scenarios(t), 3);
+    }
+}
