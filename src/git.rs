@@ -69,6 +69,47 @@ pub struct ArtifactTouch {
     pub from: Option<String>,
 }
 
+/// A commit of the range `<base>..<head>` (`Git::branch_walk`).
+//
+// Part B (SD910 in branch mode) is the first caller of the branch walk. Until
+// then the dead-code lint cannot see a use, so the type has this `allow`.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchCommit {
+    pub commit: String,
+    /// The parents of the commit, first parent first. A root commit has none.
+    /// A merge commit has 2 or more.
+    pub parents: Vec<String>,
+    /// The e-mail of the author (`%ae`), as the commit stores it. The mailmap
+    /// does not change it, so a `.mailmap` file of the branch makes no
+    /// approver.
+    pub author_email: String,
+    /// The paths that the commit changed against its first parent, with the
+    /// kind of each change. A root commit adds all its files. A merge commit
+    /// has the diff against its first parent. The diff has no rename
+    /// detection, so a move is a deletion and an addition.
+    pub paths: Vec<(String, PathChange)>,
+}
+
+/// The commits of a branch (`Git::branch_walk`).
+#[allow(dead_code)] // See `BranchCommit`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchWalk {
+    /// The commits of `<base>..<head>`, the oldest first. A parent comes
+    /// before each of its children. The order is the order of the ancestry,
+    /// not of the commit dates.
+    pub commits: Vec<BranchCommit>,
+    /// The merge base of `base` and `head`, or `None` if the history that
+    /// the repository has shows none.
+    pub merge_base: Option<String>,
+    /// True if the repository is a shallow clone. The history is complete
+    /// only if `merge_base` is `Some`: a grafted boundary commit has no
+    /// parents, like a root commit. With `shallow` and no `merge_base`, the
+    /// walk is not a proof, so a rule that needs the order of the commits
+    /// stops (design 0.7.0, D13).
+    pub shallow: bool,
+}
+
 #[derive(Default)]
 pub struct Status {
     /// Tracked files whose working-tree content differs from the index.
@@ -426,6 +467,59 @@ impl Git {
     pub fn is_shallow(&self) -> bool {
         self.run(&["rev-parse", "--is-shallow-repository"])
             .is_ok_and(|o| String::from_utf8_lossy(&o).trim() == "true")
+    }
+
+    /// Returns the value of `user.email` of the git configuration of the
+    /// repository (the local file, then the global and system files), or
+    /// `None` if the key is not set or its value is empty. It never builds a
+    /// name from the user and the host.
+    #[allow(dead_code)] // `init` is the caller, but `tests/git_lifecycle.rs` has no use of it.
+    pub fn user_email(&self) -> Option<String> {
+        let out = self.run(&["config", "--get", "user.email"]).ok()?;
+        let s = String::from_utf8_lossy(&out).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+
+    /// Returns true if `ancestor` is `descendant` or one of its ancestors. An
+    /// unknown revision gives false.
+    #[allow(dead_code)] // See `BranchCommit`.
+    pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
+        self.cmd(&["merge-base", "--is-ancestor", ancestor, descendant])
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// Walks the commits of `<base>..<head>` from the oldest (design 0.7.0,
+    /// D11 and D13). Each commit has its parents, the e-mail of its author and
+    /// the paths that it changed. A merge commit is in the list, so the caller
+    /// can apply the stops of D13. The command reads only the history that the
+    /// repository has: it never fetches. `base` and `head` are revisions, such
+    /// as a commit id.
+    #[allow(dead_code)] // See `BranchCommit`.
+    pub fn branch_walk(&self, base: &str, head: &str) -> Result<BranchWalk, String> {
+        let range = format!("{base}..{head}");
+        let out = self.run_offline(&[
+            "-c",
+            "log.showRoot=true",
+            "log",
+            "--reverse",
+            "--topo-order",
+            "--no-renames",
+            "--diff-merges=first-parent",
+            "--name-status",
+            "-z",
+            "--format=%x01%H %P%x02%ae",
+            &range,
+            "--",
+        ])?;
+        Ok(BranchWalk {
+            commits: parse_branch_walk(&out),
+            merge_base: self.merge_base(base, head),
+            shallow: self.is_shallow(),
+        })
     }
 
     /// Returns, for each file under `specs` that a commit touched, the newest
@@ -1393,6 +1487,56 @@ fn parse_commit_header(h: &str) -> Option<(String, Vec<String>, i64)> {
     Some((commit, parents, time.trim().parse().ok()?))
 }
 
+/// Reads the output of `git log -z --name-status` with the format of
+/// `branch_walk`. A record that starts with `\x01` is the header of a commit.
+/// The first record after it can start with a line feed. The other records are
+/// pairs of a status letter and a path.
+#[allow(dead_code)] // See `BranchCommit`.
+fn parse_branch_walk(out: &[u8]) -> Vec<BranchCommit> {
+    let mut commits: Vec<BranchCommit> = Vec::new();
+    let mut words: Vec<String> = Vec::new();
+    let flush = |commits: &mut Vec<BranchCommit>, words: &mut Vec<String>| {
+        if let Some(c) = commits.last_mut() {
+            let mut it = words.drain(..);
+            while let (Some(status), Some(path)) = (it.next(), it.next()) {
+                let kind = match status.as_bytes().first() {
+                    Some(b'A') => PathChange::Added,
+                    Some(b'D') => PathChange::Deleted,
+                    _ => PathChange::Modified,
+                };
+                c.paths.push((path, kind));
+            }
+        }
+        words.clear();
+    };
+    for rec in out.split(|b| *b == 0) {
+        let rec = String::from_utf8_lossy(rec);
+        // After a commit with no changed path, the line feed comes before the
+        // next header.
+        let rec = rec.strip_prefix('\n').unwrap_or(&rec);
+        if let Some(h) = rec.strip_prefix('\x01') {
+            flush(&mut commits, &mut words);
+            let Some((ids, email)) = h.split_once('\x02') else {
+                continue;
+            };
+            let mut parts = ids.split(' ').filter(|p| !p.is_empty());
+            let Some(commit) = parts.next() else { continue };
+            commits.push(BranchCommit {
+                commit: commit.to_string(),
+                parents: parts.map(str::to_string).collect(),
+                author_email: email.to_string(),
+                paths: Vec::new(),
+            });
+            continue;
+        }
+        if !rec.is_empty() {
+            words.push(rec.to_string());
+        }
+    }
+    flush(&mut commits, &mut words);
+    commits
+}
+
 /// Escapes the characters that a git `glob` pathspec reads as magic.
 fn glob_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -1450,4 +1594,279 @@ pub fn glob_pathspecs(specs: &[String]) -> Vec<String> {
             format!(":(glob){g}")
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// A throw-away repository on branch `main`. The tests of this module
+    /// have no helper of `tests/common/mod.rs`, so they use `std` only.
+    struct Tmp {
+        dir: PathBuf,
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "commit.gpgsign=false", "-c", "user.name=Test"])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_DATE", "2024-01-01T00:00:00+00:00")
+            .env("GIT_COMMITTER_DATE", "2024-01-01T00:00:00+00:00")
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    impl Tmp {
+        fn new() -> Tmp {
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir =
+                std::env::temp_dir().join(format!("spec-dna-gitmod-{}-{n}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            git_in(&dir, &["init", "-q", "-b", "main"]);
+            Tmp { dir }
+        }
+
+        fn git(&self, args: &[&str]) -> String {
+            git_in(&self.dir, args)
+        }
+
+        fn write(&self, path: &str, text: &str) {
+            let p = self.dir.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        }
+
+        /// Commits all files with the given author e-mail. The date is the
+        /// same for each commit, so only the ancestry gives the order.
+        fn commit(&self, email: &str, msg: &str) -> String {
+            self.git(&["add", "-A"]);
+            self.git(&[
+                "-c",
+                &format!("user.email={email}"),
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                msg,
+            ]);
+            self.git(&["rev-parse", "HEAD"])
+        }
+
+        fn walk(&self, base: &str) -> BranchWalk {
+            Git::new(&self.dir).branch_walk(base, "HEAD").unwrap()
+        }
+    }
+
+    #[test]
+    fn the_walk_goes_from_the_oldest_with_email_parents_and_paths() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.write("b.txt", "b\n");
+        t.write("a.txt", "a2\n");
+        let c1 = t.commit("One@Example.test", "one");
+        t.git(&["rm", "-q", "b.txt"]);
+        let c2 = t.commit("two@example.test", "two");
+        let c3 = t.commit("three@example.test", "empty");
+        let w = t.walk(&base);
+        let ids: Vec<&str> = w.commits.iter().map(|c| c.commit.as_str()).collect();
+        assert_eq!(ids, [c1.as_str(), c2.as_str(), c3.as_str()]);
+        // The e-mail has the case of the commit.
+        assert_eq!(w.commits[0].author_email, "One@Example.test");
+        assert_eq!(w.commits[0].parents, std::slice::from_ref(&base));
+        assert_eq!(w.commits[1].parents, std::slice::from_ref(&c1));
+        assert_eq!(
+            w.commits[0].paths,
+            [
+                ("a.txt".to_string(), PathChange::Modified),
+                ("b.txt".to_string(), PathChange::Added)
+            ]
+        );
+        assert_eq!(
+            w.commits[1].paths,
+            [("b.txt".to_string(), PathChange::Deleted)]
+        );
+        // A commit with no change has no path, and it does not hide the next.
+        assert!(w.commits[2].paths.is_empty());
+        assert_eq!(w.merge_base, Some(base));
+        assert!(!w.shallow);
+    }
+
+    #[test]
+    fn the_walk_of_the_base_itself_is_empty() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        let w = t.walk(&base);
+        assert!(w.commits.is_empty());
+        assert_eq!(w.merge_base, Some(base));
+    }
+
+    #[test]
+    fn a_root_commit_adds_its_files_and_has_no_parent() {
+        // 2 histories that share no commit: the merge base is `None`, and the
+        // root commit of the head shows all its files as added.
+        let other = Tmp::new();
+        other.write("o.txt", "o\n");
+        other.commit("other@example.test", "other");
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        t.write("b.txt", "b\n");
+        let root = t.commit("root@example.test", "root");
+        t.git(&["fetch", "-q", other.dir.to_str().unwrap(), "HEAD:other"]);
+        let w = t.walk("other");
+        assert_eq!(w.merge_base, None);
+        assert_eq!(w.commits.len(), 1);
+        assert_eq!(w.commits[0].commit, root);
+        assert!(w.commits[0].parents.is_empty());
+        assert_eq!(
+            w.commits[0].paths,
+            [
+                ("a.txt".to_string(), PathChange::Added),
+                ("b.txt".to_string(), PathChange::Added)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_merge_commit_is_listed_with_its_parents_and_the_diff_of_the_first() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.git(&["checkout", "-q", "-b", "side"]);
+        t.write("side.txt", "s\n");
+        let side = t.commit("side@example.test", "side");
+        t.git(&["checkout", "-q", "main"]);
+        t.write("main.txt", "m\n");
+        let main = t.commit("main@example.test", "main");
+        t.git(&["checkout", "-q", "-b", "work", &base]);
+        t.write("work.txt", "w\n");
+        let work = t.commit("work@example.test", "work");
+        t.git(&[
+            "-c",
+            "user.email=merger@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge",
+            "side",
+        ]);
+        let merge = t.git(&["rev-parse", "HEAD"]);
+        let w = t.walk(&main);
+        // The branch has `work`, `side` and the merge. A parent comes before
+        // its child.
+        let pos = |id: &str| w.commits.iter().position(|c| c.commit == id).unwrap();
+        assert_eq!(w.commits.len(), 3);
+        assert!(pos(&work) < pos(&merge) && pos(&side) < pos(&merge));
+        assert_eq!(pos(&merge), 2);
+        let m = &w.commits[2];
+        assert_eq!(m.parents, [work, side]);
+        assert_eq!(m.author_email, "merger@example.test");
+        // The diff against the first parent: the files of `side`.
+        assert_eq!(m.paths, [("side.txt".to_string(), PathChange::Added)]);
+    }
+
+    #[test]
+    fn the_mailmap_does_not_change_the_author_email() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.write(
+            ".mailmap",
+            "Owner <owner@example.test> <stranger@example.test>\n",
+        );
+        t.commit("stranger@example.test", "map");
+        let w = t.walk(&base);
+        assert_eq!(w.commits[0].author_email, "stranger@example.test");
+    }
+
+    #[test]
+    fn a_shallow_clone_reports_it_and_has_no_merge_base_below_the_boundary() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let first = t.commit("base@example.test", "base");
+        t.write("b.txt", "b\n");
+        t.commit("one@example.test", "one");
+        t.write("c.txt", "c\n");
+        t.commit("two@example.test", "two");
+        t.git(&["checkout", "-q", "-b", "work", &first]);
+        t.write("w.txt", "w\n");
+        t.commit("work@example.test", "work 1");
+        t.write("w2.txt", "w\n");
+        t.commit("work@example.test", "work 2");
+        // `--depth` needs a URL, not a path.
+        let url = format!("file://{}", t.dir.display());
+        let clone =
+            std::env::temp_dir().join(format!("spec-dna-gitmod-{}-clone", std::process::id()));
+        let _ = fs::remove_dir_all(&clone);
+        let tmp = Tmp::new();
+        git_in(
+            &tmp.dir,
+            &[
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                "--branch",
+                "main",
+                &url,
+                clone.to_str().unwrap(),
+            ],
+        );
+        let _guard = Tmp { dir: clone.clone() };
+        git_in(&clone, &["fetch", "-q", "--depth", "1", &url, "work:work"]);
+        let g = Git::new(&clone);
+        assert!(g.is_shallow());
+        let w = g.branch_walk("main", "work").unwrap();
+        // Both tips are boundary commits. They share no visible ancestor.
+        assert!(w.shallow);
+        assert_eq!(w.merge_base, None);
+        // The boundary commit of the head has no parent in the listing.
+        assert!(w.commits.iter().any(|c| c.parents.is_empty()));
+    }
+
+    #[test]
+    fn user_email_reads_the_config_and_trims_it() {
+        let t = Tmp::new();
+        t.git(&["config", "user.email", "  owner@example.test "]);
+        let g = Git::new(&t.dir);
+        assert_eq!(g.user_email().as_deref(), Some("owner@example.test"));
+        // An empty value is no e-mail.
+        t.git(&["config", "user.email", ""]);
+        assert_eq!(g.user_email(), None);
+    }
+
+    #[test]
+    fn is_ancestor_answers_for_a_commit_and_an_unknown_revision() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let a = t.commit("a@example.test", "a");
+        let b = t.commit("b@example.test", "b");
+        let g = Git::new(&t.dir);
+        assert!(g.is_ancestor(&a, &b));
+        assert!(g.is_ancestor(&a, &a));
+        assert!(!g.is_ancestor(&b, &a));
+        assert!(!g.is_ancestor("nope", &a));
+    }
 }
