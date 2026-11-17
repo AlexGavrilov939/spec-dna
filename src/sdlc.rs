@@ -296,7 +296,8 @@ pub fn ended_changes(git: &Git, dir: &str, folders: &[String]) -> Result<Vec<End
 /// The number of the last line `Hours: <number>` of a commit message. The line
 /// can be in any paragraph, because a host can write the messages of a squash
 /// as a list. A line with other text after the number is not such a line. The
-/// number has digits, and up to 2 decimals after a `.`.
+/// number has up to 7 digits, and up to 2 decimals after a `.`. A longer number
+/// would lose digits or read as `inf` in JSON, so the line gives no value.
 fn hours_line(message: &str) -> Option<f64> {
     message.lines().rev().find_map(|line| {
         let number = line.strip_prefix("Hours:")?.trim_matches([' ', '\t']);
@@ -305,7 +306,7 @@ fn hours_line(message: &str) -> Option<f64> {
             None => (number, None),
         };
         let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
-        (digits(whole) && frac.is_none_or(|f| digits(f) && f.len() <= 2))
+        (digits(whole) && whole.len() <= 7 && frac.is_none_or(|f| digits(f) && f.len() <= 2))
             .then(|| number.parse().ok())
             .flatten()
     })
@@ -645,6 +646,19 @@ struct Indicator {
     /// The word of the count in the text line, for 1 and for any other number.
     noun: (&'static str, &'static str),
     reason: Option<String>,
+    /// Writes the value. Most rows have 1 decimal.
+    show: fn(f64) -> String,
+}
+
+/// The value with 1 decimal.
+fn one_decimal(v: f64) -> String {
+    format!("{v:.1}")
+}
+
+/// A number of hours with up to 2 decimals and no zero after the last digit,
+/// as `finish` and the note of the row write it.
+fn hours_text(v: f64) -> String {
+    crate::finish::format_hours((v * 100.0).round() as u64)
 }
 
 const CHANGES: (&str, &str) = ("change", "changes");
@@ -653,6 +667,12 @@ impl Indicator {
     /// Sets the word that the text line uses for the count.
     fn counting(mut self, noun: (&'static str, &'static str)) -> Self {
         self.noun = noun;
+        self
+    }
+
+    /// Sets the function that writes the value.
+    fn shown(mut self, show: fn(f64) -> String) -> Self {
+        self.show = show;
         self
     }
 }
@@ -666,6 +686,7 @@ fn na(play: &'static str, kind: &'static str, name: &'static str, reason: &str) 
         unit: None,
         count: None,
         noun: CHANGES,
+        show: one_decimal,
         reason: Some(reason.to_string()),
     }
 }
@@ -701,6 +722,7 @@ fn computed(
         unit: Some(unit),
         count: Some(count),
         noun: CHANGES,
+        show: one_decimal,
         reason,
     }
 }
@@ -844,10 +866,7 @@ pub fn stats(
                 .str("play", r.play)
                 .str("kind", r.kind)
                 .str("name", r.name)
-                .raw(
-                    "value",
-                    &r.value.map_or("null".to_string(), |v| format!("{v:.1}")),
-                )
+                .raw("value", &r.value.map_or("null".to_string(), r.show))
                 .opt_str("unit", r.unit)
                 .raw(
                     "count",
@@ -876,7 +895,8 @@ pub fn stats(
             Some(v) => {
                 let n = r.count.unwrap_or(0);
                 line.push_str(&format!(
-                    "{v:.1} {} ({n} {})",
+                    "{} {} ({n} {})",
+                    (r.show)(v),
                     r.unit.unwrap_or(""),
                     if n == 1 { r.noun.0 } else { r.noun.1 }
                 ));
@@ -1039,11 +1059,12 @@ fn indicators(
         v.len(),
         &format!(
             "the value is the median of the finished changes that have a line `Hours:` in the commit that deletes the folder; the total is {} hours",
-            crate::finish::format_hours((total * 100.0).round() as u64)
+            hours_text(total)
         ),
         "no finished change has an `Hours:` line in the commit that deletes its folder",
         shallow,
-    ));
+    )
+    .shown(hours_text));
     rows.push(na(
         "Build",
         "lagging",
@@ -1473,6 +1494,8 @@ mod tests {
             ("Hours: 1\nHours: soon\n", Some(1.0)),
             ("Hours:4\t\r\nlast", Some(4.0)),
             ("Hours: 12345.25", Some(12345.25)),
+            ("Hours: 1234567", Some(1_234_567.0)),
+            ("Hours: 12345678", None),
             ("Hours: 1.234", None),
             ("Hours: 3 total", None),
             ("hours: 3", None),

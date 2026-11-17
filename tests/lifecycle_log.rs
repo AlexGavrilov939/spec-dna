@@ -1003,5 +1003,36 @@ fn the_hours_row_is_the_median_of_the_changes_that_have_a_line() {
     );
     let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
     let row = indicator(&out, HOURS_ROW);
-    has(row, &["\"value\":6.0", "\"count\":1"]);
+    has(row, &["\"value\":6,", "\"count\":1"]);
+}
+
+#[test]
+fn a_hours_line_with_too_many_digits_is_not_read() {
+    // 7 whole digits are the most. A longer number gives `inf` or loses
+    // digits as a JSON number, so the line gives no value.
+    for number in ["12345678".to_string(), "9".repeat(400), "9".repeat(23)] {
+        let r = squashed_with(&format!("feat: dose\n\nHours: {number}"));
+        let out = log_json(&r, &[]);
+        assert!(out.contains("\"hours\":null"), "{out}");
+        assert!(!out.contains("inf"), "{out}");
+        let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+        let row = indicator(&out, HOURS_ROW);
+        has(row, &["\"value\":null", "\"count\":0"]);
+    }
+    let r = squashed_with("feat: dose\n\nHours: 1234567.5");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":1234567.5"), "{out}");
+}
+
+#[test]
+fn the_hours_value_keeps_2_decimals() {
+    let r = squashed_with("feat: dose\n\nHours: 2.25");
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    let row = indicator(&out, HOURS_ROW);
+    has(row, &["\"value\":2.25", "the total is 2.25 hours"]);
+    let (_, text, _) = r.run(&["stats", "--sdlc"]);
+    assert!(
+        text.contains("Hours of work per finished change: 2.25 hours (1 change)"),
+        "{text}"
+    );
 }
