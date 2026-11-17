@@ -874,7 +874,8 @@ mod tests {
             Source::Project("evals/results/skills-20261121T100000Z.json".into())
         );
         assert_eq!(resolve("debug", &files).verdict, Some(Verdict::On));
-        let none = resolve("brainstorm", &files);
+        // A name that no file and no table holds. A new table changes no test.
+        let none = resolve("no-such-skill", &files);
         assert_eq!((none.verdict, none.source), (None, Source::None));
     }
 

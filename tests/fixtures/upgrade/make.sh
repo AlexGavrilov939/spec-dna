@@ -116,6 +116,16 @@ selected() {
   return 1
 }
 
+# The builds come before the change of HOME: cargo needs the real home to find
+# its toolchain and its crates.
+if selected old "$@"; then
+  bin042="$(binary 0.4.2 SPEC_DNA_042)"
+  bin050="$(binary 0.5.0 SPEC_DNA_050)"
+fi
+if selected v061 "$@"; then
+  bin061="$(binary 0.6.1 SPEC_DNA_061)"
+fi
+
 # No file of the person or of the machine reaches the result.
 export HOME="$work/home"
 export GIT_CONFIG_GLOBAL=/dev/null
@@ -268,8 +278,6 @@ ANSWERS
 }
 
 if selected old "$@"; then
-  bin042="$(binary 0.4.2 SPEC_DNA_042)"
-  bin050="$(binary 0.5.0 SPEC_DNA_050)"
   make_adapters v04 "$bin042"
   make_adapters v05 "$bin050"
   make_adapters brownfield "$bin050"
@@ -290,7 +298,6 @@ if selected old "$@"; then
 fi
 
 if selected v061 "$@"; then
-  bin061="$(binary 0.6.1 SPEC_DNA_061)"
   make_v061 "$bin061"
   record v061 "$bin061" v061
 fi

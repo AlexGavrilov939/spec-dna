@@ -132,7 +132,7 @@ The answer to question 1 sets the defaults of a new project. The answers to the 
 
 A skill is on by default when `spec-dna skill list` says so ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The rule reads the 7 skills of the design, the verdict of each skill in the table of the release, and one constant. With the constant `true`, a skill is on only with the verdict `on`. With `false`, a skill of the 7 stays on unless its verdict is `off`. A skill outside the 7 is on only with the verdict `on`. `init` never reads a table of the project for this: the default is the same in each project of a release.
 
-`--reconfigure` keeps the current values and applies no preset. A part that the file does not set gets the default of the profile of the file. If the answer to question 1 differs from the file, `init` changes the severities and the keys of ADR 0018 (`approval = "base"` and `protect-approvals` for `strict`, in a file that has no such key), and it prints this note: "the profile `<p>` sets other defaults only for a new project; answer questions 4, 5, 12 and 14 to change them".
+`--reconfigure` keeps the current values and applies no preset. A part that the file does not set gets the default of the profile of the file. If the answer to question 1 differs from the file, `init` changes the severities and, for `strict`, the keys of ADR 0018: `approval = "base"` (also when the file has `branch`, because `strict` reads the approvals of the base only; the list `approvers` stays in the file, and a note says so) and `protect-approvals = true` (only in a file that has no such key). It prints this note: "the profile `<p>` sets other defaults only for a new project; answer questions 4, 5, 12 and 14 to change them".
 
 ### The approvers
 

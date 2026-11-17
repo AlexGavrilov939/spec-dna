@@ -561,6 +561,12 @@ fn settle_approval(plan: &mut Plan) {
         }
     };
     if plan.profile == Profile::Strict {
+        if plan.kind == "reconfigure" && plan.approval == Approval::Branch {
+            note(
+                plan,
+                "the profile `strict` reads the approvals of the base only, so `init` changes `approval = \"branch\"` to `\"base\"`. `approvers` stays in the file and has no effect until the approval is `branch` again".to_string(),
+            );
+        }
         plan.approval = Approval::Base;
         if plan.approvers_given.as_ref().is_some_and(|l| !l.is_empty()) {
             note(
@@ -2398,15 +2404,16 @@ fn settle_parts(plan: &mut Plan) {
 /// The notes of the profile (ADR 0023). `strict` with the answer `skeleton`
 /// writes no eval pack, so a note names `eval pack`. `--reconfigure` with
 /// another profile keeps the current values, so a note says that the preset is
-/// for a new project. The call is idempotent.
-fn profile_notes(plan: &mut Plan) {
+/// for a new project. The note on `eval pack` goes when the folder
+/// `<dir>/pack/` exists. The call is idempotent.
+fn profile_notes(plan: &mut Plan, pack_exists: bool) {
     let mut add = |n: String| {
         if !plan.notes.contains(&n) {
             plan.notes.push(n);
         }
     };
     let mut new = Vec::new();
-    if plan.profile == Profile::Strict && plan.evals == EvalsAnswer::Skeleton {
+    if plan.profile == Profile::Strict && plan.evals == EvalsAnswer::Skeleton && !pack_exists {
         new.push(format!(
             "the profile `strict` uses the verdicts of the skills; run `spec-dna eval pack` to write the {} evals of the pack into `{}/pack/` before `spec-dna eval run --ab` (docs/evals.md)",
             crate::eval_pack::all().len(),
@@ -3271,7 +3278,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     }
 
     io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 4 skills that are off by default (`execute`, `tdd`, `verify` and `debug`). none writes nothing. The files are for Claude Code only.");
+    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 11 skills, also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -3283,7 +3290,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     settle_evals(plan);
     if plan.harness.level != Level::None {
         settle_parts(plan);
-        // The level `full` proposes the 4 skills that are off too (D39).
+        // The level `full` proposes the skills that are off by default too (D39).
         let proposed = profile_skills(plan.preset, plan.harness.level, &|s| s.default_on());
         io.say(&format!(
             "    The {} skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
@@ -3695,7 +3702,12 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let (skeleton, skeleton_notes) = skeleton_changes(repo, &plan, &parsed.evidence_tests);
     changes.extend(skeleton);
     plan.notes.extend(skeleton_notes);
-    profile_notes(&mut plan);
+    let pack_exists = repo
+        .root
+        .join(&plan.evals_table.dir)
+        .join("pack")
+        .exists();
+    profile_notes(&mut plan, pack_exists);
 
     let preview = o.dry_run || interactive || !write;
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());

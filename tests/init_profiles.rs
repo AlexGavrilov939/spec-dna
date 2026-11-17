@@ -322,3 +322,66 @@ fn reconfigure_with_another_profile_keeps_the_values_and_prints_a_note() {
     );
     assert!(!out.contains("sets other defaults"), "{out}");
 }
+
+#[test]
+fn reconfigure_to_strict_turns_branch_into_base_with_a_note_and_keeps_the_approvers() {
+    let r = repo();
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"standard\"\nharness = \"lean\"\napprovers = [\"owner@example.test\"]\n",
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        str_key(&table(&r), "change", "approval"),
+        Some("branch"),
+        "the start is a project with the approval in the branch"
+    );
+    r.commit("adopt spec-dna");
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"strict\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    // `strict` reads the approvals of the base only, so `branch` cannot stay.
+    let t = table(&r);
+    assert_eq!(str_key(&t, "change", "approval"), Some("base"));
+    assert_eq!(
+        t["change"]["approvers"].as_array().unwrap()[0].as_str(),
+        Some(OWNER),
+        "the list stays"
+    );
+    assert_eq!(
+        t["harness"].get("protect-approvals"),
+        Some(&toml::Value::Boolean(true))
+    );
+    assert!(
+        out.contains("note: the profile `strict` reads the approvals of the base only, so `init` changes `approval = \"branch\"` to `\"base\"`"),
+        "{out}"
+    );
+    // A second run has nothing to change, so it prints no such note.
+    r.commit("strict");
+    let (_, out, _) = init_with(
+        &r,
+        "profile = \"strict\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert!(!out.contains("changes `approval = \"branch\"`"), "{out}");
+}
+
+#[test]
+fn the_note_of_eval_pack_goes_when_the_pack_folder_exists() {
+    let r = repo();
+    let answers = "profile = \"strict\"\nharness = \"lean\"\n";
+    let (code, out, err) = init_with(&r, answers, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    // No pack yet: `--reconfigure` repeats the note.
+    let (_, out, _) = init_with(&r, answers, &["--reconfigure"]);
+    assert!(out.contains("run `spec-dna eval pack`"), "{out}");
+    // After `eval pack`, the folder exists and the note goes.
+    r.write("evals/pack/placeholder.json", "{}\n");
+    let (_, out, _) = init_with(&r, answers, &["--reconfigure"]);
+    assert!(!out.contains("spec-dna eval pack"), "{out}");
+}

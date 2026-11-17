@@ -81,7 +81,7 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 - `lite`, `standard` and `strict` differ in the approval, the hook and the severities, and `strict` also reads the verdicts. `standard` and `strict` have the same rule for the skills.
 - `strict` writes no eval pack: the pack has 57 evals in 812 files. `init` prints a note with the command `spec-dna eval pack`, which writes the pack before `spec-dna eval run --ab`.
 - An answer to question 4, 5, 12 or 14 replaces the value of the table.
-- `init --reconfigure` keeps the current values. A part that the file does not set (`skills`, `review-md` or `protect-tests`) gets the default of the profile of the file. A new answer to question 1 changes the severities only, and `init` prints a note. `upgrade` applies no preset.
+- `init --reconfigure` keeps the current values. A part that the file does not set (`skills`, `review-md` or `protect-tests`) gets the default of the profile of the file. A new answer to question 1 changes the severities, and `init` prints a note. For the profile `strict`, `init` also writes `approval = "base"` (the key `approvers` stays, and the note says so) and `protect-approvals = true`, because `strict` reads the approvals of the base only (ADR 0018). `upgrade` applies no preset.
 
 ## Overrides
 
