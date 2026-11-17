@@ -1395,3 +1395,107 @@ fn a_detected_orchestrator_model_leaves_out_its_efforts_entry() {
     let (code, out) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
 }
+
+// The key `protect-approvals` and its hook entry (owner review of 0.7.0, item 2)
+
+/// The command of the entry that the harness writes for the hook.
+const APPROVALS_COMMAND: &str =
+    "spec-dna hook protect-approvals --intent 'docs/intent' 2>/dev/null || true";
+
+#[test]
+fn strict_init_writes_protect_approvals_and_the_hook_entry() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("profile = \"strict\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("\nprotect-approvals = true\n"), "{cfg}");
+    let settings = r.read(".claude/settings.json");
+    assert!(
+        settings.contains(&format!("\"command\": \"{APPROVALS_COMMAND}\"")),
+        "{settings}"
+    );
+    assert!(settings.contains("\"matcher\": \"Bash\""), "{settings}");
+    let golden = format!(
+        "{}/tests/golden/harness/settings-strict.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    assert_eq!(settings, fs::read_to_string(golden).unwrap());
+    assert!(
+        out.contains("spec-dna 0.7.0 or later on PATH for the hooks"),
+        "{out}"
+    );
+    // `check` finds the file that `init` wrote clean: no SD501 and no SD502.
+    r.commit("adopt");
+    let (code, out) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD501") && !out.contains("SD502"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A second `init` has nothing to write.
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("everything is up to date"), "{out}");
+}
+
+#[test]
+fn standard_init_writes_no_approval_hook() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("profile = \"standard\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.read("spec-dna.toml").contains("protect-approvals"));
+    let settings = r.read(".claude/settings.json");
+    assert!(!settings.contains("protect-approvals"), "{settings}");
+    assert!(!settings.contains("\"Bash\""), "{settings}");
+    // The positive control: the key, set by hand, writes the entry.
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("\nreview-md = ", "\nprotect-approvals = true\nreview-md = ");
+    assert!(cfg.contains("protect-approvals = true"), "{cfg}");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt");
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.read(".claude/settings.json").contains(APPROVALS_COMMAND));
+}
+
+#[test]
+fn reconfigure_keeps_the_key_of_the_file() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("profile = \"strict\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt");
+    // Back to `standard`: the file has the key, so it keeps it.
+    let (code, out, err) = r.init_with("profile = \"standard\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read("spec-dna.toml")
+            .contains("\nprotect-approvals = true\n")
+    );
+    // A file with the key `false` stays `false` when the profile is `strict`.
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("profile = \"standard\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml").replace(
+        "\nreview-md = ",
+        "\nprotect-approvals = false\nreview-md = ",
+    );
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt");
+    let (code, out, err) = r.init_with("profile = \"strict\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("\nprotect-approvals = false\n"), "{cfg}");
+    assert!(
+        !r.read(".claude/settings.json")
+            .contains("protect-approvals")
+    );
+}
+
+#[test]
+fn protect_approvals_must_be_a_boolean() {
+    let r = Repo::with_harness("[harness]\nlevel = \"lean\"\nprotect-approvals = \"yes\"\n");
+    let (code, out, err) = r.run3(&["check"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("`harness.protect-approvals` must be true or false"),
+        "{err}"
+    );
+}
