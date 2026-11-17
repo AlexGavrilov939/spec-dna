@@ -1,6 +1,6 @@
 ---
 name: spec-dna-execute
-description: In a spec-dna project, run the tasks of an approved plan, one fresh subagent for each task.
+description: In a spec-dna project, when the plan is approved and a task is open, run the task with a fresh subagent.
 ---
 
 When to use: The plan is `approved` and a task is open.
@@ -19,4 +19,4 @@ If the check fails: Fix the cause in the same task. If a file is outside `Files`
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:1830837c95447ced -->
+<!-- spec-dna harness v{VERSION} h:b00dfd3870c59a2f -->

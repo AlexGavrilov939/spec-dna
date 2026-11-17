@@ -1,6 +1,6 @@
 ---
 name: spec-dna-verify
-description: In a spec-dna project, run the proof and read its output before you say that the work is done.
+description: In a spec-dna project, before you say that the work is done, run the proof and read its output.
 ---
 
 When to use: Before you say that the work is done.
@@ -18,4 +18,4 @@ If the check fails: Find the cause. Fix it, and run the commands again. Do not s
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:a2f47ab8f4a030ef -->
+<!-- spec-dna harness v{VERSION} h:8f3f867a7dfdf2d8 -->

@@ -769,7 +769,7 @@ fn the_line_of_agents_md_names_the_rules_the_skill_command_and_the_approval_rule
     let t = r.read("AGENTS.md");
     let line = t
         .lines()
-        .find(|l| l.contains("<!-- spec-dna:"))
+        .find(|l| l.contains("<!-- spec-dna v"))
         .unwrap_or_else(|| panic!("{t}"));
     // The whole line, with its marker, has 400 bytes or fewer.
     assert!(line.len() <= 400, "{} bytes: {line}", line.len());

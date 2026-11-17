@@ -4040,6 +4040,62 @@ opus = "xhigh"
     }
 
     #[test]
+    fn the_skills_have_the_kind_stage_and_default_of_d2() {
+        // (key, kind, stage, default)
+        let table = [
+            ("brainstorm", "stage", Some("plan"), true),
+            ("specify", "stage", Some("design"), true),
+            ("clarify", "stage", Some("design"), true),
+            ("write-plan", "stage", Some("build"), true),
+            ("execute", "stage", Some("build"), false),
+            ("tdd", "stage", Some("test"), false),
+            ("review", "stage", Some("deploy"), true),
+            ("verify", "stage", Some("deploy"), false),
+            ("finish", "stage", Some("closed"), true),
+            ("debug", "event", None, false),
+            ("post-mortem", "event", None, true),
+        ];
+        assert_eq!(Skill::ALL.len(), table.len());
+        for (s, (key, kind, stage, on)) in Skill::ALL.into_iter().zip(table) {
+            assert_eq!(s.key(), key);
+            assert_eq!(s.kind().name(), kind, "{key}");
+            assert_eq!(s.stage().map(Stage::name), stage, "{key}");
+            assert_eq!(s.default_on(), on, "{key}");
+            assert_eq!(Skill::from_key(key), Some(s));
+        }
+        // The derived order is the order of D2, so `skills.sort()` keeps it.
+        let mut sorted = Skill::ALL.to_vec();
+        sorted.sort();
+        assert_eq!(sorted, Skill::ALL);
+    }
+
+    #[test]
+    fn each_name_that_next_prints_is_a_stage_skill_of_the_pack() {
+        for n in crate::stage::SKILLS {
+            let s = Skill::from_key(n).unwrap_or_else(|| panic!("`{n}` is no skill"));
+            assert_eq!(s.kind(), SkillKind::Stage, "{n}");
+        }
+        // The 9 names of `next` and the 2 event skills.
+        assert_eq!(Skill::ALL.len(), crate::stage::SKILLS.len() + 2);
+    }
+
+    #[test]
+    fn a_name_of_0_6_that_ended_has_a_message_and_review_has_none() {
+        for old in GONE_SKILLS {
+            assert!(Skill::from_key(old).is_none(), "{old}");
+            let m = gone_skill_message(old).unwrap();
+            assert!(
+                m.contains("spec-dna upgrade") && m.contains("`brainstorm`"),
+                "{m}"
+            );
+        }
+        assert!(gone_skill_message("review").is_none());
+        for p in OLD_SKILL_PATHS {
+            assert!(Skill::ALL.iter().all(|s| s.path() != p), "{p}");
+        }
+    }
+
+    #[test]
     fn is_output_path_accepts_the_skills_and_review_md() {
         for s in Skill::ALL {
             assert!(is_output_path(&s.path()), "{s:?}");
@@ -4084,7 +4140,7 @@ opus = "xhigh"
             .find(|g| g.skill == Some(Skill::WritePlan))
             .unwrap();
         assert!(g.text.starts_with(
-            "---\nname: spec-dna-write-plan\ndescription: In a spec-dna project, write plan.md"
+            "---\nname: spec-dna-write-plan\ndescription: In a spec-dna project, before any code, write plan.md"
         ));
         let m = file_marker(&g.text).expect("marker");
         assert!(!m.edited());

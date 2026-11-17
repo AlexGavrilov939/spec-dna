@@ -195,43 +195,43 @@ Check: `spec-dna check` gives no SD918.
 If the check fails: Add or fix the eval file. Run `spec-dna check` again.";
 
 /// The `description` of a skill. It is in each request, so it is one short
-/// sentence. It starts with the scope of D5. The limits of D6 are 160
+/// sentence. It starts with the scope of D5 and then the trigger of D2. The limits of D6 are 160
 /// characters for one description, 1,900 bytes for the listing of the 11
 /// skills and 1,250 bytes for the listing of the 7 skills that are on.
 pub fn description(skill: Skill) -> &'static str {
     match skill {
         Skill::Brainstorm => {
-            "In a spec-dna project, write intent.md with its class when a request starts a change."
+            "In a spec-dna project, when a request starts a change, write intent.md with its class."
         }
         Skill::Specify => {
-            "In a spec-dna project, write spec.md with the delta when the intent is accepted and its class is higher-risk."
+            "In a spec-dna project, when the intent is accepted and its class is higher-risk, write spec.md with the delta."
         }
         Skill::Clarify => {
-            "In a spec-dna project, close each open concern and question of spec.md before it is approved."
+            "In a spec-dna project, when spec.md has an open concern or question, close each one before the spec is approved."
         }
         Skill::WritePlan => {
-            "In a spec-dna project, write plan.md with its files and small tasks before any code."
+            "In a spec-dna project, before any code, write plan.md with its files and small tasks."
         }
         Skill::Execute => {
-            "In a spec-dna project, run the tasks of an approved plan, one fresh subagent for each task."
+            "In a spec-dna project, when the plan is approved and a task is open, run the task with a fresh subagent."
         }
         Skill::Tdd => {
-            "In a spec-dna project, write a test that fails before the code when a requirement has no evidence."
+            "In a spec-dna project, when a requirement has no evidence, write a test that fails before the code."
         }
         Skill::Review => {
-            "In a spec-dna project, review the diff in 3 passes before a merge, and check each review comment."
+            "In a spec-dna project, before a merge, review the diff in 3 passes and check each review comment."
         }
         Skill::Verify => {
-            "In a spec-dna project, run the proof and read its output before you say that the work is done."
+            "In a spec-dna project, before you say that the work is done, run the proof and read its output."
         }
         Skill::Finish => {
-            "In a spec-dna project, run spec-dna finish when a change is ready, to apply its delta."
+            "In a spec-dna project, when a change is ready, run spec-dna finish to apply its delta."
         }
         Skill::Debug => {
-            "In a spec-dna project, find the cause of a failing test or command before you fix it."
+            "In a spec-dna project, when a test or command fails and the cause is not known, find the cause before you fix it."
         }
         Skill::PostMortem => {
-            "In a spec-dna project, turn an incident with an open follow-up into a new intent and an eval."
+            "In a spec-dna project, when an incident has an open follow-up, write a new intent and an eval for it."
         }
     }
 }

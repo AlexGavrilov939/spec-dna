@@ -1,6 +1,6 @@
 ---
 name: spec-dna-tdd
-description: In a spec-dna project, write a test that fails before the code when a requirement has no evidence.
+description: In a spec-dna project, when a requirement has no evidence, write a test that fails before the code.
 ---
 
 When to use: A requirement has no evidence.
@@ -19,4 +19,4 @@ If the check fails: Add the tag, or write a test that fails for the requirement.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:3ca404897df74bc9 -->
+<!-- spec-dna harness v{VERSION} h:ea3d6a5dc82ffe6c -->

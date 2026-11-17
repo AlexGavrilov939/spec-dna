@@ -1,6 +1,6 @@
 ---
 name: spec-dna-write-plan
-description: In a spec-dna project, write plan.md with its files and small tasks before any code.
+description: In a spec-dna project, before any code, write plan.md with its files and small tasks.
 ---
 
 When to use: Before the code of a change.
@@ -19,4 +19,4 @@ If the check fails: Split a task that lists too many paths. Give each task exact
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:e67254dc5d582c7d -->
+<!-- spec-dna harness v{VERSION} h:7343e156dc50bcbf -->

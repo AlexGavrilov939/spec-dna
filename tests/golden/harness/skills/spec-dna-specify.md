@@ -1,6 +1,6 @@
 ---
 name: spec-dna-specify
-description: In a spec-dna project, write spec.md with the delta when the intent is accepted and its class is higher-risk.
+description: In a spec-dna project, when the intent is accepted and its class is higher-risk, write spec.md with the delta.
 ---
 
 When to use: The intent is `accepted` and its class is `higher-risk`.
@@ -19,4 +19,4 @@ If the check fails: Fix each item that the message names. Run `spec-dna check` a
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:2b4da9fc187dc392 -->
+<!-- spec-dna harness v{VERSION} h:d59601ae3178228d -->

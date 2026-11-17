@@ -1,6 +1,6 @@
 ---
 name: spec-dna-brainstorm
-description: In a spec-dna project, write intent.md with its class when a request starts a change.
+description: In a spec-dna project, when a request starts a change, write intent.md with its class.
 ---
 
 When to use: A request starts a change.
@@ -19,4 +19,4 @@ If the check fails: Replace each placeholder. Ask the person for each fact that 
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:69b0e511182d4119 -->
+<!-- spec-dna harness v{VERSION} h:1cf53f3eb7f1ab9a -->

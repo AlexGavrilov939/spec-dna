@@ -1,6 +1,6 @@
 ---
 name: spec-dna-review
-description: In a spec-dna project, review the diff in 3 passes before a merge, and check each review comment.
+description: In a spec-dna project, before a merge, review the diff in 3 passes and check each review comment.
 ---
 
 When to use: Before a merge, or when a person asks for a review or answers one.
@@ -37,4 +37,4 @@ Review the diff in 3 passes. For each finding, give the file and the line.
 - A finding of `spec-dna check`. CI runs it.
 - The text of a file that spec-dna generates: each file with a `spec-dna harness` marker, `.claude/skills/spec-dna/SKILL.md`, the spec-dna lines of `CLAUDE.md` and `AGENTS.md`, and the entries of `.claude/settings.json` for `model`, `modelSettings`, `fallbackModel`, `advisorModel`, `permissions.deny`, `env.CLAUDE_CODE_SUBAGENT_MODEL` and each `spec-dna hook` command.
 
-<!-- spec-dna harness v{VERSION} h:81adebdb083bc380 -->
+<!-- spec-dna harness v{VERSION} h:63b9d90ea35e3282 -->

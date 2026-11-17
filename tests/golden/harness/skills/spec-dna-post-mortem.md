@@ -1,6 +1,6 @@
 ---
 name: spec-dna-post-mortem
-description: In a spec-dna project, turn an incident with an open follow-up into a new intent and an eval.
+description: In a spec-dna project, when an incident has an open follow-up, write a new intent and an eval for it.
 ---
 
 When to use: An `incident` has an open follow-up.
@@ -19,4 +19,4 @@ If the check fails: Add or fix the eval file. Run `spec-dna check` again.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:6795045e9acb071b -->
+<!-- spec-dna harness v{VERSION} h:14b0de86cebaff55 -->

@@ -205,7 +205,10 @@ fn an_unknown_name_or_a_bad_call_gives_exit_code_2() {
 #[test]
 #[ignore = "workflow-pack t17"]
 fn each_skill_that_next_names_has_a_text() {
-    let r = project("");
+    // A new project has a change policy, so `next` names a skill.
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
     let (code, out, err) = r.run(&["new", "intent", "x"]);
     assert_eq!(code, 0, "{out}{err}");
     r.commit("intent");
