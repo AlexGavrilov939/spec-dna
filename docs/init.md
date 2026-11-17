@@ -4,6 +4,8 @@ This page describes `spec-dna init`: what it detects, the questions that it asks
 
 `init` never edits a document. In an instruction file (`AGENTS.md`, `CLAUDE.md`), it changes only its own generated lines: the spec-dna line, and the model-team line of the [Claude Code harness](harness.md). Each generated line carries the version of the generator and a hash of its text, so `check` finds a manual edit.
 
+The spec-dna line has 400 bytes or fewer, with its marker. It names the 2 commands of each task (`spec-dna context` and `spec-dna check`), the 5 rules of the disciplines, the command `spec-dna skill show <name>` and the approval rule: an agent writes an approval commit only when the owner says so explicitly in the chat ([agents.md](agents.md)). `init` prints the bytes that the adapters add to each request, so you see the cost of the line.
+
 ```sh
 spec-dna init                   # interactive on a terminal
 spec-dna init --dry-run         # the preview only
@@ -149,14 +151,14 @@ The second prompt of question 12 sets 3 keys of `[harness]`. An omitted word kee
 
 | Part | Writes | Default of a new project |
 | --- | --- | --- |
-| `skills` | The stage skills `.claude/skills/spec-dna-<name>/SKILL.md`, for the names `intent`, `spec`, `plan` and `review` | All 4 skills if the answer to question 4 is not `none`, else `none` |
+| `skills` | The skills `.claude/skills/spec-dna-<name>/SKILL.md`. The 11 names are `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem` ([harness.md](harness.md#the-workflow-pack-and-reviewmd)) | The 7 skills that are on by default (all but `execute`, `tdd`, `verify` and `debug`) at the level `lean`, and all 11 at the level `full`, if the answer to question 4 is not `none`, else `none` |
 | `review-md` | `REVIEW.md` | `true` |
 | `protect-tests` | The hook `protect-tests` in `.claude/settings.json` | `fix-branches`. `off` if `[evidence] tests` is empty, which is the link style `verified-by` |
 
 - The defaults follow the final answers, so a later answer to question 4 or 6 changes them.
-- The 4 skill descriptions add 588 bytes to each request. `REVIEW.md` adds none. `init` prints the total bytes that the harness adds.
+- The descriptions of the 7 skills that are on add 1,250 bytes or fewer to each request, and the 11 skills add 1,900 bytes or fewer. `REVIEW.md` adds none. `init` prints the total bytes that the harness adds, and the bytes that the adapters add (the line of 400 bytes or fewer, and the description of the adapter skill).
 - In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of a new project. So `init --reconfigure` offers the new parts to a project that has none of them.
-- A `REVIEW.md` with no harness marker gives `review-md=false`. A skill file with no marker leaves that skill out of the default. A note names each such file, and `init` does not change it. An answer that asks for such a file stops `init` with exit code 2.
+- A `REVIEW.md` with no harness marker gives `review-md=false`. A skill file with no marker leaves that skill out of the default. A note names each such file, and `init` does not change it. A skill file of 0.6 for a name that ended (`spec-dna-intent`, `spec-dna-spec` or `spec-dna-plan`) is different: if it has a marker and you did not edit it, `init` removes it. If you edited it, `init` keeps it and names it with `kept <path>: edited by hand (SD501)`. An answer that asks for such a file stops `init` with exit code 2.
 - The answer keys are `harness-skills` (an array of names, `[]` for none), `harness-review-md` (`true` or `false`) and `harness-protect-tests`. They need a harness level other than `none`.
 
 ### Evals
@@ -187,7 +189,7 @@ Then the preview shows the full `spec-dna.toml` and each file to create or chang
 - for `github`: `.github/workflows/spec-dna.yml` (the job of [quickstart.md](quickstart.md#ci)). If the file exists, `init` does not change it.
 - for the answer `skeleton`: the starter files of the [evals](#evals), and for `github` also `.github/workflows/agent-evals.yml`
 - a local hook at the end of `.pre-commit-config.yaml` (only if `repos:` is its last top-level key), or one line in `.husky/pre-commit`. The hook runs `spec-dna check --staged`, which checks the git index: a commit records the index, not the working tree. A hook that 0.4.1 wrote (`spec-dna check`) reads the working tree. `init` changes that exact line in place when it runs again (also when `spec-dna.toml` exists), and the preview shows the diff. It does not change any other text of a hook.
-- the harness files of the Claude Code adapter, if the level is not `none`. They are `.claude/agents/*.md`, `.claude/agents/model-team.md`, the stage skills `.claude/skills/spec-dna-<stage>/SKILL.md`, `REVIEW.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`
+- the harness files of the Claude Code adapter, if the level is not `none`. They are `.claude/agents/*.md`, `.claude/agents/model-team.md`, the skills `.claude/skills/spec-dna-<name>/SKILL.md`, `REVIEW.md`, the model-team line in `CLAUDE.md` and `.claude/settings.json`
 
 The harness block of the preview shows each harness file with `create`, `change` or `remove` and a note. It also shows the warnings and the reasons for disabled roles. When `init` creates or changes `.claude/agents/Explore.md`, a note says that the file replaces the built-in `Explore` subagent of Claude Code. The note also says how to remove it: `researcher = { claude-code = "none" }` and `init --reconfigure`.
 
@@ -205,7 +207,11 @@ For GitLab CI and lefthook, the preview gives the text to add manually. `init` c
 
 `--json` has a `harness` object. Its fields, in this order, are `level`, `files` (each has `path`, `action` and `note`), `kept` (the `kept` lines), `warnings`, `notes` and `request_bytes`. `notes` is a list of text. It holds the notes of the harness block, for example the note that `.claude/agents/Explore.md` replaces the built-in `Explore` subagent. The list is empty if `init` has no note to give.
 
+The adapter skill `.claude/skills/spec-dna/SKILL.md` also has the block of the 5 disciplines and the rule that a spec-dna skill replaces a general skill of the same stage ([harness.md](harness.md#disciplines)).
+
 `init` writes the harness files as [harness.md](harness.md) says. It changes `.claude/settings.json` by a merge, and it keeps each key that it does not set. It does not replace a file that it did not generate.
+
+If `.claude/settings.json` of the project has `enabledPlugins` with a plugin whose name has the word `superpowers`, `init` prints a note for the harness. The note says that a spec-dna skill replaces a general skill of the same stage, that nothing proves the choice of Claude Code, and that `init` does not move a file that the plugin writes, such as `docs/superpowers/specs/`: exclude that folder from the roots. `init` reads this file of the project only, never a file of the home folder, and `init` changes no other part of the plugin setup. The note is in the `notes` of the `harness` object of `--json` too.
 
 `init` refuses the harness and exits with code 2 in these cases:
 
@@ -238,7 +244,7 @@ base = "main"
 harness = "lean"                # "none", "lean" or "full"
 harness-models = ["orchestrator=opus:xhigh", "verifier=sonnet:medium", "advisor=fable/opus"]
 harness-deny = ["NotebookEdit"] # tools that no agent gets; replaces the default
-harness-skills = ["intent", "spec", "plan", "review"]  # [] for none; the default follows the policy
+harness-skills = ["brainstorm", "specify", "clarify", "write-plan", "review", "finish", "post-mortem"]  # [] for none; the default follows the policy and the level
 harness-review-md = true
 harness-protect-tests = "fix-branches"  # "fix-branches", "always" or "off"
 evals = "skeleton"              # "none" or "skeleton"
@@ -278,9 +284,9 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 - `[conventions]`
 - the section keys of each root (`required-sections`, `amendment-sections`, `history-sections`, `companion-sections`, `live-sections`), and its budget, profile and rules keys. A root with no `default-type` keeps none. A section key that equals its default (`live-sections = { decision = ["Status"] }`) is not written
 
-The harness has the current `[harness]` table as its defaults. `--reconfigure` also offers the parts that a project has not yet, such as the stage skills, `REVIEW.md` and `protect-tests`.
+The harness has the current `[harness]` table as its defaults. `--reconfigure` also offers the parts that a project has not yet, such as the skills, `REVIEW.md` and `protect-tests`.
 
-A smaller level removes the generated files that it no longer produces, if you did not edit them. These files include the stage skills and `REVIEW.md`. It removes the model-team line and the hook handlers too. It keeps each key of `.claude/settings.json` that the new configuration no longer sets, and it prints one `kept` line for each key. Remove these keys manually.
+A smaller level removes the generated files that it no longer produces, if you did not edit them. These files include the skills and `REVIEW.md`. It removes the model-team line and the hook handlers too. It keeps each key of `.claude/settings.json` that the new configuration no longer sets, and it prints one `kept` line for each key. Remove these keys manually.
 
 `init` does not edit the key `types`. If the answer to question 4 is not `none`, and the `types` list lacks `intent`, `spec` or `plan`, `init` prints `warning: the policy <p> needs the types intent, spec and plan; add <list> to types in spec-dna.toml`. A file with no `types` key allows each type, so it gets no warning. With `--json`, the warning is in the top-level field `warnings`.
 
@@ -292,7 +298,7 @@ A smaller level removes the generated files that it no longer produces, if you d
 
 - `init` updates the adapters and the skill. The skill lists the types of the layers of the project. `init` also changes the exact hook line that 0.4.1 wrote, `spec-dna check`, to `spec-dna check --staged`. The harness upgrade below comes after these changes.
 - A configuration with no `[harness]` table (spec-dna 0.4 or older) gets no harness. Run `init --reconfigure` to add it.
-- `init` regenerates the harness files of a configuration with a `[harness]` table. These are the agent files, the stage skills of `[harness] skills`, and `REVIEW.md` if `review-md` is `true`. It writes each generated file that you did not edit, and each file that is absent. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
+- `init` regenerates the harness files of a configuration with a `[harness]` table. These are the agent files, the skills of `[harness] skills`, and `REVIEW.md` if `review-md` is `true`. It writes each generated file that you did not edit, and each file that is absent. It changes the model-team line and the settings entries that differ. It prints each path that it writes.
 - `init` keeps a generated file that you edited, or that has text after its marker, and it prints `kept <path>: edited by hand (SD501)`. `check` reports the file. Delete it. Then run `init` to generate it again.
 - `init` never removes a file on this path. Only `--reconfigure` removes files.
 - `init --dry-run` on this path shows the diff of each file, also of the harness files. With `--json`, `files` has a `diff` for each file.

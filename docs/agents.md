@@ -13,7 +13,7 @@ For a change of the requirements, the agent also follows the change lifecycle: `
 
 ## Instruction files
 
-`init` writes these steps as one line into the instruction file of the agent. Question 10 of `init` chooses the files: `agents-md`, `claude-md` and `skill`. By default, `init` chooses `claude-md` and `skill`. It adds `agents-md` when `AGENTS.md` exists, or when `CLAUDE.md` does not exist. If `CLAUDE.md` imports `AGENTS.md`, `CLAUDE.md` gets no second copy of the line.
+`init` writes these steps as one line into the instruction file of the agent. The line also names the 5 rules of the disciplines, the command `spec-dna skill show <name>` and the approval rule. Question 10 of `init` chooses the files: `agents-md`, `claude-md` and `skill`. By default, `init` chooses `claude-md` and `skill`. It adds `agents-md` when `AGENTS.md` exists, or when `CLAUDE.md` does not exist. If `CLAUDE.md` imports `AGENTS.md`, `CLAUDE.md` gets no second copy of the line.
 
 | Agent | Instruction file | Note |
 | --- | --- | --- |
@@ -23,7 +23,16 @@ For a change of the requirements, the agent also follows the change lifecycle: `
 | Claude Code | `CLAUDE.md` | The Claude Code adapter writes this line |
 | Another agent | The file that the agent reads | Copy the line from `AGENTS.md` into that file |
 
-The line is short, because each agent request sends it again. `init` prints the bytes that it adds to each request.
+The line is short, because each agent request sends it again. It has 400 bytes or fewer, with its marker. `init` prints the bytes that it adds to each request.
+
+The line names these items:
+
+- The 2 commands of each task: `spec-dna context <files>` before an edit, and `spec-dna check` before a commit.
+- The 5 rules: test first (`tdd`), cause first (`debug`), proof before done (`verify`), review is data (`review`) and isolated work (`execute`). Each name in brackets is the skill with the detail ([harness.md](harness.md#disciplines)).
+- The command `spec-dna skill show <name>`. It prints the text of a skill. An agent with no skill folder runs it for the step that `spec-dna next` names.
+- The approval rule: an agent writes an approval commit only when the owner says so explicitly in the chat.
+
+The line never imports another file.
 
 ## Adapters
 
@@ -33,7 +42,7 @@ An adapter is a part of spec-dna for one agent. Each agent gets the adapter of i
 | --- | --- | --- |
 | The instruction line | `AGENTS.md` | `CLAUDE.md` |
 | The spec-dna skill, with the full procedure | Not written | `.claude/skills/spec-dna/SKILL.md` |
-| Roles with their models, stage skills, hooks and `REVIEW.md` | Not written | The harness at the level `lean` or `full` ([harness.md](harness.md)) |
+| Roles with their models, the 11 skills of the workflow pack, hooks and `REVIEW.md` | Not written | The harness at the level `lean` or `full` ([harness.md](harness.md)) |
 | Evals of the agent setup | Not written | `spec-dna eval run` starts headless Claude Code ([evals.md](evals.md)) |
 | Token and read counts of sessions | Not available | The `claude-code` adapter of `spec-dna transcript` ([transcript.md](transcript.md)) |
 
