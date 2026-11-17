@@ -198,8 +198,8 @@ fn a_change_of_one_pull_request_has_no_entry() {
 
 #[test]
 fn a_move_out_of_the_intent_folder_reads_as_a_deletion() {
-    // Deviation D30: git sees the move as a deletion of the path of the
-    // intent.
+    // The whole folder leaves the layer: each file of it is a rename, and the
+    // second rename is a removal for condition 3 of D31. The change ended.
     let r = with_dose("accepted");
     fs::create_dir_all(r.dir.join("docs/archive")).unwrap();
     r.git(&["mv", FOLDER, "docs/archive/dose"]);
@@ -219,7 +219,7 @@ fn a_move_out_of_the_intent_folder_reads_as_a_deletion() {
 fn a_move_out_by_spec_dna_mv_does_not_end_a_change() {
     // `spec-dna mv` keeps the id of the intent as an alias, so the id still
     // resolves. The move is not an end for `log` or for `stats`. A plain
-    // `git mv` writes no alias, and it still ends the change (the test above).
+    // `git mv` of the intent alone is no end either (the tests of D31 below).
     let r = Repo::with_config(&config(ON));
     r.write(
         &format!("{FOLDER}/intent.md"),
@@ -241,6 +241,128 @@ fn a_move_out_by_spec_dna_mv_does_not_end_a_change() {
         text.starts_with("0 changes in the history: 0 finished, 0 closed, 0 open\n"),
         "{text}"
     );
+}
+
+// log: the 3 conditions of a move out (D31 of 0.7.0)
+
+/// A body that is long enough for git to pair a copy with its source.
+const LONG_BODY: &str = "## Intent\n\nThe dose is too high for the small valves.\nThe operator reports it each week.\nThe fix needs a new limit in the controller.\nThe limit comes from the data sheet of the valve.\nThe report of the operator names 3 valves.\nThe change keeps the old limit for the other valves.\n";
+
+fn long_intent(status: &str, extra_front: &str) -> String {
+    format!(
+        "---\nstatus: {status}\nclass: routine\nareas: [valves]\n{extra_front}---\n# Dose\n\n{LONG_BODY}"
+    )
+}
+
+/// A repository whose `main` holds the change `dose` with an intent only.
+fn with_dose_intent_only() -> Repo {
+    let r = Repo::with_config(&config(ON));
+    r.write(&format!("{FOLDER}/intent.md"), &long_intent("accepted", ""));
+    r.commit("base");
+    r
+}
+
+/// The first letter of the status of each record of the last commit, with the
+/// `-M` diff against its parent.
+fn statuses(r: &Repo) -> Vec<String> {
+    r.git_out(&["diff-tree", "-r", "-M", "--name-status", "HEAD~1", "HEAD"])
+        .lines()
+        .map(|l| l.split('\t').next().unwrap_or("").to_string())
+        .collect()
+}
+
+fn assert_no_end(r: &Repo, what: &str) {
+    let out = log_json(r, &[]);
+    assert_eq!(entries(&out), 0, "{what}: {out}");
+    let (_, text, _) = r.run(&["stats", "--sdlc"]);
+    assert!(
+        text.starts_with("1 change in the history: 0 finished, 0 closed, 1 open\n")
+            || text.starts_with("0 changes in the history: 0 finished, 0 closed, 0 open\n"),
+        "{what}: {text}"
+    );
+}
+
+#[test]
+fn a_plain_git_mv_of_the_intent_out_of_the_folder_does_not_end_the_change() {
+    let r = with_dose_intent_only();
+    fs::create_dir_all(r.dir.join("docs/requirements")).unwrap();
+    r.git(&[
+        "mv",
+        &format!("{FOLDER}/intent.md"),
+        "docs/requirements/dose.md",
+    ]);
+    r.commit("move the intent out");
+    assert_eq!(statuses(&r), ["R100"]);
+    assert_no_end(&r, "a plain git mv");
+}
+
+#[test]
+fn a_near_copy_with_no_alias_ends_the_change() {
+    let r = with_dose_intent_only();
+    r.git(&["rm", "-q", &format!("{FOLDER}/intent.md")]);
+    r.write(
+        "docs/requirements/dose.md",
+        &long_intent("draft", "").replace("# Dose\n", "# Dose limits\n"),
+    );
+    r.commit("a copy and a deletion");
+    assert!(statuses(&r)[0].starts_with('R'), "{:?}", statuses(&r));
+    assert_ne!(statuses(&r), ["R100"], "the copy must differ");
+    let out = log_json(&r, &[]);
+    assert_eq!(entries(&out), 1, "{out}");
+}
+
+#[test]
+fn a_near_copy_with_the_alias_in_the_commit_of_finish_ends_the_change() {
+    // The commit of `finish` deletes the spec and the plan, and the intent
+    // has a near copy with its old id as an alias. The deletions of the other
+    // files are condition 3, so the change ended.
+    let r = with_dose("accepted");
+    r.write(&format!("{FOLDER}/intent.md"), &long_intent("accepted", ""));
+    r.commit("a longer intent");
+    r.git(&["rm", "-q", &format!("{FOLDER}/intent.md")]);
+    r.git(&["rm", "-q", &format!("{FOLDER}/spec.md")]);
+    r.git(&["rm", "-q", &format!("{FOLDER}/plan.md")]);
+    r.write(
+        "docs/requirements/dose.md",
+        &long_intent("draft", "aliases: [intent/dose/intent]\n"),
+    );
+    r.commit("finish");
+    assert!(
+        statuses(&r).iter().any(|s| s.starts_with('R')),
+        "{:?}",
+        statuses(&r)
+    );
+    assert!(statuses(&r).iter().any(|s| s == "D"), "{:?}", statuses(&r));
+    let out = log_json(&r, &[]);
+    assert_eq!(entries(&out), 1, "{out}");
+    assert!(out.contains("\"result\":\"finished\""), "{out}");
+}
+
+#[test]
+fn a_git_mv_of_the_whole_folder_out_of_the_layer_ends_the_change() {
+    let r = with_dose("accepted");
+    fs::create_dir_all(r.dir.join("docs/archive")).unwrap();
+    r.git(&["mv", FOLDER, "docs/archive/dose"]);
+    r.commit("archive the folder");
+    assert_eq!(statuses(&r), ["R100", "R100", "R100"]);
+    let out = log_json(&r, &[]);
+    assert_eq!(entries(&out), 1, "{out}");
+}
+
+#[test]
+fn a_folder_with_only_the_intent_and_a_near_copy_with_the_alias_reads_as_a_move() {
+    // The limit that stays (D31): no other record of the folder, so a near
+    // copy with the alias is a move, also in a commit of `finish`.
+    let r = with_dose_intent_only();
+    r.git(&["rm", "-q", &format!("{FOLDER}/intent.md")]);
+    r.write(
+        "docs/requirements/dose.md",
+        &long_intent("draft", "aliases: [intent/dose/intent]\n"),
+    );
+    r.commit("finish");
+    assert!(statuses(&r)[0].starts_with('R'), "{:?}", statuses(&r));
+    let out = log_json(&r, &[]);
+    assert_eq!(entries(&out), 0, "{out}");
 }
 
 #[test]
