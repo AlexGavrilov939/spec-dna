@@ -1400,9 +1400,12 @@ fn a_plan_set_back_to_draft_and_approved_again_takes_its_new_files() {
         "spec back to draft, delta edit",
         &[(SPEC, &edited)],
     );
+    // Between the step back and the new approval commit, the approved plan
+    // has no approved spec at the head (reason 9, ADR 0019). The approval
+    // commit below clears it.
     let (code, out, found) = check(&r);
-    assert_eq!(found, want(&[]), "{out}");
-    assert_eq!(code, 0, "{out}");
+    assert_eq!(found, want(&[(PLAN, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
     let edited = spec("approved").replace(ADD, ADD_AFTER_SPIKE);
     step(&r, APPROVER, "approve spec again", &[(SPEC, &edited)]);
     // The plan lists one more path. The same 2 commits approve it.
