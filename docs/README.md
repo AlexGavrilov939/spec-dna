@@ -19,6 +19,7 @@ This page lists each page of the documentation. The [README](../README.md) gives
 - [One change from start to finish](guides/change.md): the intent, the spec, the plan, the code and `finish`.
 - [Adopt spec-dna in an existing repository](guides/existing-repo.md): `init` on the current folders, the baseline and the gate.
 - [Upgrade from 0.5 to 0.6](guides/upgrade-0.5.md): the renames, `spec-dna upgrade` and the first pull request.
+- [Upgrade from 0.6 to 0.7](guides/upgrade-0.6.md): the new skill names, the pull request of the pin, the parts of 0.7.0 and the new checks.
 
 ## Reference
 

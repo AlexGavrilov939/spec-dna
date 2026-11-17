@@ -160,6 +160,8 @@ These edits change `spec-dna.toml`. A new `types` list also changes the generate
 
 If you set a change policy later with `spec-dna init --reconfigure`, and the `types` list lacks one of the 3 types, `init` prints a warning. It does not edit the key.
 
+The upgrade to 0.7 also renames the skills and adds new parts and checks. [Upgrade from 0.6 to 0.7](upgrade-0.6.md) gives these steps.
+
 ## After the upgrade: top files and areas
 
 For a 0.5 project, `--layout` moves the top files, and `--layout --areas <file>` moves the requirements into their areas ([Run the upgrade](#run-the-upgrade)). For a 0.6 project, `--layout` moves no document to a top file, and `--areas` gives exit code 2. SD503 does not allow a move of a document in the pull request of the pin. So move the documents in a later pull request, with `spec-dna mv`. `mv` keeps the old id as an alias, removes the `type` and `status` lines that the new place makes redundant, and removes the folders that it leaves empty.
