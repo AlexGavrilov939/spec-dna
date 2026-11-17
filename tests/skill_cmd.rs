@@ -38,7 +38,6 @@ fn body_of(text: &str) -> &str {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn list_prints_one_line_for_each_skill_with_no_configuration() {
     let r = Repo::new();
     let (code, out, err) = r.run(&["skill", "list"]);
@@ -55,7 +54,6 @@ fn list_prints_one_line_for_each_skill_with_no_configuration() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn list_takes_the_state_from_the_skills_of_the_configuration() {
     let r =
         project("[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"review\", \"tdd\"]\n");
@@ -82,7 +80,6 @@ fn list_takes_the_state_from_the_skills_of_the_configuration() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn list_json_has_the_fields_of_the_contract() {
     let r = Repo::new();
     let (code, out, err) = r.run(&["skill", "list", "--json"]);
@@ -119,7 +116,6 @@ fn list_json_has_the_fields_of_the_contract() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn a_configuration_error_gives_exit_code_3() {
     let r = project("[harness]\nlevel = \"lean\"\nskills = [\"intent\"]\n");
     let (code, out, err) = r.run(&["skill", "list"]);
@@ -128,7 +124,6 @@ fn a_configuration_error_gives_exit_code_3() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn show_prints_the_body_that_init_writes_with_no_front_matter_and_no_marker() {
     let names: Vec<String> = SKILLS.iter().map(|s| format!("\"{}\"", s.0)).collect();
     let r = project(&format!(
@@ -166,7 +161,6 @@ fn show_prints_the_body_that_init_writes_with_no_front_matter_and_no_marker() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn show_works_for_a_skill_that_is_off_and_with_no_configuration() {
     let r = Repo::new();
     for (name, ..) in SKILLS {
@@ -177,7 +171,6 @@ fn show_works_for_a_skill_that_is_off_and_with_no_configuration() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn an_unknown_name_or_a_bad_call_gives_exit_code_2() {
     let r = Repo::new();
     // A name of the pack works, so the exit code 2 below is not a missing
@@ -203,7 +196,6 @@ fn an_unknown_name_or_a_bad_call_gives_exit_code_2() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn each_skill_that_next_names_has_a_text() {
     // A new project has a change policy, so `next` names a skill.
     let r = Repo::new();
@@ -228,7 +220,6 @@ fn each_skill_that_next_names_has_a_text() {
 }
 
 #[test]
-#[ignore = "workflow-pack t17"]
 fn skill_changes_no_file() {
     let r = project("[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n");
     let before = common::tree_bytes(&r.dir);

@@ -302,14 +302,12 @@ pub enum Skill {
 /// The kind of a skill (D2): a stage skill binds to a step that `next` names,
 /// and an event skill binds to an event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // The command `skill` (task t17) reads it.
 pub enum SkillKind {
     Stage,
     Event,
 }
 
 impl SkillKind {
-    #[allow(dead_code)] // The command `skill` (task t17) reads it.
     pub fn name(self) -> &'static str {
         match self {
             SkillKind::Stage => "stage",
@@ -387,7 +385,6 @@ impl Skill {
         format!(".claude/skills/{}/SKILL.md", self.name())
     }
 
-    #[allow(dead_code)] // The command `skill` (task t17) reads it.
     pub fn kind(self) -> SkillKind {
         match self {
             Skill::Debug | Skill::PostMortem => SkillKind::Event,
@@ -396,7 +393,6 @@ impl Skill {
     }
 
     /// The stage of a stage skill (D2), or `None` for an event skill.
-    #[allow(dead_code)] // The command `skill` (task t17) reads it.
     pub fn stage(self) -> Option<Stage> {
         match self {
             Skill::Brainstorm => Some(Stage::Plan),

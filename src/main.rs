@@ -239,8 +239,8 @@ gives the edit or the command that ends the stage. In the build stage, it
 names the next open task of the plan. A routine change whose plan has one
 Files item that starts with none needs no changed file: the build stage ends
 when each task is done. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
-verify or finish. The skills come in 0.7.0, and the names are fixed. The
-output has at most 12 lines. The base is the merge base of --base (default:
+verify or finish. The names are fixed, and `spec-dna skill show <name>`
+prints the text of a skill. The output has at most 12 lines. The base is the merge base of --base (default:
 origin/HEAD, then [change] base) and HEAD. Without a base, the stage stops at
 build, and the output has a note. With the policy none, it says that the change process is
 off. Exit codes: 2 usage, 3 base or configuration, 4 git, 5 no folder.",
@@ -313,6 +313,21 @@ files and of the table. --out writes the result to <dir>/eval-<time>.json
 adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
 does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
 a stop by the cap or no `claude`, 4 git or file error.",
+    ),
+    (
+        "skill",
+        "skill list\nskill show <name>",
+        "Prints the skills of the workflow pack. It reads no document and writes
+nothing. `skill list` prints one line for each of the 11 skills, in the order
+of the design: the name, the kind (stage or event), the stage (or -), the
+state in the project and the default. The state is on or off, as `[harness]
+skills` of spec-dna.toml has it, or - if the project has no spec-dna.toml.
+`skill show <name>` prints the body of the skill, with no front matter and no
+marker. It works for a skill that is off. The adapter skill spec-dna and a
+name of 0.6 (intent, spec, plan) are no name of the pack. With --json, `list`
+prints {\"skills\":[{\"name\",\"kind\",\"stage\",\"state\",\"default\"}]}, with null for
+no stage or no state, and `show` prints {\"name\",\"kind\",\"stage\",\"body\"}.
+Exit codes: 2 usage or an unknown name, 3 configuration.",
     ),
     (
         "transcript",
@@ -730,6 +745,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "stats" => stats(&Repo::discover(&cwd)?, &a),
         "eval" => eval(&cwd, &a),
         "transcript" => transcript(&cwd, &a),
+        "skill" => skill(&cwd, &a),
         other => Err(Fatal::Usage(format!("unknown command `{other}`"))),
     }
 }
@@ -2726,6 +2742,90 @@ fn log(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 /// `eval run [<id>...]`: the runner of the evals (`eval_run.rs`). `eval run`
 /// spends money and runs the checks of the project, so a pin mismatch stops
 /// it, as it stops `check` and `finish`.
+/// `skill list` and `skill show <name>` (ADR 0011, D4 and D10). The text of a
+/// skill is a constant of the binary, so `show` reads no file. `list` reads
+/// `spec-dna.toml`, if the project has one, for the state of each skill.
+fn skill(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    match a.positional.first().map(String::as_str) {
+        Some("list") => {
+            if a.positional.len() > 1 {
+                return Err(Fatal::Usage("`skill list` takes no argument".into()));
+            }
+            // A directory outside a git working tree has no configuration.
+            let on: Option<Vec<harness::Skill>> = match Repo::discover(cwd) {
+                Ok(repo) if repo.config_path().is_file() => {
+                    let cfg = repo.load_config()?;
+                    warn_pin(&cfg);
+                    Some(cfg.harness.map(|h| h.skills).unwrap_or_default())
+                }
+                _ => None,
+            };
+            skill_list(on.as_deref(), a.json);
+            Ok(0)
+        }
+        Some("show") => {
+            expect_args(a, 2, 2)?;
+            let name = a.positional[1].as_str();
+            let Some(sk) = harness::Skill::from_key(name) else {
+                return Err(Fatal::Usage(format!(
+                    "`{name}` is no skill of the workflow pack; use {}",
+                    harness::skill_keys()
+                )));
+            };
+            let body = harness_text::skill_body(name).unwrap_or_default();
+            let body = body.trim_matches('\n');
+            if a.json {
+                println!(
+                    "{}",
+                    Obj::new()
+                        .str("name", sk.key())
+                        .str("kind", sk.kind().name())
+                        .opt_str("stage", sk.stage().map(|s| s.name()))
+                        .str("body", body)
+                        .end()
+                );
+            } else {
+                println!("{body}");
+            }
+            Ok(0)
+        }
+        _ => Err(Fatal::Usage(
+            "`skill` needs a subcommand: `spec-dna skill list` or `spec-dna skill show <name>`"
+                .into(),
+        )),
+    }
+}
+
+/// Prints the table of the 11 skills. `on` is the list of `[harness] skills`,
+/// or `None` for a project with no configuration.
+fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
+    let state = |s: harness::Skill| on.map(|l| if l.contains(&s) { "on" } else { "off" });
+    let default = |s: harness::Skill| if s.default_on() { "on" } else { "off" };
+    if json {
+        let items = harness::Skill::ALL.iter().map(|&s| {
+            Obj::new()
+                .str("name", s.key())
+                .str("kind", s.kind().name())
+                .opt_str("stage", s.stage().map(|s| s.name()))
+                .opt_str("state", state(s))
+                .str("default", default(s))
+                .end()
+        });
+        println!("{}", Obj::new().raw("skills", &json::array(items)).end());
+        return;
+    }
+    for &s in &harness::Skill::ALL {
+        println!(
+            "{:<11} {:<5} {:<6} {:<3} {}",
+            s.key(),
+            s.kind().name(),
+            s.stage().map_or("-", |s| s.name()),
+            state(s).unwrap_or("-"),
+            default(s)
+        );
+    }
+}
+
 fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     if a.positional.first().map(String::as_str) != Some("run") {
         return Err(Fatal::Usage(
