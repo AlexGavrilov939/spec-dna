@@ -93,6 +93,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Default skills (ADR 0023) | `DEFAULT_ON_NEEDS_VERDICT_ON` and `RELEASE` in `src/verdict.rs`; `Skill::in_d2` in `src/harness.rs`; the preset of `src/init.rs`; `rename_skills` in `src/upgrade_config.rs`; SD507 in `src/check.rs`; `docs/profiles.md`, `docs/init.md` and `docs/commands.md` (`skill list`); `tests/init_profiles.rs` and `tests/evals_checks.rs`; `CHANGELOG.md`. A change of the constant or of `RELEASE` edits `src/verdict.rs` only | OWN (the value of the constant) | COR (`src/verdict.rs`, `src/upgrade_config.rs`), INI (`src/init.rs`, `src/harness.rs`) and DIA (`src/check.rs`) | TST | REL, DOC |
 | Eval skeleton or workflow | `src/skeleton.rs`; question 14 in `src/init.rs`; `tests/golden/evals/`; `docs/init.md` | ARC | INI | COR, DIA, REL | DOC |
 | Upgrade plan | `src/upgrade.rs`, `src/upgrade_old.rs`, `src/upgrade_config.rs`, `src/upgrade_docs.rs`, `src/upgrade_proof.rs` and `src/config_text.rs`; `tests/upgrade_*.rs`, `tests/fixtures/upgrade/` and `tests/golden/upgrade/`; the doc page of the command, when it exists; `CHANGELOG.md` | ARC | INI (the command), COR (the configuration) and HYG (the documents) | DIA, TST | DOC, REL |
+| Import | `src/import.rs`, `src/import_config.rs`, `src/import_docs.rs`, `src/import_speckit.rs`, `src/import_openspec.rs` and `src/import_proof.rs`; `tests/common/import.rs` and `tests/import_*.rs`; the `import` section of `docs/commands.md`; the term import in `docs/glossary.md`; `CHANGELOG.md` | ARC | INI (the command), COR (the configuration), HYG (the documents, the readers and the proof) | DIA, TST | DOC, REL |
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
 | Convention | `AGENTS.md`, `CONTRIBUTING.md`, `README.md` and `.github/pull_request_template.md`; lint and editor configs | OWN | ARC | DOC, REL | All |
 | Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the checkout SHA and the Claude Code version that `init` writes into a workflow (`src/init.rs`, `src/skeleton.rs`); the tag. The pin in `spec-dna.toml` of this repository moves in the release pull request, in the same commit as the version in `Cargo.toml` (ADR 0013): the tree binary does not count the pin line for SD503 | OWN | REL | ARC, TST | All |
@@ -165,6 +166,9 @@ src/approve.rs                       COR: approve, the status commit of a person
 src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
 src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
 src/sdlc.rs                          COR: `log` and `stats --sdlc`
+src/import.rs                        INI: `import`, the command, its write and its report
+src/import_config.rs                 COR: the plan of `spec-dna.toml` for `import` and the file of `--areas`
+src/import_docs.rs, src/import_speckit.rs, src/import_openspec.rs, src/import_proof.rs   HYG: the plan of the documents, the readers of the 2 tools and the proof of `import`
 src/upgrade.rs                       INI: `upgrade`, the command, its write and its report
 src/upgrade_old.rs, src/upgrade_config.rs   COR: the 0.5 reader and the plan of the configuration
 src/upgrade_docs.rs, src/upgrade_proof.rs   HYG: the plan of the documents (front matter, moves) and the proof
@@ -232,6 +236,9 @@ tests/fixtures/eval-records/         COR
 tests/eval_pack.rs, tests/eval_pack_rest.rs   INI
 tests/eval_pack_pilot/, tests/fixtures/eval-solutions/   INI: the reference and the wrong solutions that prove the checks of the pack
 tests/context_layers.rs              CTX
+tests/common/import.rs               TST: the fixture projects of `import`
+tests/import_cli.rs                  INI
+tests/import_speckit.rs, tests/import_openspec.rs   HYG
 tests/upgrade_cli.rs, tests/upgrade_review_fixes.rs   INI
 tests/upgrade_config.rs, tests/upgrade_pin.rs   COR
 tests/upgrade_first_pr.rs            DIA

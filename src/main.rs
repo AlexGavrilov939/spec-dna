@@ -44,6 +44,12 @@ mod harness;
 mod harness_text;
 mod hash;
 mod hook;
+mod import;
+mod import_config;
+mod import_docs;
+mod import_openspec;
+mod import_proof;
+mod import_speckit;
 mod index;
 mod init;
 mod json;
@@ -117,6 +123,32 @@ lists the proposals to delete, and the last line is the git add command. A
 second run after the commit changes nothing. Exit codes: 0 done or nothing to
 change, 1 a tree that is not clean, a stop of a move or a failed proof, 2 usage,
 3 configuration, pin or pin file, 4 git or write error.",
+    ),
+    (
+        "import",
+        "import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research] [--json]",
+        "Moves a project of Spec Kit 1.4.1 or OpenSpec 2.0.0 into the layout of
+spec-dna. It needs a project that init made and a tree that is clean (also with
+--dry-run). It reads the committed tree (HEAD), builds the whole plan in
+memory, proves it, and then writes. A source that gives one target (the
+constitution, a done feature, a domain spec) moves with git mv, and its old id
+stays as an alias. An open feature or an open change becomes a draft intent,
+spec and plan. Its files stay, and the last line gives the git rm command.
+The proof checks that each requirement sentence and each id stayed, counts the
+scenarios, and checks that a second run has nothing to change. The import
+changes no sentence: a line that the target rejects, such as SC-001 with MUST,
+stops the write (exit code 1). If spec-dna.toml needs the legacy key FR-{n}, an
+area or a type, the first run writes only that file: commit it, then run the
+command again. --skip-open does not read the open features and the open
+changes. --areas <file> has a TOML table [areas] that maps the name of a source
+folder to an area folder. --keep research moves each Markdown file of an
+archived change, and each extra file of a feature, to the research layer as a
+research document. Without the layer the command stops with exit code 2 and
+names spec-dna layer add research --types research. The command never deletes a
+file and never commits: it prints the git add and the git rm commands. A second
+run after the commit changes nothing. Exit codes: 0 done or nothing to change,
+1 a tree that is not clean, a stop or a failed proof, 2 usage, 3 an unknown
+layout, no project or a bad file, 4 git or write error.",
     ),
     (
         "check",
@@ -483,6 +515,7 @@ struct Args {
     reconfigure: bool,
     dry_run: bool,
     layout: bool,
+    skip_open: bool,
     pin_file: Option<String>,
     areas: Option<String>,
     ty: Option<String>,
@@ -566,6 +599,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         reconfigure: false,
         dry_run: false,
         layout: false,
+        skip_open: false,
         pin_file: None,
         areas: None,
         ty: None,
@@ -612,6 +646,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--reconfigure" => a.reconfigure = true,
             "--dry-run" => a.dry_run = true,
             "--layout" => a.layout = true,
+            "--skip-open" => a.skip_open = true,
             "--pin-file" => a.pin_file = Some(value("--pin-file")?),
             "--areas" => a.areas = Some(value("--areas")?),
             "--stub" => a.stub = true,
@@ -782,12 +817,15 @@ fn run(a: Args) -> Result<u8, Fatal> {
         for (given, name) in [
             (a.layout, "--layout"),
             (a.pin_file.is_some(), "--pin-file"),
-            (a.areas.is_some(), "--areas"),
+            (a.areas.is_some() && a.command != "import", "--areas"),
         ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `upgrade`")));
             }
         }
+    }
+    if a.skip_open && a.command != "import" {
+        return Err(Fatal::Usage("--skip-open is an option of `import`".into()));
     }
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
@@ -824,6 +862,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         }
         "init" => init(&Repo::discover(&cwd)?, &a),
         "upgrade" => upgrade(&Repo::discover(&cwd)?, &a),
+        "import" => import(&cwd, &a),
         "check" => check(&Repo::discover(&cwd)?, &a),
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
@@ -892,6 +931,64 @@ fn init(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             dry_run: a.dry_run,
             json: a.json,
             approvers: a.approvers.clone(),
+        },
+    )
+}
+
+/// `import speckit|openspec`: the arguments are checked before the repository.
+fn import(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
+    let Some(name) = a.positional.first() else {
+        return Err(Fatal::Usage(
+            "import needs a source: speckit or openspec".into(),
+        ));
+    };
+    expect_args(a, 1, 1)?;
+    let source = match name.as_str() {
+        "speckit" => import::Source::Speckit,
+        "openspec" => import::Source::Openspec,
+        other => {
+            return Err(Fatal::Usage(format!(
+                "unknown source `{other}`; use speckit or openspec"
+            )));
+        }
+    };
+    let l = &a.layer;
+    for (given, flag) in [
+        (!l.types.is_empty(), "--types"),
+        (!l.paths.is_empty(), "--paths"),
+        (!l.files.is_empty(), "--files"),
+        (!l.moves_to.is_empty(), "--moves-to"),
+        (!l.moved_from.is_empty(), "--moved-from"),
+        (!l.linked_from.is_empty(), "--linked-from"),
+        (l.context.is_some(), "--context"),
+        (l.dir.is_some(), "--dir"),
+        (l.max_docs.is_some(), "--max-docs"),
+        (l.max_chars.is_some(), "--max-chars"),
+        (l.max_started.is_some(), "--max-started"),
+        (l.stale_days.is_some(), "--stale-days"),
+    ] {
+        if given {
+            return Err(Fatal::Usage(format!("{flag} is an option of `layer add`")));
+        }
+    }
+    let keep_research = match l.keep.as_deref() {
+        None | Some("none") => false,
+        Some("research") => true,
+        Some(other) => {
+            return Err(Fatal::Usage(format!(
+                "--keep: `{other}` is not none or research"
+            )));
+        }
+    };
+    import::run(
+        &Repo::discover(cwd)?,
+        &import::RunOpts {
+            source,
+            dry_run: a.dry_run,
+            skip_open: a.skip_open,
+            areas: a.areas.clone(),
+            keep_research,
+            json: a.json,
         },
     )
 }

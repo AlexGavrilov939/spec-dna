@@ -5285,3 +5285,84 @@ fn help_lists_approve() {
         "{one}"
     );
 }
+
+// `import` (0.7.0, slice 6): the help and the usage errors.
+
+#[test]
+fn the_help_of_import_lists_the_options_and_the_exit_codes() {
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["import", "--help"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with(
+            "usage: spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research] [--json]\n"
+        ),
+        "{out}"
+    );
+    for part in [
+        "git mv",
+        "never deletes",
+        "--skip-open",
+        "--keep research",
+        "git rm",
+        "Exit codes",
+    ] {
+        assert!(out.contains(part), "`{part}` not in the help: {out}");
+    }
+    let (code, all, _) = r.run(&["--help"]);
+    assert_eq!(code, 0);
+    assert!(all.contains("import speckit|openspec"), "{all}");
+    let (code, again, _) = r.run(&["help", "import"]);
+    assert_eq!((code, again), (0, out));
+}
+
+#[test]
+fn import_forms_give_the_usage_errors_of_exit_code_2() {
+    let r = Repo::empty();
+    for (args, part) in [
+        (vec!["import"], "needs a source"),
+        (vec!["import", "bogus"], "unknown source `bogus`"),
+        (vec!["import", "speckit", "openspec"], "takes 1 arguments"),
+        (
+            vec!["import", "speckit", "--keep", "all"],
+            "`all` is not none or research",
+        ),
+        (
+            vec!["import", "speckit", "--max-docs", "3"],
+            "is an option of `layer add`",
+        ),
+        (
+            vec!["import", "speckit", "--layout"],
+            "--layout is an option of `upgrade`",
+        ),
+        (
+            vec!["import", "speckit", "--pin-file", "x.toml"],
+            "--pin-file is an option of `upgrade`",
+        ),
+        (
+            vec!["check", "--skip-open"],
+            "--skip-open is an option of `import`",
+        ),
+        (
+            vec!["upgrade", "--skip-open"],
+            "--skip-open is an option of `import`",
+        ),
+    ] {
+        let (code, out, err) = r.run(&args);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert!(err.contains(part), "{args:?}: `{part}` not in {err}");
+        assert!(
+            err.contains("Run `spec-dna --help` for usage."),
+            "{args:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn import_without_a_project_is_exit_code_3_and_names_init() {
+    let r = Repo::empty();
+    r.commit("start");
+    let (code, out, err) = r.run(&["import", "speckit"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("run `spec-dna init` first"), "{err}");
+}
