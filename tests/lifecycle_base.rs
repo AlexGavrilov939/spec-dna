@@ -568,6 +568,18 @@ fn a_change_with_no_plan_beside_a_change_with_a_plan_keeps_sd913() {
 }
 
 #[test]
+fn a_plan_that_the_branch_deletes_still_counts_when_the_base_has_it() {
+    let r = start(|r| approved_change(r, &["src/dose.py"]));
+    std::fs::remove_file(r.dir.join(PLAN)).unwrap();
+    r.write("src/dose.py", "x = 2\n");
+    r.write("README.md", "Read me.\n");
+    let (code, out) = check(&r);
+    let found = lines(&out, "SD913");
+    assert!(found.iter().any(|l| l.starts_with("README.md:1:")), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
 fn the_changes_that_files_match_are_changes_of_the_diff() {
     // The folder is not in the diff. The code matches `Files`, so the change
     // is a change of the diff, and the file outside `Files` is outside its scope.

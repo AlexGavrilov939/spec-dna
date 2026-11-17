@@ -1476,11 +1476,17 @@ impl DiffChange {
     }
 
     /// True if the change has a `plan.md` in the tree that the checks read for
-    /// it. A change that `Files` matched has one: its `Files` come from its
-    /// plan. The branch is read only if the base tree has no plan.
+    /// it, or in the base tree. A change that `Files` matched has one: its
+    /// `Files` come from its plan. A branch that deletes the `plan.md` of the
+    /// base does not turn SD913 off. The branch is read only if no tree has a
+    /// plan.
     fn has_plan(&self, ctx: &Ctx) -> bool {
         self.origin == Origin::FilesMatch
             || self.change.plan.is_some()
+            || ctx
+                .base
+                .by_path
+                .contains_key(&format!("{}/plan.md", self.change.dir))
             || self.branch(ctx).is_some_and(|b| b.has_plan)
     }
 
