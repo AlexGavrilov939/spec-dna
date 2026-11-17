@@ -1462,6 +1462,23 @@ fn program_then(words: &[String], name: &str, after: &str) -> Option<usize> {
     words[i + 1..].iter().any(|w| w == after).then_some(i)
 }
 
+/// The index of the word `git` and of its subcommand `commit` in a segment, if
+/// the subcommand is `commit`. The options of `git` before the subcommand are
+/// skipped (`-C <dir>`, `-c <name=value>`, and the others), so `git log --grep
+/// commit` is no commit.
+fn git_commit(words: &[String]) -> Option<(usize, usize)> {
+    let g = words.iter().position(|w| program(w) == "git")?;
+    let mut i = g + 1;
+    while let Some(w) = words.get(i) {
+        match w.as_str() {
+            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" | "--exec-path" => i += 2,
+            w if w.starts_with('-') => i += 1,
+            _ => break,
+        }
+    }
+    (words.get(i).map(String::as_str) == Some("commit")).then_some((g, i))
+}
+
 fn deny(reason: &str) -> String {
     let inner = Obj::new()
         .str("hookEventName", "PreToolUse")
@@ -1554,7 +1571,7 @@ pub fn approvals(
     // yet, so the state cannot show it.
     let mut before: Vec<&String> = Vec::new();
     for words in &segments {
-        if let Some(i) = program_then(words, "git", "commit")
+        if let Some((i, _)) = git_commit(words)
             && before.iter().copied().chain(&words[..i]).any(|w| {
                 let w = w.to_ascii_lowercase();
                 w.contains("accepted") || w.contains("approved")
@@ -1595,16 +1612,13 @@ pub fn approvals(
             }
             continue;
         }
-        let Some(g) = words.iter().position(|w| program(w) == "git") else {
-            continue;
-        };
-        let Some(c) = words[g + 1..].iter().position(|w| w == "commit") else {
+        let Some((g, c)) = git_commit(words) else {
             continue;
         };
         // `git -C <dir>` moves the folder, in order.
         let mut here = dir.clone();
         let mut i = g + 1;
-        while i < g + 1 + c {
+        while i < c {
             if words[i] == "-C" {
                 here = match (here.as_deref(), words.get(i + 1)) {
                     (Some(d), Some(t)) => moved(d, &start, project, t),
@@ -1614,7 +1628,7 @@ pub fn approvals(
             }
             i += 1;
         }
-        let amend = words[g + 1 + c..].iter().any(|w| w == "--amend");
+        let amend = words[c..].iter().any(|w| w == "--amend");
         if let Some(reason) = ask(&here, amend) {
             return Some(deny(&reason));
         }

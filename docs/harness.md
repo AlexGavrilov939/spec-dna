@@ -259,13 +259,14 @@ Set `protect-approvals = true` in `[harness]` (the profile `strict` has it). A p
 
 The test is that a status moves to the approval value, not that the commit changes only the status line. With `strict`, `approval` is `base`, and a commit that sets the status and edits the text becomes an approval at the merge. The hook has no exception for a routine plan: a person approves each artifact.
 
-The command that `init` writes has one `--intent '<dir>'` for each folder of the `intent` layer, from the root of the repository, for example `docs/intent`. The hook reads no `spec-dna.toml`. It runs `git` only for a command with the words `git` and `commit`, and then 3 times, and 2 more times for each artifact file that the tree changes. Bad JSON, no git, a git error and a path that it cannot read give no output and exit code 0.
+The command that `init` writes has one `--intent '<dir>'` for each folder of the `intent` layer, from the root of the repository, for example `docs/intent`. The hook reads no `spec-dna.toml`. It runs `git` only for a command whose `git` has the subcommand `commit` (`git log --grep commit` is no commit; options such as `-C <dir>` and `-c <name=value>` can come before the subcommand), and then 3 times, and 2 more times for each artifact file that the tree changes. Bad JSON, no git, a git error and a path that it cannot read give no output and exit code 0.
 
 These limits apply:
 
 - The hook reads the text of the command. It is not a shell parser. It does not see an edit and a commit in one call that has no word `accepted` or `approved` (a variable, a script file). It does not see git plumbing (`commit-tree`, `update-ref`), `cherry-pick`, `rebase`, `merge`, `am` or a git alias.
 - The same scan can deny a call that only names the words, for example `grep "spec-dna approve" docs/` or a commit message with the line `spec-dna approve` in a heredoc. The agent then runs the call in another form.
 - The hook expands `~`, `$PWD` and `$CLAUDE_PROJECT_DIR` (also with braces) at the start of the dir of a `cd` or `git -C`. It cannot read another dir with `$` or `~`. The hook then fails closed: it inspects the repository of the `cwd` of the event and of `CLAUDE_PROJECT_DIR` too, and it denies the call if one of them has a pending approval. A commit in a third repository, behind such a dir, passes.
+- The word test of the second rule is on each word before `git commit` in the call. A file or a folder name with `accepted` or `approved`, such as `git add x-approved.md && git commit`, gives a deny. Run the `git add` and the `git commit` as 2 calls.
 - It denies a commit that has nothing to do with an approval while the working tree holds a status that a person set by hand. The person commits that status, or runs `spec-dna approve`.
 - It denies a move of a change folder whose artifacts are `accepted` or `approved`, because the new path has an approval status. The person makes the move.
 - The command ends with `|| true`. A teammate with no spec-dna, or with spec-dna before 0.7.0, gets no hook.

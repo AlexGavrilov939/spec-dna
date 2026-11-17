@@ -410,3 +410,26 @@ fn a_line_continuation_between_git_and_commit_is_one_segment() {
     let out = answer(&r, "git -c user.name=x \\\n  -C . commit -am x");
     assert_denies(&out, &[INTENT]);
 }
+
+#[test]
+fn only_the_subcommand_commit_reads_the_repository() {
+    let r = project();
+    r.write(INTENT, &intent("accepted"));
+    // The word `commit` is an argument here, not the subcommand.
+    for cmd in [
+        "git log --grep commit",
+        "git show commit",
+        "git -C . log --grep=x commit",
+        "git branch commit",
+    ] {
+        assert_eq!(answer(&r, cmd), "", "{cmd}");
+    }
+    // Options before the subcommand do not hide it.
+    for cmd in [
+        "git -c core.editor=true commit -am x",
+        "git --no-pager commit -am x",
+        "git -C . commit -am x",
+    ] {
+        assert_denies(&answer(&r, cmd), &[INTENT]);
+    }
+}
