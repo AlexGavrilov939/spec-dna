@@ -120,23 +120,6 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
             }
         }
     }
-    // SD926: an item of `[change] approvers` is the address of an agent or a
-    // bot. `apply_severity` drops it when the change process is off.
-    for a in &config.change_approvers {
-        if crate::config::is_agent_address(a) {
-            out.push(Diag {
-                path: crate::config::FILE_NAME.to_string(),
-                line: config.change_approvers_line,
-                code: Code::ApproverAgent,
-                doc: crate::config::FILE_NAME.to_string(),
-                target: a.clone(),
-                message: format!(
-                    "`[change] approvers` lists `{a}`, the address of an agent or a bot; a commit of this author can come from an agent, so it proves no approval of a person"
-                ),
-                severity: Code::ApproverAgent.severity(),
-            });
-        }
-    }
     let mut out = apply_severity(config, out);
     // SD612 skips a reference that SD611 or SD901 reports in this run, so it
     // reads the diagnostics after their severity.
@@ -146,6 +129,29 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
     out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
     out.sort();
     out
+}
+
+/// SD926: each item of `[change] approvers` that is the address of an agent or
+/// a bot. The command `check` compares the findings of the head with the
+/// findings of the base configuration, so an item is new when the base does
+/// not list it. The caller applies the severity (`apply_severity`).
+pub fn approver_agents(config: &Config) -> Vec<Diag> {
+    config
+        .change_approvers
+        .iter()
+        .filter(|a| crate::config::is_agent_address(a))
+        .map(|a| Diag {
+            path: crate::config::FILE_NAME.to_string(),
+            line: config.change_approvers_line,
+            code: Code::ApproverAgent,
+            doc: crate::config::FILE_NAME.to_string(),
+            target: a.clone(),
+            message: format!(
+                "`[change] approvers` lists `{a}`, the address of an agent or a bot; a commit of this author can come from an agent, so it proves no approval of a person"
+            ),
+            severity: Code::ApproverAgent.severity(),
+        })
+        .collect()
 }
 
 /// SD612: a reference from a document outside the folder of a change into the

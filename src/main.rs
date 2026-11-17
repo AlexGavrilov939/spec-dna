@@ -1440,6 +1440,21 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             outcome.new.push(is_new);
         }
     }
+    // SD926: an agent or bot address in `[change] approvers`. The base
+    // findings use the configuration of the base, so an item that the base
+    // lists already is not new. A base with no configuration has no findings.
+    let head_aa = check::apply_severity(&cfg, check::approver_agents(&cfg));
+    if !head_aa.is_empty() {
+        let base_aa: Vec<_> = match base_config(repo, &base_snap)? {
+            Some(bc) if use_base => check::apply_severity(&cfg, check::approver_agents(&bc)),
+            _ => Vec::new(),
+        };
+        for d in head_aa {
+            let is_new = !base_aa.iter().any(|b| b.fingerprint() == d.fingerprint());
+            outcome.head.push(d);
+            outcome.new.push(is_new);
+        }
+    }
     // SD506: the eval files, only for a project with `[evals]`. The base
     // findings use the `[evals]` table of the base, so only a new finding
     // fails the gate. A base with no table has no findings.

@@ -1462,3 +1462,34 @@ fn sd926_is_off_with_policy_none() {
     let (_, all, _) = r.run(&["check", "--all", "--json"]);
     assert!(!all.contains("SD926"), "{all}");
 }
+
+#[test]
+fn sd926_is_new_when_the_branch_adds_the_address() {
+    // Guard: the code is not a state code, and the base configuration gives
+    // the base findings. A branch that adds the address gets the warning as a
+    // new one, with exit code 0. A base that lists it already gives no new one.
+    let r = start_branch();
+    let text = r.read("spec-dna.toml").replace(
+        &format!("approvers = [\"{APPROVER}\"]"),
+        &format!("approvers = [\"{APPROVER}\", \"noreply@anthropic.com\"]"),
+    );
+    r.write("spec-dna.toml", &text);
+    r.commit("list an agent");
+    let (code, out, err) = r.run(&["check", "--base", "main"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            ": warning SD926 approver-agent: `[change] approvers` lists `noreply@anthropic.com`"
+        ),
+        "{out}"
+    );
+    // The base already lists the address: the finding is not new.
+    r.git(&["checkout", "-q", "-b", "later"]);
+    r.write("src/other.py", "y = 2\n");
+    r.commit("code");
+    let (code, out, err) = r.run(&["check", "--base", "feature"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("SD926"), "{out}");
+    let (_, all, _) = r.run(&["check", "--all"]);
+    assert!(all.contains("SD926"), "{all}");
+}

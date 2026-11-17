@@ -264,6 +264,7 @@ The command that `init` writes has one `--intent '<dir>'` for each folder of the
 These limits apply:
 
 - The hook reads the text of the command. It is not a shell parser. It does not see an edit and a commit in one call that has no word `accepted` or `approved` (a variable, a script file). It does not see git plumbing (`commit-tree`, `update-ref`), `cherry-pick`, `rebase`, `merge`, `am` or a git alias.
+- The same scan can deny a call that only names the words, for example `grep "spec-dna approve" docs/` or a commit message with the line `spec-dna approve` in a heredoc. The agent then runs the call in another form.
 - It denies a commit that has nothing to do with an approval while the working tree holds a status that a person set by hand. The person commits that status, or runs `spec-dna approve`.
 - It denies a move of a change folder whose artifacts are `accepted` or `approved`, because the new path has an approval status. The person makes the move.
 - The command ends with `|| true`. A teammate with no spec-dna, or with spec-dna before 0.7.0, gets no hook.

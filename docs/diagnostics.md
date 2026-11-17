@@ -219,7 +219,7 @@ These codes are new in 0.6.0, except SD923 to SD926, which are new in 0.7.0. The
 The checks of the change codes read these trees:
 
 - SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925 read one tree. They need no base and no history.
-- SD926 reads `spec-dna.toml` only. It needs no base and no history. The hidden address of a person, such as `1234+name@users.noreply.github.com`, is not on the list. The target is the item as the file writes it, and the compare of the address ignores case.
+- SD926 reads `spec-dna.toml` only. It needs no base and no history. The hidden address of a person, such as `1234+name@users.noreply.github.com`, is not on the list. The target is the item as the file writes it, and the compare of the address ignores case. SD926 is not a state code. It is new when the configuration of the base does not list the address. Against a base that lists it already, `check` shows it only with `--all`.
 - These codes compare the head with the lifecycle base. They do not run if git cannot name this base:
   - SD905 (the part for a change with no delta);
   - SD910, SD913, SD915, SD916, SD917 and SD918;
