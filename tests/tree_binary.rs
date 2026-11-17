@@ -242,10 +242,7 @@ fn pin_only_change_with_crlf_in_the_working_tree_gives_no_sd503() {
     // checkout with `core.autocrlf` gives, and the change moves the pin. The
     // TOML meaning of the 2 texts differs in the pin line only.
     let r = base("spec-dna", VERSION);
-    r.write(
-        "spec-dna.toml",
-        &config(VERSION, "").replace('\n', "\r\n"),
-    );
+    r.write("spec-dna.toml", &config(VERSION, "").replace('\n', "\r\n"));
     r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
     for (name, args) in modes(&r) {
         let (code, out, err) = r.run(&args);
@@ -261,10 +258,7 @@ fn a_change_of_the_line_ends_alone_is_no_pin_only_change() {
     let r = base("spec-dna", VERSION);
     move_pin(&r, "");
     r.commit("move the pin");
-    r.write(
-        "spec-dna.toml",
-        &config(VERSION, "").replace('\n', "\r\n"),
-    );
+    r.write("spec-dna.toml", &config(VERSION, "").replace('\n', "\r\n"));
     r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
     for (name, args) in modes(&r) {
         let (code, out, err) = r.run(&args);
