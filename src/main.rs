@@ -285,7 +285,10 @@ new file is the same text, or it has the old id in its aliases
 (spec-dna mv writes it). The same commit removes no other file of the
 change folder. Thus a plain git mv of intent.md is a move, and a git mv of
 the whole folder, or a finish that removes the spec and the plan, ends the
-change. --since limits the walk to the commits after <rev>. In a
+change. 2 cases stay as they were in 0.6.1 and read as a move: a folder
+that holds only intent.md, moved with git mv, and a finish that adds a near
+copy with the old id in its aliases to such a folder. --since limits the walk
+to the commits after <rev>. In a
 shallow clone, a note says that older changes can be missing, and --json has
 shallow: true. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
@@ -299,8 +302,10 @@ playbook names. It reads git and the committed files only: the plan and
 design times, the survival rate of the intents, the spec commits after the
 first plan commit, the time from plan approval to the merged pull request,
 and how often the merged diff stays inside the plan (SD913). A move of
-intent.md out of the intent folder that keeps its id as an alias (spec-dna
-mv) does not end a life: stats drops that change. An indicator
+intent.md out of the intent folder does not end a life if git finds the
+rename, the new file is the same text or has the old id in its aliases, and
+the same commit removes no other file of the folder (see log): stats drops
+that change. An indicator
 that git cannot give prints n/a with the reason, and --json has value null
 and a reason. With --group, it counts only the changes that have an area of
 the group. An unknown group is a usage error, and so is stats without --sdlc.

@@ -349,6 +349,18 @@ fn a_git_mv_of_the_whole_folder_out_of_the_layer_ends_the_change() {
 }
 
 #[test]
+fn a_git_mv_of_a_folder_that_holds_only_the_intent_reads_as_a_move() {
+    // The second case that stays (D31): the folder has one file, so the move
+    // of the folder is the same single `R100` rename as a plain `git mv`.
+    let r = with_dose_intent_only();
+    fs::create_dir_all(r.dir.join("docs/archive")).unwrap();
+    r.git(&["mv", FOLDER, "docs/archive/dose"]);
+    r.commit("archive the folder");
+    assert_eq!(statuses(&r), ["R100"]);
+    assert_no_end(&r, "a git mv of a folder with one file");
+}
+
+#[test]
 fn a_folder_with_only_the_intent_and_a_near_copy_with_the_alias_reads_as_a_move() {
     // The limit that stays (D31): no other record of the folder, so a near
     // copy with the alias is a move, also in a commit of `finish`.

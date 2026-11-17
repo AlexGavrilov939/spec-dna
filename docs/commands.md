@@ -517,9 +517,9 @@ A move of `intent.md` out of the `intent` folder does not end a change. `log` gi
 2. The rename is `R100`, which means that the new file has the same text. Else the front matter `aliases` of the new file holds the old id of the intent. `spec-dna mv` and `upgrade` write it. `finish` never writes it.
 3. The same diff has no other record that deletes or renames a file of the change folder.
 
-A plain `git mv` of `intent.md` is `R100`, so it is a move. A `git mv` of the whole folder out of the `intent` folder renames each file of the folder, so condition 3 is false: the folder left the layer, and the change ended. A commit of `finish` that removes the spec and the plan ends the change in the same way, also if it adds a near copy of the intent with the old id in its `aliases`. A near copy with no alias is not `R100`, so it does not meet condition 2.
+A plain `git mv` of `intent.md` is `R100`, so it is a move. A `git mv` of a whole folder out of the `intent` folder renames each file of the folder. If the folder holds a spec or a plan too, condition 3 is false: the folder left the layer, and the change ended. If the folder holds only `intent.md`, the move of the folder is the same single `R100` rename as a plain `git mv`, so it is a move. A commit of `finish` that removes the spec and the plan ends the change in the same way, also if it adds a near copy of the intent with the old id in its `aliases`. A near copy with no alias is not `R100`, so it does not meet condition 2.
 
-One case stays as it was in 0.6.1. A folder that holds only `intent.md`, and a commit of `finish` that adds a near copy with the old id in its `aliases`, read as a move. The commit has no other record of the folder, so `log` gives no entry for that change. A move that changes more than half of the text is no rename for git, so it ends the change.
+2 cases stay as they were in 0.6.1, and both read as a move. In both, the folder holds only `intent.md`, so the commit has no other record of the folder and `log` gives no entry for that change. The first case is a commit of `finish` that adds a near copy with the old id in its `aliases`. The second case is a `git mv` of the whole folder out of the `intent` folder. A move that changes more than half of the text is no rename for git, so it ends the change.
 
 In a shallow clone, `log` can miss the changes that the clone does not have. It prints the note `this is a shallow clone; older changes may be missing`. With `--json`, the field `shallow` is `true`. With `[change] policy = "none"`, `log` says that the change process is off and lists nothing. It warns on a pin mismatch, as `status` does.
 
@@ -546,7 +546,7 @@ The command rebuilds the life of each change from the commits that touched its `
 - A span that would be negative is not counted.
 - The durations use the committer dates.
 - A rename of the folder inside the `intent` folder keeps the life under the new name.
-- A move of `intent.md` out of the `intent` folder does not end the life, because the file still exists. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 3 conditions of a move out.
+- A move of `intent.md` out of the `intent` folder does not end the life, because the file still exists. `stats` drops that life: it is not finished, closed or open. The [`log`](#log) section gives the 3 conditions of a move out, and the 2 cases that read as a move although the folder left the layer.
 
 | Play | Kind | Indicator | Value |
 | --- | --- | --- | --- |
@@ -759,7 +759,7 @@ spec-dna index <dir or file> [--replace]
 
 `index` writes a generated index of the documents under a directory. The index has one row for each entry, with its name, title and status. A cell with no text, such as a missing status, is written as `| |`. `--replace` replaces a file that a person keeps manually. Then the links to a section of the old file that names an entry go to the entry. `check` reports a stale or manually edited index (SD610).
 
-`index` gives the file the type of its place, as `check` reads it: the `type` line that the old file keeps, the type of the root, the type of the layer folder, or the `default-type` of the root. If that type needs a status, and the old file has none, and the root gives none, `index` writes the first status of the type before the line `generated`. That is `draft`, or `proposed` for a decision. A status that the old file has stays. A root with `default-type` and `status` gets no line. If the place gives no type (for example `index docs` in a mixed root with no `default-type`), `index` stops with exit code 2 and writes nothing. The message is ``the place `<dir>` gives no type; index a folder of a layer, or set `default-type` of the root``. The index that `finish` writes again follows the same rule, and for a place with no type it keeps the front matter as it is.
+`index` gives the file the type of its place, as `check` reads it: the `type` line that the old file keeps, the type of the root, the type of the layer folder, or the `default-type` of the root. If that type needs a status, and the old file has none, and the root gives none, `index` writes the first status of the type before the line `generated`. That is `draft`, or `proposed` for a decision. A status that the old file has stays. A root with `default-type` and `status` gets no line. If the place gives no type (for example `index docs` in a mixed root with no `default-type`), `index` stops with exit code 2 and writes nothing. The message is ``the place `<dir>` gives no type; index a folder of a layer, or set `default-type` of the root``. For the folder of a layer that holds more than one type, such as the `intent` folder (`intent`, `spec` and `plan`), the message names the layer and its types, because the folder gives no single type. The index that `finish` writes again follows the same rule, and for a place with no type it keeps the front matter as it is.
 
 ## eval
 
