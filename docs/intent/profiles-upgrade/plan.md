@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Profiles at init and the upgrade from 0.6: plan
 
