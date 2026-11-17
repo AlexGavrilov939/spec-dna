@@ -432,6 +432,28 @@ pub fn release(name: &str) -> Option<Verdict> {
     RELEASE.iter().find(|r| r.name == name).map(|r| r.verdict)
 }
 
+/// ADR 0023. `true`: a skill is on by default only with the verdict `on`.
+/// `false`: D33 (a skill of D2 is on unless `off`; another skill only with
+/// `on`). The owner sets the value after the full eval run. A test names no
+/// default skill, so this line is the one edit of the change.
+pub const DEFAULT_ON_NEEDS_VERDICT_ON: bool = true;
+
+/// The rule of ADR 0023. It reads no file and no table.
+pub fn on_by_default(in_d2: bool, verdict: Option<Verdict>, needs_on: bool) -> bool {
+    match (needs_on, in_d2, verdict) {
+        (_, _, Some(Verdict::On)) => true,
+        (true, _, _) | (false, false, _) => false,
+        (false, true, v) => v != Some(Verdict::Off),
+    }
+}
+
+/// The default of a name in this release: the rule, the table of the release
+/// (through `release(name)`, never the constant `RELEASE` itself) and the
+/// constant.
+pub fn default_on(name: &str, in_d2: bool) -> bool {
+    on_by_default(in_d2, release(name), DEFAULT_ON_NEEDS_VERDICT_ON)
+}
+
 fn r6(x: f64) -> f64 {
     crate::eval_run::r6(x)
 }
@@ -1371,6 +1393,50 @@ mod tests {
         let j = release_json(&[row]);
         assert!(j.starts_with("{\"release\":[{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261117T082902Z-tdd\",\"claude_code\":\"2.1.326\",\"models\":[\"claude-a\",\"claude-b\"],\"with\":{\"runs\":20,\"passes\":10,\"pass_rate\":0.5,\"cost_usd\":19.937455,\"cost_per_correct_usd\":1.993746},"), "{j}");
         assert!(j.ends_with("\"cost_ratio\":null}]}"), "{j}");
+    }
+
+    /// ADR 0023. The 8 cases of the table, for each value of the constant.
+    #[test]
+    fn the_rule_of_adr_0023_gives_each_default() {
+        use Verdict::{Inconclusive, Off, On};
+        // in D2, verdict, the default with `true`, the default with `false`
+        let table: [(bool, Option<Verdict>, bool, bool); 8] = [
+            (true, None, false, true),
+            (true, Some(On), true, true),
+            (true, Some(Inconclusive), false, true),
+            (true, Some(Off), false, false),
+            (false, None, false, false),
+            (false, Some(On), true, true),
+            (false, Some(Inconclusive), false, false),
+            (false, Some(Off), false, false),
+        ];
+        for (in_d2, verdict, with_true, with_false) in table {
+            assert_eq!(
+                on_by_default(in_d2, verdict, true),
+                with_true,
+                "in D2 {in_d2}, verdict {verdict:?}, needs_on true"
+            );
+            assert_eq!(
+                on_by_default(in_d2, verdict, false),
+                with_false,
+                "in D2 {in_d2}, verdict {verdict:?}, needs_on false"
+            );
+        }
+    }
+
+    /// The default of a name reads the table through `release(name)` and the
+    /// constant. It does not name a verdict of the table.
+    #[test]
+    fn the_default_of_a_name_follows_the_table_and_the_constant() {
+        for name in ["brainstorm", "tdd", "debug", "no-such-skill"] {
+            for in_d2 in [true, false] {
+                assert_eq!(
+                    default_on(name, in_d2),
+                    on_by_default(in_d2, release(name), DEFAULT_ON_NEEDS_VERDICT_ON),
+                    "{name}"
+                );
+            }
+        }
     }
 
     /// The simulation of D33 on the bootstrap above. Each trial draws 5 evals

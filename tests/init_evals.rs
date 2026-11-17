@@ -8,7 +8,8 @@ mod common;
 use common::*;
 use std::fs;
 
-/// The 7 skills that are on by default, in the order of D2.
+/// The 7 skills of D2, in the order of D2. A test that uses them pins the
+/// skills. A test of the defaults reads them with `default_skills`.
 const SKILLS: [&str; 7] = [
     ".claude/skills/spec-dna-brainstorm/SKILL.md",
     ".claude/skills/spec-dna-specify/SKILL.md",
@@ -18,6 +19,47 @@ const SKILLS: [&str; 7] = [
     ".claude/skills/spec-dna-finish/SKILL.md",
     ".claude/skills/spec-dna-post-mortem/SKILL.md",
 ];
+
+/// The skills that are on by default in this build (ADR 0023), in the order
+/// of D2. They come from `skill list --json` in a folder with no
+/// `spec-dna.toml`, so a new table of the release changes no test.
+fn default_skills() -> Vec<String> {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["skill", "list", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out.split("{\"name\":\"")
+        .skip(1)
+        .filter(|item| item.contains("\"default\":\"on\""))
+        .map(|item| item.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+/// The file of each default skill.
+fn default_skill_paths() -> Vec<String> {
+    default_skills()
+        .iter()
+        .map(|n| format!(".claude/skills/spec-dna-{n}/SKILL.md"))
+        .collect()
+}
+
+/// The value of the part `skills` of the default, as the configuration and the
+/// prompt of question 12 write it: `["a", "b"]` and `a,b`.
+fn default_skills_toml() -> String {
+    let q: Vec<String> = default_skills()
+        .iter()
+        .map(|n| format!("\"{n}\""))
+        .collect();
+    format!("[{}]", q.join(", "))
+}
+
+fn default_skills_part() -> String {
+    let names = default_skills();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(",")
+    }
+}
 
 const STARTER: [&str; 3] = [
     "evals/check.sh",
@@ -64,12 +106,14 @@ fn lines_with<'a>(out: &'a str, code: &str) -> Vec<&'a str> {
 #[test]
 fn a_new_project_with_the_defaults_passes_check_and_has_no_sd506() {
     let r = new_project();
+    let skills = default_skill_paths();
     for f in STARTER
         .iter()
-        .chain(SKILLS.iter())
-        .chain(["REVIEW.md"].iter())
+        .map(|f| f.to_string())
+        .chain(skills)
+        .chain(["REVIEW.md".to_string()])
     {
-        assert!(r.dir.join(f).exists(), "{f}");
+        assert!(r.dir.join(&f).exists(), "{f}");
     }
     // The CI answer of an empty repository is `none`: no workflow.
     assert!(!r.dir.join(WORKFLOW).exists());
@@ -84,7 +128,10 @@ fn a_new_project_with_the_defaults_passes_check_and_has_no_sd506() {
         "{cfg}"
     );
     assert!(
-        cfg.contains("skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]\nreview-md = true\nprotect-tests = \"fix-branches\"\n"),
+        cfg.contains(&format!(
+            "skills = {}\nreview-md = true\nprotect-tests = \"fix-branches\"\n",
+            default_skills_toml()
+        )),
         "{cfg}"
     );
     let (code, out, err) = r.run(&["check"]);
@@ -499,16 +546,34 @@ fn a_review_md_with_no_marker_gives_review_md_false() {
 
 #[test]
 fn a_skill_with_no_marker_leaves_the_default_skills() {
+    // The level `full` proposes the 11 skills, so the test names no default
+    // skill: the file of `specify` has no marker, and the list leaves it out.
+    let r = Repo::new();
+    r.write(SKILLS[1], "---\nname: spec-dna-specify\n---\nMine.\n");
+    let (code, out, err) = init_with(&r, "harness = \"full\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]\n"),
+        "{cfg}"
+    );
+    assert!(out.contains(&format!("note: {}", SKILLS[1])), "{out}");
+    // The default list leaves the skill out too, if it is in the list.
     let r = Repo::new();
     r.write(SKILLS[1], "---\nname: spec-dna-specify\n---\nMine.\n");
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
-    let cfg = r.read("spec-dna.toml");
+    let want: Vec<String> = default_skills()
+        .into_iter()
+        .filter(|n| n != "specify")
+        .map(|n| format!("\"{n}\""))
+        .collect();
     assert!(
-        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]\n"),
-        "{cfg}"
+        r.read("spec-dna.toml")
+            .contains(&format!("skills = [{}]\n", want.join(", "))),
+        "{}",
+        r.read("spec-dna.toml")
     );
-    assert!(out.contains(&format!("note: {}", SKILLS[1])), "{out}");
 }
 
 #[test]
@@ -614,7 +679,7 @@ fn request_bytes(out: &str) -> usize {
 }
 
 #[test]
-fn the_7_skill_descriptions_that_are_on_add_their_listing_to_the_prefix_of_each_request() {
+fn the_descriptions_of_the_default_skills_add_their_listing_to_the_prefix_of_each_request() {
     // The sum has the length of the version in the markers, so the test
     // compares 2 runs of the same version.
     let (with, listing) = {
@@ -626,7 +691,7 @@ fn the_7_skill_descriptions_that_are_on_add_their_listing_to_the_prefix_of_each_
         );
         assert!(out.contains("per-request prefix: "), "{out}");
         // The listing of Claude Code: one line for each skill.
-        let listing: usize = SKILLS
+        let listing: usize = default_skill_paths()
             .iter()
             .map(|f| {
                 let name = f.split('/').nth(2).unwrap();
@@ -646,8 +711,9 @@ fn the_7_skill_descriptions_that_are_on_add_their_listing_to_the_prefix_of_each_
         assert_eq!(code, 0, "{out}{err}");
         request_bytes(&out)
     };
-    // D6: the listing of the 7 skills that are on has 1,250 bytes or fewer.
-    assert!(listing > 0 && listing <= 1250, "{listing}");
+    // D6: the listing of the 7 skills of D2 has 1,250 bytes or fewer, and the
+    // 11 skills have 1,900 bytes or fewer.
+    assert!(listing <= 1900, "{listing}");
     assert_eq!(with, without + listing);
 }
 
@@ -782,9 +848,13 @@ mod terminal {
         ];
         let (code, out) = on_terminal(&r.dir, &answers);
         assert_eq!(code, 0, "{out}");
+        let parts_prompt = format!(
+            "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills={} review-md=true protect-tests=fix-branches]: ",
+            default_skills_part()
+        );
         for want in [
             "12. Agent harness (none, lean, full) [lean]: ",
-            "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,review,finish,post-mortem review-md=true protect-tests=fix-branches]: ",
+            parts_prompt.as_str(),
             "13. Models (role=model[:effort] ...) [",
             "14. Evals (none, skeleton) [skeleton]: ",
         ] {

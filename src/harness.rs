@@ -418,19 +418,24 @@ impl Skill {
         }
     }
 
-    /// True if the skill is on by default (D2). `init` at level `lean` writes
-    /// these skills. The 4 skills that are off stay off until an eval gives a
-    /// verdict (Q4).
-    pub fn default_on(self) -> bool {
+    /// True for the 7 skills that D2 turns on. This is a fact of the design,
+    /// and it does not change with a table of verdicts. The 4 other skills
+    /// (`execute`, `tdd`, `verify` and `debug`) are off in D2 until a verdict
+    /// gives them `on`.
+    pub fn in_d2(self) -> bool {
         !matches!(
             self,
             Skill::Execute | Skill::Tdd | Skill::Verify | Skill::Debug
         )
     }
 
-    /// The skills that are on by default, in the order of `ALL`.
-    pub fn default_on_list() -> Vec<Skill> {
-        Skill::ALL.into_iter().filter(|s| s.default_on()).collect()
+    /// True if the skill is on by default in this release (ADR 0023): the rule
+    /// reads the 7 skills of D2, the table of the release and the constant
+    /// `DEFAULT_ON_NEEDS_VERDICT_ON`. `init` at the level `lean` writes the
+    /// skills that give true, `upgrade` renames to them, and `skill list` and
+    /// SD507 report them.
+    pub fn default_on(self) -> bool {
+        crate::verdict::default_on(self.key(), self.in_d2())
     }
 }
 
@@ -4211,7 +4216,7 @@ opus = "xhigh"
             assert_eq!(s.key(), key);
             assert_eq!(s.kind().name(), kind, "{key}");
             assert_eq!(s.stage().map(Stage::name), stage, "{key}");
-            assert_eq!(s.default_on(), on, "{key}");
+            assert_eq!(s.in_d2(), on, "{key}");
             assert_eq!(Skill::from_key(key), Some(s));
         }
         // The derived order is the order of D2, so `skills.sort()` keeps it.
@@ -4315,8 +4320,9 @@ opus = "xhigh"
         let all = plan_of(&with_skills(
             "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]",
         ));
-        let listing: usize = Skill::default_on_list()
+        let listing: usize = Skill::ALL
             .iter()
+            .filter(|s| s.in_d2())
             .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
             .sum();
         assert_eq!(all, off + listing);
