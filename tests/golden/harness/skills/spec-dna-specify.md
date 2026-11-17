@@ -8,7 +8,7 @@ When to use: The intent is `accepted` and its class is `higher-risk`.
 Commands:
 
 1. Run `spec-dna new spec <slug>`.
-2. Under `Delta`, write one line for each requirement that the change adds, changes or removes: `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`.
+2. Under `Delta`, write one list item for each requirement that the change adds, changes or removes: `- ADD <id>#<key>: <sentence>`, `- CHANGE <id>#<key>@<hash>: <sentence>` or `- REMOVE <id>#<key>@<hash>`. `check` and `finish` ignore a paragraph there.
 3. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
 4. Under `Interfaces`, write `- none` or one paragraph if no interface changes. Else write one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
 5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
@@ -16,10 +16,10 @@ Commands:
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD914 and no SD920. SD914 is an invalid delta or interface item. SD920 is a decision that is absent or not accepted.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD914 (an invalid delta or interface item). SD920 (a decision that is absent or not accepted) reports only after the spec is `approved`. Before the approval, read the status of each linked decision. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run the check again.
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:63ad1cd6a6f5e50d -->
+<!-- spec-dna harness v{VERSION} h:b6fa08196d9b7a03 -->

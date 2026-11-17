@@ -10,14 +10,14 @@ Commands:
 1. Read `Concerns` and `Open questions` of `spec.md`.
 2. Give each item a box: `- [ ]` is open, and `- [x]` is resolved. If no item applies, write one item `- none`.
 3. Ask the person about each open item. Write the answer in the item, then change its box to `- [x]`.
-4. Run `spec-dna check --base origin/HEAD`.
+4. Run the check below.
 
 Artifact: `Concerns` and `Open questions` of `spec.md`, each item answered.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD919, SD922 and SD925. SD919 is an open concern, SD922 is an open question, and SD925 is an item with no box.
+Check: Before the approval, confirm that no `- [ ]` item stays in `Concerns` and `Open questions`. SD919 (an open concern) and SD922 (an open question) report it only after the spec is `approved`. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD925 (an item with no box). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Ask the person about the item that the message names. Do not mark an item that has no answer. Add a box to an item that has none.
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:6ccb96b5c35a05c9 -->
+<!-- spec-dna harness v{VERSION} h:10d45caaed723ea5 -->

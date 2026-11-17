@@ -57,7 +57,7 @@ Commands:
 
 Artifact: `intent.md` with the intent, why now, out of scope and its class.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD306 (a placeholder stays).
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD306 (a placeholder stays). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run the check again.";
 
@@ -66,7 +66,7 @@ const SPECIFY_PARTS: &str = r"When to use: The intent is `accepted` and its clas
 Commands:
 
 1. Run `spec-dna new spec <slug>`.
-2. Under `Delta`, write one line for each requirement that the change adds, changes or removes: `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`.
+2. Under `Delta`, write one list item for each requirement that the change adds, changes or removes: `- ADD <id>#<key>: <sentence>`, `- CHANGE <id>#<key>@<hash>: <sentence>` or `- REMOVE <id>#<key>@<hash>`. `check` and `finish` ignore a paragraph there.
 3. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
 4. Under `Interfaces`, write `- none` or one paragraph if no interface changes. Else write one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
 5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
@@ -74,7 +74,7 @@ Commands:
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD914 and no SD920. SD914 is an invalid delta or interface item. SD920 is a decision that is absent or not accepted.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD914 (an invalid delta or interface item). SD920 (a decision that is absent or not accepted) reports only after the spec is `approved`. Before the approval, read the status of each linked decision. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run the check again.";
 
@@ -85,11 +85,11 @@ Commands:
 1. Read `Concerns` and `Open questions` of `spec.md`.
 2. Give each item a box: `- [ ]` is open, and `- [x]` is resolved. If no item applies, write one item `- none`.
 3. Ask the person about each open item. Write the answer in the item, then change its box to `- [x]`.
-4. Run `spec-dna check --base origin/HEAD`.
+4. Run the check below.
 
 Artifact: `Concerns` and `Open questions` of `spec.md`, each item answered.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD919, SD922 and SD925. SD919 is an open concern, SD922 is an open question, and SD925 is an item with no box.
+Check: Before the approval, confirm that no `- [ ]` item stays in `Concerns` and `Open questions`. SD919 (an open concern) and SD922 (an open question) report it only after the spec is `approved`. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD925 (an item with no box). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Ask the person about the item that the message names. Do not mark an item that has no answer. Add a box to an item that has none.";
 
@@ -100,14 +100,15 @@ Commands:
 1. Run `spec-dna next <slug>`. Run `spec-dna context <file>...` for the files that you plan to change.
 2. Run `spec-dna new plan <slug>`.
 3. Under `Files`, list each path of the scope. Write each path in a code span.
-4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most 3 exact paths and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
+4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
+6. A plan can have a section `## Hours` with the items `- <number of hours>: <what>`. `spec-dna finish` prints their total as the line `Hours: <total>`.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD913, SD923 and SD924. SD913 is a file that `Files` does not list. SD923 is a task with no exact `Files:` or no `Verify:`. SD924 is a task with too many paths.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (a task with too many paths) report only after the plan is `approved`. Before the approval, count the paths and the `Verify:` of each task. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
-If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run the check again.";
+If the check fails: Split a task that lists more than `max-task-files` paths. Give each task exact paths and one `Verify:`. Run the check again.";
 
 const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is open.
 
@@ -120,7 +121,7 @@ Commands:
 
 Artifact: The code, the tests and the checked task.
 
-Check: The `Verify:` of the task passes. `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
+Check: The `Verify:` of the task passes. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`. The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
 
 If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person to change the plan.";
 
@@ -134,7 +135,7 @@ Commands:
 
 Artifact: A test with a `covers:` tag, run red before the code.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is a requirement with no evidence. SD916 is a delta requirement with no `covers:` tag. They check the tag, not the order.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is a requirement with no evidence. SD916 is a delta requirement with no `covers:` tag. They check the tag, not the order. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.";
 
@@ -167,7 +168,7 @@ Check: Each command ends with exit code 0, and the check gives no error. `finish
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.";
 
-const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its tasks are done, and its `Proof` passes.
+const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its tasks are done, and its `Proof` passes. Its intent, spec and plan, with their approval commits, are merged in an earlier pull request.
 
 Commands:
 
@@ -177,9 +178,9 @@ Commands:
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
-Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --base origin/HEAD` gives no error.
+Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --base origin/HEAD` gives no error. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
-If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. Do not delete the folder by hand.";
+If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. SD910 reason 7 means that the branch added the artifacts and finished the change. Put `finish` in a new pull request. Do not delete the folder by hand.";
 
 const DEBUG_PARTS: &str = r"When to use: A test or a command fails, and you do not know the cause.
 
@@ -205,10 +206,11 @@ Commands:
 3. Run `spec-dna new intent <slug>`. Add the line `from: <incident id>` to its front matter, and set `class`.
 4. Write the intent: what the change gives, why now and what is out of scope.
 5. Add an eval for the incident: the file `<id>.json` directly in the evals folder, `[evals] dir`.
+6. In the incident, change the open follow-up to `- [x]`, and name the new intent in it.
 
 Artifact: A new `intent.md` with `from:`, and an eval file for the incident.
 
-Check: `spec-dna check --base origin/HEAD` gives no SD918 and no SD101. SD918 is an incident with no eval. SD101 is an incident id that names no document.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD101 (a `from:` that names no document), no SD306 and no SD506 (an invalid eval file). SD918 (an incident with no eval) reports only when the diff adds the incident, so check by hand that the eval file exists. Run `spec-dna status`: it lists no open follow-up for the incident. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the check again.";
 
@@ -510,6 +512,92 @@ mod tests {
         has(Skill::Finish, &["`spec-dna finish <slug>`", "--dry-run"]);
         has(Skill::Debug, &["regression test", "3 failed fixes"]);
         has(Skill::PostMortem, &["from:", "SD918"]);
+    }
+
+    /// The text of one part of a body, from its heading to the next one.
+    fn part(skill: Skill, name: &str) -> String {
+        let b = body(skill);
+        let at = b.find(&format!("\n{name}")).map_or(0, |i| i + 1);
+        let rest = &b[at..];
+        let end = PARTS
+            .iter()
+            .filter(|p| **p != name)
+            .filter_map(|p| rest[1..].find(&format!("\n{p}")).map(|i| i + 1))
+            .min()
+            .unwrap_or(rest.len());
+        rest[..end].to_string()
+    }
+
+    #[test]
+    fn a_check_that_reads_the_base_stages_the_new_files_and_names_the_fallback() {
+        // `check --base` reads tracked files only, and it needs a base.
+        for s in Skill::ALL {
+            let b = body(s);
+            if !b.contains("check --base origin/HEAD") || s == Skill::Verify {
+                continue;
+            }
+            let c = part(s, "Check:");
+            assert!(c.contains("pass the default branch"), "{s:?}: {c}");
+            // A skill that never writes a new file still needs no staging:
+            // `finish` stages its own paths.
+            if s != Skill::Finish {
+                assert!(
+                    c.contains("`git add`") && c.contains("tracked files only"),
+                    "{s:?}: {c}"
+                );
+            }
+        }
+        assert!(body(Skill::Verify).contains("pass the default branch"));
+    }
+
+    #[test]
+    fn finish_needs_the_artifacts_in_an_earlier_pull_request() {
+        assert!(part(Skill::Finish, "When to use:").contains("earlier pull request"));
+        let f = part(Skill::Finish, "If the check fails:");
+        assert!(
+            f.contains("SD910 reason 7") && f.contains("new pull request"),
+            "{f}"
+        );
+    }
+
+    #[test]
+    fn the_delta_forms_are_list_items() {
+        let b = body(Skill::Specify);
+        for p in [
+            "`- ADD <id>#<key>: <sentence>`",
+            "`- CHANGE <id>#<key>@<hash>: <sentence>`",
+            "`- REMOVE <id>#<key>@<hash>`",
+        ] {
+            assert!(b.contains(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn write_plan_names_the_task_limit_key_and_the_hours() {
+        let b = body(Skill::WritePlan);
+        assert!(b.contains("at most `max-task-files` exact paths (default 3)"));
+        assert!(!b.contains("at most 3") && !b.contains("more than 3 paths"));
+        assert!(b.contains("`## Hours`") && b.contains("`Hours: <total>`"));
+        assert!(b.contains("`- <number of hours>: <what>`"));
+    }
+
+    #[test]
+    fn a_floor_that_cannot_fail_yet_is_not_claimed() {
+        // SD919 and SD922 report an `approved` spec only.
+        let c = part(Skill::Clarify, "Check:");
+        assert!(c.contains("no `- [ ]` item stays"), "{c}");
+        assert!(c.contains("SD919") && c.contains("only after the spec is `approved`"));
+        // SD920 reports an `approved` spec only; SD914 reports a draft.
+        let c = part(Skill::Specify, "Check:");
+        assert!(c.contains("SD920") && c.contains("only after the spec is `approved`"));
+        // SD923 and SD924 report an `approved` plan only.
+        let c = part(Skill::WritePlan, "Check:");
+        assert!(c.contains("SD924") && c.contains("only after the plan is `approved`"));
+        // SD918 reports only when the diff adds the incident.
+        let c = part(Skill::PostMortem, "Check:");
+        assert!(!c.contains("gives no SD918"), "{c}");
+        assert!(c.contains("SD918") && c.contains("only when the diff adds the incident"));
+        assert!(c.contains("`spec-dna status`"), "{c}");
     }
 
     #[test]
