@@ -114,6 +114,18 @@ case "$mode" in
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"permission_denials":[{"tool_name":"Skill"},{"tool_name":"Bash"}],"result":"ok"}\n'
         exit 0 ;;
+    tokens)
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"modelUsage":{"claude-b":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40,"thinkingTokens":99},"claude-a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":3}},"permission_denials":[],"result":"ok"}\n'
+        exit 0 ;;
+    nousage)
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"permission_denials":[],"result":"ok"}\n'
+        exit 0 ;;
+    badusage)
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"modelUsage":{"claude-a":{"inputTokens":-1,"outputTokens":2}},"permission_denials":[],"result":"ok"}\n'
+        exit 0 ;;
     plainfail) printf 'Segmentation fault\n'; exit 139 ;;
     break)
         rm -f "$STUB_BREAK_FILE"
@@ -387,17 +399,32 @@ fn a_dry_run_prints_the_pairs_and_the_estimate_and_starts_nothing() {
 }
 
 #[test]
-fn an_estimate_above_the_cap_gives_exit_code_3_and_no_process() {
+fn an_estimate_above_the_cap_starts_and_stops_before_the_cap() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
-    // The default cap is 20, and the estimate is 40.
-    let (code, out, err) = fx.run(&["tdd"]);
+    // The default cap is 20, and the estimate is 40. Each run costs 2 USD, so
+    // the 10th run ends at 20 USD, and the 11th could pass the cap.
+    let (code, out, err) = fx.run_env(&["tdd", "--json"], &[("STUB_COST", "2")]);
     assert_eq!(code, 3, "{out}{err}");
-    assert!(err.contains("estimate 40.00 USD"), "{err}");
-    assert!(fx.calls().is_empty());
+    assert!(
+        err.contains("note: the estimate 40.00 USD is above max-total-usd 20.00 USD; the run stops before a run that could pass the cap, and --resume goes on"),
+        "{err}"
+    );
+    assert_eq!(fx.calls().len(), 10);
+    assert!(out.contains("\"stopped\":\"max-total-usd\""), "{out}");
+    assert_eq!(fx.results().len(), 1, "the partial result is written");
+    // `--resume` with a higher cap goes on, and the cap counts the spend of the file.
+    let file = format!("evals/results/{}", fx.results()[0]);
+    let (code, out, err) = fx.run(&["tdd", "--resume", &file, "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10 + 30);
+    assert!(
+        !err.contains("note: the estimate"),
+        "no note for an estimate of the spend that fits: {err}"
+    );
 }
 
 #[test]
-fn a_dry_run_prints_the_estimate_above_the_cap_and_says_that_a_real_run_refuses() {
+fn a_dry_run_prints_the_estimate_above_the_cap_and_says_that_a_real_run_starts() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
     let (code, out, err) = fx.run(&["tdd", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -405,12 +432,15 @@ fn a_dry_run_prints_the_estimate_above_the_cap_and_says_that_a_real_run_refuses(
         out.contains("5 evals, 40 runs, estimate 40.00 USD, cap 20.00 USD"),
         "{out}"
     );
-    assert!(out.contains("a real run would refuse to start"), "{out}");
+    assert!(
+        out.contains("a real run starts, and stops before a run that could pass the cap"),
+        "{out}"
+    );
     let (code, out, _) = fx.run(&["tdd", "--dry-run", "--json"]);
     assert_eq!(code, 0);
     assert!(out.contains("\"above_cap\":true"), "{out}");
     let (_, out, _) = fx.run(&["tdd", "--dry-run", "--max-total-usd", "100"]);
-    assert!(!out.contains("would refuse"), "{out}");
+    assert!(!out.contains("a real run starts"), "{out}");
     assert!(fx.calls().is_empty());
 }
 
@@ -430,6 +460,164 @@ fn the_spend_above_the_cap_stops_the_run_and_writes_the_partial_result() {
     // No verdict for an incomplete skill.
     assert!(out.contains("\"verdict\":null"), "{out}");
     fx.assert_clean();
+}
+
+// The tokens, the models and the checks of each side (eval-records, R1 and R4).
+
+/// The text of the first pair of the result: `tdd-1`, run 1.
+fn first_pair(json: &str) -> &str {
+    let at = json
+        .find("\"eval\":\"tdd-1\",\"run\":1")
+        .expect("no first pair");
+    let rest = &json[at..];
+    &rest[..rest.find("{\"eval\"").map_or(rest.len(), |i| i.max(1))]
+}
+
+#[test]
+fn each_side_keeps_the_tokens_and_the_models_of_its_run() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The first call is the arm `with` of `tdd-1`, and its tokens are the sums
+    // over the 2 models. `thinkingTokens` is not added, and an absent field is 0.
+    fx.modes(&["tokens"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let pair = first_pair(&out);
+    assert!(
+        pair.contains("\"passed\":true,\"tokens\":{\"in\":11,\"out\":22,\"cache_read\":33,\"cache_write\":40},\"models\":[\"claude-a\",\"claude-b\"],\"checks\":"),
+        "{pair}"
+    );
+    // The result file on the disk has the same text.
+    let file =
+        fs::read_to_string(fx.repo.dir.join("evals/results").join(&fx.results()[0])).unwrap();
+    assert!(
+        file.contains("\"tokens\":{\"in\":11,\"out\":22,\"cache_read\":33,\"cache_write\":40}")
+    );
+    // The arm `without` ran with the default stub: one model, all fields 0.
+    assert!(
+        pair.contains("\"without\":{") && pair.contains("\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"]"),
+        "{pair}"
+    );
+}
+
+#[test]
+fn a_result_with_no_model_usage_has_null_tokens() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // No `modelUsage`; then a value that is not an integer >= 0 (the models stay).
+    fx.modes(&["nousage", "badusage"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let pair = first_pair(&out);
+    assert!(
+        pair.contains("\"passed\":true,\"tokens\":null,\"models\":[],\"checks\":"),
+        "{pair}"
+    );
+    assert!(
+        pair.contains("\"passed\":true,\"tokens\":null,\"models\":[\"claude-a\"],\"checks\":"),
+        "{pair}"
+    );
+}
+
+#[test]
+fn each_side_lists_its_check_names_and_results() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The arm `with` of `tdd-1` fails its check: it has the skill folder.
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_PASS", "noskill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let pair = first_pair(&out);
+    let with = &pair[..pair.find("\"without\"").unwrap()];
+    assert!(
+        with.ends_with("\"checks\":[{\"name\":\"notes-done\",\"passed\":false}]},"),
+        "{with}"
+    );
+    let without = &pair[pair.find("\"without\"").unwrap()..];
+    assert!(
+        without.contains("\"checks\":[{\"name\":\"notes-done\",\"passed\":true}]}"),
+        "{without}"
+    );
+    // No command and no output of a check is in the result.
+    assert!(!out.contains("file_has"), "{out}");
+}
+
+#[test]
+fn a_resume_reads_back_the_tokens_the_models_and_the_checks() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["tokens"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--resume",
+        &file,
+        "--runs",
+        "2",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let pair = first_pair(&out);
+    assert!(
+        pair.contains("\"tokens\":{\"in\":11,\"out\":22,\"cache_read\":33,\"cache_write\":40},\"models\":[\"claude-a\",\"claude-b\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}]"),
+        "{pair}"
+    );
+}
+
+#[test]
+fn resume_with_more_runs_extends_each_eval() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    // The smoke: 1 run of each of the 5 evals.
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10);
+    let file = format!("evals/results/{}", fx.results()[0]);
+    // The smoke becomes run 1 of the batch: 3 more runs of each eval.
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--resume",
+        &file,
+        "--runs",
+        "4",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10 + 30);
+    let top = &out[..out.find("\"skills\":").unwrap()];
+    assert!(top.contains("\"runs\":4"), "{top}");
+    assert!(out.contains("\"with\":{\"runs\":20,"), "{out}");
+    assert!(out.contains("\"eval\":\"tdd-1\",\"run\":4"), "{out}");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+    // The file on the disk is the same one, with `runs` 4.
+    assert_eq!(fx.results().len(), 1);
+    let disk = fs::read_to_string(fx.repo.dir.join(&file)).unwrap();
+    assert!(disk[..disk.find("\"skills\":").unwrap()].contains("\"runs\":4"));
+}
+
+#[test]
+fn resume_with_fewer_runs_is_a_usage_error() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "2", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    let before = fx.calls().len();
+    let (code, _, err) = fx.run(&["tdd", "--resume", &file, "--runs", "1"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--runs"), "{err}");
+    // A file with no `runs` (each eval kept its own runs) takes no `--runs`.
+    let fx2 = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx2.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file2 = format!("evals/results/{}", fx2.results()[0]);
+    let (code, _, err) = fx2.run(&["tdd", "--resume", &file2, "--runs", "2"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--runs"), "{err}");
+    assert_eq!(fx.calls().len(), before, "no process may start");
+    assert_eq!(fx2.calls().len(), 10, "no process may start");
 }
 
 // The arms.
