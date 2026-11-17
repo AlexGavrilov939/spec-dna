@@ -487,8 +487,10 @@ fn each_side_keeps_the_tokens_and_the_models_of_its_run() {
         "{pair}"
     );
     // The result file on the disk has the same text.
-    let file =
-        fs::read_to_string(fx.repo.dir.join("evals/results").join(&fx.results()[0])).unwrap();
+    let file: String = fs::read_to_string(fx.repo.dir.join("evals/results").join(&fx.results()[0]))
+        .unwrap()
+        .split_whitespace()
+        .collect();
     assert!(
         file.contains("\"tokens\":{\"in\":11,\"out\":22,\"cache_read\":33,\"cache_write\":40}")
     );
@@ -594,7 +596,10 @@ fn resume_with_more_runs_extends_each_eval() {
     assert!(out.contains("\"stopped\":null"), "{out}");
     // The file on the disk is the same one, with `runs` 4.
     assert_eq!(fx.results().len(), 1);
-    let disk = fs::read_to_string(fx.repo.dir.join(&file)).unwrap();
+    let disk: String = fs::read_to_string(fx.repo.dir.join(&file))
+        .unwrap()
+        .split_whitespace()
+        .collect();
     assert!(disk[..disk.find("\"skills\":").unwrap()].contains("\"runs\":4"));
 }
 
@@ -874,7 +879,7 @@ fn the_result_has_the_arms_the_pairs_the_interval_and_the_verdict() {
         "\"verdict\":\"on\"",
         "\"rule\":1",
         "\"cost_ratio\":null",
-        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true},\"without\":{\"claude_exit\":0,",
+        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}]},\"without\":{\"claude_exit\":0,",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -1002,7 +1007,7 @@ fn a_refused_attempt_of_each_class_is_retried_and_never_counted() {
         );
         // The pair that was retried counts the excluded attempt.
         assert!(
-            out.contains("\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":1,\"permission_denials\":0,\"passed\":true}"),
+            out.contains("\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":1,\"permission_denials\":0,\"passed\":true,"),
             "{mode}: {out}"
         );
         // The cost of the arm has the 5 counted runs only. The spend has the
@@ -1172,7 +1177,7 @@ fn the_agent_and_the_checks_commit_with_a_neutral_identity_and_no_signature() {
         assert!(!who.contains("real@example.org"), "{who}");
     }
     assert!(
-        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true}"),
+        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"agent-identity\",\"passed\":true},{\"name\":\"check-commits\",\"passed\":true},{\"name\":\"notes-done\",\"passed\":true}]},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,"),
         "{out}"
     );
 }
@@ -1636,7 +1641,7 @@ fn an_agent_that_runs_too_long_is_killed_and_counts_as_a_failed_run() {
     assert!(start.elapsed().as_secs() < 25, "the hang was not cut");
     assert_eq!(fx.calls().len(), 10, "no retry: a timeout is no refusal");
     assert!(
-        out.contains("\"with\":{\"claude_exit\":-1,\"subtype\":\"timeout\",\"cost_usd\":null,\"excluded\":0,\"permission_denials\":null,\"passed\":false}"),
+        out.contains("\"with\":{\"claude_exit\":-1,\"subtype\":\"timeout\",\"cost_usd\":null,\"excluded\":0,\"permission_denials\":null,\"passed\":false,"),
         "{out}"
     );
     assert!(
@@ -1763,7 +1768,7 @@ fn the_arms_allow_the_tool_skill_and_the_result_counts_the_permission_denials() 
         assert_eq!(args[at + 1], "Read,Edit,Skill", "call {n}");
     }
     assert!(
-        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":2,\"passed\":true},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,"),
+        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":2,\"passed\":true,\"tokens\":null,\"models\":[],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}]},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,"),
         "{out}"
     );
 }

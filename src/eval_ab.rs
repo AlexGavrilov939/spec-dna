@@ -18,9 +18,9 @@
 use crate::adapters::{self, VERSION};
 use crate::config::{Config, Evals};
 use crate::eval_run::{
-    Ctx, EPS, Limits, Planned, Refusal, RunResult, catch_interrupts, claude_version, copy_list,
-    first_wait, harness_list, interrupt_signal, load_evals_in, make_out_dir, normalize_out,
-    now_secs, one_attempt, r6, replace_result, retry_waits, utc_time,
+    Ctx, EPS, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts, claude_version,
+    copy_list, first_wait, harness_list, interrupt_signal, load_evals_in, make_out_dir,
+    normalize_out, now_secs, one_attempt, r6, replace_result, retry_waits, utc_time,
 };
 use crate::evals::{self, Eval};
 use crate::harness::Skill;
@@ -100,6 +100,12 @@ struct Side {
     excluded: u32,
     denials: Option<u32>,
     passed: bool,
+    /// The sums of the token counts of the run, if `claude` gave them.
+    tokens: Option<Tokens>,
+    /// The sorted names of the models of the run.
+    models: Vec<String>,
+    /// The name and the result of each check. No command, no output.
+    checks: Vec<(String, bool)>,
 }
 
 /// One eval and run number, with the 2 arms. An arm that did not run is
@@ -214,8 +220,10 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             evals::CHECK_FILE
         )));
     }
-    // `--resume` goes on with the `runs` of its file. A different `--runs` is
-    // a usage error, because the pairs of the file would not fit the plan.
+    // `--resume` goes on with the `runs` of its file. A higher `--runs` adds
+    // runs to each eval, and the file keeps the new value. A lower `--runs`,
+    // or `--runs` with a file that kept the runs of each eval, is a usage
+    // error, because the pairs of the file would not fit the plan.
     let resumed = match &o.resume {
         Some(file) => Some(read_resume_file(repo, file, &o.target)?),
         None => None,
@@ -226,16 +234,20 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                 json::Value::Num(n) => Some(*n as u32),
                 _ => None,
             };
-            if o.runs.is_some() && o.runs != file_runs {
-                return Err(Fatal::Usage(match file_runs {
-                    Some(n) => format!(
-                        "--runs {} differs from the file of --resume, which has --runs {n}; leave --runs out",
-                        o.runs.unwrap_or(0)
-                    ),
-                    None => "--runs differs from the file of --resume, which kept the runs of each eval; leave --runs out".to_string(),
-                }));
+            match (o.runs, file_runs) {
+                (None, f) => f,
+                (Some(n), Some(f)) if n >= f => Some(n),
+                (Some(n), Some(f)) => {
+                    return Err(Fatal::Usage(format!(
+                        "--runs {n} is below the file of --resume, which has --runs {f}; use {f} or more, or leave --runs out"
+                    )));
+                }
+                (Some(_), None) => {
+                    return Err(Fatal::Usage(
+                        "--runs with a file of --resume that kept the runs of each eval; leave --runs out".to_string(),
+                    ));
+                }
             }
-            file_runs
         }
         None => o.runs,
     };
@@ -297,15 +309,12 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         })
         .sum();
     if state.spend + remaining > cap + EPS {
-        return Err(Fatal::Config(format!(
-            "the estimate {:.2} USD ({}runs x 2 arms x max-budget-usd) is above max-total-usd {cap:.2} USD; no run started. Lower the runs, or raise max-total-usd",
-            state.spend + remaining,
-            if o.resume.is_some() {
-                "the spend so far and the runs that are left, "
-            } else {
-                ""
-            }
-        )));
+        // The run starts. The check before each run stops it at the cap, and
+        // `--resume` goes on with a higher cap, so no paid run is lost.
+        eprintln!(
+            "eval run: note: the estimate {:.2} USD is above max-total-usd {cap:.2} USD; the run stops before a run that could pass the cap, and --resume goes on",
+            state.spend + remaining
+        );
     }
 
     // A bad `--out` must stop the command before the first run spends money.
@@ -625,6 +634,9 @@ fn run_arm(
                 excluded,
                 denials: r.denials,
                 passed: r.passed,
+                tokens: r.tokens,
+                models: r.models,
+                checks: r.checks,
             }));
         };
         state.spend += r.cost.unwrap_or(0.0);
@@ -685,6 +697,24 @@ fn read_prior(v: &json::Value, groups: &[Group]) -> Prior {
             excluded: num(v.get("excluded")).unwrap_or(0.0) as u32,
             denials: num(v.get("permission_denials")).map(|n| n as u32),
             passed: v.get("passed").is_true(),
+            tokens: read_tokens(v.get("tokens")),
+            models: v
+                .get("models")
+                .as_arr()
+                .iter()
+                .filter_map(|m| m.as_str().map(str::to_string))
+                .collect(),
+            checks: v
+                .get("checks")
+                .as_arr()
+                .iter()
+                .filter_map(|c| {
+                    Some((
+                        c.get("name").as_str()?.to_string(),
+                        c.get("passed").is_true(),
+                    ))
+                })
+                .collect(),
         })
     };
     let mut pairs: Vec<Vec<PairRec>> = groups.iter().map(|_| Vec::new()).collect();
@@ -733,6 +763,20 @@ fn read_prior(v: &json::Value, groups: &[Group]) -> Prior {
             .collect(),
         pairs,
     }
+}
+
+/// Reads the `tokens` of a side of a result file: 4 integers, or `None`.
+fn read_tokens(v: &json::Value) -> Option<Tokens> {
+    let n = |key: &str| match v.get(key) {
+        json::Value::Num(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 => Some(*n as u64),
+        _ => None,
+    };
+    Some(Tokens {
+        input: n("in")?,
+        output: n("out")?,
+        cache_read: n("cache_read")?,
+        cache_write: n("cache_write")?,
+    })
 }
 
 /// Reads and checks the result file of `--resume`: a path of the repository
@@ -1082,12 +1126,29 @@ fn side_json(s: &Option<Side>) -> String {
         None => obj.raw("cost_usd", "null"),
     };
     let obj = obj.num("excluded", s.excluded);
-    match s.denials {
+    let obj = match s.denials {
         Some(n) => obj.num("permission_denials", n),
         None => obj.raw("permission_denials", "null"),
     }
-    .bool("passed", s.passed)
-    .end()
+    .bool("passed", s.passed);
+    let obj = match &s.tokens {
+        Some(t) => obj.raw(
+            "tokens",
+            &Obj::new()
+                .num("in", t.input)
+                .num("out", t.output)
+                .num("cache_read", t.cache_read)
+                .num("cache_write", t.cache_write)
+                .end(),
+        ),
+        None => obj.raw("tokens", "null"),
+    };
+    let checks = json::array(
+        s.checks
+            .iter()
+            .map(|(name, passed)| Obj::new().str("name", name).bool("passed", *passed).end()),
+    );
+    obj.strs("models", &s.models).raw("checks", &checks).end()
 }
 
 fn item_json(it: &Item) -> String {
@@ -1251,7 +1312,7 @@ fn dry_run(
     println!("eval run --ab {target} (dry run): {header}");
     if estimate > cap + EPS {
         println!(
-            "a real run would refuse to start: the estimate {estimate:.2} USD is above max-total-usd {cap:.2} USD; raise it with --max-total-usd"
+            "a real run starts, and stops before a run that could pass the cap: the estimate {estimate:.2} USD is above max-total-usd {cap:.2} USD; --resume goes on"
         );
     }
     for p in evals {
