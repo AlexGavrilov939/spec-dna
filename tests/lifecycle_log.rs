@@ -933,7 +933,10 @@ fn log_reads_the_hours_line_of_a_squash_commit() {
         "feat: dose (#1)\n\n* feat: finish dose\n\nHours: 3.5\n\nCo-authored-by: A <a@example.com>",
     );
     let out = log_json(&r, &[]);
-    assert!(out.contains("\"hours\":3.5"), "{out}");
+    assert!(
+        out.contains("\"hours\":{\"low\":3.5,\"high\":3.5}"),
+        "{out}"
+    );
     let (code, text, _) = r.run(&["log"]);
     assert_eq!(code, 0);
     assert!(text.contains(" remove 1 hours 3.5 "), "{text}");
@@ -959,11 +962,17 @@ fn log_reads_the_last_hours_line_and_only_a_whole_line() {
         "feat: dose\n\nHours: 1\n\nHours:2.25 \t\n\nhours: 9\nHours: 4 total\nTotal Hours: 8",
     );
     let out = log_json(&r, &[]);
-    assert!(out.contains("\"hours\":2.25"), "{out}");
+    assert!(
+        out.contains("\"hours\":{\"low\":2.25,\"high\":2.25}"),
+        "{out}"
+    );
     // A total with more than 4 digits is a number too.
     let r = squashed_with("feat: dose\n\nHours: 12345.5");
     let out = log_json(&r, &[]);
-    assert!(out.contains("\"hours\":12345.5"), "{out}");
+    assert!(
+        out.contains("\"hours\":{\"low\":12345.5,\"high\":12345.5}"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -1021,7 +1030,10 @@ fn a_hours_line_with_too_many_digits_is_not_read() {
     }
     let r = squashed_with("feat: dose\n\nHours: 1234567.5");
     let out = log_json(&r, &[]);
-    assert!(out.contains("\"hours\":1234567.5"), "{out}");
+    assert!(
+        out.contains("\"hours\":{\"low\":1234567.5,\"high\":1234567.5}"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -1035,4 +1047,98 @@ fn the_hours_value_keeps_2_decimals() {
         text.contains("Hours of work per finished change: 2.25 hours (1 change)"),
         "{text}"
     );
+}
+
+#[test]
+fn log_reads_a_range_of_hours() {
+    let r = squashed_with("feat: dose\n\nHours: 5-9");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":{\"low\":5,\"high\":9}"), "{out}");
+    let (code, text, _) = r.run(&["log"]);
+    assert_eq!(code, 0);
+    assert!(text.contains(" remove 1 hours 5-9 "), "{text}");
+    // Spaces or tabs around the dash, and 2 decimals, are fine.
+    let r = squashed_with("feat: dose\n\nHours: 2.5 \t- 3.25");
+    let out = log_json(&r, &[]);
+    assert!(
+        out.contains("\"hours\":{\"low\":2.5,\"high\":3.25}"),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" hours 2.5-3.25 "), "{text}");
+    // A range with equal ends is a number in the text.
+    let r = squashed_with("feat: dose\n\nHours: 3-3");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":{\"low\":3,\"high\":3}"), "{out}");
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" hours 3 "), "{text}");
+    // The last line decides, and a bad range is no value.
+    let r = squashed_with("feat: dose\n\nHours: 1\nHours: 2-4");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":{\"low\":2,\"high\":4}"), "{out}");
+    for bad in [
+        "9-5",
+        "5-9h",
+        "5-",
+        "-9",
+        "5-9-12",
+        "5-9 total",
+        "1.234-5",
+        "5 -- 9",
+    ] {
+        let r = squashed_with(&format!("feat: dose\n\nHours: {bad}"));
+        let out = log_json(&r, &[]);
+        assert!(out.contains("\"hours\":null"), "{bad}: {out}");
+        let (_, text, _) = r.run(&["log"]);
+        assert!(text.contains(" remove 1 hours - "), "{bad}: {text}");
+    }
+}
+
+#[test]
+fn log_json_gives_hours_as_low_and_high() {
+    let r = squashed_with("feat: dose\n\nHours: 4.5");
+    let out = log_json(&r, &[]);
+    let sha = r.git_out(&["rev-parse", "HEAD"]);
+    assert!(
+        out.contains(&format!(
+            "\"hours\":{{\"low\":4.5,\"high\":4.5}},\"commit\":\"{sha}\""
+        )),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" remove 1 hours 4.5 "), "{text}");
+}
+
+#[test]
+fn the_hours_row_counts_a_range_as_its_midpoint() {
+    let r = squashed_with("feat: dose\n\nHours: 4-8");
+    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let row = indicator(&out, HOURS_ROW);
+    has(
+        row,
+        &[
+            "\"value\":6,",
+            "\"unit\":\"hours\"",
+            "\"count\":1",
+            "a range counts as its midpoint; the total is 4-8 hours",
+        ],
+    );
+    let (_, text, _) = r.run(&["stats", "--sdlc"]);
+    assert!(
+        text.contains("Hours of work per finished change: 6 hours (1 change)"),
+        "{text}"
+    );
+    // A number has no mention of a range.
+    let r = squashed_with("feat: dose\n\nHours: 4.5");
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    let row = indicator(&out, HOURS_ROW);
+    has(row, &["\"value\":4.5", "the total is 4.5 hours"]);
+    assert!(!row.contains("midpoint"), "{row}");
+    // A range with equal ends is a number.
+    let r = squashed_with("feat: dose\n\nHours: 3-3");
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    let row = indicator(&out, HOURS_ROW);
+    has(row, &["\"value\":3,", "the total is 3 hours"]);
+    assert!(!row.contains("midpoint"), "{row}");
 }
