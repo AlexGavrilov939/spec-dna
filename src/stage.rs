@@ -341,9 +341,7 @@ impl<'a> Ctx<'a> {
             return Vec::new();
         };
         let dir = &ch.dir;
-        let concerns = change::section_items(&head.docs[a.doc as usize], ItemSection::Concerns)
-            .filter(|i| i.task == Some(false))
-            .count();
+        let concerns = change::open_concerns(&head.docs[a.doc as usize]).len();
         let questions = ch.open_questions(head).len();
         let mut out = Vec::new();
         if concerns > 0 {
@@ -527,6 +525,15 @@ impl<'a> Ctx<'a> {
                     items.push(item(true, Step::Execute, NO_FILES_LINE));
                 }
             }
+            // A paragraph under `Files` lists no path. A draft plan gets the
+            // line first, so that the approval stays the last line.
+            if !approved && ch.files_paragraph_only(head) && ch.files(head).is_empty() {
+                items.push(item(
+                    false,
+                    Step::WritePlan,
+                    crate::change::FILES_PARAGRAPH_LINE,
+                ));
+            }
             // The tasks of the plan, also if the plan is a draft.
             let t = tasks(ch, head);
             if t.total > 0 {
@@ -553,7 +560,9 @@ impl<'a> Ctx<'a> {
                 items.push(item(
                     false,
                     Step::Execute,
-                    if files.is_empty() {
+                    if files.is_empty() && ch.files_paragraph_only(head) {
+                        crate::change::FILES_PARAGRAPH_LINE.to_string()
+                    } else if files.is_empty() {
                         match ch.files_not_paths(head).first() {
                             Some(item) => format!(
                                 "the items of `Files` in {dir}/plan.md are not paths, so it lists no path (the first is \"{item}\"); write each path or glob in a code span, as `src/valve.py`"

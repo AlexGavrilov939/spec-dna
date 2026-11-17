@@ -648,19 +648,17 @@ fn interface_id(item: &ListItem) -> Option<&str> {
 /// SD919: each open concern (`- [ ]`) of a spec that is `approved`. The
 /// function does not read the status: the caller does.
 pub(crate) fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
-    for item in change::section_items(spec, ItemSection::Concerns) {
-        if item.task == Some(false) {
-            out.push(crate::check::diag(
-                spec,
-                item.line,
-                Code::ConcernOpen,
-                short(&item.text),
-                format!(
-                    "the spec is `approved`, and the concern `{}` is open",
-                    short(&item.text)
-                ),
-            ));
-        }
+    for item in change::open_concerns(spec) {
+        out.push(crate::check::diag(
+            spec,
+            item.line,
+            Code::ConcernOpen,
+            short(&item.text),
+            format!(
+                "the spec is `approved`, and the concern `{}` is open",
+                short(&item.text)
+            ),
+        ));
     }
 }
 
@@ -852,6 +850,9 @@ struct DiffChange {
     files: Vec<String>,
     /// The items of `Files` that are not paths, as the plan has them.
     not_paths: Vec<String>,
+    /// True if `Files` has a paragraph and no list item, and the paragraph
+    /// does not state "no files" (D28).
+    paragraph: bool,
     /// The scope of SD913 from the tree of `side`: the folder, the patterns of
     /// the plan, and the documents that the delta and `Interfaces` name.
     scope: Vec<String>,
@@ -1196,6 +1197,9 @@ struct BranchScope {
     files: Vec<String>,
     /// The items of `Files` of the plan of the branch that are not paths.
     not_paths: Vec<String>,
+    /// True if `Files` of the plan of the branch has a paragraph and no list
+    /// item (D28).
+    paragraph: bool,
     /// The documents that its delta and `Interfaces` name.
     scope: Vec<String>,
 }
@@ -1216,6 +1220,7 @@ impl DiffChange {
                 Some(BranchScope {
                     files: newest.files(&corpus),
                     not_paths: newest.files_not_paths(&corpus),
+                    paragraph: newest.files_paragraph_only(&corpus),
                     scope,
                 })
             })
@@ -1243,6 +1248,7 @@ fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
     let mut scope = vec![format!("{}/", change.dir)];
     let mut targets = Vec::new();
     let not_paths = change.files_not_paths(corpus);
+    let paragraph = change.files_paragraph_only(corpus);
     scope_paths(ctx, &change, corpus, &mut scope, Some(&mut targets));
     scope.extend(files.iter().cloned());
     DiffChange {
@@ -1252,6 +1258,7 @@ fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
         side,
         files,
         not_paths,
+        paragraph,
         scope,
         branch: OnceCell::new(),
         targets,
@@ -1669,9 +1676,9 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
 }
 
 /// The note of a message when the plan of a change has no path at all, and an
-/// item of `Files` that is not a path. A plan that has a path gives no note: the
-/// path that the message is about is not in it for another reason, and an
-/// unrelated item would mislead.
+/// item of `Files` that is not a path, or a paragraph and no list item (D28). A
+/// plan that has a path gives no note: the path that the message is about is
+/// not in it for another reason, and an unrelated item would mislead.
 fn not_paths_cause(ch: &DiffChange, branch: Option<&BranchScope>) -> Option<String> {
     if !ch.files.is_empty() || branch.is_some_and(|b| !b.files.is_empty()) {
         return None;
@@ -1679,8 +1686,16 @@ fn not_paths_cause(ch: &DiffChange, branch: Option<&BranchScope>) -> Option<Stri
     let first = ch
         .not_paths
         .first()
-        .or_else(|| branch.and_then(|b| b.not_paths.first()))?;
-    Some(not_paths_note(&ch.change.slug, first))
+        .or_else(|| branch.and_then(|b| b.not_paths.first()));
+    match first {
+        Some(first) => Some(not_paths_note(&ch.change.slug, first)),
+        None if ch.paragraph || branch.is_some_and(|b| b.paragraph) => Some(format!(
+            "; the plan of the change `{}`: {}",
+            ch.change.slug,
+            change::FILES_PARAGRAPH_LINE
+        )),
+        None => None,
+    }
 }
 
 /// The note for the first item of `Files` that is not a path.
