@@ -256,10 +256,12 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - The approval commit (`approval = "branch"`):
     - `check` walks the commits of `base..HEAD` from the oldest. The order of the commits counts, and their date does not.
     - An approval commit is not a merge commit, and the e-mail of its author is in `[change] approvers` (the compare ignores case). It changes one artifact file only, and it changes the `status` line only, to `accepted` for an intent and to `approved` for a spec or a plan.
-    - The scope of a plan is its `Files` at its approval commit. A path that a later commit adds to `Files` has no approved plan.
+    - The scope of a plan that an approval commit of the branch approved is its `Files` at that commit. A path that a later commit adds to `Files` has no approved plan (reason 8). A plan that the base tree approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope.
     - Each status that the branch sets (`accepted` or `approved`) needs an approval commit that set it, also when no later work depends on it.
-    - The check needs the full history. A shallow clone, and a merge commit that merges another branch, stop the rule, and SD910 then reports as with `approval = "base"`. A merge of the base into the branch, and the test merge of a code host, do not stop it.
+    - The check needs the full history. A shallow clone, and a merge commit that merges another branch, stop the rule, and SD910 then reports as with `approval = "base"`. If the base is known and the merge base is not reachable in a shallow clone, SD910 reports reason 5 for each change that needs an approval. An unknown base (no `origin/HEAD` and no `--base`) gives no change check and a note, as in 0.6.1. A merge of the base into the branch, and the test merge of a code host, do not stop it.
     - A change that the branch adds and finishes gives SD910, also when approval commits exist. The record of `finish` needs the approvals in an earlier pull request.
+    - A plan that the branch sets back to `draft` after the code landed does not take the approval of that code away: the walk checks each commit of the code at its own place. SD401 compares with the base only, so it does not see a status that moves back inside the branch when the base has no plan. The review of the pull request is the control.
+    - With `approval = "base"`, a `draft` plan in the head gives SD910 for its code, because the base tree has no `approved` plan.
     - An author e-mail is not a proof. The code host stays the control: `CODEOWNERS`, a protected default branch and required signed commits.
   - The message of SD910 names one reason of 8:
     1. The base tree has no approval.

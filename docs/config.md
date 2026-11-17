@@ -134,7 +134,7 @@ sonnet = "high"
 | `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
 | `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
 | `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
-| `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is not empty. With `approval = "branch"` the list is not empty, or the exit code is 3. |
+| `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
@@ -401,9 +401,9 @@ These values are an error (exit code 3):
 
 - `approval = "branch"` with no `approvers`, or with an empty list.
 - `approval = "branch"` with `profile = "strict"`. `strict` reads the approvals of the base only.
-- An item of `approvers` that is empty.
+- An item of `approvers` that is empty, that holds `*`, or that has no `@`. A wildcard matches each author, so ADR 0012 rejects it.
 
-`approval = "branch"` needs the full history of the branch. A shallow clone gives the result of `base`. Use `fetch-depth: 0` in a workflow that runs `check`.
+`approval = "branch"` needs the full history of the branch. A shallow clone gives the result of `base`, and when the merge base is not reachable SD910 reports reason 5. Use `fetch-depth: 0` in a workflow that runs `check`.
 
 `init` writes `approval = "branch"` and your `git config user.email` as the one approver for `lite` and `standard`. It writes `approval = "base"` for `strict`. If git has no `user.email`, it writes `approval = "base"` and no `approvers`, and it prints a note. An upgraded project keeps `base`. A change of these keys edits `spec-dna.toml`, so SD503 applies.
 
