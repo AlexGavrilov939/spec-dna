@@ -13,8 +13,6 @@
 //! - An open feature becomes a draft `intent.md`, `spec.md` and `plan.md`.
 //!   Each file stays, because the sources are written, not moved.
 
-#![allow(dead_code)]
-
 use crate::import_docs::{
     Ctx, Lines, Pair, PairKind, Read, SourceFile, State, Target, id_of, indent, plain_heading,
     requirements_path, slug, split_sentence, with_front_matter,
@@ -159,8 +157,10 @@ pub fn read(ctx: &Ctx) -> Result<Read, Fatal> {
     if specs.is_empty() {
         return Err(layout_error("`specs/` is not in the tree"));
     }
-    let mut read = Read::default();
-    read.universe = tool.iter().chain(&specs).map(|f| f.to_string()).collect();
+    let mut read = Read {
+        universe: tool.iter().chain(&specs).map(|f| f.to_string()).collect(),
+        ..Read::default()
+    };
     for f in &tool {
         if *f != CONSTITUTION {
             read.sources.push(SourceFile::kept(f, "a file of the tool"));
@@ -841,7 +841,7 @@ fn open_feature(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::import_docs::{Places, State, corpus_of, id_of};
+    use crate::import_docs::{Places, State, corpus_of};
     use crate::upgrade_docs::TreeData;
 
     const CFG: &str = "spec-dna = \"0.6.1\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[layers.research]\ntypes = [\"research\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
@@ -925,7 +925,7 @@ mod tests {
         }
 
         fn err(&self) -> &Fatal {
-            self.read.as_ref().err().expect("an error")
+            self.read.as_ref().expect_err("an error")
         }
     }
 

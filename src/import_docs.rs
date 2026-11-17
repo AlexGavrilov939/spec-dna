@@ -10,8 +10,6 @@
 //! (`Places`), the split of a Markdown text in sections, and the front matter
 //! of a target.
 
-#![allow(dead_code)]
-
 use crate::config::Config;
 use crate::frontmatter;
 use crate::hash::nfc;
@@ -573,6 +571,32 @@ pub fn split_sentence(body: &str) -> (String, String) {
     )
 }
 
+/// The share of the bytes of `a` in lines that `b` keeps, against the larger
+/// of the 2 texts, from 0 to 1. Git keeps a rename if the similarity of the 2
+/// files is at least one half (it counts bytes of equal chunks), so the report
+/// warns about an edit that is larger.
+pub fn similarity(a: &str, b: &str) -> f64 {
+    let mut left: HashMap<&str, usize> = HashMap::new();
+    for l in b.lines() {
+        *left.entry(l).or_default() += 1;
+    }
+    let size = |t: &str| t.lines().map(|l| l.len() + 1).sum::<usize>();
+    let total = size(a).max(size(b));
+    if total == 0 {
+        return 1.0;
+    }
+    let mut same = 0usize;
+    for l in a.lines() {
+        if let Some(n) = left.get_mut(l)
+            && *n > 0
+        {
+            *n -= 1;
+            same += l.len() + 1;
+        }
+    }
+    same as f64 / total as f64
+}
+
 /// The text of a sentence without its markers `[NEEDS CLARIFICATION: text]`
 /// (the white space is joined), and the texts of the markers, joined with
 /// `; `.
@@ -979,17 +1003,6 @@ pub fn link_target(c: &Corpus, from: &str, target: &str) -> Option<String> {
     (c.files.contains(&resolved) || c.dirs.contains(&resolved)).then_some(resolved)
 }
 
-/// The text with its links rewritten for a file that moves from `from` to `to`.
-pub fn relink(
-    text: &str,
-    from: &str,
-    to: &str,
-    map: &HashMap<String, String>,
-    c: &Corpus,
-) -> String {
-    rewrite_links(text, mv::parent(from), mv::parent(to), map, c)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1284,6 +1297,16 @@ mod tests {
         assert_eq!(s, "A and");
         assert_eq!(q.as_deref(), Some("x; y"));
         assert_eq!(strip_clarification("No marker.").0, "No marker.");
+    }
+
+    #[test]
+    fn the_similarity_is_the_share_of_the_lines_that_stay() {
+        assert_eq!(similarity("a\nb\n", "a\nb\n"), 1.0);
+        assert_eq!(similarity("a\nb\nc\nd\n", "a\nb\nx\ny\n"), 0.5);
+        assert_eq!(similarity("a\na\n", "a\nb\n"), 0.5);
+        // The larger text counts, and a long line weighs more than a short one.
+        assert_eq!(similarity("aaaa\nb\n", "aaaa\n"), 5.0 / 7.0);
+        assert_eq!(similarity("", ""), 1.0);
     }
 
     #[test]

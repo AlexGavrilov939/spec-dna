@@ -24,8 +24,6 @@
 //! (the plan edits the relative links of a moved file, as `mv` does), the
 //! clarification marker and the white space.
 
-#![allow(dead_code)]
-
 use crate::change::{self, Verb};
 use crate::check;
 use crate::config::Config;

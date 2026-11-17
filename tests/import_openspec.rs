@@ -324,15 +324,28 @@ fn the_key_of_a_requirement_is_the_slug_of_its_name_and_a_name_with_no_letter_st
 }
 
 #[test]
-fn git_still_sees_a_rename_for_each_moved_domain_spec() {
-    let repo = imported();
+fn the_report_says_when_the_edit_of_a_moved_domain_spec_is_too_large_for_a_git_rename() {
+    // Each requirement heading becomes a list item, so a small spec can fall
+    // below the similarity of one half that git needs for a rename.
+    let repo = fx::openspec();
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
     repo.git(&["add", "-A"]);
     let names = repo.git_out(&["diff", "--cached", "-M", "--name-status"]);
-    let line = "openspec/specs/auth/spec.md\tdocs/requirements/auth.md";
-    assert!(
-        names
+    for (from, to) in [
+        ("openspec/specs/auth/spec.md", "docs/requirements/auth.md"),
+        (
+            "openspec/specs/billing/spec.md",
+            "docs/requirements/billing.md",
+        ),
+    ] {
+        let renamed = names
             .lines()
-            .any(|l| l.starts_with('R') && l.ends_with(line)),
-        "no rename in:\n{names}"
-    );
+            .any(|l| l.starts_with('R') && l.ends_with(&format!("{from}\t{to}")));
+        let said = out.contains(&format!("the edit of `{to}` is large"));
+        assert!(
+            renamed || said,
+            "{from}: no rename and no note:\n{names}\n{out}"
+        );
+    }
 }

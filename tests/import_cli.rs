@@ -279,7 +279,7 @@ fn a_dry_run_and_a_write_give_the_same_plan() {
     assert_eq!(norm(&dry), real);
     assert!(
         status(&repo)
-            .contains("R  specs/001-photo-albums/spec.md -> docs/requirements/photo-albums.md")
+            .contains("specs/001-photo-albums/spec.md -> docs/requirements/photo-albums.md")
     );
 }
 

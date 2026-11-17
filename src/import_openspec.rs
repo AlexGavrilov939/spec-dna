@@ -11,8 +11,6 @@
 //!   stays in place.
 //! - An archived change stays in place, or moves to the research layer.
 
-#![allow(dead_code)]
-
 use crate::import_docs::{
     Ctx, Lines, Pair, PairKind, Read, SourceFile, State, Target, count_scenarios, id_of, indent,
     requirements_path, slug, split_sentence, with_front_matter,
@@ -58,8 +56,10 @@ pub fn read(ctx: &Ctx) -> Result<Read, Fatal> {
             "`openspec/` has no `specs/`, no `changes/` and no `config.yaml`",
         ));
     }
-    let mut read = Read::default();
-    read.universe = all.iter().map(|f| f.to_string()).collect();
+    let mut read = Read {
+        universe: all.iter().map(|f| f.to_string()).collect(),
+        ..Read::default()
+    };
     for f in &all {
         if f.starts_with("openspec/specs/") || f.starts_with("openspec/changes/") {
             continue;
@@ -904,7 +904,7 @@ mod tests {
         }
 
         fn err(&self) -> &Fatal {
-            self.read.as_ref().err().expect("an error")
+            self.read.as_ref().expect_err("an error")
         }
     }
 

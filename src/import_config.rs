@@ -7,8 +7,6 @@
 //! The plan is a pure function over the text of the file. Each edit is a
 //! splice (`config_text`), so each comment and each other byte stays.
 
-#![allow(dead_code)]
-
 use crate::config::{self, Config};
 use crate::config_text::{at, insert_keys, k, set_value};
 use crate::model::DocType;
@@ -41,6 +39,7 @@ pub struct ConfigPlan {
 }
 
 impl ConfigPlan {
+    #[cfg(test)]
     pub fn changed(&self) -> bool {
         !self.notes.is_empty()
     }

@@ -113,6 +113,17 @@ The red-green-refactor cycle is strict.
 
 This constitution is above other practice. An amendment needs a record.
 
+An amendment starts as a proposal in a pull request.
+The proposal names the principle that it changes.
+The proposal gives the reason for the change.
+The owners of the project read the proposal.
+Each owner can ask for a change of the text.
+The amendment is accepted when all owners approve it.
+The accepted text replaces the old text of the principle.
+The old text stays in the history of the repository.
+A change of a principle needs a note in the release notes.
+Each release names the version of this constitution.
+
 **Version**: 1.0.0 | **Ratified**: 2026-01-05
 ";
 
