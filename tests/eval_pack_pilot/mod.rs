@@ -139,7 +139,7 @@ fn checks_of(json: &str) -> Vec<(String, bool)> {
 fn prove(skill: &str) {
     let lab = Lab::new();
     let ids = lab.ids(skill);
-    assert!(!ids.is_empty(), "no eval of {skill}");
+    assert_eq!(ids.len(), 5, "the pack needs 5 evals of {skill}: {ids:?}");
     let mut seen_reference = 0;
     for id in &ids {
         let dir = solutions().join(id);
@@ -223,4 +223,67 @@ fn the_verify_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
 #[test]
 fn the_execute_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
     prove("execute");
+}
+
+/// The number after `"<key>": ` in the text of an eval file.
+fn number(text: &str, key: &str) -> f64 {
+    let at = text
+        .find(&format!("\"{key}\": "))
+        .unwrap_or_else(|| panic!("no key {key}"));
+    let rest = &text[at + key.len() + 4..];
+    let end = rest.find([',', '\n']).unwrap();
+    rest[..end].trim().parse().unwrap()
+}
+
+#[test]
+fn the_pilot_evals_keep_the_limits_of_the_design_and_name_no_skill_in_the_task() {
+    let lab = Lab::new();
+    const NAMES: [&str; 11] = [
+        "brainstorm",
+        "specify",
+        "clarify",
+        "write-plan",
+        "execute",
+        "tdd",
+        "review",
+        "verify",
+        "finish",
+        "debug",
+        "post-mortem",
+    ];
+    for skill in ["execute", "tdd", "verify", "debug"] {
+        for id in lab.ids(skill) {
+            let text =
+                fs::read_to_string(lab.repo.dir.join(format!("evals/pack/{id}.json"))).unwrap();
+            let turns = number(&text, "max-turns");
+            let budget = number(&text, "max-budget-usd");
+            assert!((12.0..=25.0).contains(&turns), "{id}: {turns} turns");
+            assert!((1.5..=2.0).contains(&budget), "{id}: {budget} USD");
+            let task = text
+                .split("\"task\": \"")
+                .nth(1)
+                .and_then(|t| t.split("\",\n").next())
+                .unwrap_or_else(|| panic!("{id}: no task"))
+                .to_lowercase();
+            for name in NAMES {
+                assert!(!task.contains(name), "{id}: the task names `{name}`");
+            }
+            assert!(
+                !task.contains("spec-dna") && !task.contains("skill"),
+                "{id}"
+            );
+            // The fixture has no instruction file that names a skill.
+            let dir = lab.repo.dir.join(format!("evals/pack/fixtures/{id}"));
+            for file in ["AGENTS.md", "CLAUDE.md", "README.md"] {
+                let text = fs::read_to_string(dir.join(file))
+                    .unwrap_or_default()
+                    .to_lowercase();
+                for name in NAMES {
+                    assert!(!text.contains(name), "{id}/{file} names `{name}`");
+                }
+                assert!(!text.contains("spec-dna"), "{id}/{file}");
+            }
+            assert!(dir.join("test.sh").exists(), "{id}: no test.sh");
+        }
+    }
 }

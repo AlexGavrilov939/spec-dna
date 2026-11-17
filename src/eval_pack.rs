@@ -9,7 +9,11 @@
 //!
 //! An eval is one `PackEval` in the list of its group (`EXECUTE_TDD`,
 //! `VERIFY_DEBUG`, `BRAINSTORM_SPECIFY`, `CLARIFY_WRITE_PLAN`,
-//! `REVIEW_FINISH` or `POST_MORTEM`). The module needs no other change.
+//! `REVIEW_FINISH` or `POST_MORTEM`). The module needs no other change. The
+//! 20 evals of `execute`, `tdd`, `verify` and `debug` are in the sibling file
+//! `eval_pack_pilot.rs`, with their fixtures. Each of them has a reference
+//! solution and wrong solutions in `tests/fixtures/eval-solutions/<id>/`, and
+//! `tests/eval_pack_pilot/mod.rs` runs them with a stub `claude`.
 //!
 //! - `id` is `<skill>-<n>`, with n from 1 to 5. The pair `agents-line` uses
 //!   `tdd-1`, `debug-1`, `verify-1`, `review-1` and `execute-1`.
