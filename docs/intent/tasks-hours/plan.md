@@ -35,7 +35,7 @@ status: approved
 - [x] t13: Write the line with no space before its marker, and test the version `99.99.99` (`init-engineer`). Files: `src/adapters.rs`. Verify: `cargo test --bin spec-dna adapters` passes.
 - [x] t14: Update the docs of the plan type and of the commands (`core-engineer`; `hygiene-engineer` for `finish`). Files: `docs/types.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
 - [x] t15: Update SD923, the change guide and the glossary with the terms "skipped task" and "spike" (`diagnostics-engineer`; `architect`). Files: `docs/diagnostics.md`, `docs/guides/change.md`, `docs/glossary.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t16: Write the entry of the change (`release-engineer`). Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t16: Write the entry of the change (`release-engineer`). Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
 
 ## Risks
 
