@@ -31,7 +31,7 @@ status: approved
 
 - [x] t1: Write the failing tests of `index` and of the refresh of `finish`, from the reproduction of D29 (`hygiene-engineer`). Files: `tests/cli.rs`, `tests/finish.rs`. Verify: `cargo test --test cli --test finish` fails on the new cases.
 - [x] t2: Write the failing tests of the reader and of `new` for a pair of areas (`core-engineer`). Files: `tests/new_place.rs`. Verify: `cargo test --test new_place` fails on the new cases.
-- [ ] t3: Write the failing test of `mv` into an area that differs only in case (`hygiene-engineer`). Files: `tests/cli.rs`. Verify: `cargo test --test cli mv` fails on the new case.
+- [x] t3: Write the failing test of `mv` into an area that differs only in case (`hygiene-engineer`). Files: `tests/cli.rs`. Verify: `cargo test --test cli mv` fails on the new case.
 - [ ] t4: Write the failing tests of `upgrade --layout --areas` and of `init` for a pair (`init-engineer`). Files: `tests/upgrade_cli.rs`, `tests/init_graph.rs`. Verify: `cargo test --test upgrade_cli --test init_graph` fails on the new cases.
 - [ ] t5: Write the failing tests of a plain `git mv`, the near copies, the whole folder and the case that stays. Change the test that expects a plain `git mv` to end the change (`core-engineer`). Files: `tests/lifecycle_log.rs`. Verify: `cargo test --test lifecycle_log` fails on the new cases.
 - [ ] t6: Give a generated index the status of its place, and stop for a place with no type (`hygiene-engineer`). Files: `src/registry.rs`, `src/main.rs`, `src/finish.rs`. Verify: `cargo test --test cli --test finish`.

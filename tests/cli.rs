@@ -5059,3 +5059,40 @@ fn index_of_a_place_with_no_type_stops_with_exit_code_2_and_writes_nothing() {
     assert!(!r.dir.join("docs/README.md").exists());
     assert_eq!(git(&r.dir, &["status", "--short"]), "");
 }
+
+// A move into an area that differs only in case (D30 of 0.7.0)
+
+#[test]
+fn mv_stops_for_an_area_that_differs_from_a_name_of_areas_only_in_case() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\nareas = [\"valves\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    r.write(
+        "docs/requirements/valves/closing.md",
+        "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close**: The controller SHALL close the valve in 5 seconds.\n",
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/valves/closing",
+        "requirements/Valves/closing",
+    ]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`Valves`") && err.contains("`valves`") && err.contains("only in case"),
+        "{err}"
+    );
+    assert_eq!(git(&r.dir, &["status", "--short"]), "");
+    assert!(r.dir.join("docs/requirements/valves/closing.md").exists());
+    // A move inside the area, and a move out of every area, are fine.
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/valves/closing",
+        "requirements/valves/shut",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["mv", "requirements/valves/shut", "requirements/Shut"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
