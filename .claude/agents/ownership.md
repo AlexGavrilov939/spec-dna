@@ -86,6 +86,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Move, split or generated index | `src/mv.rs`, `src/split.rs` and `src/registry.rs`; the `mv`, `history` and `index` sections of `docs/commands.md` | ARC | HYG | COR, DIA, TST | REL |
 | Transcript format or output | `src/transcript.rs` and the reader in `src/json.rs`; `docs/transcript.md`; `tests/fixtures/transcripts*/` | ARC | TRN | COR, TST | REL |
 | Git access | `src/git.rs` | ARC | COR | TST | REL |
+| Approval in the branch (ADR 0012) | `src/approval.rs`; the function `approval_missing` in `src/lifecycle.rs` and the texts of SD910 in `src/diag.rs`; the keys `approval` and `approvers` (the row "Config key"); the field `approvals` of `check --json` and its golden file; `tests/branch_approval.rs`; the SD910 part of `docs/diagnostics.md` and `docs/profiles.md`; `CHANGELOG.md` | ARC | DIA | COR, INI, TST | DOC, REL |
 | Harness role or generated file | `src/harness.rs` and `src/harness_text.rs`; `docs/harness.md`; `tests/golden/harness/`; the harness tests; `CHANGELOG.md` | ARC | INI, and DIA for the function `check` | COR, TST, DOC | REL |
 | Hook | `src/hook.rs`; the `hook` section of `docs/commands.md`; the hooks section of `docs/harness.md`; `tests/hook*.rs` | ARC | INI | TST | REL |
 | Eval file form or runner | `src/evals.rs` and `src/eval_run.rs`; the `eval` section and the exit codes of `docs/commands.md`; `docs/evals.md`; `tests/eval_run.rs`; SD506 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
@@ -158,6 +159,7 @@ src/templates.rs                     COR
 src/layer.rs                         COR: the layer graph, its levels, the file order and `layer add`/`layer list`
 src/change.rs                        COR: the change model, the delta lines, the tasks of a plan
 src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 to SD917, SD919 to SD922) and the lifecycle base
+src/approval.rs                      DIA: the walk of the commits of a branch and the approval commits (ADR 0012)
 src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
 src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
 src/sdlc.rs                          COR: `log` and `stats --sdlc`
@@ -205,6 +207,7 @@ tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, 
 tests/sd202.rs                       DIA
 tests/layers_checks.rs, tests/sd921.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
 tests/finish.rs                      HYG
+tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
 tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
 tests/common/mod.rs, tests/common_helpers.rs   TST: the shared git fixtures. Every agent uses them
 tests/init_change.rs, tests/init_language.rs   INI
