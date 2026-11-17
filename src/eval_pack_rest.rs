@@ -957,11 +957,11 @@ pub const REVIEW_FINISH: &[PackEval] = &[
             ("finds-bug", r##"grep -Eqi 'count_bin' REVIEW-OUT.md"##),
             (
                 "finds-security",
-                r##"grep -Eqi 'report_filter|eval' REVIEW-OUT.md"##,
+                r##"grep -Eqi 'report_filter|(^|[^a-z])eval([^a-z]|$)' REVIEW-OUT.md"##,
             ),
             (
                 "finds-compliance",
-                r##"grep -Eqi 'prune_audit' REVIEW-OUT.md && grep -Eqi '30|90|keep-audit' REVIEW-OUT.md"##,
+                r##"grep -Eqi 'prune_audit' REVIEW-OUT.md && grep -Eqi '(^|[^0-9])(30|90)([^0-9]|$)|keep-audit' REVIEW-OUT.md"##,
             ),
             (
                 "lines-cited",

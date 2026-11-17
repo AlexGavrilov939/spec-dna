@@ -172,6 +172,7 @@ src/eval_run.rs                      COR: `eval run`, and the attempt that `--ab
 src/eval_ab.rs                       COR: `eval run --ab`: the arms, the pairs and the result file
 src/verdict.rs                       COR: the bootstrap, the rules of the verdict, the table of the release and the reader of the results (`eval verdict`, SD507)
 src/eval_pack.rs                     INI: the evals of the pack, their fixtures and `eval pack`
+src/eval_pack_pilot.rs, src/eval_pack_rest.rs, src/eval_pack_fixtures_rest.rs   INI: the data of the 55 evals of the pack (the 20 pilot evals, the 35 other evals and their fixtures)
 src/harness.rs                       INI: the roles, the generated files, the settings merge. DIA: the function `check` (SD501, SD502, SD504, SD505)
 src/harness_text.rs                  INI: the texts of the 11 skills of the workflow pack and `REVIEW.md`
 src/hook.rs                          INI
@@ -220,7 +221,8 @@ tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/in
 tests/skill_cmd.rs                   INI: the cases of `skill list` and `skill show`. COR: the arguments and the help
 tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
 tests/config_step4.rs, tests/eval_run.rs, tests/eval_ab.rs, tests/stats_evals.rs   COR
-tests/eval_pack.rs                   INI
+tests/eval_pack.rs, tests/eval_pack_rest.rs   INI
+tests/eval_pack_pilot/, tests/fixtures/eval-solutions/   INI: the reference and the wrong solutions that prove the checks of the pack
 tests/context_layers.rs              CTX
 tests/upgrade_cli.rs, tests/upgrade_review_fixes.rs   INI
 tests/upgrade_config.rs, tests/upgrade_pin.rs   COR
