@@ -102,7 +102,7 @@ deny = ["NotebookEdit"]         # tools that no generated agent gets (default []
 context-meter = [300000, 600000]  # context sizes of the main session for the hook; [] = off
 subagent-meter = 250000         # context size of a subagent for the hook; 0 = off
 fanout-cap = 10                 # agents that a workflow can start before the hook asks; 0 = off
-skills = ["intent", "spec", "plan", "review"]  # the stage skills to write (default [])
+skills = ["brainstorm", "specify", "clarify", "write-plan", "review", "finish", "post-mortem"]  # the skills to write (default [])
 review-md = true                # write REVIEW.md (default false)
 protect-tests = "fix-branches"  # "fix-branches", "always" or "off" (default "off")
 
@@ -194,7 +194,7 @@ sonnet = "high"
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
 | `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
-| `harness.skills` | list of strings | `[]` | The stage skills that `init` writes. Each value is `intent`, `spec`, `plan` or `review`, and each is listed once. The order of the list does not matter: spec-dna uses the order of `intent`, `spec`, `plan`, `review`. Each skill is the file `.claude/skills/spec-dna-<skill>/SKILL.md`. With `none`, spec-dna reads the key and ignores it. |
+| `harness.skills` | list of strings | `[]` | The skills of the workflow pack that `init` writes. Each value is one of the 11 names `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`, and each is listed once. The order of the list does not matter: spec-dna uses the order of this sentence. Each skill is the file `.claude/skills/spec-dna-<skill>/SKILL.md`. The names `intent`, `spec` and `plan` of 0.6 give exit code 3, and `spec-dna upgrade` renames them. With `none`, spec-dna reads the key and ignores it. |
 | `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
@@ -436,7 +436,7 @@ An eval is a task with checks that tests the agent setup of a project ([ADR 0008
 
 - `dir` is a path relative to the repository root. spec-dna drops a leading `./` and a final `/`. An absolute path, a `..` or `.` segment, a `\` and a `:` are errors (exit code 3).
 - `dir` and `templates.dir` must not overlap: one folder is not the other folder, and it is not inside the other folder. If they overlap, the exit code is 3.
-- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. For the same reason, `REVIEW.md` and the stage skills that `[harness]` writes are never part of a root.
+- The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. For the same reason, `REVIEW.md` and the skills that `[harness]` writes are never part of a root.
 - `min-pass-rate`, `runs` and `max-total-usd` are the defaults of a run. An eval file can set `runs`. The command `eval run` can replace each of them. `pass-at` is a key of an eval file only. In `[evals]` it is an unknown key.
 
 ## The table `harness`
@@ -451,7 +451,7 @@ These keys select the parts of the harness that `init` writes besides the agents
 
 | Key | Values | Meaning |
 | --- | --- | --- |
-| `skills` | a list of `intent`, `spec`, `plan` and `review` | The stage skills. Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes all 4 when `[change] policy` is not `none`, and `[]` when it is `none`. |
+| `skills` | a list of the 11 names | The skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes the 7 skills that are on by default when `[change] policy` is not `none` (also the 4 others at the level `full`), and `[]` when it is `none`. An old name `intent`, `spec` or `plan` is an error (exit code 3): the message names the new names and `spec-dna upgrade`. |
 | `review-md` | `true` or `false` | `true` writes `REVIEW.md` in the repository root. |
 | `protect-tests` | `"fix-branches"`, `"always"` or `"off"` | It selects when the hook `protect-tests` asks before an edit of a tracked test file. `"fix-branches"` asks only on a branch that starts with `fix/`. `"always"` removes the branch test. `"off"` writes no hook. An empty `[evidence] tests` list also writes no hook. |
 

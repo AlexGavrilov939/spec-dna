@@ -88,10 +88,10 @@ git commit -m "build: adopt spec-dna"
 `init` writes these files:
 
 - `spec-dna.toml`, with the pinned version, the profile, the layer graph, the change policy and the document roots. A new project gets one mixed root (`docs`, or the directory of `--root <dir>`) and no `default-type`. The folder of a layer gives the type of a document, so `docs/requirements/loans.md` is a `requirements` document. [docs/config.md](config.md) gives all keys.
-- One line in `CLAUDE.md`, and in `AGENTS.md` when `AGENTS.md` exists or `CLAUDE.md` does not exist. Codex, Cursor and many other agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or documents. It also tells the agent to run `spec-dna check` before the work is complete. On an existing project, `init` adds only this line, and the line never imports another file.
+- One line in `CLAUDE.md`, and in `AGENTS.md` when `AGENTS.md` exists or `CLAUDE.md` does not exist. Codex, Cursor and many other agents read `AGENTS.md`. Claude Code reads `CLAUDE.md`. The line tells an agent to run `spec-dna context` once for a task that edits code or documents. It also tells the agent to run `spec-dna check` before the work is complete. It names the 5 rules of the disciplines (test first, cause first, proof before done, review is data and isolated work), the command `spec-dna skill show <name>` that prints the text of a skill, and the approval rule: an agent writes an approval commit only when the owner says so explicitly in the chat. The line has 400 bytes or fewer. On an existing project, `init` adds only this line, and the line never imports another file.
 - The skill `.claude/skills/spec-dna/SKILL.md` for Claude Code, with the full procedure for agents.
 - If you choose them: the CI job `.github/workflows/spec-dna.yml`, and a hook in `.pre-commit-config.yaml` or `.husky/pre-commit`.
-- The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the stage skills in `.claude/skills/spec-dna-*`, `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. The file `.claude/agents/Explore.md` replaces the built-in `Explore` subagent. [docs/harness.md](harness.md) describes the roles, the models, the hooks and how to remove that file. Each teammate needs spec-dna on `PATH` for the hooks.
+- The Claude Code harness (level `lean` by default). It has agent files in `.claude/agents/`, the 7 skills of the workflow pack that are on by default in `.claude/skills/spec-dna-*` (the level `full` also writes the 4 that are off), `REVIEW.md`, entries in `.claude/settings.json` and a model-team line in `CLAUDE.md`. The file `.claude/agents/Explore.md` replaces the built-in `Explore` subagent. [docs/harness.md](harness.md) describes the roles, the models, the hooks and how to remove that file. Each teammate needs spec-dna on `PATH` for the hooks.
 - The starter files of the evals: the table `[evals]` in `spec-dna.toml`, and `evals/check.sh`, an example eval and its fixture in `evals/`. Question 14 writes them with the answer `skeleton`, the default of a new project, and writes nothing with the answer `none`. For the CI answer `github`, `init` also writes `.github/workflows/agent-evals.yml`. `init` starts no run, and the CI job runs only after you set the repository variable `SPEC_DNA_EVALS`. `init` prints the 2 commands for it. [docs/evals.md](evals.md) describes the evals.
 
 `init` prints the bytes that it adds to the prompt prefix of each agent request. It also prints the `git add` command for the files that it wrote.
@@ -274,7 +274,7 @@ A change applies when you upgrade from 0.1 to 0.2. A configuration without `prof
 
 ## Uninstall
 
-If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files, the stage skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers. It keeps the table `[evals]` and the files of the evals.
+If the project has the agent harness, first run `spec-dna init --reconfigure` and choose `none`. `init` removes the generated agent files, the skills, `REVIEW.md`, the model-team line of `CLAUDE.md` and the hook handlers. It keeps the table `[evals]` and the files of the evals.
 
 ```sh
 rm spec-dna.toml
