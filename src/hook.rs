@@ -5,7 +5,8 @@
 //! pin and never scans the repository. Unknown flags and bad values are
 //! ignored, the exit code is always 0, and an error gives no output.
 //! `protect-tests` reads no file. It runs `git` at most 2 times, and only for
-//! a path that matches a test glob.
+//! a path that matches a test glob. `protect-approvals` runs `git` only for a
+//! command that holds the words `git` and `commit` (see its section).
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -66,6 +67,15 @@ pub fn run(args: &[String]) {
                 protect(
                     &input,
                     &ProtectOpts::parse(flags),
+                    project.as_deref(),
+                    &mut run_git,
+                )
+            }
+            "protect-approvals" => {
+                let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from);
+                approvals(
+                    &input,
+                    &ApprovalsOpts::parse(flags),
                     project.as_deref(),
                     &mut run_git,
                 )
@@ -1394,6 +1404,295 @@ pub fn protect(
     Some(Obj::new().raw("hookSpecificOutput", &inner).end())
 }
 
+// ---------------------------------------------------------------------------
+// protect-approvals
+// ---------------------------------------------------------------------------
+
+/// The flags of `protect-approvals`: one `--intent <dir>` for each folder of
+/// the `intent` layer, from the repository root. With no folder, the hook
+/// still denies `spec-dna approve`, and it reads no commit.
+#[derive(Default)]
+pub struct ApprovalsOpts {
+    pub intent: Vec<String>,
+}
+
+impl ApprovalsOpts {
+    fn parse(args: &[String]) -> Self {
+        ApprovalsOpts {
+            intent: flag_values(args, "--intent")
+                .into_iter()
+                .map(|d| d.trim_matches('/').to_string())
+                .filter(|d| !d.is_empty())
+                .collect(),
+        }
+    }
+}
+
+/// Splits a command into segments and words. It removes the quote characters,
+/// and it splits at `;`, `&`, `|`, `(`, `)`, a backtick and a line feed (so
+/// `&&` and `||` split too), then at white space. It is a text scan, not a
+/// shell parser: `sh -c "a; b"` gives the words of `a` and `b`.
+fn command_segments(command: &str) -> Vec<Vec<String>> {
+    let text: String = command
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\''))
+        .collect();
+    text.split([';', '&', '|', '(', ')', '`', '\n'])
+        .map(|seg| {
+            seg.split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// The last part of a path word, without `.exe`: `/usr/bin/git` gives `git`.
+fn program(word: &str) -> &str {
+    let last = word.rsplit(['/', '\\']).next().unwrap_or(word);
+    last.strip_suffix(".exe").unwrap_or(last)
+}
+
+/// The index of the first word `name` (as a program) in a segment that has the
+/// word `after` later.
+fn program_then(words: &[String], name: &str, after: &str) -> Option<usize> {
+    let i = words.iter().position(|w| program(w) == name)?;
+    words[i + 1..].iter().any(|w| w == after).then_some(i)
+}
+
+fn deny(reason: &str) -> String {
+    let inner = Obj::new()
+        .str("hookEventName", "PreToolUse")
+        .str("permissionDecision", "deny")
+        .str(
+            "permissionDecisionReason",
+            &format!("spec-dna protect-approvals: {reason}"),
+        )
+        .end();
+    Obj::new().raw("hookSpecificOutput", &inner).end()
+}
+
+const ASK_PERSON: &str = "Only a person approves: ask the person to run `spec-dna approve <slug> <artifact>` in a terminal of their own.";
+
+/// The approval value of an artifact file name, or `None` for another name.
+fn approval_of_file(file: &str) -> Option<(&'static str, &'static str)> {
+    match file {
+        "intent.md" => Some(("intent", "accepted")),
+        "spec.md" => Some(("spec", "approved")),
+        "plan.md" => Some(("plan", "approved")),
+        _ => None,
+    }
+}
+
+/// The value of the `status` line of the front matter of a text.
+fn status_of(text: &str) -> Option<String> {
+    let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    for line in lines {
+        if line.trim_end() == "---" {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix("status:") else {
+            continue;
+        };
+        let value = rest.split(" #").next().unwrap_or(rest).trim();
+        return Some(value.trim_matches(['"', '\'']).to_string());
+    }
+    None
+}
+
+/// Handles one `PreToolUse` event of `Bash`. It returns the JSON of a deny
+/// for a call that runs `spec-dna approve`, and for a `git commit` that moves
+/// the status of an artifact of a change to its approval value. Another call
+/// gives `None`, also when the input is bad or `git` fails. `project` is
+/// `CLAUDE_PROJECT_DIR`. `git` runs `git -C <dir> <args>`. It runs 0 times for
+/// a command with no word `commit` after a word `git`, and then 3 times, and 2
+/// more times for each artifact file that the working tree changes.
+pub fn approvals(
+    input: &str,
+    opts: &ApprovalsOpts,
+    project: Option<&Path>,
+    git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>,
+) -> Option<String> {
+    let v = json::parse(input).ok()?;
+    if v.get("tool_name").as_str() != Some("Bash") {
+        return None;
+    }
+    let command = v.get("tool_input").get("command").as_str()?;
+    let segments = command_segments(command);
+    // Rule A: `spec-dna approve` is for a person.
+    if segments
+        .iter()
+        .any(|w| program_then(w, "spec-dna", "approve").is_some())
+    {
+        return Some(deny(
+            "`spec-dna approve` is for a person. Ask the person to run it in a terminal of their own.",
+        ));
+    }
+    if opts.intent.is_empty() {
+        return None;
+    }
+    // Rule C: an edit and a commit in one call. The status is not in the tree
+    // yet, so the state cannot show it.
+    let mut before: Vec<&String> = Vec::new();
+    for words in &segments {
+        if let Some(i) = program_then(words, "git", "commit")
+            && before.iter().copied().chain(&words[..i]).any(|w| {
+                let w = w.to_ascii_lowercase();
+                w.contains("accepted") || w.contains("approved")
+            })
+        {
+            return Some(deny(&format!(
+                "this call writes `accepted` or `approved` and runs `git commit`; run the edit and the commit as 2 calls, so the hook can read the edit. {ASK_PERSON}"
+            )));
+        }
+        before.extend(words);
+    }
+    // Rule B: the state of the repository.
+    let start = match v.get("cwd").as_str().filter(|c| !c.is_empty()) {
+        Some(c) => c.to_string(),
+        None => project
+            .and_then(Path::to_str)
+            .filter(|p| !p.is_empty())?
+            .to_string(),
+    };
+    let mut dir = PathBuf::from(start);
+    for words in &segments {
+        if program(&words[0]) == "cd" {
+            if let Some(target) = words.get(1) {
+                dir = moved(&dir, target)?;
+            }
+            continue;
+        }
+        let Some(g) = words.iter().position(|w| program(w) == "git") else {
+            continue;
+        };
+        let Some(c) = words[g + 1..].iter().position(|w| w == "commit") else {
+            continue;
+        };
+        // `git -C <dir>` moves the folder, in order.
+        let mut here = dir.clone();
+        let mut i = g + 1;
+        while i < g + 1 + c {
+            if words[i] == "-C" {
+                here = moved(&here, words.get(i + 1)?)?;
+                i += 1;
+            }
+            i += 1;
+        }
+        let amend = words[g + 1 + c..].iter().any(|w| w == "--amend");
+        if let Some(reason) = moved_to_approval(&here, amend, &opts.intent, git) {
+            return Some(deny(&reason));
+        }
+    }
+    None
+}
+
+/// The folder that `cd <target>` or `git -C <target>` gives. A target with `$`
+/// or `~` gives `None`: the hook cannot read it.
+fn moved(from: &Path, target: &str) -> Option<PathBuf> {
+    if target.contains(['$', '~']) {
+        return None;
+    }
+    Some(from.join(target))
+}
+
+/// The reason to deny a commit in `dir`, if the commit sets the status of an
+/// artifact file to its approval value. The old tree is `HEAD`, or `HEAD~1`
+/// for an amend. A tree that is not there gives the empty tree.
+fn moved_to_approval(
+    dir: &Path,
+    amend: bool,
+    intent: &[String],
+    git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>,
+) -> Option<String> {
+    let top = git(dir, &["rev-parse", "--show-toplevel"])?;
+    let top = top.stdout.trim_end_matches(['\n', '\r']).to_string();
+    if !top_ok(&top) {
+        return None;
+    }
+    let root = PathBuf::from(&top);
+    let specs: Vec<String> = intent
+        .iter()
+        .map(|d| format!(":(top,literal){d}"))
+        .collect();
+    let old = if amend { "HEAD~1" } else { "HEAD" };
+    let mut args = vec!["diff", "--name-only", "-z", old, "--"];
+    args.extend(specs.iter().map(String::as_str));
+    let mut paths: Vec<String> = Vec::new();
+    let mut old_tree = Some(old);
+    match git(&root, &args) {
+        Some(out) if out.ok => paths.extend(split_z(&out.stdout)),
+        _ => {
+            // No such commit: the files of the index have no old status.
+            old_tree = None;
+            let mut args = vec!["ls-files", "-z", "--cached", "--full-name", "--"];
+            args.extend(specs.iter().map(String::as_str));
+            paths.extend(split_z(&git(&root, &args)?.stdout));
+        }
+    }
+    let mut args = vec![
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        "--full-name",
+        "--",
+    ];
+    args.extend(specs.iter().map(String::as_str));
+    paths.extend(split_z(&git(&root, &args)?.stdout));
+    paths.sort();
+    paths.dedup();
+    for path in paths {
+        let Some((slug, artifact, approved)) = artifact_of(&path, intent) else {
+            continue;
+        };
+        let old_status = match old_tree {
+            Some(rev) => git(&root, &["show", &format!("{rev}:{path}")])
+                .filter(|o| o.ok)
+                .and_then(|o| status_of(&o.stdout)),
+            None => None,
+        };
+        if old_status.as_deref() == Some(approved) {
+            continue;
+        }
+        let index = git(&root, &["show", &format!(":{path}")])
+            .filter(|o| o.ok)
+            .and_then(|o| status_of(&o.stdout));
+        let tree = read_limited(&root.join(&path)).and_then(|t| status_of(&t));
+        if index.as_deref() == Some(approved) || tree.as_deref() == Some(approved) {
+            return Some(format!(
+                "{path} has the status `{approved}` in this commit. Only a person approves. Set the status back, and ask the person to run `spec-dna approve {slug} {artifact}` in a terminal of their own."
+            ));
+        }
+    }
+    None
+}
+
+/// True if the output of `rev-parse --show-toplevel` is a path.
+fn top_ok(top: &str) -> bool {
+    !top.is_empty() && is_absolute(top)
+}
+
+fn split_z(out: &str) -> impl Iterator<Item = String> + '_ {
+    out.split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+}
+
+/// The slug, the artifact name and the approval value of a path
+/// `<dir>/<slug>/<artifact>.md`, if `dir` is one of the folders.
+fn artifact_of(path: &str, intent: &[String]) -> Option<(String, &'static str, &'static str)> {
+    intent.iter().find_map(|d| {
+        let rest = path.strip_prefix(d.as_str())?.strip_prefix('/')?;
+        let (slug, file) = rest.split_once('/')?;
+        let (artifact, approved) = approval_of_file(file)?;
+        (!slug.is_empty()).then(|| (slug.to_string(), artifact, approved))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2028,6 +2327,96 @@ mod tests {
         assert_eq!(flag_cap(&a(&["--cap"])), None);
         assert_eq!(flag_cap(&a(&[])), None);
     }
+    // ---- protect-approvals ----
+
+    #[test]
+    fn approvals_split_a_command_into_segments_and_words() {
+        let words = |c: &str| command_segments(c);
+        assert_eq!(
+            words("cd /p && git add -A; git commit -m \"a b\" || echo 'x'"),
+            vec![
+                vec!["cd", "/p"],
+                vec!["git", "add", "-A"],
+                vec!["git", "commit", "-m", "a", "b"],
+                vec!["echo", "x"],
+            ]
+        );
+        // The inner text of `sh -c` and a substitution give their own words.
+        assert_eq!(
+            words("sh -c \"spec-dna approve a intent\""),
+            vec![vec!["sh", "-c", "spec-dna", "approve", "a", "intent"],]
+        );
+        assert_eq!(
+            words("echo $(spec-dna approve a intent)"),
+            vec![
+                vec!["echo", "$"],
+                vec!["spec-dna", "approve", "a", "intent"]
+            ]
+        );
+        assert_eq!(program("/usr/bin/git"), "git");
+        assert_eq!(program("C:\\bin\\spec-dna.exe"), "spec-dna");
+        assert_eq!(program("spec-dna-x"), "spec-dna-x");
+    }
+
+    #[test]
+    fn approvals_read_the_status_and_the_artifact_of_a_path() {
+        assert_eq!(
+            status_of("---\r\nstatus: \"accepted\"  # ok\r\nclass: routine\r\n---\n"),
+            Some("accepted".to_string())
+        );
+        assert_eq!(status_of("---\nclass: routine\n---\nstatus: draft\n"), None);
+        assert_eq!(status_of("status: draft\n"), None);
+        let dirs = vec!["docs/intent".to_string()];
+        assert_eq!(
+            artifact_of("docs/intent/a-b/plan.md", &dirs),
+            Some(("a-b".to_string(), "plan", "approved"))
+        );
+        assert_eq!(
+            artifact_of("docs/intent/a-b/intent.md", &dirs),
+            Some(("a-b".to_string(), "intent", "accepted"))
+        );
+        for no in [
+            "docs/intent/a-b/notes.md",
+            "docs/intent/readme.md",
+            "docs/intents/a-b/plan.md",
+            "docs/other/a-b/plan.md",
+        ] {
+            assert_eq!(artifact_of(no, &dirs), None, "{no}");
+        }
+    }
+
+    #[test]
+    fn approvals_run_no_git_for_a_command_with_no_commit() {
+        let ev = |c: &str| {
+            format!(
+                "{{\"cwd\":\"/p\",\"tool_name\":\"Bash\",\"tool_input\":{{\"command\":\"{c}\"}}}}"
+            )
+        };
+        let opts = ApprovalsOpts {
+            intent: vec!["docs/intent".into()],
+        };
+        let mut calls = 0;
+        for c in ["git status", "git add -A && git diff", "ls; echo accepted"] {
+            let out = approvals(&ev(c), &opts, None, &mut |_, _| {
+                calls += 1;
+                None
+            });
+            assert_eq!(out, None, "{c}");
+        }
+        assert_eq!(calls, 0);
+        // The words `git` and `commit` run git, which fails here: no output.
+        let out = approvals(&ev("git commit -m x"), &opts, None, &mut |_, _| {
+            calls += 1;
+            None
+        });
+        assert_eq!((out, calls), (None, 1));
+        // The flag `--intent` repeats and trims a final `/`.
+        let flags: Vec<String> = ["--intent", "a/b/", "--intent=c", "--other"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(ApprovalsOpts::parse(&flags).intent, ["a/b", "c"]);
+    }
+
     // ---- protect-tests ----
 
     fn ptest(always: bool, globs: &[&str]) -> ProtectOpts {

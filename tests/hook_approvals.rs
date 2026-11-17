@@ -155,7 +155,7 @@ fn denies_a_commit_of_a_staged_status_change() {
             "a terminal of their own",
         ],
     );
-    // A spec and a plan move to `approved`.
+    // A spec and a plan move to `approved`. The hook names the first path.
     let r = project();
     r.write(SPEC, &plain("approved", "## Delta\n\nNone."));
     r.write(PLAN, &plain("approved", "## Files\n\n- `src/a.py`"));
@@ -163,7 +163,7 @@ fn denies_a_commit_of_a_staged_status_change() {
     let out = answer(&r, "git commit -m x");
     assert_denies(
         &out,
-        &[SPEC, "`approved`", "spec-dna approve valve-timeout spec"],
+        &[PLAN, "`approved`", "spec-dna approve valve-timeout plan"],
     );
 }
 

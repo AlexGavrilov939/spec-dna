@@ -49,7 +49,7 @@ status: approved
 - [x] t7: Add `--approver`, the answers key, the prompt and the notes (`init-engineer`; `core-engineer` for the flag). Files: `src/init.rs`, `src/main.rs`. Verify: `cargo test --test init_change`.
 - [x] t8: Add the command `approve` (`core-engineer`). Files: `src/approve.rs`, `src/git.rs`, `src/main.rs`. Verify: `cargo test --test approve_cmd --test cli`.
 - [x] t9: Add the key `protect-approvals` and the hook entry (`init-engineer`). Files: `src/harness.rs`, `src/init.rs`. Verify: `cargo test --test harness`.
-- [ ] t10: Add the hook `protect-approvals` (`init-engineer`). Files: `src/hook.rs`. Verify: `cargo test --test hook_approvals`.
+- [x] t10: Add the hook `protect-approvals` (`init-engineer`). Files: `src/hook.rs`. Verify: `cargo test --test hook_approvals`.
 - [ ] t11: Update the commands (`core-engineer`; `init-engineer` for the hook). Files: `docs/commands.md`. Verify: `pre-commit run --all-files`.
 - [ ] t12: Update the docs of `init`, the harness and the quickstart (`init-engineer`). Files: `docs/init.md`, `docs/harness.md`, `docs/quickstart.md`. Verify: `pre-commit run --all-files`.
 - [ ] t13: Update the codes and the profiles (`diagnostics-engineer`). Files: `docs/diagnostics.md`, `docs/profiles.md`. Verify: `pre-commit run --all-files`.
