@@ -255,6 +255,9 @@ pub struct Plan {
     pub high_risk_paths: Vec<String>,
     /// `[change] max-fanout`.
     pub max_fanout: u32,
+    /// `[change] max-task-files`. No question asks for it. `--reconfigure`
+    /// keeps the value if the current file sets the key. `None`: no key.
+    pub max_task_files: Option<u32>,
     /// `[change] base`. No question asks for it. `--reconfigure` keeps the
     /// value that the file sets. The config loader has checked the name.
     pub change_base: Option<String>,
@@ -382,6 +385,11 @@ impl Plan {
             out.push_str(&format!(
                 "approvers = {}  # the author e-mails of the approval commits\n",
                 toml_list(&self.approvers)
+            ));
+        }
+        if let Some(n) = self.max_task_files {
+            out.push_str(&format!(
+                "max-task-files = {n}  # tasks of an approved plan: paths in `Files:` before SD924\n"
             ));
         }
         if let Some(b) = &self.change_base {
@@ -606,6 +614,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         high_risk_layers: None,
         high_risk_paths: Vec::new(),
         max_fanout: config::DEFAULT_MAX_FANOUT,
+        max_task_files: None,
         change_base: None,
         approval: Approval::Base,
         approvers: Vec::new(),
@@ -702,6 +711,16 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     .then(|| cfg.high_risk_layers.clone());
     p.high_risk_paths = cfg.high_risk_paths.clone();
     p.max_fanout = cfg.max_fanout;
+    p.max_task_files = text
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| {
+            t.get("change")
+                .and_then(toml::Value::as_table)
+                .map(|c| c.contains_key("max-task-files"))
+        })
+        .unwrap_or(false)
+        .then_some(cfg.max_task_files);
     p.change_base = cfg.change_base.clone();
     p.approval = cfg.change_approval;
     p.approvers = cfg.change_approvers.clone();
