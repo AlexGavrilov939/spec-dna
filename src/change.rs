@@ -166,18 +166,81 @@ impl Change {
         self.has_none_item(corpus) && self.files(corpus).is_empty()
     }
 
-    /// True if the `Files` section has one item only, and the item starts with
-    /// the word `none`.
+    /// True if the `Files` section states "no files". With list items, it has
+    /// one item only, and the item starts with the word `none` (the rule of
+    /// 0.6.1). With no list item, its first paragraph is the form of D28
+    /// ([`is_none_text`]), such as `None: this change is research.`.
     fn has_none_item(&self, corpus: &Corpus) -> bool {
         let Some(a) = &self.plan else {
             return false;
         };
-        let mut items = section_items(&corpus.docs[a.doc as usize], ItemSection::Files);
+        let doc = &corpus.docs[a.doc as usize];
+        let mut items = section_items(doc, ItemSection::Files);
         match (items.next(), items.next()) {
             (Some(item), None) => starts_with_none(&item.text),
-            _ => false,
+            (Some(_), Some(_)) => false,
+            (None, _) => doc
+                .parsed
+                .files_paragraph
+                .as_ref()
+                .is_some_and(|p| is_none_text(&p.text)),
         }
     }
+
+    /// True if the `Files` section of the plan has a paragraph and no list
+    /// item, and the paragraph does not state "no files" (design 0.7.0, D28).
+    /// The section then lists no path, and the person must write a list.
+    pub fn files_paragraph_only(&self, corpus: &Corpus) -> bool {
+        let Some(a) = &self.plan else {
+            return false;
+        };
+        let doc = &corpus.docs[a.doc as usize];
+        section_items(doc, ItemSection::Files).next().is_none()
+            && doc
+                .parsed
+                .files_paragraph
+                .as_ref()
+                .is_some_and(|p| !is_none_text(&p.text))
+    }
+}
+
+/// The line that `next`, `status` and the messages of SD913 and SD915 give for
+/// a `Files` section with a paragraph and no list item (design 0.7.0, D28).
+pub const FILES_PARAGRAPH_LINE: &str = "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`";
+
+/// True if `text` states "nothing" in the form of D28: its first word is
+/// `none`, in any case, and `:`, `.` or the end of the text follows the word.
+/// The text is a paragraph under `Files`, or the one item of `Interfaces`,
+/// `Concerns` or `Open questions`, without its task box. `None of the old files
+/// stay` is not this form. A list item under `Files` keeps the rule of 0.6.1
+/// (the first word is `none`).
+pub fn is_none_text(text: &str) -> bool {
+    let t = text.trim();
+    let end = t
+        .char_indices()
+        .find(|&(_, c)| !c.is_alphanumeric())
+        .map_or(t.len(), |(i, _)| i);
+    t[..end].eq_ignore_ascii_case("none")
+        && matches!(t[end..].chars().next(), None | Some(':' | '.'))
+}
+
+/// The open concerns of a spec: the items `- [ ]` of its `Concerns` section. A
+/// resolved concern, an item with no task box and the one item that states
+/// "nothing" (`- [ ] None.`) are not open.
+pub fn open_concerns(spec: &Doc) -> Vec<&ListItem> {
+    if states_nothing(spec, ItemSection::Concerns) {
+        return Vec::new();
+    }
+    section_items(spec, ItemSection::Concerns)
+        .filter(|i| i.task == Some(false))
+        .collect()
+}
+
+/// True if a section of a document has one item only, and the item states
+/// "nothing" ([`is_none_text`]). The task box of the item does not matter.
+pub fn states_nothing(doc: &Doc, section: ItemSection) -> bool {
+    let mut items = section_items(doc, section);
+    matches!((items.next(), items.next()), (Some(item), None) if is_none_text(&item.text))
 }
 
 /// True if the first word of `text` is `none`, in any case. The word ends at
@@ -206,7 +269,7 @@ fn usable_code(code: &str) -> bool {
 }
 
 /// The text on one line, with at most 80 characters, for a message.
-fn shown(text: &str) -> String {
+pub(crate) fn shown(text: &str) -> String {
     let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.chars().count() > 80 {
         format!("{}...", t.chars().take(77).collect::<String>().trim_end())
@@ -499,6 +562,10 @@ pub struct PlanTask {
     /// spans, and the plain paths of the entries that have no code span
     /// ([`plain_path`]).
     pub files: Vec<String>,
+    /// The text after the label `Files:`, on one line, with one final `.`
+    /// removed. `None` if the label is absent. A label with no text gives an
+    /// empty string. SD923 reads it (design 0.7.0, D40).
+    pub files_text: Option<String>,
     /// The text after the label `Verify:`, on one line. One final `.` is
     /// removed. `None` if the label is absent or has no text.
     pub verify: Option<String>,
@@ -544,11 +611,13 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         return None;
     }
     let mut files = None;
+    let mut files_text = None;
     let mut verify = None;
     for (n, &(_, end, is_files)) in labels.iter().enumerate() {
         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
         let seg = &text[end..stop];
         if is_files {
+            files_text.get_or_insert_with(|| one_line(seg));
             files.get_or_insert_with(|| label_paths(seg));
         } else if verify.is_none() {
             let v = one_line(seg);
@@ -560,6 +629,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         done,
         text: one_line(after),
         files: files.unwrap_or_default(),
+        files_text,
         verify: verify.flatten(),
         line: item.line,
         range: item.range.clone(),
@@ -743,13 +813,19 @@ impl Change {
     }
 
     /// The open questions of the spec: the items `- [ ]` of its `Open
-    /// questions` section. A resolved question (`- [x]`) and an item with no
-    /// task box are not open.
+    /// questions` section. A resolved question (`- [x]`), an item with no task
+    /// box and the one item that states "nothing" (`- [ ] None.`) are not
+    /// open.
     pub fn open_questions<'a>(&self, corpus: &'a Corpus) -> Vec<&'a ListItem> {
         let Some(a) = &self.spec else {
             return Vec::new();
         };
-        section_items(&corpus.docs[a.doc as usize], ItemSection::OpenQuestions)
+        let doc = &corpus.docs[a.doc as usize];
+        // One item that states "nothing" is no open question (D28).
+        if states_nothing(doc, ItemSection::OpenQuestions) {
+            return Vec::new();
+        }
+        section_items(doc, ItemSection::OpenQuestions)
             .filter(|i| i.task == Some(false))
             .collect()
     }
@@ -1176,6 +1252,114 @@ mod tests {
             "---\nstatus: accepted\n---\n# I\n",
         )]);
         assert!(!collect(&c)[0].no_files(&c));
+    }
+
+    #[test]
+    fn the_none_form_of_d28_needs_a_colon_a_full_stop_or_the_end() {
+        for t in [
+            "none",
+            "None",
+            "NONE.",
+            "none: research only",
+            "None. This change is research.",
+            "  none  ",
+            "none:",
+        ] {
+            assert!(is_none_text(t), "{t}");
+        }
+        for t in [
+            "",
+            "None of the old files stay",
+            "none, research only",
+            "nonexistent",
+            "`none`",
+            "no files",
+            "none-of",
+            "- none",
+            "nonexistent.md",
+            "none/x",
+            "nones.",
+        ] {
+            assert!(!is_none_text(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn a_paragraph_under_files_states_no_files_or_asks_for_a_list() {
+        let plan = |files: &str, order: &str| {
+            format!(
+                "---\nstatus: approved\n---\n# P\n\n## Files\n\n{files}\n\n## Order\n\n{order}\n"
+            )
+        };
+        // (no_files, paragraph only)
+        let check = |files: &str, order: &str| {
+            let c = corpus(&[("docs/intent/x/plan.md", &plan(files, order))]);
+            let ch = &collect(&c)[0];
+            (ch.no_files(&c), ch.files_paragraph_only(&c))
+        };
+        for para in [
+            "None.",
+            "none",
+            "NONE: this change is research.",
+            "None. The change\nedits no file.",
+        ] {
+            assert_eq!(check(para, ""), (true, false), "{para}");
+        }
+        for para in [
+            "None of the old files stay.",
+            "The code of the dose.",
+            "nonexistent.md",
+            "`none`",
+        ] {
+            assert_eq!(check(para, ""), (false, true), "{para}");
+        }
+        // A task that lists a path names a file, so the plan lists files.
+        assert_eq!(
+            check("None.", "- [ ] t1: Edit. Files: `src/a.py`."),
+            (false, false)
+        );
+        // A list item decides: the paragraph is only text.
+        assert_eq!(check("The code.\n\n- `src/a.py`", ""), (false, false));
+        assert_eq!(check("None.\n\n- `src/a.py`", ""), (false, false));
+        assert_eq!(check("None.\n\n- None.", ""), (true, false));
+        // No paragraph and no item: nothing.
+        assert_eq!(check("", ""), (false, false));
+        // A paragraph gives no `files_not_paths` entry.
+        let c = corpus(&[("docs/intent/x/plan.md", &plan("The code.", ""))]);
+        assert!(collect(&c)[0].files_not_paths(&c).is_empty());
+    }
+
+    #[test]
+    fn one_none_item_states_nothing_in_the_sections_of_a_spec() {
+        let spec = |body: &str| {
+            let c = corpus(&[(
+                "docs/intent/x/spec.md",
+                &format!("---\nstatus: approved\n---\n# S\n\n{body}"),
+            )]);
+            let d = &c.docs[0];
+            (
+                states_nothing(d, ItemSection::Concerns),
+                open_concerns(d).len(),
+                collect(&c)[0].open_questions(&c).len(),
+            )
+        };
+        assert_eq!(spec("## Concerns\n\n- [ ] None.\n"), (true, 0, 0));
+        assert_eq!(spec("## Concerns\n\n- none\n"), (true, 0, 0));
+        assert_eq!(spec("## Concerns\n\n- [x] None: no risk.\n"), (true, 0, 0));
+        assert_eq!(
+            spec("## Concerns\n\n- [ ] None of the risks is open.\n"),
+            (false, 1, 0)
+        );
+        assert_eq!(
+            spec("## Concerns\n\n- [ ] None.\n- [ ] A risk.\n"),
+            (false, 2, 0)
+        );
+        assert_eq!(spec("## Open questions\n\n- [ ] None.\n"), (false, 0, 0));
+        assert_eq!(
+            spec("## Open questions\n\n- [ ] None.\n- [ ] Who?\n"),
+            (false, 0, 2)
+        );
+        assert_eq!(spec("## Open questions\n\n- [ ] Who?\n"), (false, 0, 1));
     }
 
     #[test]

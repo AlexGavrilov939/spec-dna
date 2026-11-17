@@ -949,3 +949,30 @@ fn a_switch_to_strict_writes_base() {
     let (code, out, err) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+#[test]
+fn reconfigure_keeps_max_task_files() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The project adds the key by hand. A new `init` never proposes it.
+    assert!(r.change().unwrap().get("max-task-files").is_none());
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("\nmax-fanout = 8", "\nmax-task-files = 5\nmax-fanout = 8");
+    assert!(cfg.contains("max-task-files = 5"), "{cfg}");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt and edit");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        r.change()
+            .unwrap()
+            .get("max-task-files")
+            .and_then(toml::Value::as_integer),
+        Some(5)
+    );
+    r.commit("reconfigure");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}

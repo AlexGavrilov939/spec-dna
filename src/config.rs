@@ -97,6 +97,10 @@ pub struct Config {
     /// `[change] max-fanout`: the most requirement documents that one change
     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
     pub max_fanout: u32,
+    /// `[change] max-task-files`: the most paths that one task of an approved
+    /// plan lists before SD924. An integer from 1 to 20. The default is
+    /// `DEFAULT_MAX_TASK_FILES` (design 0.7.0, D40).
+    pub max_task_files: u32,
     /// `[change] base`: the name of a local branch that is the base of the
     /// change checks when `--base` and `refs/remotes/origin/HEAD` give none
     /// (design 0.6.1, D35 and D36). `None`: the key is absent.
@@ -246,6 +250,9 @@ impl Approval {
 /// The default of `[change] max-fanout`.
 pub const DEFAULT_MAX_FANOUT: u32 = 8;
 
+/// The default of `[change] max-task-files`.
+pub const DEFAULT_MAX_TASK_FILES: u32 = 3;
+
 /// The default of `[change] high-risk-layers`. A layer that the graph does
 /// not have is dropped.
 pub const DEFAULT_HIGH_RISK_LAYERS: [&str; 2] = ["interfaces", "rules"];
@@ -257,6 +264,7 @@ struct ChangeTable {
     high_risk_layers: Vec<String>,
     high_risk_paths: Vec<String>,
     max_fanout: u32,
+    max_task_files: u32,
     base: Option<String>,
     approval: Approval,
     approvers: Vec<String>,
@@ -271,6 +279,7 @@ impl ChangeTable {
             high_risk_layers: default_high_risk_layers(graph),
             high_risk_paths: Vec::new(),
             max_fanout: DEFAULT_MAX_FANOUT,
+            max_task_files: DEFAULT_MAX_TASK_FILES,
             base: None,
             approval: Approval::Base,
             approvers: Vec::new(),
@@ -327,6 +336,13 @@ impl ChangeTable {
         };
         let high_risk_paths = high_risk_paths_value(&f.opt_strs("high-risk-paths")?)?;
         let max_fanout = f.opt_u32("max-fanout")?.unwrap_or(DEFAULT_MAX_FANOUT);
+        let max_task_files = match f.take("max-task-files") {
+            None => DEFAULT_MAX_TASK_FILES,
+            Some(Value::Integer(n)) if (1..=20).contains(n) => *n as u32,
+            Some(_) => {
+                return Err("`change.max-task-files` must be an integer from 1 to 20".into());
+            }
+        };
         let base = f.opt_str("base")?;
         if let Some(b) = &base {
             branch_name_problem(b).map_or(Ok(()), |why| {
@@ -372,6 +388,7 @@ impl ChangeTable {
             high_risk_layers,
             high_risk_paths,
             max_fanout,
+            max_task_files,
             base,
             approval,
             approvers,
@@ -844,7 +861,7 @@ impl Profile {
             }
             "SD911" | "SD913" => (None, Some(W), Some(W)),
             "SD912" => (None, Some(W), Some(E)),
-            "SD917" | "SD921" => (None, Some(W), Some(E)),
+            "SD917" | "SD921" | "SD923" | "SD924" | "SD925" => (None, Some(W), Some(E)),
             "SD918" => (None, Some(W), Some(W)),
             _ => return Some(code.severity()),
         };
@@ -873,12 +890,12 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
         "changes",
         &[
             "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
-            "SD918", "SD919", "SD920", "SD921", "SD922",
+            "SD918", "SD919", "SD920", "SD921", "SD922", "SD923", "SD924", "SD925",
         ],
     ),
 ];
 
-/// True for a code of the group `changes`: SD905 and SD910 to SD922.
+/// True for a code of the group `changes`: SD905 and SD910 to SD925.
 fn is_change_code(code: Code) -> bool {
     GROUPS
         .iter()
@@ -1376,6 +1393,7 @@ impl Config {
             high_risk_layers: change.high_risk_layers,
             high_risk_paths: change.high_risk_paths,
             max_fanout: change.max_fanout,
+            max_task_files: change.max_task_files,
             change_base: change.base,
             change_approval: change.approval,
             change_approvers: change.approvers,
@@ -2980,6 +2998,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             // The other keys keep their defaults.
             assert_eq!(c.change_gate, None);
             assert_eq!(c.max_fanout, DEFAULT_MAX_FANOUT);
+            assert_eq!(c.max_task_files, 3);
         }
         for (tail, want) in [
             ("[change]\n", "`change.policy` is required"),
@@ -3047,6 +3066,24 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             let e = err(bad);
             assert!(
                 e.contains("`change.max-fanout` must be a non-negative integer"),
+                "{bad}: {e}"
+            );
+        }
+        // max-task-files
+        for good in [1, 3, 20] {
+            assert_eq!(ok(&format!("max-task-files = {good}")).max_task_files, good);
+        }
+        for bad in [
+            "max-task-files = 0",
+            "max-task-files = 21",
+            "max-task-files = -1",
+            "max-task-files = \"3\"",
+            "max-task-files = 1.5",
+            "max-task-files = true",
+        ] {
+            let e = err(bad);
+            assert!(
+                e.contains("`change.max-task-files` must be an integer from 1 to 20"),
                 "{bad}: {e}"
             );
         }
@@ -3136,12 +3173,15 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "truth-changed-without-change",
             ),
             (Code::QuestionOpen, "question-open"),
+            (Code::TaskIncomplete, "task-incomplete"),
+            (Code::TaskTooLarge, "task-too-large"),
+            (Code::CheckboxMissing, "checkbox-missing"),
         ] {
             assert_eq!(code.name(), name);
             assert_eq!(Code::from_code(code.code()), Some(code));
         }
         // The group `layers` holds SD901 to SD904. The group `changes` holds
-        // SD905 and SD910 to SD922.
+        // SD905 and SD910 to SD925.
         let c = with(
             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
             "[change]\npolicy = \"two-class\"\n",
@@ -3161,7 +3201,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         use Severity::{Error as E, Warning as W};
         // The design table: code, lite, standard, strict.
         type Sev = Option<Severity>;
-        let rows: [(Code, Sev, Sev, Sev); 13] = [
+        let rows: [(Code, Sev, Sev, Sev); 16] = [
             (Code::FanOut, None, Some(W), Some(W)),
             (Code::GateApprovalMissing, Some(W), Some(E), Some(E)),
             (Code::ChangeStale, None, Some(W), Some(W)),
@@ -3175,6 +3215,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             (Code::QuestionOpen, Some(W), Some(E), Some(E)),
             (Code::DecisionNeededUnaccepted, Some(W), Some(E), Some(E)),
             (Code::IncidentEvalMissing, None, Some(W), Some(W)),
+            (Code::TaskIncomplete, None, Some(W), Some(E)),
+            (Code::TaskTooLarge, None, Some(W), Some(E)),
+            (Code::CheckboxMissing, None, Some(W), Some(E)),
         ];
         for (code, lite, standard, strict) in rows {
             for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
@@ -3300,6 +3343,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             Code::QuestionOpen,
             Code::DecisionNeededUnaccepted,
             Code::TruthChangedWithoutChange,
+            Code::TaskIncomplete,
+            Code::TaskTooLarge,
+            Code::CheckboxMissing,
         ];
         for change in [
             "",
@@ -3440,6 +3486,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "high-risk-layers",
                 "high-risk-paths",
                 "max-fanout",
+                "max-task-files",
                 "policy"
             ]
         );
@@ -3451,6 +3498,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ("high-risk-layers", "1"),
             ("high-risk-paths", "1"),
             ("max-fanout", "\"x\""),
+            ("max-task-files", "\"x\""),
         ] {
             let e = with("", &format!("[change]\npolicy = \"none\"\n{k} = {bad}\n")).unwrap_err();
             assert!(

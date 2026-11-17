@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const MAGIC: &[u8; 8] = b"SPECDNA\0";
-const FORMAT: u32 = 1;
+/// The layout of the file. Format 2 adds the first paragraph of `Files`
+/// (design 0.7.0, D28).
+const FORMAT: u32 = 2;
 
 pub struct Index {
     pub path: PathBuf,
@@ -248,6 +250,14 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.u32(i.range.start);
         w.u32(i.range.end);
     }
+    match &d.files_paragraph {
+        None => w.u8(0),
+        Some(t) => {
+            w.u8(1);
+            w.str(&t.text);
+            w.u32(t.line);
+        }
+    }
 }
 
 fn read_doc(r: &mut R) -> Option<ParsedDoc> {
@@ -369,6 +379,13 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             range: r.u32()?..r.u32()?,
         });
     }
+    d.files_paragraph = match r.u8()? {
+        0 => None,
+        _ => Some(Token {
+            text: r.str()?,
+            line: r.u32()?,
+        }),
+    };
     Some(d)
 }
 
@@ -433,5 +450,43 @@ mod tests {
         assert_eq!(tasks[0].files, ["a", "b/*"]);
         assert_eq!(tasks[0].verify.as_deref(), Some("`cargo test`"));
         assert!(tasks[1].done);
+    }
+
+    #[test]
+    fn round_trip_keeps_the_paragraph_of_files_and_the_hours() {
+        let text = "---\nstatus: draft\n---\n# P\n\n## Files\n\nNone: research.\n\n## Hours\n\n- 1.5: code\n- 2: review\n";
+        let mut m = HashMap::new();
+        m.insert("p".to_string(), Arc::new(crate::parse::parse(text)));
+        m.insert("q".to_string(), Arc::new(crate::parse::parse("# Q\n")));
+        let para = m["p"].files_paragraph.clone().expect("a paragraph");
+        assert_eq!((para.text.as_str(), para.line), ("None: research.", 8));
+        assert!(m["q"].files_paragraph.is_none());
+        let back = decode(&encode(&m)).unwrap();
+        assert_eq!(*back["p"], *m["p"]);
+        assert_eq!(*back["q"], *m["q"]);
+        assert_eq!(back["p"].files_paragraph, Some(para));
+        let hours: Vec<_> = back["p"]
+            .items
+            .iter()
+            .filter(|i| i.section == ItemSection::Hours)
+            .map(|i| i.text.as_str())
+            .collect();
+        assert_eq!(hours, ["1.5: code", "2: review"]);
+    }
+
+    #[test]
+    fn the_header_has_format_2_and_the_parser_version() {
+        let bytes = encode(&HashMap::new());
+        assert_eq!(&bytes[..8], MAGIC);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
+        assert_eq!(
+            u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
+            PARSER_VERSION
+        );
+        // A cache of the older format is not read.
+        let mut old = bytes.clone();
+        old[8..12].copy_from_slice(&1u32.to_le_bytes());
+        assert!(decode(&old).is_none());
+        assert!(decode(&bytes).is_some());
     }
 }

@@ -55,7 +55,7 @@ spec-dna show requirements/valves/closing#flush-time
 
 The spec has 4 more sections:
 
-- `Interfaces`: each interface that the change edits, as `CHANGE <interface id>: <text>`.
+- `Interfaces`: each interface that the change edits, as `CHANGE <interface id>: <text>`, and each new interface, as `ADD <interface id>: <text>`. Write `- none` if the change touches no interface.
 - `Decisions`: each decision that the change needs, as `[[decisions/<slug>]]`.
 - `Concerns`: a task list. Resolve each concern (`- [x]`). Write its resolution before the approval (SD919).
 - `Open questions`: a task list. Answer each question (`- [x]`), and write the answer after it, before the approval (SD922).
@@ -191,5 +191,8 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 | SD919 | An approved spec has an open concern | Resolve the concern. Write its resolution |
 | SD922 | An approved spec has an open question | Answer the question (`- [x]`). Write the answer after it |
 | SD921 | A requirement changed, and no intent folder changed | Write an intent, or keep the requirement as it is |
+| SD923 | A task of an approved plan has no `Files:` or no `Verify:`, or its `Files:` has a glob or a folder | Write the exact paths and the check of the task |
+| SD924 | A task of an approved plan lists more paths than `max-task-files` | Split the task |
+| SD925 | An item of `Concerns` or `Open questions` has no task box | Write `- [ ]` or `- [x]` at the start of the item |
 
 [diagnostics.md](../diagnostics.md) gives each code and its fix. [config.md](../config.md#the-table-change) gives the keys of `[change]`.

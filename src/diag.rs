@@ -114,6 +114,9 @@ codes! {
     IncidentEvalMissing = "SD918", "incident-eval-missing", Warning, "Add an eval for the incident to [evals] dir in the same change. Name its file in the `Eval` section of the incident.";
     TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
     QuestionOpen = "SD922", "question-open", Warning, "Answer each open question of the spec, or remove it, before the spec is `approved`. Check the box (`- [x]`) and write the answer after the question.";
+    TaskIncomplete = "SD923", "task-incomplete", Warning, "Complete the task of the approved plan. Write `Files:` with each exact path of the task (no glob, no folder), or `Files: none`. Write `Verify:` with a command in a code span, or the check in words.";
+    TaskTooLarge = "SD924", "task-too-large", Warning, "Split the task. Write each part as its own task with at most `[change] max-task-files` paths in `Files:` and one `Verify:`.";
+    CheckboxMissing = "SD925", "checkbox-missing", Warning, "Write the task box at the start of the item: `- [ ]` for an open item, `- [x]` for a resolved item. SD919 and SD922 read the box. To state that the section has no item, write one item that starts with the word `none`, followed by `:`, `.` or the end.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

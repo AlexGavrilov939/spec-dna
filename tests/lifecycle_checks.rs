@@ -875,3 +875,347 @@ fn from_in_a_document_that_is_not_an_intent_is_not_a_reference() {
     let (_, out) = check(&r);
     assert!(severities(&out, "SD101").is_empty(), "{out}");
 }
+
+// SD914: the forms of `Interfaces`
+
+const EVENTS: &str = "---\nstatus: active\n---\n# Events\n\n## Requirements\n\n- **emit**: The interface SHALL emit one event for a change.\n";
+
+#[test]
+fn interfaces_accept_none_and_add_of_a_new_interface() {
+    // `none` states "no interface", in each form of the `none` rule.
+    for item in [
+        "- none",
+        "- None.",
+        "- none: no contract changes",
+        "- [ ] None.",
+        "- [x] none",
+    ] {
+        never("SD914", |r| {
+            change(
+                r,
+                "dose",
+                "draft",
+                "draft",
+                &format!("## Interfaces\n\n{item}\n"),
+            );
+        });
+    }
+    // `ADD` names a document that is absent, at the place of an interface.
+    never("SD914", |r| {
+        change(
+            r,
+            "dose",
+            "draft",
+            "draft",
+            "## Interfaces\n\n- ADD contracts/events: add the event contract.\n",
+        );
+    });
+    // `ADD` of an interface that exists is also valid.
+    never("SD914", |r| {
+        change(
+            r,
+            "dose",
+            "draft",
+            "draft",
+            "## Interfaces\n\n- ADD contracts/http: add a field.\n- CHANGE contracts/http: change a field.\n",
+        );
+    });
+    // The place of the id gives another type.
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "draft",
+        "draft",
+        "## Interfaces\n\n- ADD requirements/events: add it.\n",
+    );
+    let (_, out) = check(&r);
+    let got = messages(&out, "SD914");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(got[0].contains("not `interface`"), "{out}");
+    assert!(got[0].contains("`requirements/events`"), "{out}");
+}
+
+#[test]
+fn a_none_item_that_is_not_alone_or_not_the_word_is_not_none() {
+    // `none` states "nothing" only as the one item of the section. The
+    // item of 0.6.1 gave SD914 as a bad form, and it still does.
+    for item in [
+        "- none\n- CHANGE contracts/http: Text.",
+        "- None of the contracts change.",
+        "- nonexistent",
+        "- `none`",
+    ] {
+        let r = repo("standard");
+        change(
+            &r,
+            "dose",
+            "draft",
+            "draft",
+            &format!("## Interfaces\n\n{item}\n"),
+        );
+        let (_, out) = check(&r);
+        let got = messages(&out, "SD914");
+        assert_eq!(got.len(), 1, "{item}: {out}");
+        assert!(
+            got[0].contains("an item of `Interfaces` is `CHANGE <interface id>: <text>`"),
+            "{item}: {out}"
+        );
+    }
+}
+
+#[test]
+fn an_add_item_needs_its_document_when_the_diff_deletes_the_folder() {
+    let setup = |with_document: bool| {
+        let r = repo("standard");
+        change(
+            &r,
+            "dose",
+            "accepted",
+            "approved",
+            "## Interfaces\n\n- ADD contracts/events: add the event contract.\n",
+        );
+        r.commit("base");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
+        if with_document {
+            r.write("docs/contracts/events.md", EVENTS);
+        }
+        r.commit("finish dose");
+        r
+    };
+    // No document and no delta line that adds it.
+    let r = setup(false);
+    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    let got = messages(&out, "SD914");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].contains(
+            "the spec adds the interface `contracts/events`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD contracts/events#<key>` lines"
+        ),
+        "{out}"
+    );
+    // The document is in the diff.
+    let r = setup(true);
+    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    assert!(severities(&out, "SD914").is_empty(), "{out}");
+}
+
+// SD925
+
+#[test]
+fn an_item_with_no_box_in_concerns_gives_sd925() {
+    matrix("SD925", [None, Some("warning"), Some("error")], |r| {
+        change(
+            r,
+            "dose",
+            "accepted",
+            "approved",
+            "## Concerns\n\n- The cache can grow without a limit.\n",
+        )
+    });
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "accepted",
+        "approved",
+        &format!(
+            "{}\n## Concerns\n\n- The cache can grow without a limit.\n",
+            delta(&["- ADD requirements/valves#flush: The controller SHALL flush the line."])
+        ),
+    );
+    let (code, out) = check(&r);
+    assert_eq!(code, 0, "a warning does not fail check: {out}");
+    let got = messages(&out, "SD925");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].starts_with("docs/intent/dose/spec.md:12: warning SD925 checkbox-missing: "),
+        "{out}"
+    );
+    assert!(
+        got[0].contains(
+            "an item of `Concerns` has no task box, so SD919 cannot see if it is open; write `- [ ]` for an open concern or `- [x]` for a resolved one"
+        ),
+        "{out}"
+    );
+    // The spec has no other diagnostic for the item.
+    assert!(severities(&out, "SD919").is_empty(), "{out}");
+}
+
+#[test]
+fn an_item_with_no_box_in_open_questions_names_sd922() {
+    matrix("SD925", [None, Some("warning"), Some("error")], |r| {
+        change(
+            r,
+            "dose",
+            "accepted",
+            "approved",
+            "## Open questions\n\n- Who owns the timer?\n",
+        )
+    });
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "accepted",
+        "approved",
+        "## Open questions\n\n- Who owns the timer?\n",
+    );
+    let (_, out) = check(&r);
+    let got = messages(&out, "SD925");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].contains(
+            "an item of `Open questions` has no task box, so SD922 cannot see if it is open"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn sd925_reads_a_spec_of_each_status_except_a_closed_change() {
+    let body = "## Concerns\n\n- No box.\n";
+    for spec in ["draft", "approved"] {
+        matrix("SD925", [None, Some("warning"), Some("error")], |r| {
+            change(r, "dose", "draft", spec, body)
+        });
+    }
+    never("SD925", |r| change(r, "dose", "closed", "approved", body));
+}
+
+#[test]
+fn an_item_with_a_box_gives_no_sd925() {
+    never("SD925", |r| {
+        change(
+            r,
+            "dose",
+            "accepted",
+            "draft",
+            "## Concerns\n\n- [x] Resolved.\n- [ ] Open.\n\n## Open questions\n\n- [x] Answered. Yes.\n- [ ] Open.\n",
+        )
+    });
+}
+
+#[test]
+fn a_none_item_states_nothing_in_concerns_and_open_questions() {
+    // The box does not matter: one item that starts with `none` states
+    // "nothing", so no SD919, SD922 or SD925 reads it.
+    for item in [
+        "- [ ] None.",
+        "- None.",
+        "- [x] none",
+        "- none",
+        "- None: no risk.",
+    ] {
+        let setup = |r: &Repo| {
+            change(
+                r,
+                "dose",
+                "accepted",
+                "approved",
+                &format!("## Concerns\n\n{item}\n\n## Open questions\n\n{item}\n"),
+            )
+        };
+        never("SD925", setup);
+        never("SD919", setup);
+        never("SD922", setup);
+    }
+    // The 0.6.1 result for a real concern that starts with the word `None`.
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "accepted",
+        "approved",
+        "## Concerns\n\n- [ ] None of the old files stay.\n",
+    );
+    let (_, out) = check(&r);
+    assert_eq!(severities(&out, "SD919"), ["error"], "{out}");
+    // A `none` item with other items is an item like the others.
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "accepted",
+        "approved",
+        "## Open questions\n\n- [ ] None.\n- [ ] Who owns it?\n",
+    );
+    let (_, out) = check(&r);
+    assert_eq!(severities(&out, "SD922"), ["error", "error"], "{out}");
+}
+
+#[test]
+fn an_add_item_with_a_bad_id_gives_sd914() {
+    // A glob, `..` and an absolute path are no document id. The id would
+    // widen the scope of SD913 if it passed.
+    for id in [
+        "contracts/*",
+        "contracts/a?",
+        "contracts/[ab]",
+        "contracts/../x",
+        "/abs",
+    ] {
+        let r = repo("standard");
+        change(
+            &r,
+            "dose",
+            "draft",
+            "draft",
+            &format!("## Interfaces\n\n- ADD {id}: anything.\n"),
+        );
+        let (_, out) = check(&r);
+        let got = messages(&out, "SD914");
+        assert_eq!(got.len(), 1, "{id}: {out}");
+        assert!(
+            got[0].contains(&format!("`{id}` is not a document id")),
+            "{id}: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_place_with_no_type_is_not_named_as_requirements() {
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "draft",
+        "draft",
+        "## Interfaces\n\n- ADD foo/bar: anything.\n",
+    );
+    let (_, out) = check(&r);
+    let got = messages(&out, "SD914");
+    assert_eq!(got.len(), 1, "{out}");
+    assert!(
+        got[0].contains("the place of `foo/bar` gives no type, not `interface`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_document_of_another_type_does_not_satisfy_an_add_item_after_the_folder_is_deleted() {
+    let r = repo("standard");
+    change(
+        &r,
+        "dose",
+        "accepted",
+        "approved",
+        "## Interfaces\n\n- ADD contracts/new: add the contract.\n",
+    );
+    r.commit("base");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
+    r.write(
+        "docs/contracts/new.md",
+        &EVENTS.replace("status: active\n", "status: active\ntype: requirements\n"),
+    );
+    r.commit("finish dose");
+    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    let got = messages(&out, "SD914");
+    assert!(
+        got.iter()
+            .any(|l| l.contains("`contracts/new` is a `requirements` document, not an interface")),
+        "{out}"
+    );
+}

@@ -53,7 +53,9 @@ fn new_intent_writes_class_routine_for_each_of_the_3_templates() {
         assert_eq!(code, 0, "{args:?}: {out}{err}");
         let text = r.read("docs/intent/drip/intent.md");
         assert!(
-            text.starts_with("---\nstatus: draft\nclass: routine\n---\n# Drip\n"),
+            text.starts_with(
+                "---\nstatus: draft\nclass: routine\n---\n# {{The title of the change.}}\n"
+            ),
             "{args:?}: {text}"
         );
         // The new document has no problem with its front matter.
@@ -99,14 +101,13 @@ fn a_project_template_of_an_intent_keeps_its_own_front_matter() {
     );
     assert_eq!(r.run(&["new", "intent", "a", "--template", "hr"]).0, 0);
     assert_eq!(r.run(&["new", "intent", "b", "--template", "plain"]).0, 0);
-    assert!(
-        r.read("docs/intent/a/intent.md")
-            .starts_with("---\nclass: higher-risk\nstatus: draft\n---\n# A\n")
-    );
+    assert!(r.read("docs/intent/a/intent.md").starts_with(
+        "---\nclass: higher-risk\nstatus: draft\n---\n# {{The title of the change.}}\n"
+    ));
     // A template with no `class` stays without it: an absent class is routine.
     assert!(
         r.read("docs/intent/b/intent.md")
-            .starts_with("---\nstatus: draft\n---\n# B\n")
+            .starts_with("---\nstatus: draft\n---\n# {{The title of the change.}}\n")
     );
 }
 
@@ -232,4 +233,124 @@ fn a_change_folder_gives_the_same_result_with_a_cold_and_a_warm_cache() {
     let new = std::fs::read(&cache).unwrap();
     assert_eq!(new, bytes, "the run writes the cache again");
     assert_ne!(u32::from_le_bytes(new[12..16].try_into().unwrap()), 11);
+}
+
+// The paragraph under `Files` (design 0.7.0, D28)
+
+const D28_LINE: &str = "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`";
+
+const LIFECYCLE_CONFIG: &str = "profile = \"standard\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n";
+
+fn plan_with(files: &str) -> String {
+    format!(
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n{files}\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
+    )
+}
+
+/// The base commit on `main` with an approved routine plan whose `Files`
+/// section is `files`, `origin/HEAD` on it, and the branch `feature`.
+fn with_plan(files: &str) -> Repo {
+    let r = Repo::with_config(LIFECYCLE_CONFIG);
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n",
+    );
+    r.write("docs/intent/dose/plan.md", &plan_with(files));
+    r.write("src/dose.py", "x = 1\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r
+}
+
+/// An edit of a code file and of the intent: the intent puts the change in the
+/// diff, so SD913 reads its plan.
+fn work(r: &Repo) {
+    r.write("src/dose.py", "x = 2\n");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is far too high.\n",
+    );
+    r.commit("work");
+}
+
+#[test]
+fn sd913_names_a_paragraph_under_files_and_not_a_none_paragraph() {
+    // A paragraph that is not `none` lists no path, and the message says why.
+    for files in ["The dose code and its test.", "None of the old files stay."] {
+        let r = with_plan(files);
+        work(&r);
+        let (_, out, _) = r.run(&["check"]);
+        let line = out
+            .lines()
+            .find(|l| l.contains(" SD913 "))
+            .unwrap_or_else(|| panic!("{files}: {out}"));
+        assert!(line.contains(D28_LINE), "{files}: {line}");
+        assert!(!line.contains("is not a path"), "{files}: {line}");
+    }
+    // A `none` paragraph states "no files", so a path is outside the plan, and
+    // the message does not blame the paragraph.
+    for files in ["None.", "none: this change is research.", "NONE"] {
+        let r = with_plan(files);
+        work(&r);
+        let (_, out, _) = r.run(&["check"]);
+        let line = out
+            .lines()
+            .find(|l| l.contains(" SD913 "))
+            .unwrap_or_else(|| panic!("{files}: {out}"));
+        assert!(!line.contains("paragraph"), "{files}: {line}");
+    }
+    // A list item next to the paragraph is a list, and the list decides.
+    let r = with_plan("The code.\n\n- `src/other.py`");
+    work(&r);
+    let (_, out, _) = r.run(&["check"]);
+    let line = out.lines().find(|l| l.contains(" SD913 ")).expect("SD913");
+    assert!(!line.contains("paragraph"), "{line}");
+}
+
+#[test]
+fn sd915_names_a_paragraph_under_files() {
+    let r = with_plan("The dose code and its test.");
+    std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
+    r.commit("delete the folder");
+    let (_, out, _) = r.run(&["check"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD915 "))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(line.contains(D28_LINE), "{line}");
+}
+
+#[test]
+fn the_cache_header_has_format_2_and_parser_version_14() {
+    let r = repo();
+    r.write(
+        "docs/intent/drip/plan.md",
+        "---\nstatus: draft\n---\n# Plan\n\n## Files\n\nNone.\n\n## Hours\n\n- 1.5: code\n",
+    );
+    assert_eq!(check(&r).0, 0);
+    let cache = r.dir.join(".git/spec-dna/index-v1.bin");
+    let bytes = std::fs::read(&cache).unwrap();
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 14);
+    // A cache of format 1 is not used. The run replaces it.
+    let mut old = bytes.clone();
+    old[8..12].copy_from_slice(&1u32.to_le_bytes());
+    std::fs::write(&cache, &old).unwrap();
+    let (_, json) = check(&r);
+    assert!(json.contains("\"parsed\":1"), "{json}");
+    assert_eq!(std::fs::read(&cache).unwrap(), bytes);
+}
+
+#[test]
+fn a_paragraph_under_files_gives_the_same_result_with_a_cold_and_a_warm_cache() {
+    // The parser keeps the paragraph, and the cache stores it.
+    let r = with_plan("The dose code and its test.");
+    work(&r);
+    let cold = r.run(&["check", "--no-cache"]).1;
+    let first = r.run(&["check"]).1;
+    let warm = r.run(&["check"]).1;
+    assert!(cold.contains(D28_LINE), "{cold}");
+    assert_eq!(first, cold);
+    assert_eq!(warm, cold);
 }

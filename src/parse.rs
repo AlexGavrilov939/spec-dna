@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 13;
+pub const PARSER_VERSION: u32 = 14;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -47,11 +47,15 @@ pub struct ParsedDoc {
     /// Only a `terms` document uses them (SD904).
     pub terms: Vec<TermRow>,
     /// The top-level list items of the sections that carry a change (`Delta`,
-    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`
-    /// and `Open questions`), in the order of the file. The parser stores
-    /// them for every document. Only the documents of a change and an
+    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`,
+    /// `Open questions` and `Hours`), in the order of the file. The parser
+    /// stores them for every document. Only the documents of a change and an
     /// incident use them.
     pub items: Vec<ListItem>,
+    /// The first paragraph of the section `Files` that is not in a list: its
+    /// text as it is in the source, on one line, and the line of its start
+    /// (design 0.7.0, D28). The model reads it for a plan.
+    pub files_paragraph: Option<Token>,
 }
 
 /// The sections whose list items the parser keeps. The heading text must be
@@ -66,10 +70,11 @@ pub enum ItemSection {
     FollowUps = 5,
     Order = 6,
     OpenQuestions = 7,
+    Hours = 8,
 }
 
 impl ItemSection {
-    pub const ALL: [ItemSection; 8] = [
+    pub const ALL: [ItemSection; 9] = [
         ItemSection::Delta,
         ItemSection::Interfaces,
         ItemSection::Decisions,
@@ -78,6 +83,7 @@ impl ItemSection {
         ItemSection::FollowUps,
         ItemSection::Order,
         ItemSection::OpenQuestions,
+        ItemSection::Hours,
     ];
 
     pub fn heading(self) -> &'static str {
@@ -90,6 +96,7 @@ impl ItemSection {
             ItemSection::FollowUps => "Follow-ups",
             ItemSection::Order => "Order",
             ItemSection::OpenQuestions => "Open questions",
+            ItemSection::Hours => "Hours",
         }
     }
 
@@ -517,6 +524,7 @@ pub fn parse(text: &str) -> ParsedDoc {
 
     doc.body_chars = (body.chars().count() - code_chars) as u32;
     doc.items.sort_by_key(|i| i.range.start);
+    doc.files_paragraph = scan.files_paragraph.take();
     doc
 }
 
@@ -530,6 +538,12 @@ struct ItemScan {
     section: Option<ItemSection>,
     /// The list items that are open now, outer first.
     open: Vec<OpenItem>,
+    /// The depth of the block quotes that are open now.
+    quotes: u32,
+    /// The start of the paragraph of `Files` that the parser reads now.
+    paragraph: Option<usize>,
+    /// The first paragraph of the section `Files` outside a list.
+    files_paragraph: Option<Token>,
 }
 
 struct OpenItem {
@@ -560,6 +574,29 @@ impl ItemScan {
             Event::Text(t) | Event::Code(t) if self.heading.is_some() => {
                 if let Some(h) = self.heading.as_mut() {
                     h.push_str(t);
+                }
+            }
+            Event::Start(Tag::BlockQuote(_)) => self.quotes += 1,
+            Event::End(TagEnd::BlockQuote(_)) => self.quotes = self.quotes.saturating_sub(1),
+            Event::Start(Tag::Paragraph) => {
+                if self.section == Some(ItemSection::Files)
+                    && self.open.is_empty()
+                    && self.quotes == 0
+                    && self.files_paragraph.is_none()
+                {
+                    self.paragraph = Some(range.start);
+                }
+            }
+            Event::End(TagEnd::Paragraph) => {
+                if let Some(start) = self.paragraph.take() {
+                    let text = body[start..range.end]
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    self.files_paragraph = Some(Token {
+                        text,
+                        line: lines.line(body_start + start),
+                    });
                 }
             }
             Event::Start(Tag::Item) => {
@@ -1591,5 +1628,69 @@ mod tests {
             &src[r.sentence.start as usize..r.sentence.end as usize],
             "Text."
         );
+    }
+
+    fn paragraph(src: &str) -> Option<(String, u32)> {
+        parse(src).files_paragraph.map(|t| (t.text, t.line))
+    }
+
+    #[test]
+    fn the_first_paragraph_of_files_is_kept_on_one_line_with_its_line() {
+        assert_eq!(
+            paragraph("# P\n\n## Files\n\nNone.\n"),
+            Some(("None.".to_string(), 5))
+        );
+        // Lines join with one space. The text is as it is in the source.
+        assert_eq!(
+            paragraph("# P\n\n## files\n\nThe `dose` code,\n   and the test.\n\nMore.\n"),
+            Some(("The `dose` code, and the test.".to_string(), 5))
+        );
+        // The text is in the file with its front matter.
+        assert_eq!(
+            paragraph("---\nstatus: draft\n---\n# P\n\n## Files\n\nnone\n"),
+            Some(("none".to_string(), 8))
+        );
+        // A list item is no paragraph, also a loose item. A paragraph after
+        // the list is the first paragraph that is not in a list.
+        assert_eq!(paragraph("## Files\n\n- `a`\n\n  more\n"), None);
+        assert_eq!(paragraph("## Files\n\n1. `a`\n- `b`\n"), None);
+        assert_eq!(
+            paragraph("## Files\n\n- `a`\n\nAfter the list.\n"),
+            Some(("After the list.".to_string(), 5))
+        );
+        // A block quote, another section, a table and a section with no
+        // paragraph give none.
+        assert_eq!(paragraph("## Files\n\n> Note.\n"), None);
+        assert_eq!(paragraph("## Risks\n\nText.\n\n## Files\n"), None);
+        assert_eq!(paragraph("## Order\n\nText.\n"), None);
+        assert_eq!(paragraph("## Files\n\n| a |\n| - |\n| b |\n"), None);
+        assert_eq!(paragraph("Text.\n\n## Files and paths\n\nText.\n"), None);
+        // Only the first paragraph, and the first section.
+        assert_eq!(
+            paragraph("## Files\n\nOne.\n\nTwo.\n\n## Files\n\nThree.\n"),
+            Some(("One.".to_string(), 3))
+        );
+    }
+
+    #[test]
+    fn items_under_hours_are_kept() {
+        let d =
+            parse("# P\n\n## Hours\n\n- 1.5: t1 code\n- 2: review\n- [ ] 0.5\n\n## Other\n\n- x\n");
+        let got: Vec<_> = d
+            .items
+            .iter()
+            .map(|i| (i.section, i.task, i.text.as_str(), i.line))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (ItemSection::Hours, None, "1.5: t1 code", 5),
+                (ItemSection::Hours, None, "2: review", 6),
+                (ItemSection::Hours, Some(false), "0.5", 7),
+            ]
+        );
+        assert_eq!(ItemSection::from_heading("hours"), Some(ItemSection::Hours));
+        assert_eq!(ItemSection::ALL.len(), 9);
+        assert_eq!(PARSER_VERSION, 14);
     }
 }

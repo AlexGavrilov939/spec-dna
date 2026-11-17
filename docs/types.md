@@ -129,18 +129,19 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level.
+The parser keeps the list items of 9 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level.
 
 | Section | Document | Items |
 | --- | --- | --- |
 | `Delta` | spec | One delta line each: `ADD <id>#<key>: <text>`, `CHANGE <id>#<key>@<hash>: <text>` or `REMOVE <id>#<key>@<hash>` |
-| `Interfaces` | spec | `CHANGE <interface id>: <text>` |
+| `Interfaces` | spec | `CHANGE <interface id>: <text>` for an interface that exists, `ADD <interface id>: <text>` for a new interface, or one item `none` ([the `none` rule](#the-none-rule)) |
 | `Decisions` | spec | Links `[[decisions/<slug>]]` |
-| `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved |
-| `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922) |
-| `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect |
+| `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved. An item with no box gives SD925 |
+| `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922). An item with no box gives SD925 |
+| `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
 | `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
+| `Hours` | plan | One item for each part of the work, as `- 1.5: t1 code`. The parser keeps the items. The commands that read them come later |
 
 Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range. It keeps the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
 
@@ -163,6 +164,8 @@ The `Order` section of a plan holds a task list. A task is one top-level list it
 - `Files:` and `Verify:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the 2 labels does not matter. The first label of each kind counts.
 - The files of a task are the entries after `Files:`. spec-dna removes one final `.` or `;` of the text, and the parentheses that wrap it. An entry is a part of the text up to a comma that is not in a code span and not in a link (`[text](destination)`). An entry gives its code spans, or, if it has no code span, its text if the text is a plain path. They are paths or globs from the repository root.
 - The `Verify:` text is a check: a sentence or a command in a code span. An empty text counts as no text.
+- The text of `Files:` is `none` when its first word is `none`, followed by `:`, `.` or the end of the text ([the `none` rule](#the-none-rule)). Such a task lists no path.
+- An `approved` plan gives SD923 for a task with no `Files:` or no `Verify:`, or with a glob or a folder in `Files:`. It gives SD924 for a task with more than `[change] max-task-files` paths (default 3). A `draft` plan gives neither ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
 - A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
 - If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
 
@@ -188,7 +191,19 @@ The patterns of a plan are the paths of its section `Files`, then the `Files:` p
 
 A plan can state that the work edits no file. The `Files` section then has one item only, a list item, and the item starts with the word `none` in any case, such as `- none: research only`. The word ends at the first character that is not a letter or a digit, so `nonexistent` is not the word. Such a plan lists no file when no task of `Order` has a path in `Files:`. In that case, the item is not a wrong item: `next` and `status` do not name it, and the messages of SD913 and SD915 do not name it. For a routine change, `next` and `status` then show `[x] the plan lists no files: the change edits no file` in place of the step of the files ([commands.md](commands.md#next)). A higher-risk change keeps the step of the files, because its spec has a delta.
 
+### A paragraph under `Files`
+
+The parser keeps the first paragraph of the section `Files` that is not in a list. A paragraph whose first word is `none` means the same as the list item `- none`. The word is `none` in any case. It must be followed by `:`, `.` or the end of the paragraph. So `None.` and `None: this change is research.` state "no files". `None of the old files stay.` is another paragraph.
+
+Another paragraph gives no path. When the section has a paragraph and no list item, `next`, `status` and the messages of SD913 and SD915 say: "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`". When the section has a list item, the list gives the paths, and the paragraph is only text.
+
 Assume that the items of `Files` are not paths, and the plan lists no path in `Files` or in its tasks. Then `next` and `status` say so and show the first such item. The messages of SD913 and SD915 do the same ([diagnostics](diagnostics.md)). If the plan lists a path, they do not name an item, because the item is not the reason for the diagnostic.
+
+### The `none` rule
+
+One item can state "nothing" in the sections `Interfaces`, `Concerns` and `Open questions`. The section then has one item only, and the first word of the item is `none`, in any case. The word must be followed by `:`, `.` or the end of the text. The task box does not matter: `- none`, `- None.` and `- [ ] None.` state "nothing". `- None of the risks is open` does not, and a `none` item with other items is an item like the others.
+
+A section that states "nothing" gives no SD914 (`Interfaces`), no SD919 (`Concerns`), no SD922 (`Open questions`) and no SD925. A list item under `Files` keeps the rule of 0.6.1: it states "no files" when it is the only item and its first word is `none`. The paragraph under `Files` uses the rule of this section.
 
 ## Templates
 
@@ -199,7 +214,7 @@ Assume that the items of `Files` are not paths, and the plan lists no path in `F
 | `prd` | `intent` | `new intent <slug> --template prd` | Problem, Users, Goals, Non-goals, Success measures, Open questions |
 | `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
 | `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope. The 3 intent templates have `class: routine` |
-| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns, Open questions |
+| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns (the item `- [ ] {{An open concern.}}`), Open questions |
 | `plan` (default) | `plan` | `new plan <slug>` | Files (the item `` `{{path}}` ``), Order (2 example tasks, each with `` Files: `{{path}}` ``), Risks, Proof |
 | `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |
 | `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |
@@ -212,7 +227,7 @@ The `prd` and `rfc` templates satisfy the required section of an `intent`, becau
 
 The `Status` section of a decision is a live section: its text can change after the decision has the status `accepted` (`live-sections`, [config.md](config.md#sections-of-a-decision)). It comes before `Amendments`, because an amendment goes at the end of the file and must not be inside the live section. The `Amendments` section of the template is empty.
 
-A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template and writes the H1 from the id. It sets the first status of the type.
+A project template is a Markdown file `<dir>/<name>.md`. Its front matter names its `type`. `new` stops with exit code 2 for an unknown name and for a template of another type. `new` copies the template and writes the H1 from the id. For `intent`, `spec` and `plan`, the H1 is the placeholder `{{The title of the change.}}`, because a slug is a short folder name, and no rule makes a title from it. SD306 reports it until the author writes the title. It sets the first status of the type.
 
 `new` also removes `was-type`, and it removes `type` where the place gives the type. `check` reads no file of the folder as a document.
 

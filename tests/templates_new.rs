@@ -220,7 +220,7 @@ fn spec_and_plan_have_their_required_sections() {
         assert!(text.contains(section), "{text}");
         assert!(text.len() < 700, "{ty}: {} bytes", text.len());
         assert!(
-            text.starts_with("---\nstatus: draft\n---\n# Drip\n"),
+            text.starts_with("---\nstatus: draft\n---\n# {{The title of the change.}}\n"),
             "{text}"
         );
     }
@@ -579,4 +579,83 @@ fn an_amendment_goes_after_the_status_section() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("SD405"), "{out}");
+}
+
+// The title of a document of a change (design 0.7.0, section 15)
+
+#[test]
+fn a_change_document_gets_a_title_placeholder_not_a_title_from_the_slug() {
+    let r = Repo::mixed();
+    for (ty, line) in [("intent", 5), ("spec", 4), ("plan", 4)] {
+        let (code, out, err) = r.run(&["new", ty, "v2-api-client"]);
+        assert_eq!(code, 0, "{ty}: {out}{err}");
+        let path = format!("docs/intent/v2-api-client/{ty}.md");
+        let text = r.read(&path);
+        assert!(
+            text.lines().any(|l| l == "# {{The title of the change.}}"),
+            "{ty}: {text}"
+        );
+        assert!(!text.contains("# V2 api client"), "{ty}: {text}");
+        // The H1 is the line `line`, and SD306 reports it.
+        assert_eq!(
+            text.lines().nth(line - 1),
+            Some("# {{The title of the change.}}"),
+            "{ty}: {text}"
+        );
+        git(&r.dir, &["add", "-A"]);
+        let (_, out, _) = r.run(&["check", "--all"]);
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with(&format!("{path}:{line}: error SD306 "))),
+            "{ty}: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_project_template_of_a_change_gets_the_title_placeholder_too() {
+    let r = Repo::mixed();
+    r.write(
+        ".spec-dna/templates/plain.md",
+        "---\ntype: intent\n---\n# T\n\n## Intent\n\n{{Text.}}\n",
+    );
+    assert_eq!(
+        r.run(&["new", "intent", "drip", "--template", "plain"]).0,
+        0
+    );
+    assert!(
+        r.read("docs/intent/drip/intent.md")
+            .contains("\n# {{The title of the change.}}\n")
+    );
+}
+
+#[test]
+fn a_document_that_is_not_of_a_change_keeps_the_title_of_its_id() {
+    let r = Repo::mixed();
+    assert_eq!(r.run(&["new", "requirements", "water-supply"]).0, 0);
+    assert!(
+        r.read("docs/requirements/water-supply.md")
+            .contains("\n# Water supply\n")
+    );
+    assert_eq!(r.run(&["new", "decision", "use-a-timer"]).0, 0);
+    assert!(
+        r.read("docs/decisions/use-a-timer.md")
+            .contains("# Use a timer\n")
+    );
+}
+
+#[test]
+fn the_spec_template_writes_a_task_box_in_the_concern() {
+    let r = Repo::mixed();
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
+    let text = r.read("docs/intent/drip/spec.md");
+    assert!(
+        text.contains("## Concerns\n\n- [ ] {{An open concern.}}\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("## Open questions\n\n- [ ] {{A question that has no answer yet.}}\n"),
+        "{text}"
+    );
 }
