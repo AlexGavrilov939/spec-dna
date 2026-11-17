@@ -31,7 +31,6 @@ change sensor-timeout (higher-risk), stage design
 base ee7cb62bc0bd
 [x] the intent is accepted [skill: brainstorm]
 [ ] write `docs/intent/sensor-timeout/spec.md` with `spec-dna new spec sensor-timeout` [skill: specify]
-[ ] set `status: approved` in docs/intent/sensor-timeout/spec.md [skill: specify]
 ```
 
 The `Delta` section of the spec lists each requirement that the change adds, changes or removes:

@@ -38,6 +38,10 @@ pub struct Change {
     /// The `class` of the intent. A change with no intent, and an intent with
     /// no `class` or with an invalid `class`, is `routine`.
     pub class: Class,
+    /// True if the change has an intent and its `class` is absent, empty or
+    /// invalid. `next` and `status` then give no class. `check` keeps
+    /// `routine` (design 0.7.0, section 15).
+    pub class_unset: bool,
     /// The `areas` of the intent.
     pub areas: Vec<String>,
     /// The `from` of the intent: the id of an incident.
@@ -65,6 +69,7 @@ pub fn collect(corpus: &Corpus) -> Vec<Change> {
             spec: None,
             plan: None,
             class: Class::Routine,
+            class_unset: false,
             areas: Vec::new(),
             from: None,
         });
@@ -76,6 +81,7 @@ pub fn collect(corpus: &Corpus) -> Vec<Change> {
             DocType::Intent => {
                 change.intent = artifact;
                 change.class = d.class;
+                change.class_unset = !d.class_set;
                 change.areas = d.areas.clone();
                 change.from = d.from.as_ref().map(|(f, _)| f.clone());
             }
@@ -87,6 +93,12 @@ pub fn collect(corpus: &Corpus) -> Vec<Change> {
 }
 
 impl Change {
+    /// The class for `next` and `status`: `None` if the intent has no valid
+    /// class (design 0.7.0, section 15).
+    pub fn class_shown(&self) -> Option<&'static str> {
+        (!self.class_unset).then(|| self.class.name())
+    }
+
     /// The status of the intent, or an empty string if the change has no
     /// intent.
     pub fn intent_status(&self) -> &str {

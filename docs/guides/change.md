@@ -16,7 +16,9 @@ If the class of an intent is too low for its diff, `check` reports SD917. The hi
 
 ## A higher-risk change
 
-Each document needs the approval of the document before it in the base tree. Thus a higher-risk change has 4 pull requests or more: the intent, the spec, the plan, and the code with `finish`. To approve a document, set its status in the pull request. The merge records the approval. With `[change] gate = "warn"`, one pull request can hold all the steps, and `check` reports a warning.
+Each document needs the approval of the document before it. With `[change] approval = "base"`, the base tree must show the approval, so a higher-risk change has 4 pull requests or more: the intent, the spec, the plan, and the code with `finish`. To approve a document, set its status in the pull request. The merge records the approval. With `[change] gate = "warn"`, one pull request can hold all the steps, and `check` reports a warning.
+
+With `[change] approval = "branch"`, an approval commit in the branch also counts, so the approvals and the work can be in one pull request. [The approval commit](#the-approval-commit) gives the rule. The floor stays 2 pull requests, because `finish` follows in a later pull request.
 
 ### 1. Write the intent
 
@@ -24,7 +26,7 @@ Each document needs the approval of the document before it in the base tree. Thu
 spec-dna new intent sensor-timeout
 ```
 
-This command writes `docs/intent/sensor-timeout/intent.md` with the status `draft`. Write what you want and why, in your own words. Set the class in the front matter:
+This command writes `docs/intent/sensor-timeout/intent.md` with the status `draft`. Write what you want and why, in your own words. Set the class in the front matter first, and commit it before the approval. An approval commit changes the `status` line alone, so it cannot also add the class. An intent with no class stays in the stage `plan`, and `next` asks for the class before the approval:
 
 ```md
 ---
@@ -101,13 +103,42 @@ spec-dna finish sensor-timeout
 
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
+## The approval commit
+
+This section is for a project with `[change] approval = "branch"`. `check` then walks the commits of the branch from the oldest. A commit that edits an artifact or a path of `Files` needs the approval of the artifact before it. The approval is in the base tree, or in an approval commit that comes before this commit.
+
+An approval commit meets all these conditions:
+
+1. It is not a merge commit.
+2. The author e-mail is in `[change] approvers` (for example `owner@example.test`). The compare ignores case.
+3. It changes one artifact file only, and the `status` line only: `accepted` for an intent, `approved` for a spec or a plan.
+4. The file is an artifact of a change that the branch started or continued.
+
+The steps of a higher-risk change in one branch:
+
+1. Commit the intent as a `draft`, with its class.
+2. An approver commits `status: accepted` in `intent.md`, in a commit of its own.
+3. Commit the spec as a `draft`. An approver commits `status: approved` in it. Do the same for the plan.
+4. Commit the code.
+
+A `draft` spec or plan needs no approval of the artifact before it. The approval commit of a plan fixes its `Files`: a path that a later commit adds to `Files` has no approved plan (SD910, reason 8). This holds for a plan that an approval commit of the branch approved. A plan that the base tree already approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope. This is for a plan that an approval commit of the branch approved. A plan that the base tree already approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope.
+
+- The e-mail of an author is not a proof. A person can set any e-mail. The control is the code host: `CODEOWNERS` for `docs/intent/`, a protected default branch and required signed commits.
+- In this repository, an agent writes an approval commit only when the owner says so explicitly in the chat ([AGENTS.md](../../AGENTS.md)). This is the rule of this repository, not advice for each project: another project decides for itself. List in `approvers` the e-mails of the persons that approve, and list each e-mail that one person uses. A person that hides the e-mail on the code host has a `noreply` address too.
+- The check needs the full history. Use `fetch-depth: 0` in the step of the checkout in your workflow. A shallow clone gives no approval, and `check` reports SD910 as with `approval = "base"`. If the clone is so shallow that the merge base is not reachable, `check` reports SD910 with reason 5 for each change that needs an approval, and it does not skip the check. `init` writes `fetch-depth: 0` in the workflows that it generates.
+- A merge commit that merges another branch into the branch stops the rule. Rebase the branch, or merge the base into it. A required check must also run on the event `merge_group` of a merge queue.
+- A squash merge keeps the net diff only, so a change that starts and ends in one pull request leaves no record. `check` reports SD910 (reason 7) for a branch that adds a change and finishes it. Merge the artifacts and their approvals in a pull request first, and `finish` in a later one.
+- `status` shows the source of each approval, `base` or `branch <short sha>`. `check --json` lists the approval commits in `approvals`.
+
 ## A routine change
 
-A routine change has no spec and no delta. It has 3 pull requests:
+A routine change has no spec and no delta. With `approval = "base"`, it has 3 pull requests:
 
 1. The intent, with `class: routine` and `status: accepted`.
 2. The plan. The agent sets `status: approved`.
 3. The code. Edit the requirements in the same pull request as the code. Then run `spec-dna finish <slug>`.
+
+With `approval = "branch"`, the intent, its approval commit, the plan, its approval commit and the code can be in one pull request. `finish` follows in a later pull request ([the approval commit](#the-approval-commit)).
 
 For a routine change, `finish` checks the evidence of each requirement whose hash is different from the base.
 
@@ -152,7 +183,7 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 
 | Code | What happened | What to do |
 | --- | --- | --- |
-| SD910 | A document or code changed, and the base has no approval of the document before it | Merge the approval first, in its own pull request |
+| SD910 | A `spec.md` or a `plan.md` that is not a `draft`, or code, changed, and no approval of the document before it counts | With `approval = "base"`, merge the approval first, in its own pull request. With `"branch"`, the message names one of 8 reasons and its fix ([the approval commit](#the-approval-commit)) |
 | SD913 | The diff touches a file that `Files` of the plan does not list | Add the file to `Files` before the pull request of `finish`, or remove the edit |
 | SD914 | A delta line is not valid, or its hash is not the hash of the current text | Run `spec-dna show`. Correct the line in its own pull request before `finish` |
 | SD916 | A new or changed requirement has no evidence | Add a test with a `covers:` tag, or a `verified-by` path |

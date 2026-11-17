@@ -17,6 +17,7 @@ macro_rules! eprintln {
 }
 
 mod adapters;
+mod approval;
 mod change;
 mod check;
 mod cite;
@@ -1006,6 +1007,15 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // before 0.6.0 counts as no lifecycle base (D154).
     let mut change_base =
         lifecycle::change_base(&cfg, &repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    // A shallow clone in branch mode, with a known base and no merge base: the
+    // tip of the base is the lifecycle base, and the rule gives no approval.
+    let mut tip_base = false;
+    if change_base.is_none()
+        && let Some(tip) = lifecycle::shallow_tip(&cfg, &repo.git, a.base.as_deref())
+    {
+        change_base = Some(tip);
+        tip_base = true;
+    }
     let mut life_note: Option<String> = None;
     if let Some(c) = &change_base {
         let pin = if Some(c) == base_commit.as_ref() {
@@ -1179,7 +1189,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     }
     // SD911 is a state code: it reports the tree, so it is never new. It needs
     // a real merge base, and it is silent with the tip fallback.
-    if let Some(rev) = &change_base {
+    if let Some(rev) = change_base.as_ref().filter(|_| !tip_base) {
         let stale = lifecycle::stale_changes(&cfg, &repo.git, head, rev).map_err(Fatal::Io)?;
         let diags = lifecycle::stale_diags(&cfg, head, &stale);
         outcome.new.extend(std::iter::repeat_n(true, diags.len()));
@@ -1345,6 +1355,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .str("pointer", &l.pointer)
                 .end()
         });
+        let approvals_json = report.approvals.iter().map(|x| {
+            Obj::new()
+                .str("commit", &x.commit)
+                .str("path", &x.path)
+                .str("author", &x.author)
+                .end()
+        });
         let mut obj = Obj::new()
             .str("version", VERSION)
             .str("mode", if a.all { "all" } else { "base" })
@@ -1360,6 +1377,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
                 .raw("locked_links", &json::array(locked_json))
+                .raw("approvals", &json::array(approvals_json))
                 .raw("documents", &json::array(docs))
                 .end()
         );

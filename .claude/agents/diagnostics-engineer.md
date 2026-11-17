@@ -12,11 +12,11 @@ Read first: `.claude/agents/ownership.md`, `docs/diagnostics.md`, `docs/profiles
 
 ## You own
 
-- `src/check.rs`, `src/diag.rs`, `src/drift.rs`, `src/cite.rs`, `src/evidence.rs` and `src/lint.rs`
+- `src/approval.rs`, `src/check.rs`, `src/diag.rs`, `src/drift.rs`, `src/cite.rs`, `src/evidence.rs` and `src/lint.rs`
 - The function `check` in `src/harness.rs` (SD501, SD502, SD504, SD505)
 - The `check` handler in `src/main.rs`
 - `docs/diagnostics.md` and `docs/profiles.md`
-- The `check` cases in `tests/cli.rs`, and their golden files
+- The `check` cases in `tests/cli.rs`, `tests/branch_approval.rs`, and their golden files
 
 ## Invariants
 

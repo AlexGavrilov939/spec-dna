@@ -34,6 +34,7 @@ CI runs the same hooks (`.github/workflows/ci.yml`). A change is complete only w
 - Commits and PR titles follow Conventional Commits. See `CONTRIBUTING.md`.
 - Work on a branch. Do not commit to `master` directly.
 - Start each change that is not a small fix with `spec-dna new intent <slug>`. `CONTRIBUTING.md`, section "Changes", gives the steps.
+- Approval commits: an agent writes an approval commit (a commit that sets `status: accepted` or `status: approved`) only when the owner says so explicitly in the chat. Do not set such a status on your own initiative. The owner turns the rule of the approval in the branch on in `spec-dna.toml` (a pull request of its own, SD503), and lists the approvers there. Until then, this repository uses the rule of the base tree.
 - GitHub Actions: pin each `uses:` to a full commit SHA, with the version tag in a trailing comment. Set `permissions: {}` at the workflow level, and give each job only the permissions that it needs.
 - Do not commit secrets or local agent state: `.env*`, `.claude/settings.local.json`, `CLAUDE.local.md`.
 - Docs: follow `CONTRIBUTING.md`, section "Docs layout". Give each page one kind. Write each detail in one reference page. Add each new page to `docs/README.md`.

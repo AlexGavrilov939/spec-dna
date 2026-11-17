@@ -8,8 +8,9 @@
 //! The stage `Maintain` is not the stage of a change: an incident with an open
 //! item in `Follow-ups` is a follow-up, and `status` lists it.
 
+use crate::approval::Branch;
 use crate::change::{self, Change, PlanTask, Verb};
-use crate::config::{ChangePolicy, Config};
+use crate::config::{Approval, ChangePolicy, Config};
 use crate::evidence::{self, Evidence};
 use crate::json::{self, Obj};
 use crate::lifecycle::{self, Diff, ReqChangeKind};
@@ -190,6 +191,9 @@ pub struct View {
     /// The diff of the working tree against the base.
     pub diff: Option<Diff>,
     pub notes: Vec<String>,
+    /// True with `[change] approval = "branch"`. Then an approval line also
+    /// tells an approver to commit the `status` line alone (design 0.7.0, D7).
+    pub branch: bool,
 }
 
 /// Reads the working tree, the lifecycle base and the diff. An unknown `--base`
@@ -227,6 +231,7 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
         base_rev,
         diff,
         notes,
+        branch: cfg.change_approval == Approval::Branch,
     })
 }
 
@@ -358,6 +363,17 @@ impl<'a> Ctx<'a> {
         out
     }
 
+    /// The end of a line that asks for an approval. With the branch rule, an
+    /// approver commits the `status` line alone, so that the commit counts
+    /// (design 0.7.0, D7 and D11).
+    fn alone(&self) -> &'static str {
+        if self.view.branch {
+            ": an approver commits the `status` line alone"
+        } else {
+            ""
+        }
+    }
+
     /// Derives the stage of a change and its checklist. The stage is the first
     /// row of the table of the design that matches.
     pub fn derive(&self, ch: &Change) -> Report {
@@ -391,6 +407,7 @@ impl<'a> Ctx<'a> {
                 None,
             );
         }
+        let alone = self.alone();
         if intent != "accepted" {
             let mut items = Self::clarify_items(head, ch);
             items.push(if ch.intent.is_none() {
@@ -398,19 +415,47 @@ impl<'a> Ctx<'a> {
                     false,
                     Step::Plan,
                     format!(
-                        "write `{dir}/intent.md` with `spec-dna new intent {slug}`, then set `status: accepted` in it"
+                        "write `{dir}/intent.md` with `spec-dna new intent {slug}`, then set `status: accepted` in it{alone}"
+                    ),
+                )
+            } else if ch.class_unset {
+                // The class comes first: an approval commit changes the
+                // `status` line alone.
+                item(
+                    false,
+                    Step::Plan,
+                    format!(
+                        "write `class: routine` or `class: higher-risk` in the front matter of {dir}/intent.md and commit it, then set `status: accepted`{alone}"
                     ),
                 )
             } else {
                 item(
                     false,
                     Step::Plan,
-                    format!("set `status: accepted` in {dir}/intent.md"),
+                    format!("set `status: accepted` in {dir}/intent.md{alone}"),
                 )
             });
             return report(Stage::Plan, items, None);
         }
         let intent_done = item(true, Step::Plan, "the intent is accepted");
+        // The class decides the next artifact, so an accepted intent with no
+        // class stays at the stage `plan`.
+        if ch.class_unset {
+            return report(
+                Stage::Plan,
+                vec![
+                    intent_done,
+                    item(
+                        false,
+                        Step::Plan,
+                        format!(
+                            "write `class: routine` or `class: higher-risk` in the front matter of {dir}/intent.md; until then `check` reads the change as `routine`"
+                        ),
+                    ),
+                ],
+                None,
+            );
+        }
         if higher && spec != "approved" {
             let mut items = vec![intent_done];
             if ch.spec.is_none() {
@@ -436,11 +481,14 @@ impl<'a> Ctx<'a> {
                 }
             }
             items.extend(Self::clarify_items(head, ch));
-            items.push(item(
-                false,
-                Step::Specify,
-                format!("set `status: approved` in {dir}/spec.md"),
-            ));
+            // A line to approve a file that does not exist would be false.
+            if ch.spec.is_some() {
+                items.push(item(
+                    false,
+                    Step::Specify,
+                    format!("set `status: approved` in {dir}/spec.md{alone}"),
+                ));
+            }
             return report(Stage::Design, items, None);
         }
         let mut done = vec![intent_done];
@@ -493,11 +541,13 @@ impl<'a> Ctx<'a> {
                 next_task = Some(task.clone());
             }
             if !approved {
-                items.push(item(
-                    false,
-                    Step::WritePlan,
-                    format!("set `status: approved` in {dir}/plan.md"),
-                ));
+                if ch.plan.is_some() {
+                    items.push(item(
+                        false,
+                        Step::WritePlan,
+                        format!("set `status: approved` in {dir}/plan.md{alone}"),
+                    ));
+                }
             } else if !no_files {
                 let files = ch.files(head);
                 items.push(item(
@@ -681,6 +731,10 @@ pub fn follow_ups(head: &Corpus) -> Vec<FollowUp> {
     out
 }
 
+/// The skill of an open follow-up of an incident (design 0.7.0, D8). It is
+/// not a step of a change, so it is not in `SKILLS`.
+const POST_MORTEM: &str = "post-mortem";
+
 const OFF_NOTE: &str = "the change process is off: `[change] policy` is `none`";
 
 /// The short form of a commit.
@@ -750,7 +804,7 @@ pub fn next(
             "{}",
             Obj::new()
                 .str("slug", &ch.slug)
-                .str("class", ch.class.name())
+                .opt_str("class", ch.class_shown())
                 .str("stage", r.stage.name())
                 .opt_str("base", view.base_rev.as_deref())
                 .raw("items", &json::array(items))
@@ -764,7 +818,7 @@ pub fn next(
     println!(
         "change {} ({}), stage {}",
         ch.slug,
-        ch.class.name(),
+        ch.class_shown().unwrap_or("class not set"),
         r.stage.name()
     );
     match &view.base_rev {
@@ -785,6 +839,48 @@ pub fn next(
         );
     }
     Ok(0)
+}
+
+/// The source of the approval of each artifact of a change, in the order
+/// intent, spec and plan (design 0.7.0, D8): `base`, or `branch <short sha>`.
+/// An artifact whose status is not `accepted` or `approved`, an absent
+/// artifact and an approval that no gate counts give `None`. It follows the
+/// rule of the last approval of SD910: the base tree first, then the approval
+/// commit that set the status.
+fn sources_of(view: &View, ch: &Change, walk: Option<&Branch>) -> [Option<String>; 3] {
+    let base_changes = view.base.as_ref().map(change::collect);
+    let base_ch = base_changes
+        .as_ref()
+        .and_then(|b| b.iter().find(|b| b.dir == ch.dir));
+    let one = |a: &Option<change::Artifact>, base: Option<&change::Artifact>| {
+        let a = a.as_ref()?;
+        if !matches!(a.status.as_str(), "accepted" | "approved") {
+            return None;
+        }
+        if base.is_some_and(|b| b.status == a.status) {
+            return Some("base".to_string());
+        }
+        let w = walk.filter(|w| w.stopped().is_none())?;
+        let path = &view.head.docs[a.doc as usize].path;
+        match w.last(path, &a.status) {
+            Ok(Some(ap)) => Some(format!("branch {}", short(&ap.commit))),
+            _ => None,
+        }
+    };
+    [
+        one(&ch.intent, base_ch.and_then(|b| b.intent.as_ref())),
+        one(&ch.spec, base_ch.and_then(|b| b.spec.as_ref())),
+        one(&ch.plan, base_ch.and_then(|b| b.plan.as_ref())),
+    ]
+}
+
+/// The object `approved_in` of `status --json`.
+fn approved_json(s: &[Option<String>; 3]) -> String {
+    Obj::new()
+        .opt_str("intent", s[0].as_deref())
+        .opt_str("spec", s[1].as_deref())
+        .opt_str("plan", s[2].as_deref())
+        .end()
 }
 
 /// `spec-dna status [--group <name>]`: each change with its class, stage, next
@@ -835,12 +931,19 @@ pub fn status(
     };
     let started = lifecycle::started_count(&view.head);
     let follow = follow_ups(&view.head);
+    let walk = match (&view.base, &view.base_rev) {
+        (Some(base), Some(rev)) if view.branch => {
+            Some(Branch::read(cfg, &repo.git, rev, base, &view.head))
+        }
+        _ => None,
+    };
     struct Row<'a> {
         ch: &'a Change,
         report: Report,
         tasks: Tasks,
         areas: Vec<String>,
         stale: bool,
+        sources: [Option<String>; 3],
     }
     let rows: Vec<Row> = cx
         .changes
@@ -858,6 +961,7 @@ pub fn status(
                 tasks: tasks(ch, &view.head),
                 areas,
                 stale: stale.contains(&ch.slug),
+                sources: sources_of(&view, ch, walk.as_ref()),
             })
         })
         .collect();
@@ -886,8 +990,9 @@ pub fn status(
                 .str("slug", &r.ch.slug)
                 .str("path", &r.ch.dir)
                 .str("title", title)
-                .str("class", r.ch.class.name())
+                .opt_str("class", r.ch.class_shown())
                 .raw("statuses", &statuses)
+                .raw("approved_in", &approved_json(&r.sources))
                 .str("stage", r.report.stage.name())
                 .str("next", r.report.next())
                 .bool("stale", r.stale)
@@ -901,6 +1006,7 @@ pub fn status(
                 .str("path", &f.path)
                 .num("line", f.line)
                 .str("text", &f.text)
+                .str("skill", POST_MORTEM)
                 .end()
         });
         println!(
@@ -938,10 +1044,15 @@ pub fn status(
         );
     }
     for r in &rows {
-        let st = |a: &Option<crate::change::Artifact>| {
+        // With the branch rule, a status that an approval gives has its source.
+        let st = |a: &Option<crate::change::Artifact>, i: usize| {
             a.as_ref().map_or("-".to_string(), |a| {
                 if a.status.is_empty() {
                     "none".to_string()
+                } else if view.branch
+                    && let Some(src) = &r.sources[i]
+                {
+                    format!("{} ({src})", a.status)
                 } else {
                     a.status.clone()
                 }
@@ -950,11 +1061,11 @@ pub fn status(
         let mut line = format!(
             "{} {} {} intent {} spec {} plan {}",
             r.ch.slug,
-            r.ch.class.name(),
+            r.ch.class_shown().unwrap_or("none"),
             r.report.stage.name(),
-            st(&r.ch.intent),
-            st(&r.ch.spec),
-            st(&r.ch.plan)
+            st(&r.ch.intent, 0),
+            st(&r.ch.spec, 1),
+            st(&r.ch.plan, 2)
         );
         if r.tasks.total > 0 {
             line.push_str(&format!(" tasks {}/{}", r.tasks.done, r.tasks.total));
@@ -972,7 +1083,10 @@ pub fn status(
         println!("  next: {}", r.report.next());
     }
     for f in &follow {
-        println!("follow-up {}: {}:{} {}", f.incident, f.path, f.line, f.text);
+        println!(
+            "follow-up {}: {}:{} {} [skill: {POST_MORTEM}]",
+            f.incident, f.path, f.line, f.text
+        );
     }
     Ok(0)
 }

@@ -259,3 +259,103 @@ fn a_bad_base_is_still_exit_code_3() {
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("`nope` is not a commit"), "{err}");
 }
+
+// The keys `approval` and `approvers` (design 0.7.0, D14 and D15). The binary
+// reads them in all cases, and the tests here check what it accepts and what
+// it rejects. The rule of SD910 that uses them has its own tests.
+
+#[test]
+fn approval_takes_base_and_branch() {
+    accepts(&table("approval = \"base\""));
+    accepts(&table(
+        "approval = \"branch\"\napprovers = [\"owner@example.test\"]",
+    ));
+    for bad in ["\"Branch\"", "\"\"", "\"none\"", "\"base \""] {
+        rejects(
+            &table(&format!("approval = {bad}")),
+            &["`change.approval` must be", "\"base\"", "\"branch\""],
+        );
+    }
+    for bad in ["true", "1", "[\"branch\"]"] {
+        rejects(
+            &table(&format!("approval = {bad}")),
+            &["`change.approval` must be a string"],
+        );
+    }
+}
+
+#[test]
+fn approvers_are_a_list_of_e_mails() {
+    // With `approval = "base"` the list is free, and it can be empty or absent.
+    accepts(&table("approvers = []"));
+    accepts(&table(
+        "approval = \"base\"\napprovers = [\"a@example.test\"]",
+    ));
+    accepts(&table(
+        "approval = \"branch\"\napprovers = [\"a@example.test\", \"12+b@users.noreply.example.test\"]",
+    ));
+    rejects(
+        &table("approvers = \"a@example.test\""),
+        &["`change.approvers` must be an array of strings"],
+    );
+    rejects(
+        &table("approvers = [1]"),
+        &["`change.approvers` must hold strings"],
+    );
+    rejects(
+        &table("approvers = [\"a@example.test\", \"  \"]"),
+        &["`change.approvers`", "is empty"],
+    );
+}
+
+#[test]
+fn branch_with_no_approver_is_exit_code_3() {
+    for keys in [
+        "approval = \"branch\"",
+        "approval = \"branch\"\napprovers = []",
+    ] {
+        rejects(
+            &table(keys),
+            &[
+                "`change.approvers`",
+                "`change.approval = \"branch\"`",
+                "at least one e-mail",
+            ],
+        );
+    }
+}
+
+#[test]
+fn strict_with_branch_is_exit_code_3() {
+    let keys = "approval = \"branch\"\napprovers = [\"owner@example.test\"]";
+    let r = repo("profile = \"strict\"\n", &table(keys));
+    let (code, _, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 3, "{err}");
+    for n in ["`change.approval = \"branch\"`", "`strict`", "base"] {
+        assert!(err.contains(n), "`{n}` is not in\n{err}");
+    }
+    // `strict` with `base`, and the other profiles with `branch`, are valid.
+    let r = repo("profile = \"strict\"\n", &table("approval = \"base\""));
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    for p in ["lite", "standard"] {
+        let r = repo(&format!("profile = \"{p}\"\n"), &table(keys));
+        let (code, out, err) = r.run(&["check", "--all"]);
+        assert_eq!(code, 0, "{p}\n{out}\n{err}");
+    }
+}
+
+#[test]
+fn an_approver_that_is_no_e_mail_is_exit_code_3() {
+    // A wildcard matches each author, so the condition would be empty (ADR
+    // 0012). An item with no `@` is no e-mail.
+    for item in ["*", "owner", "*@example.test", "owner@*"] {
+        rejects(
+            &table(&format!("approval = \"branch\"\napprovers = [\"{item}\"]")),
+            &["change.approvers", item, "e-mail"],
+        );
+    }
+    accepts(&table(
+        "approval = \"branch\"\napprovers = [\"owner@example.test\"]",
+    ));
+}

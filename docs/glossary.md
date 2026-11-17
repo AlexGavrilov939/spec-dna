@@ -8,10 +8,12 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | advisor | A second, stronger model that the main model consults before a decision | | [harness](harness.md) |
 | alias | An earlier id of a document or a requirement. A reference to an alias resolves to the current id | | [concepts](concepts.md#ids-and-requirements) |
 | amendment section | A section of an accepted decision that can grow after the acceptance. The default name is `Amendments` | | [config](config.md) |
+| approval commit | A commit of an approver in the branch that changes the `status` line of one artifact file to `accepted` or `approved`. With `[change] approval = "branch"`, it counts as an approval for the work after it | | [change guide](guides/change.md#the-approval-commit) |
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
+| approver | A person whose author e-mail is in `[change] approvers`. Only the approval commits of an approver count | | [config](config.md) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
-| base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree | | [concepts](concepts.md#the-change-lifecycle) |
+| base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch | | [concepts](concepts.md#the-change-lifecycle) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
 | change class | The weight of a change: `small-fix`, `routine` or `higher-risk` | | [change guide](guides/change.md#choose-the-class) |

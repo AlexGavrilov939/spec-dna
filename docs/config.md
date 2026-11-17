@@ -42,6 +42,8 @@ gate = "block"                  # "block", "warn" or "off"
 high-risk-layers = ["interfaces", "rules"]  # a delta in these layers makes a change higher-risk (default)
 high-risk-paths = []            # globs from the repository root (default: none)
 max-fanout = 8                  # documents that one change can touch before SD905 (default)
+approval = "base"               # "base" or "branch": where an approval can be (default: "base")
+approvers = []                  # the author e-mails of the approval commits, with approval = "branch"
 
 [templates]
 dir = ".spec-dna/templates"     # project templates (default); not a root
@@ -131,6 +133,8 @@ sonnet = "high"
 | `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
 | `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
 | `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
+| `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
+| `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
@@ -342,12 +346,14 @@ gate = "block"                              # "block", "warn" or "off"
 high-risk-layers = ["interfaces", "rules"]  # layers whose documents make a change higher-risk
 high-risk-paths = []                        # globs from the repository root
 max-fanout = 8                              # documents that one change can touch before SD905
+approval = "branch"                         # "base" or "branch": where an approval can be (default: "base")
+approvers = ["owner@example.test"]          # the author e-mails of the approval commits
 base = "main"                               # a local branch, for a repository with no remote (default: none)
 ```
 
 The table `[change]` sets the change process: the change classes that the project uses, and the strictness of the gate. [The change guide](guides/change.md) gives the process. The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate.
 
-`spec-dna init` writes the table with the 5 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
+`spec-dna init` writes the table with the 5 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). It also writes `approval` and `approvers`: see [Approval in the branch](#approval-in-the-branch). `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
 
 `policy` has these values:
 
@@ -366,7 +372,7 @@ The key `gate` sets the severity of SD910. The order of the sources for SD910 is
 3. The key `gate`: `block` is an error, `warn` is a warning, `off` is off.
 4. The profile ([profiles.md](profiles.md)): a warning in `lite`, an error in `standard` and `strict`.
 
-With `gate = "block"`, a change to the artifact of a stage needs the base tree to show approval of the earlier artifact.
+With `gate = "block"`, a change to the artifact of a stage needs the approval of the earlier artifact. With `approval = "base"`, the base tree must show it. With `approval = "branch"`, an approval commit of an approver in the branch also counts.
 
 `high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905.
 
@@ -379,6 +385,27 @@ The lifecycle checks compare the head with the merge base of a base revision and
 spec-dna never guesses a branch: it reads only the branch that the file names, and it uses no network. A repository with no remote has no `origin/HEAD`, so set `base` there. If the branch does not exist and there is no `origin/HEAD`, the base is unknown. This is not an error, because a CI clone often has no local branch. If the branch exists but has no common history with `HEAD`, the note says so. The commands print a note, `check` runs only the checks of one tree, and `--base <rev>` gives the base. `status`, `next`, `finish` and `check` read the key. `finish` reads it for each policy.
 
 A change of `base` edits `spec-dna.toml`, so SD503 applies: make it a change of its own.
+
+### Approval in the branch
+
+`approval` sets where SD910 looks for the approval of the earlier artifact of a change:
+
+| Value | Meaning |
+| --- | --- |
+| `base` | Only the base tree holds approvals. This is the default and the rule of 0.6. |
+| `branch` | An approval commit of an approver in the branch also counts, if it comes before the work that it approves. |
+
+`approvers` lists the author e-mails of such a commit. The compare ignores case and needs an exact match, so a person who hides an e-mail on the code host lists the `noreply` address too. An e-mail is not a proof of identity. [ADR 0012](adr/0012-approval-in-the-branch.md) states the limit: the code host is the control.
+
+These values are an error (exit code 3):
+
+- `approval = "branch"` with no `approvers`, or with an empty list.
+- `approval = "branch"` with `profile = "strict"`. `strict` reads the approvals of the base only.
+- An item of `approvers` that is empty, that holds `*`, or that has no `@`. A wildcard matches each author, so ADR 0012 rejects it.
+
+`approval = "branch"` needs the full history of the branch. A shallow clone gives the result of `base`, and when the merge base is not reachable SD910 reports reason 5. Use `fetch-depth: 0` in a workflow that runs `check`.
+
+`init` writes `approval = "branch"` and your `git config user.email` as the one approver for `lite` and `standard`. It writes `approval = "base"` for `strict`. If git has no `user.email`, it writes `approval = "base"` and no `approvers`, and it prints a note. An upgraded project keeps `base`. A change of these keys edits `spec-dna.toml`, so SD503 applies.
 
 ## The table `templates`
 

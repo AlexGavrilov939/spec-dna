@@ -8,9 +8,14 @@
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`, or of
 //! the local branch of `[change] base`) with `HEAD`. It is never the tip of `--base`: a branch that started from an old
 //! commit is not behind the default branch because of that.
+//!
+//! SD910 reads the approvals from the base tree. With `[change] approval =
+//! "branch"`, it also reads the approval commits of `base..HEAD`
+//! ([`crate::approval`], design 0.7.0, D11 to D17).
 
+use crate::approval::{Approval, Branch, Fail, Reason};
 use crate::change::{self, Change, Delta, Verb};
-use crate::config::{ChangePolicy, Config};
+use crate::config::{self, ChangePolicy, Config};
 use crate::diag::{Code, Diag};
 use crate::evidence::Evidence;
 use crate::git::{Git, PathChange};
@@ -30,6 +35,23 @@ pub const NO_BASE_NOTE: &str = "no base for the change checks; pass --base <rev>
 /// branch exists but has no merge base with `HEAD`, the note says so. Otherwise
 /// it is `NO_BASE_NOTE`.
 pub fn no_base_note(config: &Config, git: &Git, base: Option<&str>) -> String {
+    let note = no_base_reason(config, git, base);
+    // With the branch rule, a shallow clone is the likely cause (D13).
+    if config.change_approval == config::Approval::Branch && git.is_shallow() {
+        return format!(
+            "{note}; the clone is shallow, and the branch rule needs the full history, so fetch it (`fetch-depth: 0`)"
+        );
+    }
+    note
+}
+
+fn no_base_reason(config: &Config, git: &Git, base: Option<&str>) -> String {
+    // A base that the user passed is not a base to ask for.
+    if let Some(rev) = base {
+        return format!(
+            "no base for the change checks: `{rev}` and HEAD have no merge base (a shallow clone, or histories with no common commit); fetch more history of the branch"
+        );
+    }
     match &config.change_base {
         Some(b)
             if base.is_none() && git.remote_head().is_none() && git.local_branch(b).is_none() =>
@@ -74,6 +96,32 @@ pub fn change_base(
         return Ok(None);
     }
     merge_base_of(git, base, config.change_base.as_deref())
+}
+
+/// The base of the change checks for a shallow clone in branch mode, when the
+/// base is known and the merge base is not reachable (design 0.7.0, D13): the
+/// tip of the base. The branch rule then gives no approval, and SD910 reports
+/// the reason 5 for each change that needs one, so less history never gives a
+/// pass. It is `None` in each other case, and the note of an unknown base stays.
+/// The tip is not a merge base, so SD911 does not use it.
+pub fn shallow_tip(config: &Config, git: &Git, base: Option<&str>) -> Option<String> {
+    if config.change_policy == ChangePolicy::None
+        || config.change_approval != config::Approval::Branch
+        || !git.is_shallow()
+    {
+        return None;
+    }
+    let tip = match base {
+        Some(rev) => git.commit(rev),
+        None => git.remote_head().or_else(|| {
+            config
+                .change_base
+                .as_deref()
+                .and_then(|b| git.local_branch(b))
+        }),
+    }?;
+    let head = git.commit("HEAD")?;
+    git.merge_base(&tip, &head).is_none().then_some(tip)
 }
 
 /// The merge base of `--base` (or, without it, of `refs/remotes/origin/HEAD`,
@@ -769,6 +817,10 @@ pub struct BaseReport {
     /// True if a commit of the branch added a change and the branch finished
     /// it (B5). Such a change is a change of the diff, so SD921 stays silent.
     pub born: bool,
+    /// The approval commits that cleared a gate of SD910 (`check --json`,
+    /// `approvals`), in the order of the walk. It is empty with
+    /// `approval = "base"`.
+    pub approvals: Vec<Approval>,
 }
 
 /// How a change came into the diff.
@@ -931,9 +983,11 @@ impl<'a> Ctx<'a> {
 /// does not change), SD915, SD916, SD917, SD918 and SD920 (the decision that is
 /// not `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
 /// diff of the head against it. The checks read the artifacts of a change from
-/// the head tree, and from the base tree if the diff deletes the folder. They
-/// read approvals from the base tree only, so an approval in the same pull
-/// request does not count.
+/// the head tree, and from the base tree if the diff deletes the folder. With
+/// `approval = "base"` they read approvals from the base tree only, so an
+/// approval in the same pull request does not count. With `approval =
+/// "branch"`, SD910 also reads the commits of `base_rev..HEAD`
+/// ([`crate::approval`]).
 pub fn base_checks(
     config: &Config,
     git: &Git,
@@ -974,8 +1028,13 @@ pub fn base_checks(
     };
     let changes = diff_changes(&ctx)?;
     let mut out = Vec::new();
+    let mut approvals = Vec::new();
     if on(Code::GateApprovalMissing) {
-        out.extend(approval_missing(&ctx, &changes));
+        let branch = (config.change_approval == config::Approval::Branch)
+            .then(|| Branch::read(config, git, base_rev, base, head));
+        let (diags, used) = approval_missing(&ctx, &changes, branch.as_ref());
+        out.extend(diags);
+        approvals = used;
     }
     if on(Code::OutsidePlan) {
         out.extend(outside_plan(&ctx, &changes));
@@ -1006,6 +1065,7 @@ pub fn base_checks(
         diags: crate::check::apply_severity(config, out),
         exempt,
         born: changes.iter().any(|c| c.origin == Origin::Born),
+        approvals,
     })
 }
 
@@ -1289,6 +1349,7 @@ fn born_change(ctx: &Ctx, folder: &str) -> (Change, Box<Corpus>) {
             spec: None,
             plan: None,
             class: Class::Routine,
+            class_unset: false,
             areas: Vec::new(),
             from: None,
         });
@@ -1332,23 +1393,55 @@ fn born_corpus(ctx: &Ctx, folder: &str) -> Option<Corpus> {
     ))
 }
 
-/// SD910. A change adds or edits an artifact of a stage, and the base tree does
-/// not show the approval of the artifact before it. Also: code under the `Files`
-/// of a change, and no such change has an `approved` plan in the base tree.
-fn approval_missing(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
+/// The end of the message of an SD910 finding. With `approval = "base"` it is
+/// the text of 0.6 and the reason 1. With the branch rule it is the sentence of
+/// the reason.
+fn sd910_tail(branch: Option<&Branch>, base_text: &str, fail: &Fail) -> String {
+    match branch {
+        Some(_) => format!("; {}", fail.sentence()),
+        None => format!("; {base_text} (reason {})", Reason::NoBase.number()),
+    }
+}
+
+/// SD910. A change adds or edits an artifact of a stage that is not `draft`, and
+/// the base tree does not show the approval of the artifact before it. Also: code
+/// under the `Files` of a change, and no such change has an `approved` plan in
+/// the base tree. With `approval = "branch"`, an approval commit of the branch
+/// before the work also counts (D11), the statuses that the branch sets need an
+/// approval commit (the last approval), and the message names one reason of 8
+/// (D17). The second value is the approval commits that cleared a gate.
+fn approval_missing(
+    ctx: &Ctx,
+    changes: &[DiffChange],
+    branch: Option<&Branch>,
+) -> (Vec<Diag>, Vec<Approval>) {
     let base_changes = change::collect(ctx.base);
     let base_of = |dir: &str| base_changes.iter().find(|b| b.dir == dir);
+    // The walk of the branch, if it counts approvals. A stopped walk gives the
+    // result of 0.6 with the reason of the stop.
+    let walk = branch.filter(|b| b.stopped().is_none());
+    let stop = branch.and_then(|b| b.stopped());
     let mut out = Vec::new();
+    let mut used: Vec<Approval> = Vec::new();
     for ch in changes {
         let corpus = ctx.corpus(ch);
         let c = &ch.change;
         if ch.origin == Origin::Born {
             // The branch added the change and finished it, so the base tree
-            // has no approval of any artifact.
-            let message = format!(
-                "the change `{}` was added and finished in this branch, and the base tree has no approval of it; get the approval of each artifact into the base first",
-                c.slug
-            );
+            // has no approval of any artifact. With the branch rule the
+            // approval commits do not help (D16).
+            let message = match branch {
+                Some(_) => format!(
+                    "the change `{}` was added and finished in this branch, and the base tree has no approval of it; {}",
+                    c.slug,
+                    Reason::Born.sentence(None)
+                ),
+                None => format!(
+                    "the change `{}` was added and finished in this branch, and the base tree has no approval of it; get the approval of each artifact into the base first (reason {})",
+                    c.slug,
+                    Reason::Born.number()
+                ),
+            };
             let path = format!("{}/intent.md", c.dir);
             out.push(match &c.intent {
                 Some(a) => crate::check::diag(
@@ -1375,30 +1468,86 @@ fn approval_missing(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             ) {
                 continue;
             }
-            let (need, ok, status) = if name == "spec.md" || c.class != Class::HigherRisk {
-                (
-                    "intent.md",
-                    base_ch.is_some_and(|b| b.intent_status() == "accepted"),
-                    "accepted",
-                )
+            let (need, status) = if name == "spec.md" || c.class != Class::HigherRisk {
+                ("intent.md", "accepted")
             } else {
-                (
-                    "spec.md",
-                    base_ch.is_some_and(|b| spec_status(b) == "approved"),
-                    "approved",
-                )
+                ("spec.md", "approved")
             };
-            if !ok {
+            let fail = match walk {
+                // The walk checks the artifact at each commit after which its
+                // status is not `draft`.
+                Some(w) => match w.artifact(&d.path, &format!("{}/{need}", c.dir), status) {
+                    Ok(v) => {
+                        used.extend(v);
+                        None
+                    }
+                    Err(f) => Some(f),
+                },
+                None => {
+                    // A `draft` artifact needs no approval of the artifact
+                    // before it (design 0.7.0, section 15, item 1).
+                    if a.status == "draft" {
+                        continue;
+                    }
+                    let ok = base_ch.is_some_and(|b| match need {
+                        "intent.md" => b.intent_status() == "accepted",
+                        _ => spec_status(b) == "approved",
+                    });
+                    (!ok).then(|| stop.cloned().unwrap_or_else(|| Fail::new(Reason::NoBase)))
+                }
+            };
+            if let Some(f) = fail {
                 out.push(crate::check::diag(
                     d,
                     1,
                     Code::GateApprovalMissing,
                     need,
                     format!(
-                        "`{name}` changes, and the base tree has no `{status}` `{need}` for the change `{}`; get the approval of the earlier artifact into the base first",
-                        c.slug
+                        "`{name}` changes, and the base tree has no `{status}` `{need}` for the change `{}`{}",
+                        c.slug,
+                        sd910_tail(
+                            branch,
+                            "get the approval of the earlier artifact into the base first",
+                            &f
+                        )
                     ),
                 ));
+            }
+        }
+        // The rule of the last approval (D11): each status that the branch
+        // sets needs an approval commit that set it.
+        let Some(w) = walk else { continue };
+        if !matches!(ch.side, Side::Head) {
+            continue;
+        }
+        for (name, art) in [
+            ("intent.md", &c.intent),
+            ("spec.md", &c.spec),
+            ("plan.md", &c.plan),
+        ] {
+            let Some(a) = art else { continue };
+            let d = &corpus.docs[a.doc as usize];
+            if !matches!(
+                ctx.diff.kind(&d.path),
+                Some(PathChange::Added | PathChange::Modified)
+            ) || !matches!(a.status.as_str(), "accepted" | "approved")
+                || w.base_status(&d.path) == Some(a.status.as_str())
+            {
+                continue;
+            }
+            match w.last(&d.path, &a.status) {
+                Ok(v) => used.extend(v),
+                Err(f) => out.push(crate::check::diag(
+                    d,
+                    1,
+                    Code::GateApprovalMissing,
+                    "status",
+                    format!(
+                        "`{name}` has the status `{}`, which differs from the base tree, and no approval commit set it{}",
+                        a.status,
+                        sd910_tail(branch, "", &f)
+                    ),
+                )),
             }
         }
     }
@@ -1419,10 +1568,35 @@ fn approval_missing(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             .filter(|c| change::in_scope(&c.files, p))
             .collect();
         if matching.is_empty()
-            || matching.iter().any(approved)
             || matching.iter().all(|c| c.origin == Origin::Born)
             || ctx.paths().owned.contains(p)
         {
+            continue;
+        }
+        let mut first_fail: Option<Fail> = None;
+        let mut cleared = false;
+        match walk {
+            Some(w) => {
+                for m in matching.iter().filter(|m| m.origin != Origin::Born) {
+                    let plan_path = match &m.change.plan {
+                        Some(a) => ctx.corpus(m).docs[a.doc as usize].path.clone(),
+                        None => format!("{}/plan.md", m.change.dir),
+                    };
+                    match w.code(&plan_path, p) {
+                        Ok(v) => {
+                            used.extend(v);
+                            cleared = true;
+                            break;
+                        }
+                        Err(f) => {
+                            first_fail.get_or_insert(f);
+                        }
+                    }
+                }
+            }
+            None => cleared = matching.iter().any(approved),
+        }
+        if cleared {
             continue;
         }
         let first = matching
@@ -1433,6 +1607,9 @@ fn approval_missing(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             Some(a) => ctx.corpus(first).docs[a.doc as usize].id.clone(),
             None => first.change.slug.clone(),
         };
+        let fail = first_fail
+            .or_else(|| stop.cloned())
+            .unwrap_or_else(|| Fail::new(Reason::NoBase));
         out.push(Diag {
             doc,
             ..path_diag(
@@ -1440,13 +1617,20 @@ fn approval_missing(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
                 Code::GateApprovalMissing,
                 p,
                 format!(
-                    "`{p}` is under `Files` of the change `{}`, and the base tree has no `approved` plan for it; get the approval of the plan into the base first",
-                    first.change.slug
+                    "`{p}` is under `Files` of the change `{}`, and the base tree has no `approved` plan for it{}",
+                    first.change.slug,
+                    sd910_tail(
+                        branch,
+                        "get the approval of the plan into the base first",
+                        &fail
+                    )
                 ),
             )
         });
     }
-    out
+    used.sort_by_key(|a| a.order);
+    used.dedup_by(|a, b| a.commit == b.commit);
+    (out, used)
 }
 
 /// SD913: a path of the diff is outside the scope of each change of the diff.
