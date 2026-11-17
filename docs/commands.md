@@ -175,7 +175,7 @@ docs/decisions/timer.md:8: info: the locked text links `../intent/dose/intent.md
 
 The line is not a diagnostic. It has no code, no severity and no rule, it is not in the counts, and it does not change the exit code. If the target was in the folder of an intent, the line names the change. Otherwise it says "the new place of the text, or the reason for its removal". Add the amendment to the decision: an amendment section can name the new place as plain text. Without `--all`, `check` prints no such line. A reference to a document that exists, with an absent section, is not a locked link.
 
-The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target` and `pointer` (the text after "points to" in the info line). The list is empty if there is no locked link. The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
+The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target` and `pointer` (the text after "points to" in the info line). The list is empty if there is no locked link. The field `approvals` is always in the output too, after `locked_links`. It lists the approval commits that cleared a gate of SD910, in the order of the walk. Each entry has `commit` (the full id), `path` (the artifact that the commit approved) and `author` (the author e-mail). The list is empty with `[change] approval = "base"`, and also when no gate needed an approval commit ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 
 ## context
 
@@ -276,7 +276,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 spec-dna next <slug> [--base <rev>]
 ```
 
-`next` prints the checklist to the next gate of the change `<slug>`, the folder `<intent folder>/<slug>/`. The first 2 lines give the change, its class, its stage and its base. The other lines are the checklist, at most 10. Each line says done (`[x]`) or open (`[ ]`), and ends with `[skill: <name>]`. The last line is the edit or the command that ends the stage, for example ``set `status: accepted` in docs/intent/dose-limit/intent.md``. The output has at most 12 lines.
+`next` prints the checklist to the next gate of the change `<slug>`, the folder `<intent folder>/<slug>/`. The first 2 lines give the change, its class, its stage and its base. An intent with no valid class (the field is absent, empty or invalid) has no class: the first line then says `(class not set)`. The other lines are the checklist, at most 10. Each line says done (`[x]`) or open (`[ ]`), and ends with `[skill: <name>]`. The last line is the edit or the command that ends the stage, for example ``set `status: accepted` in docs/intent/dose-limit/intent.md``. The output has at most 12 lines.
 
 ```text
 change dose-limit (routine), stage build
@@ -295,12 +295,15 @@ A change has no stage field. The stage is the first row of this table that match
 | Stage | The change is in this stage when | The last line of `next` |
 | --- | --- | --- |
 | `closed` | `intent.md` is `closed` | Run `spec-dna finish <slug>` |
-| `plan` | `intent.md` is absent, or its status is not `accepted` | Set `status: accepted` in `intent.md` |
+| `plan` | `intent.md` is absent, or its status is not `accepted`, or its `class` is not set | Set `status: accepted` in `intent.md`, or write the `class` |
 | `design` | The class is `higher-risk`, and `spec.md` is absent or not `approved` | Set `status: approved` in `spec.md` |
 | `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base. A routine change with an approved plan that lists no files is in `build` while a task of `Order` is open | Set `status: approved` in `plan.md`, or change a file of `Files` |
 | `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
+- An intent with no `class` stays in the stage `plan`, because the class decides the next artifact. If its status is `draft`, the last line asks for the class first and then for the status. If its status is `accepted`, the last line asks for the class, and says that `check` reads the change as `routine` until then. `check` does not change: it reads a change with no class as `routine`.
+- A line that asks to approve a spec or a plan appears only when the file exists. With no file, the last line asks to write it with `spec-dna new`.
+- With `[change] approval = "branch"`, each line that asks for an approval also says that an approver commits the `status` line alone. A commit that changes more than the `status` line is no approval commit.
 - If the plan lists no path because the items of `Files` are not paths, the last line says so and shows the first such item. A path is a code span, or a plain path ([Files and paths](types.md#files-and-paths)).
 - A routine change with an approved plan that lists no files has no step for the diff. The plan states this with one `Files` item that starts with `none` ([Files and paths](types.md#files-and-paths)). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage passes `build` when each task of `Order` is done, or when `Order` has no task, with or without a base. A higher-risk change keeps the step of the files.
 - A file of `Files` differs from the base if the diff against the base has a path that a `Files` item matches. The diff is the diff of the working tree. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
@@ -341,7 +344,7 @@ With `--json`, the output is one object:
 {"slug":"dose-limit","class":"routine","stage":"build","base":"3f2a9c1b7e0d4a11...","items":[{"done":true,"text":"the intent is accepted","skill":"brainstorm"}],"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"},"next":"change a file that `Files` of ...","notes":[]}
 ```
 
-`base` is a SHA, or `null`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
+`base` is a SHA, or `null`. `class` is `null` if the intent has no valid class, and with the policy `none`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--base` that is not a commit; 4 git; 5 no folder for the slug.
 
@@ -400,13 +403,13 @@ spec-dna status [--group <name>] [--base <rev>]
 
 `status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total` and the id of the next open task). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
 
-Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
+Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text, and it ends with `[skill: post-mortem]`. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
 
 ```text
 policy three-class, base 3f2a9c1b7e0d, 1 started (max 3)
 dose-limit routine build intent accepted spec - plan approved tasks 1/3 next-task t2 areas valves
   next: change a file that `Files` of docs/intent/dose-limit/plan.md lists: none differs from the base
-follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm for a stuck valve.
+follow-up incidents/valve-stuck: docs/incidents/valve-stuck.md:13 Add an alarm for a stuck valve. [skill: post-mortem]
 ```
 
 `--group <name>` lists only the changes that are in the group. A group is a name of `[groups]` and its areas ([Areas and groups](design/0.6.0.md#areas-and-groups)). A change is in the group in one of these cases:
@@ -419,10 +422,10 @@ The area of a delta target is the first folder under the folder of the layer of 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 
 ```json
-{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve."}]}
+{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
 ```
 
-A status is `null` if the file is absent. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
+A status is `null` if the file is absent. `class` is `null` if the intent has no valid class, and the text shows the token `none`. `approved_in` gives the source of the approval of each artifact: `"base"` (the base tree has the same status), `"branch <short sha>"` (the approval commit that set the status, with `[change] approval = "branch"`) or `null` (the status is not `accepted` or `approved`, the file is absent, or no approval counts). The short sha has 12 characters. With `approval = "branch"`, the text adds `(base)` or `(branch <short sha>)` after each `accepted` or `approved` status. With `approval = "base"`, the text does not change. Each item of `follow_ups` has `"skill":"post-mortem"`. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
 
 Exit codes: 0 done; 2 usage, or an unknown group; 3 configuration, or a `--base` that is not a commit; 4 git.
 

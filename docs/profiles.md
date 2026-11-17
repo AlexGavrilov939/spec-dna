@@ -38,6 +38,7 @@ The codes of the group `changes` depend on the `[change]` table:
 - Without a `[change]` table, the policy is `none`. With `policy = "none"`, each code of the group is off, and no rule enables it.
 - SD918 also needs the table `[evals]`.
 - SD910 follows `[change] gate` when the key is present. `block` makes it an error, `warn` makes it a warning, and `off` disables it. Then the profile column does not apply. If `gate` is absent, SD910 takes the severity of its profile column. When `init` writes the `[change]` table, it also writes `gate`.
+- SD910 reads the approvals of the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). `strict` reads the approvals of the base only, so `approval = "branch"` with `profile = "strict"` is an error (exit code 3). `init` writes `approval = "branch"` for `lite` and `standard`, and `approval = "base"` for `strict`.
 - A rule for SD910 in `[rules]` has priority over the gate. `[rules]` can also override SD921, as it overrides each code.
 
 These codes compare with the lifecycle base: SD905 for a change with no delta, SD910, SD913, SD915, SD916, SD917 and SD918. SD920 for a decision that is not `accepted` and SD921 do the same. This base is the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD`. These codes do not run if git cannot name it.

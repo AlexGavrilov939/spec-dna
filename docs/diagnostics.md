@@ -181,7 +181,7 @@ These codes are new in 0.6.0. They apply only to a project with a `[change]` tab
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
 | SD905 | fan-out | warning | One change touches more requirement documents than `[change] max-fanout`: the documents of the delta of its spec, or, for a change with no delta line, the requirement documents of its diff. Off in `lite`. |
-| SD910 | gate-approval-missing | error | An artifact of a stage changes while the base tree has no approval of the artifact before it. Code under the `Files` of a plan that the base tree does not approve counts as an artifact. Merge the approval first. `[change] gate` sets the severity: `block` is an error, `warn` is a warning, `off` disables the code. |
+| SD910 | gate-approval-missing | error | A `spec.md` or a `plan.md` that is not a `draft` changes while no approval of the artifact before it counts. Code under the `Files` of a plan that no approval covers counts as an artifact. With `[change] approval = "base"`, only the base tree gives an approval. With `"branch"`, an approval commit of an approver in the branch also counts. The message names one of 8 reasons. `[change] gate` sets the severity: `block` is an error, `warn` is a warning, `off` disables the code. |
 | SD911 | change-stale | warning | A started change has had no commit for more than `stale-days` days (a key of the `intent` layer). It is a state code: `check --all` shows it, and it is never new. Off in `lite`. |
 | SD912 | started-limit | warning | More changes than `max-started` of the `intent` layer have an `accepted` intent. The diagnostic is on `spec-dna.toml`. It is new when the head has more started changes than the lifecycle base. Off in `lite`, an error in `strict`. |
 | SD913 | outside-plan | warning | The diff of a change touches a file that no item of `Files` matches. The intent folder and the documents that the delta names are always in scope. Off in `lite`. |
@@ -220,7 +220,7 @@ The checks of the change codes read these trees:
   - SD921.
 - SD911 reads the base and the history.
 
-The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. It reads each approval from the base tree only, so an approval in the same pull request does not count.
+The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. With `[change] approval = "base"`, it reads each approval from the base tree only, so an approval in the same pull request does not count. With `"branch"`, SD910 also reads the commits of `base..HEAD` (see SD910 below).
 
 The changes of a diff are these:
 
@@ -244,13 +244,33 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - The diagnostic is new if the head has more such intents than the lifecycle base has, and the head is over the limit.
 - SD910:
   - The order of artifacts is `intent.md`, then `spec.md` (for `higher-risk`), then `plan.md`, then code. Code is a changed file that no layer owns.
-  - The check reads these rows from the base tree:
+  - The check applies these rows:
     - `intent.md` needs nothing.
     - `spec.md` needs an `accepted` intent.
     - `plan.md` needs an `approved` spec for a `higher-risk` change, and an `accepted` intent for another change.
     - A path that a `Files` item matches needs an `approved` plan. If more than one change matches the path, one approved plan is enough.
+  - A `spec.md` or a `plan.md` with the status `draft` needs no approval of the artifact before it. Code under `Files` still needs an `approved` plan.
+  - With `approval = "base"`, the rows read the base tree. With `approval = "branch"`, they read the base tree and the approval commits of the branch.
   - A branch-born change gives one diagnostic on its intent, because the base tree has no approval for it.
   - SD910 follows `[change] gate`, and a rule in `[rules]` has priority over the gate. A deleted artifact is not an edit.
+  - The approval commit (`approval = "branch"`):
+    - `check` walks the commits of `base..HEAD` from the oldest. The order of the commits counts, and their date does not.
+    - An approval commit is not a merge commit, and the e-mail of its author is in `[change] approvers` (the compare ignores case). It changes one artifact file only, and it changes the `status` line only, to `accepted` for an intent and to `approved` for a spec or a plan.
+    - The scope of a plan is its `Files` at its approval commit. A path that a later commit adds to `Files` has no approved plan.
+    - Each status that the branch sets (`accepted` or `approved`) needs an approval commit that set it, also when no later work depends on it.
+    - The check needs the full history. A shallow clone, and a merge commit that merges another branch, stop the rule, and SD910 then reports as with `approval = "base"`. A merge of the base into the branch, and the test merge of a code host, do not stop it.
+    - A change that the branch adds and finishes gives SD910, also when approval commits exist. The record of `finish` needs the approvals in an earlier pull request.
+    - An author e-mail is not a proof. The code host stays the control: `CODEOWNERS`, a protected default branch and required signed commits.
+  - The message of SD910 names one reason of 8:
+    1. The base tree has no approval.
+    2. No approval commit comes before the work.
+    3. The author of the approval commit is not an approver.
+    4. The commit changes more than the `status` line.
+    5. The clone is shallow.
+    6. A merge commit stops the rule.
+    7. The branch added and finished the change.
+    8. The path is not in the `Files` of the plan at its approval commit.
+  - `check --json` has the field `approvals`: the approval commits that cleared a gate ([commands.md](commands.md#check)).
 - SD913:
   - The scope of a change has these parts:
     - its folder;
