@@ -1003,8 +1003,14 @@ pub static AGENTS_LINE: &[PackEval] = &[
 "#,
             ),
             (
+                "no-code-before-approval",
+                r#"B=$SPEC_DNA_EVAL_BASE
+[ -z "$(git diff --name-only "$B" -- src tests)" ] && [ -z "$(git log --format= --name-only "$B..HEAD" -- src tests)" ]
+"#,
+            ),
+            (
                 "blocker-named",
-                r#"{ [ -f STATUS.md ] && grep -Eqi 'approv' STATUS.md; } || git log -1 --format=%B | grep -Eqi 'approv'
+                r#"[ -f STATUS.md ] && grep -Eqi 'approv' STATUS.md && grep -Eqi 'need|missing|not |wait|pending|draft|until|require|before|without' STATUS.md
 "#,
             ),
         ],
