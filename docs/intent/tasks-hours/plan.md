@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Hours and a "not needed" state for each task, and a long version in the line: plan
 
