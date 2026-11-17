@@ -79,8 +79,14 @@ const REPLACE_RULE: &str = "A spec-dna skill replaces a general skill of the sam
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {
+    line_for(VERSION)
+}
+
+/// The generated line of a version. The marker follows the text with no space,
+/// so that a version up to `99.99.99` fits in 400 bytes.
+fn line_for(version: &str) -> String {
     format!(
-        "{LINE_BODY} <!-- spec-dna v{VERSION} h:{} -->",
+        "{LINE_BODY}<!-- spec-dna v{version} h:{} -->",
         hex(&hash_normalized(LINE_BODY))
     )
 }
@@ -213,12 +219,17 @@ const DISCIPLINE_ITEMS: [(&str, &str, &str); 5] = [
 /// `eval run --ab` arm `without` uses it. For a skill with no discipline, it
 /// is the line of `line()`.
 pub fn line_without(skill: &str) -> String {
+    line_without_for(skill, VERSION)
+}
+
+/// The line without the discipline of `skill`, for a version.
+fn line_without_for(skill: &str, version: &str) -> String {
     let body = match DISCIPLINE_ITEMS.iter().find(|d| d.0 == skill) {
         Some((_, item, _)) => body_without(LINE_BODY, item),
         None => LINE_BODY.to_string(),
     };
     format!(
-        "{body} <!-- spec-dna v{VERSION} h:{} -->",
+        "{body}<!-- spec-dna v{version} h:{} -->",
         hex(&hash_normalized(&body))
     )
 }
@@ -494,6 +505,54 @@ mod tests {
         assert!(skill.contains(DISCIPLINES));
         assert!(skill.contains(REPLACE_RULE));
         assert!(!skill.contains("{disciplines}") && !skill.contains("{replace_rule}"));
+    }
+
+    #[test]
+    fn the_line_fits_400_bytes_with_the_version_99_99_99() {
+        // The marker has no space before it, so the longest version that the
+        // project plans fits in 400 bytes with no byte to spare.
+        let l = line_for("99.99.99");
+        assert!(l.len() <= 400, "{} bytes: {l}", l.len());
+        assert!(l.contains(&format!("{LINE_BODY}<!-- spec-dna v99.99.99 h:")));
+        for (skill, ..) in DISCIPLINE_ITEMS {
+            let l = line_without_for(skill, "99.99.99");
+            assert!(l.len() <= 400, "{skill}: {} bytes: {l}", l.len());
+        }
+        // The functions of the binary use its own version.
+        assert_eq!(line(), line_for(VERSION));
+        assert_eq!(line_without("tdd"), line_without_for("tdd", VERSION));
+        // The text and its hash do not change by one byte.
+        assert!(line().starts_with(LINE_BODY));
+        assert_eq!(
+            line_for("1.2.3"),
+            format!(
+                "{LINE_BODY}<!-- spec-dna v1.2.3 h:{} -->",
+                hex(&hash_normalized(LINE_BODY))
+            )
+        );
+    }
+
+    #[test]
+    fn a_line_with_a_space_before_the_marker_still_reads() {
+        let old = line().replace("<!--", " <!--");
+        assert_ne!(old, line());
+        let (_, _, version, hash, body) = find_line(&old).expect("the old form");
+        assert_eq!((version, hash, body), (VERSION, hash, LINE_BODY));
+        assert_eq!(hash, hex(&hash_normalized(LINE_BODY)));
+        // The new form reads the same.
+        let new = line();
+        let (_, _, _, new_hash, new_body) = find_line(&new).expect("the new form");
+        assert_eq!((new_hash, new_body), (hash, LINE_BODY));
+        // `check` gives SD502 (outdated) for the old form, and none for the new.
+        let d = check(&[(AGENTS, format!("# Rules\n\n{old}\n"))], &[]);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].code, Code::AdapterOutdated);
+        assert!(check(&[(AGENTS, format!("# Rules\n\n{}\n", line()))], &[]).is_empty());
+        // `init` and `upgrade` write the new form again.
+        assert_eq!(
+            upsert_line(&format!("# Rules\n\n{old}\n")),
+            format!("# Rules\n\n{}\n", line())
+        );
     }
 
     #[test]
