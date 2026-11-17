@@ -7,6 +7,10 @@
 //! - a `covers: <doc-id>#<key>` tag in a test file. The tag is plain text, so
 //!   it works in a comment of any language.
 //!
+//! A tag `covers: partial <doc-id>#<key>` records that a test proves a part of
+//! a requirement. It is not evidence: [`Evidence::of`] gives full evidence
+//! only, and [`Evidence::partial_of`] gives the partial tags.
+//!
 //! spec-dna checks that the links resolve. It does not run the tests.
 
 use crate::config::Config;
@@ -24,14 +28,23 @@ pub struct Cover {
     pub path: String,
     pub line: u32,
     pub target: String,
+    /// True for a tag `covers: partial <id>`. It is not evidence.
+    pub partial: bool,
 }
 
-/// Returns the requirement ids of the `covers:` tags of one line. A tag
-/// starts at `covers:` after a character that is not part of a word. The ids
-/// follow it, separated by spaces or commas, each as `<doc-id>#<key>`. The
-/// first word that is not such an id ends the tag, for example `*/` or
-/// `-->`.
-pub fn tags(line: &str) -> Vec<String> {
+/// The characters that a tag word can have around its text.
+fn trim_word(word: &str) -> &str {
+    word.trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '[' | ']' | '(' | ')' | ';' | '.'))
+}
+
+/// Returns the requirement ids of the `covers:` tags of one line, each with
+/// the flag of a partial tag. A tag starts at `covers:` after a character that
+/// is not part of a word. The ids follow it, separated by spaces or commas,
+/// each as `<doc-id>#<key>`. The first word that is not such an id ends the
+/// tag, for example `*/` or `-->`. The word `partial`, in any ASCII case, is
+/// the exception when it is the first word: it makes each id of the tag
+/// partial, with or without one colon after it. After an id, the word `partial` ends the tag as any other word.
+pub fn tags(line: &str) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     let mut rest = line;
     while let Some(pos) = rest.find(TAG) {
@@ -41,16 +54,28 @@ pub fn tags(line: &str) -> Vec<String> {
         if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-') {
             continue;
         }
+        let mut partial = false;
+        let mut first = true;
         for word in after.split(|c: char| c.is_whitespace() || c == ',') {
             if word.is_empty() {
                 continue;
             }
-            let id = word.trim_matches(|c: char| {
-                matches!(c, '`' | '"' | '\'' | '[' | ']' | '(' | ')' | ';' | '.')
-            });
+            let id = trim_word(word);
+            // One colon after the word is part of the form: `partial: <id>`.
+            if first
+                && id
+                    .strip_suffix(':')
+                    .unwrap_or(id)
+                    .eq_ignore_ascii_case("partial")
+            {
+                partial = true;
+                first = false;
+                continue;
+            }
+            first = false;
             match id.split_once('#') {
                 Some((d, k)) if !d.is_empty() && !k.is_empty() && !k.contains('#') => {
-                    out.push(id.to_string())
+                    out.push((id.to_string(), partial))
                 }
                 _ => break,
             }
@@ -84,11 +109,12 @@ pub fn load(
         {
             continue;
         }
-        for target in tags(&text) {
+        for (target, partial) in tags(&text) {
             out.push(Cover {
                 path: path.clone(),
                 line,
                 target,
+                partial,
             });
         }
     }
@@ -101,6 +127,9 @@ pub struct Evidence {
     /// For each (document, index into `parsed.reqs`), the `covers:` tags as
     /// `<path>:<line>`.
     pub covers: HashMap<(u32, usize), Vec<String>>,
+    /// The partial tags, as `<path>:<line>`, in the same form. They are not
+    /// evidence.
+    pub partial: HashMap<(u32, usize), Vec<String>>,
 }
 
 impl Evidence {
@@ -117,8 +146,12 @@ impl Evidence {
             let problem = match c.resolve(&cv.target) {
                 Res::Found(d, Some(key), true) => match c.docs[d as usize].req(&key) {
                     Some(r) => {
-                        ev.covers
-                            .entry((d, r))
+                        let map = if cv.partial {
+                            &mut ev.partial
+                        } else {
+                            &mut ev.covers
+                        };
+                        map.entry((d, r))
                             .or_default()
                             .push(format!("{}:{}", cv.path, cv.line));
                         continue;
@@ -162,8 +195,8 @@ impl Evidence {
 
     /// Returns the evidence of one requirement (an index into `parsed.reqs` of
     /// document `di`). The evidence is the paths of `verified-by` (front
-    /// matter and the inline marker), and the `covers:` tags as
-    /// `<path>:<line>`.
+    /// matter and the inline marker), and the full `covers:` tags as
+    /// `<path>:<line>`. A partial tag is not evidence.
     pub fn of(&self, di: u32, d: &Doc, r: usize) -> Vec<String> {
         let mut out: Vec<String> = d.verified_by.iter().map(|v| v.0.clone()).collect();
         out.extend(d.parsed.reqs[r].verified_by.iter().cloned());
@@ -171,6 +204,12 @@ impl Evidence {
             out.extend(v.iter().cloned());
         }
         out
+    }
+
+    /// The partial `covers:` tags of one requirement, as `<path>:<line>`, in
+    /// the order of the tags.
+    pub fn partial_of(&self, di: u32, r: usize) -> &[String] {
+        self.partial.get(&(di, r)).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -190,4 +229,45 @@ fn same_target(c: &Corpus, target: &str) -> String {
 /// active document.
 pub fn needs_evidence(d: &Doc) -> bool {
     d.ty.has_requirements() && d.status_str() == "active"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ids of the tags of a line, each with `~` if the tag is partial.
+    fn ids(line: &str) -> Vec<String> {
+        tags(line)
+            .into_iter()
+            .map(|(t, p)| if p { format!("~{t}") } else { t })
+            .collect()
+    }
+
+    #[test]
+    fn tags_reads_partial_with_one_trailing_colon() {
+        assert_eq!(ids("# covers: partial: a#b"), ["~a#b"]);
+        assert_eq!(ids("# covers: Partial: a#b, c#d"), ["~a#b", "~c#d"]);
+        // One colon only, and only on the first word.
+        assert!(ids("# covers: partial:: a#b").is_empty());
+        assert_eq!(ids("# covers: a#b partial: c#d"), ["a#b"]);
+    }
+
+    #[test]
+    fn tags_reads_the_word_partial_first_only() {
+        assert_eq!(ids("# covers: a#b"), ["a#b"]);
+        assert_eq!(ids("# covers: partial a#b"), ["~a#b"]);
+        assert_eq!(ids("# covers: PARTIAL a#b"), ["~a#b"]);
+        // The word applies to each id of the tag.
+        assert_eq!(ids("# covers: partial a#b, c#d"), ["~a#b", "~c#d"]);
+        // The trim of punctuation is the one of an id.
+        assert_eq!(ids("# covers: (partial) a#b"), ["~a#b"]);
+        // After an id, the word ends the tag.
+        assert_eq!(ids("# covers: a#b partial c#d"), ["a#b"]);
+        assert_eq!(ids("# covers: a#b partial"), ["a#b"]);
+        // Each tag of a line has its own flag.
+        assert_eq!(ids("# covers: a#b # covers: partial c#d"), ["a#b", "~c#d"]);
+        // The word alone names no id.
+        assert!(ids("# covers: partial").is_empty());
+        assert!(ids("# covers: partial text a#b").is_empty());
+    }
 }

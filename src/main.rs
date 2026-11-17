@@ -319,7 +319,9 @@ not a commit, 4 git.",
 playbook names. It reads git and the committed files only: the plan and
 design times, the survival rate of the intents, the spec commits after the
 first plan commit, the time from plan approval to the merged pull request,
-and how often the merged diff stays inside the plan (SD913). A move of
+how often the merged diff stays inside the plan (SD913), and the share of
+requirements that have a partial covers: tag and no full evidence (it reads
+the tree of HEAD, and no group filter changes it). A move of
 intent.md out of the intent folder does not end a life if git finds the
 rename, the new file is the same text or has the old id in its aliases, and
 the same commit removes no other file of the folder (see log): stats drops

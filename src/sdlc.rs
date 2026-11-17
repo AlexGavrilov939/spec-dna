@@ -19,6 +19,7 @@
 use crate::change::{self, Verb};
 use crate::config::{ChangePolicy, Config, Evals};
 use crate::evals;
+use crate::evidence;
 use crate::frontmatter::{self, Value};
 use crate::git::{ArtifactTouch, DeletedIntent, Git, PathChange};
 use crate::json::{self, Obj};
@@ -1142,6 +1143,7 @@ fn indicators(
         "Regressions caught in CI against regressions found in production",
         "it needs the incident tracker",
     ));
+    rows.push(partial_row(repo, cfg)?);
     rows.push(na(
         "Maintain",
         "leading",
@@ -1204,6 +1206,68 @@ fn test_rows(repo: &Repo, cfg: &Config, shallow: bool) -> Result<Vec<Indicator>,
         pass_rate_row(&repo.git, evals, &tree)?,
         incident_time_row(repo, cfg, evals, head.as_deref(), &tree, shallow)?,
     ])
+}
+
+const PARTIAL: (&str, &str, &str) = (
+    "Test",
+    "lagging",
+    "Share of requirements with partial evidence only",
+);
+
+/// The share of the requirements that need evidence and have a partial
+/// `covers:` tag and no full evidence. It reads the committed tree of `HEAD`
+/// and its tags, as the 2 leading rows of the Test play do. A `--group` filter
+/// does not change it, and a shallow clone adds no note.
+fn partial_row(repo: &Repo, cfg: &Config) -> Result<Indicator, Fatal> {
+    let row = |value: Option<f64>, count: usize, note: &str, empty: &str| {
+        computed(PARTIAL, value, "percent", count, note, empty, false)
+            .counting(("requirement", "requirements"))
+    };
+    let none = "the tree of HEAD has no active requirement";
+    let Some(head) = repo.head_commit() else {
+        return Ok(row(None, 0, "", none));
+    };
+    let snap = Snapshot::at(repo, &head)?;
+    let mut corpus = repo::load(repo, cfg, &[&snap], true, false)?
+        .corpora
+        .remove(0);
+    corpus.covers = evidence::load(repo, cfg, Some(&head), false)?;
+    let (ev, _) = evidence::Evidence::build(&corpus);
+    let (mut n, mut partial, mut bare) = (0, 0, 0);
+    for (di, d) in corpus.docs.iter().enumerate() {
+        if !evidence::needs_evidence(d) {
+            continue;
+        }
+        for &ri in &d.reqs {
+            n += 1;
+            if ev.of(di as u32, d, ri).is_empty() {
+                if ev.partial_of(di as u32, ri).is_empty() {
+                    bare += 1;
+                } else {
+                    partial += 1;
+                }
+            }
+        }
+    }
+    if n == 0 {
+        return Ok(row(None, 0, "", none));
+    }
+    if cfg.evidence_tests.is_empty() {
+        return Ok(row(
+            None,
+            n,
+            "",
+            "`[evidence] tests` is empty, so no `covers:` tag counts",
+        ));
+    }
+    Ok(row(
+        Some(100.0 * partial as f64 / n as f64),
+        n,
+        &format!(
+            "{partial} of {n} requirements have a partial covers: tag only; {bare} have no evidence"
+        ),
+        "",
+    ))
 }
 
 /// The started time and the pass rate of a complete result file: a JSON object

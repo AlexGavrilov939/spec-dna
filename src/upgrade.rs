@@ -690,11 +690,12 @@ fn after(tree: &Tree, plan: &Plan) -> Result<After, Fatal> {
     for p in &files {
         let Some(t) = tests.get(p) else { continue };
         for (i, line) in t.lines().enumerate() {
-            for target in evidence::tags(line) {
+            for (target, partial) in evidence::tags(line) {
                 covers.push(Cover {
                     path: p.clone(),
                     line: i as u32 + 1,
                     target,
+                    partial,
                 });
             }
         }

@@ -54,6 +54,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | locked | The state of the text of an accepted decision outside its amendment, history and live sections. SD405 checks it | frozen | [diagnostics](diagnostics.md) |
 | mixed root | A root with documents of more than one type. The place or the front matter gives the type of each document | | [types](types.md#place-gives-the-type) |
 | `moves-to` | An edge of the layer graph: the text of the source layer matures into the target layer | | [concepts](concepts.md#layers-and-the-graph) |
+| partial tag | A tag `covers: partial <doc-id>#<key>` in a test. It records that the test proves a part of a requirement. It is not evidence | | [config](config.md#a-partial-tag) |
 | pass rate | The share of evals that pass | | [evals](evals.md) |
 | pending | The layer of the top files `roadmap.md` and `questions.md` | | [concepts](concepts.md#layers-and-the-graph) |
 | pin | The version of spec-dna in `spec-dna.toml` (`spec-dna = "<version>"`), with the sums of its binaries as an option | | [config](config.md#the-pin-comes-first) |

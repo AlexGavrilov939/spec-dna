@@ -16,6 +16,8 @@ Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
 Test leading: The eval pass rate over time: n/a (the configuration has no [evals] table)
 Test leading: How long a production incident takes to become a permanent eval: n/a (the configuration has no [evals] table)
 Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
+Test lagging: Share of requirements with partial evidence only: 0.0 percent (2 requirements)
+  note: 0 of 2 requirements have a partial covers: tag only; 2 have no evidence
 Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
 Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)
 Deploy both: The other indicators of the playbook: n/a (they need CI logs, telemetry or an incident tracker)

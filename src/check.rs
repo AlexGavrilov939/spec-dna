@@ -527,15 +527,22 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
             }
         }
         if needs_evidence(d) && ev.of(di, d, ri).is_empty() {
+            let message = match ev.partial_of(di, ri).first() {
+                Some(at) => format!(
+                    "`{}#{}` is active, and only a partial `covers:` tag names it ({at}); add a test that covers all of it, or a `verified-by`",
+                    d.id, r.key
+                ),
+                None => format!(
+                    "`{}#{}` is active but no test covers it (`covers:` tag or `verified-by`)",
+                    d.id, r.key
+                ),
+            };
             out.push(diag(
                 d,
                 r.line,
                 Code::RequirementUnverified,
                 r.key.clone(),
-                format!(
-                    "`{}#{}` is active but no test covers it (`covers:` tag or `verified-by`)",
-                    d.id, r.key
-                ),
+                message,
             ));
         }
     }

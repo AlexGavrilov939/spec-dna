@@ -1493,3 +1493,77 @@ fn sd926_is_new_when_the_branch_adds_the_address() {
     let (_, all, _) = r.run(&["check", "--all"]);
     assert!(all.contains("SD926"), "{all}");
 }
+
+// A delta that depends on a spike (design 0.7.0, section 15, D11)
+
+const SPIKE: &str = "src/spike.py";
+const ADD_AFTER_SPIKE: &str = "- ADD requirements/valves#sensor-timeout: When a sensor gives no value for 30 seconds, the controller SHALL close the valve of its bed.";
+
+/// The commits up to the approval of a plan that lists the spike file.
+fn up_to_the_plan_with_a_spike(r: &Repo) {
+    let files = [CODE, TEST, SPIKE];
+    first_four(r);
+    step(r, AGENT, "plan draft", &[(PLAN, &plan("draft", &files))]);
+    step(
+        r,
+        APPROVER,
+        "approve plan",
+        &[(PLAN, &plan("approved", &files))],
+    );
+}
+
+#[test]
+fn a_delta_edit_after_the_approval_commit_needs_no_new_approval() {
+    let r = start_branch();
+    up_to_the_plan_with_a_spike(&r);
+    step(&r, AGENT, "spike", &[(SPIKE, "print(30)\n")]);
+    // The edit keeps the status `approved`. No commit approves it again.
+    let edited = spec("approved").replace(ADD, ADD_AFTER_SPIKE);
+    step(&r, AGENT, "delta after the spike", &[(SPEC, &edited)]);
+    step_code(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+// The next test follows the rule of SD910 for a plan that the branch sets back
+// to `draft` after its code landed. If the decision about that rule changes,
+// this test follows it.
+#[test]
+fn a_plan_set_back_to_draft_and_approved_again_takes_its_new_files() {
+    let r = start_branch();
+    up_to_the_plan_with_a_spike(&r);
+    step(&r, AGENT, "spike", &[(SPIKE, "print(30)\n")]);
+    // The spec goes back to `draft` with the edit, and a status-only commit of
+    // the approver sets `approved` again.
+    let edited = spec("draft").replace(ADD, ADD_AFTER_SPIKE);
+    step(
+        &r,
+        AGENT,
+        "spec back to draft, delta edit",
+        &[(SPEC, &edited)],
+    );
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let edited = spec("approved").replace(ADD, ADD_AFTER_SPIKE);
+    step(&r, APPROVER, "approve spec again", &[(SPEC, &edited)]);
+    // The plan lists one more path. The same 2 commits approve it.
+    let files = [CODE, TEST, SPIKE, "src/extra.py"];
+    step(
+        &r,
+        AGENT,
+        "plan back to draft",
+        &[(PLAN, &plan("draft", &files))],
+    );
+    step(
+        &r,
+        APPROVER,
+        "approve plan again",
+        &[(PLAN, &plan("approved", &files))],
+    );
+    step(&r, AGENT, "extra file", &[("src/extra.py", "x = 1\n")]);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+}

@@ -2443,6 +2443,101 @@ fn evidence_resolves_covers_tags_and_verified_by() {
     assert!(!out.contains("SD105"), "{out}");
 }
 
+/// `profile_repo` with a partial tag on `loans#fines`, which has no other
+/// evidence.
+fn partial_repo(tag: &str) -> Repo {
+    let r = profile_repo("");
+    r.write(
+        "tests/test_fines.py",
+        &format!("{tag}\ndef test_fines():\n    pass\n"),
+    );
+    r.commit("partial");
+    r
+}
+
+#[test]
+fn a_partial_tag_alone_gives_sd608_that_names_it() {
+    let r = partial_repo("# covers: partial loans#fines");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "a warning: {out}");
+    assert!(
+        out.contains("docs/loans.md:7: warning SD608 requirement-unverified: `loans#fines` is active, and only a partial `covers:` tag names it (tests/test_fines.py:1); add a test that covers all of it, or a `verified-by`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("A `covers: partial` tag alone is not evidence."),
+        "{out}"
+    );
+    // The tag of another requirement stays full evidence.
+    assert!(!out.contains("`loans#loan-period` is active"), "{out}");
+}
+
+#[test]
+fn a_partial_tag_that_names_no_requirement_gives_sd105() {
+    let r = partial_repo("# covers: partial loans#fine, loans#fines");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("tests/test_fines.py:1: error SD105 covers-unresolved: `covers:` tag: `loans` has no requirement `fine`"),
+        "{out}"
+    );
+    // The word `partial` applies to each id of the tag.
+    assert_eq!(out.matches("error SD105").count(), 1, "{out}");
+}
+
+#[test]
+fn a_full_tag_beside_a_partial_tag_is_evidence() {
+    let r = partial_repo("# covers: partial loans#fines");
+    r.write("tests/test_all.py", "# covers: loans#fines\n");
+    r.commit("full");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD608"), "{out}");
+    let (_, out, _) = r.run(&["show", "loans#fines"]);
+    assert!(
+        out.contains("- loans#fines: tests/test_all.py:1\n")
+            || out.contains("- loans#fines: tests/test_all.py:1;"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_word_partial_after_the_ids_keeps_the_tag_full() {
+    let r = partial_repo("# covers: loans#fines partial");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD608"), "{out}");
+}
+
+#[test]
+fn show_gives_the_field_partial_apart_from_the_sources() {
+    let r = partial_repo("# covers: partial loans#fines");
+    r.write("tests/test_p.py", "# covers: partial loans#loan-period\n");
+    r.commit("more");
+    let (code, out, _) = r.run(&["show", "loans#fines"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("<!-- evidence -->\n- loans#fines: none; partial: tests/test_fines.py:1"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "loans#loan-period"]);
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1; partial: tests/test_p.py:1"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["show", "loans#fines", "--json"]);
+    assert!(
+        out.contains("\"evidence\":[{\"key\":\"fines\",\"sources\":[],\"partial\":[\"tests/test_fines.py:1\"]}]"),
+        "{out}"
+    );
+    // The field is always there, also with no partial tag.
+    let (_, out, _) = r.run(&["show", "loans#renew-limit", "--json"]);
+    assert!(
+        out.contains("\"sources\":[\"tests/renew.py\"],\"partial\":[]"),
+        "{out}"
+    );
+}
+
 #[test]
 fn knowledge_types_have_templates_sections_and_context_rules() {
     let r = Repo::empty();
