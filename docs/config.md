@@ -376,7 +376,7 @@ The key `gate` sets the severity of SD910. The order of the sources for SD910 is
 
 With `gate = "block"`, a change to the artifact of a stage needs the approval of the earlier artifact. With `approval = "base"`, the base tree must show it. With `approval = "branch"`, an approval commit of an approver in the branch also counts.
 
-`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905. `max-task-files` is the limit of SD924, and it is the size of a task that a person can review. `init` does not write it, and an absent key means 3.
+`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905. `max-task-files` is the limit of SD924, and it is the size of a task that a person can review. An absent key means 3.
 
 The lifecycle checks compare the head with the merge base of a base revision and `HEAD`. The base revision is the first of these:
 

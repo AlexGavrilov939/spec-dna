@@ -176,7 +176,7 @@ These codes are new in 0.6.0. The rule group `layers` sets their severity ([prof
 
 ## Changes (SD905 and SD910 to SD925)
 
-These codes are new in 0.6.0. They apply only to a project with a `[change]` table whose `policy` is not `none`. SD918 also needs an `[evals]` table. With `policy = "none"`, SD905 and SD910 to SD925 are off, and no rule enables them. The rule group `changes` sets their severity ([profiles.md](profiles.md)). The change lifecycle is in [change.md](guides/change.md).
+These codes are new in 0.6.0, except SD923, SD924 and SD925, which are new in 0.7.0. They apply only to a project with a `[change]` table whose `policy` is not `none`. SD918 also needs an `[evals]` table. With `policy = "none"`, SD905 and SD910 to SD925 are off, and no rule enables them. The rule group `changes` sets their severity ([profiles.md](profiles.md)). The change lifecycle is in [change.md](guides/change.md).
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
