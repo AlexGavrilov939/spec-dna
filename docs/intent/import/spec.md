@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Import of a Spec Kit or OpenSpec project: spec
 
