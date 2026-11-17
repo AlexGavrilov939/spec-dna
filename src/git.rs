@@ -1104,6 +1104,21 @@ impl Git {
         Ok(std::fs::read(self.root.join(path)).ok())
     }
 
+    /// True if the head entry of `path` is a symbolic link: the file of the
+    /// working tree, or the entry of the git index (mode 120000) for a
+    /// `staged` `Git`. The path is from the repository root. A path that is
+    /// absent gives `false`. The 2 modes give one answer for a link, where
+    /// `head_file` gives the target in the working tree and the link text in
+    /// the index (ADR 0019).
+    pub fn head_is_symlink(&self, path: &str) -> bool {
+        if self.staged {
+            return self
+                .run(&["ls-files", "-s", "-z", "--", path])
+                .is_ok_and(|out| out.starts_with(b"120000 "));
+        }
+        std::fs::symlink_metadata(self.root.join(path)).is_ok_and(|m| m.file_type().is_symlink())
+    }
+
     /// Runs a git command with `input` on its standard input.
     fn run_with_input(&self, args: &[&str], input: String) -> Result<Vec<u8>, String> {
         let mut child = self
@@ -1936,6 +1951,21 @@ mod tests {
         assert_eq!(w.merge_base, None);
         // The boundary commit of the head has no parent in the listing.
         assert!(w.commits.iter().any(|c| c.parents.is_empty()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn head_is_symlink_gives_one_answer_in_both_modes() {
+        let t = Tmp::new();
+        t.write("real.txt", "a\n");
+        std::os::unix::fs::symlink("real.txt", t.dir.join("link.txt")).unwrap();
+        t.commit("a@example.test", "base");
+        let g = Git::new(&t.dir);
+        for g in [g.staged(), g] {
+            assert!(g.head_is_symlink("link.txt"));
+            assert!(!g.head_is_symlink("real.txt"));
+            assert!(!g.head_is_symlink("absent.txt"));
+        }
     }
 
     #[test]

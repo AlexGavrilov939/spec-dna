@@ -135,12 +135,15 @@ impl Repo {
     /// at the top level of the repository is the package `spec-dna` with the
     /// version of this binary. It reads the head tree: the git index for
     /// `check --staged`, else the working tree. A file that is absent or that
-    /// cannot be read gives `false`.
+    /// cannot be read gives `false`. A `Cargo.toml` that is a symbolic link is
+    /// no manifest, in the working tree and in the index: the 2 modes read it
+    /// differently, and the target can be outside the repository (ADR 0019).
     pub fn is_tree_binary(&self) -> bool {
-        matches!(
-            self.git.head_file("Cargo.toml"),
-            Ok(Some(bytes)) if config::is_tree_manifest(&String::from_utf8_lossy(&bytes), VERSION)
-        )
+        !self.git.head_is_symlink("Cargo.toml")
+            && matches!(
+                self.git.head_file("Cargo.toml"),
+                Ok(Some(bytes)) if config::is_tree_manifest(&String::from_utf8_lossy(&bytes), VERSION)
+            )
     }
 
     /// Reads `spec-dna.toml` as the git index has it.
