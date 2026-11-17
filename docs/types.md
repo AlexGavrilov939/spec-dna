@@ -141,7 +141,7 @@ The parser keeps the list items of 9 sections for each document. The heading tex
 | `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
 | `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
-| `Hours` | plan | One item for each part of the work, as `- 1.5: t1 code`. The parser keeps the items. The commands that read them come later |
+| `Hours` | plan | One item for each part of the work, as `- 1.5: t1 code`. An item starts with a number of hours (up to 4 digits, and up to 2 decimals after a `.`), an optional `h`, and then the end of the item, or `:` or a space and free text. `finish` adds the numbers and prints the line `Hours: <total>` ([commands.md](commands.md#finish)). An item with another form gives a note of `finish` and no total |
 
 Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range. It keeps the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
 
