@@ -52,9 +52,9 @@ Commands:
 
 Artifact: `intent.md` with the intent, why now, out of scope and its class.
 
-Check: `spec-dna check` gives no SD306 (a placeholder stays).
+Check: `spec-dna check --base origin/HEAD` gives no SD306 (a placeholder stays).
 
-If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run `spec-dna check` again.";
+If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run the check again.";
 
 const SPECIFY_PARTS: &str = r"When to use: The intent is `accepted` and its class is `higher-risk`.
 
@@ -63,32 +63,32 @@ Commands:
 1. Run `spec-dna new spec <slug>`.
 2. Under `Delta`, write one line for each requirement that the change adds, changes or removes: `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`.
 3. For `CHANGE` and `REMOVE`, run `spec-dna show <id>#<key>` and copy the hash.
-4. Under `Interfaces`, write `- none`, or one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
+4. Under `Interfaces`, write `- none` or one paragraph if no interface changes. Else write one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
 5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
 6. Write each item of `Concerns` and `Open questions` with a box: `- [ ]` is open. If none applies, write one item `- none`.
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: `spec-dna check` gives no SD914 and no SD920. SD914 is an invalid delta or interface item. SD920 is a decision that is absent or not accepted.
+Check: `spec-dna check --base origin/HEAD` gives no SD914 and no SD920. SD914 is an invalid delta or interface item. SD920 is a decision that is absent or not accepted.
 
-If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run `spec-dna check` again.";
+If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run the check again.";
 
-const CLARIFY_PARTS: &str = r"When to use: `spec.md` has an open concern or an open question, and nobody has approved the spec.
+const CLARIFY_PARTS: &str = r"When to use: `spec.md` has an open concern or an open question.
 
 Commands:
 
 1. Read `Concerns` and `Open questions` of `spec.md`.
 2. Give each item a box: `- [ ]` is open, and `- [x]` is resolved. If no item applies, write one item `- none`.
 3. Ask the person about each open item. Write the answer in the item, then change its box to `- [x]`.
-4. Run `spec-dna check`.
+4. Run `spec-dna check --base origin/HEAD`.
 
 Artifact: `Concerns` and `Open questions` of `spec.md`, each item answered.
 
-Check: `spec-dna check` gives no SD919, SD922 and SD925. SD919 is an open concern, SD922 is an open question, and SD925 is an item with no box.
+Check: `spec-dna check --base origin/HEAD` gives no SD919, SD922 and SD925. SD919 is an open concern, SD922 is an open question, and SD925 is an item with no box.
 
 If the check fails: Ask the person about the item that the message names. Do not mark an item that has no answer. Add a box to an item that has none.";
 
-const WRITE_PLAN_PARTS: &str = r"When to use: Before the code of a change. The intent is `accepted`, and a higher-risk change has an approved spec.
+const WRITE_PLAN_PARTS: &str = r"When to use: Before the code of a change.
 
 Commands:
 
@@ -100,9 +100,9 @@ Commands:
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: `spec-dna check` gives no SD913, SD923 and SD924. SD913 is a file that `Files` does not list. SD923 is a task with no exact `Files:` or no `Verify:`. SD924 is a task with too many paths.
+Check: `spec-dna check --base origin/HEAD` gives no SD913, SD923 and SD924. SD913 is a file that `Files` does not list. SD923 is a task with no exact `Files:` or no `Verify:`. SD924 is a task with too many paths.
 
-If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run `spec-dna check` again.";
+If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run the check again.";
 
 const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is open.
 
@@ -115,7 +115,7 @@ Commands:
 
 Artifact: The code, the tests and the checked task.
 
-Check: The `Verify:` of the task passes, and `spec-dna check` gives no SD913 (a file that `Files` does not list). The hook `protect-tests`, if it is on, stops an edit of a protected test.
+Check: The `Verify:` of the task passes. `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
 
 If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person to change the plan.";
 
@@ -129,7 +129,7 @@ Commands:
 
 Artifact: A test with a `covers:` tag, run red before the code.
 
-Check: `spec-dna check` gives no SD608 (a requirement with no evidence) and no SD916 (a delta requirement with no `covers:` tag). They check the tag, not the order.
+Check: `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is a requirement with no evidence. SD916 is a delta requirement with no `covers:` tag. They check the tag, not the order.
 
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.";
 
@@ -153,12 +153,12 @@ const VERIFY_PARTS: &str = r"When to use: Before you say that the work is done, 
 Commands:
 
 1. Run each command of `Proof` in `plan.md`. Read the whole output of each command.
-2. Run `spec-dna check`. If it prints a note that it has no base, add `--base <rev>` with the default branch.
+2. Run `spec-dna check --base origin/HEAD`. If git has no such ref, pass the default branch of the project as the base.
 3. In your answer, name each command that you ran and each command that you did not run.
 
 Artifact: The output of the `Proof` commands and of `spec-dna check`.
 
-Check: Each command ends with exit code 0, and `spec-dna check` gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence).
+Check: Each command ends with exit code 0, and the check gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence).
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.";
 
@@ -172,7 +172,7 @@ Commands:
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
-Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check` gives no error.
+Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --base origin/HEAD` gives no error.
 
 If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. Do not delete the folder by hand.";
 
@@ -203,9 +203,9 @@ Commands:
 
 Artifact: A new `intent.md` with `from:`, and an eval file for the incident.
 
-Check: `spec-dna check` gives no SD918 (no eval for the incident) and no SD101 (an incident id that names no document).
+Check: `spec-dna check --base origin/HEAD` gives no SD918 and no SD101. SD918 is an incident with no eval. SD101 is an incident id that names no document.
 
-If the check fails: Add or fix the eval file, or fix the id in `from:`. Run `spec-dna check` again.";
+If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the check again.";
 
 /// The `description` of a skill. It is in each request, so it is one short
 /// sentence. It starts with the scope of D5 and then the trigger of D2. The limits of D6 are 160

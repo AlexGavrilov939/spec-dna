@@ -14,10 +14,10 @@ Commands:
 
 Artifact: The code, the tests and the checked task.
 
-Check: The `Verify:` of the task passes, and `spec-dna check` gives no SD913 (a file that `Files` does not list). The hook `protect-tests`, if it is on, stops an edit of a protected test.
+Check: The `Verify:` of the task passes. `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
 
 If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person to change the plan.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:4fe5a2041245624a -->
+<!-- spec-dna harness v{VERSION} h:94fbd53d4510801a -->

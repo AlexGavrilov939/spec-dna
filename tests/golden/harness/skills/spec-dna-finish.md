@@ -13,10 +13,10 @@ Commands:
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
-Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check` gives no error.
+Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --base origin/HEAD` gives no error.
 
 If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. Do not delete the folder by hand.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:4c0db80502afd31d -->
+<!-- spec-dna harness v{VERSION} h:5b651324010595c6 -->

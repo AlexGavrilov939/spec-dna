@@ -14,10 +14,10 @@ Commands:
 
 Artifact: `intent.md` with the intent, why now, out of scope and its class.
 
-Check: `spec-dna check` gives no SD306 (a placeholder stays).
+Check: `spec-dna check --base origin/HEAD` gives no SD306 (a placeholder stays).
 
-If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run `spec-dna check` again.
+If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run the check again.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:2d51709930081a21 -->
+<!-- spec-dna harness v{VERSION} h:4e8bfbb098343c95 -->

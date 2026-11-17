@@ -13,10 +13,10 @@ Commands:
 
 Artifact: A test with a `covers:` tag, run red before the code.
 
-Check: `spec-dna check` gives no SD608 (a requirement with no evidence) and no SD916 (a delta requirement with no `covers:` tag). They check the tag, not the order.
+Check: `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is a requirement with no evidence. SD916 is a delta requirement with no `covers:` tag. They check the tag, not the order.
 
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:3d391bb21917102f -->
+<!-- spec-dna harness v{VERSION} h:44c5d55c6e6ffbb2 -->

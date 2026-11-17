@@ -15,10 +15,10 @@ Commands:
 
 Artifact: A new `intent.md` with `from:`, and an eval file for the incident.
 
-Check: `spec-dna check` gives no SD918 (no eval for the incident) and no SD101 (an incident id that names no document).
+Check: `spec-dna check --base origin/HEAD` gives no SD918 and no SD101. SD918 is an incident with no eval. SD101 is an incident id that names no document.
 
-If the check fails: Add or fix the eval file, or fix the id in `from:`. Run `spec-dna check` again.
+If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the check again.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:d9c7861c110573a8 -->
+<!-- spec-dna harness v{VERSION} h:4a0423d4033ea7fd -->

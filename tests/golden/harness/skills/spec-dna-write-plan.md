@@ -3,7 +3,7 @@ name: spec-dna-write-plan
 description: In a spec-dna project, before any code, write plan.md with its files and small tasks.
 ---
 
-When to use: Before the code of a change. The intent is `accepted`, and a higher-risk change has an approved spec.
+When to use: Before the code of a change.
 
 Commands:
 
@@ -15,10 +15,10 @@ Commands:
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: `spec-dna check` gives no SD913, SD923 and SD924. SD913 is a file that `Files` does not list. SD923 is a task with no exact `Files:` or no `Verify:`. SD924 is a task with too many paths.
+Check: `spec-dna check --base origin/HEAD` gives no SD913, SD923 and SD924. SD913 is a file that `Files` does not list. SD923 is a task with no exact `Files:` or no `Verify:`. SD924 is a task with too many paths.
 
-If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run `spec-dna check` again.
+If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run the check again.
 
 Never set `accepted` or `approved`. An approver sets it in a commit that changes only the `status` line. Make that commit only when the approver says so explicitly in this session.
 
-<!-- spec-dna harness v{VERSION} h:950b144b7883d58c -->
+<!-- spec-dna harness v{VERSION} h:de570426a6d1bc70 -->
