@@ -235,3 +235,69 @@ fn check_staged_reads_the_manifest_and_the_configuration_of_the_index() {
     assert_eq!(sd503(&out), 0, "{out}{err}");
     assert_eq!(code, 0, "{out}{err}");
 }
+
+#[test]
+fn pin_only_change_with_crlf_in_the_working_tree_gives_no_sd503() {
+    // The base has LF line ends. The working tree has CRLF line ends, as a
+    // checkout with `core.autocrlf` gives, and the change moves the pin. The
+    // TOML meaning of the 2 texts differs in the pin line only.
+    let r = base("spec-dna", VERSION);
+    r.write(
+        "spec-dna.toml",
+        &config(VERSION, "").replace('\n', "\r\n"),
+    );
+    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
+    for (name, args) in modes(&r) {
+        let (code, out, err) = r.run(&args);
+        assert_eq!(sd503(&out), 0, "{name}: {out}{err}");
+        assert_eq!(code, 0, "{name}: {out}{err}");
+    }
+}
+
+#[test]
+fn a_change_of_the_line_ends_alone_is_no_pin_only_change() {
+    // The pin does not change. A change of the line ends alone is a change of
+    // the file, so SD503 counts it with the document. This guards D-B1.
+    let r = base("spec-dna", VERSION);
+    move_pin(&r, "");
+    r.commit("move the pin");
+    r.write(
+        "spec-dna.toml",
+        &config(VERSION, "").replace('\n', "\r\n"),
+    );
+    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
+    for (name, args) in modes(&r) {
+        let (code, out, err) = r.run(&args);
+        assert_eq!(sd503(&out), 1, "{name}: {out}{err}");
+        assert_eq!(code, 1, "{name}: {out}{err}");
+    }
+}
+
+/// A repository whose `Cargo.toml` is a symbolic link to a real file of the
+/// tree. The link text is not a manifest.
+#[cfg(unix)]
+fn linked_base() -> Repo {
+    let r = Repo::new();
+    r.write("spec-dna.toml", &config(OLD, ""));
+    r.write("manifest/Cargo.toml", &cargo("spec-dna", VERSION));
+    std::os::unix::fs::symlink("manifest/Cargo.toml", r.dir.join("Cargo.toml")).unwrap();
+    r.write("docs/a.md", "# A\n\nA text.\n");
+    r.commit("base");
+    r
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_manifest_is_no_tree_binary_in_both_modes() {
+    // The working tree follows the link, and the index holds the link text.
+    // A link is no manifest, so the 2 modes give one answer: SD503 counts the
+    // pin line.
+    let r = linked_base();
+    move_pin(&r, "");
+    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
+    for (name, args) in modes(&r) {
+        let (code, out, err) = r.run(&args);
+        assert_eq!(sd503(&out), 1, "{name}: {out}{err}");
+        assert_eq!(code, 1, "{name}: {out}{err}");
+    }
+}
