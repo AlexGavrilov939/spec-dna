@@ -67,7 +67,7 @@ spec-dna check --base origin/main  # the gate for CI; init can write the job
 ```
 
 > [!NOTE]
-> By default, `init` also adds a change process, a harness for Claude Code (models, hooks, settings) and eval files. For the checks only, give it this file with `spec-dna init --answers <file>`:
+> By default, `init` also adds a change process, a harness for Claude Code (models, hooks, settings) and eval files. The first question asks for a profile (`lite`, `standard` or `strict`). It sets the defaults of these parts and the severity of the checks ([Profiles](docs/profiles.md)). For the checks only, give it this file with `spec-dna init --answers <file>`:
 >
 > ```toml
 > change-policy = "none"
@@ -120,12 +120,16 @@ Each example runs in a temporary folder. A test compares each page with the real
 
 Spec Kit and OpenSpec help an agent write specifications. spec-dna checks the result on each change. It checks links, ids, code citations, test links and accepted decisions. It does not check what the code does.
 
+To keep the files of the tool, map its folder as a root:
+
 | Framework | Root in `spec-dna.toml` | What works |
 | --- | --- | --- |
 | [Spec Kit](https://github.com/github/spec-kit) | `specs` as `requirements`, with `legacy-keys = ["FR-{n}"]` | Test links to `FR-001`, renamed files in `tasks.md`, `context` |
 | [OpenSpec](https://github.com/Fission-AI/OpenSpec) | `openspec/specs` as `requirements` | Links, renamed files in a spec, `context`. A `covers:` tag cannot name an OpenSpec requirement, because it is a heading |
 
-We tested both with spec-dna 0.6.1 on 2026-11-16. Do not map `openspec/changes`: its archive step moves files, and `check` reports each old id (SD202).
+We tested the table with both tools on 2026-11-16. Do not map `openspec/changes`: its archive step moves files, and `check` reports each old id (SD202).
+
+To move the project into the layout of spec-dna, run `spec-dna import speckit` or `spec-dna import openspec` after `init`. The import proves that each requirement sentence and each id stay, and it deletes no file. It reads the layouts of Spec Kit 1.4.1 and OpenSpec 2.0.0. On 2026-11-17, the notes of the newer releases (Spec Kit 1.4.2 and OpenSpec 2.1.0) showed no change of these layouts, but no test ran the import on them. [Commands](docs/commands.md#import) gives the steps.
 
 ## Status
 
