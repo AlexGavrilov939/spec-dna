@@ -389,15 +389,22 @@
           "maximum": 4294967295
         },
         "skills": {
-          "description": "The stage skills that `init` writes, each once. They are written in the order intent, spec, plan, review. Default: none.",
+          "description": "The skills of the workflow pack that `init` writes, each once. They are written in the order brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, finish, debug, post-mortem. Default: none. The names intent, spec and plan of 0.6 end: `spec-dna upgrade` renames them.",
           "type": "array",
           "uniqueItems": true,
           "items": {
             "enum": [
-              "intent",
-              "spec",
-              "plan",
-              "review"
+              "brainstorm",
+              "specify",
+              "clarify",
+              "write-plan",
+              "execute",
+              "tdd",
+              "review",
+              "verify",
+              "finish",
+              "debug",
+              "post-mortem"
             ]
           }
         },

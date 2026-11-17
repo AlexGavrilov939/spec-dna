@@ -2158,7 +2158,9 @@ fn settle_parts(plan: &mut Plan) {
         plan.harness.skills = if plan.change_policy == ChangePolicy::None {
             Vec::new()
         } else {
-            Skill::ALL
+            // The 7 skills that are on by default (D2). The level `full` also
+            // proposes the 4 that are off (D39).
+            Skill::default_on_list()
                 .into_iter()
                 .filter(|s| !plan.parts.unmarked_skills.contains(s))
                 .collect()
@@ -2239,8 +2241,10 @@ fn parts_line(h: &Harness) -> String {
 fn parse_skills(names: &[String]) -> Result<Vec<Skill>, String> {
     let mut out: Vec<Skill> = Vec::new();
     for n in names {
-        let s = Skill::from_key(n)
-            .ok_or_else(|| format!("unknown skill `{n}`; use intent, spec, plan, review"))?;
+        let s = Skill::from_key(n).ok_or_else(|| {
+            harness::gone_skill_message(n)
+                .unwrap_or_else(|| format!("unknown skill `{n}`; use {}", harness::skill_keys()))
+        })?;
         if out.contains(&s) {
             return Err(format!("`skills` lists `{n}` more than once"));
         }
@@ -2298,9 +2302,10 @@ fn apply_parts(plan: &mut Plan, words: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The bytes of the skill listing that `skills` adds to each request.
+/// The bytes of the skill listing that `skills` adds to each request. It
+/// counts the skills that are on by default.
 fn skill_listing_bytes() -> usize {
-    Skill::ALL
+    Skill::default_on_list()
         .into_iter()
         .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(s)).len())
         .sum()
@@ -2993,7 +2998,8 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     if plan.harness.level != Level::None {
         settle_parts(plan);
         io.say(&format!(
-            "    The 4 stage skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
+            "    The {} skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
+            Skill::default_on_list().len(),
             skill_listing_bytes()
         ));
         let a = io.line(
@@ -4164,7 +4170,7 @@ mod tests {
         let line = parts_line(&plan.harness);
         assert_eq!(
             line,
-            "skills=intent,spec,plan,review review-md=true protect-tests=fix-branches"
+            "skills=brainstorm,specify,clarify,write-plan,review,finish,post-mortem review-md=true protect-tests=fix-branches"
         );
         let words: Vec<String> = line.split_whitespace().map(str::to_string).collect();
         let mut again = plan.clone();
@@ -4189,7 +4195,8 @@ mod tests {
         let mut plan = plan_of_empty_repo();
         for (w, want) in [
             ("skills=build", "unknown skill `build`"),
-            ("skills=spec,spec", "`spec` more than once"),
+            ("skills=specify,specify", "`specify` more than once"),
+            ("skills=intent", "spec-dna upgrade"),
             ("review-md=yes", "true or false"),
             ("protect-tests=never", "fix-branches, always or off"),
             ("models=none", "unknown part `models`"),
@@ -4204,7 +4211,7 @@ mod tests {
     fn the_default_skills_follow_the_final_policy_and_the_link_style() {
         let mut plan = plan_of_empty_repo();
         settle_parts(&mut plan);
-        assert_eq!(plan.harness.skills.len(), 4);
+        assert_eq!(plan.harness.skills.len(), 7);
         // A later answer changes the default, because no one set the part.
         plan.change_policy = ChangePolicy::None;
         plan.style = Style::VerifiedBy;
@@ -4213,14 +4220,15 @@ mod tests {
         assert_eq!(plan.harness.protect_tests, Protect::Off);
         // A part that the answers set stays.
         plan.parts.derive_skills = false;
-        plan.harness.skills = vec![Skill::Spec];
+        plan.harness.skills = vec![Skill::Specify];
         settle_parts(&mut plan);
-        assert_eq!(plan.harness.skills, vec![Skill::Spec]);
+        assert_eq!(plan.harness.skills, vec![Skill::Specify]);
     }
 
     #[test]
-    fn the_listing_of_the_4_skills_is_588_bytes() {
-        assert_eq!(skill_listing_bytes(), 588);
+    fn the_listing_of_the_7_skills_that_are_on_has_at_most_1250_bytes() {
+        let n = skill_listing_bytes();
+        assert!(n > 588 && n <= 1250, "{n} bytes");
     }
 
     #[test]

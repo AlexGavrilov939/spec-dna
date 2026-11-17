@@ -2873,21 +2873,21 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     #[test]
     fn the_evals_dir_and_the_harness_files_are_never_part_of_a_root() {
         let c = Config::parse(
-            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n[evals]\ndir = \"q/evals/\"\n[harness]\nlevel = \"lean\"\nskills = [\"spec\"]\nreview-md = true\n",
+            "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n[evals]\ndir = \"q/evals/\"\n[harness]\nlevel = \"lean\"\nskills = [\"specify\"]\nreview-md = true\n",
         )
         .unwrap();
         assert!(c.is_excluded(0, "q/evals/fixtures/a/notes.md"));
         assert!(!c.is_excluded(0, "q/evals.md"));
         assert!(!c.is_excluded(0, "q/evalsx/a.md"));
         assert!(c.is_excluded(0, "REVIEW.md"));
-        assert!(c.is_excluded(0, ".claude/skills/spec-dna-spec/SKILL.md"));
+        assert!(c.is_excluded(0, ".claude/skills/spec-dna-specify/SKILL.md"));
         // A skill that the configuration does not write stays a file of the root.
-        assert!(!c.is_excluded(0, ".claude/skills/spec-dna-plan/SKILL.md"));
+        assert!(!c.is_excluded(0, ".claude/skills/spec-dna-write-plan/SKILL.md"));
         assert!(!c.is_excluded(0, "docs/a.md"));
         // With `review-md = false`, and at level `none`, `REVIEW.md` is a document.
         for h in [
             "[harness]\nlevel = \"lean\"\n",
-            "[harness]\nlevel = \"none\"\nreview-md = true\nskills = [\"spec\"]\n",
+            "[harness]\nlevel = \"none\"\nreview-md = true\nskills = [\"specify\"]\n",
         ] {
             let c = Config::parse(&format!(
                 "spec-dna = \"0.1.0\"\n[[roots]]\npath = \".\"\n{h}"
@@ -2895,7 +2895,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             .unwrap();
             assert!(!c.is_excluded(0, "REVIEW.md"), "{h}");
             assert!(
-                !c.is_excluded(0, ".claude/skills/spec-dna-spec/SKILL.md"),
+                !c.is_excluded(0, ".claude/skills/spec-dna-specify/SKILL.md"),
                 "{h}"
             );
         }

@@ -3204,6 +3204,7 @@ mod tests {
         let h = harness::Harness::new(harness::Level::Full);
         paths.extend(harness::generated_files(&h).into_iter().map(|g| g.path));
         paths.extend(harness::Skill::ALL.iter().map(|s| s.path()));
+        paths.extend(harness::OLD_SKILL_PATHS.iter().map(|p| p.to_string()));
         // The starter files of the evals, with the folder `<dir>` of `[evals]`.
         paths.extend(evals::skeleton_paths("<dir>"));
         for p in &paths {
