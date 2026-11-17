@@ -207,16 +207,18 @@ A check of the pack is a shell command. A check that runs `spec-dna check` reads
 ### Run the arms
 
 ```text
-spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--json]
+spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
 ```
 
 `--ab` takes one target:
 
 - a skill, such as `tdd`, to run the 5 evals of that skill;
-- `all`, to run each skill that the pack has (the 11 skills of a full pack). It does not include `agents-line`;
+- `all`, to run each skill that the pack has (the 11 skills of a full pack, 440 runs). It does not include `agents-line`;
 - `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs the first eval of each skill that a discipline names: `tdd-1`, `debug-1`, `verify-1`, `review-1` and `execute-1`.
 
-`--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--isolate` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval.
+`--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval.
+
+`--ab` isolates the runs by default: it adds `--setting-sources project --strict-mcp-config`, so the user settings, the hooks, the MCP servers and the user `CLAUDE.md` of the person do not reach a run. `--no-isolate` switches it off. `--isolate` is the default, and with `--no-isolate` it is a usage error.
 
 The 2 arms differ in the temporary copy of each run:
 
@@ -227,26 +229,60 @@ The 2 arms differ in the temporary copy of each run:
 
 The pair `agents-line` has no `.claude/skills/` folder in each arm, because the line serves an agent with no skill folder. `with` has the generated line in `AGENTS.md` and `CLAUDE.md`, as `init` writes it. `without` has no line and denies `spec-dna skill`.
 
-In the copy of a fixture, the runner writes the version of the binary into the pin line of `spec-dna.toml`, so a fixture does not give exit code 3 in each run. The working tree never changes.
+These rules apply to both arms:
 
-A pair is the same eval and the same run number in both arms. For each eval and run number, `with` runs first for an odd number, and `without` runs first for an even number. The runner runs one run at a time. The loop has no early stop, except a stop by the cap or by the API.
+- The tools of the eval get `Skill` (`--allowedTools`), because the arm `with` needs it under `--permission-mode dontAsk`. Each pair side in the result has `permission_denials`, the number of items in the list `permission_denials` of the result of `claude`, or `null`. A denied call of the skill is then visible.
+- A fixture can have its own `AGENTS.md` and `CLAUDE.md`. They keep their text. The copy adds only the generated lines of the project (the line of the adapter, and the line of the harness) after it. The arm `without` and the pair `agents-line` remove only their discipline line or lines.
+- In the copy of a fixture, the runner writes the version of the binary into the pin line of `spec-dna.toml`, so a fixture does not give exit code 3 in each run.
+- The `PATH` of the agent and of each check has the folder of the running binary first, so `spec-dna` in a copy is the binary under test.
+- An agent that runs more than 25 minutes, and a check that runs more than 5 minutes, are killed with their process group. The run counts as failed, with the subtype `timeout`, and it is no refusal. `SPEC_DNA_EVAL_TIMEOUT` (the agent) and `SPEC_DNA_EVAL_CHECK_TIMEOUT` (a check) set the limits in seconds, from 1 to 86,400. Another value is a usage error.
+- The working tree never changes.
+
+A pair is the same eval and the same run number in both arms. For each eval and run number, `with` runs first for an odd number, and `without` runs first for an even number. The runner runs one run at a time.
+
+The cap is checked before each run: if the spend and the `max-budget-usd` of the next run could pass `max-total-usd`, the run does not start. The command stops with `"stopped": "max-total-usd"` and exit code 3.
+
+`--dry-run` prints the number of runs, the estimate and the cap, also when the estimate is above the cap. It then says that a real run would refuse to start, and the exit code is 0. With `--json`, the key `above_cap` is `true`.
+
+#### Stop and resume
+
+The runner writes the result file after each pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 130 (SIGINT) or 143 (SIGTERM).
+
+```text
+spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-total-usd <n>
+```
+
+`--resume` goes on in the same file, and it writes one merged result into it. It skips each pair that the file holds, and it runs the arm that a half pair lacks. The target must be the target of the file. `--resume` takes no `--out` and no `--dry-run`. The spend, the excluded attempts and the models of the file carry over, and the cap counts the spend of the file too. A file of a finished target has nothing to run. `eval verdict` keeps reading the newest file that holds each name.
 
 ### Runs that the API refuses
 
-The runner treats a refused attempt as no run. A refused attempt is an account limit, 401, 403, 429, a 5xx status or a page of Cloudflare. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. Else an attempt is refused when these conditions are true:
+The runner treats a refused attempt as no run. A refused attempt is an account limit, a credit or a login problem, 401, 403, 429, a 5xx status, a page of Cloudflare or a lost connection. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. A run that exits with code 0 and has no `"is_error": true` is never a refusal. Else an attempt is refused in these cases:
 
-1. `claude` exits with a code other than 0, or the result object has `"is_error": true`.
-2. The result object has `"is_error": true` and an `api_error_status` of 401, 403, 429 or 500 to 599 (the text does not matter, and it can be long), or the text matches a marker.
+1. The result object has `"is_error": true` and an `api_error_status` of 401, 403, 429 or 500 to 599. The text does not matter, and it can be long.
+2. The result object has a `result` text with fewer than 600 bytes and a marker.
+3. There is no result object, and the stdout is empty. The exit code is not 0. The stderr gives the class. This is a decision of the design: an empty output is a failed connection more often than a failed run.
+4. There is no result object, and the stdout is a text with fewer than 600 bytes and a marker.
 
-The text is the `result` of the result object, or the stdout of `claude` if there is no result object. It must have fewer than 600 bytes, so a long answer that names a status does not count. A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), or one of these phrases, in any case: "rate limit", "usage limit", "limit reached", "limit will reset", "overloaded", "Failed to authenticate", "Attention Required", "Cloudflare", "Request timed out", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "ENOTFOUND", "socket hang up", "fetch failed".
+A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), or one of these phrases, in any case:
 
-A failed check, an agent that ran out of turns or budget, an empty output and an error that does not match are runs, and they count. A run that exits with code 0 and no error flag counts, also when its answer names a limit.
+- account: "usage limit", "spend limit reached", "credit balance", "out of usage", "out of extra usage", "please run /login", "not logged in";
+- other: "rate limit", "limit will reset", "overloaded", "Failed to authenticate", "Attention Required", "Cloudflare", "Request timed out", "Connection error", "Unable to connect", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "ENOTFOUND", "socket hang up", "fetch failed", "could not resolve host".
 
-The runner tries a refused attempt again with the same eval, arm and run number, in a new temporary folder. The waits before the 6 retries are 60, 120, 240, 480, 960 and 1,920 seconds, about 63 minutes in total. `SPEC_DNA_EVAL_BACKOFF` sets the first wait in seconds, from 0 to 3,600, and the next waits double it. A value that is not an integer in this range is a usage error (exit code 2). The tests set it to 0. The variable has an effect only on `--ab`.
+`Context limit reached` is not a marker: it is a run. A failed check, an agent that ran out of turns or budget, and an error with no marker are runs, and they count.
+
+The runner tries a refused attempt again with the same eval, arm and run number, in a new temporary folder. The waits depend on the class:
+
+| Class | Waits | Total |
+| --- | --- | --- |
+| An account limit, credit or login (the markers of account) | 60, 120, 240, 480, 960 and 1,920 seconds, then 1,800 seconds 9 times, and a last wait of 1,620 seconds: 16 retries | 6 hours |
+| Any other refusal | 60, 120, 240, 480, 960 and 1,920 seconds: 6 retries | about 63 minutes |
+
+A 5-hour session window ends before the last retry of an account limit. `SPEC_DNA_EVAL_BACKOFF` sets the first wait in seconds, from 0 to 3,600, and the next waits scale with it. A value that is not an integer in this range is a usage error (exit code 2). The tests set it to 0. The variable has an effect only on `--ab`.
 
 - No result counts a refused attempt: not the pass rate, not the runs, not the cost of the arm. The result file reports the count of excluded attempts of each arm.
 - The charged cost of a refused attempt is the cost that `claude` reports, or 0. It goes to `spend_usd` and to the check of the cap only.
-- After the last wait, the command stops with exit code 3, and `stopped` is `"api-error"`. It writes the partial result. Run the target again later.
+- After the last wait, the command stops with exit code 3, and `stopped` is `"api-error"`. It writes the partial result. Run the target again later with `--resume`.
+- A backstop covers a refusal that the markers miss. After 5 counted runs in a row with `"is_error": true`, a cost of 0 and no `error_max_` subtype, the command stops with `"api-error"` and exit code 3, and it writes the partial result.
 
 `eval run` without `--ab` keeps the rule of [ADR 0008](adr/0008-harness-and-evals.md): a refused run is a failed run, and the runner never tries it again.
 
@@ -261,11 +297,11 @@ The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the 
 | `target`, `seed`, `resamples` | The target, 24 and 2,000 |
 | `max_total_usd`, `estimate_usd`, `spend_usd` | The cap, the estimate and the spend. The spend includes the excluded attempts |
 | `excluded` | `{"with": n, "without": n}`, the excluded attempts of each arm |
-| `stopped` | `null`, `"max-total-usd"`, `"api-error"` or `"error"` |
+| `stopped` | `null`, `"max-total-usd"`, `"api-error"`, `"error"` (a git or file error) or `"interrupted"` (SIGINT, SIGTERM, or a file that the runner writes during the run) |
 | `error` | Only when `stopped` is `"error"`: the first line of the message of the git or file error, with no path of the machine |
 | `skills` | One item for each skill, or one item `agents-line` |
 
-An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`, and each side has `claude_exit`, `subtype`, `cost_usd`, `excluded` and `passed`. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
+An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials` and `passed`. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
 
 ### The verdict
 
