@@ -18,7 +18,7 @@ status: approved
 
 ## Order
 
-- [ ] t1: Write the 2 fixture projects in the public layouts, in the words of spec-dna, and one case `fixtures_` that writes each project (`test-engineer`). Files: `tests/common/import.rs`, `tests/common/mod.rs`, `tests/import_cli.rs`. Verify: `cargo test --test import_cli fixtures_`.
+- [x] t1: Write the 2 fixture projects in the public layouts, in the words of spec-dna, and one case `fixtures_` that writes each project (`test-engineer`). Files: `tests/common/import.rs`, `tests/common/mod.rs`, `tests/import_cli.rs`. Verify: `cargo test --test import_cli fixtures_`.
 - [ ] t2: Write the failing tests of the help and of the usage errors (`core-engineer`). Files: `tests/cli.rs`. Verify: `cargo test --test cli import` fails on the new cases.
 - [ ] t3: Add the failing tests of the command (`init-engineer`). Files: `tests/import_cli.rs`. Verify: `cargo test --test import_cli` fails on each new case.
 - [ ] t4: Write the failing tests of Spec Kit and of the proof (`hygiene-engineer`). Files: `tests/import_speckit.rs`. Verify: `cargo test --test import_speckit` fails on each case.
