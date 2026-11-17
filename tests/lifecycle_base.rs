@@ -899,8 +899,8 @@ fn with_no_base_the_note_is_printed_and_only_the_checks_of_one_tree_run() {
     r.write(INTENT, &intent("draft", "routine"));
     r.commit("base");
     r.git(&["checkout", "-q", "-b", "feature"]);
-    r.write(SPEC, &spec("draft", &[]));
-    r.write(PLAN, &plan("draft", &["src/dose.py"]));
+    r.write(SPEC, &spec("approved", &[]));
+    r.write(PLAN, &plan("approved", &["src/dose.py"]));
     edit_valves(&r);
     r.write("src/other.py", "y = 2\n");
     let (code, out, err) = r.run(&["check"]);
@@ -928,7 +928,7 @@ fn with_no_base_the_note_is_printed_and_only_the_checks_of_one_tree_run() {
 #[test]
 fn staged_reads_the_index() {
     let r = start(|r| r.write(INTENT, &intent("draft", "higher-risk")));
-    r.write(SPEC, &spec("draft", &[]));
+    r.write(SPEC, &spec("approved", &[]));
     // The file is not staged: the index has no spec.
     let (code, out, _) = r.run(&["check", "--staged"]);
     assert!(!has(&out, "SD910"), "{out}");
@@ -942,7 +942,7 @@ fn staged_reads_the_index() {
     r.git(&["reset", "-q"]);
     r.write(INTENT, &intent("accepted", "higher-risk"));
     r.git(&["add", INTENT]);
-    r.write(SPEC, &spec("draft", &[]));
+    r.write(SPEC, &spec("approved", &[]));
     let (_, out, _) = r.run(&["check", "--staged"]);
     assert!(!has(&out, "SD910"), "{out}");
 }

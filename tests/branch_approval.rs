@@ -710,8 +710,8 @@ fn a_rebase_that_reorders_the_commits_changes_the_result_not_the_dates() {
     let approve = r.git_out(&["rev-parse", "HEAD"]);
     let code = r.git_out(&["rev-parse", "HEAD~1"]);
     r.git(&["checkout", "-q", "-b", "reordered", "HEAD~2"]);
-    r.git(&["cherry-pick", "-q", &approve]);
-    r.git(&["cherry-pick", "-q", &code]);
+    r.git(&["cherry-pick", &approve]);
+    r.git(&["cherry-pick", &code]);
     let (code_exit, out, found) = check(&r);
     assert_eq!(found, want(&[]), "{out}");
     assert_eq!(code_exit, 0, "{out}");
@@ -808,7 +808,7 @@ fn check_json_has_the_field_approvals_in_each_mode() {
     assert_eq!(approvals_field(&out), "", "{out}");
     let a = out.find("\"locked_links\":").unwrap();
     let b = out.find("\"approvals\":").unwrap();
-    let c = out.find("\"documents\":").unwrap();
+    let c = out.find("\"documents\":[").unwrap();
     assert!(a < b && b < c, "{out}");
     // An approval commit that no gate needs gives no item.
     let r = start_branch();

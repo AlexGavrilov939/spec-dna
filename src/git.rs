@@ -70,10 +70,6 @@ pub struct ArtifactTouch {
 }
 
 /// A commit of the range `<base>..<head>` (`Git::branch_walk`).
-//
-// Part B (SD910 in branch mode) is the first caller of the branch walk. Until
-// then the dead-code lint cannot see a use, so the type has this `allow`.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchCommit {
     pub commit: String,
@@ -92,7 +88,6 @@ pub struct BranchCommit {
 }
 
 /// The commits of a branch (`Git::branch_walk`).
-#[allow(dead_code)] // See `BranchCommit`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchWalk {
     /// The commits of `<base>..<head>`, the oldest first. A parent comes
@@ -481,7 +476,6 @@ impl Git {
 
     /// Returns true if `ancestor` is `descendant` or one of its ancestors. An
     /// unknown revision gives false.
-    #[allow(dead_code)] // See `BranchCommit`.
     pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
         self.cmd(&["merge-base", "--is-ancestor", ancestor, descendant])
             .env("GIT_NO_LAZY_FETCH", "1")
@@ -497,7 +491,6 @@ impl Git {
     /// can apply the stops of D13. The command reads only the history that the
     /// repository has: it never fetches. `base` and `head` are revisions, such
     /// as a commit id.
-    #[allow(dead_code)] // See `BranchCommit`.
     pub fn branch_walk(&self, base: &str, head: &str) -> Result<BranchWalk, String> {
         let range = format!("{base}..{head}");
         let out = self.run_offline(&[

@@ -17,6 +17,7 @@ macro_rules! eprintln {
 }
 
 mod adapters;
+mod approval;
 mod change;
 mod check;
 mod cite;
@@ -1345,6 +1346,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .str("pointer", &l.pointer)
                 .end()
         });
+        let approvals_json = report.approvals.iter().map(|x| {
+            Obj::new()
+                .str("commit", &x.commit)
+                .str("path", &x.path)
+                .str("author", &x.author)
+                .end()
+        });
         let mut obj = Obj::new()
             .str("version", VERSION)
             .str("mode", if a.all { "all" } else { "base" })
@@ -1360,6 +1368,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .raw("summary", &summary)
                 .raw("diagnostics", &json::array(diags))
                 .raw("locked_links", &json::array(locked_json))
+                .raw("approvals", &json::array(approvals_json))
                 .raw("documents", &json::array(docs))
                 .end()
         );
