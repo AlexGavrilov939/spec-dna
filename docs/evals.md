@@ -246,13 +246,13 @@ The cap is checked before each run: if the spend and the `max-budget-usd` of the
 
 #### Stop and resume
 
-The runner writes the result file after each pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 130 (SIGINT) or 143 (SIGTERM).
+The runner writes the result file after each pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGHUP, SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 129 (SIGHUP), 130 (SIGINT) or 143 (SIGTERM). A run of the agent that ended before the signal is in `spend_usd`. A Ctrl-C does not reach the git helpers of the runner, so an interrupt is never an error of git.
 
 ```text
 spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-total-usd <n>
 ```
 
-`--resume` goes on in the same file, and it writes one merged result into it. It skips each pair that the file holds, and it runs the arm that a half pair lacks. The target must be the target of the file. `--resume` takes no `--out` and no `--dry-run`. The spend, the excluded attempts and the models of the file carry over, and the cap counts the spend of the file too. A file of a finished target has nothing to run. `eval verdict` keeps reading the newest file that holds each name.
+`--resume` goes on in the same file, and it writes one merged result into it. It skips each pair that the file holds, and it runs the arm that a half pair lacks. The target must be the target of the file. The run uses the `runs` of the file. A different `--runs` is a usage error (exit code 2). `--resume` takes no `--out` and no `--dry-run`. The spend, the excluded attempts and the models of the file carry over, and the cap counts the spend of the file too. A file of a finished target has nothing to run. `eval verdict` keeps reading the newest file that holds each name.
 
 ### Runs that the API refuses
 
@@ -261,14 +261,17 @@ The runner treats a refused attempt as no run. A refused attempt is an account l
 1. The result object has `"is_error": true` and an `api_error_status` of 401, 403, 429 or 500 to 599. The text does not matter, and it can be long.
 2. The result object has a `result` text with fewer than 600 bytes and a marker.
 3. There is no result object, and the stdout is empty. The exit code is not 0. The stderr gives the class. This is a decision of the design: an empty output is a failed connection more often than a failed run.
-4. There is no result object, and the stdout is a text with fewer than 600 bytes and a marker.
+4. There is no result object, the exit code is not 0, and the stdout is a text. A text with fewer than 600 bytes and a marker gives the class. Without a marker, the attempt is a silent error (see below): an agent never ends with a plain text.
+5. The result object has `"is_error": true`, no marker, and a cost of 0 or no cost: a silent error. A real agent run never costs 0.
 
-A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), or one of these phrases, in any case:
+A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), `limit reached` together with `reset` (for example `5-hour limit reached ∙ resets 3pm`), a window of the account (`5-hour limit`, `weekly limit`, `session limit`, `opus limit`), or one of these phrases, in any case:
 
 - account: "usage limit", "spend limit reached", "credit balance", "out of usage", "out of extra usage", "please run /login", "not logged in";
 - other: "rate limit", "limit will reset", "overloaded", "Failed to authenticate", "Attention Required", "Cloudflare", "Request timed out", "Connection error", "Unable to connect", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "ENOTFOUND", "socket hang up", "fetch failed", "could not resolve host".
 
-`Context limit reached` is not a marker: it is a run. A failed check, an agent that ran out of turns or budget, and an error with no marker are runs, and they count.
+`Context limit reached` and `Token limit reached for this file` have no `reset`: they are runs. A failed check, an agent that ran out of turns or budget, and an error that has a cost and no marker are runs, and they count.
+
+A silent error is excluded like a refusal, with the short ladder: no result counts it, and the spend gets its cost, or 0. 5 silent errors in a row stop the command with `"api-error"` (exit code 3) and the partial result. A run that counts resets the row. Thus a broken `claude`, such as one that prints a plain error, gives no result and no verdict.
 
 The runner tries a refused attempt again with the same eval, arm and run number, in a new temporary folder. The waits depend on the class:
 
@@ -282,7 +285,7 @@ A 5-hour session window ends before the last retry of an account limit. `SPEC_DN
 - No result counts a refused attempt: not the pass rate, not the runs, not the cost of the arm. The result file reports the count of excluded attempts of each arm.
 - The charged cost of a refused attempt is the cost that `claude` reports, or 0. It goes to `spend_usd` and to the check of the cap only.
 - After the last wait, the command stops with exit code 3, and `stopped` is `"api-error"`. It writes the partial result. Run the target again later with `--resume`.
-- A backstop covers a refusal that the markers miss. After 5 counted runs in a row with `"is_error": true`, a cost of 0 and no `error_max_` subtype, the command stops with `"api-error"` and exit code 3, and it writes the partial result.
+- The 5 silent errors in a row are the backstop for a refusal that the markers miss.
 
 `eval run` without `--ab` keeps the rule of [ADR 0008](adr/0008-harness-and-evals.md): a refused run is a failed run, and the runner never tries it again.
 
@@ -294,7 +297,7 @@ The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the 
 | --- | --- |
 | `spec_dna`, `claude_code`, `started` | The versions and the start time, as in the result of `eval run` |
 | `models` | The sorted names of the models that the results of `claude` list in `modelUsage`. Names only |
-| `target`, `seed`, `resamples` | The target, 24 and 2,000 |
+| `target`, `runs`, `seed`, `resamples` | The target, the value of `--runs` (`null` if each eval kept its own runs), 24 and 2,000 |
 | `max_total_usd`, `estimate_usd`, `spend_usd` | The cap, the estimate and the spend. The spend includes the excluded attempts |
 | `excluded` | `{"with": n, "without": n}`, the excluded attempts of each arm |
 | `stopped` | `null`, `"max-total-usd"`, `"api-error"`, `"error"` (a git or file error) or `"interrupted"` (SIGINT, SIGTERM, or a file that the runner writes during the run) |

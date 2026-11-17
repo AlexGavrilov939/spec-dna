@@ -31,6 +31,8 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - A run of the agent that takes more than 25 minutes, and a check that takes more than 5 minutes, are killed with their process group and count as failed (subtype `timeout`). `SPEC_DNA_EVAL_TIMEOUT` and `SPEC_DNA_EVAL_CHECK_TIMEOUT` set the limits in seconds.
 - The agent and the checks of an eval run with the folder of the running binary first on `PATH`, and with a neutral git identity and no signature. The files `AGENTS.md` and `CLAUDE.md` of a fixture keep their text in `--ab`: the copy adds only the generated lines of the project.
 - `eval run --ab` allows the tool `Skill` in both arms and records `permission_denials` for each side of a pair. The cap is checked before each run. `--dry-run` prints the estimate also above the cap.
+- `eval run --ab` excludes a silent error like a refusal: a result with an error and a cost of 0, or a plain text or no output with a non-zero exit, and no marker. The charged cost is 0, 5 in a row stop the command with `api-error`, and a real run resets the row. The messages `5-hour limit reached ∙ resets 3pm` and `Weekly limit reached ∙ resets Mon 9am` are account limits. `Context limit reached` stays a run.
+- The result of `eval run --ab` has the key `runs`, and `--resume` uses it: a different `--runs` is a usage error. SIGHUP is trapped like SIGTERM (exit 129). The cost of an agent run that a signal interrupts during its checks stays in `spend_usd`.
 - The code SD507 `skill-unproven`: a skill that is off by default and is in `[harness] skills` has no verdict `on`. It is off in `lite` and `standard`, and a warning in `strict`.
 
 ### Changed

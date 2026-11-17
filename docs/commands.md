@@ -793,7 +793,7 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 
 `eval run --ab <target>` measures a skill against no skill ([ADR 0016](adr/0016-skill-evals.md)). The target is a skill, `all` or `agents-line`. It reads the pack in `<[evals] dir>/pack/`, runs each eval in the arms `with` and `without` in pairs, and writes `<[evals] dir>/results/skills-<YYYYMMDD>T<HHMMSS>Z.json` (or the folder of `--out`). The result has the pass rates, the costs, the difference and the cost ratio with a 90% interval, and a verdict. [evals.md](evals.md#the-pack-and-the-measure-of-a-skill) gives the arms, the rules of the verdict and the result file.
 
-`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 130 and 143. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
+`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`, and `--resume` rejects a different `--runs`. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
 
 | Code | Meaning of `eval run --ab` |
 | --- | --- |
@@ -801,7 +801,7 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | 2 | Usage error: no target, more than one target, an unknown target, `--min-pass-rate`, or a bad value of `SPEC_DNA_EVAL_BACKOFF` |
 | 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
 | 4 | A git or file error: the temporary folder, the copy, the base commit or the result file. After the first run, the command writes the partial result (`"stopped": "error"`) before it exits |
-| 130, 143 | SIGINT or SIGTERM. The partial result is written first |
+| 129, 130, 143 | SIGHUP, SIGINT or SIGTERM. The partial result is written first |
 
 ### eval pack
 
