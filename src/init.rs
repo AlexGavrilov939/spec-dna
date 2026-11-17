@@ -3702,11 +3702,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let (skeleton, skeleton_notes) = skeleton_changes(repo, &plan, &parsed.evidence_tests);
     changes.extend(skeleton);
     plan.notes.extend(skeleton_notes);
-    let pack_exists = repo
-        .root
-        .join(&plan.evals_table.dir)
-        .join("pack")
-        .exists();
+    let pack_exists = repo.root.join(&plan.evals_table.dir).join("pack").exists();
     profile_notes(&mut plan, pack_exists);
 
     let preview = o.dry_run || interactive || !write;
