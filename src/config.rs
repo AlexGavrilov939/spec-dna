@@ -1079,6 +1079,11 @@ pub(crate) fn unknown_type(key: &str, name: &str) -> String {
     )
 }
 
+/// The budget of a plan in 0.6.1. 0.7.0 gives the type no default budget, but a
+/// `[budgets.plan]` table with one field takes the other field from here.
+const PLAN_SOFT_0_6: u32 = 6_000;
+const PLAN_HARD_0_6: u32 = 12_000;
+
 pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
     (8_000, 16_000),  // product
     (8_000, 16_000),  // system
@@ -1205,8 +1210,15 @@ impl Config {
                         .ok_or_else(|| format!("`budgets.{}` must be a table", ty.name()))?;
                     let mut f = Fields::new(tbl, &format!("budgets.{}.", ty.name()));
                     let (soft, hard) = budgets[ty as usize];
-                    let soft = f.opt_u32("soft")?.unwrap_or(soft);
-                    let hard = f.opt_u32("hard")?.unwrap_or(hard);
+                    let (soft, hard) = match (ty, f.opt_u32("soft")?, f.opt_u32("hard")?) {
+                        // A `plan` table with one field only keeps working as in
+                        // 0.6.1: the other field is the old default. The old
+                        // default gives way to an explicit value, so it never
+                        // makes `hard` lower than `soft`.
+                        (DocType::Plan, Some(s), None) => (s, PLAN_HARD_0_6.max(s)),
+                        (DocType::Plan, None, Some(h)) => (PLAN_SOFT_0_6.min(h), h),
+                        (_, s, h) => (s.unwrap_or(soft), h.unwrap_or(hard)),
+                    };
                     if hard < soft {
                         return Err(format!("`budgets.{}`: `hard` is below `soft`", ty.name()));
                     }

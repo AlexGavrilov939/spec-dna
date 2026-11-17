@@ -529,7 +529,7 @@ The default budgets are (soft and hard, in characters):
 
 A budget counts the Unicode characters of the body, without front matter and code blocks. The text of amendment sections counts.
 
-`soft = 0` turns off SD701 and SD703 for a type. `hard = 0` turns off SD702 and SD704, and it needs `soft = 0`, because a `hard` below `soft` is a configuration error (exit code 3). So `soft = 0` and `hard = 0` give a type no budget. `[budgets.plan]` with 2 values above 0 gives a plan the rules of SD701 to SD704. A project that has an explicit `[budgets.plan]` keeps it. Delete the table to take the new default.
+`soft = 0` turns off SD701 and SD703 for a type. `hard = 0` turns off SD702 and SD704, and it needs `soft = 0`, because a `hard` below `soft` is a configuration error (exit code 3). So `soft = 0` and `hard = 0` give a type no budget. `[budgets.plan]` with 2 values above 0 gives a plan the rules of SD701 to SD704. A `[budgets.plan]` table with one key only takes the other key from the default of 0.6.1 (6,000 for `soft`, 12,000 for `hard`). An explicit `soft` above 12,000 gives `hard` the same value, and an explicit `hard` below 6,000 gives `soft` the same value, so the table is never a configuration error. A project that has an explicit `[budgets.plan]` keeps it. Delete the table to take the new default.
 
 A document over the soft budget gives a warning (SD701). If it also grew against the base, it gives SD703. The hard budget compares the document with the base ([ADR 0001](adr/0001-information-model.md), "Amendments"). These rules apply:
 

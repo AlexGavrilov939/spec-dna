@@ -1294,3 +1294,33 @@ fn a_zero_budget_turns_the_budget_of_a_type_off() {
     assert!(budget_codes(&out).is_empty(), "{out}");
     assert_eq!(code, 0, "{out}");
 }
+
+#[test]
+fn a_budgets_plan_table_with_one_field_takes_the_old_default_for_the_other() {
+    // Only `soft`: `hard` is the default of 0.6.1, 12,000. A plan of about
+    // 12,500 characters is over both.
+    let r = repo_with_plan(&plan_of(40), "[budgets.plan]\nsoft = 3000\n");
+    let (code, out) = check(&r);
+    assert_eq!(budget_codes(&out), ["SD702"], "{out}");
+    assert_eq!(code, 1, "{out}");
+    // Only `soft`, above the old `hard`: `hard` follows `soft`, with no
+    // configuration error.
+    let r = repo_with_plan(&plan_of(40), "[budgets.plan]\nsoft = 15000\n");
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // Only `hard`: `soft` is the default of 0.6.1, 6,000.
+    let r = repo_with_plan(&plan_of(12), "[budgets.plan]\nhard = 20000\n");
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let r = repo_with_plan(&plan_of(25), "[budgets.plan]\nhard = 20000\n");
+    let (code, out) = check(&r);
+    assert_eq!(budget_codes(&out), ["SD701"], "{out}");
+    assert_eq!(code, 0, "{out}");
+    // Only `hard`, below the old `soft`: no configuration error.
+    let r = repo_with_plan(&plan_of(1), "[budgets.plan]\nhard = 2000\n");
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
