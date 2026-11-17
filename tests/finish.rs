@@ -27,6 +27,7 @@ const VALVES_PATH: &str = "docs/requirements/valves.md";
 const CHANGE_CLOSE: &str = "- CHANGE requirements/valves#close@{close}: The controller SHALL close the valve in 4 seconds.";
 const ADD_FLUSH: &str =
     "- ADD requirements/valves#flush: The controller SHALL flush the line before it closes.";
+const ADD_PUMP: &str = "- ADD requirements/pump#start: The pump SHALL start the flow.";
 const REMOVE_OPEN: &str = "- REMOVE requirements/valves#open@{open}";
 const COVERS_CLOSE_FLUSH: &str =
     "# covers: requirements/valves#close\n# covers: requirements/valves#flush\n";
@@ -1059,6 +1060,31 @@ fn a_generated_index_that_lists_the_folder_is_written_again() {
     let (code, out) = check(&r, "main");
     assert!(!has(&out, "SD610") && !has(&out, "SD102"), "{out}");
     assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn the_refresh_of_a_generated_index_writes_the_status_of_its_place() {
+    // An index of the folder `requirements` with no status and an old hash. The
+    // change adds a document to the folder, so `finish` writes the index again.
+    let r = Fx {
+        delta: &[ADD_PUMP],
+        extra: &[(
+            "docs/requirements/README.md",
+            "---\ngenerated: spec-dna index h:0000000000000000\n---\n# Requirements\n\n| Entry | Title | Status |\n| --- | --- | --- |\n| [valves](valves.md) | Valves | active |\n",
+        )],
+        ..Fx::default()
+    }
+    .start();
+    r.write("tests/test_pump.py", "# covers: requirements/pump#start\n");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("wrote docs/requirements/README.md"), "{out}");
+    let index = r.read("docs/requirements/README.md");
+    assert!(
+        index.starts_with("---\nstatus: draft\ngenerated: spec-dna index h:"),
+        "{index}"
+    );
+    assert!(index.contains("pump.md"), "{index}");
 }
 
 // The merge kinds

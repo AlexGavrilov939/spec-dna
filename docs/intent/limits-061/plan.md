@@ -29,7 +29,7 @@ status: approved
 
 ## Order
 
-- [ ] t1: Write the failing tests of `index` and of the refresh of `finish`, from the reproduction of D29 (`hygiene-engineer`). Files: `tests/cli.rs`, `tests/finish.rs`. Verify: `cargo test --test cli --test finish` fails on the new cases.
+- [x] t1: Write the failing tests of `index` and of the refresh of `finish`, from the reproduction of D29 (`hygiene-engineer`). Files: `tests/cli.rs`, `tests/finish.rs`. Verify: `cargo test --test cli --test finish` fails on the new cases.
 - [ ] t2: Write the failing tests of the reader and of `new` for a pair of areas (`core-engineer`). Files: `tests/new_place.rs`. Verify: `cargo test --test new_place` fails on the new cases.
 - [ ] t3: Write the failing test of `mv` into an area that differs only in case (`hygiene-engineer`). Files: `tests/cli.rs`. Verify: `cargo test --test cli mv` fails on the new case.
 - [ ] t4: Write the failing tests of `upgrade --layout --areas` and of `init` for a pair (`init-engineer`). Files: `tests/upgrade_cli.rs`, `tests/init_graph.rs`. Verify: `cargo test --test upgrade_cli --test init_graph` fails on the new cases.
