@@ -16,7 +16,24 @@ pub const CLAUDE: &str = "CLAUDE.md";
 pub const SKILL: &str = ".claude/skills/spec-dna/SKILL.md";
 pub const PATHS: [&str; 3] = [AGENTS, CLAUDE, SKILL];
 
-const LINE_BODY: &str = "If a task edits code or docs, run `spec-dna context <files>` once first. Before a commit, run `spec-dna check`.";
+/// The sentence of the approval rule (Q5). The line of `AGENTS.md` and the
+/// body of each skill (`harness_text::APPROVAL_RULE`) both use it, so they
+/// state the same words. A macro, because `concat!` needs a literal.
+macro_rules! approval_sentence {
+    () => {
+        "An agent writes an approval commit only when the owner says so explicitly in the chat."
+    };
+}
+pub(crate) use approval_sentence;
+
+/// The text of the line (ADR 0003, ADR 0010, ADR 0011). The whole line, with
+/// its marker, has 400 bytes or fewer (D6), and each request carries it. It
+/// names the 5 disciplines (D3) with the skill of each, the command that
+/// prints the detail (D4), and the approval rule of the owner (Q5).
+const LINE_BODY: &str = concat!(
+    "If a task edits code or docs, run `spec-dna context <files>` once. Before a commit, run `spec-dna check`. Rules: test first (tdd), cause first (debug), proof before done (verify), review is data (review), isolated work (execute). Detail: `spec-dna skill show <name>`. ",
+    approval_sentence!()
+);
 
 /// The skill description. An agent loads the description of each skill into
 /// every request, so it must stay short.
@@ -37,7 +54,28 @@ const SKILL_BODY: &str = "# spec-dna
     - Supersede the decision if its outcome changes. Write a new decision with `supersedes: [<old id>]`. Set the status of the old decision to `superseded`.
 7. Before you finish, run `spec-dna check` once (or the project target that runs it). Fix each error, and each SD606 or SD607 warning (a document cites code that your change removed). For an accepted decision, name the new path or identifier in its amendment section. The output gives the fix of each code. Run `check` again only after a fix. Other warnings need no change.
 8. Do not split, move or shorten a document in a task for a size warning (SD701, SD703, SD704). For a size error (SD702), do one of these actions: put your new text into a new document and link it, or move whole sections with one `spec-dna mv <doc-id>#<section>... <to>`. Then the old ids stay as aliases.
-9. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner. `check` reports a change of `spec-dna.toml` together with other files as SD503.";
+9. Do not edit `spec-dna.toml`. A configuration change is a change of its own, by the project owner. `check` reports a change of `spec-dna.toml` together with other files as SD503.
+
+{disciplines}
+
+{replace_rule}";
+
+/// The block of the 5 disciplines (D3). Each rule is one line of 140 bytes or
+/// fewer, and it names the skill that holds the detail. The block has 700
+/// bytes or fewer (D6). A rule works when its skill is off, because
+/// `spec-dna skill show <name>` prints the detail.
+pub const DISCIPLINES: &str = "## Disciplines
+
+Each rule names the skill with the detail. Run `spec-dna skill show <name>` to read it, also when the skill is off.
+
+- Test first: write a test that fails before the code (`tdd`).
+- Cause first: find the cause of a failure before the fix. After 3 failed fixes, stop and ask (`debug`).
+- Proof before done: run the proof and read its output before you say \"done\" (`verify`).
+- Review is data: check each review comment against the code before you act on it (`review`).
+- Isolated work: do each change in its own git worktree or branch (`execute`).";
+
+/// The rule for a project that also has another workflow plugin (D5).
+const REPLACE_RULE: &str = "A spec-dna skill replaces a general skill of the same stage. For `write-plan` it replaces `writing-plans`.";
 
 /// The generated line of a root instruction file.
 pub fn line() -> String {
@@ -65,7 +103,10 @@ fn skill_body(types: &[DocType]) -> String {
         .filter(|t| types.is_empty() || types.contains(t))
         .map(DocType::name)
         .collect();
-    SKILL_BODY.replace("{types}", &names.join(", "))
+    SKILL_BODY
+        .replace("{types}", &names.join(", "))
+        .replace("{disciplines}", DISCIPLINES)
+        .replace("{replace_rule}", REPLACE_RULE)
 }
 
 /// The skill block, between begin and end markers.
@@ -332,6 +373,34 @@ mod tests {
     }
 
     #[test]
+    fn the_line_and_the_discipline_block_keep_their_limits() {
+        // D6: the line has 400 bytes or fewer with its marker, and the block
+        // of disciplines has 700 bytes or fewer.
+        let l = line();
+        assert!(l.len() <= 400, "{} bytes: {l}", l.len());
+        assert!(DISCIPLINES.len() <= 700, "{} bytes", DISCIPLINES.len());
+        let rules: Vec<&str> = DISCIPLINES
+            .lines()
+            .filter(|l| l.starts_with("- "))
+            .collect();
+        assert_eq!(rules.len(), 5);
+        for r in &rules {
+            assert!(r.len() <= 140, "{} bytes: {r}", r.len());
+        }
+        // The line names the 5 skills, the command and the approval rule.
+        for w in ["tdd", "debug", "verify", "review", "execute"] {
+            assert!(l.contains(w), "{w}");
+        }
+        assert!(l.contains("`spec-dna skill show <name>`"));
+        assert!(l.contains(approval_sentence!()));
+        // The skill body holds the block and the rule of D5.
+        let skill = skill_file(&[]);
+        assert!(skill.contains(DISCIPLINES));
+        assert!(skill.contains(REPLACE_RULE));
+        assert!(!skill.contains("{disciplines}") && !skill.contains("{replace_rule}"));
+    }
+
+    #[test]
     fn detects_an_existing_import() {
         assert!(imports_agents("# X\n@AGENTS.md\n"));
         assert!(!imports_agents("# X\n"));
@@ -400,8 +469,9 @@ mod tests {
 
     #[test]
     fn prefix_stays_small() {
-        // The line in one instruction file plus the skill description.
+        // The line in one instruction file plus the skill description. The
+        // line has 400 bytes or fewer (D6), and a line feed ends it.
         let bytes = line().len() + 1 + skill_prefix_bytes();
-        assert!(bytes <= 300, "{bytes} bytes");
+        assert!(bytes <= 401 + 111, "{bytes} bytes");
     }
 }

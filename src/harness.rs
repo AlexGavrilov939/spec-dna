@@ -14,6 +14,7 @@ use crate::diag::{Code, Diag};
 use crate::harness_text;
 use crate::hash::{hash_normalized, hex};
 use crate::json::{self, Value};
+use crate::stage::Stage;
 use toml::Value as Toml;
 
 pub const SETTINGS: &str = ".claude/settings.json";
@@ -281,25 +282,105 @@ impl RoleCfg {
     }
 }
 
-/// A stage skill that `init` writes (`[harness] skills`).
+/// A skill of the workflow pack that `init` writes (`[harness] skills`). The
+/// variants have the order of D2, and `skills.sort()` uses it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Skill {
-    Intent,
-    Spec,
-    Plan,
+    Brainstorm,
+    Specify,
+    Clarify,
+    WritePlan,
+    Execute,
+    Tdd,
     Review,
+    Verify,
+    Finish,
+    Debug,
+    PostMortem,
+}
+
+/// The kind of a skill (D2): a stage skill binds to a step that `next` names,
+/// and an event skill binds to an event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillKind {
+    Stage,
+    Event,
+}
+
+impl SkillKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            SkillKind::Stage => "stage",
+            SkillKind::Event => "event",
+        }
+    }
+}
+
+/// The names of 0.6 that end in 0.7.0 (`review` stays). A key with one of them
+/// is an error, and `upgrade` renames it. spec-dna keeps no alias.
+pub const GONE_SKILLS: [&str; 3] = ["intent", "spec", "plan"];
+
+/// The skill files of 0.6 that 0.7.0 does not write. SD503 does not count
+/// them, so the pull request of the pin can delete them. `init` removes an
+/// unedited one.
+pub(crate) const OLD_SKILL_PATHS: [&str; 3] = [
+    ".claude/skills/spec-dna-intent/SKILL.md",
+    ".claude/skills/spec-dna-spec/SKILL.md",
+    ".claude/skills/spec-dna-plan/SKILL.md",
+];
+
+/// The error for a name of 0.6 that ended, or `None` for another name. The
+/// message names the new names and the command that renames them.
+pub fn gone_skill_message(name: &str) -> Option<String> {
+    GONE_SKILLS.contains(&name).then(|| {
+        format!(
+            "the skill `{name}` ended in 0.7.0; `intent` is now `brainstorm`, `spec` is now `specify` and `clarify`, and `plan` is now `write-plan`. Run `spec-dna upgrade` to rename them"
+        )
+    })
+}
+
+/// The error for a name of 0.6 in an answer of `init` (the answers file, or
+/// the parts line of question 12). `upgrade` never changes an answers file,
+/// so the message names the new names only.
+pub fn gone_skill_answer_message(name: &str) -> Option<String> {
+    let to = match name {
+        "intent" => "`brainstorm`",
+        "spec" => "`specify` and `clarify`",
+        "plan" => "`write-plan`",
+        _ => return None,
+    };
+    Some(format!("the skill `{name}` ended in 0.7.0; use {to}"))
 }
 
 impl Skill {
-    pub const ALL: [Skill; 4] = [Skill::Intent, Skill::Spec, Skill::Plan, Skill::Review];
+    pub const ALL: [Skill; 11] = [
+        Skill::Brainstorm,
+        Skill::Specify,
+        Skill::Clarify,
+        Skill::WritePlan,
+        Skill::Execute,
+        Skill::Tdd,
+        Skill::Review,
+        Skill::Verify,
+        Skill::Finish,
+        Skill::Debug,
+        Skill::PostMortem,
+    ];
 
-    /// The value in `skills`: `intent`.
+    /// The value in `skills`, and the name that `next` prints: `write-plan`.
     pub fn key(self) -> &'static str {
         match self {
-            Skill::Intent => "intent",
-            Skill::Spec => "spec",
-            Skill::Plan => "plan",
+            Skill::Brainstorm => "brainstorm",
+            Skill::Specify => "specify",
+            Skill::Clarify => "clarify",
+            Skill::WritePlan => "write-plan",
+            Skill::Execute => "execute",
+            Skill::Tdd => "tdd",
             Skill::Review => "review",
+            Skill::Verify => "verify",
+            Skill::Finish => "finish",
+            Skill::Debug => "debug",
+            Skill::PostMortem => "post-mortem",
         }
     }
 
@@ -307,15 +388,56 @@ impl Skill {
         Skill::ALL.into_iter().find(|k| k.key() == s)
     }
 
-    /// The name of the skill: `spec-dna-intent`.
+    /// The name of the skill: `spec-dna-write-plan`.
     pub fn name(self) -> String {
         format!("spec-dna-{}", self.key())
     }
 
-    /// The path of the file: `.claude/skills/spec-dna-intent/SKILL.md`.
+    /// The path of the file: `.claude/skills/spec-dna-write-plan/SKILL.md`.
     pub fn path(self) -> String {
         format!(".claude/skills/{}/SKILL.md", self.name())
     }
+
+    pub fn kind(self) -> SkillKind {
+        match self {
+            Skill::Debug | Skill::PostMortem => SkillKind::Event,
+            _ => SkillKind::Stage,
+        }
+    }
+
+    /// The stage of a stage skill (D2), or `None` for an event skill.
+    pub fn stage(self) -> Option<Stage> {
+        match self {
+            Skill::Brainstorm => Some(Stage::Plan),
+            Skill::Specify | Skill::Clarify => Some(Stage::Design),
+            Skill::WritePlan | Skill::Execute => Some(Stage::Build),
+            Skill::Tdd => Some(Stage::Test),
+            Skill::Review | Skill::Verify => Some(Stage::Deploy),
+            Skill::Finish => Some(Stage::Closed),
+            Skill::Debug | Skill::PostMortem => None,
+        }
+    }
+
+    /// True if the skill is on by default (D2). `init` at level `lean` writes
+    /// these skills. The 4 skills that are off stay off until an eval gives a
+    /// verdict (Q4).
+    pub fn default_on(self) -> bool {
+        !matches!(
+            self,
+            Skill::Execute | Skill::Tdd | Skill::Verify | Skill::Debug
+        )
+    }
+
+    /// The skills that are on by default, in the order of `ALL`.
+    pub fn default_on_list() -> Vec<Skill> {
+        Skill::ALL.into_iter().filter(|s| s.default_on()).collect()
+    }
+}
+
+/// The 11 names, with commas, for a message.
+pub fn skill_keys() -> String {
+    let keys: Vec<&str> = Skill::ALL.iter().map(|s| s.key()).collect();
+    keys.join(", ")
 }
 
 /// `[harness] protect-tests`: when the hook asks before an edit of a test.
@@ -529,10 +651,12 @@ impl Harness {
         let mut skills: Vec<Skill> = Vec::new();
         for name in f.opt_strs("skills")? {
             let skill = Skill::from_key(&name).ok_or_else(|| {
-                let keys: Vec<&str> = Skill::ALL.iter().map(|s| s.key()).collect();
+                if let Some(gone) = gone_skill_message(&name) {
+                    return format!("`harness.skills`: {gone}");
+                }
                 format!(
                     "`harness.skills`: unknown skill `{name}`; use {}",
-                    keys.join(", ")
+                    skill_keys()
                 )
             })?;
             if skills.contains(&skill) {
@@ -1081,11 +1205,29 @@ fn team_page(h: &Harness) -> String {
     s += "\n## Precedence\n\nThis project file has priority over the user settings. The options `--model`, `--effort` and `--advisor`, and a resumed session, have priority over this project file.\n";
     s += "\n## Reload\n\nClaude Code reloads `advisorModel`, `fallbackModel`, `env` and the `.claude/agents` directory while it runs. Claude Code reads `model` and `modelSettings` only when a session starts.\n";
     if !h.skills.is_empty() {
-        let names: Vec<String> = h.skills.iter().map(|k| format!("`{}`", k.name())).collect();
-        s += &format!(
-            "\n## Skills\n\nspec-dna writes these stage skills: {}. Each skill runs spec-dna commands for one stage of a change.\n",
-            names.join(", ")
-        );
+        // The stage skills and the event skills are named apart (D2).
+        let named = |kind: SkillKind| -> Vec<String> {
+            h.skills
+                .iter()
+                .filter(|k| k.kind() == kind)
+                .map(|k| format!("`{}`", k.name()))
+                .collect()
+        };
+        let (stage, event) = (named(SkillKind::Stage), named(SkillKind::Event));
+        let mut text = Vec::new();
+        if !stage.is_empty() {
+            text.push(format!(
+                "spec-dna writes these stage skills: {}. Each skill runs spec-dna commands for one stage of a change.",
+                stage.join(", ")
+            ));
+        }
+        if !event.is_empty() {
+            text.push(format!(
+                "spec-dna writes these event skills: {}. A failure or an incident starts an event skill, and it has no stage.",
+                event.join(", ")
+            ));
+        }
+        s += &format!("\n## Skills\n\n{}\n", text.join(" "));
     }
     if h.review_md {
         s += &format!(
@@ -1243,6 +1385,17 @@ pub fn wanted(path: &str) -> bool {
             .is_some_and(|r| r.ends_with(".md") && !r.contains('/'))
 }
 
+/// After the removal of a skill file, removes its folder
+/// (`.claude/skills/spec-dna-intent/`) if the folder is empty. A folder with
+/// another file stays, and so does any error.
+pub(crate) fn remove_empty_skill_dir(root: &std::path::Path, path: &str) {
+    if is_skill_path(path)
+        && let Some(dir) = std::path::Path::new(path).parent()
+    {
+        let _ = std::fs::remove_dir(root.join(dir));
+    }
+}
+
 /// The agent files that 0.5 wrote and 0.6 does not: `checker.md` became
 /// `verifier.md`, and `spec-writer.md` ended. `init --reconfigure` removes an
 /// unedited one, so a change of the configuration with it is still its own.
@@ -1258,6 +1411,7 @@ pub fn is_output_path(path: &str) -> bool {
         || path == TEAM_PAGE
         || path == REVIEW
         || OLD_AGENT_PATHS.contains(&path)
+        || OLD_SKILL_PATHS.contains(&path)
         || AGENT_DEFS.iter().any(|d| d.path() == path)
         || Skill::ALL.iter().any(|s| s.path() == path)
 }
@@ -1866,7 +2020,8 @@ pub struct FileChange {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// `init` with an existing configuration. It writes and never removes.
+    /// `init` with an existing configuration. It writes, and it removes only
+    /// an unedited skill file of 0.6 that 0.7.0 does not write.
     Upgrade,
     /// A new configuration, or `init --reconfigure`. It also removes the
     /// generated files that the configuration no longer produces.
@@ -2036,6 +2191,25 @@ pub fn plan(
                 });
             } else {
                 plan.kept.push(format!("kept {p}: edited by hand (SD501)"));
+            }
+        }
+    }
+    // `init` with an existing configuration also removes an unedited skill
+    // file of 0.6 (D4). A hand-edited file stays, and `check` reports it.
+    // `Mode::Reconfigure` removes it in the loop above.
+    if mode == Mode::Upgrade {
+        for p in OLD_SKILL_PATHS {
+            let Some(t) = get(p) else { continue };
+            let Some(m) = file_marker(t) else { continue };
+            if m.edited() {
+                plan.kept.push(format!("kept {p}: edited by hand (SD501)"));
+            } else {
+                plan.changes.push(FileChange {
+                    path: p.to_string(),
+                    action: Action::Remove,
+                    note: "the skill ended in 0.7.0".into(),
+                    text: String::new(),
+                });
             }
         }
     }
@@ -2623,13 +2797,20 @@ opus = "xhigh"
         let h = parse("level = \"lean\"").unwrap();
         assert!(h.skills.is_empty() && !h.review_md && h.protect_tests == Protect::Off);
         // The list is in the order of `Skill`, not the order of the file.
-        let h = parse("level = \"full\"\nskills = [\"review\", \"intent\", \"plan\"]").unwrap();
-        assert_eq!(h.skills, [Skill::Intent, Skill::Plan, Skill::Review]);
-        assert_eq!(Skill::Spec.path(), ".claude/skills/spec-dna-spec/SKILL.md");
+        let h = parse("level = \"full\"\nskills = [\"review\", \"brainstorm\", \"write-plan\"]")
+            .unwrap();
+        assert_eq!(
+            h.skills,
+            [Skill::Brainstorm, Skill::WritePlan, Skill::Review]
+        );
+        assert_eq!(
+            Skill::Specify.path(),
+            ".claude/skills/spec-dna-specify/SKILL.md"
+        );
         let text = h.toml_section();
         assert!(
             text.contains(
-                "fanout-cap = 10\nskills = [\"intent\", \"plan\", \"review\"]\nreview-md = false\nprotect-tests = \"off\"\n\n[harness.roles]"
+                "fanout-cap = 10\nskills = [\"brainstorm\", \"write-plan\", \"review\"]\nreview-md = false\nprotect-tests = \"off\"\n\n[harness.roles]"
             ),
             "{text}"
         );
@@ -2642,10 +2823,10 @@ opus = "xhigh"
 
     #[test]
     fn writes_doc_names_the_files_of_the_new_keys() {
-        let mut h = parse("level = \"lean\"\nskills = [\"spec\"]\nreview-md = true").unwrap();
+        let mut h = parse("level = \"lean\"\nskills = [\"specify\"]\nreview-md = true").unwrap();
         assert!(h.writes_doc("REVIEW.md"));
-        assert!(h.writes_doc(".claude/skills/spec-dna-spec/SKILL.md"));
-        assert!(!h.writes_doc(".claude/skills/spec-dna-plan/SKILL.md"));
+        assert!(h.writes_doc(".claude/skills/spec-dna-specify/SKILL.md"));
+        assert!(!h.writes_doc(".claude/skills/spec-dna-write-plan/SKILL.md"));
         assert!(!h.writes_doc(".claude/skills/spec-dna/SKILL.md"));
         h.level = Level::None;
         assert!(!h.writes_doc("REVIEW.md"));
@@ -2676,7 +2857,7 @@ opus = "xhigh"
             },
             {
                 let mut h = lean();
-                h.skills = vec![Skill::Plan];
+                h.skills = vec![Skill::WritePlan];
                 h.protect_tests = Protect::FixBranches;
                 h
             },
@@ -3669,7 +3850,7 @@ opus = "xhigh"
         let strays = [
             ".claude/agents/implementer.md",
             ".claude/agents/code-simplifier.md",
-            ".claude/skills/spec-dna-plan/SKILL.md",
+            ".claude/skills/spec-dna-write-plan/SKILL.md",
             REVIEW,
         ];
         for p in strays {
@@ -3894,7 +4075,7 @@ opus = "xhigh"
     fn wanted_accepts_a_skill_file_and_review_md_but_not_the_adapter_skill() {
         for p in [
             "REVIEW.md",
-            ".claude/skills/spec-dna-intent/SKILL.md",
+            ".claude/skills/spec-dna-brainstorm/SKILL.md",
             ".claude/skills/mine/SKILL.md",
         ] {
             assert!(wanted(p), "{p}");
@@ -3917,9 +4098,69 @@ opus = "xhigh"
     }
 
     #[test]
+    fn the_skills_have_the_kind_stage_and_default_of_d2() {
+        // (key, kind, stage, default)
+        let table = [
+            ("brainstorm", "stage", Some("plan"), true),
+            ("specify", "stage", Some("design"), true),
+            ("clarify", "stage", Some("design"), true),
+            ("write-plan", "stage", Some("build"), true),
+            ("execute", "stage", Some("build"), false),
+            ("tdd", "stage", Some("test"), false),
+            ("review", "stage", Some("deploy"), true),
+            ("verify", "stage", Some("deploy"), false),
+            ("finish", "stage", Some("closed"), true),
+            ("debug", "event", None, false),
+            ("post-mortem", "event", None, true),
+        ];
+        assert_eq!(Skill::ALL.len(), table.len());
+        for (s, (key, kind, stage, on)) in Skill::ALL.into_iter().zip(table) {
+            assert_eq!(s.key(), key);
+            assert_eq!(s.kind().name(), kind, "{key}");
+            assert_eq!(s.stage().map(Stage::name), stage, "{key}");
+            assert_eq!(s.default_on(), on, "{key}");
+            assert_eq!(Skill::from_key(key), Some(s));
+        }
+        // The derived order is the order of D2, so `skills.sort()` keeps it.
+        let mut sorted = Skill::ALL.to_vec();
+        sorted.sort();
+        assert_eq!(sorted, Skill::ALL);
+    }
+
+    #[test]
+    fn each_name_that_next_prints_is_a_stage_skill_of_the_pack() {
+        for n in crate::stage::SKILLS {
+            let s = Skill::from_key(n).unwrap_or_else(|| panic!("`{n}` is no skill"));
+            assert_eq!(s.kind(), SkillKind::Stage, "{n}");
+        }
+        // The 9 names of `next` and the 2 event skills.
+        assert_eq!(Skill::ALL.len(), crate::stage::SKILLS.len() + 2);
+    }
+
+    #[test]
+    fn a_name_of_0_6_that_ended_has_a_message_and_review_has_none() {
+        for old in GONE_SKILLS {
+            assert!(Skill::from_key(old).is_none(), "{old}");
+            let m = gone_skill_message(old).unwrap();
+            assert!(
+                m.contains("spec-dna upgrade") && m.contains("`brainstorm`"),
+                "{m}"
+            );
+        }
+        assert!(gone_skill_message("review").is_none());
+        for p in OLD_SKILL_PATHS {
+            assert!(Skill::ALL.iter().all(|s| s.path() != p), "{p}");
+        }
+    }
+
+    #[test]
     fn is_output_path_accepts_the_skills_and_review_md() {
         for s in Skill::ALL {
             assert!(is_output_path(&s.path()), "{s:?}");
+        }
+        // The 3 files of the 0.6 names do not count for SD503.
+        for p in OLD_SKILL_PATHS {
+            assert!(is_output_path(p), "{p}");
         }
         assert!(is_output_path("REVIEW.md"));
         assert!(!is_output_path(".claude/skills/spec-dna/SKILL.md"));
@@ -3928,13 +4169,13 @@ opus = "xhigh"
 
     #[test]
     fn generated_files_put_the_skills_and_review_md_between_the_agents_and_the_page() {
-        let h = with_skills("skills = [\"review\", \"intent\"]\nreview-md = true");
+        let h = with_skills("skills = [\"review\", \"brainstorm\"]\nreview-md = true");
         let paths: Vec<String> = generated_files(&h).into_iter().map(|g| g.path).collect();
         let want = [
             ".claude/agents/fallback-advisor.md",
             ".claude/agents/verifier.md",
             ".claude/agents/Explore.md",
-            ".claude/skills/spec-dna-intent/SKILL.md",
+            ".claude/skills/spec-dna-brainstorm/SKILL.md",
             ".claude/skills/spec-dna-review/SKILL.md",
             "REVIEW.md",
             TEAM_PAGE,
@@ -3951,25 +4192,24 @@ opus = "xhigh"
 
     #[test]
     fn a_skill_file_has_the_front_matter_the_body_and_the_marker_last() {
-        let h = with_skills("skills = [\"plan\"]");
+        let h = with_skills("skills = [\"write-plan\"]");
         let g = generated_files(&h)
             .into_iter()
-            .find(|g| g.skill == Some(Skill::Plan))
+            .find(|g| g.skill == Some(Skill::WritePlan))
             .unwrap();
-        assert!(
-            g.text
-                .starts_with("---\nname: spec-dna-plan\ndescription: Writes plan.md of a change")
-        );
+        assert!(g.text.starts_with(
+            "---\nname: spec-dna-write-plan\ndescription: In a spec-dna project, before any code, write plan.md"
+        ));
         let m = file_marker(&g.text).expect("marker");
         assert!(!m.edited());
         assert!(g.text.ends_with(" -->\n"));
         assert_eq!(m.after, "");
         // The text is static: another configuration gives the same file.
-        let mut other = with_skills("skills = [\"plan\"]");
+        let mut other = with_skills("skills = [\"write-plan\"]");
         other.cfg_mut(Role::Verifier).model = Model::Id("sonnet".into());
         let g2 = generated_files(&other)
             .into_iter()
-            .find(|g| g.skill == Some(Skill::Plan))
+            .find(|g| g.skill == Some(Skill::WritePlan))
             .unwrap();
         assert_eq!(g.text, g2.text);
     }
@@ -3980,31 +4220,46 @@ opus = "xhigh"
         let off = plan_of(&with_skills(""));
         assert_eq!(plan_of(&with_skills("review-md = true")), off);
         let all = plan_of(&with_skills(
-            "skills = [\"intent\", \"spec\", \"plan\", \"review\"]",
+            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]",
         ));
-        let listing: usize = Skill::ALL
+        let listing: usize = Skill::default_on_list()
             .iter()
             .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
             .sum();
         assert_eq!(all, off + listing);
-        assert!(listing <= 800);
+        assert!(listing <= 1250);
     }
 
     #[test]
     fn the_team_page_has_no_new_section_while_the_keys_are_off() {
         let off = team_page(&with_skills(""));
         assert!(!off.contains("## Skills") && !off.contains("REVIEW.md"));
-        let on = team_page(&with_skills("skills = [\"spec\"]\nreview-md = true"));
-        assert!(on.contains("\n## Skills\n\nspec-dna writes these stage skills: `spec-dna-spec`."));
+        let on = team_page(&with_skills("skills = [\"specify\"]\nreview-md = true"));
+        assert!(
+            on.contains("\n## Skills\n\nspec-dna writes these stage skills: `spec-dna-specify`.")
+        );
         assert!(on.contains("\n## Review policy\n\n`REVIEW.md` holds"));
         assert!(!on.contains("`spec-dna-review` has the same text"));
+        // An event skill is named apart from the stage skills.
+        let ev = team_page(&with_skills(
+            "skills = [\"review\", \"debug\", \"post-mortem\"]",
+        ));
+        assert!(
+            ev.contains("\n## Skills\n\nspec-dna writes these stage skills: `spec-dna-review`. Each skill runs spec-dna commands for one stage of a change. spec-dna writes these event skills: `spec-dna-debug`, `spec-dna-post-mortem`. A failure or an incident starts an event skill, and it has no stage.\n"),
+            "{ev}"
+        );
+        let only = team_page(&with_skills("skills = [\"debug\"]"));
+        assert!(
+            only.contains("\n## Skills\n\nspec-dna writes these event skills: `spec-dna-debug`.")
+        );
+        assert!(!only.contains("stage skills"));
         let both = team_page(&with_skills("skills = [\"review\"]\nreview-md = true"));
         assert!(both.contains("The skill `spec-dna-review` has the same text."));
     }
 
     #[test]
     fn plan_reconfigure_removes_an_unedited_stray_skill_and_keeps_an_edited_one() {
-        let on = with_skills("skills = [\"intent\", \"plan\"]\nreview-md = true");
+        let on = with_skills("skills = [\"brainstorm\", \"write-plan\"]\nreview-md = true");
         let files: Vec<(String, String)> = generated_files(&on)
             .into_iter()
             .map(|g| (g.path, g.text))
@@ -4020,8 +4275,8 @@ opus = "xhigh"
         assert_eq!(
             removed,
             [
-                ".claude/skills/spec-dna-intent/SKILL.md",
-                ".claude/skills/spec-dna-plan/SKILL.md",
+                ".claude/skills/spec-dna-brainstorm/SKILL.md",
+                ".claude/skills/spec-dna-write-plan/SKILL.md",
                 "REVIEW.md"
             ]
         );

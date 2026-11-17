@@ -17,7 +17,7 @@ use crate::config_text::{
     Seg, append_tables, at, delete_key, delete_table, insert_keys, k, key_text, line_ending, quote,
     rename_key, render_value, replace_strings, set_value,
 };
-use crate::harness::{Level, Role};
+use crate::harness::{Level, Role, Skill};
 use crate::layer::{Graph, Layer, render_graph};
 use crate::model::DocType;
 use crate::repo::Fatal;
@@ -794,6 +794,84 @@ pub struct Repair {
     /// One line for each edit that the plan cannot make: the person makes it
     /// by hand.
     pub by_hand: Vec<String>,
+}
+
+/// The skill names of 0.6 that end in 0.7.0, with the names that replace them
+/// (D4). `review` stays.
+const SKILL_RENAMES: [(&str, &[&str]); 3] = [
+    ("intent", &["brainstorm"]),
+    ("spec", &["specify", "clarify"]),
+    ("plan", &["write-plan"]),
+];
+
+/// Renames the skills of 0.6 in `[harness] skills` (D4, D41): `intent` is
+/// `brainstorm`, `spec` is `specify` and `clarify`, and `plan` is `write-plan`.
+/// A name that the list already has is not added twice, and the new list has
+/// the order of D2. Only the value of `skills` in `[harness]` changes: the
+/// words `intent`, `spec` and `plan` are also the names of types. The call
+/// is before the first parse of the file, because the parser gives exit code 3
+/// for an old name. A list with no old name, and a text that does not parse,
+/// stay as they are, so a second run changes nothing.
+pub fn rename_skills(text: &str) -> Repair {
+    let mut out = Repair {
+        text: text.to_string(),
+        ..Repair::default()
+    };
+    let Ok(table) = text.parse::<Table>() else {
+        return out;
+    };
+    let Some(list) = table
+        .get("harness")
+        .and_then(|h| h.get("skills"))
+        .filter(|v| v.is_array())
+        .map(strs)
+    else {
+        return out;
+    };
+    let old_of = |n: &str| SKILL_RENAMES.iter().find(|r| r.0 == n);
+    let found: Vec<&(&str, &[&str])> = list.iter().filter_map(|n| old_of(n)).collect();
+    if found.is_empty() {
+        return out;
+    }
+    let mut new: Vec<String> = Vec::new();
+    for n in &list {
+        let names: Vec<&str> = match old_of(n) {
+            Some((_, to)) => to.to_vec(),
+            None => vec![n.as_str()],
+        };
+        for name in names {
+            if !new.iter().any(|x| x == name) {
+                new.push(name.to_string());
+            }
+        }
+    }
+    // An unknown name stays at the end, and the parser reports it.
+    new.sort_by_key(|n| Skill::from_key(n).map_or(usize::MAX, |s| s as usize));
+    let said: Vec<String> = found
+        .iter()
+        .map(|(from, to)| {
+            let to: Vec<String> = to.iter().map(|t| t.to_string()).collect();
+            format!("`{from}` is now {}", code_list(&to))
+        })
+        .collect();
+    match set_value(text, &[k("harness"), k("skills")], &str_array(&new)) {
+        Ok(t) => {
+            out.text = t;
+            out.edits.push(format!(
+                "`skills` of `[harness]` got the names of 0.7.0: {}",
+                said.join(", ")
+            ));
+        }
+        Err(_) => {
+            let quoted: Vec<String> = new.iter().map(|n| format!("\"{n}\"")).collect();
+            out.by_hand.push(format!(
+                "`skills` of `[harness]` has names of 0.6 ({}); the list has many lines, so change it by hand to [{}], then run `spec-dna upgrade` again",
+                said.join(", "),
+                quoted.join(", ")
+            ))
+        }
+    }
+    out
 }
 
 /// "`a`", "`a` and `b`" or "`a`, `b` and `c`".
@@ -2220,5 +2298,50 @@ mod tests {
         );
         let g = graph_without_limits(&t).unwrap();
         assert!(g.layers().iter().all(|l: &Layer| l.max_docs.is_none()));
+    }
+
+    #[test]
+    fn the_names_of_0_6_in_skills_change_and_the_types_stay() {
+        let t = "spec-dna = \"0.6.1\"\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[harness]\nlevel = \"lean\"\nskills = [\"plan\", \"review\", \"intent\", \"spec\"]  # mine\n";
+        let r = rename_skills(t);
+        assert_eq!(
+            r.text,
+            "spec-dna = \"0.6.1\"\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\"]  # mine\n"
+        );
+        assert_eq!(r.edits.len(), 1, "{:?}", r.edits);
+        assert!(r.by_hand.is_empty());
+        // A second call changes nothing.
+        let again = rename_skills(&r.text);
+        assert_eq!(again.text, r.text);
+        assert!(again.edits.is_empty());
+    }
+
+    #[test]
+    fn a_name_that_the_list_already_has_is_not_added_twice() {
+        let t = "[harness]\nskills = [\"specify\", \"spec\"]\n";
+        let r = rename_skills(t);
+        assert_eq!(r.text, "[harness]\nskills = [\"specify\", \"clarify\"]\n");
+    }
+
+    #[test]
+    fn no_old_name_or_no_valid_text_changes_nothing() {
+        for t in [
+            "[harness]\nskills = [\"review\"]\n",
+            "types = [\"intent\"]\n",
+            "[harness]\nlevel = \"lean\"\n",
+            "this is not toml",
+        ] {
+            let r = rename_skills(t);
+            assert_eq!(r.text, t);
+            assert!(r.edits.is_empty() && r.by_hand.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_list_of_many_lines_with_a_new_length_is_left_to_the_person() {
+        let t = "[harness]\nskills = [\n  \"spec\",  # the spec\n  \"review\",\n]\n";
+        let r = rename_skills(t);
+        assert_eq!(r.text, t);
+        assert_eq!(r.by_hand.len(), 1, "{:?}", r.by_hand);
     }
 }

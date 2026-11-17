@@ -1865,3 +1865,115 @@ fn a_document_whose_id_names_2_documents_is_no_top_file() {
     );
     assert!(!repo.dir.join("docs/lab/product.md").exists());
 }
+
+// --- the rename of the skills of 0.6 (0.7.0, D41) ---
+
+#[test]
+fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
+    let repo = project_06(None);
+    let toml = repo.read("spec-dna.toml").replace(
+        "[harness]\nlevel = \"none\"\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\"intent\", \"spec\", \"plan\", \"review\"]\n",
+    );
+    assert!(toml.contains("skills = [\"intent\""), "{toml}");
+    repo.write("spec-dna.toml", &toml);
+    repo.commit("a 0.6 project with the 4 skills");
+    // The old names stop each command, but `upgrade` reads the file.
+    let (code, _, err) = repo.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("brainstorm") && out.contains("write-plan"),
+        "{out}"
+    );
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let toml = repo.read("spec-dna.toml");
+    // `intent` is `brainstorm`, `spec` is `specify` and `clarify`, `plan` is
+    // `write-plan`, and `review` stays. The list has the order of D2.
+    assert!(
+        toml.contains(
+            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\"]\n"
+        ),
+        "{toml}"
+    );
+    // The words `intent`, `spec` and `plan` also name types, and the list
+    // `types` keeps them. Only the list `skills` loses the old names.
+    assert!(
+        toml.lines()
+            .filter(|l| l.starts_with("skills = "))
+            .all(|l| !l.contains("\"intent\"")
+                && !l.contains("\"spec\"")
+                && !l.contains("\"plan\"")),
+        "no old name stays: {toml}"
+    );
+    assert!(
+        toml.contains("types = [\"intent\", \"spec\", \"plan\"]"),
+        "{toml}"
+    );
+    repo.commit("upgrade");
+    // A second run has nothing to change, and the project checks clean.
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+    assert_eq!(status(&repo), "");
+    let (code, out, err) = repo.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn a_skills_list_of_many_lines_with_an_old_name_stops_upgrade_with_the_new_list() {
+    let repo = project_06(None);
+    let toml = repo.read("spec-dna.toml").replace(
+        "[harness]\nlevel = \"none\"\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\n  \"spec\",  # the spec\n  \"review\",\n]\n",
+    );
+    assert!(toml.contains("\"spec\",  # the spec"), "{toml}");
+    repo.write("spec-dna.toml", &toml);
+    repo.commit("a list of many lines");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("by hand") && err.contains("[\"specify\", \"clarify\", \"review\"]"),
+        "{err}"
+    );
+    // The file stays as it was.
+    assert_eq!(repo.read("spec-dna.toml"), toml);
+}
+
+#[test]
+fn upgrade_removes_an_unedited_skill_file_of_0_6_with_its_empty_folder() {
+    let repo = project_06(None);
+    let toml = repo.read("spec-dna.toml").replace(
+        "[harness]\nlevel = \"none\"\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n",
+    );
+    repo.write("spec-dna.toml", &toml);
+    let old =
+        include_str!("golden/harness/old-skills/spec-dna-intent.md").replace("{VERSION}", "0.6.1");
+    repo.write(".claude/skills/spec-dna-intent/SKILL.md", &old);
+    repo.write(
+        ".claude/skills/spec-dna-spec/SKILL.md",
+        &format!("{old}Own note.\n"),
+    );
+    repo.write(
+        ".claude/skills/spec-dna-spec/notes.md",
+        "A file of the project.\n",
+    );
+    repo.commit("old skills");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!repo.dir.join(".claude/skills/spec-dna-intent").exists());
+    // A folder that still has a file stays, with the file.
+    assert!(
+        repo.dir
+            .join(".claude/skills/spec-dna-spec/SKILL.md")
+            .exists()
+    );
+    assert!(
+        repo.dir
+            .join(".claude/skills/spec-dna-spec/notes.md")
+            .exists()
+    );
+}

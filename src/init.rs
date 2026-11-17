@@ -2137,6 +2137,12 @@ pub(crate) fn harness_run(
     {
         notes.push(EXPLORE_NOTE.to_string());
     }
+    if new.level != Level::None
+        && let Some((_, t)) = existing.iter().find(|e| e.0 == harness::SETTINGS)
+        && has_workflow_plugin(t)
+    {
+        notes.push(WORKFLOW_PLUGIN_NOTE.to_string());
+    }
     Ok(HarnessRun {
         level: new.level,
         hooks_version: harness::hooks_version(new),
@@ -2158,7 +2164,9 @@ fn settle_parts(plan: &mut Plan) {
         plan.harness.skills = if plan.change_policy == ChangePolicy::None {
             Vec::new()
         } else {
-            Skill::ALL
+            // The 7 skills that are on by default (D2). The level `full` also
+            // proposes the 4 that are off (D39).
+            proposed_skills(plan.harness.level)
                 .into_iter()
                 .filter(|s| !plan.parts.unmarked_skills.contains(s))
                 .collect()
@@ -2239,8 +2247,10 @@ fn parts_line(h: &Harness) -> String {
 fn parse_skills(names: &[String]) -> Result<Vec<Skill>, String> {
     let mut out: Vec<Skill> = Vec::new();
     for n in names {
-        let s = Skill::from_key(n)
-            .ok_or_else(|| format!("unknown skill `{n}`; use intent, spec, plan, review"))?;
+        let s = Skill::from_key(n).ok_or_else(|| {
+            harness::gone_skill_answer_message(n)
+                .unwrap_or_else(|| format!("unknown skill `{n}`; use {}", harness::skill_keys()))
+        })?;
         if out.contains(&s) {
             return Err(format!("`skills` lists `{n}` more than once"));
         }
@@ -2298,12 +2308,43 @@ fn apply_parts(plan: &mut Plan, words: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The bytes of the skill listing that `skills` adds to each request.
-fn skill_listing_bytes() -> usize {
-    Skill::ALL
-        .into_iter()
-        .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(s)).len())
+/// The bytes of the skill listing that `skills` adds to each request. It
+/// counts the skills that are on by default.
+fn skill_listing_bytes(skills: &[Skill]) -> usize {
+    skills
+        .iter()
+        .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
         .sum()
+}
+
+/// The skills that a level proposes (D39): the 7 that are on by default, and
+/// at the level `full` also the 4 that are off.
+fn proposed_skills(level: Level) -> Vec<Skill> {
+    if level == Level::Full {
+        Skill::ALL.to_vec()
+    } else {
+        Skill::default_on_list()
+    }
+}
+
+/// The note for a project that also has the plugin Superpowers (D5). A spec-dna
+/// skill and a skill of the plugin for the same stage compete.
+const WORKFLOW_PLUGIN_NOTE: &str = "`.claude/settings.json` enables a plugin with the word `superpowers`. The description of each spec-dna skill starts with \"In a spec-dna project\", and the adapter skill `spec-dna` states that a spec-dna skill replaces a general skill of the same stage (for `write-plan`, `writing-plans`). Nothing proves that Claude Code selects the spec-dna skill first. `init` does not move a file that the plugin writes, such as `docs/superpowers/specs/`: exclude that folder from the roots.";
+
+/// Returns true if `enabledPlugins` of a `.claude/settings.json` names a
+/// plugin with the word `superpowers`, in any case, and does not set it to
+/// `false`. `init` reads this file of the project only, never a file of the
+/// home folder (D5).
+fn has_workflow_plugin(settings: &str) -> bool {
+    let Ok(doc) = json::parse(settings) else {
+        return false;
+    };
+    match doc.get("enabledPlugins") {
+        json::Value::Obj(items) => items.iter().any(|(k, v)| {
+            k.to_ascii_lowercase().contains("superpowers") && *v != json::Value::Bool(false)
+        }),
+        _ => false,
+    }
 }
 
 /// The note for `.claude/agents/Explore.md`. Only an agent with the name
@@ -2980,7 +3021,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     }
 
     io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `code-simplifier`. none writes nothing. The files are for Claude Code only.");
+    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 4 skills that are off by default (`execute`, `tdd`, `verify` and `debug`). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -2992,9 +3033,12 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     settle_evals(plan);
     if plan.harness.level != Level::None {
         settle_parts(plan);
+        // The level `full` proposes the 4 skills that are off too (D39).
+        let proposed = proposed_skills(plan.harness.level);
         io.say(&format!(
-            "    The 4 stage skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
-            skill_listing_bytes()
+            "    The {} skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
+            proposed.len(),
+            skill_listing_bytes(&proposed)
         ));
         let a = io.line(
             &Question::Harness.prompt(
@@ -3555,6 +3599,7 @@ fn apply(repo: &Repo, changes: &[Change]) -> Result<Vec<String>, Fatal> {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(Fatal::Io(format!("{}: {e}", p.display()))),
             }
+            harness::remove_empty_skill_dir(&repo.root, &c.path);
             written.push(c.path.clone());
             continue;
         }
@@ -4164,7 +4209,7 @@ mod tests {
         let line = parts_line(&plan.harness);
         assert_eq!(
             line,
-            "skills=intent,spec,plan,review review-md=true protect-tests=fix-branches"
+            "skills=brainstorm,specify,clarify,write-plan,review,finish,post-mortem review-md=true protect-tests=fix-branches"
         );
         let words: Vec<String> = line.split_whitespace().map(str::to_string).collect();
         let mut again = plan.clone();
@@ -4189,7 +4234,8 @@ mod tests {
         let mut plan = plan_of_empty_repo();
         for (w, want) in [
             ("skills=build", "unknown skill `build`"),
-            ("skills=spec,spec", "`spec` more than once"),
+            ("skills=specify,specify", "`specify` more than once"),
+            ("skills=intent", "use `brainstorm`"),
             ("review-md=yes", "true or false"),
             ("protect-tests=never", "fix-branches, always or off"),
             ("models=none", "unknown part `models`"),
@@ -4204,7 +4250,7 @@ mod tests {
     fn the_default_skills_follow_the_final_policy_and_the_link_style() {
         let mut plan = plan_of_empty_repo();
         settle_parts(&mut plan);
-        assert_eq!(plan.harness.skills.len(), 4);
+        assert_eq!(plan.harness.skills.len(), 7);
         // A later answer changes the default, because no one set the part.
         plan.change_policy = ChangePolicy::None;
         plan.style = Style::VerifiedBy;
@@ -4213,14 +4259,31 @@ mod tests {
         assert_eq!(plan.harness.protect_tests, Protect::Off);
         // A part that the answers set stays.
         plan.parts.derive_skills = false;
-        plan.harness.skills = vec![Skill::Spec];
+        plan.harness.skills = vec![Skill::Specify];
         settle_parts(&mut plan);
-        assert_eq!(plan.harness.skills, vec![Skill::Spec]);
+        assert_eq!(plan.harness.skills, vec![Skill::Specify]);
     }
 
     #[test]
-    fn the_listing_of_the_4_skills_is_588_bytes() {
-        assert_eq!(skill_listing_bytes(), 588);
+    fn the_listing_of_the_7_skills_that_are_on_has_at_most_1250_bytes() {
+        let n = skill_listing_bytes(&proposed_skills(Level::Lean));
+        assert!(n > 588 && n <= 1250, "{n} bytes");
+        // The 11 skills of the level `full` have 1,900 bytes or fewer.
+        let n = skill_listing_bytes(&proposed_skills(Level::Full));
+        assert!(n <= 1900, "{n} bytes");
+    }
+
+    #[test]
+    fn a_plugin_with_the_word_superpowers_gives_the_note_of_d5() {
+        let on = |k: &str| format!("{{\"enabledPlugins\":{{\"{k}\":true}}}}");
+        assert!(has_workflow_plugin(&on("superpowers@x")));
+        assert!(has_workflow_plugin(&on("my-Superpowers-fork@y")));
+        assert!(!has_workflow_plugin(&on("other@x")));
+        assert!(!has_workflow_plugin(
+            "{\"enabledPlugins\":{\"superpowers@x\":false}}"
+        ));
+        assert!(!has_workflow_plugin("{\"permissions\":{}}"));
+        assert!(!has_workflow_plugin("not json"));
     }
 
     #[test]

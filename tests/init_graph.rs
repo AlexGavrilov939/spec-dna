@@ -174,7 +174,8 @@ fn a_new_project_gets_the_small_graph_and_a_root_without_a_default_type() {
     let (code, out, _) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
     let bytes = prefix_bytes(&r.run(&["init"]).1);
-    assert!(bytes <= 300, "{bytes} bytes");
+    // The line has 400 bytes or fewer (D6), and the skill description has 111.
+    assert!(bytes <= 401 + 111, "{bytes} bytes");
     // The preview names the questions with the numbers of the design.
     let (_, out, _) = r.run(&["init", "--reconfigure", "--dry-run", "--non-interactive"]);
     for n in 1..=14 {

@@ -75,9 +75,9 @@ grep -q '^Model team: ' CLAUDE.md || fail "init wrote no model-team line"
 for f in verifier Explore fallback-advisor model-team; do
     [ -f ".claude/agents/$f.md" ] || fail "init wrote no .claude/agents/$f.md"
 done
-# The stage skills, REVIEW.md and the starter files of the evals (the defaults of
-# a new project). The "Start" block adds them to the commit.
-for f in .claude/skills/spec-dna-intent/SKILL.md .claude/skills/spec-dna-review/SKILL.md REVIEW.md evals/check.sh evals/example.json evals/fixtures/example/notes.txt; do
+# The skills that are on by default, REVIEW.md and the starter files of the
+# evals (the defaults of a new project). The "Start" block adds them to the commit.
+for f in .claude/skills/spec-dna-brainstorm/SKILL.md .claude/skills/spec-dna-write-plan/SKILL.md .claude/skills/spec-dna-review/SKILL.md REVIEW.md evals/check.sh evals/example.json evals/fixtures/example/notes.txt; do
     [ -f "$f" ] || fail "init wrote no $f"
 done
 [ -e .github/workflows/agent-evals.yml ] && fail "init wrote the workflow of the evals for the CI answer none"
@@ -86,7 +86,7 @@ grep -q '^\[evals\]' spec-dna.toml || fail "init wrote no [evals] table"
 grep -q '@' CLAUDE.md && fail "init wrote an import into CLAUDE.md"
 [ -e AGENTS.md ] && fail "init created AGENTS.md next to an existing CLAUDE.md"
 bytes=$(spec-dna init | sed -n 's/^per-request prefix: \([0-9]*\) bytes.*/\1/p')
-[ "$bytes" -le 300 ] || fail "the adapters add $bytes bytes to the prompt prefix"
+[ "$bytes" -le 512 ] || fail "the adapters add $bytes bytes to the prompt prefix"
 echo "prompt prefix: $bytes bytes"
 
 # The small graph of `init` has no `interfaces` layer, and the demo has an
@@ -164,7 +164,7 @@ printf 'harness = "none"\n' >"$work/none.toml"
 spec-dna init --reconfigure --answers "$work/none.toml"
 [ -e .claude/agents/verifier.md ] && fail "init --reconfigure did not remove the agent files"
 [ -e REVIEW.md ] && fail "init --reconfigure did not remove REVIEW.md"
-[ -e .claude/skills/spec-dna-intent/SKILL.md ] && fail "init --reconfigure did not remove the stage skills"
+[ -e .claude/skills/spec-dna-brainstorm/SKILL.md ] && fail "init --reconfigure did not remove the skills"
 grep -q '^\[evals\]' spec-dna.toml || fail "init --reconfigure removed the [evals] table of the level none"
 [ -f evals/check.sh ] || fail "init --reconfigure removed the files of the evals"
 uninstall=$(block Uninstall | grep -v '^cargo uninstall')
@@ -176,10 +176,10 @@ rm -r evals
 gitc add -A
 [ "$(gitc ls-files -s docs)" = "$docs_before" ] || fail "the uninstall changed a document"
 gitc diff --cached --name-status | tee "$work/uninstall.txt"
-# The uninstall removes the harness agent files, the stage skills, REVIEW.md
+# The uninstall removes the harness agent files, the skills, REVIEW.md
 # and the files of the evals. `.claude/settings.json` stays, because it can
 # hold keys of the project.
-if grep -v -E '^D[[:space:]]+(spec-dna\.toml|REVIEW\.md|evals/.*|\.claude/skills/spec-dna(-[a-z]+)?/SKILL\.md|\.claude/agents/[A-Za-z-]+\.md)$|^M[[:space:]]+(CLAUDE\.md|\.claude/settings\.json)$' "$work/uninstall.txt"; then
+if grep -v -E '^D[[:space:]]+(spec-dna\.toml|REVIEW\.md|evals/.*|\.claude/skills/spec-dna(-[a-z]+)*/SKILL\.md|\.claude/agents/[A-Za-z-]+\.md)$|^M[[:space:]]+(CLAUDE\.md|\.claude/settings\.json)$' "$work/uninstall.txt"; then
     fail "the uninstall changed other files"
 fi
 grep -rl 'spec-dna' docs && fail "a document refers to spec-dna"

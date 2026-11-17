@@ -25,8 +25,10 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | decision | A MADR record of a choice. After the acceptance, its text is locked, except its amendment, history and live sections | | [types](types.md) |
 | delta | The list of `ADD`, `CHANGE` and `REMOVE` lines in a spec. Each line names a requirement id | | [change guide](guides/change.md) |
 | diff risk | The class R0, R1 or R2 of a change of requirement text | change-risk class | [ADR 0001](adr/0001-information-model.md) |
+| discipline | A rule that applies to each task, in one line. spec-dna has 5: test first, cause first, proof before done, review is data and isolated work. Each rule names the skill that holds its detail | | [harness](harness.md#disciplines) |
 | document id | The path of a document in its root, without `.md` | | [concepts](concepts.md#ids-and-requirements) |
 | eval | A task with checks that tests the agent setup of a project | | [evals](evals.md) |
+| event skill | A skill that an event starts: a failure (`debug`) or an incident (`post-mortem`). `next` does not name it | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
 | evidence | A test with a `covers:` tag, or a `verified-by` path, that proves a requirement | | [config](config.md#evidence) |
 | `finish` | The command that applies the delta of a change, checks the evidence and deletes the intent folder | | [change guide](guides/change.md) |
 | foundation | The layer of the top files `product.md`, `system.md` and `terms.md` | | [concepts](concepts.md#layers-and-the-graph) |
@@ -66,12 +68,13 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `routine` | A change class with an intent and a plan. The agent approves the plan | | [change guide](guides/change.md#choose-the-class) |
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |
 | section id | `<document id>#<heading slug>`: the unit that `context` gives to an agent | | [concepts](concepts.md#context) |
-| skill | A `SKILL.md` folder that gives a procedure to the agent | | [harness](harness.md) |
+| skill | A `SKILL.md` folder that gives a procedure to the agent. `spec-dna skill show <name>` prints the text of a skill of the workflow pack | | [harness](harness.md) |
 | slug | The name of a change or a document in an id, in lowercase words with hyphens, such as `sensor-timeout` | | [change guide](guides/change.md) |
 | `small-fix` | A change class with no intent: a pull request only | | [change guide](guides/change.md#choose-the-class) |
 | spec | `spec.md`: the delta, the interfaces, the decisions, the concerns and the open questions of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
 | stable layer | A layer of level 0, such as `rules` or `decisions`. The current truth is in stable layers | | [concepts](concepts.md#layers-and-the-graph) |
 | stage | One of Plan, Design, Build, Test, Deploy and Closed. spec-dna derives the stage of a change from its files and git | | [change guide](guides/change.md) |
+| stage skill | A skill that `next` names for a step of a change, for example `write-plan`. The workflow pack has 9 stage skills | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
 | standard document | A document form that a team already knows, such as an ADR or a PRD | | [types](types.md) |
 | subagent | An agent with its own context, which the main agent starts. The Claude Code adapter defines them in `.claude/agents/` | | [harness](harness.md) |
 | template | The text that `spec-dna new` writes for a new document | | [types](types.md#templates) |
@@ -79,3 +82,4 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | top file | A document of a layer that has a fixed file name, such as `terms.md` or `roadmap.md` | | [types](types.md#place-gives-the-type) |
 | `verified-by` | A front matter field with the paths of the tests or verification records of a document | | [config](config.md#evidence) |
 | `verifier` | The subagent that checks finished work. It runs the tests, reads the diff and reports each defect. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |
+| workflow pack | The set of 11 skills of spec-dna: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`. 7 are on by default | | [harness](harness.md#the-workflow-pack-and-reviewmd) |

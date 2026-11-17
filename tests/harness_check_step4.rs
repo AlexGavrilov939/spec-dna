@@ -8,9 +8,9 @@ mod common;
 use common::Repo;
 
 const SKILLS: [&str; 4] = [
-    ".claude/skills/spec-dna-intent/SKILL.md",
-    ".claude/skills/spec-dna-spec/SKILL.md",
-    ".claude/skills/spec-dna-plan/SKILL.md",
+    ".claude/skills/spec-dna-brainstorm/SKILL.md",
+    ".claude/skills/spec-dna-specify/SKILL.md",
+    ".claude/skills/spec-dna-write-plan/SKILL.md",
     ".claude/skills/spec-dna-review/SKILL.md",
 ];
 
@@ -18,7 +18,7 @@ const IMPLEMENTER: &str = ".claude/agents/implementer.md";
 const SIMPLIFIER: &str = ".claude/agents/code-simplifier.md";
 const CHECKER: &str = ".claude/agents/checker.md";
 
-const FULL_ALL_ON: &str = "[harness]\nlevel = \"full\"\nskills = [\"intent\", \"spec\", \"plan\", \"review\"]\nreview-md = true\n";
+const FULL_ALL_ON: &str = "[harness]\nlevel = \"full\"\nskills = [\"brainstorm\", \"specify\", \"write-plan\", \"review\"]\nreview-md = true\n";
 // `init --reconfigure` gives the defaults of a new project to a part that the
 // file has no key for (S9), so the parts are off by explicit keys.
 const LEAN_OFF: &str =
@@ -201,7 +201,7 @@ fn a_file_with_no_marker_at_a_generated_path_gives_sd504_with_the_way_out() {
         ),
         (
             SKILLS[1],
-            "[harness]\nlevel = \"lean\"\nskills = [\"spec\"]\n",
+            "[harness]\nlevel = \"lean\"\nskills = [\"specify\"]\n",
             "remove the skill from `skills` in [harness]",
         ),
     ] {

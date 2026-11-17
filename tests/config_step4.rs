@@ -152,14 +152,25 @@ fn the_evals_folder_is_never_part_of_a_root() {
 fn the_harness_keys_of_step_4_have_values() {
     for (cfg, want) in [
         (
-            "skills = [\"intent\", \"nope\"]",
-            "`harness.skills`: unknown skill `nope`; use intent, spec, plan, review",
+            "skills = [\"brainstorm\", \"nope\"]",
+            "`harness.skills`: unknown skill `nope`; use brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, finish, debug, post-mortem",
         ),
         (
-            "skills = [\"spec\", \"spec\"]",
-            "`harness.skills` lists `spec` more than once",
+            "skills = [\"specify\", \"specify\"]",
+            "`harness.skills` lists `specify` more than once",
         ),
-        ("skills = \"intent\"", "harness.skills"),
+        // The 3 names of 0.6 end. The message names the new names and the
+        // command that renames them (exit code 3).
+        (
+            "skills = [\"intent\"]",
+            "`harness.skills`: the skill `intent` ended in 0.7.0; `intent` is now `brainstorm`, `spec` is now `specify` and `clarify`, and `plan` is now `write-plan`. Run `spec-dna upgrade` to rename them",
+        ),
+        (
+            "skills = [\"review\", \"spec\"]",
+            "the skill `spec` ended in 0.7.0",
+        ),
+        ("skills = [\"plan\"]", "the skill `plan` ended in 0.7.0"),
+        ("skills = \"brainstorm\"", "harness.skills"),
         ("skills = [1]", "harness.skills"),
         (
             "review-md = \"yes\"",
@@ -185,7 +196,7 @@ fn a_harness_with_the_keys_of_step_4_is_valid() {
     for level in ["none", "lean", "full"] {
         parses(&format!("[harness]\nlevel = \"{level}\"\n"));
         parses(&format!(
-            "[harness]\nlevel = \"{level}\"\nskills = [\"review\", \"intent\"]\nreview-md = true\nprotect-tests = \"always\"\n"
+            "[harness]\nlevel = \"{level}\"\nskills = [\"review\", \"brainstorm\", \"post-mortem\"]\nreview-md = true\nprotect-tests = \"always\"\n"
         ));
         parses(&format!(
             "[harness]\nlevel = \"{level}\"\nskills = []\nreview-md = false\nprotect-tests = \"off\"\n"

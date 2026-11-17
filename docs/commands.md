@@ -13,6 +13,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | `show` | Print a document, a section or a requirement | [show](#show) |
 | `new` | Write a document from a template, also the 3 documents of a change | [new](#new) |
 | `next` | Print the checklist to the next gate of a change | [next](#next) |
+| `skill list`, `skill show` | Print the 11 skills of the workflow pack, or the text of one skill | [skill](#skill) |
 | `finish` | Apply the delta of a change, check the evidence, delete the folder of the change | [finish](#finish) |
 | `status` | Print each change, its class, its stage and its next gate | [status](#status) |
 | `log` | Print the finished changes | [log](#log) |
@@ -31,6 +32,8 @@ spec-dna upgrade --pin-file ../spec-dna-pin.toml             # write the move, t
 spec-dna new decision pump-choice   # a new document from the template of its type
 spec-dna new intent sensor-timeout --template prd   # the first document of a change
 spec-dna next sensor-timeout        # the checklist to the next gate of a change
+spec-dna skill list                 # the 11 skills, their kind, stage, state and default
+spec-dna skill show write-plan      # the text of a skill, also if the skill is off
 spec-dna finish sensor-timeout --dry-run   # the diff of the finish of a change, and nothing written
 spec-dna finish sensor-timeout      # apply the delta, delete the folder, stage the paths
 spec-dna status                     # each change, its class, its stage and its next gate
@@ -95,13 +98,13 @@ With a change policy other than `none`, the preview has a note with the `CODEOWN
 
 `init` writes these adapters:
 
-- one line in `AGENTS.md`, if the file exists or if neither file exists;
+- one line of 400 bytes or fewer in `AGENTS.md`, if the file exists or if neither file exists. It names the 5 rules of the disciplines, `spec-dna skill show <name>` and the approval rule;
 - one line in `CLAUDE.md`, unless `CLAUDE.md` imports such an `AGENTS.md`;
 - the skill `.claude/skills/spec-dna/SKILL.md` of the Claude Code adapter.
 
 The line never imports another file. Each adapter has the version of its generator and a hash. `check` reports a manual edit or an old version. A second run of `init` updates the adapters. It also replaces the multi-line blocks that earlier versions wrote.
 
-Questions 12 and 13 set the [agent harness](harness.md). `init` writes it for the Claude Code adapter: agent files, the stage skills, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`.
+Questions 12 and 13 set the [agent harness](harness.md). `init` writes it for the Claude Code adapter: agent files, the skills of the workflow pack, `REVIEW.md`, a model-team line in `CLAUDE.md` and a merge into `.claude/settings.json`. The default level is `lean`.
 
 Question 14 sets the evals ([evals.md](evals.md)). The answer `skeleton` writes the table `[evals]`, `evals/check.sh` and an example eval. For the CI answer `github`, it also writes the workflow `.github/workflows/agent-evals.yml`. It starts no run. A new project gets `skeleton`. An upgraded project keeps `none`.
 
@@ -317,7 +320,7 @@ In the `build` stage, `next` also names the next open task of the plan, also if 
 
 ### Skills
 
-Each line of `next` has the name of the skill for its step. The skills come in 0.7.0. Until then, `next` prints the names only, as data. The list is fixed and has 9 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. With `--json`, each item has the field `skill`.
+Each line of `next` has the name of the skill for its step. The list is fixed and has 9 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. With `--json`, each item has the field `skill`.
 
 | Step | Skill |
 | --- | --- |
@@ -331,7 +334,7 @@ Each line of `next` has the name of the skill for its step. The skills come in 0
 | The stage `deploy`, review the diff | `review` |
 | The stage `closed`, or a change that is ready for `finish` | `finish` |
 
-A line that is done has the skill of its own step.
+A line that is done has the skill of its own step. `spec-dna skill show <name>` prints the text of a skill, also for an agent with no skill folder. `next` never names `debug` and `post-mortem`: a failure and an incident are events, not stages of a change.
 
 ### Base and output
 
@@ -348,6 +351,41 @@ With `--json`, the output is one object:
 `base` is a SHA, or `null`. `class` is `null` if the intent has no valid class, and with the policy `none`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--base` that is not a commit; 4 git; 5 no folder for the slug.
+
+## skill
+
+```text
+spec-dna skill list [--json]
+spec-dna skill show <name> [--json]
+```
+
+`skill` prints the skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). It reads no document, writes nothing and starts no program. The text of each skill is a constant of the binary, so the pin fixes it.
+
+`skill list` prints one line for each of the 11 skills, in the order of the table of the pack. A line has 5 columns: the name, the kind (`stage` or `event`), the stage (`-` for an event skill), the state in the project and the default.
+
+```text
+brainstorm  stage plan   on  on
+specify     stage design on  on
+execute     stage build  off off
+debug       event -      off off
+```
+
+- The state comes from `[harness] skills` of `spec-dna.toml`: `on` if the list has the name, else `off`. A project with a `spec-dna.toml` and no `[harness]` table has each skill `off`. With no `spec-dna.toml`, the state is `-`.
+- The default is the state before an eval gives a verdict: `on` for the 7 skills that are on by default, else `off`.
+- A configuration error gives exit code 3. A pin of another version gives the warning of `next` on stderr.
+
+`skill show <name>` prints the body of one skill, with no front matter and no marker. It is the text that `init` writes into `.claude/skills/spec-dna-<name>/SKILL.md`. It works for a skill that is off, and with no `spec-dna.toml`, so an agent with no skill folder can read the text of the step that `next` names. The 11 names are the only names. The adapter skill `spec-dna`, a folder name such as `spec-dna-review` and the names `intent`, `spec` and `plan` of 0.6 give exit code 2.
+
+With `--json`, `list` prints one object, and `show` prints one object with the body:
+
+```json
+{"skills":[{"name":"brainstorm","kind":"stage","stage":"plan","state":"on","default":"on"}]}
+{"name":"write-plan","kind":"stage","stage":"build","body":"When to use: ..."}
+```
+
+`stage` is `null` for an event skill. `state` is `null` with no `spec-dna.toml`.
+
+Exit codes: 0 done; 2 usage or an unknown name; 3 configuration.
 
 ## finish
 
@@ -836,7 +874,7 @@ Save the file of `--pin-file` outside the repository, for example in the folder 
 | 1. Check | Refuses a tree that is not clean. Reads the old configuration. Builds the whole plan in memory |
 | 2. Configuration | Renames the old names: the types (`change` gives the 3 types `intent`, `spec` and `plan`), the statuses, the keys of `[budgets.*]` and the role `reviewer`. Removes `spec-writer`. Writes `[change] policy = "none"` and the layers that the types in use need, with no limits. Sets the pin to the new version, with the sums of `--pin-file`. Keeps each comment and each line ending. Writes the keys below |
 | 3. Front matter | Rewrites each `type:` and each `status:` that changed. A `proposed` or `accepted` change becomes an `intent` that is `draft` or `accepted`, and a `rejected` change becomes a `closed` intent. A `done` change and a former `note` become `research`. `upgrade` writes `was-type` (`change` or `note`) on each such document, and it adds a front matter if the document has none. It removes the `status` line of a `done` change |
-| 4. Harness | If `[harness]` exists, renames the role keys and writes the new parts as off: `skills = []`, `review-md = false` and `protect-tests = "off"`. A project at level `full` gets `code-simplifier = { claude-code = "none" }` in `[harness.roles]`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker. For a 0.5 project, it disables that role |
+| 4. Harness | If `[harness]` exists, renames the role keys, renames the skills of 0.6 in `skills` (`intent` is `brainstorm`, `spec` is `specify` and `clarify`, `plan` is `write-plan`, [harness.md](harness.md#upgrade-from-06)), and writes the new parts as off: `skills = []`, `review-md = false` and `protect-tests = "off"`. A project at level `full` gets `code-simplifier = { claude-code = "none" }` in `[harness.roles]`. Deletes an unedited generated file under its old name. Keeps an edited file, and `check` reports it (SD501). Never replaces a file that has no marker. For a 0.5 project, it disables that role |
 | 5. Changes and layout | Always: moves each `proposed`, `accepted` or `rejected` change with `git mv` to `<root>/intent/<slug>/intent.md`, in its own root. Writes its old id into `aliases`. The slug is the file stem, or the folder of an `index.md` or a `README.md`. With `--layout` only: moves the 6 folders of a mixed root that the next paragraph lists. Writes the old ids into `aliases`. A `done` change and a 0.5 spec stay where they are, because only a person can choose the area of a spec: `--areas` gives the choice. The top files and the areas are in the paragraphs below |
 | 6. Proof | Checks the items below. If the proof fails, `upgrade` writes nothing and exits with code 1 |
 | 7. Report | Lists the proposals to delete, the decisions to check, the files that it kept, the links that it did not rewrite and the changes of behavior |
