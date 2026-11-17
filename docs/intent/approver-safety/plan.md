@@ -42,7 +42,7 @@ status: approved
 
 - [x] t1: Write the failing tests of `init` and the approvers: an agent or bot e-mail, no terminal, `--approver`, the answers key, `strict` and `--reconfigure` (`init-engineer`). Files: `tests/init_change.rs`. Verify: `cargo test --test init_change` fails on the new cases.
 - [x] t2: Write the failing tests of SD926 (`diagnostics-engineer`). Files: `tests/branch_approval.rs`. Verify: `cargo test --test branch_approval` fails on the new cases.
-- [ ] t3: Write the failing tests of `approve` (`core-engineer`). Files: `tests/approve_cmd.rs`, `tests/cli.rs`. Verify: `cargo test --test approve_cmd` fails on each case.
+- [x] t3: Write the failing tests of `approve` (`core-engineer`). Files: `tests/approve_cmd.rs`, `tests/cli.rs`. Verify: `cargo test --test approve_cmd` fails on each case.
 - [ ] t4: Write the failing tests of the hook and its entry (`init-engineer`). Files: `tests/hook_approvals.rs`, `tests/harness.rs`, `tests/golden/harness/settings-strict.json`. Verify: `cargo test --test hook_approvals --test harness` fails on the new cases.
 - [ ] t5: Add the list of agent addresses, the group of SD926 and the range texts (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`, `docs/config.md`. Verify: `cargo test --bin spec-dna config::`.
 - [ ] t6: Add SD926 to `check` (`diagnostics-engineer`). Files: `src/diag.rs`, `src/check.rs`. Verify: `cargo test --test branch_approval sd926`.

@@ -3130,7 +3130,7 @@ fn init_asks_on_a_terminal() {
 
     // A "no" at the confirmation writes nothing.
     let r = Repo::empty();
-    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nn\n");
+    let (code, out) = on_terminal(&r.dir, &["init"], "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nn\n");
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("nothing written"), "{out}");
     assert!(!r.dir.join("spec-dna.toml").exists());
@@ -5123,4 +5123,24 @@ fn index_of_the_folder_of_a_layer_with_many_types_names_the_layer() {
         "{err}"
     );
     assert!(!r.dir.join("docs/intent/README.md").exists());
+}
+
+#[test]
+fn help_lists_approve() {
+    let run = |args: &[&str]| {
+        let o = Command::new(BIN).args(args).output().unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+        )
+    };
+    let (code, all) = run(&["--help"]);
+    assert_eq!(code, Some(0));
+    assert!(all.contains("approve <slug> intent|spec|plan"), "{all}");
+    let (code, one) = run(&["approve", "--help"]);
+    assert_eq!(code, Some(0), "{one}");
+    assert!(
+        one.starts_with("usage: spec-dna approve <slug> intent|spec|plan [--json]\n"),
+        "{one}"
+    );
 }
