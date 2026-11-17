@@ -164,7 +164,7 @@ The `Order` section of a plan holds a task list. A task is one top-level list it
 - `Files:` and `Verify:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the 2 labels does not matter. The first label of each kind counts.
 - The files of a task are the entries after `Files:`. spec-dna removes one final `.` or `;` of the text, and the parentheses that wrap it. An entry is a part of the text up to a comma that is not in a code span and not in a link (`[text](destination)`). An entry gives its code spans, or, if it has no code span, its text if the text is a plain path. They are paths or globs from the repository root.
 - The `Verify:` text is a check: a sentence or a command in a code span. An empty text counts as no text.
-- The text of `Files:` is `none` when it starts with the word `none` ([the `none` rule](#the-none-rule)). Such a task lists no path.
+- The text of `Files:` is `none` when its first word is `none`, followed by `:`, `.` or the end of the text ([the `none` rule](#the-none-rule)). Such a task lists no path.
 - An `approved` plan gives SD923 for a task with no `Files:` or no `Verify:`, or with a glob or a folder in `Files:`. It gives SD924 for a task with more than `[change] max-task-files` paths (default 3). A `draft` plan gives neither ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
 - A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
 - If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
@@ -193,7 +193,7 @@ A plan can state that the work edits no file. The `Files` section then has one i
 
 ### A paragraph under `Files`
 
-The parser keeps the first paragraph of the section `Files` that is not in a list. A paragraph that starts with the word `none` means the same as the list item `- none`. The word is `none` in any case. It must be followed by `:`, `.` or the end of the paragraph. So `None.` and `None: this change is research.` state "no files". `None of the old files stay.` is another paragraph.
+The parser keeps the first paragraph of the section `Files` that is not in a list. A paragraph whose first word is `none` means the same as the list item `- none`. The word is `none` in any case. It must be followed by `:`, `.` or the end of the paragraph. So `None.` and `None: this change is research.` state "no files". `None of the old files stay.` is another paragraph.
 
 Another paragraph gives no path. When the section has a paragraph and no list item, `next`, `status` and the messages of SD913 and SD915 say: "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`". When the section has a list item, the list gives the paths, and the paragraph is only text.
 
