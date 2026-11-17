@@ -251,7 +251,7 @@ The runner tries a refused attempt again with the same eval, arm and run number,
 
 ### The result file of `--ab`
 
-The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start), where `<dir>` is `<[evals] dir>/results` or the value of `--out`. A second file in the same second gets the suffix `-2`. The file is indented JSON. It has no `pass_rate` at the top level, so `spec-dna stats --sdlc` does not count it as a result of `eval run`.
+The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start), where `<dir>` is `<[evals] dir>/results` or the value of `--out`. A second file in the same second gets the suffix `-2`. The runner writes the text to a hidden temporary file in the folder and then gives it its final name, so a reader never sees a half file. The file is indented JSON. A stop by the cap, by `api-error` or by a git or file error (exit code 4) writes the partial result before the command exits, so the paid runs are not lost. It has no `pass_rate` at the top level, so `spec-dna stats --sdlc` does not count it as a result of `eval run`.
 
 | Key | Content |
 | --- | --- |
@@ -260,7 +260,8 @@ The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the 
 | `target`, `seed`, `resamples` | The target, 24 and 2,000 |
 | `max_total_usd`, `estimate_usd`, `spend_usd` | The cap, the estimate and the spend. The spend includes the excluded attempts |
 | `excluded` | `{"with": n, "without": n}`, the excluded attempts of each arm |
-| `stopped` | `null`, `"max-total-usd"` or `"api-error"` |
+| `stopped` | `null`, `"max-total-usd"`, `"api-error"` or `"error"` |
+| `error` | Only when `stopped` is `"error"`: the first line of the message of the git or file error, with no path of the machine |
 | `skills` | One item for each skill, or one item `agents-line` |
 
 An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`, and each side has `claude_exit`, `subtype`, `cost_usd`, `excluded` and `passed`. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.

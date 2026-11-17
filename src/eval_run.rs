@@ -1103,6 +1103,25 @@ pub(crate) fn write_result(
         .chars()
         .filter(|c| !matches!(c, '-' | ':'))
         .collect();
+    // The text goes to a temporary file first. A hidden name that does not end
+    // with `.json` is no result file, so no reader sees a half-written file.
+    let tmp = folder.join(format!(".{prefix}-{stamp}.{}.tmp", std::process::id()));
+    fs::write(&tmp, text.as_bytes())
+        .map_err(|e| Fatal::Io(format!("cannot write `{dir}`: {e}")))?;
+    let result = place_result(&folder, &tmp, dir, prefix, &stamp);
+    let _ = fs::remove_file(&tmp);
+    result
+}
+
+/// Gives the temporary file its final name. A hard link never replaces a file
+/// that exists, so the name gets the first free suffix from `-2` to `-999`.
+fn place_result(
+    folder: &Path,
+    tmp: &Path,
+    dir: &str,
+    prefix: &str,
+    stamp: &str,
+) -> Result<String, Fatal> {
     for n in 1..1000 {
         let name = if n == 1 {
             format!("{prefix}-{stamp}.json")
@@ -1110,18 +1129,15 @@ pub(crate) fn write_result(
             format!("{prefix}-{stamp}-{n}.json")
         };
         let path = folder.join(&name);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut f) => {
-                use std::io::Write;
-                f.write_all(text.as_bytes())
-                    .map_err(|e| Fatal::Io(format!("cannot write `{dir}/{name}`: {e}")))?;
-                return Ok(format!("{dir}/{name}"));
-            }
+        match fs::hard_link(tmp, &path) {
+            Ok(()) => return Ok(format!("{dir}/{name}")),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            // A file system with no hard links: rename, if the name is free.
+            Err(_) if !path.exists() => {
+                return fs::rename(tmp, &path)
+                    .map(|()| format!("{dir}/{name}"))
+                    .map_err(|e| Fatal::Io(format!("cannot write `{dir}/{name}`: {e}")));
+            }
             Err(e) => return Err(Fatal::Io(format!("cannot write `{dir}/{name}`: {e}"))),
         }
     }

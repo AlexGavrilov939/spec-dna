@@ -108,6 +108,8 @@ struct PairRec {
 enum Stop {
     MaxTotal,
     ApiError,
+    /// A git or file error ended the run. The error is in the result.
+    Error,
 }
 
 impl Stop {
@@ -115,6 +117,7 @@ impl Stop {
         match self {
             Stop::MaxTotal => "max-total-usd",
             Stop::ApiError => "api-error",
+            Stop::Error => "error",
         }
     }
 }
@@ -223,6 +226,9 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     };
     let mut pairs: Vec<Vec<PairRec>> = groups.iter().map(|_| Vec::new()).collect();
     let mut stopped: Option<Stop> = None;
+    // A git or file error ends the loop, but the paid runs are not lost: the
+    // result is written before the command exits.
+    let mut failed: Option<Fatal> = None;
     let planned_pairs: u32 = total_runs / 2;
     let mut done_pairs = 0;
     'groups: for (gi, g) in groups.iter().enumerate() {
@@ -236,7 +242,15 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
                 };
                 let mut sides: [Option<Side>; 2] = [None, None];
                 for arm in order {
-                    match run_arm(&mut ctx, &mut state, g, p, arm, n)? {
+                    let done = match run_arm(&mut ctx, &mut state, g, p, arm, n) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            stopped = Some(Stop::Error);
+                            failed = Some(e);
+                            break 'groups;
+                        }
+                    };
+                    match done {
                         Done::Counted(side) => sides[arm.index()] = Some(side),
                         Done::Stop(s) => {
                             stopped = Some(s);
@@ -277,6 +291,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         spend: state.spend,
         excluded: state.excluded,
         stopped,
+        error: failed.as_ref().map(|e| error_text(repo, e.message())),
         items,
     };
     let compact = result_json(&result);
@@ -287,7 +302,19 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             println!("{line}");
         }
     }
-    let path = write_result(repo, &out_dir, &started, &compact)?;
+    let path = write_result(repo, &out_dir, &started, &compact);
+    if let Some(e) = failed {
+        // The error of the run comes first. A failed write is only a note.
+        match &path {
+            Ok(p) => eprintln!("eval run: the partial result is in {p}"),
+            Err(w) => eprintln!(
+                "eval run: the partial result is not written: {}",
+                w.message()
+            ),
+        }
+        return Err(e);
+    }
+    let path = path?;
     eprintln!("eval run: the result is in {path}");
     match stopped {
         None => Ok(0),
@@ -298,6 +325,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             );
             Ok(3)
         }
+        Some(Stop::Error) => unreachable!("an error returns above"),
         Some(Stop::ApiError) => {
             eprintln!(
                 "eval run: stopped (api-error): the API refused the attempt {} times in a row, and the waits are over; the partial result is written. Run the target again later",
@@ -646,7 +674,26 @@ struct ResultFile {
     spend: f64,
     excluded: [u32; 2],
     stopped: Option<Stop>,
+    /// The message of the error that stopped the run, with no path.
+    error: Option<String>,
     items: Vec<Item>,
+}
+
+/// The first line of an error message, with the paths of the repository and of
+/// the temporary folder replaced, and at most 200 characters. The result
+/// keeps no path of the machine.
+fn error_text(repo: &Repo, message: &str) -> String {
+    let mut text = message.lines().next().unwrap_or("").to_string();
+    for (path, name) in [
+        (std::env::temp_dir(), "<tmp>"),
+        (repo.root.clone(), "<repo>"),
+    ] {
+        let p = path.to_string_lossy();
+        if !p.is_empty() {
+            text = text.replace(p.as_ref(), name);
+        }
+    }
+    text.chars().take(200).collect()
 }
 
 fn interval(i: &verdict::Interval) -> String {
@@ -731,7 +778,7 @@ fn result_json(r: &ResultFile) -> String {
         .num("with", r.excluded[0])
         .num("without", r.excluded[1])
         .end();
-    Obj::new()
+    let obj = Obj::new()
         .str("spec_dna", VERSION)
         .opt_str("claude_code", r.claude_code.as_deref())
         .raw("models", &models)
@@ -743,8 +790,12 @@ fn result_json(r: &ResultFile) -> String {
         .num("estimate_usd", r6(r.estimate))
         .num("spend_usd", r6(r.spend))
         .raw("excluded", &excluded)
-        .opt_str("stopped", r.stopped.map(Stop::name))
-        .raw("skills", &json::array(r.items.iter().map(item_json)))
+        .opt_str("stopped", r.stopped.map(Stop::name));
+    let obj = match &r.error {
+        Some(e) => obj.str("error", e),
+        None => obj,
+    };
+    obj.raw("skills", &json::array(r.items.iter().map(item_json)))
         .end()
 }
 
@@ -785,6 +836,9 @@ fn result_text(r: &ResultFile) -> Vec<String> {
     }
     if let Some(s) = r.stopped {
         lines.push(format!("stopped: {}", s.name()));
+    }
+    if let Some(e) = &r.error {
+        lines.push(format!("error: {e}"));
     }
     lines
 }

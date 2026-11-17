@@ -853,6 +853,36 @@ fn a_run_out_of_turns_or_budget_and_a_status_that_is_no_refusal_count() {
 }
 
 #[test]
+fn an_error_in_the_middle_of_a_run_writes_the_partial_result_before_exit_code_4() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The stub removes a fixture file of `tdd-3` during call 3, so the copy
+    // of `tdd-3` fails after the 4 runs of `tdd-1` and `tdd-2`.
+    fx.modes(&["ok", "ok", "break"]);
+    let broken = fx.repo.dir.join("evals/pack/fixtures/tdd-3/notes.txt");
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_BREAK_FILE", broken.to_str().unwrap())],
+    );
+    assert_eq!(code, 4, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4, "the runs before the error are done");
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}: one file, no temporary file");
+    let text = fs::read_to_string(fx.repo.dir.join("evals/results").join(&names[0])).unwrap();
+    assert!(text.contains("\"stopped\": \"error\""), "{text}");
+    assert!(text.contains("\"error\": \"cannot copy"), "{text}");
+    assert!(text.contains("\"eval\": \"tdd-2\""), "{text}");
+    assert!(!text.contains("\"eval\": \"tdd-3\""), "{text}");
+    assert!(text.contains("\"verdict\": null"), "{text}");
+    // No path of the machine in the file.
+    assert!(!text.contains(fx.repo.dir.to_str().unwrap()), "{text}");
+    assert!(!text.contains(fx.path("tmp").to_str().unwrap()), "{text}");
+    // The same object is on stdout, and stderr names the error.
+    assert!(out.contains("\"stopped\":\"error\""), "{out}");
+    assert!(err.contains("cannot copy"), "{err}");
+    fx.assert_clean();
+}
+
+#[test]
 fn a_refusal_of_the_arm_without_counts_in_its_own_arm() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     // The second call is the arm `without` of the first pair.

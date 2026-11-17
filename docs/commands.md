@@ -800,7 +800,7 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | 0 | The target is complete, with any verdict. Also `--dry-run` |
 | 2 | Usage error: no target, more than one target, an unknown target, `--min-pass-rate`, or a bad value of `SPEC_DNA_EVAL_BACKOFF` |
 | 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
-| 4 | A git or file error: the temporary folder, the copy, the base commit or the result file |
+| 4 | A git or file error: the temporary folder, the copy, the base commit or the result file. After the first run, the command writes the partial result (`"stopped": "error"`) before it exits |
 
 ### eval pack
 
