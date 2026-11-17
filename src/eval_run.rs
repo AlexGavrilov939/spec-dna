@@ -818,28 +818,53 @@ fn result_models(stdout: &[u8]) -> Vec<String> {
 /// longer text is an answer of the agent that names a status.
 const REFUSAL_TEXT_MAX: usize = 600;
 
-/// The phrases of a refusal, in lower case.
-const REFUSAL_PHRASES: [&str; 6] = [
+/// The phrases of a refusal, in lower case: the account limit, the rate
+/// limit, an overloaded API, a page of Cloudflare and a failed connection.
+/// The first group is the list of the lab harness of session 15.
+const REFUSAL_PHRASES: [&str; 17] = [
     "rate limit",
+    "rate-limit",
+    "rate_limit",
     "usage limit",
+    "limit reached",
+    "limit will reset",
     "overloaded",
     "failed to authenticate",
     "attention required",
     "cloudflare",
+    "request timed out",
+    "econnreset",
+    "etimedout",
+    "econnrefused",
+    "enotfound",
+    "socket hang up",
+    "fetch failed",
 ];
 
+/// True for the statuses of a refusal: 401, 403, 429 and 500 to 599.
+fn is_refusal_status(status: u32) -> bool {
+    matches!(status, 401 | 403 | 429 | 500..=599)
+}
+
 /// The rule of the owner for `eval run --ab` (ADR 0016, amendment of
-/// 2026-11-16): the API refused the attempt, so it is no run and no result
-/// counts it. 3 conditions must hold:
+/// 2026-11-16): an account limit, 401, 403, 429, a 5xx status or a page of
+/// Cloudflare refused the attempt. It is no run, and no result counts it.
+///
+/// A result of `claude` with a `subtype` that starts with `error_max_` (the
+/// agent ran out of turns or budget) is never a refusal. Else the attempt is
+/// refused when both of these are true:
 ///
 /// 1. `claude` exits with a code other than 0, or the result object has
 ///    `"is_error": true`.
-/// 2. The text of the answer (`result`, or the whole output if there is no
-///    result object) has fewer than 600 bytes.
-/// 3. The text has `API Error:` with the status 401, 403, 429 or 500 to 599,
-///    or the word `429`, or one of the phrases of `REFUSAL_PHRASES` in any
-///    case.
+/// 2. One of these holds:
+///    - the result object has `is_error` and an `api_error_status` of 401,
+///      403, 429 or 500 to 599, whatever its text is;
+///    - the text of the answer has fewer than 600 bytes and a marker (see
+///      `has_refusal_marker`). The text is the `result` of the object, or the
+///      whole output if there is no result object (a page of Cloudflare, or
+///      an error of the network).
 ///
+/// A failed check, an empty output and an error that does not match are runs.
 /// A real output looks like this (Claude Code 2.1.x):
 /// `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","total_cost_usd":0.5}`.
 pub(crate) fn is_refused(claude_exit: i32, stdout: &[u8]) -> bool {
@@ -848,8 +873,24 @@ pub(crate) fn is_refused(claude_exit: i32, stdout: &[u8]) -> bool {
     if claude_exit == 0 && !is_error {
         return false;
     }
+    if let Some(o) = &obj {
+        if o.get("subtype")
+            .as_str()
+            .is_some_and(|t| t.starts_with("error_max_"))
+        {
+            return false;
+        }
+        if is_error
+            && let json::Value::Num(n) = o.get("api_error_status")
+            && n.fract() == 0.0
+            && *n >= 0.0
+            && is_refusal_status(*n as u32)
+        {
+            return true;
+        }
+    }
     // With a result object, the text is its `result`, or empty. Only an output
-    // with no result object is read as text (a page of Cloudflare, for example).
+    // with no result object is read as text.
     let text = match &obj {
         Some(o) => o.get("result").as_str().unwrap_or("").to_string(),
         None => String::from_utf8_lossy(stdout).into_owned(),
@@ -857,7 +898,9 @@ pub(crate) fn is_refused(claude_exit: i32, stdout: &[u8]) -> bool {
     text.len() < REFUSAL_TEXT_MAX && has_refusal_marker(&text)
 }
 
-/// Condition 3 of `is_refused`.
+/// The markers of a refusal in a short text: `API Error:` with a status of
+/// `is_refusal_status`, the word `429`, `hit your ... limit` (at most 40
+/// characters between), or a phrase of `REFUSAL_PHRASES` in any case.
 fn has_refusal_marker(text: &str) -> bool {
     const API_ERROR: &str = "API Error:";
     let mut rest = text;
@@ -868,10 +911,7 @@ fn has_refusal_marker(text: &str) -> bool {
             .chars()
             .take_while(char::is_ascii_digit)
             .collect();
-        if let Ok(status) = digits.parse::<u32>()
-            && matches!(status, 401 | 403 | 429 | 500..=599)
-            && digits.len() == 3
-        {
+        if digits.len() == 3 && digits.parse::<u32>().is_ok_and(is_refusal_status) {
             return true;
         }
     }
@@ -893,6 +933,13 @@ fn has_refusal_marker(text: &str) -> bool {
         from = a + 1;
     }
     let lower = text.to_ascii_lowercase();
+    if let Some(at) = lower.find("hit your ") {
+        let tail = &lower[at + "hit your ".len()..];
+        let window: String = tail.chars().take(40 + "limit".len()).collect();
+        if window.contains("limit") {
+            return true;
+        }
+    }
     REFUSAL_PHRASES.iter().any(|p| lower.contains(p))
 }
 
@@ -1292,6 +1339,27 @@ mod tests {
             b"<title>Attention Required! | Cloudflare</title>"
         ));
         assert!(is_refused(1, b"API Error: 502 Bad Gateway"));
+        // The shapes of the lab harness of session 15, and the network.
+        for text in [
+            "You've hit your limit · resets 5pm (Europe/London)",
+            "You've hit your weekly Opus limit",
+            "Claude AI usage limit reached|1700000000",
+            "5-hour limit reached, resets 3pm",
+            "Request timed out",
+            "Overloaded",
+        ] {
+            assert!(is_refused(1, &failed(text)), "{text}");
+        }
+        assert!(is_refused(1, b"Error: read ECONNRESET"));
+        assert!(is_refused(1, b"TypeError: fetch failed"));
+        // An `is_error` result with a refusal status is a refusal, whatever the text.
+        for status in [401, 403, 429, 500, 503, 529, 599] {
+            let out = format!(
+                "{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"api_error_status\":{status},\"result\":\"{}\"}}",
+                "x".repeat(900)
+            );
+            assert!(is_refused(1, out.as_bytes()), "{status}");
+        }
         // A list of events: the last result decides.
         let events = br#"[{"type":"system"},{"type":"result","is_error":true,"result":"API Error: 503 down"}]"#;
         assert!(is_refused(1, events));
@@ -1323,6 +1391,28 @@ mod tests {
         assert!(is_refused(1, &failed("Too many requests, 429.")));
         assert!(!is_refused(-1, b"not json"));
         // A status that is not a refusal, or that is not a whole word.
+        // The agent ran out of turns or budget: a run, with any text.
+        for subtype in ["error_max_turns", "error_max_budget_usd"] {
+            let out = format!(
+                "{{\"type\":\"result\",\"subtype\":\"{subtype}\",\"is_error\":true,\"api_error_status\":503,\"result\":\"API Error: 503 rate limit\"}}"
+            );
+            assert!(!is_refused(1, out.as_bytes()), "{subtype}");
+        }
+        // A status that is not a refusal, with no error flag, or on a result with exit code 0.
+        for out in [
+            r#"{"type":"result","is_error":true,"api_error_status":400,"result":"Bad request"}"#,
+            r#"{"type":"result","is_error":true,"api_error_status":404,"result":"Not found"}"#,
+            r#"{"type":"result","is_error":true,"api_error_status":null,"result":"Failed"}"#,
+        ] {
+            assert!(!is_refused(1, out.as_bytes()), "{out}");
+        }
+        assert!(!is_refused(
+            0,
+            br#"{"type":"result","is_error":false,"api_error_status":429,"result":"done"}"#
+        ));
+        assert!(!is_refused(1, b"Segmentation fault"));
+        let far = format!("hit your target {} limit", "x".repeat(60));
+        assert!(!is_refused(1, &failed(&far)));
         assert!(!is_refused(1, &failed("API Error: 400 Bad request")));
         assert!(!is_refused(1, &failed("API Error: 404 Not found")));
         assert!(!is_refused(1, &failed("API Error: 5030 odd")));

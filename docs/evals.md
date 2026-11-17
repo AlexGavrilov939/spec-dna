@@ -232,13 +232,14 @@ A pair is the same eval and the same run number in both arms. For each eval and 
 
 ### Runs that the API refuses
 
-The runner treats a refused attempt as no run. An attempt is refused when 3 conditions are true:
+The runner treats a refused attempt as no run. A refused attempt is an account limit, 401, 403, 429, a 5xx status or a page of Cloudflare. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. Else an attempt is refused when these conditions are true:
 
 1. `claude` exits with a code other than 0, or the result object has `"is_error": true`.
-2. The `result` text has fewer than 600 bytes, so a long answer that names a status does not count. With no result object, the runner reads the stdout of `claude` as the text.
-3. The text has `API Error:` with the status 401, 403, 429 or 500 to 599, or the word `429`. Or it has one of these phrases, in any case: "rate limit", "usage limit", "overloaded", "Failed to authenticate", "Attention Required", "Cloudflare".
+2. The result object has `"is_error": true` and an `api_error_status` of 401, 403, 429 or 500 to 599 (the text does not matter, and it can be long), or the text matches a marker.
 
-A failed check, a stop by the turns and an error that does not match are runs, and they count. A run that exits with code 0 and no error flag counts, also when its answer names a limit.
+The text is the `result` of the result object, or the stdout of `claude` if there is no result object. It must have fewer than 600 bytes, so a long answer that names a status does not count. A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), or one of these phrases, in any case: "rate limit", "usage limit", "limit reached", "limit will reset", "overloaded", "Failed to authenticate", "Attention Required", "Cloudflare", "Request timed out", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "ENOTFOUND", "socket hang up", "fetch failed".
+
+A failed check, an agent that ran out of turns or budget, an empty output and an error that does not match are runs, and they count. A run that exits with code 0 and no error flag counts, also when its answer names a limit.
 
 The runner tries a refused attempt again with the same eval, arm and run number, in a new temporary folder. The waits before the 6 retries are 60, 120, 240, 480, 960 and 1,920 seconds, about 63 minutes in total. `SPEC_DNA_EVAL_BACKOFF` sets the first wait in seconds, from 0 to 3,600, and the next waits double it. A value that is not an integer in this range is a usage error (exit code 2). The tests set it to 0. The variable has an effect only on `--ab`.
 

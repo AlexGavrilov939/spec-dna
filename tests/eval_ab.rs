@@ -33,6 +33,10 @@ echo "$n" > "$STUB_DIR/n"
 } >> "$STUB_DIR/log"
 mode=$(sed -n "${n}p" "$STUB_DIR/modes" 2>/dev/null)
 [ -n "$mode" ] || mode=ok
+account() {
+    printf '{"type":"result","subtype":"success","is_error":true,"result":"%s","total_cost_usd":%s}\n' "$1" "${STUB_REFUSED_COST:-0.5}"
+    exit 1
+}
 refuse() {
     printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":%s,"result":"%s","total_cost_usd":%s}\n' "$1" "$2" "${STUB_REFUSED_COST:-0.5}"
     exit 1
@@ -53,6 +57,34 @@ case "$mode" in
         pad=$(printf 'x%.0s' $(seq 1 700))
         printf '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 429 %s","total_cost_usd":0.1}\n' "$pad"
         exit 1 ;;
+    acct) account "You've hit your limit · resets 5pm (Europe/London)" ;;
+    usage) account "Claude AI usage limit reached|1700000000" ;;
+    timeout) account "Request timed out" ;;
+    overloaded) account "Overloaded" ;;
+    s401x) refuse 401 "Something went wrong" ;;
+    s500) refuse 500 "Something went wrong" ;;
+    s529) refuse 529 "x" ;;
+    s503long)
+        pad=$(printf 'x%.0s' $(seq 1 900))
+        refuse 503 "$pad" ;;
+    netpage) printf 'Error: read ECONNRESET\n'; exit 1 ;;
+    maxbudget)
+        printf '{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"Reached the maximum budget","total_cost_usd":0.1}\n'
+        exit 1 ;;
+    turnsnotext)
+        printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.429}\n'
+        exit 1 ;;
+    s400)
+        printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":400,"result":"Bad request","total_cost_usd":0.1}\n'
+        exit 1 ;;
+    s429noerr)
+        printf '{"type":"result","subtype":"success","is_error":false,"api_error_status":429,"result":"done","total_cost_usd":0.1}\n'
+        exit 0 ;;
+    empty) exit 1 ;;
+    plainfail) printf 'Segmentation fault\n'; exit 139 ;;
+    break)
+        rm -f "$STUB_BREAK_FILE"
+        ;;
 esac
 pass=0
 case "$STUB_PASS" in
@@ -765,6 +797,59 @@ fn a_run_that_fails_for_another_reason_counts() {
         out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
         "{out}"
     );
+}
+
+#[test]
+fn an_account_limit_a_timeout_and_a_5xx_status_are_refusals() {
+    // The shapes of the lab harness of session 15, and an `is_error` result
+    // with an `api_error_status` of any text.
+    for mode in [
+        "acct",
+        "usage",
+        "timeout",
+        "overloaded",
+        "s401x",
+        "s500",
+        "s529",
+        "s503long",
+        "netpage",
+    ] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(
+            fx.calls().len(),
+            11,
+            "{mode}: one refused attempt, then 10 runs"
+        );
+        assert!(
+            out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+            "{mode}: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_run_out_of_turns_or_budget_and_a_status_that_is_no_refusal_count() {
+    for mode in [
+        "maxbudget",
+        "turnsnotext",
+        "s400",
+        "s429noerr",
+        "empty",
+        "plainfail",
+    ] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(fx.calls().len(), 10, "{mode}: no retry");
+        assert!(
+            out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+            "{mode}: {out}"
+        );
+    }
 }
 
 #[test]
