@@ -71,11 +71,15 @@ spec-dna new plan sensor-timeout
 `plan.md` has 4 sections:
 
 - `Files`: each path or glob that the change edits, as a code span or a plain path.
-- `Order`: a task list. Write each task on one line with an id, for example `- [ ] t1: Close the valve on a timeout. Files: src/valves.rs. Verify: the test passes.` A line with no id is not a task. `next` names the next open task.
+- `Order`: a task list. Write each task on one line with an id, for example `- [ ] t1: Close the valve on a timeout. Files: src/valves.rs. Verify: the test passes. Hours: 1-2.` A line with no id is not a task. `Hours:` is optional: write a number or a range. `next` names the next open task.
 - `Risks`: what can fail, and what reduces the risk.
 - `Proof`: the tests, with their `covers:` ids, and the commands that show the result.
 
 The items of `Files` and the `Files:` paths of the tasks are the scope of the change (SD913).
+
+#### A spike
+
+For a spike, write one task for each way that you try. When the spike ends, add `Skip: <reason>` to each task that is not needed, and tick it (`- [x]`). `next`, `status` and the counts then treat the task as closed, and `finish` leaves its hours out. A commit that adds `Skip:` to an approved plan adds no path to `Files`, so it needs no new approval. A `Skip:` with no reason does not skip the task: SD923 reports it.
 
 Open a pull request. The owner sets `status: approved` and merges it.
 
@@ -103,7 +107,7 @@ spec-dna finish sensor-timeout
 
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
-If the plan has a section `Hours`, `finish` adds the items and prints the line `Hours: <total>`. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
+`finish` adds the `Hours:` labels of the tasks that are not skipped, and prints the line `Hours: <total>`. The total is a number, or a range `<low>-<high>` if a task has a range. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
 
 ## The approval commit
 
@@ -194,7 +198,7 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 | SD919 | An approved spec has an open concern | Resolve the concern. Write its resolution |
 | SD922 | An approved spec has an open question | Answer the question (`- [x]`). Write the answer after it |
 | SD921 | A requirement changed, and no intent folder changed | Write an intent, or keep the requirement as it is |
-| SD923 | A task of an approved plan has no `Files:` or no `Verify:`, or its `Files:` has a glob or a folder | Write the exact paths and the check of the task |
+| SD923 | A task of an approved plan has no `Files:` or no `Verify:`, its `Files:` has a glob or a folder, or its `Skip:` has no reason | Write the exact paths and the check of the task, or the reason after `Skip:` |
 | SD924 | A task of an approved plan lists more paths than `max-task-files` | Split the task |
 | SD925 | An item of `Concerns` or `Open questions` has no task box | Write `- [ ]` or `- [x]` at the start of the item |
 
