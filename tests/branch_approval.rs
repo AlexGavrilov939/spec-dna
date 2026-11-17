@@ -411,6 +411,24 @@ fn the_test_merge_of_a_host_is_neutral() {
 }
 
 #[test]
+fn a_test_merge_that_the_base_outgrew_is_still_neutral() {
+    // The base moves again after the host made the test merge. The first
+    // parent of the merge commit is an old tip, which is the merge base. This
+    // differs from D13 as written ("the first parent is the base tip"): the
+    // rule does not turn red when the base moves under an open pull request.
+    let r = start_branch();
+    test_merge(&r);
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "y = 3\n");
+    r.commit("main moves again");
+    r.git(&["update-ref", "refs/remotes/origin/main", "main"]);
+    r.git(&["checkout", "-q", "merge-ref"]);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
 fn a_merge_queue_commit_stops_the_rule() {
     // The queue puts the pull request on top of another queued pull request:
     // the first parent of its merge commit is not the tip of the base.
@@ -743,12 +761,63 @@ fn an_uncommitted_edit_of_the_code_before_the_approval_gives_sd910() {
 }
 
 #[test]
-fn a_status_that_only_the_working_tree_sets_is_no_approval() {
+fn a_status_that_only_the_working_tree_sets_gives_no_finding_and_no_approval() {
+    // The approver runs `check`, or the hook of `init`, before the approval
+    // commit. A status that no commit holds yet gives no finding.
     let r = start_branch();
     step_intent_draft(&r);
     r.write(INTENT, &intent("accepted", "higher-risk"));
     let (code, out, found) = check(&r);
-    assert_eq!(found, want(&[(INTENT, 2)]), "{out}");
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(approvals_field(&json(&r)), "");
+    r.git(&["add", INTENT]);
+    let (code, out, _) = r.run(&["check", "--staged"]);
+    assert!(findings_of(&out).is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn work_that_depends_on_a_status_of_the_working_tree_gives_sd910() {
+    // The plan is `approved` only in the working tree, so it approves no code.
+    let r = start_branch();
+    first_four(&r);
+    step_plan_draft(&r);
+    r.write(PLAN, &plan("approved", &FILES));
+    r.write(CODE, CODE_NEW);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 2)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_merge_commit_of_an_approver_is_no_approval() {
+    // Condition 1 of D11: the approver sets the status in a merge commit.
+    let r = start_branch();
+    step_intent_draft(&r);
+    main_moves(&r);
+    r.git(&["merge", "-q", "--no-commit", "--no-ff", "main"]);
+    r.write(INTENT, &intent("accepted", "higher-risk"));
+    r.commit_as("merge main and approve", APPROVER);
+    step_spec_draft(&r);
+    step_spec_approved(&r, APPROVER);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(INTENT, 2), (SPEC, 2)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn an_approver_commit_that_adds_the_file_as_accepted_is_no_approval() {
+    // Condition 3 of D11: the commit changes the `status` line only.
+    let r = start_branch();
+    step(
+        &r,
+        APPROVER,
+        "add the intent as accepted",
+        &[(INTENT, &intent("accepted", "higher-risk"))],
+    );
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(INTENT, 4)]), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 

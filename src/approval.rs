@@ -269,6 +269,12 @@ impl Branch {
                 return b;
             }
         };
+        // A text that git cannot give (a partial clone without the blob) makes
+        // the walk a guess, so the rule stops.
+        if texts.iter().any(Option::is_none) {
+            b.stop = Some(Fail::new(Reason::Shallow));
+            return b;
+        }
         let text_at: HashMap<(&str, &str), &Vec<u8>> = specs
             .iter()
             .zip(&texts)
@@ -461,11 +467,14 @@ impl Branch {
 
     /// The rule of the last approval (D11): the artifact has the status
     /// `status`, which differs from the base tree. An approval commit must have
-    /// set it.
-    pub fn last(&self, path: &str, status: &str) -> Result<Approval, Fail> {
+    /// set it. A status that only the working tree (or the index) sets gives
+    /// `None`: no commit holds it yet, and the approver has to run `check` (and
+    /// the hook of `init`) before the approval commit.
+    pub fn last(&self, path: &str, status: &str) -> Result<Option<Approval>, Fail> {
         match self.entries.get(path).and_then(|v| v.last()) {
+            Some(e) if e.status == status && e.idx == self.n => Ok(None),
             Some(e) if e.status == status => match &e.how {
-                How::Approved(a) => Ok(a.clone()),
+                How::Approved(a) => Ok(Some(a.clone())),
                 How::Unapproved(f) => Err(f.clone()),
             },
             _ => Err(Fail::new(Reason::NoCommit)),

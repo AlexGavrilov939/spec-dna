@@ -8,6 +8,10 @@
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`, or of
 //! the local branch of `[change] base`) with `HEAD`. It is never the tip of `--base`: a branch that started from an old
 //! commit is not behind the default branch because of that.
+//!
+//! SD910 reads the approvals from the base tree. With `[change] approval =
+//! "branch"`, it also reads the approval commits of `base..HEAD`
+//! ([`crate::approval`], design 0.7.0, D11 to D17).
 
 use crate::approval::{Approval, Branch, Fail, Reason};
 use crate::change::{self, Change, Delta, Verb};
@@ -947,9 +951,11 @@ impl<'a> Ctx<'a> {
 /// does not change), SD915, SD916, SD917, SD918 and SD920 (the decision that is
 /// not `accepted`). It also finds the data for SD921. `base` is the lifecycle tree, `base_rev` its commit, and `diff` the
 /// diff of the head against it. The checks read the artifacts of a change from
-/// the head tree, and from the base tree if the diff deletes the folder. They
-/// read approvals from the base tree only, so an approval in the same pull
-/// request does not count.
+/// the head tree, and from the base tree if the diff deletes the folder. With
+/// `approval = "base"` they read approvals from the base tree only, so an
+/// approval in the same pull request does not count. With `approval =
+/// "branch"`, SD910 also reads the commits of `base_rev..HEAD`
+/// ([`crate::approval`]).
 pub fn base_checks(
     config: &Config,
     git: &Git,
@@ -1497,7 +1503,7 @@ fn approval_missing(
                 continue;
             }
             match w.last(&d.path, &a.status) {
-                Ok(v) => used.push(v),
+                Ok(v) => used.extend(v),
                 Err(f) => out.push(crate::check::diag(
                     d,
                     1,
