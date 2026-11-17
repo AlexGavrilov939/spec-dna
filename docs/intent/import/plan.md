@@ -23,7 +23,7 @@ status: approved
 - [x] t3: Add the failing tests of the command (`init-engineer`). Files: `tests/import_cli.rs`. Verify: `cargo test --test import_cli` fails on each new case.
 - [x] t4: Write the failing tests of Spec Kit and of the proof (`hygiene-engineer`). Files: `tests/import_speckit.rs`. Verify: `cargo test --test import_speckit` fails on each case.
 - [x] t5: Write the failing tests of OpenSpec (`hygiene-engineer`). Files: `tests/import_openspec.rs`. Verify: `cargo test --test import_openspec` fails on each case.
-- [ ] t6: Add the command, its help, its exit codes and the module lines (`core-engineer`). Files: `src/main.rs`. Verify: `cargo test --test cli import`.
+- [x] t6: Add the command, its help, its exit codes and the module lines (`core-engineer`). Files: `src/main.rs`. Verify: `cargo test --test cli import`.
 - [ ] t7: Plan the legacy key, the areas and the types of `spec-dna.toml`. Read the file of `--areas`, and stop a pair of areas (`core-engineer`; the unit tests come first). Files: `src/import_config.rs`. Verify: `cargo test --bin spec-dna import_config`.
 - [ ] t8: Add the normal form and the 5 steps of the proof (`hygiene-engineer`; the unit tests come first). Files: `src/import_proof.rs`. Verify: `cargo test --bin spec-dna import_proof`.
 - [ ] t9: Plan the targets, the moves, the writes, the aliases, the links and the clashes (`hygiene-engineer`; the unit tests come first). Files: `src/import_docs.rs`. Verify: `cargo test --bin spec-dna import_docs`.
