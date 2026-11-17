@@ -208,7 +208,7 @@ spec-dna status                      # each change, its class, its stage and its
 spec-dna finish sensor-timeout       # apply the delta, check the evidence, delete the folder
 ```
 
-`next` marks each line done or open. Its last line gives the edit that approves the artifact. To approve a document, set its status in a pull request. `finish` works in the working tree and commits nothing. `spec-dna finish <slug> --dry-run` prints the diff only. [The change guide](guides/change.md) takes one change from the intent to `finish`.
+`next` marks each line done or open. Its last line gives the edit that approves the artifact. To approve a document, run `spec-dna approve <slug> <artifact>` in a terminal of your own. The command sets the status and commits it alone. `finish` works in the working tree and commits nothing. `spec-dna finish <slug> --dry-run` prints the diff only. [The change guide](guides/change.md) takes one change from the intent to `finish`.
 
 ## CI
 

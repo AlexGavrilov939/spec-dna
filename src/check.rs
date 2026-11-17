@@ -131,6 +131,29 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
     out
 }
 
+/// SD926: each item of `[change] approvers` that is the address of an agent or
+/// a bot. The command `check` compares the findings of the head with the
+/// findings of the base configuration, so an item is new when the base does
+/// not list it. The caller applies the severity (`apply_severity`).
+pub fn approver_agents(config: &Config) -> Vec<Diag> {
+    config
+        .change_approvers
+        .iter()
+        .filter(|a| crate::config::is_agent_address(a))
+        .map(|a| Diag {
+            path: crate::config::FILE_NAME.to_string(),
+            line: config.change_approvers_line,
+            code: Code::ApproverAgent,
+            doc: crate::config::FILE_NAME.to_string(),
+            target: a.clone(),
+            message: format!(
+                "`[change] approvers` lists `{a}`, the address of an agent or a bot; a commit of this author can come from an agent, so it proves no approval of a person"
+            ),
+            severity: Code::ApproverAgent.severity(),
+        })
+        .collect()
+}
+
 /// SD612: a reference from a document outside the folder of a change into the
 /// folder, that step 0 of `finish` stops on. The references and the exceptions
 /// are those of step 0 (`finish::refs_into`). `reported` has the diagnostics of

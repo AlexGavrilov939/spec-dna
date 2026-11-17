@@ -49,6 +49,7 @@ deny = ["NotebookEdit"]
 skills = ["brainstorm", "specify", "clarify", "write-plan", "review", "finish", "post-mortem"]
 review-md = true
 protect-tests = "fix-branches"
+protect-approvals = true
 context-meter = [300000, 600000]
 subagent-meter = 250000
 fanout-cap = 10
@@ -73,6 +74,7 @@ A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no 
 | `skills` | The skills of the workflow pack that `init` writes. Each value is one of the 11 names, and each name is listed once. `[]` writes none. `init` writes them in the order of the table in [The workflow pack](#the-workflow-pack-and-reviewmd), also if the list has another order. The names `intent`, `spec` and `plan` of 0.6 give exit code 3 ([Upgrade from 0.6](#upgrade-from-06)) |
 | `review-md` | `true` writes `REVIEW.md`. `false` writes no file |
 | `protect-tests` | `fix-branches`, `always` or `off`. It selects the hook that asks before an edit of a test file. See [`spec-dna hook protect-tests`](#spec-dna-hook-protect-tests) |
+| `protect-approvals` | `true` or `false`. `true` adds the hook that denies an approval by an agent. See [`spec-dna hook protect-approvals`](#spec-dna-hook-protect-approvals). `init` writes `true` for the profile `strict`. A file with no key has the same effect as `false` |
 | `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` disables the meter for the main session |
 | `subagent-meter` | The context size at which a subagent gets a message. `0` disables it |
 | `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
@@ -107,6 +109,7 @@ Entries in `.claude/settings.json`:
 | `hooks.PostToolUse` | `spec-dna hook context-meter ...` |
 | `hooks.PreToolUse` (matcher `Workflow`) | `spec-dna hook fanout-cap ...` |
 | `hooks.PreToolUse` (matcher `Edit\|Write`) | `spec-dna hook protect-tests ...`, only if `protect-tests` is not `off` and `[evidence] tests` is not empty |
+| `hooks.PreToolUse` (matcher `Bash`) | `spec-dna hook protect-approvals ...`, only if `protect-approvals` is `true` and the project has a layer of the type `intent` |
 
 spec-dna writes the settings file again with a 2-space indent. A number form such as `1e3` becomes `1000`, and an integer above 2^53 loses precision.
 
@@ -198,7 +201,7 @@ Claude Code does not load `REVIEW.md` for a task, so the file adds no bytes to a
 
 Each hook is a subcommand of the spec-dna binary. A hook reads the event of Claude Code from stdin. It does not read `spec-dna.toml`, so the generated command contains the values. It never fails: an error gives no output and exit code 0. The command ends with `2>/dev/null || true`, so a teammate with an older spec-dna, or without spec-dna, gets no error and no hook.
 
-Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `protect-tests` needs 0.6.0 or later. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
+Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `protect-tests` needs 0.6.0 or later, and the hook `protect-approvals` needs 0.7.0 or later. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
 
 ### `spec-dna hook context-meter`
 
@@ -243,6 +246,36 @@ The hook runs `git` only for a path that matches a glob, and at most 2 times. Th
 - If the agent enters a worktree, `CLAUDE_PROJECT_DIR` stays at the main checkout, and only the `cwd` moves. A file of a worktree that the agent enters gets no question, also if the worktree is inside the main checkout. Start the session in the worktree to protect it.
 - A change of `[evidence] tests` changes the command, and `check` reports SD502 for the entry until you run `spec-dna init`.
 - To remove the entry, set `protect-tests = "off"` and run `spec-dna init --reconfigure`. Plain `init` removes no entry.
+
+### `spec-dna hook protect-approvals`
+
+Only a person approves a document. An agent that works in the repository commits with the e-mail and the key of the person, so `check` cannot tell its approval commit from a commit of the person. The default rule of each project is the sentence of the generated line of `AGENTS.md`: an agent writes an approval commit only when the owner says so explicitly in the chat. The hook makes the rule stricter. It runs on `PreToolUse` of `Bash`, and it denies the call.
+
+Set `protect-approvals = true` in `[harness]` (the profile `strict` has it). A person then runs `spec-dna approve <slug> <artifact>` in a terminal of their own ([commands.md](commands.md#approve)). The hook denies these calls of an agent:
+
+- a call that runs `spec-dna approve`, also on the word of the owner, and also inside `sh -c`;
+- a call that writes the word `accepted` or `approved` and runs `git commit`. The hook cannot read the edit in that case, so the reason says to run the edit and the commit as 2 calls;
+- a `git commit` while the working tree or the index holds an artifact of a change (`intent.md`, `spec.md` or `plan.md`) with its approval status (`accepted` for an intent, `approved` for a spec or a plan), and the old tree does not. The old tree is `HEAD`, or `HEAD~1` for `--amend`. A new file counts.
+
+The test is that a status moves to the approval value, not that the commit changes only the status line. With `strict`, `approval` is `base`, and a commit that sets the status and edits the text becomes an approval at the merge. The hook has no exception for a routine plan: a person approves each artifact.
+
+The command that `init` writes has one `--intent '<dir>'` for each folder of the `intent` layer, from the root of the repository, for example `docs/intent`. The hook reads no `spec-dna.toml`. It runs `git` only for a command whose `git` has the subcommand `commit` (`git log --grep commit` is no commit; options such as `-C <dir>` and `-c <name=value>` can come before the subcommand), and then 3 times, and 2 more times for each artifact file that the tree changes. Bad JSON, no git, a git error and a path that it cannot read give no output and exit code 0.
+
+These limits apply:
+
+- The hook reads the text of the command. It is not a shell parser. It does not see an edit and a commit in one call that has no word `accepted` or `approved` (a variable, a script file). It does not see git plumbing (`commit-tree`, `update-ref`), `cherry-pick`, `rebase`, `merge`, `am` or a git alias.
+- The same scan can deny a call that only names the words, for example `grep "spec-dna approve" docs/` or a commit message with the line `spec-dna approve` in a heredoc. The agent then runs the call in another form.
+- The hook expands `~`, `$PWD` and `$CLAUDE_PROJECT_DIR` (also with braces) at the start of the dir of a `cd` or `git -C`. It cannot read another dir with `$` or `~`. The hook then fails closed: it inspects the repository of the `cwd` of the event and of `CLAUDE_PROJECT_DIR` too, and it denies the call if one of them has a pending approval. A commit in a third repository, behind such a dir, passes.
+- The word test of the second rule is on each word before `git commit` in the call. A file or a folder name with `accepted` or `approved`, such as `git add x-approved.md && git commit`, gives a deny. Run the `git add` and the `git commit` as 2 calls.
+- The hook reads at most 1 MiB of the event. A longer event gives no output (it fails open).
+- It denies a commit that has nothing to do with an approval while the working tree holds a status that a person set by hand. The person commits that status, or runs `spec-dna approve`.
+- It denies a move of a change folder whose artifacts are `accepted` or `approved`, because the new path has an approval status. The person makes the move.
+- The command ends with `|| true`. A teammate with no spec-dna, or with spec-dna before 0.7.0, gets no hook.
+- Only the Claude Code adapter has the hook. For another agent, the generated line of `AGENTS.md` is the rule.
+- The Claude Code documentation does not say if a command that the person starts with a `!` prefix passes the hooks. The input of a hook does not tell a person from an agent. So run `spec-dna approve` in a terminal of your own. With the hook, `!spec-dna approve` can be denied.
+- The hook guards against an agent that acts on its own initiative. It is not a security control. The code host stays the control: [ADR 0012](adr/0012-approval-in-the-branch.md) states the limit, and [ADR 0018](adr/0018-approval-by-a-person.md) holds the rules.
+
+To remove the entry, set `protect-approvals = false` and run `spec-dna init --reconfigure`.
 
 ## Check
 
