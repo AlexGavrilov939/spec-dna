@@ -23,19 +23,20 @@ status: approved
 - `docs/types.md` The section `Hours` of a plan.
 - `docs/guides/change.md` The line `Hours:` in the commit message.
 - `CHANGELOG.md` The entry of the change.
+- `examples/one-change/README.md` The `log` line of the example has the new token `hours -`.
 
 ## Order
 
-- [ ] t1: Write the failing tests of the hours: `finish` prints `Hours: 3.5`, and `log` and `stats --sdlc` read the line from a squash commit with the line in a middle paragraph (`core-engineer`, `hygiene-engineer`). Files: `tests/lifecycle_log.rs`, `tests/finish.rs`. Verify: `cargo test --test lifecycle_log --test finish` fails on the new tests only.
-- [ ] t2: Write the failing tests of SD612 in `standard` and `lite`, and of the locked links: an amendment that names the target, and the pointer with the commit (`diagnostics-engineer`). Files: `tests/layers_checks.rs`, `tests/lifecycle_finished.rs`. Verify: `cargo test --test layers_checks --test lifecycle_finished` fails on the new tests only.
-- [ ] t3: Read the messages of a list of commits with one git process (`core-engineer`). Files: `src/git.rs`. Verify: `cargo test --bin spec-dna git::` passes.
-- [ ] t4: Add the total of `Hours`, the line `Hours: <total>`, the note of an item with no number, and the field `hours` to `finish` (`hygiene-engineer`). Files: `src/finish.rs`, `src/main.rs`. Verify: `cargo test --test finish` passes.
-- [ ] t5: Read the line `Hours:` in `log` and `stats --sdlc` (`core-engineer`). Files: `src/sdlc.rs`, `tests/golden/stats-sdlc.txt`, `tests/golden/stats-sdlc-evals.txt`. Verify: `cargo test --test lifecycle_log --test stats_evals` passes.
-- [ ] t6: Make the search of step 0 of `finish` a function that takes the corpus and the change folders, with no change of its result (`hygiene-engineer`). Files: `src/finish.rs`. Verify: `cargo test --test finish` passes.
-- [ ] t7: Add SD612 with the order of SD611 and SD901 (`diagnostics-engineer`). Files: `src/diag.rs`, `src/check.rs`. Verify: `cargo test --test layers_checks` passes.
-- [ ] t8: Clear a locked link that an amendment names, and name the commit of a finished change in the pointer and in `locked_links` (`diagnostics-engineer`; `core-engineer` for `sdlc`). Files: `src/check.rs`, `src/sdlc.rs`, `src/main.rs`. Verify: `cargo test --test lifecycle_finished` passes.
-- [ ] t9: Update the docs of SD612, the locked links and the commands. Files: `docs/diagnostics.md`, `docs/profiles.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t10: Update the docs of the plan type and the guide, and the change log. Files: `docs/types.md`, `docs/guides/change.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t1: Write the failing tests of the hours: `finish` prints `Hours: 3.5`, and `log` and `stats --sdlc` read the line from a squash commit with the line in a middle paragraph (`core-engineer`, `hygiene-engineer`). Files: `tests/lifecycle_log.rs`, `tests/finish.rs`. Verify: `cargo test --test lifecycle_log --test finish` fails on the new tests only.
+- [x] t2: Write the failing tests of SD612 in `standard` and `lite`, and of the locked links: an amendment that names the target, and the pointer with the commit (`diagnostics-engineer`). Files: `tests/layers_checks.rs`, `tests/lifecycle_finished.rs`. Verify: `cargo test --test layers_checks --test lifecycle_finished` fails on the new tests only.
+- [x] t3: Read the messages of a list of commits with one git process (`core-engineer`). Files: `src/git.rs`. Verify: `cargo test --bin spec-dna git::` passes.
+- [x] t4: Add the total of `Hours`, the line `Hours: <total>`, the note of an item with no number, and the field `hours` to `finish` (`hygiene-engineer`). Files: `src/finish.rs`, `src/main.rs`. Verify: `cargo test --test finish` passes.
+- [x] t5: Read the line `Hours:` in `log` and `stats --sdlc` (`core-engineer`). Files: `src/sdlc.rs`, `tests/golden/stats-sdlc.txt`, `tests/golden/stats-sdlc-evals.txt`. Verify: `cargo test --test lifecycle_log --test stats_evals` passes.
+- [x] t6: Make the search of step 0 of `finish` a function that takes the corpus and the change folders, with no change of its result (`hygiene-engineer`). Files: `src/finish.rs`. Verify: `cargo test --test finish` passes.
+- [x] t7: Add SD612 with the order of SD611 and SD901 (`diagnostics-engineer`). Files: `src/diag.rs`, `src/check.rs`. Verify: `cargo test --test layers_checks` passes.
+- [x] t8: Clear a locked link that an amendment names, and name the commit of a finished change in the pointer and in `locked_links` (`diagnostics-engineer`; `core-engineer` for `sdlc`). Files: `src/check.rs`, `src/sdlc.rs`, `src/main.rs`. Verify: `cargo test --test lifecycle_finished` passes.
+- [x] t9: Update the docs of SD612, the locked links and the commands. Files: `docs/diagnostics.md`, `docs/profiles.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t10: Update the docs of the plan type and the guide, and the change log. Files: `docs/types.md`, `docs/guides/change.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
 
 ## Risks
 
