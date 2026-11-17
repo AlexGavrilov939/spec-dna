@@ -310,7 +310,7 @@ fn the_json_has_the_fields_of_the_contract_in_order() {
     assert_eq!(
         out.trim_end(),
         format!(
-            "{{\"changes\":[{{\"slug\":\"dose\",\"class\":\"higher-risk\",\"title\":\"Dose\",\"result\":\"finished\",\"delta\":{{\"add\":1,\"change\":1,\"remove\":1}},\"commit\":\"{sha}\",\"date\":\"2024-04-05\"}}],\"shallow\":false}}"
+            "{{\"changes\":[{{\"slug\":\"dose\",\"class\":\"higher-risk\",\"title\":\"Dose\",\"result\":\"finished\",\"delta\":{{\"add\":1,\"change\":1,\"remove\":1}},\"hours\":null,\"commit\":\"{sha}\",\"date\":\"2024-04-05\"}}],\"shallow\":false}}"
         )
     );
 }
@@ -326,7 +326,7 @@ fn the_text_has_one_line_for_each_change() {
     assert_eq!(
         text,
         format!(
-            "2024-04-05 finished dose higher-risk add 1 change 1 remove 1 {} Dose\n",
+            "2024-04-05 finished dose higher-risk add 1 change 1 remove 1 hours - {} Dose\n",
             &sha[..12]
         )
     );
@@ -645,7 +645,7 @@ fn an_indicator_that_git_cannot_give_has_a_null_value_and_a_reason() {
     empty.commit("start");
     let out = stats_json(&empty, &[]);
     let rows: Vec<&str> = out.split("{\"play\"").skip(1).collect();
-    assert_eq!(rows.len(), 14, "{out}");
+    assert_eq!(rows.len(), 15, "{out}");
     for row in rows {
         if row.contains("\"value\":null") {
             assert!(row.contains("\"reason\":\""), "{row}");
@@ -911,4 +911,97 @@ fn stats_text_matches_the_golden_file() {
         "a line has a trailing space: {out}"
     );
     golden("stats-sdlc.txt", &out);
+}
+
+// The line `Hours:` of the commit that deletes the folder
+
+/// `dose` is finished by a squash commit. The message of the commit is `msg`.
+fn squashed_with(msg: &str) -> Repo {
+    let r = with_dose("accepted");
+    remove_folder(&r);
+    merge_squash(&r.dir);
+    r.git(&["commit", "--amend", "-q", "-m", msg]);
+    r
+}
+
+const HOURS_ROW: &str = "Hours of work per finished change";
+
+#[test]
+fn log_reads_the_hours_line_of_a_squash_commit() {
+    // The line is in a middle paragraph, not in the last one.
+    let r = squashed_with(
+        "feat: dose (#1)\n\n* feat: finish dose\n\nHours: 3.5\n\nCo-authored-by: A <a@example.com>",
+    );
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":3.5"), "{out}");
+    let (code, text, _) = r.run(&["log"]);
+    assert_eq!(code, 0);
+    assert!(text.contains(" remove 1 hours 3.5 "), "{text}");
+    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let row = indicator(&out, HOURS_ROW);
+    has(
+        row,
+        &[
+            "\"play\":\"Build\"",
+            "\"kind\":\"lagging\"",
+            "\"value\":3.5",
+            "\"unit\":\"hours\"",
+            "\"count\":1",
+            "the total is 3.5 hours",
+        ],
+    );
+}
+
+#[test]
+fn log_reads_the_last_hours_line_and_only_a_whole_line() {
+    let r = squashed_with(
+        "feat: dose\n\nHours: 1\n\nHours:2.25 \t\n\nhours: 9\nHours: 4 total\nTotal Hours: 8",
+    );
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":2.25"), "{out}");
+    // A total with more than 4 digits is a number too.
+    let r = squashed_with("feat: dose\n\nHours: 12345.5");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":12345.5"), "{out}");
+}
+
+#[test]
+fn a_commit_with_no_hours_line_gives_no_value() {
+    let r = squashed_with("feat: dose\n\nHours were not counted.");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":null"), "{out}");
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" remove 1 hours - "), "{text}");
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    let row = indicator(&out, HOURS_ROW);
+    has(
+        row,
+        &[
+            "\"value\":null",
+            "\"count\":0",
+            "no finished change has an `Hours:` line in the commit that deletes its folder",
+        ],
+    );
+}
+
+#[test]
+fn the_hours_row_is_the_median_of_the_changes_that_have_a_line() {
+    let r = history();
+    // `alpha` and `beta` are finished. Only the message of `alpha` has a line.
+    let date = at("01-12");
+    git_env(
+        &r.dir,
+        &[
+            "commit",
+            "--amend",
+            "-q",
+            "-m",
+            "alpha finished\n\nHours: 6",
+        ],
+        &[("GIT_AUTHOR_DATE", &date), ("GIT_COMMITTER_DATE", &date)],
+    );
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    let row = indicator(&out, HOURS_ROW);
+    has(row, &["\"value\":6.0", "\"count\":1"]);
 }

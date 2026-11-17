@@ -6,6 +6,7 @@ Design lagging: Requirements rework after build starts: spec.md commits after th
 Build leading: Time from plan approval to the merged pull request: n/a (no finished change has an approved plan in the history yet)
 Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
 Build lagging: How often the merged diff still matches the committed plan.md: n/a (no finished change has a plan and a readable diff in the history yet)
+Build lagging: Hours of work per finished change: n/a (no finished change has an `Hours:` line in the commit that deletes its folder)
 Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
 Test leading: The eval pass rate over time: 80.0 percent (2 result files)
   note: the value is the pass rate of the newest result file (2026-02-20T10:00:00Z); the committed files hold the history; 1 file skipped: not a complete result
