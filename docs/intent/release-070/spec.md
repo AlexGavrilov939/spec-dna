@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Release 0.7.0: spec
 
