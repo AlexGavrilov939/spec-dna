@@ -779,7 +779,7 @@ pub(crate) fn interface_id(item: &ListItem) -> Option<&str> {
 
 /// SD923 and SD924: the tasks of an `approved` plan. A task needs the label
 /// `Files:` with exact paths (`none` is a value), and the label `Verify:`
-/// (SD923). It lists at most `max-task-files` paths (SD924). A draft plan is
+/// (SD923). A `Skip:` with no reason is a problem too (design 0.7.0, D40). It lists at most `max-task-files` paths (SD924). A draft plan is
 /// not checked. A task whose id an earlier task has is not checked: the first
 /// task with an id counts. One diagnostic of SD923 names every problem of the
 /// task. The target of both codes is the id of the task.
@@ -813,16 +813,29 @@ fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
         if t.verify.is_none() {
             problems.push("it has no `Verify:`".to_string());
         }
+        let labels_problem = !problems.is_empty();
+        let skip_problem = t.skip.as_deref() == Some("");
+        if skip_problem {
+            problems.push("its `Skip:` has no reason".to_string());
+        }
         if !problems.is_empty() {
+            let mut fixes = Vec::new();
+            if labels_problem {
+                fixes.push("write the exact paths in `Files:` and the check in `Verify:`");
+            }
+            if skip_problem {
+                fixes.push("write the reason after `Skip:`");
+            }
             out.push(crate::check::diag(
                 doc,
                 t.line,
                 Code::TaskIncomplete,
                 &t.id,
                 format!(
-                    "the plan is `approved`, and the task `{}` is incomplete: {}; write the exact paths in `Files:` and the check in `Verify:`",
+                    "the plan is `approved`, and the task `{}` is incomplete: {}; {}",
                     t.id,
-                    problems.join("; ")
+                    problems.join("; "),
+                    fixes.join("; ")
                 ),
             ));
         }

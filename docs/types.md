@@ -129,7 +129,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 9 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level.
+The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level.
 
 | Section | Document | Items |
 | --- | --- | --- |
@@ -141,7 +141,6 @@ The parser keeps the list items of 9 sections for each document. The heading tex
 | `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
 | `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
-| `Hours` | plan | One item for each part of the work, as `- 1.5: t1 code`. An item starts with a number of hours (up to 4 digits, and up to 2 decimals after a `.`), an optional `h`, and then the end of the item, or `:` or a space and free text. `finish` adds the numbers and prints the line `Hours: <total>` ([commands.md](commands.md#finish)). An item with another form gives a note of `finish` and no total |
 
 Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range. It keeps the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
 
@@ -155,21 +154,24 @@ The `Order` section of a plan holds a task list. A task is one top-level list it
 
 ```md
 - [ ] t1: Add the timer to the valve loop. Files: `src/valve.py`, `tests/`. Verify: `cargo test valve`.
-- [x] t2: Write the sensor driver. Files: `src/sensor.py`. Verify: run the driver on the bench.
+- [x] t2: Write the sensor driver. Files: `src/sensor.py`. Verify: run the driver on the bench. Hours: 1-2.
+- [x] t3: Add a second timer. Files: `src/valve.py`. Verify: `cargo test valve`. Hours: 2. Skip: the first timer is enough.
 ```
 
-- The box `[ ]` is an open task. The box `[x]` (or `[X]`) is a done task.
+- The box `[ ]` is an open task. The box `[x]` (or `[X]`) is a done task. A task with a reason in `Skip:` is a skipped task, whatever its box.
 - The id is a letter or a digit, then letters, digits, `_` or `-`. The colon follows the id, and then a space or the end of the line. The id is stable: do not renumber the tasks of a started change. The id is case-sensitive.
 - The text is what follows the colon, up to the first label. spec-dna joins the lines of the item into one line. It removes one final `.`.
-- `Files:` and `Verify:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the 2 labels does not matter. The first label of each kind counts.
+- `Files:`, `Verify:`, `Hours:` and `Skip:` are labels. They are optional, they are case-sensitive, and each follows a space or the start of the line. A code span (`` ` ``) cannot hold a label. A label ends at the next label, so the order of the labels does not matter. The first label of each kind counts.
 - The files of a task are the entries after `Files:`. spec-dna removes one final `.` or `;` of the text, and the parentheses that wrap it. An entry is a part of the text up to a comma that is not in a code span and not in a link (`[text](destination)`). An entry gives its code spans, or, if it has no code span, its text if the text is a plain path. They are paths or globs from the repository root.
 - The `Verify:` text is a check: a sentence or a command in a code span. An empty text counts as no text.
+- The value of `Hours:` is the estimate or the real time of the task, as `<n>` or as a range `<a>-<b>` with `a` not above `b`. A number has up to 4 digits, up to 2 decimals after a `.`, and an optional `h`. Spaces or tabs can be around the `-`. `finish` adds the hours of the tasks, and prints the line `Hours: <total>` ([commands.md](commands.md#finish)). When you know the real time, replace a range with a number. Another value is invalid: `finish` gives a note and no total. A plan has no other source of hours: the section `Hours` is plain text, and nothing reads it.
+- The text of `Skip:` is the reason why the task is not needed, for example after a spike. A task with a reason is skipped: it is closed, and `next`, `status` and the counts treat it as closed. `finish` leaves its hours out. Write `- [x]` for a skipped task. A `Skip:` with no reason does not skip the task, and SD923 reports it.
 - The text of `Files:` is `none` when its first word is `none`, followed by `:`, `.` or the end of the text ([the `none` rule](#the-none-rule)). Such a task lists no path.
-- An `approved` plan gives SD923 for a task with no `Files:` or no `Verify:`, or with a glob or a folder in `Files:`. It gives SD924 for a task with more than `[change] max-task-files` paths (default 3). A `draft` plan gives neither ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
+- An `approved` plan gives SD923 for a task with no `Files:` or no `Verify:`, with a glob or a folder in `Files:`, or with a `Skip:` that has no reason. A skipped task still needs `Files:` and `Verify:`. It gives SD924 for a task with more than `[change] max-task-files` paths (default 3). A `draft` plan gives neither ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)).
 - A list item of `Order` with no task box, or with no id of this form, is not a task. It is not an error. A nested list belongs to its task, and its items are not tasks.
 - If an earlier task of the plan has the same id, the later task is a duplicate. The first task with an id counts. A duplicate is never the next task, and it gives no diagnostic.
 
-The next task is the first task that is open and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it ([commands.md](commands.md#next)).
+The next task is the first task that is not closed (not done and not skipped) and is not a duplicate, in the order of the file. The commands `status` and `next` read the boxes and name it ([commands.md](commands.md#next)).
 
 ### Files and paths
 

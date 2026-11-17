@@ -71,9 +71,11 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |
 | section id | `<document id>#<heading slug>`: the unit that `context` gives to an agent | | [concepts](concepts.md#context) |
 | skill | A `SKILL.md` folder that gives a procedure to the agent. `spec-dna skill show <name>` prints the text of a skill of the workflow pack | | [harness](harness.md) |
+| skipped task | A task of a plan with the label `Skip:` and a reason. It is not needed. `next`, `status` and the counts treat it as closed, and `finish` leaves its hours out | | [types](types.md#tasks-of-a-plan) |
 | slug | The name of a change or a document in an id, in lowercase words with hyphens, such as `sensor-timeout` | | [change guide](guides/change.md) |
 | `small-fix` | A change class with no intent: a pull request only | | [change guide](guides/change.md#choose-the-class) |
 | spec | `spec.md`: the delta, the interfaces, the decisions, the concerns and the open questions of one higher-risk change. It never holds the current truth | | [change guide](guides/change.md) |
+| spike | A short piece of work that tries more than one way to build a change. Write one task for each way. After the spike, mark each task that is not needed as a skipped task | | [change guide](guides/change.md#a-spike) |
 | stable layer | A layer of level 0, such as `rules` or `decisions`. The current truth is in stable layers | | [concepts](concepts.md#layers-and-the-graph) |
 | stage | One of Plan, Design, Build, Test, Deploy and Closed. spec-dna derives the stage of a change from its files and git | | [change guide](guides/change.md) |
 | stage skill | A skill that `next` names for a step of a change, for example `write-plan`. The workflow pack has 9 stage skills | | [harness](harness.md#the-workflow-pack-and-reviewmd) |

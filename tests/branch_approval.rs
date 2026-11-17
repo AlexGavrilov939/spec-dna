@@ -1332,3 +1332,20 @@ fn the_squash_replay_with_strict_keeps_the_pull_requests_of_the_base() {
         "{out}"
     );
 }
+
+#[test]
+fn a_skip_label_in_an_approved_plan_gives_no_sd910() {
+    // A commit of the agent adds `Hours:` and `Skip:` to the approved plan.
+    // It adds no path to `Files`, so reason 8 does not apply.
+    let r = start_branch();
+    ok_flow(&r);
+    let edited = plan("approved", &FILES).replace(
+        "Verify: the test passes.",
+        "Verify: the test passes. Hours: 1-2. Skip: the valve has no timer.",
+    );
+    assert_ne!(edited, plan("approved", &FILES));
+    step(&r, AGENT, "skip the task", &[(PLAN, &edited)]);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
