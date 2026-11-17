@@ -280,8 +280,12 @@ last line `Hours: <number>` or `Hours: <a>-<b>` of the commit message that
 deleted the intent (a dash if there is none). A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
 default branch, has no entry. A move of intent.md out of the intent folder
-that keeps its id as an alias (spec-dna mv) does not end a change. A plain
-git mv, which writes no alias, still reads as a deletion. --since limits the walk to the commits after <rev>. In a
+does not end a change if 3 conditions are true. Git finds the rename. The
+new file is the same text, or it has the old id in its aliases
+(spec-dna mv writes it). The same commit removes no other file of the
+change folder. Thus a plain git mv of intent.md is a move, and a git mv of
+the whole folder, or a finish that removes the spec and the plan, ends the
+change. --since limits the walk to the commits after <rev>. In a
 shallow clone, a note says that older changes can be missing, and --json has
 shallow: true. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
