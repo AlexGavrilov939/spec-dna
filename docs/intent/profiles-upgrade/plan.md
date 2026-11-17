@@ -33,7 +33,7 @@ status: approved
 - [x] t12: Give SD507 the rule (`diagnostics-engineer`). Files: `src/check.rs`. Verify: `cargo test --test evals_checks`. Hours: 0.25.
 - [x] t13: Make the tests of the CLI, the upgrade and the evals of `init` read the default skills (`test-engineer`). Files: `tests/cli.rs`, `tests/upgrade_cli.rs`, `tests/init_evals.rs`. Verify: `cargo test --test cli --test upgrade_cli --test init_evals`. Hours: 0.5.
 - [x] t14: Make the tests of the skills and of `init` read the default skills (`init-engineer`). Files: `tests/harness_skills.rs`, `tests/skill_cmd.rs`, `tests/init_change.rs`. Verify: `cargo test --test harness_skills --test skill_cmd --test init_change`. Hours: 0.5.
-- [ ] t15: Make the demo read the default skills (`init-engineer`). Files: `scripts/demo-replay.sh`. Verify: `scripts/demo-replay.sh`. Hours: 0.25.
+- [x] t15: Make the demo read the default skills (`init-engineer`). Files: `scripts/demo-replay.sh`. Verify: `scripts/demo-replay.sh`. Hours: 0.25.
 - [ ] t16: Document the preset, the profiles and SD507 (`init-engineer`; `diagnostics-engineer`). Files: `docs/init.md`, `docs/profiles.md`, `docs/diagnostics.md`. Verify: `pre-commit run --all-files`. Hours: 0.75.
 - [ ] t17: Replace "the 7 skills that are on by default" with the rule (`init-engineer`; `core-engineer`). Files: `docs/harness.md`, `docs/commands.md`, `docs/config.md`. Verify: `pre-commit run --all-files`. Hours: 0.5.
 - [ ] t18: Update the quickstart and write the entry (`init-engineer`; `release-engineer`). Files: `docs/quickstart.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 0.25.
