@@ -713,6 +713,52 @@ fn an_interface_that_the_diff_does_not_change_gives_sd914() {
     assert_eq!(code, 0, "{out}{err}");
 }
 
+const EVENTS: &str = "---\nstatus: active\n---\n# Events\n\n## Requirements\n\n- **emit**: The interface SHALL emit one event for a change.\n";
+
+#[test]
+fn an_add_item_of_interfaces_needs_its_document_or_a_delta_line_that_adds_it() {
+    let fx = Fx {
+        moves_to: "\"requirements\", \"contracts\"",
+        spec_extra: "## Interfaces\n\n- ADD contracts/events: add the event contract.\n",
+        ..Fx::default()
+    };
+    // No document and no delta line: step 3 stops, and nothing changes.
+    let r = fx.start();
+    let before = tree(&r);
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(
+            ": error SD914 "
+        ) && out.contains(
+            "the spec adds the interface `contracts/events`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD contracts/events#<key>` lines"
+        ),
+        "{out}"
+    );
+    assert_eq!(tree(&r), before);
+    // The document is in the pull request.
+    r.write("docs/contracts/events.md", EVENTS);
+    r.write("tests/test_events.py", "# covers: contracts/events#emit\n");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+
+    // A delta line that adds the document is also enough. `finish` writes it.
+    let r = Fx {
+        delta: &["- ADD contracts/events#emit: The interface SHALL emit one event for a change."],
+        extra: &[("tests/test_events.py", "# covers: contracts/events#emit\n")],
+        ..fx
+    }
+    .start();
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join("docs/contracts/events.md").exists());
+    // The pull request of `finish` deletes the folder. `check` reads the spec
+    // of the base, and it finds the document in the head.
+    r.commit("finish dose");
+    let (_, out) = check(&r, "main");
+    assert!(!has(&out, "SD914"), "{out}");
+}
+
 #[test]
 fn an_added_requirement_in_a_new_document_with_a_required_section_gives_sd305_only_after() {
     let new = "- ADD requirements/pump/priming#prime: The pump SHALL prime for 4 seconds.";
