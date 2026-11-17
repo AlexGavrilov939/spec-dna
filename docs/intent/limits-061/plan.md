@@ -42,7 +42,7 @@ status: approved
 - [x] t11: Read a rename out of the intent folder by the 3 conditions of D31 (`core-engineer`). Files: `src/git.rs`, `src/sdlc.rs`. Verify: `cargo test --test lifecycle_log`.
 - [x] t12: Update the sections of the commands and the exit codes. `hygiene-engineer` writes `index` and `mv`, `init-engineer` writes `upgrade`, and `core-engineer` writes the rest. Files: `docs/commands.md`. Verify: `pre-commit run --all-files`.
 - [x] t13: Update the key `areas` and the note of `init` (`core-engineer`; `init-engineer` for `docs/init.md`). Files: `docs/config.md`, `schema/spec-dna.schema.json`, `docs/init.md`. Verify: `pre-commit run --all-files`.
-- [ ] t14: Write the entry of the change (`hygiene-engineer`, `core-engineer` and `init-engineer`, each for its part). Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`.
+- [x] t14: Write the entry of the change (`hygiene-engineer`, `core-engineer` and `init-engineer`, each for its part). Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`.
 
 ## Risks
 
