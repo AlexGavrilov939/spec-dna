@@ -52,9 +52,9 @@ status: approved
 - [x] t11: Add the row of `stats --sdlc` and its help text, and count 16 rows (`core-engineer`). Files: `src/sdlc.rs`, `src/main.rs`, `tests/lifecycle_log.rs`. Verify: `cargo test --test stats_evals --test lifecycle_log` passes.
 - [x] t12: Write the failing test of a plan of 40 tasks, and the guards of `[budgets.plan]` (`diagnostics-engineer`). Files: `tests/lifecycle_checks.rs`. Verify: `cargo test --test lifecycle_checks budget` fails on the new test only.
 - [x] t13: Remove the default budget of `plan`, and state that `soft = 0, hard = 0` gives a type no budget (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`. Verify: `cargo test --test lifecycle_checks` passes.
-- [ ] t14: Update the docs of SD913, SD608, SD916, the evidence and the budgets (`diagnostics-engineer`, `core-engineer`). Files: `docs/diagnostics.md`, `docs/config.md`, `docs/types.md`. Verify: `pre-commit run --files docs/diagnostics.md docs/config.md docs/types.md` passes.
-- [ ] t15: Update `show`, `next`, `status` and `stats`, the guide (a delta that depends on a spike) and the glossary (`docs-editor`). Files: `docs/commands.md`, `docs/guides/change.md`, `docs/glossary.md`. Verify: `pre-commit run --files docs/commands.md docs/guides/change.md docs/glossary.md` passes.
-- [ ] t16: Write the entry, with the migration note of `[budgets.plan]`. Files: `CHANGELOG.md`. Verify: `pre-commit run --files CHANGELOG.md` passes.
+- [x] t14: Update the docs of SD913, SD608, SD916, the evidence and the budgets (`diagnostics-engineer`, `core-engineer`). Files: `docs/diagnostics.md`, `docs/config.md`, `docs/types.md`. Verify: `pre-commit run --files docs/diagnostics.md docs/config.md docs/types.md` passes.
+- [x] t15: Update `show`, `next`, `status` and `stats`, the guide (a delta that depends on a spike) and the glossary (`docs-editor`). Files: `docs/commands.md`, `docs/guides/change.md`, `docs/glossary.md`. Verify: `pre-commit run --files docs/commands.md docs/guides/change.md docs/glossary.md` passes.
+- [x] t16: Write the entry, with the migration note of `[budgets.plan]`. Files: `CHANGELOG.md`. Verify: `pre-commit run --files CHANGELOG.md` passes.
 
 ## Hours
 

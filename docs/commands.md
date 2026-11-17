@@ -237,7 +237,7 @@ spec-dna show --conventions <type>
 `show <id>` prints a document, a section with its subsections, or one requirement, with ids and hashes. For a requirements, interface or rule document, it also prints these items:
 
 - the number of recognized requirements (`--json`: their keys);
-- the evidence of each requirement: its `verified-by` paths and the `covers:` tags of the tests.
+- the evidence of each requirement: its `verified-by` paths and the full `covers:` tags of the tests. The partial tags (`covers: partial <doc-id>#<key>`) follow after `partial:`, as in `- loans#fines: none; partial: tests/test_fines.py:1`. `--json` gives each item of `evidence` the field `sources` (the full evidence) and the field `partial` (a list of `<path>:<line>`, empty if there is none).
 
 `show --conventions <type>` prints the conventions for documents of the type. These are the sections of project documents that `[conventions]` in `spec-dna.toml` names. The output also gives the names of the amendment and live sections of the type. When a target of `context` is a document of that type, `context` serves the same sections first.
 
@@ -302,7 +302,7 @@ A change has no stage field. The stage is the first row of this table that match
 | `plan` | `intent.md` is absent, or its status is not `accepted`, or its `class` is not set | Set `status: accepted` in `intent.md`, or write the `class` |
 | `design` | The class is `higher-risk`, and `spec.md` is absent or not `approved` | Set `status: approved` in `spec.md` |
 | `build` | `plan.md` is absent or not `approved`, or no file of `Files` differs from the base. A routine change with an approved plan that lists no files is in `build` while a task of `Order` is open | Set `status: approved` in `plan.md`, or change a file of `Files` |
-| `test` | A requirement that the change adds or changes has no evidence | Add a `covers:` tag in a test file |
+| `test` | A requirement that the change adds or changes has no full evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
 - An intent with no `class` stays in the stage `plan`, because the class decides the next artifact. If its status is `draft`, the last line asks for the class first and then for the status. If its status is `accepted`, the last line asks for the class, and says that `check` reads the change as `routine` until then. `check` does not change: it reads a change with no class as `routine`.
@@ -314,6 +314,7 @@ A change has no stage field. The stage is the first row of this table that match
 - A file of `Files` differs from the base if the diff against the base has a path that a `Files` item matches. The diff is the diff of the working tree. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
 - A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.
+- A partial tag (`covers: partial <doc-id>#<key>`) is not evidence ([A partial tag](config.md#a-partial-tag)). Suppose a partial tag names a requirement that has no full evidence. Then the summary line of `next` says "no full evidence" in place of "no evidence", and it ends with "; N of them have a partial covers: tag only" (N is a number). The item of that requirement names its id, and it says "has a partial covers: tag only", the place of the tag, and "add a test that covers all of it". With no partial tag, the lines are the lines of 0.6.
 - The change that the default branch finished is no longer in the tree, so it has no stage. `spec-dna log` lists it.
 - The stage Maintain is not the stage of a change. `status` lists an open follow-up of an incident ([status](#status)).
 
@@ -411,7 +412,7 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
     - A relative link of a delta line moves to the path of the target document.
     - The result keeps CRLF, a BOM and the final newline of each file.
     - A line that the tree applies already is skipped, so a second run changes nothing.
-6. Step 5: each requirement that the delta adds or changes has evidence (SD916). For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
+6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
 
 If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code.
 
@@ -455,7 +456,7 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 spec-dna status [--group <name>] [--base <rev>]
 ```
 
-`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total`, `skipped <n>` if a task is skipped, and the id of the next open task). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
+`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total`, `skipped <n>` if a task is skipped, and the id of the next open task), and the token `partial <n>` when `<n>` requirements of the change have a partial `covers:` tag and no full evidence (`status --json`: the integer field `partial`, 0 if there is none). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
 
 Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text, and it ends with `[skill: post-mortem]`. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
 
@@ -476,7 +477,7 @@ The area of a delta target is the first folder under the folder of the layer of 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 
 ```json
-{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"skipped":0,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
+{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"skipped":0,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}},"partial":0}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
 ```
 
 A status is `null` if the file is absent. `class` is `null` if the intent has no valid class, and the text shows the token `none`. `approved_in` gives the source of the approval of each artifact: `"base"` (the base tree has the same status), `"branch <short sha>"` (the approval commit that set the status, with `[change] approval = "branch"`) or `null` (the status is not `accepted` or `approved`, the file is absent, or no approval counts). The short sha has 12 characters. With `approval = "branch"`, the text adds `(base)` or `(branch <short sha>)` after each `accepted` or `approved` status. With `approval = "base"`, the text does not change. Each item of `follow_ups` has `"skill":"post-mortem"`. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.done` counts the tasks with `- [x]` and no reason in `Skip:`, and `tasks.skipped` counts the skipped tasks. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
@@ -562,6 +563,7 @@ The command rebuilds the life of each change from the commits that touched its `
 | Test | leading | The eval pass rate over time | The `pass_rate` of the newest result file in `<[evals] dir>/results`, in percent. `n/a` without `[evals]`. |
 | Test | leading | How long a production incident takes to become a permanent eval | The median days from the commit that added an incident to the commit that added the eval that its `Eval` section names. `n/a` without `[evals]`. |
 | Test | lagging | Regressions caught in CI against regressions found in production | `n/a`: it needs the incident tracker. |
+| Test | lagging | Share of requirements with partial evidence only | The percent of the requirements that need evidence (an `active` `requirements`, `interface` or `rule` document) in the tree of `HEAD` that have a partial `covers:` tag and no full evidence. Unit `percent`. The count is the number of such requirements, and the note gives the partial and the bare count. `n/a` if the tree has no active requirement, or if `[evidence] tests` is empty. |
 | Maintain | leading | Time from band breach to an `intent.md` in the triage queue | `n/a`: spec-dna has no bands. |
 | Maintain | lagging | Repeat incidents of the same class | `n/a`: an incident has no class field. |
 | Deploy | both | The other indicators of the playbook | `n/a`: they need CI logs, telemetry or an incident tracker. |
@@ -583,7 +585,7 @@ A shallow clone can miss old changes, so each indicator that it computes from th
 
 With `[change] policy = "none"`, `stats` says that the change process is off and gives no indicator. It warns on a pin mismatch.
 
-The 2 Test indicators read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. They are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file and an incident belong to no change.
+The 2 leading Test indicators and the share of partial evidence read the tree of `HEAD`, not the working tree, so a file that is not committed does not count. They are `n/a` with the reason "the configuration has no [evals] table" if the configuration has no `[evals]`. `--group` does not change them, because a result file, an incident and a requirement belong to no change. The share of partial evidence needs no `[evals]`, and a shallow clone adds no note to it.
 
 The pass rate reads each `*.json` file that is directly in `<[evals] dir>/results`.
 
@@ -614,7 +616,7 @@ Plan lagging: Survival rate: the share of intent.md files that are accepted rath
 Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
 ```
 
-With `--json`, the output is one object with the 15 indicators of the table, in its order:
+With `--json`, the output is one object with the 16 indicators of the table, in its order. The table of 0.6 had 15 rows, so a script reads a row by its `name`, not by its place:
 
 ```json
 {"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
@@ -622,7 +624,7 @@ With `--json`, the output is one object with the 15 indicators of the table, in 
 
 - `value` is a number with 1 decimal, or `null` for an indicator with no value. The row of the hours has up to 2 decimals and no zero after the last digit (`2.25`, `3.5`, `6`).
 - `unit` is `days`, `percent`, `commits per change` or `hours`.
-- `count` is the number of changes that the value counts. For the 2 Test indicators, it is the number of result files and incidents. It is `null` for an indicator that git cannot give.
+- `count` is the number of changes that the value counts. For the 2 leading Test indicators, it is the number of result files and incidents. For the share of partial evidence, it is the number of requirements that need evidence. It is `null` for an indicator that git cannot give.
 - `reason` is `null` for a full value. Each `null` value has a reason.
 
 Exit codes: 0 done; 2 usage, an unknown group, or no `--sdlc`; 3 configuration; 4 git.

@@ -48,7 +48,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD102 | unresolved-link | error | A Markdown link or image points to a path that is not in the git tree. An accepted decision gives no SD102 for a link in its locked text. |
 | SD103 | evidence-missing | error | A `verified-by` path (in the front matter, or in the inline `<!-- verified-by: ... -->` marker of a requirement) is not in the git tree. |
 | SD104 | ambiguous-reference | error | A reference names an alias that more than one document has. |
-| SD105 | covers-unresolved | error | A `covers:` tag in a test file names no requirement. The document, the key or the requirement does not exist, or the id names a section. A tag that names the requirement of an `ADD` line of an `accepted` change is not reported: `finish` writes the requirement later. |
+| SD105 | covers-unresolved | error | A `covers:` tag in a test file names no requirement. The document, the key or the requirement does not exist, or the id names a section. A tag that names the requirement of an `ADD` line of an `accepted` change is not reported: `finish` writes the requirement later. A partial tag (`covers: partial <doc-id>#<key>`) follows the same rule. |
 | SD106 | convention-unresolved | error | A pointer of `conventions` in spec-dna.toml names a document or a Markdown file that is not in the git tree. Or it names a section that the document or file does not have. |
 
 ## Ids and keys (SD201 to SD204)
@@ -132,7 +132,7 @@ Each other path that differs from the base counts. Examples are documents, code,
 | SD605 | amendment-outcome | warning | New amendment text states a requirement, a BCP 14 keyword or a status word. |
 | SD606 | cited-path-removed | warning | A document cites a file or a directory that the change removed or renamed. The message names the new path of a file with the same content. A link gives SD102 instead. |
 | SD607 | cited-symbol-removed | warning | A document cites an identifier in an inline code span. The change removed the identifier from a file, and no other file that is not Markdown has it. If the file has exactly one new identifier, the message names it as a possible new name. |
-| SD608 | requirement-unverified | warning | A requirement of an active `requirements`, `interface` or `rule` document has no evidence: no `verified-by` and no `covers:` tag. |
+| SD608 | requirement-unverified | warning | A requirement of an active `requirements`, `interface` or `rule` document has no evidence: no `verified-by` and no full `covers:` tag. A tag `covers: partial <doc-id>#<key>` is not evidence: the message names the first such tag, and the requirement still gives SD608. |
 | SD609 | incident-unlinked | warning | An incident links no requirement, rule, decision or procedure. |
 | SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries. A change added, removed or renamed an entry document, or changed its title or status, or edited the rows manually. |
 | SD611 | decision-links-intent | warning | An accepted decision links an `intent` document in its locked text, or in `depends-on`. You can delete a finished intent (SD202 allows it), but you cannot remove the link from the locked text (SD405). SD611 does not report a link in an amendment, history or live section. SD901 reports it, so name the intent as plain text there. After `spec-dna finish` deletes the intent, the link is dead, and `check --all` names it in an [info line](#locked-references). [types.md](types.md#links-between-types) gives the link directions. |
@@ -186,10 +186,10 @@ These codes are new in 0.6.0, except SD923, SD924 and SD925, which are new in 0.
 | SD910 | gate-approval-missing | error | A `spec.md` or a `plan.md` that is not a `draft` changes while no approval of the artifact before it counts. Code under the `Files` of a plan that no approval covers counts as an artifact. With `[change] approval = "base"`, only the base tree gives an approval. With `"branch"`, an approval commit of an approver in the branch also counts. The message names one of 8 reasons. `[change] gate` sets the severity: `block` is an error, `warn` is a warning, `off` disables the code. |
 | SD911 | change-stale | warning | A started change has had no commit for more than `stale-days` days (a key of the `intent` layer). It is a state code: `check --all` shows it, and it is never new. Off in `lite`. |
 | SD912 | started-limit | warning | More changes than `max-started` of the `intent` layer have an `accepted` intent. The diagnostic is on `spec-dna.toml`. It is new when the head has more started changes than the lifecycle base. Off in `lite`, an error in `strict`. |
-| SD913 | outside-plan | warning | The diff of a change touches a file that no item of `Files` matches. The intent folder and the documents that the delta names are always in scope. Off in `lite`. |
+| SD913 | outside-plan | warning | A change of the diff has a plan, and the diff touches a file that no item of `Files` matches. The intent folder and the documents that the delta names are always in scope. Before a plan exists, SD913 gives nothing. Off in `lite`. |
 | SD914 | delta-invalid | error | A delta line has an invalid form, names an absent target, targets a layer that `moves-to` does not allow, or has a hash that does not match the requirement. SD914 also reports an `Interfaces` item that is not `CHANGE <interface id>: <text>`, `ADD <interface id>: <text>` or `none`, that names an absent interface document, that has the place of another type, or that names an interface that the diff does not change. It is a warning for a spec that the diff does not touch, and with no lifecycle base. |
 | SD915 | finish-incomplete | error | The diff deletes an intent folder whose base status is not `closed`, and the head does not have the result of its delta. For a change with no delta, the diff changes no `Files` path and no requirement hash. |
-| SD916 | delta-evidence-missing | error | An `ADD` or `CHANGE` requirement has no `covers:` tag and no `verified-by` when `finish` runs, or when the diff deletes the intent folder. For a change with no delta, the same applies to each requirement whose hash differs from the base. |
+| SD916 | delta-evidence-missing | error | An `ADD` or `CHANGE` requirement has no full `covers:` tag and no `verified-by` when `finish` runs, or when the diff deletes the intent folder. For a change with no delta, the same applies to each requirement whose hash differs from the base. |
 | SD917 | class-too-low | warning | The `class` of an intent is lower than the minimum that the diff gives. Off in `lite`, an error in `strict`. |
 | SD918 | incident-eval-missing | warning | The diff adds a document of type `incident`, and adds or changes no `*.json` file directly in `[evals] dir`. It needs `[evals]` and a `[change] policy` other than `none`. Off in `lite`. A move of an incident is not an add. |
 | SD919 | concern-open | error | A spec with the status `approved` has an open concern (`- [ ]` in `Concerns`). |
@@ -293,7 +293,11 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - If a plan lists no path, and it has an item that is not a path, the message names the first such item. If its `Files` section has a paragraph and no list item, and the paragraph is not in the `none` form: the first word is `none`, followed by `:`, `.` or the end of the paragraph ([Files and paths](types.md#files-and-paths)), the message says: "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`". SD915 gives the same text.
   - For a change with no delta, a requirement document is in scope only if `Files` lists it.
   - SD913 gives one diagnostic for each path outside the scope of every change of the diff, also for a path that is deleted. A generated index is not reported.
-  - A change with no `plan.md` has no `Files`, so each path outside its folder gives SD913.
+  - SD913 runs only when at least one change of the diff has a `plan.md`. A `draft` plan is a plan, and so is a plan with `- None.` under `Files`. Before a plan exists, a change has no `Files`, so it has no scope to check against. Thus an edit of another document (such as the questions or the roadmap) or of a spike gives no SD913 during `clarify`.
+  - The check reads the plan in the tree that SD913 reads for the change: the head tree, the base tree or the newest branch text for a folder that the diff deletes, or the newest branch text of a change that the branch added and finished. A change that its `Files` matched has a plan.
+  - When a change of the diff has a plan, the rule applies to each path outside the scope of every change of the diff. The scope of a change with no plan (its folder, and the documents that its delta and `Interfaces` name) still counts. An edit that belongs to a change with no plan, next to a change with a plan, still gives SD913. Keep one change in a branch.
+  - The warnings come back when the plan arrives in the same branch, because the diff against the base still holds the edits of `clarify`. List such a path in `Files`, or merge the edits of `clarify` in a pull request of their own.
+  - Code that a branch edits before any plan exists gets no signal: SD910 needs `Files`, and SD913 needs a plan. The review of the pull request is the control.
 - SD917:
   - The minimum class is `higher-risk` in these cases:
     - A delta line targets a document of a layer of `[change] high-risk-layers`.
@@ -358,9 +362,10 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - With a delta, it checks the requirement of each `ADD` and `CHANGE` line that the head applies. A line that the head does not apply gives SD915.
   - With no delta, it checks each requirement that the diff changes or adds, in a document that `Files` lists. With one change in the diff, it checks a document of any path.
   - A requirement has evidence in one of 3 cases:
-    - A `covers:` tag of a test file names it.
+    - A full `covers:` tag of a test file names it.
     - It has a `verified-by` marker.
     - Its document has `verified-by` in the front matter.
+  - A tag `covers: partial <doc-id>#<key>` is not evidence, also next to no other evidence. A full tag or a `verified-by` of the same requirement is evidence, also next to a partial tag. If only a partial tag names the requirement, the message names the first such tag and says so.
   - The diagnostic is on the requirement, and its target is `<id>#<key>`.
 - SD911:
   - A started change is a change with an `accepted` intent.
