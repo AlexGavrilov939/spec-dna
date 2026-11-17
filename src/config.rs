@@ -669,6 +669,10 @@ fn is_pin_line(line: &str) -> bool {
 /// True if `old` and `new` differ in the pin line and in no other line
 /// (ADR 0013, D19). The pin line is a line before the first table header.
 /// Two texts that are equal, or that differ in another way, give `false`.
+/// The compare reads `\r\n` as `\n` in both texts (ADR 0019): git reads a
+/// working tree with `core.autocrlf` as LF, and TOML has the same meaning for
+/// both line ends. A change of the line ends alone has no pin change, so it
+/// gives `false`.
 pub fn pin_line_only_change(old: &str, new: &str) -> bool {
     fn without_pin(text: &str) -> String {
         let mut in_header = true;
@@ -681,7 +685,8 @@ pub fn pin_line_only_change(old: &str, new: &str) -> bool {
             })
             .collect()
     }
-    old != new && without_pin(old) == without_pin(new)
+    let (old, new) = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n"));
+    old != new && without_pin(&old) == without_pin(&new)
 }
 
 /// True if the text of a `Cargo.toml` is the package `spec-dna` with the
@@ -2518,9 +2523,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         let old = "spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n";
         let new = "spec-dna = \"0.7.0\"\n[[roots]]\npath = \"docs\"\n";
         assert!(pin_line_only_change(old, new));
-        // The comment above the pin and the line ending are part of the text.
+        // The comment above the pin is part of the text.
         assert!(!pin_line_only_change(old, &format!("# c\n{new}")));
-        assert!(!pin_line_only_change(old, &new.replace('\n', "\r\n")));
         // Another line changes with the pin.
         assert!(!pin_line_only_change(old, &new.replace("docs", "doc")));
         assert!(!pin_line_only_change(old, &format!("{new}\n")));
@@ -2534,6 +2538,24 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert!(!pin_line_only_change(
             "spec-dna = \"0.6.0\"\nspec-dna-sha256 = \"a\"\n",
             "spec-dna = \"0.7.0\"\nspec-dna-sha256 = \"b\"\n"
+        ));
+    }
+
+    #[test]
+    fn a_crlf_text_and_its_lf_base_differ_in_the_pin_only() {
+        let old = "spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n";
+        let new = "spec-dna = \"0.7.0\"\n[[roots]]\npath = \"docs\"\n";
+        let crlf = |t: &str| t.replace('\n', "\r\n");
+        // `\r\n` is read as `\n`, in the head text and in the base text.
+        assert!(pin_line_only_change(old, &crlf(new)));
+        assert!(pin_line_only_change(&crlf(old), new));
+        assert!(pin_line_only_change(&crlf(old), &crlf(new)));
+        // A change of the line ends alone has no pin change.
+        assert!(!pin_line_only_change(old, &crlf(old)));
+        // Another line changes with the pin.
+        assert!(!pin_line_only_change(
+            old,
+            &crlf(&new.replace("docs", "doc"))
         ));
     }
 
