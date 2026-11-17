@@ -9,8 +9,8 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | alias | An earlier id of a document or a requirement. A reference to an alias resolves to the current id | | [concepts](concepts.md#ids-and-requirements) |
 | amendment section | A section of an accepted decision that can grow after the acceptance. The default name is `Amendments` | | [config](config.md) |
 | approval commit | A commit of an approver in the branch that changes the `status` line of one artifact file to `accepted` or `approved`. With `[change] approval = "branch"`, it counts as an approval for the work after it | | [change guide](guides/change.md#the-approval-commit) |
-| approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
-| approver | A person whose author e-mail is in `[change] approvers`. Only the approval commits of an approver count | | [config](config.md) |
+| approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request. The command `spec-dna approve <slug> <artifact>` does it for one artifact, and it is for a person | | [commands](commands.md#approve) |
+| approver | A person whose author e-mail is in `[change] approvers`. Only the approval commits of an approver count. The address of an agent or a bot is no approver (SD926) | | [config](config.md) |
 | arm | One of the 2 setups that `eval run --ab` compares on the same evals: `with` the skill and `without` it | | [evals](evals.md#run-the-arms) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
@@ -69,7 +69,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `REVIEW.md` | The review policy of the repository, which a code review service reads | | [harness](harness.md) |
 | role | A job in the harness, such as `verifier`, with its model and its agent file | | [harness](harness.md#roles) |
 | root | A folder that `spec-dna.toml` maps to document types. Document ids are relative to it | | [config](config.md) |
-| `routine` | A change class with an intent and a plan. The agent approves the plan | | [change guide](guides/change.md#choose-the-class) |
+| `routine` | A change class with an intent and a plan. The agent approves the plan, when the owner says so | | [change guide](guides/change.md#choose-the-class) |
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |
 | section id | `<document id>#<heading slug>`: the unit that `context` gives to an agent | | [concepts](concepts.md#context) |
 | skill | A `SKILL.md` folder that gives a procedure to the agent. `spec-dna skill show <name>` prints the text of a skill of the workflow pack | | [harness](harness.md) |
