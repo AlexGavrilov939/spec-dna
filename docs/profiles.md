@@ -25,6 +25,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
 | `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan), SD918 (incident with no eval) | off | warning | warning |
 | `changes` | SD912 (started limit), SD917 (class too low), SD921 (truth changed without a change), SD923 (task incomplete), SD924 (task too large), SD925 (checkbox missing) | off | warning | error |
+| `changes` | SD926 (an agent or bot address in `approvers`) | warning | warning | warning |
 | `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted), SD922 (question open) | warning | error | error |
 
 The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) is always an error. SD506 (an eval file that is not valid, or an absent `check.sh`) is in no group, so it is an error in every profile. SD507 (a skill that has no verdict `on`) is in no group too. It is off in `lite` and `standard`, and a warning in `strict`. Only a rule for SD506 or SD507 in `[rules]` can change them. SD612 (a link into the folder of a change) is also in no group: it is a warning in each profile, and a rule for SD612 changes it.
@@ -41,7 +42,7 @@ The codes of the group `changes` depend on the `[change]` table:
 - SD910 reads the approvals of the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). `strict` reads the approvals of the base only, so `approval = "branch"` with `profile = "strict"` is an error (exit code 3). `init` writes `approval = "branch"` for `lite` and `standard`, and `approval = "base"` for `strict`.
 - A rule for SD910 in `[rules]` has priority over the gate. `[rules]` can also override SD921, as it overrides each code.
 
-SD923, SD924 and SD925 are new in 0.7.0. SD923 and SD924 read the tasks of an `approved` plan only, so a draft plan of 0.6.1 gives no new diagnostic. In `standard` they are warnings, and a warning never fails `check`. In `strict` they are errors, and the gate reports only a new error. SD923 and SD924 read one tree, as SD925 does.
+SD923, SD924, SD925 and SD926 are new in 0.7.0. SD926 is a warning in each profile. SD923 and SD924 read the tasks of an `approved` plan only, so a draft plan of 0.6.1 gives no new diagnostic. In `standard` they are warnings, and a warning never fails `check`. In `strict` they are errors, and the gate reports only a new error. SD923 and SD924 read one tree, as SD925 does.
 
 These codes compare with the lifecycle base: SD905 for a change with no delta, SD910, SD913, SD915, SD916, SD917 and SD918. SD920 for a decision that is not `accepted` and SD921 do the same. This base is the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD`. These codes do not run if git cannot name it.
 
