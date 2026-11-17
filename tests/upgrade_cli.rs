@@ -73,6 +73,33 @@ fn upgrade(repo: &Repo, args: &[&str]) -> (i32, String, String) {
     repo.run(&a)
 }
 
+/// The skills that are on by default in this build (ADR 0023), from
+/// `skill list --json` in a folder with no `spec-dna.toml`. A test of the
+/// rename reads them here, so a new table of the release changes no test.
+fn default_skills() -> Vec<String> {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["skill", "list", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out.split("{\"name\":\"")
+        .skip(1)
+        .filter(|item| item.contains("\"default\":\"on\""))
+        .map(|item| item.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+/// The list that a rename of `old` names gives, with `review` at the end: each
+/// new name of `new` that is on by default, in the order of D2.
+fn renamed(new: &[&str]) -> String {
+    let on = default_skills();
+    let names: Vec<String> = new
+        .iter()
+        .filter(|n| on.iter().any(|d| d == *n))
+        .chain(["review"].iter())
+        .map(|n| format!("\"{n}\""))
+        .collect();
+    format!("[{}]", names.join(", "))
+}
+
 fn status(repo: &Repo) -> String {
     repo.git_out(&["status", "--porcelain"])
 }
@@ -1902,6 +1929,8 @@ fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
     assert_eq!(code, 3, "{err}");
     let (code, out, err) = upgrade(&repo, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
+    // The report names each new name: the list has it, or the report says
+    // that the name is off by default.
     assert!(
         out.contains("brainstorm") && out.contains("write-plan"),
         "{out}"
@@ -1910,11 +1939,13 @@ fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
     assert_eq!(code, 0, "{out}{err}");
     let toml = repo.read("spec-dna.toml");
     // `intent` is `brainstorm`, `spec` is `specify` and `clarify`, `plan` is
-    // `write-plan`, and `review` stays. The list has the order of D2.
+    // `write-plan`, and `review` stays. A new name is in the list only if it
+    // is on by default. The list has the order of D2.
     assert!(
-        toml.contains(
-            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\"]\n"
-        ),
+        toml.contains(&format!(
+            "skills = {}\n",
+            renamed(&["brainstorm", "specify", "clarify", "write-plan"])
+        )),
         "{toml}"
     );
     // The words `intent`, `spec` and `plan` also name types, and the list
@@ -1954,7 +1985,7 @@ fn a_skills_list_of_many_lines_with_an_old_name_stops_upgrade_with_the_new_list(
     let (code, out, err) = upgrade(&repo, &[]);
     assert_eq!(code, 3, "{out}{err}");
     assert!(
-        err.contains("by hand") && err.contains("[\"specify\", \"clarify\", \"review\"]"),
+        err.contains("by hand") && err.contains(&renamed(&["specify", "clarify"])),
         "{err}"
     );
     // The file stays as it was.

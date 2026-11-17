@@ -804,15 +804,25 @@ const SKILL_RENAMES: [(&str, &[&str]); 3] = [
     ("plan", &["write-plan"]),
 ];
 
-/// Renames the skills of 0.6 in `[harness] skills` (D4, D41): `intent` is
-/// `brainstorm`, `spec` is `specify` and `clarify`, and `plan` is `write-plan`.
-/// A name that the list already has is not added twice, and the new list has
-/// the order of D2. Only the value of `skills` in `[harness]` changes: the
-/// words `intent`, `spec` and `plan` are also the names of types. The call
-/// is before the first parse of the file, because the parser gives exit code 3
-/// for an old name. A list with no old name, and a text that does not parse,
-/// stay as they are, so a second run changes nothing.
+/// Renames the skills of 0.6 in `[harness] skills` (D4, D41, ADR 0023):
+/// `intent` is `brainstorm`, `spec` is `specify` and `clarify`, and `plan` is
+/// `write-plan`. A new name that is on by default (`Skill::default_on`) goes
+/// into the list. A new name that is off by default is left out, and a line of
+/// `edits` names it and the fix. A name that the list already has stays, also
+/// when its default is off, because the person chose it. A name is not added
+/// twice, and the new list has the order of D2. Only the value of `skills` in
+/// `[harness]` changes: the words `intent`, `spec` and `plan` are also the
+/// names of types. The call is before the first parse of the file, because the
+/// parser gives exit code 3 for an old name. A list with no old name, and a
+/// text that does not parse, stay as they are, so a second run changes
+/// nothing.
 pub fn rename_skills(text: &str) -> Repair {
+    rename_skills_with(text, &|s| s.default_on())
+}
+
+/// `rename_skills` with the default of a skill given by `on`, so a test can
+/// pass a fake table.
+pub fn rename_skills_with(text: &str, on: &dyn Fn(Skill) -> bool) -> Repair {
     let mut out = Repair {
         text: text.to_string(),
         ..Repair::default()
@@ -833,10 +843,14 @@ pub fn rename_skills(text: &str) -> Repair {
     if found.is_empty() {
         return out;
     }
+    // A new name goes into the list if it is on by default or if the list
+    // has it already.
+    let wanted =
+        |name: &str| list.iter().any(|x| x == name) || Skill::from_key(name).is_some_and(|s| on(s));
     let mut new: Vec<String> = Vec::new();
     for n in &list {
         let names: Vec<&str> = match old_of(n) {
-            Some((_, to)) => to.to_vec(),
+            Some((_, to)) => to.iter().copied().filter(|t| wanted(t)).collect(),
             None => vec![n.as_str()],
         };
         for name in names {
@@ -850,9 +864,23 @@ pub fn rename_skills(text: &str) -> Repair {
     let said: Vec<String> = found
         .iter()
         .map(|(from, to)| {
-            let to: Vec<String> = to.iter().map(|t| t.to_string()).collect();
-            format!("`{from}` is now {}", code_list(&to))
+            let kept: Vec<String> = to
+                .iter()
+                .filter(|t| new.iter().any(|x| x == *t))
+                .map(|t| t.to_string())
+                .collect();
+            if kept.is_empty() {
+                format!("`{from}` ended")
+            } else {
+                format!("`{from}` is now {}", code_list(&kept))
+            }
         })
+        .collect();
+    // One line for each new name that the rule leaves out.
+    let left_out: Vec<(&str, &str)> = found
+        .iter()
+        .flat_map(|(from, to)| to.iter().map(move |t| (*from, *t)))
+        .filter(|(_, t)| !new.iter().any(|x| x == t))
         .collect();
     match set_value(text, &[k("harness"), k("skills")], &str_array(&new)) {
         Ok(t) => {
@@ -861,14 +889,30 @@ pub fn rename_skills(text: &str) -> Repair {
                 "`skills` of `[harness]` got the names of 0.7.0: {}",
                 said.join(", ")
             ));
+            for (from, to) in left_out {
+                out.edits.push(format!(
+                    "`skills`: `{from}` ended, and `{to}` is off by default in 0.7.0 (no verdict `on`); add \"{to}\" to `skills` of [harness] to turn it on"
+                ));
+            }
         }
         Err(_) => {
             let quoted: Vec<String> = new.iter().map(|n| format!("\"{n}\"")).collect();
-            out.by_hand.push(format!(
+            let mut message = format!(
                 "`skills` of `[harness]` has names of 0.6 ({}); the list has many lines, so change it by hand to [{}], then run `spec-dna upgrade` again",
                 said.join(", "),
                 quoted.join(", ")
-            ))
+            );
+            if !left_out.is_empty() {
+                let names: Vec<String> = left_out.iter().map(|(_, t)| t.to_string()).collect();
+                message.push_str(&format!(
+                    ". The list leaves out {}, which {} off by default in 0.7.0 (no verdict `on`); add {} to turn {} on",
+                    code_list(&names),
+                    if names.len() == 1 { "is" } else { "are" },
+                    if names.len() == 1 { "it" } else { "them" },
+                    if names.len() == 1 { "it" } else { "each" },
+                ));
+            }
+            out.by_hand.push(message)
         }
     }
     out
@@ -2303,7 +2347,7 @@ mod tests {
     #[test]
     fn the_names_of_0_6_in_skills_change_and_the_types_stay() {
         let t = "spec-dna = \"0.6.1\"\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[harness]\nlevel = \"lean\"\nskills = [\"plan\", \"review\", \"intent\", \"spec\"]  # mine\n";
-        let r = rename_skills(t);
+        let r = rename_skills_with(t, &|_| true);
         assert_eq!(
             r.text,
             "spec-dna = \"0.6.1\"\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\"]  # mine\n"
@@ -2311,15 +2355,89 @@ mod tests {
         assert_eq!(r.edits.len(), 1, "{:?}", r.edits);
         assert!(r.by_hand.is_empty());
         // A second call changes nothing.
-        let again = rename_skills(&r.text);
+        let again = rename_skills_with(&r.text, &|_| true);
         assert_eq!(again.text, r.text);
         assert!(again.edits.is_empty());
+    }
+
+    /// The default of the fake table of ADR 0023, for each value of the
+    /// constant. `brainstorm` and `tdd` are `on`, `clarify` and `debug` are
+    /// `inconclusive`, `review` is `off`, and the other skills have no verdict.
+    fn fake_default(needs_on: bool) -> impl Fn(Skill) -> bool {
+        use crate::verdict::{Verdict, on_by_default};
+        move |s| {
+            let verdict = match s {
+                Skill::Brainstorm | Skill::Tdd => Some(Verdict::On),
+                Skill::Clarify | Skill::Debug => Some(Verdict::Inconclusive),
+                Skill::Review => Some(Verdict::Off),
+                _ => None,
+            };
+            on_by_default(s.in_d2(), verdict, needs_on)
+        }
+    }
+
+    #[test]
+    fn the_rename_follows_the_rule_with_a_fake_table() {
+        let t = "[harness]\nskills = [\"intent\", \"spec\", \"plan\", \"review\"]\n";
+        // `true`: only `brainstorm` has the verdict `on`. `review` stays,
+        // although it is off by default, because the person chose it.
+        let r = rename_skills_with(t, &fake_default(true));
+        assert_eq!(r.text, "[harness]\nskills = [\"brainstorm\", \"review\"]\n");
+        // The line of the rename and one line for each name that is left out.
+        assert_eq!(r.edits.len(), 4, "{:?}", r.edits);
+        let said = r.edits.join("\n");
+        for name in ["specify", "clarify", "write-plan"] {
+            assert!(
+                said.contains(&format!("`{name}` is off by default")),
+                "{said}"
+            );
+        }
+        assert!(
+            said.contains("add \"write-plan\" to `skills` of [harness]"),
+            "{said}"
+        );
+        assert!(r.by_hand.is_empty());
+        // A second call changes nothing.
+        let again = rename_skills_with(&r.text, &fake_default(true));
+        assert_eq!(again.text, r.text);
+        assert!(again.edits.is_empty());
+
+        // `false`: D33. Each new name of D2 stays, and no name is left out.
+        let r = rename_skills_with(t, &fake_default(false));
+        assert_eq!(
+            r.text,
+            "[harness]\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\"]\n"
+        );
+        assert_eq!(r.edits.len(), 1, "{:?}", r.edits);
+        assert!(!r.edits[0].contains("off by default"), "{:?}", r.edits);
+    }
+
+    #[test]
+    fn a_name_that_the_list_holds_stays_also_when_its_default_is_off() {
+        let t = "[harness]\nskills = [\"specify\", \"spec\", \"tdd\"]\n";
+        let r = rename_skills_with(t, &fake_default(true));
+        // `specify` was in the list: it stays. `spec` ended: `clarify` is off.
+        assert_eq!(r.text, "[harness]\nskills = [\"specify\", \"tdd\"]\n");
+        assert_eq!(r.edits.len(), 2, "{:?}", r.edits);
+    }
+
+    #[test]
+    fn a_list_of_many_lines_gets_the_filtered_list_by_hand() {
+        let t = "[harness]\nskills = [\n  \"intent\",\n  \"spec\",\n  \"review\",\n]\n";
+        let r = rename_skills_with(t, &fake_default(true));
+        assert_eq!(r.text, t);
+        assert_eq!(r.by_hand.len(), 1, "{:?}", r.by_hand);
+        assert!(
+            r.by_hand[0].contains("[\"brainstorm\", \"review\"]"),
+            "{:?}",
+            r.by_hand
+        );
     }
 
     #[test]
     fn a_name_that_the_list_already_has_is_not_added_twice() {
         let t = "[harness]\nskills = [\"specify\", \"spec\"]\n";
-        let r = rename_skills(t);
+        let r = rename_skills_with(t, &|_| true);
         assert_eq!(r.text, "[harness]\nskills = [\"specify\", \"clarify\"]\n");
     }
 
@@ -2331,7 +2449,7 @@ mod tests {
             "[harness]\nlevel = \"lean\"\n",
             "this is not toml",
         ] {
-            let r = rename_skills(t);
+            let r = rename_skills_with(t, &|_| true);
             assert_eq!(r.text, t);
             assert!(r.edits.is_empty() && r.by_hand.is_empty());
         }
@@ -2340,7 +2458,7 @@ mod tests {
     #[test]
     fn a_list_of_many_lines_with_a_new_length_is_left_to_the_person() {
         let t = "[harness]\nskills = [\n  \"spec\",  # the spec\n  \"review\",\n]\n";
-        let r = rename_skills(t);
+        let r = rename_skills_with(t, &|_| true);
         assert_eq!(r.text, t);
         assert_eq!(r.by_hand.len(), 1, "{:?}", r.by_hand);
     }

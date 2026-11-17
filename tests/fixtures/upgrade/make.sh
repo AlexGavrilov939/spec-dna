@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Records how the fixtures of the upgrade were made (step 5, slice 1).
 #
-# The fixtures are projects that pin 0.4.2 or 0.5.0. Only the real binaries of
-# those versions give the exact bytes and markers of the files that `init`
-# writes, so the generated files are committed. CI does not run this script.
-# The tests read what it records.
+# The fixtures are projects that pin 0.4.2, 0.5.0 or 0.6.1. Only the real
+# binaries of those versions give the exact bytes and markers of the files that
+# `init` writes, so the generated files are committed. CI does not run this
+# script. The tests read what it records.
 #
 # What a person writes and what the script writes:
 #
@@ -37,6 +37,17 @@
 #                             references that `upgrade --layout` makes top
 #                             files. It has no generated file, so this script
 #                             records nothing for it.
+#   v061/                     A project of 0.6.1 with a change that has an
+#                             accepted intent, an approved spec and an
+#                             approved plan. The documents (`docs/`), the
+#                             script (`src/`) and its test (`tests/`) are
+#                             written by hand, in the domain of the other
+#                             fixtures. The script runs `init --answers` of
+#                             0.6.1 (`standard`, `lean`, no CI, no hook,
+#                             `skeleton`) on them, and it writes the rest:
+#                             `spec-dna.toml`, `AGENTS.md`, `CLAUDE.md`, the
+#                             adapter skill, `.claude/`, `REVIEW.md` and
+#                             `evals/`. The tests of `upgrade_v061.rs` read it.
 #   recorded/<case>.txt       The result of the real binary on the composed
 #                             tree of each case: the exit code of
 #                             `check --all`, each document that it loaded, each
@@ -46,14 +57,18 @@
 #
 # Use:
 #
-#   tests/fixtures/upgrade/make.sh
+#   tests/fixtures/upgrade/make.sh [old|v061]
 #
-# The script needs `git`, `cargo` and `python3`. It builds the tags `v0.4.2`
-# and `v0.5.0` of this repository in a temporary `git worktree`, with
+# With no argument, the script makes each fixture. `old` makes the fixtures of
+# 0.4.2 and 0.5.0, and `v061` makes the fixture of 0.6.1.
+#
+# The script needs `git`, `cargo` and `python3`. It builds the tags `v0.4.2`,
+# `v0.5.0` and `v0.6.1` of this repository in a temporary `git worktree`, with
 # `cargo install --locked --root`. It deletes the worktrees and their build
-# folders at the end. The disk needs about 1 GB.
-# To use binaries that exist already, set `SPEC_DNA_042` and `SPEC_DNA_050` to
-# their paths.
+# folders at the end. The disk needs about 1 GB. It never uses the binary of
+# `~/.cargo/bin` unless you give its path in a variable.
+# To use binaries that exist already, set `SPEC_DNA_042`, `SPEC_DNA_050` and
+# `SPEC_DNA_061` to their paths.
 #
 # The script changes only files in this folder. Run it twice: the second run
 # must give no diff (`git status --short tests/fixtures/upgrade`).
@@ -65,7 +80,7 @@ repo="$(cd "$here/../../.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/spec-dna-fixtures.XXXXXX")"
 
 cleanup() {
-  for tag in 0.4.2 0.5.0; do
+  for tag in 0.4.2 0.5.0 0.6.1; do
     if [ -d "$work/wt-$tag" ]; then
       git -C "$repo" worktree remove --force "$work/wt-$tag" || true
     fi
@@ -88,8 +103,18 @@ binary() {
   echo "$work/bin-$version/bin/spec-dna"
 }
 
-bin042="$(binary 0.4.2 SPEC_DNA_042)"
-bin050="$(binary 0.5.0 SPEC_DNA_050)"
+# The groups that the arguments select. No argument selects each group.
+selected() {
+  [ "$#" -ge 1 ] || return 1
+  local group="$1"
+  shift
+  [ "$#" -eq 0 ] && return 0
+  local arg
+  for arg in "$@"; do
+    [ "$arg" = "$group" ] && return 0
+  done
+  return 1
+}
 
 # No file of the person or of the machine reaches the result.
 export HOME="$work/home"
@@ -212,17 +237,60 @@ PY
   } >"$here/recorded/$name.txt"
 }
 
-make_adapters v04 "$bin042"
-make_adapters v05 "$bin050"
-make_adapters brownfield "$bin050"
-make_harness lean
-make_harness full
-make_edited
+# The fixture of 0.6.1. The hand-written folders stay, and `init` of 0.6.1
+# writes the rest.
+make_v061() {
+  local bin="$1" tmp="$work/gen-v061" out="$here/v061"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  local dir
+  for dir in docs src tests; do
+    cp -R "$out/$dir" "$tmp/$dir"
+  done
+  seed_agents "$tmp"
+  commit_tree "$tmp"
+  cat >"$work/answers-v061.toml" <<'ANSWERS'
+profile = "standard"
+harness = "lean"
+ci = "none"
+evals = "skeleton"
+hook = "none"
+ANSWERS
+  (cd "$tmp" && "$bin" init --answers "$work/answers-v061.toml" >/dev/null)
+  find "$out" -mindepth 1 -maxdepth 1 ! -name docs ! -name src ! -name tests \
+    -exec rm -rf {} +
+  # Each file that `init` added or changed.
+  (cd "$tmp" && git status --porcelain -uall | cut -c4- | sort) |
+    while IFS= read -r file; do
+      mkdir -p "$out/$(dirname "$file")"
+      cp "$tmp/$file" "$out/$file"
+    done
+}
 
-rm -rf "$here/recorded"
-record v04 "$bin042" v04
-record v05 "$bin050" v05
-record brownfield "$bin050" brownfield
-record harness-lean "$bin050" v05 harness-lean
-record harness-full "$bin050" v05 harness-full
-record harness-edited "$bin050" v05 harness-lean harness-edited
+if selected old "$@"; then
+  bin042="$(binary 0.4.2 SPEC_DNA_042)"
+  bin050="$(binary 0.5.0 SPEC_DNA_050)"
+  make_adapters v04 "$bin042"
+  make_adapters v05 "$bin050"
+  make_adapters brownfield "$bin050"
+  make_harness lean
+  make_harness full
+  make_edited
+
+  mkdir -p "$here/recorded"
+  for name in v04 v05 brownfield harness-lean harness-full harness-edited; do
+    rm -f "$here/recorded/$name.txt"
+  done
+  record v04 "$bin042" v04
+  record v05 "$bin050" v05
+  record brownfield "$bin050" brownfield
+  record harness-lean "$bin050" v05 harness-lean
+  record harness-full "$bin050" v05 harness-full
+  record harness-edited "$bin050" v05 harness-lean harness-edited
+fi
+
+if selected v061 "$@"; then
+  bin061="$(binary 0.6.1 SPEC_DNA_061)"
+  make_v061 "$bin061"
+  record v061 "$bin061" v061
+fi
