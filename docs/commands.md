@@ -13,6 +13,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | `show` | Print a document, a section or a requirement | [show](#show) |
 | `new` | Write a document from a template, also the 3 documents of a change | [new](#new) |
 | `next` | Print the checklist to the next gate of a change | [next](#next) |
+| `approve` | Set the status of one artifact of a change and commit that file alone (for a person) | [approve](#approve) |
 | `skill list`, `skill show` | Print the 11 skills of the workflow pack, or the text of one skill | [skill](#skill) |
 | `finish` | Apply the delta of a change, check the evidence, delete the folder of the change | [finish](#finish) |
 | `status` | Print each change, its class, its stage and its next gate | [status](#status) |
@@ -32,6 +33,7 @@ spec-dna upgrade --pin-file ../spec-dna-pin.toml             # write the move, t
 spec-dna new decision pump-choice   # a new document from the template of its type
 spec-dna new intent sensor-timeout --template prd   # the first document of a change
 spec-dna next sensor-timeout        # the checklist to the next gate of a change
+spec-dna approve sensor-timeout intent   # a person: set the status of the intent and commit that file alone
 spec-dna skill list                 # the 11 skills, their kind, stage, state and default
 spec-dna skill show write-plan      # the text of a skill, also if the skill is off
 spec-dna finish sensor-timeout --dry-run   # the diff of the finish of a change, and nothing written
@@ -69,6 +71,7 @@ spec-dna transcript ~/.claude/projects/<project> --expect requirements/valves/cl
 spec-dna hook context-meter --levels 300000,600000 --subagent 250000   # a hook of a coding agent
 spec-dna hook fanout-cap --cap 10   # a hook of a coding agent
 spec-dna hook protect-tests --mode fix-branches --test '**/tests/**'   # a hook of a coding agent: ask before an edit of a test file
+spec-dna hook protect-approvals --intent docs/intent   # a hook of a coding agent: deny an approval by the agent
 spec-dna --help                     # commands and options (-h); --version (-V) prints the version
 spec-dna mv --help                  # the help of one command
 ```
@@ -80,7 +83,7 @@ A target is a document id, an alias such as `ADR-12`, `<id>#<anchor or key>`, or
 ## init
 
 ```text
-spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>]
+spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run] [--root <dir>] [--approver <e-mail>]
 ```
 
 `init` examines the repository and finds these items:
@@ -93,6 +96,8 @@ spec-dna init [--non-interactive | --answers <file>] [--reconfigure] [--dry-run]
 Then `init` asks at most 14 questions, with the found values as defaults. Questions 12 to 14 set the harness and the evals. It shows how it applied each answer, the full `spec-dna.toml`, and the diff of each file that it will create or change. It writes them after you confirm.
 
 `--dry-run` shows this preview only. Without a terminal, `init` uses the defaults. `init` never edits a document. [init.md](init.md) gives the details.
+
+`--approver <e-mail>` gives an approver for `[change] approvers`. The flag can repeat, and `--approver=<e-mail>` is the same. A new configuration and `--reconfigure` read it. The e-mail of an agent or a bot, such as `noreply@anthropic.com`, gives exit code 2 and writes nothing. The answers key `approvers` has the same effect. Without a flag, an answer or a person to list, `init` writes `approval = "base"` and a note ([init.md](init.md#the-approvers)).
 
 With a change policy other than `none`, the preview has a note with the `CODEOWNERS` line for the specs. `--json` has the field `codeowners`. `init` never writes the `CODEOWNERS` file.
 
@@ -273,6 +278,31 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 - It removes `type:` where the place gives the type.
 
 `new` writes no `type:` line where the place gives the type. It uses `--root <dir>`, or the first root of that single type, or the first mixed root. A type name of 0.5 is an error (exit code 2) that names the new command. For example, `new contract x` says to use `new interface`, and `new change x` says to use `new intent`.
+
+## approve
+
+```text
+spec-dna approve <slug> intent|spec|plan [--json]
+```
+
+`approve` is the command of a person for an approval commit. It sets the `status` line of one artifact of the change `<slug>` to its approval value (`accepted` for an intent, `approved` for a spec or a plan), and it commits that file alone. The commit changes the `status` line and no other byte, so it is an approval commit of the branch rule ([config.md](config.md#approval-in-the-branch)). The command makes no check of the person: run it in a terminal of your own. The hook `protect-approvals` ([harness.md](harness.md#spec-dna-hook-protect-approvals)) denies it for an agent.
+
+The steps, in this order. A refusal gives exit code 1, and nothing changes:
+
+1. The pin is the version of the binary, and the project has a layer of the type `intent`. Else exit code 3.
+2. The folder `<intent folder>/<slug>/` and the file of the artifact exist. Else exit code 5.
+3. The file is tracked, and it has the same text in `HEAD`, in the index and in the working tree. Commit the text first.
+4. The status is `draft`. If it is the approval value already, the command prints that and ends with exit code 0, with no commit. Another status is a refusal.
+5. An intent needs a valid `class`. Set the class in a commit of its own first.
+6. The earlier artifact has its approval value: a spec needs an `accepted` intent. A plan needs an `approved` spec for a higher-risk change, and an `accepted` intent for a routine change.
+7. With `approval = "branch"`, the e-mail of the author (`git var GIT_AUTHOR_IDENT`, so `GIT_AUTHOR_EMAIL` counts) is in `[change] approvers`. The compare ignores case. With `approval = "base"`, the command does not check the author, because the merge is the approval.
+8. The command replaces the value of the `status` line in place. It keeps the indent, the quotes, a comment after the value and the line end (`\n` or `\r\n`).
+9. The command runs `git commit --only -m "docs: approve the <artifact> of <slug>" -- <path>`. Other staged changes stay staged and out of the commit. The command passes no `--no-verify` and no `--no-gpg-sign`, so the hooks and the signing of the person apply. A project whose commit rules reject this message gets exit code 4 with the text of git, and the person makes the commit by hand.
+10. If the commit fails, the command writes the old text back and exits with code 4.
+
+The output is `approved <path> in <12 characters of the commit> (author <e-mail>)`. With `--json`: `{"slug", "artifact", "path", "status", "commit", "author"}`. `commit` is the full id, or `null` when the artifact already had the approval value.
+
+Exit codes: 0 committed, or already approved; 1 a refusal of steps 3 to 7; 2 usage (the slug or the artifact name is bad, or an option is unknown); 3 configuration; 4 git or file error; 5 no folder or no file.
 
 ## next
 
@@ -849,11 +879,12 @@ It prints counts and ids only. It never prints the text of a prompt, a command o
 spec-dna hook context-meter [--levels <a,b,...>] [--subagent <n>]
 spec-dna hook fanout-cap [--cap <n>]
 spec-dna hook protect-tests [--mode <fix-branches|always>] [--test <glob>]...
+spec-dna hook protect-approvals [--intent <dir>]...
 ```
 
 The hooks use the event names of Claude Code, so they belong to its adapter ([agents.md](agents.md)). A coding agent runs `hook`. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it.
 
-A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. `protect-tests` reads no file, and runs `git` at most 2 times, only for a path that matches a test glob.
+A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. `protect-tests` reads no file, and runs `git` at most 2 times, only for a path that matches a test glob. `protect-approvals` runs `git` only for a command with the words `git` and `commit`, and then 3 times, and 2 more times for each artifact file that the working tree changes.
 
 A hook ignores unknown flags and bad values. The exit code is always 0. An error gives no output. A hook prints JSON only when the agent must see a message.
 
@@ -889,6 +920,16 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 6. The hook answers `permissionDecision: "ask"` with a reason. The reason has the relative path and, for `fix-branches`, the branch.
 
 Each step that fails gives no output. `git` runs with `GIT_OPTIONAL_LOCKS=0`. The hook stores nothing. A run with `claude -p` cannot ask the person. The agent of the Claude Code adapter then denies the edit, and the model reads the reason.
+
+`protect-approvals` runs before a `Bash` tool call (the `PreToolUse` event). It denies a call of an agent that approves a document. It reads `tool_name` and `tool_input.command` of the event, `cwd`, and `CLAUDE_PROJECT_DIR` of the environment. `init` writes the command when `[harness] protect-approvals` is `true`, with one `--intent <dir>` for each folder of the `intent` layer from the repository root, for example `docs/intent` ([`[harness] protect-approvals`](config.md#the-table-harness)). The generated command ends with `2>/dev/null || true`. The hook never reads `spec-dna.toml`.
+
+The hook splits the command into segments at `;`, `&`, `|`, brackets, backticks and line feeds, and each segment into words at white space. It removes the quotes, so `sh -c "..."` gives its inner words. This is a text scan, not a shell parser. The rules, in this order:
+
+1. A segment with a word whose last path part is `spec-dna` and a later word `approve`: deny.
+2. A segment with the words `git` and `commit` that has, before the word `git`, a word with `accepted` or `approved`: deny, and the reason says to run the edit and the commit as 2 calls. This is for an edit and a commit in one call. With no `--intent`, the hook skips this rule and the next one.
+3. A segment with the words `git` and `commit`: the hook reads the repository. The folder is `cwd`, else `CLAUDE_PROJECT_DIR`. A `cd <dir>` segment before the commit, and `git -C <dir>`, move it. A dir with `$` or `~` gives no output. The old tree is `HEAD`, or `HEAD~1` with `--amend`. A tree that is not there is the empty tree. The candidates are the artifact files `<dir>/<slug>/intent.md`, `spec.md` and `plan.md` that the working tree changes against the old tree (`git diff --name-only`), and the untracked ones. For each candidate, the hook compares the old status with the status in the index and in the working tree. It denies the call if a new status is the approval value, and the old status is not.
+
+A deny is `permissionDecision: "deny"` with a reason. The reason of rule 3 names the path and the status, and tells the agent to set the status back and to ask the person to run `spec-dna approve <slug> <artifact>` in a terminal of their own. Bad JSON, no git, a git error and a path that the hook cannot read give no output. [harness.md](harness.md#spec-dna-hook-protect-approvals) gives the limits.
 
 ## upgrade
 
@@ -1049,11 +1090,11 @@ These limits apply:
 | Code | Meaning |
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
-| 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `upgrade` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
+| 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `approve` refused (steps 3 to 7), `upgrade` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
 | 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id of `eval run`, an `index` of a place that gives no type, and a `new` or `mv` into an area that differs from a name of `areas` only in case |
 | 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent |
-| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `eval run`: the temporary folder, the copy, the base commit or the result file |
-| 5 | A target names no document, section or requirement. For `finish` and `next`: no folder for the slug |
+| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `approve`: the commit failed, and the file has its old text. For `eval run`: the temporary folder, the copy, the base commit or the result file |
+| 5 | A target names no document, section or requirement. For `finish`, `next` and `approve`: no folder for the slug, and for `approve` also no file of the artifact |
 
 A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.
 
