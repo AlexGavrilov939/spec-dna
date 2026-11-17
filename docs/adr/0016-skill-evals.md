@@ -120,3 +120,7 @@ ADR 0008 is accepted, and its text is locked. Read its section "Evals" with thes
 - `eval run --ab` takes one target: a skill, `all`, or `agents-line` (the pair of the line of `AGENTS.md`).
 - The result file is `skills-<YYYYMMDD>T<HHMMSS>Z.json`, so 2 runs on one day keep 2 files. For each skill, `eval verdict` reads the newest result file that holds the skill. The pilot gives 5 files: 4 skills and `agents-line`. The table of the release comes from the committed files of the pilot and of the full run.
 - The `without` arm denies `Bash(spec-dna skill:*)`, the permission form of Claude Code, in place of `Bash(spec-dna skill*)`.
+
+### 2026-11-17
+
+See ADR 0021.
