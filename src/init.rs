@@ -607,13 +607,13 @@ fn parse_approvers(source: &str, items: &[String]) -> Result<Vec<String>, String
 
 /// The default of the approvers prompt: the list of the first source that has
 /// one. The sources are the list that a flag or an answers file gave, the
-/// current list of `--reconfigure`, and the e-mail of git if it is not the
+/// current list of `--reconfigure` (if it is not empty), and the e-mail of git if it is not the
 /// address of an agent or a bot. The result can be empty.
 fn approvers_default(plan: &Plan) -> Vec<String> {
     if let Some(list) = &plan.approvers_given {
         return list.clone();
     }
-    if plan.approval_set {
+    if plan.approval_set && !plan.approvers.is_empty() {
         return plan.approvers.clone();
     }
     plan.git_email
@@ -4429,6 +4429,20 @@ mod tests {
         };
         let e = ask_approvers(&mut plan, &mut io).unwrap_err();
         assert!(e.contains("is the address of an agent or a bot"), "{e}");
+    }
+
+    #[test]
+    fn the_approvers_prompt_falls_through_an_empty_current_list() {
+        // A file of an agent session has `approval = "base"` and no approvers.
+        // The next source, the git e-mail of a person, is the default.
+        let mut plan = plan_of_empty_repo();
+        plan.approval_set = true;
+        plan.approvers = Vec::new();
+        plan.git_email = Some("person@example.test".into());
+        assert_eq!(approvers_default(&plan), ["person@example.test"]);
+        // A current list comes first.
+        plan.approvers = vec!["kept@example.test".into()];
+        assert_eq!(approvers_default(&plan), ["kept@example.test"]);
     }
 
     #[test]
