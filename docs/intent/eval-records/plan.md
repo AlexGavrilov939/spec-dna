@@ -35,7 +35,7 @@ status: approved
 - [ ] t16: Update the docs of the evals and of the commands (`core-engineer`; `init-engineer`). Files: `docs/evals.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
 - [ ] t17: Update SD506, the glossary ("record", "batch") and the owners of the new paths (`diagnostics-engineer`; `architect`). Files: `docs/diagnostics.md`, `docs/glossary.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
 - [ ] t18: Write the entry of the change (`release-engineer`). Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t19: Raise `max_turns` from 25 to 40 for each eval of `execute` and for `tdd-1`, `debug-1` and `execute-1` of `agents-line`, and give the fixture of `execute-1` a requirement key for its `covers:` tag. The proof is in the lab file of session 26: 4 of 4 runs with the line stopped at the cap with correct work. Write first a failing test that no eval of `execute` has a cap under 40 (`init-engineer`). Files: `tests/eval_pack.rs`, `src/eval_pack_pilot.rs`, `src/eval_pack_harder.rs`. Verify: `cargo test --test eval_pack` passes.
+- [x] t19: Raise `max_turns` from 25 to 40 for each eval of `execute` and for `tdd-1`, `debug-1` and `execute-1` of `agents-line`, and give the fixture of `execute-1` a requirement key for its `covers:` tag. The proof is in the lab file of session 26: 4 of 4 runs with the line stopped at the cap with correct work. Write first a failing test that no eval of `execute` has a cap under 40 (`init-engineer`). Files: `tests/eval_pack.rs`, `src/eval_pack_pilot.rs`, `src/eval_pack_harder.rs`. Verify: `cargo test --test eval_pack` passes.
 
 ## Risks
 

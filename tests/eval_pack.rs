@@ -418,3 +418,70 @@ fn the_covers_tags_of_the_pack_fixtures_give_no_sd105() {
     let (_, out, _) = r.run(&["check", "--all"]);
     assert!(!out.contains("SD105"), "{out}");
 }
+
+// The turn cap of the evals that the proof of `execute-1` measured (session 26).
+// In the pilot, 4 of 4 runs of `execute-1` with the line of `AGENTS.md` stopped
+// at the cap of 25 turns with correct work: the line costs 3 to 7 turns that
+// only run `spec-dna`. So an eval of `execute`, and the evals `tdd-1` and
+// `debug-1` of the pair `agents-line`, have a cap of at least 40 turns.
+
+/// The number after `"<key>": ` in the text of an eval file.
+fn number(text: &str, key: &str) -> f64 {
+    let at = text
+        .find(&format!("\"{key}\": "))
+        .unwrap_or_else(|| panic!("no key {key}"));
+    let rest = &text[at + key.len() + 4..];
+    let end = rest.find([',', '\n']).unwrap();
+    rest[..end].trim().parse().unwrap()
+}
+
+#[test]
+fn no_eval_of_execute_has_a_turn_cap_under_40_and_the_evals_of_agents_line_keep_headroom() {
+    let r = project("[evals]\n");
+    let (code, out, err) = pack(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    for id in [
+        "execute-1",
+        "execute-2",
+        "execute-3",
+        "execute-4",
+        "execute-5",
+        "tdd-1",
+        "debug-1",
+    ] {
+        let text = r.read(&format!("evals/pack/{id}.json"));
+        let turns = number(&text, "max-turns");
+        assert!(turns >= 40.0, "{id}: {turns} turns");
+        // The budget stays the guard of the cost.
+        assert!(number(&text, "max-budget-usd") <= 2.0, "{id}");
+    }
+}
+
+#[test]
+fn the_fixture_of_execute_1_has_a_requirement_that_a_covers_tag_can_name() {
+    let r = project("[evals]\n");
+    pack(&r);
+    let fixture = "evals/pack/fixtures/execute-1";
+    let counts = r.read(&format!("{fixture}/docs/counts.md"));
+    assert!(counts.contains("- **count-words**:"), "{counts}");
+    // A project with this document and a test that names the requirement
+    // gives no SD105.
+    let p = Repo::with_config(
+        "\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
+    );
+    p.write("docs/counts.md", &counts);
+    p.write(
+        "tests/test_words.py",
+        "# covers: counts#count-words\nimport unittest\n",
+    );
+    p.commit("start");
+    let (_, out, err) = p.run(&["check", "--all"]);
+    assert!(!out.contains("SD105"), "{out}{err}");
+    // The old tag names a section, and it is no requirement.
+    p.write(
+        "tests/test_words.py",
+        "# covers: counts#counts\nimport unittest\n",
+    );
+    let (_, out, _) = p.run(&["check", "--all"]);
+    assert!(out.contains("SD105"), "{out}");
+}

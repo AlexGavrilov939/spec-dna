@@ -268,7 +268,7 @@ fn the_pilot_evals_keep_the_limits_of_the_design_and_name_no_skill_in_the_task()
                 fs::read_to_string(lab.repo.dir.join(format!("evals/pack/{id}.json"))).unwrap();
             let turns = number(&text, "max-turns");
             let budget = number(&text, "max-budget-usd");
-            assert!((12.0..=25.0).contains(&turns), "{id}: {turns} turns");
+            assert!((12.0..=40.0).contains(&turns), "{id}: {turns} turns");
             assert!((1.5..=2.0).contains(&budget), "{id}: {budget} USD");
             let task = text
                 .split("\"task\": \"")

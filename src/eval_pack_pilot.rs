@@ -77,7 +77,7 @@ pub static EXECUTE_TDD: &[PackEval] = &[
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -194,6 +194,11 @@ Run all the tests with `sh test.sh`. Run some of them with `sh test.sh -k <word>
                 r#"# Counts
 
 The counts of a text.
+
+## Requirements
+
+- **count-words**: When a text is counted, the service SHALL return the number of its words.
+- **count-lines**: When a text is counted, the service SHALL return the number of its lines.
 "#,
             ),
             (
@@ -242,7 +247,7 @@ class SmokeTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -374,7 +379,7 @@ class TextTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -518,7 +523,7 @@ class SmokeTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -679,7 +684,7 @@ class SmokeTest(unittest.TestCase):
         skill: "execute",
         task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 25,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
@@ -828,7 +833,7 @@ class SmokeTest(unittest.TestCase):
         skill: "tdd",
         task: "The requirement `slug#trim-dashes` of docs/slug.md has no code yet. Implement it in src/slug.py. Commit your work in small steps.",
         allowed_tools: CODE_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -1448,7 +1453,7 @@ pub static DEBUG: &[PackEval] = &[
         skill: "debug",
         task: "The test `test_two_lines` in tests/test_report.py fails: `format_total` gives 20.82 where the test expects 20.86. Fix the problem.",
         allowed_tools: PY_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
