@@ -90,12 +90,11 @@ With --reconfigure, it asks the questions again.",
         "Moves a project that pins 0.4.0 or later to the version of this binary. It
 reads the committed tree (HEAD), builds the whole plan in memory, proves that
 each old id, alias, requirement and section still resolves to the same text,
-and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the 0.6 skill names in
-[harness] skills (intent is brainstorm, spec is specify and clarify, plan is
-write-plan), the
-type and the status in the front matter, and the adapter and harness files. It
-moves each proposed, accepted or rejected change to intent/<slug>/intent.md
-with git mv, and keeps its old id as an alias. With --layout, it also moves
+and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the
+0.6 skill names in [harness] skills (intent is brainstorm, spec is specify and
+clarify, plan is write-plan), the type and the status in the front matter, and
+the adapter and harness files. It moves each proposed, accepted or rejected
+change to intent/<slug>/intent.md with git mv, and keeps its old id as an alias. With --layout, it also moves
 the folders of the other 0.5 namespaces of a mixed root, and it moves a note,
 a reference or a change named roadmap, overview, questions, glossary or
 architecture (and their usual synonyms) to the top file of its root. With
@@ -318,7 +317,7 @@ a stop by the cap or no `claude`, 4 git or file error.",
     ),
     (
         "skill",
-        "skill list\nskill show <name>",
+        "skill list [--json]\nskill show <name> [--json]",
         "Prints the skills of the workflow pack. It reads no document and writes
 nothing. `skill list` prints one line for each of the 11 skills, in the order
 of the design: the name, the kind (stage or event), the stage (or -), the
@@ -2741,9 +2740,6 @@ fn log(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     sdlc::log(repo, &cfg, a.since.as_deref(), a.json)
 }
 
-/// `eval run [<id>...]`: the runner of the evals (`eval_run.rs`). `eval run`
-/// spends money and runs the checks of the project, so a pin mismatch stops
-/// it, as it stops `check` and `finish`.
 /// `skill list` and `skill show <name>` (ADR 0011, D4 and D10). The text of a
 /// skill is a constant of the binary, so `show` reads no file. `list` reads
 /// `spec-dna.toml`, if the project has one, for the state of each skill.
@@ -2828,6 +2824,9 @@ fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
     }
 }
 
+/// `eval run [<id>...]`: the runner of the evals (`eval_run.rs`). `eval run`
+/// spends money and runs the checks of the project, so a pin mismatch stops
+/// it, as it stops `check` and `finish`.
 fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     if a.positional.first().map(String::as_str) != Some("run") {
         return Err(Fatal::Usage(
