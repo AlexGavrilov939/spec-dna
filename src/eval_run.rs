@@ -841,15 +841,17 @@ const REFUSAL_PHRASES: [&str; 6] = [
 ///    case.
 ///
 /// A real output looks like this (Claude Code 2.1.x):
-/// `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","total_cost_usd":0.73}`.
+/// `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","total_cost_usd":0.5}`.
 pub(crate) fn is_refused(claude_exit: i32, stdout: &[u8]) -> bool {
     let obj = result_object(stdout);
     let is_error = obj.as_ref().is_some_and(|o| o.get("is_error").is_true());
     if claude_exit == 0 && !is_error {
         return false;
     }
-    let text = match obj.as_ref().and_then(|o| o.get("result").as_str()) {
-        Some(t) => t.to_string(),
+    // With a result object, the text is its `result`, or empty. Only an output
+    // with no result object is read as text (a page of Cloudflare, for example).
+    let text = match &obj {
+        Some(o) => o.get("result").as_str().unwrap_or("").to_string(),
         None => String::from_utf8_lossy(stdout).into_owned(),
     };
     text.len() < REFUSAL_TEXT_MAX && has_refusal_marker(&text)
@@ -877,8 +879,14 @@ fn has_refusal_marker(text: &str) -> bool {
     let mut from = 0;
     while let Some(at) = text[from..].find("429") {
         let (a, b) = (from + at, from + at + 3);
-        let before = a == 0 || !bytes[a - 1].is_ascii_alphanumeric();
-        let after = b >= bytes.len() || !bytes[b].is_ascii_alphanumeric();
+        // A word: no letter or digit next to it, and not a part of a number
+        // such as `0.429` or `429.5`.
+        let digit = |i: usize| bytes.get(i).is_some_and(u8::is_ascii_digit);
+        let before = a == 0
+            || !(bytes[a - 1].is_ascii_alphanumeric()
+                || (bytes[a - 1] == b'.' && a >= 2 && digit(a - 2)));
+        let after = b >= bytes.len()
+            || !(bytes[b].is_ascii_alphanumeric() || (bytes[b] == b'.' && digit(b + 1)));
         if before && after {
             return true;
         }
@@ -1301,6 +1309,18 @@ mod tests {
             br#"{"type":"result","subtype":"error_max_turns","is_error":true}"#
         ));
         assert!(!is_refused(1, b""));
+        // A result object with no `result` text: the number of the cost is no
+        // status, and the output is not read as text.
+        assert!(!is_refused(
+            1,
+            br#"{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.429}"#
+        ));
+        assert!(!is_refused(
+            1,
+            br#"{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":429}"#
+        ));
+        assert!(!is_refused(1, &failed("cost 0.429 USD, 429.5 tokens")));
+        assert!(is_refused(1, &failed("Too many requests, 429.")));
         assert!(!is_refused(-1, b"not json"));
         // A status that is not a refusal, or that is not a whole word.
         assert!(!is_refused(1, &failed("API Error: 400 Bad request")));
