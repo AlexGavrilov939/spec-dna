@@ -1132,6 +1132,23 @@ impl Git {
         Ok(out.stdout)
     }
 
+    /// Reads the messages of commits with one `git cat-file --batch` process.
+    /// The result has one item for each id, in order. A commit that git cannot
+    /// read gives `None`. The message is the text after the first empty line of
+    /// the commit object, so a signature or a merge tag in the header does not
+    /// matter.
+    pub fn commit_messages(&self, ids: &[String]) -> Result<Vec<Option<String>>, String> {
+        let objects = self.read_blobs(ids)?;
+        Ok(ids
+            .iter()
+            .map(|id| {
+                let raw = objects.get(id)?;
+                let at = raw.windows(2).position(|w| w == b"\n\n")?;
+                Some(String::from_utf8_lossy(&raw[at + 2..]).into_owned())
+            })
+            .collect())
+    }
+
     /// Reads blobs with one `git cat-file --batch` process.
     pub fn read_blobs(&self, ids: &[String]) -> Result<HashMap<String, Vec<u8>>, String> {
         let mut out = HashMap::new();
@@ -1943,5 +1960,51 @@ mod tests {
         assert!(g.is_ancestor(&a, &a));
         assert!(!g.is_ancestor(&b, &a));
         assert!(!g.is_ancestor("nope", &a));
+    }
+
+    #[test]
+    fn commit_messages_come_from_one_process_in_the_order_of_the_ids() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let one = t.commit("a@example.test", "one\n\nHours: 2\n\nlast paragraph");
+        t.write("a.txt", "b\n");
+        let two = t.commit("a@example.test", "two");
+        let none = "0".repeat(40);
+        let got = Git::new(&t.dir)
+            .commit_messages(&[two.clone(), none, one.clone(), two])
+            .unwrap();
+        assert_eq!(got[0].as_deref(), Some("two\n"));
+        assert_eq!(got[1], None);
+        assert_eq!(
+            got[2].as_deref(),
+            Some("one\n\nHours: 2\n\nlast paragraph\n")
+        );
+        assert_eq!(got[3], got[0]);
+        assert!(Git::new(&t.dir).commit_messages(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_commit_message_follows_a_multi_line_header() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        t.commit("a@example.test", "base");
+        // A merge commit has 2 parents and a header of 4 lines.
+        t.git(&["checkout", "-q", "-b", "side"]);
+        t.write("b.txt", "b\n");
+        t.commit("a@example.test", "side");
+        t.git(&["checkout", "-q", "main"]);
+        t.write("c.txt", "c\n");
+        t.commit("a@example.test", "main");
+        t.git(&[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge side\n\nHours: 1",
+            "side",
+        ]);
+        let merge = t.git(&["rev-parse", "HEAD"]);
+        let got = Git::new(&t.dir).commit_messages(&[merge]).unwrap();
+        assert_eq!(got[0].as_deref(), Some("merge side\n\nHours: 1\n"));
     }
 }
