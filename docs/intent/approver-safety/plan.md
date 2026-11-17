@@ -55,8 +55,8 @@ status: approved
 - [x] t13: Update the codes and the profiles (`diagnostics-engineer`). Files: `docs/diagnostics.md`, `docs/profiles.md`. Verify: `pre-commit run --all-files`.
 - [x] t14: Make the guide and the glossary agree with the default rule (`architect`; `docs-editor` for the language). Files: `docs/guides/change.md`, `docs/glossary.md`. Verify: `pre-commit run --all-files`.
 - [x] t15: Update the conventions and the owners of the new files (`architect`; the owner accepts). Files: `AGENTS.md`, `CONTRIBUTING.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files`.
-- [ ] t16: Write ADR 0018, which amends ADR 0006, ADR 0012 and ADR 0017 (`architect`; the owner accepts). Files: `docs/adr/0018-approval-by-a-person.md`. Verify: `cargo run --quiet -- check`.
-- [ ] t17: Write section 15 and the entry of the change (`architect`, `release-engineer`). Files: `docs/design/0.7.0.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`.
+- [x] t16: Write ADR 0018, which amends ADR 0006, ADR 0012 and ADR 0017 (`architect`; the owner accepts). Files: `docs/adr/0018-approval-by-a-person.md`. Verify: `cargo run --quiet -- check`.
+- [x] t17: Write section 15 and the entry of the change (`architect`, `release-engineer`). Files: `docs/design/0.7.0.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`.
 
 ## Risks
 
