@@ -29,6 +29,8 @@ mod diag;
 mod drift;
 mod eval_ab;
 mod eval_pack;
+mod eval_pack_fixtures_rest;
+mod eval_pack_rest;
 mod eval_run;
 mod evals;
 mod evidence;

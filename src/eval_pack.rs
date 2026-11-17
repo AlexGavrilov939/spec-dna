@@ -78,13 +78,13 @@ static EXECUTE_TDD: &[PackEval] = pilot::EXECUTE_TDD;
 /// Group of t13: `verify` and `debug`.
 static VERIFY_DEBUG: &[PackEval] = pilot::VERIFY_DEBUG;
 /// Group of t14: `brainstorm` and `specify`.
-static BRAINSTORM_SPECIFY: &[PackEval] = &[];
+static BRAINSTORM_SPECIFY: &[PackEval] = crate::eval_pack_rest::BRAINSTORM_SPECIFY;
 /// Group of t15: `clarify` and `write-plan`.
-static CLARIFY_WRITE_PLAN: &[PackEval] = &[];
+static CLARIFY_WRITE_PLAN: &[PackEval] = crate::eval_pack_rest::CLARIFY_WRITE_PLAN;
 /// Group of t16: `review` and `finish`.
-static REVIEW_FINISH: &[PackEval] = &[];
+static REVIEW_FINISH: &[PackEval] = crate::eval_pack_rest::REVIEW_FINISH;
 /// Group of t17: `post-mortem`.
-static POST_MORTEM: &[PackEval] = &[];
+static POST_MORTEM: &[PackEval] = crate::eval_pack_rest::POST_MORTEM;
 
 /// Each eval of the pack, in the order of the groups.
 pub fn all() -> Vec<&'static PackEval> {
