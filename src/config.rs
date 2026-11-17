@@ -114,6 +114,9 @@ pub struct Config {
     /// The compare of an e-mail ignores case, so the list keeps the case that
     /// the file has. With `Branch` the list has one item at least.
     pub change_approvers: Vec<String>,
+    /// The line of the key `approvers` in the `[change]` table of the text
+    /// that `parse` read, for SD926. The value is 1 if the key is absent.
+    pub change_approvers_line: u32,
 }
 
 /// The author addresses of agents and bots (owner review of 0.7.0, item 1).
@@ -910,7 +913,7 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
         "changes",
         &[
             "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
-            "SD918", "SD919", "SD920", "SD921", "SD922", "SD923", "SD924", "SD925",
+            "SD918", "SD919", "SD920", "SD921", "SD922", "SD923", "SD924", "SD925", "SD926",
         ],
     ),
 ];
@@ -1144,6 +1147,25 @@ pub const DEFAULT_TEST_GLOBS: [&str; 10] = [
     "**/*Test.*",
     "**/*_spec.*",
 ];
+
+/// The line (from 1) of the key `approvers` in the table `[change]` of a
+/// configuration text. It is 1 if the text has no such line.
+fn approvers_line(text: &str) -> u32 {
+    let mut in_change = false;
+    for (i, line) in text.lines().enumerate() {
+        let t = line.trim_start();
+        if t.starts_with('[') {
+            let name = t.trim_start_matches('[').split(']').next().unwrap_or("");
+            in_change = !t.starts_with("[[") && name.trim() == "change";
+        } else if in_change
+            && let Some(rest) = t.strip_prefix("approvers")
+            && rest.trim_start().starts_with('=')
+        {
+            return u32::try_from(i + 1).unwrap_or(1);
+        }
+    }
+    1
+}
 
 impl Config {
     /// The area of a document path (from the repository root): its first
@@ -1449,6 +1471,7 @@ impl Config {
             change_base: change.base,
             change_approval: change.approval,
             change_approvers: change.approvers,
+            change_approvers_line: approvers_line(text),
         })
     }
 
@@ -2889,6 +2912,14 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             let a = a.as_str().unwrap();
             assert!(!is_agent_address(a), "{a}");
         }
+    }
+
+    #[test]
+    fn the_approvers_line_is_the_line_of_the_key_in_the_change_table() {
+        let text = "spec-dna = \"0.1.0\"\n\n[[roots]]\npath = \"docs\"\n\n[change]\npolicy = \"three-class\"\napproval = \"branch\"\napprovers = [\"a@example.test\"]\n";
+        assert_eq!(Config::parse(text).unwrap().change_approvers_line, 9);
+        let none = "spec-dna = \"0.1.0\"\n\n[[roots]]\npath = \"docs\"\n";
+        assert_eq!(Config::parse(none).unwrap().change_approvers_line, 1);
     }
 
     #[test]

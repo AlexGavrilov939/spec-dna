@@ -45,7 +45,7 @@ status: approved
 - [x] t3: Write the failing tests of `approve` (`core-engineer`). Files: `tests/approve_cmd.rs`, `tests/cli.rs`. Verify: `cargo test --test approve_cmd` fails on each case.
 - [x] t4: Write the failing tests of the hook and its entry (`init-engineer`). Files: `tests/hook_approvals.rs`, `tests/harness.rs`, `tests/golden/harness/settings-strict.json`. Verify: `cargo test --test hook_approvals --test harness` fails on the new cases.
 - [x] t5: Add the list of agent addresses, the group of SD926 and the range texts (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`, `docs/config.md`. Verify: `cargo test --bin spec-dna config::`.
-- [ ] t6: Add SD926 to `check` (`diagnostics-engineer`). Files: `src/diag.rs`, `src/check.rs`. Verify: `cargo test --test branch_approval sd926`.
+- [x] t6: Add SD926 to `check` (`diagnostics-engineer`). Files: `src/diag.rs`, `src/check.rs`. Verify: `cargo test --test branch_approval sd926`.
 - [ ] t7: Add `--approver`, the answers key, the prompt and the notes (`init-engineer`; `core-engineer` for the flag). Files: `src/init.rs`, `src/main.rs`. Verify: `cargo test --test init_change`.
 - [ ] t8: Add the command `approve` (`core-engineer`). Files: `src/approve.rs`, `src/git.rs`, `src/main.rs`. Verify: `cargo test --test approve_cmd --test cli`.
 - [ ] t9: Add the key `protect-approvals` and the hook entry (`init-engineer`). Files: `src/harness.rs`, `src/init.rs`. Verify: `cargo test --test harness`.
