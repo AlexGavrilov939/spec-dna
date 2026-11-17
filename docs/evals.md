@@ -1,6 +1,6 @@
 # Evals
 
-This page gives the eval file, the runner, the cost cap and the CI job of the evals. Read it when you test the agent setup of a Claude Code project. [commands.md](commands.md#eval) gives the command.
+This page gives the eval file, the runner, the cost cap, the pack that measures each skill and the CI job of the evals. Read it when you test the agent setup of a Claude Code project. [commands.md](commands.md#eval) gives the command.
 
 An eval is a task with checks that tests the agent setup of a project: its instruction files, skills, hooks and roles. `spec-dna eval run` runs the evals and reports the pass rate. Thus a team can see when a change of the setup makes the agent worse. The runner uses the Claude Code adapter and starts headless Claude Code. [agents.md](agents.md) lists the adapters.
 
@@ -74,6 +74,7 @@ An eval is the file `<dir>/<id>.json`. A JSON file directly in `<dir>` is an eva
 | `max-budget-usd` | yes | - | The budget of one run. A number above 0, and at most `[evals] max-total-usd` |
 | `runs` | no | `[evals] runs` | An integer from 1 to 100. `--runs` overrides it |
 | `pass-at` | no | the runs of the eval | The runs that must pass for the eval to pass. An integer from 1 to the runs of the eval |
+| `skill` | no | none | The skill that `eval run --ab` measures with this eval. One of the 11 names of the pack, such as `tdd` or `write-plan`. `eval run` without `--ab` does not read it. [The pack](#the-pack-and-the-measure-of-a-skill) gives its use |
 | `checks` | yes | - | A list that is not empty. Each item has exactly `name` (`[a-z0-9][a-z0-9-]{0,63}`, once in the file) and `run` (not empty). A check passes on exit code 0 |
 
 On a `fix/` branch, the hook `protect-tests` can ask before an edit of a test file ([harness.md](harness.md#spec-dna-hook-protect-tests)). A run with `claude -p` cannot answer, so Claude Code denies the edit.
@@ -184,6 +185,123 @@ Claude Code checks `--max-budget-usd` against an estimate of the client, so the 
 The result has no task text, no check command, no output text of `claude`, no path of the machine and no value of the environment. Claude Code can keep its own session files on the machine. spec-dna does not read or copy them.
 
 A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats --sdlc` reads them for the indicator "eval pass rate". It uses the newest complete file by `started`. A file is complete when it has a string `started`, a number `pass_rate` from 0 to 1, and `"stopped": null`.
+
+## The pack and the measure of a skill
+
+[ADR 0016](adr/0016-skill-evals.md) gives the reasons. Each skill of the workflow pack costs bytes in each request. The runner can show what a skill adds on the setup of your project. It runs the same evals with the skill and without it, and it compares the 2 pass rates.
+
+### The pack
+
+`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of the 11 skills, 55 in total. Each eval has the key `skill`, and its id is `<skill>-<n>`, with `n` from 1 to 5. Each eval runs 4 times (`"runs": 4`). The files are these:
+
+| File | Content |
+| --- | --- |
+| `<dir>/pack/<id>.json` | The eval. A JSON file in a subfolder is not an eval of `eval run`, so the pack stays out of the normal runs and out of SD506 |
+| `<dir>/pack/fixtures/<id>/` | The fixture of the eval: a small project with no data of a consumer project. Its `spec-dna.toml` pins the version of the binary that wrote it |
+
+The command writes each file once. If a file exists, the command keeps it, and the output names it (`kept <path>`). Thus a project can edit its copy of an eval. The command needs `[evals]`. Without it, the exit code is 3. A write error gives exit code 4. With `--json`, it prints `{"written":[...],"kept":[...]}`.
+
+A check of the pack is a shell command. A check that runs `spec-dna check` reads the codes that it needs, such as `SD919`, and never the exit code alone. The 2 arms differ in the generated files, so the exit code of `check` can differ with the arm (for example SD501). The `tdd` evals read the git history of the copy, so a test commit must come before the code commit.
+
+### Run the arms
+
+```text
+spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--json]
+```
+
+`--ab` takes one target:
+
+- a skill, such as `tdd`, to run the 5 evals of that skill;
+- `all`, to run each skill that the pack has (the 11 skills of a full pack). It does not include `agents-line`;
+- `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs the first eval of each skill that a discipline names: `tdd-1`, `debug-1`, `verify-1`, `review-1` and `execute-1`.
+
+`--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--isolate` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval.
+
+The 2 arms differ in the temporary copy of each run:
+
+| Arm | The copy |
+| --- | --- |
+| `with` | It has the folder of the skill, `.claude/skills/spec-dna-<name>/SKILL.md`, also when `[harness] skills` has the skill off. The text is the text of `spec-dna skill show <name>`, with a front matter |
+| `without` | It has no folder of the skill. The line of `AGENTS.md` and `CLAUDE.md` has no discipline of the skill, and the adapter skill has no rule of it. For `write-plan`, the adapter skill also loses the rule that names `writing-plans`. A skill with no discipline changes no line. The command adds `--disallowedTools` with `Bash(spec-dna skill:*)` after the place of `--allowedTools`, so the agent cannot read the text of the skill. `spec-dna next` still prints the name of the skill, so the arm measures the absence of the text, not of the name |
+
+The pair `agents-line` has no `.claude/skills/` folder in each arm, because the line serves an agent with no skill folder. `with` has the generated line in `AGENTS.md` and `CLAUDE.md`, as `init` writes it. `without` has no line and denies `spec-dna skill`.
+
+In the copy of a fixture, the runner writes the version of the binary into the pin line of `spec-dna.toml`, so a fixture does not give exit code 3 in each run. The working tree never changes.
+
+A pair is the same eval and the same run number in both arms. For each eval and run number, `with` runs first for an odd number, and `without` runs first for an even number. The runner runs one run at a time. The loop has no early stop, except a stop by the cap or by the API.
+
+### Runs that the API refuses
+
+The runner treats a refused attempt as no run. An attempt is refused when 3 conditions are true:
+
+1. `claude` exits with a code other than 0, or the result object has `"is_error": true`.
+2. The `result` text has fewer than 600 bytes, so a long answer that names a status does not count. With no result object, the runner reads the stdout of `claude` as the text.
+3. The text has `API Error:` with the status 401, 403, 429 or 500 to 599, or the word `429`. Or it has one of these phrases, in any case: "rate limit", "usage limit", "overloaded", "Failed to authenticate", "Attention Required", "Cloudflare".
+
+A failed check, a stop by the turns and an error that does not match are runs, and they count. A run that exits with code 0 and no error flag counts, also when its answer names a limit.
+
+The runner tries a refused attempt again with the same eval, arm and run number, in a new temporary folder. The waits before the 6 retries are 60, 120, 240, 480, 960 and 1,920 seconds, about 63 minutes in total. `SPEC_DNA_EVAL_BACKOFF` sets the first wait in seconds, from 0 to 3,600, and the next waits double it. A value that is not an integer in this range is a usage error (exit code 2). The tests set it to 0. The variable has an effect only on `--ab`.
+
+- No result counts a refused attempt: not the pass rate, not the runs, not the cost of the arm. The result file reports the count of excluded attempts of each arm.
+- The charged cost of a refused attempt is the cost that `claude` reports, or 0. It goes to `spend_usd` and to the check of the cap only.
+- After the last wait, the command stops with exit code 3, and `stopped` is `"api-error"`. It writes the partial result. Run the target again later.
+
+`eval run` without `--ab` keeps the rule of [ADR 0008](adr/0008-harness-and-evals.md): a refused run is a failed run, and the runner never tries it again.
+
+### The result file of `--ab`
+
+The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start), where `<dir>` is `<[evals] dir>/results` or the value of `--out`. A second file in the same second gets the suffix `-2`. The file is indented JSON. It has no `pass_rate` at the top level, so `spec-dna stats --sdlc` does not count it as a result of `eval run`.
+
+| Key | Content |
+| --- | --- |
+| `spec_dna`, `claude_code`, `started` | The versions and the start time, as in the result of `eval run` |
+| `models` | The sorted names of the models that the results of `claude` list in `modelUsage`. Names only |
+| `target`, `seed`, `resamples` | The target, 24 and 2,000 |
+| `max_total_usd`, `estimate_usd`, `spend_usd` | The cap, the estimate and the spend. The spend includes the excluded attempts |
+| `excluded` | `{"with": n, "without": n}`, the excluded attempts of each arm |
+| `stopped` | `null`, `"max-total-usd"` or `"api-error"` |
+| `skills` | One item for each skill, or one item `agents-line` |
+
+An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`, and each side has `claude_exit`, `subtype`, `cost_usd`, `excluded` and `passed`. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
+
+### The verdict
+
+The unit of the verdict is one run. The 4 runs of one eval are not independent, so the bootstrap first resamples the evals, and then the runs of each eval. For each resample it draws the index of an eval `k` times for `k` evals, and then one index for each run of each drawn eval. Both arms use the same index of a pair. The generator is SplitMix64 with the seed 24, and an index is the next value modulo the count. The interval is the 100th and the 1,900th value of the 2,000 sorted values. Thus a reader can repeat the interval from the pairs of the file.
+
+A skill gets the verdict `on` when one rule holds:
+
+1. The pass rate with the skill is at least 0.20 above the pass rate without it, and the low end of the interval of the difference is above 0.
+2. The pass rate with the skill is at most 0.05 below the pass rate without it, the ratio of the costs per correct outcome is at most 0.90, and the high end of the interval of the ratio is below 1. The ratio is undefined when a resample has no pass in an arm, and rule 2 is then not met.
+
+The verdict is `off` when the high end of the interval of the difference is below 0. Else it is `inconclusive`. A skill that is off by default and is `inconclusive` stays off. The result file gives the rule of an `on` verdict (`"rule": 1` or `2`).
+
+```text
+spec-dna eval verdict [--json]
+```
+
+`eval verdict` prints one line for each of the 11 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The table is empty until the release has a committed result. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`.
+
+SD507 `skill-unproven` reports a skill of `[harness] skills` that is off by default and has no verdict `on` in the project or in the release. It is a warning in the profile `strict`, and off in `lite` and `standard`. [diagnostics.md](diagnostics.md) gives the code.
+
+### The cost
+
+The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its evals. The full pack is 55 evals, 4 runs and 2 arms: 440 runs. The pilot of the 4 skills that are off (`execute`, `tdd`, `verify` and `debug`) and the pair `agents-line` is 200 runs. `--dry-run` prints the number of runs and the estimate. The default `max-total-usd` is 20, so a real run needs `--max-total-usd`. As in `eval run`, the command checks the estimate before the first run (exit code 3 and no process), and it checks the spend after each pair (exit code 3, `"stopped": "max-total-usd"` and the partial result).
+
+### The simulation of the rules
+
+The rules are strict on purpose. A simulation on the bootstrap above gives the share of trials that get the verdict `on`. Each trial draws 5 evals of 4 runs for each arm, with the true pass rate 0.8 with the skill and 0.6 without it (a gain of 0.20). The runs are independent, and each run costs the same. Thus the ratio of the costs per correct outcome is the passes without the skill over the passes with it. 10,000 trials give these shares:
+
+| Share of trials | Value |
+| --- | --- |
+| Rule 1 holds | 0.244 |
+| Rule 2 holds | 0.177 |
+| The verdict is `on` | 0.246 |
+
+Rule 2 adds almost nothing to rule 1 when the runs cost the same. The run is `cargo test --release --bin spec-dna verdict -- --ignored --nocapture`. A real eval has clusters of runs, so the shares of a real result can be lower. Thus only a large gain gives the verdict `on`, and a smaller gain stays `inconclusive`.
+
+### The limits
+
+One model family runs the agents, and a result is valid for the model and the Claude Code version that the file records. The `without` arm cannot remove what the model learned in training, so the gain of the arm is a lower bound. No result is a proof for another project. The pack has no arm with another plugin installed.
 
 ## The CI job
 

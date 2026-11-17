@@ -33,7 +33,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD201 to SD204 | Document ids and requirement keys | [Ids and keys](#ids-and-keys-sd201-to-sd204) |
 | SD301 to SD306 | Front matter, types, statuses and sections | [Front matter, types and sections](#front-matter-types-and-sections-sd301-to-sd306) |
 | SD401 to SD405 | Status changes, supersede links and locked text | [Status and locked text](#status-and-locked-text-sd401-to-sd405) |
-| SD501 to SD506 | Adapters, harness files, configuration and evals | [Adapters, harness, configuration and evals](#adapters-harness-configuration-and-evals-sd501-to-sd506) |
+| SD501 to SD507 | Adapters, harness files, configuration, evals and skills | [Adapters, harness, configuration and evals](#adapters-harness-configuration-and-evals-sd501-to-sd507) |
 | SD601 to SD612 | Links, drift, evidence and quality | [Links, drift and quality](#links-drift-and-quality-sd601-to-sd612) |
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
@@ -81,9 +81,9 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD404 | depends-on-inactive | error | `depends-on` names a superseded or retired document. |
 | SD405 | decision-locked | error | Text outside the amendment sections (`amendment-sections`, default `## Amendments`), the history sections and the live sections (`live-sections`, default `Status`) changed after the decision got the status `accepted`. |
 
-## Adapters, harness, configuration and evals (SD501 to SD506)
+## Adapters, harness, configuration and evals (SD501 to SD507)
 
-SD501, SD502, SD504 and SD505 check the files that `spec-dna init` writes: the adapters, and the harness files of the Claude Code adapter ([harness.md](harness.md)). SD506 checks the eval files ([evals.md](evals.md)). SD506 is new in 0.6.0.
+SD501, SD502, SD504 and SD505 check the files that `spec-dna init` writes: the adapters, and the harness files of the Claude Code adapter ([harness.md](harness.md)). SD506 checks the eval files ([evals.md](evals.md)). SD506 is new in 0.6.0. SD507 reports a skill that has no measured gain (new in 0.7.0).
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
@@ -93,6 +93,7 @@ SD501, SD502, SD504 and SD505 check the files that `spec-dna init` writes: the a
 | SD504 | harness-missing | error | `[harness]` has a level that is not `none`, and a file that the harness of the Claude Code adapter needs is absent: an agent file, a skill of the workflow pack (`.claude/skills/spec-dna-<skill>/SKILL.md`), `REVIEW.md`, `.claude/agents/model-team.md`, or the model-team line of `CLAUDE.md`. A file at the path of one of these files, with no harness marker, also gives SD504: spec-dna does not replace a file that it did not generate. The message gives the ways to fix it: move the file, set the role of an agent file to `none`, remove the skill from `skills`, or set `review-md = false`. |
 | SD505 | harness-settings-invalid | error | `.claude/settings.json` of the harness of the Claude Code adapter is not valid JSON, or its root is not an object, or a key that spec-dna writes into has a value of the wrong type (the message names it). `check` cannot compare the harness entries. |
 | SD506 | evals-invalid | error | The table `[evals]` is in the configuration, and a `*.json` file directly in `[evals] dir` is not a valid eval, or the file `<dir>/check.sh` is absent. The message names the broken rule, and the target is its key (for example `task`, `fixture` or `checks`). `spec-dna eval run` uses the same rules. SD506 reads no text of `check.sh` or of a fixture, and no file in a subfolder. It is an error in each profile. It does not depend on `[change] policy` ([the checks of the evals](#checks-of-the-evals)). |
+| SD507 | skill-unproven | warning | A skill in `[harness] skills` is off by default (`execute`, `tdd`, `verify` or `debug`), and neither a result file of `eval run --ab` in `<[evals] dir>/results` nor the table of the release gives it the verdict `on` ([evals.md](evals.md#the-verdict)). For each skill, the newest result file that holds a verdict of the skill decides, and a file of a stopped run gives no verdict. A skill that is on by default is exempt. The code needs no `[evals]` table. It is in no rule group. It is off in `lite` and `standard`, and a warning in `strict`. It is never an error. The diagnostic is on the line of `skills` in `spec-dna.toml`, and its target is the name of the skill. |
 
 ### Files that SD503 counts
 

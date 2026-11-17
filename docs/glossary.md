@@ -11,6 +11,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | approval commit | A commit of an approver in the branch that changes the `status` line of one artifact file to `accepted` or `approved`. With `[change] approval = "branch"`, it counts as an approval for the work after it | | [change guide](guides/change.md#the-approval-commit) |
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request | | [change guide](guides/change.md) |
 | approver | A person whose author e-mail is in `[change] approvers`. Only the approval commits of an approver count | | [config](config.md) |
+| arm | One of the 2 setups that `eval run --ab` compares on the same evals: `with` the skill and `without` it | | [evals](evals.md#run-the-arms) |
 | area | A topic folder under `requirements/` | | [config](config.md) |
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch | | [concepts](concepts.md#the-change-lifecycle) |
@@ -20,6 +21,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | change policy | The change classes that a project uses: `three-class`, `two-class` or `none` (`[change] policy`) | | [config](config.md) |
 | code citation | A file path or a symbol in a code span of a document. `check` reports a citation that does not resolve | | [diagnostics](diagnostics.md#code-citations) |
 | concern | An item of the task list in the `Concerns` section of a spec. An approved spec has no open concern (SD919) | | [change guide](guides/change.md) |
+| cost per correct outcome | The cost of the runs of one arm, divided by its passes. The verdict of a skill uses the ratio of this value with the skill and without it | | [evals](evals.md#the-verdict) |
 | `covers:` tag | A comment in a test, such as `# covers: valves#shutoff`, that links the test to a requirement | | [concepts](concepts.md#ids-and-requirements) |
 | current truth | The requirements, rules and interfaces of the project, in `requirements/`, `rules/` and `interfaces/`. A delta changes them, and SD921 guards them | | [concepts](concepts.md#layers-and-the-graph) |
 | decision | A MADR record of a choice. After the acceptance, its text is locked, except its amendment, history and live sections | | [types](types.md) |
@@ -80,6 +82,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | template | The text that `spec-dna new` writes for a new document | | [types](types.md#templates) |
 | `terms` | The type of `terms.md`: a table of terms, meanings and forbidden synonyms. SD904 reads it | | [types](types.md) |
 | top file | A document of a layer that has a fixed file name, such as `terms.md` or `roadmap.md` | | [types](types.md#place-gives-the-type) |
+| verdict | The result of the measure of a skill: `on`, `off` or `inconclusive`. `eval verdict` prints it, or `unmeasured` | | [evals](evals.md#the-verdict) |
 | `verified-by` | A front matter field with the paths of the tests or verification records of a document | | [config](config.md#evidence) |
 | `verifier` | The subagent that checks finished work. It runs the tests, reads the diff and reports each defect. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |
 | workflow pack | The set of 11 skills of spec-dna: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`. 7 are on by default | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
