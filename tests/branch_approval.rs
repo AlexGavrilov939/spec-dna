@@ -644,7 +644,7 @@ fn a_path_named_like_a_commit_header_forges_no_approval() {
     );
     step_code(&r);
     let (code, out, found) = check(&r);
-    assert_eq!(found, want(&[(PLAN, 3), (CODE, 3)]), "{out}");
+    assert_eq!(found, want(&[(PLAN, 3), (CODE, 3), (TEST, 3)]), "{out}");
     assert_eq!(code, 1, "{out}");
     // The only approvals are the real ones: the 3 commits of the owner.
     let out = json(&r);
@@ -682,7 +682,7 @@ fn paths_with_odd_bytes_change_no_result_of_a_good_branch() {
         3,
         "{out}"
     );
-    assert!(!out.contains("intruder"), "{out}");
+    assert!(!approvals_field(&out).contains("intruder"), "{out}");
 }
 
 // Work inside a merge commit

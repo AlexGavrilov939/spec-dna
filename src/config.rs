@@ -350,6 +350,13 @@ impl ChangeTable {
                         .into(),
                 );
             }
+            // A wildcard matches each author, so the condition would be empty
+            // (ADR 0012). An item with no `@` is no e-mail.
+            if a.contains('*') || !a.contains('@') {
+                return Err(format!(
+                    "`change.approvers`: `{a}` is not an e-mail; list each e-mail in full, such as `owner@example.test` (a wildcard is not valid)"
+                ));
+            }
             approvers.push(a.to_string());
         }
         if approval == Approval::Branch && approvers.is_empty() {

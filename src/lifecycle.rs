@@ -46,6 +46,12 @@ pub fn no_base_note(config: &Config, git: &Git, base: Option<&str>) -> String {
 }
 
 fn no_base_reason(config: &Config, git: &Git, base: Option<&str>) -> String {
+    // A base that the user passed is not a base to ask for.
+    if let Some(rev) = base {
+        return format!(
+            "no base for the change checks: `{rev}` and HEAD have no merge base (a shallow clone, or histories with no common commit); fetch more history of the branch"
+        );
+    }
     match &config.change_base {
         Some(b)
             if base.is_none() && git.remote_head().is_none() && git.local_branch(b).is_none() =>
@@ -90,6 +96,32 @@ pub fn change_base(
         return Ok(None);
     }
     merge_base_of(git, base, config.change_base.as_deref())
+}
+
+/// The base of the change checks for a shallow clone in branch mode, when the
+/// base is known and the merge base is not reachable (design 0.7.0, D13): the
+/// tip of the base. The branch rule then gives no approval, and SD910 reports
+/// the reason 5 for each change that needs one, so less history never gives a
+/// pass. It is `None` in each other case, and the note of an unknown base stays.
+/// The tip is not a merge base, so SD911 does not use it.
+pub fn shallow_tip(config: &Config, git: &Git, base: Option<&str>) -> Option<String> {
+    if config.change_policy == ChangePolicy::None
+        || config.change_approval != config::Approval::Branch
+        || !git.is_shallow()
+    {
+        return None;
+    }
+    let tip = match base {
+        Some(rev) => git.commit(rev),
+        None => git.remote_head().or_else(|| {
+            config
+                .change_base
+                .as_deref()
+                .and_then(|b| git.local_branch(b))
+        }),
+    }?;
+    let head = git.commit("HEAD")?;
+    git.merge_base(&tip, &head).is_none().then_some(tip)
 }
 
 /// The merge base of `--base` (or, without it, of `refs/remotes/origin/HEAD`,

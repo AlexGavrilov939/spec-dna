@@ -80,10 +80,11 @@ pub struct BranchCommit {
     /// does not change it, so a `.mailmap` file of the branch makes no
     /// approver.
     pub author_email: String,
-    /// The paths that the commit changed against its first parent, with the
-    /// kind of each change. A root commit adds all its files. A merge commit
-    /// has the diff against its first parent. The diff has no rename
-    /// detection, so a move is a deletion and an addition.
+    /// The paths that the commit changed against its parent, with the kind of
+    /// each change. A root commit adds all its files. A merge commit lists only
+    /// the paths that differ from each parent, all with the kind `Modified`.
+    /// The diff has no rename detection, so a move is a deletion and an
+    /// addition.
     pub paths: Vec<(String, PathChange)>,
 }
 
@@ -491,27 +492,90 @@ impl Git {
     /// can apply the stops of D13. The command reads only the history that the
     /// repository has: it never fetches. `base` and `head` are revisions, such
     /// as a commit id.
+    ///
+    /// The walk reads 3 things apart, and it never parses a path and a commit
+    /// header from one stream. A file name can hold any byte but NUL, so a
+    /// name can look like a header. `rev-list` gives the commits and their
+    /// parents, one commit on each line. `log` gives the e-mail of each
+    /// commit, and the commit must be in the first list. `diff-tree` gives the
+    /// paths of one commit at a time, as NUL-separated records. For a merge
+    /// commit the paths are the ones that differ from each parent: the work
+    /// that the merge itself does (a conflict fix, or a new file), not the
+    /// changes that it takes from a parent.
     pub fn branch_walk(&self, base: &str, head: &str) -> Result<BranchWalk, String> {
         let range = format!("{base}..{head}");
-        let out = self.run_offline(&[
-            "-c",
-            "log.showRoot=true",
-            "log",
+        let listed = self.run_offline(&[
+            "rev-list",
             "--reverse",
             "--topo-order",
-            "--no-renames",
-            "--diff-merges=first-parent",
-            "--name-status",
-            "-z",
-            "--format=%x01%H %P%x02%ae",
+            "--parents",
             &range,
             "--",
         ])?;
+        let mut commits: Vec<BranchCommit> = Vec::new();
+        for line in String::from_utf8_lossy(&listed).lines() {
+            let mut ids = line.split(' ').filter(|p| !p.is_empty());
+            let Some(commit) = ids.next() else { continue };
+            commits.push(BranchCommit {
+                commit: commit.to_string(),
+                parents: ids.map(str::to_string).collect(),
+                author_email: String::new(),
+                paths: Vec::new(),
+            });
+        }
+        // The e-mail of the author, as the commit stores it. A line is
+        // `<id> <e-mail>`: an e-mail has no line feed.
+        let emails = self.run_offline(&["log", "--format=%H %ae", &range, "--"])?;
+        let mut email_of: HashMap<&str, &str> = HashMap::new();
+        let emails = String::from_utf8_lossy(&emails).into_owned();
+        for line in emails.lines() {
+            if let Some((id, email)) = line.split_once(' ') {
+                email_of.insert(id, email);
+            }
+        }
+        for c in &mut commits {
+            c.author_email = email_of
+                .get(c.commit.as_str())
+                .ok_or_else(|| format!("git gave no author for the commit {}", c.commit))?
+                .to_string();
+            c.paths = self.commit_paths(c)?;
+        }
         Ok(BranchWalk {
-            commits: parse_branch_walk(&out),
+            commits,
             merge_base: self.merge_base(base, head),
             shallow: self.is_shallow(),
         })
+    }
+
+    /// The paths that a commit of the walk changed (`branch_walk`).
+    fn commit_paths(&self, c: &BranchCommit) -> Result<Vec<(String, PathChange)>, String> {
+        let mut args: Vec<&str> = vec!["diff-tree", "-r", "-z", "--no-commit-id"];
+        match c.parents.as_slice() {
+            [] => args.extend(["--root", "--name-status", "--no-renames", &c.commit]),
+            [parent] => args.extend(["--name-status", "--no-renames", parent, &c.commit]),
+            _ => args.extend(["-c", "--name-only", &c.commit]),
+        }
+        let out = self.run_offline(&args)?;
+        let mut recs = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        let mut paths = Vec::new();
+        if c.parents.len() > 1 {
+            for path in recs {
+                paths.push((
+                    String::from_utf8_lossy(path).into_owned(),
+                    PathChange::Modified,
+                ));
+            }
+            return Ok(paths);
+        }
+        while let (Some(status), Some(path)) = (recs.next(), recs.next()) {
+            let kind = match status.first() {
+                Some(b'A') => PathChange::Added,
+                Some(b'D') => PathChange::Deleted,
+                _ => PathChange::Modified,
+            };
+            paths.push((String::from_utf8_lossy(path).into_owned(), kind));
+        }
+        Ok(paths)
     }
 
     /// Returns, for each file under `specs` that a commit touched, the newest
@@ -1477,56 +1541,6 @@ fn parse_commit_header(h: &str) -> Option<(String, Vec<String>, i64)> {
     let commit = parts.next()?.to_string();
     let parents = parts.map(str::to_string).collect();
     Some((commit, parents, time.trim().parse().ok()?))
-}
-
-/// Reads the output of `git log -z --name-status` with the format of
-/// `branch_walk`. A record that starts with `\x01` is the header of a commit.
-/// The first record after it can start with a line feed. The other records are
-/// pairs of a status letter and a path.
-#[allow(dead_code)] // See `BranchCommit`.
-fn parse_branch_walk(out: &[u8]) -> Vec<BranchCommit> {
-    let mut commits: Vec<BranchCommit> = Vec::new();
-    let mut words: Vec<String> = Vec::new();
-    let flush = |commits: &mut Vec<BranchCommit>, words: &mut Vec<String>| {
-        if let Some(c) = commits.last_mut() {
-            let mut it = words.drain(..);
-            while let (Some(status), Some(path)) = (it.next(), it.next()) {
-                let kind = match status.as_bytes().first() {
-                    Some(b'A') => PathChange::Added,
-                    Some(b'D') => PathChange::Deleted,
-                    _ => PathChange::Modified,
-                };
-                c.paths.push((path, kind));
-            }
-        }
-        words.clear();
-    };
-    for rec in out.split(|b| *b == 0) {
-        let rec = String::from_utf8_lossy(rec);
-        // After a commit with no changed path, the line feed comes before the
-        // next header.
-        let rec = rec.strip_prefix('\n').unwrap_or(&rec);
-        if let Some(h) = rec.strip_prefix('\x01') {
-            flush(&mut commits, &mut words);
-            let Some((ids, email)) = h.split_once('\x02') else {
-                continue;
-            };
-            let mut parts = ids.split(' ').filter(|p| !p.is_empty());
-            let Some(commit) = parts.next() else { continue };
-            commits.push(BranchCommit {
-                commit: commit.to_string(),
-                parents: parts.map(str::to_string).collect(),
-                author_email: email.to_string(),
-                paths: Vec::new(),
-            });
-            continue;
-        }
-        if !rec.is_empty() {
-            words.push(rec.to_string());
-        }
-    }
-    flush(&mut commits, &mut words);
-    commits
 }
 
 /// Escapes the characters that a git `glob` pathspec reads as magic.

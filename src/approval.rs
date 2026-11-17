@@ -282,8 +282,14 @@ impl Branch {
             .collect();
         for (i, c) in walk.commits.iter().enumerate() {
             // A neutral merge brings the base, or the commits that the walk
-            // lists on their own.
+            // lists on their own. The paths that differ from each of its
+            // parents are the work of the merge itself (a new file, a fix of
+            // a conflict): they count as touched at this commit. The status of
+            // an artifact in a merge commit sets no approval.
             if c.parents.len() > 1 {
+                for (p, _) in &c.paths {
+                    b.touches.entry(p.clone()).or_default().push(i);
+                }
                 continue;
             }
             let author_ok = approvers.contains(&c.author_email.to_lowercase());
