@@ -328,3 +328,29 @@ fn a_dry_run_of_a_skill_and_of_the_agents_line_each_print_40_runs_and_an_estimat
     assert_eq!(code, 0);
     assert!(out.contains("55 evals, 440 runs"), "{out}");
 }
+
+#[test]
+fn the_covers_tags_of_the_pack_fixtures_give_no_sd105() {
+    // A fixture holds test files with `covers:` tags. They are no test of the
+    // project, so `check` reads none of them.
+    let r = project("[evals]\n");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("init");
+    let (code, out, err) = pack(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    let tagged = std::process::Command::new("grep")
+        .args(["-rl", "covers:", "evals/pack/fixtures"])
+        .current_dir(&r.dir)
+        .output()
+        .unwrap();
+    assert!(
+        !tagged.stdout.is_empty(),
+        "the test needs a fixture with a covers tag"
+    );
+    r.commit("pack");
+    let (_, out, _) = r.run(&["check", "--base", "HEAD~1"]);
+    assert!(!out.contains("SD105"), "{out}");
+    let (_, out, _) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD105"), "{out}");
+}

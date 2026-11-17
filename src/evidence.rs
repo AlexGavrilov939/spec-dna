@@ -75,9 +75,14 @@ pub fn load(
         .git
         .grep_lines(TAG, rev, untracked, &config.evidence_tests)
         .map_err(Fatal::Io)?;
+    // A file below `[evals] dir` is a fixture or an eval, never a test of the
+    // project: the fixtures of the pack hold test files with `covers:` tags.
+    let evals_prefix = config.evals.as_ref().map(|e| format!("{}/", e.dir));
     let mut out = Vec::new();
     for (path, line, text) in lines {
-        if !config.is_test_file(&path) {
+        if !config.is_test_file(&path)
+            || evals_prefix.as_ref().is_some_and(|p| path.starts_with(p))
+        {
             continue;
         }
         for target in tags(&text) {
