@@ -652,7 +652,12 @@ fn ask_approvers(plan: &mut Plan, io: &mut Ask) -> Result<(), String> {
         ),
         &shown,
     );
-    let list = if a.eq_ignore_ascii_case("none") {
+    // Enter, or the default typed again, takes the default as it is. A list
+    // that holds an agent address is the current list of `--reconfigure`: it
+    // stays, and `check` gives SD926 for it.
+    let list = if a == shown {
+        default
+    } else if a.eq_ignore_ascii_case("none") {
         Vec::new()
     } else {
         parse_approvers("question 5", &words(&a))?
@@ -4429,6 +4434,30 @@ mod tests {
         };
         let e = ask_approvers(&mut plan, &mut io).unwrap_err();
         assert!(e.contains("is the address of an agent or a bot"), "{e}");
+    }
+
+    #[test]
+    fn the_approvers_prompt_keeps_a_current_list_with_an_agent_address() {
+        // Enter keeps the default. The default is the current list, also if it
+        // holds an agent address (`check` gives SD926 for it).
+        let mut plan = plan_of_empty_repo();
+        plan.approval_set = true;
+        plan.approvers = vec!["noreply@anthropic.com".into(), "p@example.test".into()];
+        let mut input = std::io::Cursor::new(b"\n".to_vec());
+        let mut out = Vec::new();
+        let mut io = Ask {
+            input: &mut input,
+            out: &mut out,
+        };
+        ask_approvers(&mut plan, &mut io).unwrap();
+        assert_eq!(plan.approvers_given, None);
+        // A typed answer that differs is parsed.
+        let mut input = std::io::Cursor::new(b"noreply@anthropic.com\n".to_vec());
+        let mut io = Ask {
+            input: &mut input,
+            out: &mut out,
+        };
+        assert!(ask_approvers(&mut plan, &mut io).is_err());
     }
 
     #[test]
