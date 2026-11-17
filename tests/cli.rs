@@ -3083,7 +3083,7 @@ fn init_asks_on_a_terminal() {
         "14. Evals (none, skeleton) [skeleton]: ",
         "Agent harness: full (for Claude Code)",
         "  create .claude/agents/verifier.md (agent verifier: sonnet, medium)",
-        "Each teammate needs spec-dna 0.6.0 or later on PATH for the hooks.",
+        "Each teammate needs spec-dna 0.7.0 or later on PATH for the hooks.",
         "Restart Claude Code. Then check:",
         "--- spec-dna.toml ---",
         "Write these files? [y/N]: ",
@@ -3093,6 +3093,9 @@ fn init_asks_on_a_terminal() {
     }
     let cfg = r.read("spec-dna.toml");
     assert!(cfg.contains("profile = \"strict\""), "{cfg}");
+    // The profile `strict` reads the approvals of the base only: no approvers prompt.
+    assert!(!out.contains("5. Approvers"), "{out}");
+    assert!(cfg.contains("protect-approvals = true"), "{cfg}");
     assert!(
         cfg.contains("evidence = \"error\"\nbudgets = \"off\"\n"),
         "{cfg}"
