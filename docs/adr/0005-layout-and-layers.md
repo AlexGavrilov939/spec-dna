@@ -133,3 +133,7 @@ This ADR amends [ADR 0001](0001-information-model.md). ADR 0001 is accepted, so 
 - Amendment of 0.4.2, "Link direction": SD611 has the name `decision-links-intent`, and it reports a link to an intent. SD901 gives the general rule.
 
 ## Amendments
+
+### 2026-11-17: the budget of a plan (0.7.0)
+
+- "Growth controls": the type `plan` has no default budget, as `research`. A plan of small tasks (design 0.7.0, D40) grows with the size of the change, and `finish` deletes it. `[budgets.plan]` sets a budget.

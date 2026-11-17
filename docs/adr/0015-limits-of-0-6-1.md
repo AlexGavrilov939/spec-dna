@@ -120,3 +120,7 @@ This ADR amends no locked text. ADR 0001, ADR 0003 and ADR 0006 stay as they are
 These change sets of `.claude/agents/ownership.md` apply: "Hash definition or parsed data" (D28), "Move, split or generated index" (D29), "Config key" (D30) and "Git access" (D31). If the new field of D28 goes into the cache file, "Cache layout" applies too. "Command, option, help text or exit code" applies to the new messages and to the exit code of `index`.
 
 ## Amendments
+
+### 2026-11-17: the stop of `index`
+
+The reproduction of `failure-analyst` proves the cause of D29: `index` never resolves the type of its place, so it writes no status. The first status of a type always exists, so the stop of D29 occurs only when the place gives no type. `index` then stops with exit code 2 and names the folder, because no layer exists to name. The refresh of `finish` uses the same rule. For D30, `init` proposes only one name of a pair. The plan of `upgrade` parses the new configuration before its proof, so the plan of `--areas` stops a pair itself, with exit code 1, and the sentence of this ADR stays true. For D31, a rename of another file out of the change folder is a deletion for condition 3.

@@ -122,3 +122,7 @@ The build adds the section "What `init` writes for each profile" to [docs/profil
 ### 2026-11-16: SD925
 
 SD925 (`checkbox-missing`) joins SD923 and SD924 in the row "Checks that this profile turns on": it is off in `lite`, a warning in `standard` and an error in `strict`. Thus the profile adds the severities of SD923, SD924, SD925 and SD507. [Section 15 of the design](../design/0.7.0.md#15-deviations-during-the-build) gives the reason.
+
+### 2026-11-17
+
+See ADR 0018.

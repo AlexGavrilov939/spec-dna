@@ -93,3 +93,7 @@ ADR 0001 and ADR 0003 are accepted and locked, so this ADR does not edit them. T
 - `.claude/agents/ownership.md`, row "Release": the pin moves in the release pull request. `CONTRIBUTING.md`, section "Releases": the release pull request moves the pin together with the version in `Cargo.toml` and `Cargo.lock`. The last paragraph, which moves the pin in a pull request of its own, ends. Slice 1 of the build writes the new steps.
 
 ## Amendments
+
+### 2026-11-17
+
+See ADR 0019.

@@ -314,3 +314,13 @@ A second real project showed 2 gaps.
 
 - Staged head tree. `check --staged` uses the git index as the head tree: the staged blobs and the staged `spec-dna.toml`, without untracked or working-tree files. The base rules do not change. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101). The hook that `init` writes uses `--staged`. An unmerged path in the index is an error of git access (exit 4).
 - Link direction. A change links the decisions, specs and contracts that it implements. When the frozen text or `depends-on` of an accepted decision links a change, `check` gives a warning (SD611). A done or rejected change can be deleted (SD202), and the frozen text cannot drop the link (SD405). A link in an amendment, history or live section is allowed.
+
+### 2026-11-17: a partial `covers:` tag (0.7.0)
+
+This amends "Evidence" of the amendment of 2026-11-08.
+
+- A tag `covers: partial <doc-id>#<key>` records that a test proves a part of a requirement. The word `partial` comes first after `covers:`, and it applies to each id of the tag.
+- A partial tag is not evidence. Alone, it does not clear SD608 or SD916. A full tag or a `verified-by` of the same requirement is evidence, also next to a partial tag.
+- A partial tag that names no requirement is an error (SD105), as a full tag is.
+- `show`, `status`, `stats --sdlc` and the messages of SD608 and SD916 name the partial tags. spec-dna still does not claim that tests pass.
+- A binary before 0.7.0 reads no id after the word `partial`, so it reads no evidence from such a tag.
