@@ -767,10 +767,11 @@ spec-dna index <dir or file> [--replace]
 spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]
 spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
 spec-dna eval pack
-spec-dna eval verdict
+spec-dna eval verdict [--release] [--json]
+spec-dna eval records <result file>
 ```
 
-`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts the headless agent of the Claude Code adapter (`claude -p`) on a copy of a fixture. Then it runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand than `run`, `pack` and `verdict`, is a usage error. [evals.md](evals.md) is the guide to the start, the cost and the CI job.
+`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts the headless agent of the Claude Code adapter (`claude -p`) on a copy of a fixture. Then it runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand than `run`, `pack`, `verdict` and `records`, is a usage error. [evals.md](evals.md) is the guide to the start, the cost and the CI job.
 
 spec-dna itself makes no network call. `claude` makes network calls, and each run costs money. A pin that differs from the version of the binary stops the command, as it stops `check`. The runner has no time limit of its own. In CI, `timeout-minutes` of the workflow limits the job.
 
@@ -804,23 +805,29 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 
 `eval run --ab <target>` measures a skill against no skill ([ADR 0016](adr/0016-skill-evals.md)). The target is a skill, `all` or `agents-line`. It reads the pack in `<[evals] dir>/pack/`, runs each eval in the arms `with` and `without` in pairs, and writes `<[evals] dir>/results/skills-<YYYYMMDD>T<HHMMSS>Z.json` (or the folder of `--out`). The result has the pass rates, the costs, the difference and the cost ratio with a 90% interval, and a verdict. [evals.md](evals.md#the-pack-and-the-measure-of-a-skill) gives the arms, the rules of the verdict and the result file.
 
-`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`, and `--resume` rejects a different `--runs`. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
+`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. `--resume <file> --runs <n>` with `n` above the `runs` of the file adds runs to each eval. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`. `--resume` rejects a lower `--runs`, and `--runs` with a file that kept the runs of each eval. An estimate above the cap does not stop the command: it prints a note and starts, and the check before each run stops it at the cap. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
 
 | Code | Meaning of `eval run --ab` |
 | --- | --- |
 | 0 | The target is complete, with any verdict. Also `--dry-run`, also with an estimate above the cap |
 | 2 | Usage error: no target, more than one target, an unknown target, `--min-pass-rate`, or a bad value of `SPEC_DNA_EVAL_BACKOFF` |
-| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
+| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
 | 4 | A git or file error: the temporary folder, the copy, the base commit or the result file. After the first run, the command writes the partial result (`"stopped": "error"`) before it exits |
 | 129, 130, 143 | SIGHUP, SIGINT or SIGTERM. The partial result is written first |
 
 ### eval pack
 
-`eval pack` writes the 55 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
+`eval pack` writes the 57 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
 
 ### eval verdict
 
 `eval verdict` prints one line for each of the 11 skills and for `agents-line`: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source (`project <file>`, `release` or `-`). For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name, and then the table of the release that the binary holds. It starts no agent and needs no `[evals]` table. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`. Exit code 0, or 3 for a configuration error.
+
+`eval verdict --release` prints the table of the release instead: one line for each name that has a row, with the verdict, the rule, the runs and passes of each arm, the costs, the 2 intervals, the batch and the version of Claude Code. With `--json`, it prints `{"release":[...]}`. It reads the binary only, and it needs no project. [evals.md](evals.md#the-records-of-a-release) gives the form.
+
+### eval records
+
+`eval records <result file>` reads one result file of `eval run --ab`, and prints one record for each run of each arm, as JSON Lines on stdout. A record has the 9 keys `skill`, `eval`, `run`, `arm`, `pass`, `cost`, `tokens`, `models` and `claude_code`, and no other key. The command builds each record from these 9 values, so no path and no text of the file reaches the output. It computes each item again from its records, and it compares the result with the item of the file. It prints the number of records on stderr. It takes one file and no option. Exit code 0, 2 for a usage error, or 3 for a file that is not a result of `--ab`, an item with no verdict, a value outside its form or a result that the records do not repeat. [evals.md](evals.md#the-records-of-a-release) gives the form of a record.
 
 ## transcript
 

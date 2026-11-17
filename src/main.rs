@@ -31,6 +31,7 @@ mod eval_ab;
 mod eval_pack;
 mod eval_pack_fixtures_rest;
 mod eval_pack_rest;
+mod eval_records;
 mod eval_run;
 mod evals;
 mod evidence;
@@ -315,7 +316,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -323,7 +324,7 @@ sources <dir>/check.sh of the project, never the copy. An eval passes when at
 least pass-at of its runs pass. The suite passes when the share of evals that
 pass is at least min-pass-rate. It refuses to start when runs x
 max-budget-usd is above max-total-usd, and it stops when the spend is above
-it. --runs, --min-pass-rate and --max-total-usd replace the values of the
+it (`eval run --ab` starts and stops before a run that could pass the cap). --runs, --min-pass-rate and --max-total-usd replace the values of the
 files and of the table. --out writes the result to <dir>/eval-<time>.json
 (counts, costs and check names only). --dry-run starts no process. --isolate
 adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
@@ -346,17 +347,21 @@ SPEC_DNA_EVAL_BACKOFF (0 to 3600) sets the first wait in seconds.
 --min-pass-rate is a usage error with --ab. --ab isolates the runs by default
 (--no-isolate switches it off). An account limit, a credit or a login problem
 waits up to 6 hours. A run that takes more than 25 minutes (a check, 5 minutes)
-is killed and counts as failed. The result is written after each pair.
+is killed and counts as failed. The result is written after each arm of a pair.
 SIGHUP, SIGINT and SIGTERM write it and exit with 129, 130 and 143, and
---resume <result file> goes on in it. --dry-run prints the estimate also above
-the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
+--resume <result file> goes on in it, and with a higher --runs it adds runs to
+each eval. An estimate above the cap prints a note, and the run starts and stops
+at the cap. --dry-run prints the estimate also above the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
 pack file, a stop by the cap or by api-error, 4 git or file error, 129, 130
 and 143 a signal.
 
-`eval pack` writes the pack of 55 evals and their fixtures to <dir>/pack/. It
+`eval pack` writes the pack of 57 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
 
-`eval verdict` prints one line for each of the 11 skills and for agents-line:
+`eval verdict --release` prints the table of the release, one line for each name
+that has a row. `eval records <result file>` prints the records of the runs of a
+result file of --ab as JSON Lines (9 keys, no path, no text), and it computes each
+item again from them. `eval verdict` prints one line for each of the 11 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",
@@ -477,6 +482,7 @@ struct Args {
     ab: bool,
     no_isolate: bool,
     resume: Option<String>,
+    release: bool,
 }
 
 /// The options of `layer add`.
@@ -558,6 +564,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         ab: false,
         no_isolate: false,
         resume: None,
+        release: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -600,6 +607,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--ab" => a.ab = true,
             "--no-isolate" => a.no_isolate = true,
             "--resume" => a.resume = Some(value("--resume")?),
+            "--release" => a.release = true,
             "--out" => a.out = Some(value("--out")?),
             "--runs" => {
                 let v = value("--runs")?;
@@ -761,6 +769,11 @@ fn run(a: Args) -> Result<u8, Fatal> {
     }
     if a.sdlc && !matches!(a.command.as_str(), "stats" | "log") {
         return Err(Fatal::Usage("--sdlc is an option of `stats`".into()));
+    }
+    if a.command != "eval" && a.release {
+        return Err(Fatal::Usage(
+            "--release is an option of `eval verdict`".into(),
+        ));
     }
     if a.command != "eval" {
         for (given, name) in [
@@ -3002,11 +3015,41 @@ fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
 /// it, as it stops `check` and `finish`.
 fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     let sub = a.positional.first().map(String::as_str);
-    if !matches!(sub, Some("run" | "pack" | "verdict")) {
+    if !matches!(sub, Some("run" | "pack" | "verdict" | "records")) {
         return Err(Fatal::Usage(
-            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack` or `spec-dna eval verdict`"
+            "`eval` needs a subcommand: `spec-dna eval run [<id>...]`, `spec-dna eval run --ab <target>`, `spec-dna eval pack`, `spec-dna eval verdict` or `spec-dna eval records <result file>`"
                 .into(),
         ));
+    }
+    if a.release && sub != Some("verdict") {
+        return Err(Fatal::Usage(
+            "--release is an option of `eval verdict`".into(),
+        ));
+    }
+    if sub == Some("records") {
+        // `records` reads one file that can be outside the repository. It takes
+        // no option, and it needs no configuration.
+        let option = [
+            a.json,
+            a.runs.is_some(),
+            a.min_pass_rate.is_some(),
+            a.max_total_usd.is_some(),
+            a.out.is_some(),
+            a.isolate,
+            a.ab,
+            a.no_isolate,
+            a.resume.is_some(),
+            a.dry_run,
+            a.release,
+        ]
+        .contains(&true);
+        if a.positional.len() != 2 || option {
+            return Err(Fatal::Usage(
+                "`eval records` takes one result file and no option: `spec-dna eval records <result file>`"
+                    .into(),
+            ));
+        }
+        return eval_records::run(&a.positional[1]);
     }
     if sub != Some("run") {
         // `pack` and `verdict` take no option of `run`, and no argument.
@@ -3031,6 +3074,10 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                 a.positional[0]
             )));
         }
+    }
+    if a.release {
+        // The table of the release is in the binary. It needs no project.
+        return Ok(eval_release_cmd(a.json));
     }
     let repo = Repo::discover(cwd)?;
     let cfg = repo.load_config()?;
@@ -3158,6 +3205,19 @@ fn eval_pack_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8, Fa
         table.dir
     );
     Ok(0)
+}
+
+/// `eval verdict --release`: the table of the release (`verdict::RELEASE`),
+/// one line for each name that has a row. It reads no file and starts no agent.
+fn eval_release_cmd(json: bool) -> u8 {
+    if json {
+        println!("{}", verdict::release_json(verdict::RELEASE));
+    } else {
+        for row in verdict::RELEASE {
+            println!("{}", verdict::release_line(row));
+        }
+    }
+    0
 }
 
 /// `eval verdict`: the verdict of each skill and of `agents-line`. It reads
