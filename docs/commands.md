@@ -316,7 +316,7 @@ A change has no stage field. The stage is the first row of this table that match
 - The change that the default branch finished is no longer in the tree, so it has no stage. `spec-dna log` lists it.
 - The stage Maintain is not the stage of a change. `status` lists an open follow-up of an incident ([status](#status)).
 
-In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done. The first open task is the next task.
+In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done and the tasks that are skipped (a task with a reason in `Skip:`, which is not needed and is closed). With a skipped task, the line of the tasks ends with `, <n> not needed`. The first task that is not closed is the next task.
 
 ### Skills
 
@@ -414,14 +414,18 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
 
 If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code.
 
-If the plan has a section `Hours` ([types.md](types.md#sections-that-carry-list-items)), `finish` adds its items and prints the line `Hours: <total>` (also with `--dry-run`), with no zero after the last digit (`3.5`, `4`). The next line says to add this line to the commit message of the change and to keep it in the squash message, because `finish` makes no commit. An item that has no number of hours gives the note `the item "<text>" of Hours has no number of hours; no total`, and no `Hours:` line. A plan with no `Hours` item prints nothing. `log` and `stats --sdlc` read the line from the commit that deletes `intent.md`. Nothing checks the value: the line is a record.
+`finish` adds the label `Hours:` of each task of the plan that is not a duplicate and is not skipped ([types.md](types.md#tasks-of-a-plan)). It prints the line `Hours: <low>` or `Hours: <low>-<high>` (also with `--dry-run`), with no zero after the last digit (`3.5`, `4`). A task with a number counts as the range of equal ends, so a plan with `Hours: 1-2` and `Hours: 1.5` gives `Hours: 2.5-3.5`. The next line says to add this line to the commit message of the change and to keep it in the squash message, because `finish` makes no commit. No task and no value of `Hours:` stops `finish`. It prints these notes:
 
-These rules apply to `Hours`:
+- A task has a value that is no number and no range, for example `soon` or `3-1`: the note ``the task `<id>` has the value "<value>" in `Hours:`, which is no number of hours and no range; no total``, one for each such task, and no `Hours:` line.
+- A task has no `Hours:`, and no value is invalid: the note ``the tasks `<id>`, `<id>` have no `Hours:`; the total leaves them out``. The total of the other tasks still prints. For one task, the note is ``the task `<id>` has no `Hours:`; the total leaves it out``.
+- No task has `Hours:`: no line and no note.
 
-- A nested item under an item of `Hours` is not counted. Only the top-level items are.
-- Two sections `Hours` in one plan are added together.
-- `finish` reads an item with an optional `h` (`1.5h`). The line `Hours:` of a commit message has no `h`: `Hours: 3.5h` is not read, and the value is absent.
-- A number of the line `Hours:` has up to 7 digits before the `.` and up to 2 after it. A longer number is not read.
+`log` and `stats --sdlc` read the line from the commit that deletes `intent.md`. Nothing checks the value: the line is a record. The section `Hours` of a plan is not read.
+
+These rules apply to `Hours:`:
+
+- The label `Hours:` of a task has a number or a range ([Tasks of a plan](types.md#tasks-of-a-plan)). The number can end with `h` (`1.5h`). The line `Hours:` of a commit message has no `h`: `Hours: 3.5h` is not read, and the value is absent.
+- A number of the line `Hours:` of a commit message has up to 7 digits before the `.` and up to 2 after it. A longer number is not read. A range of the line is `<a>-<b>` with `a` not above `b`, and spaces or tabs can be around the `-`.
 - `log` reads the commit that deletes `intent.md`. For a merge-commit merge, that is the commit of the branch, so the line must be in that commit and not only in the message of the merge commit.
 
 These rules apply to the files:
@@ -437,10 +441,10 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 `--dry-run` writes nothing. It prints the diff of each file that `finish` would write, and `remove <path>` for each file that it would delete. With `--json`, the output is one object:
 
 ```json
-{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}],"hours":3.5}
+{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}],"hours":{"low":2.5,"high":3.5}}
 ```
 
-`hours` is the total of the section `Hours`, or `null`. A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty, and the output has no `hours`. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
+`hours` is the total of the `Hours:` labels of the tasks as `{"low","high"}` (equal for a number), or `null`. A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty, and the output has no `hours`. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
 
 `finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
 
@@ -450,7 +454,7 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 spec-dna status [--group <name>] [--base <rev>]
 ```
 
-`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total` and the id of the next open task). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
+`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total`, `skipped <n>` if a task is skipped, and the id of the next open task). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
 
 Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text, and it ends with `[skill: post-mortem]`. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
 
@@ -471,10 +475,10 @@ The area of a delta target is the first folder under the folder of the layer of 
 The base and the policy `none` work as for [next](#next). The output has `notes` for the no-base note. With `--json`, the output is one object:
 
 ```json
-{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
+{"version":"0.6.0","policy":"three-class","base":"3f2a9c1b7e0d4a11...","started":1,"max_started":3,"notes":[],"changes":[{"slug":"dose-limit","path":"docs/intent/dose-limit","title":"Dose limit","class":"routine","statuses":{"intent":"accepted","spec":null,"plan":"approved"},"approved_in":{"intent":"base","spec":null,"plan":"base"},"stage":"build","next":"change a file that ...","stale":false,"areas":["valves"],"tasks":{"done":1,"skipped":0,"total":3,"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"}}}],"follow_ups":[{"incident":"incidents/valve-stuck","path":"docs/incidents/valve-stuck.md","line":13,"text":"Add an alarm for a stuck valve.","skill":"post-mortem"}]}
 ```
 
-A status is `null` if the file is absent. `class` is `null` if the intent has no valid class, and the text shows the token `none`. `approved_in` gives the source of the approval of each artifact: `"base"` (the base tree has the same status), `"branch <short sha>"` (the approval commit that set the status, with `[change] approval = "branch"`) or `null` (the status is not `accepted` or `approved`, the file is absent, or no approval counts). The short sha has 12 characters. With `approval = "branch"`, the text adds `(base)` or `(branch <short sha>)` after each `accepted` or `approved` status. With `approval = "base"`, the text does not change. Each item of `follow_ups` has `"skill":"post-mortem"`. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
+A status is `null` if the file is absent. `class` is `null` if the intent has no valid class, and the text shows the token `none`. `approved_in` gives the source of the approval of each artifact: `"base"` (the base tree has the same status), `"branch <short sha>"` (the approval commit that set the status, with `[change] approval = "branch"`) or `null` (the status is not `accepted` or `approved`, the file is absent, or no approval counts). The short sha has 12 characters. With `approval = "branch"`, the text adds `(base)` or `(branch <short sha>)` after each `accepted` or `approved` status. With `approval = "base"`, the text does not change. Each item of `follow_ups` has `"skill":"post-mortem"`. `max_started` is `null` if the layer has no limit. `areas` lists the areas of the intent, then the areas of the delta targets. `tasks.done` counts the tasks with `- [x]` and no reason in `Skip:`, and `tasks.skipped` counts the skipped tasks. `tasks.next_task` is the next open task whatever the stage is, and it is `null` if the plan has none.
 
 Exit codes: 0 done; 2 usage, or an unknown group; 3 configuration, or a `--base` that is not a commit; 4 git.
 
@@ -493,7 +497,7 @@ The status of the intent in the parent of that commit gives the result:
 | `accepted` | `finished` |
 | any other status, also `draft` | `closed` |
 
-For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the hours, the commit and the title. The counts and the class come from the parent tree too. The hours are the number of the last line `Hours: <number>` of the message of that commit. The line can be in any paragraph, because a host can write the messages of a squash as a list. A line with other text after the number is not such a line. `finish` prints the line, and the person or the agent that commits puts it in the message. With no such line, the hours are absent: `-` in the text and `null` in `--json`. One git process reads the messages of all the listed commits. A line that has no valid form is not counted. The newest change comes first.
+For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the hours, the commit and the title. The counts and the class come from the parent tree too. The hours are the last line `Hours: <number>` or `Hours: <a>-<b>` of the message of that commit. The line can be in any paragraph, because a host can write the messages of a squash as a list. A line with other text after the number is not such a line. `finish` prints the line, and the person or the agent that commits puts it in the message. The text shows `4.5` or `5-9`. In `--json`, `hours` is `{"low","high"}`, with equal ends for a number. With no such line, the hours are absent: `-` in the text and `null` in `--json`. One git process reads the messages of all the listed commits. A line that has no valid form is not counted. The newest change comes first.
 
 ```text
 2024-04-05 finished dose-limit higher-risk add 1 change 2 remove 0 hours 3.5 3f2a9c1b7e0d Dose limit
@@ -518,7 +522,7 @@ In a shallow clone, `log` can miss the changes that the clone does not have. It 
 With `--json`, the output is one object:
 
 ```json
-{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"hours":3.5,"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
+{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"hours":{"low":3.5,"high":3.5},"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
 ```
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--since` that is not a commit; 4 git.
@@ -549,7 +553,7 @@ The command rebuilds the life of each change from the commits that touched its `
 | Build | leading | Time from plan approval to the merged pull request | The median days from the first commit that sets the plan `approved` to the commit that deleted the folder. It counts finished changes. |
 | Build | leading | Share of changes that merge from the first implementation pass | `n/a`: it needs pull request metadata. |
 | Build | lagging | How often the merged diff still matches the committed `plan.md` | The percent of finished changes whose diff has no path that SD913 reports for the scope of the plan. |
-| Build | lagging | Hours of work per finished change | The median of the hours of the finished changes. The hours are the last line `Hours: <number>` of the message of the commit that deleted the `intent.md` (the commit that [`log`](#log) lists). Unit `hours`. The count is the number of finished changes that have such a line, and the note gives the total. A change with no line does not count. |
+| Build | lagging | Hours of work per finished change | The median of the hours of the finished changes. The hours are the last line `Hours: <number>` or `Hours: <a>-<b>` of the message of the commit that deleted the `intent.md` (the commit that [`log`](#log) lists). A range counts as its midpoint. Unit `hours`. The count is the number of finished changes that have such a line, and the note gives the total (a range `<low>-<high>` if a change has a range). A change with no line does not count. |
 | Build | lagging | Rework cycles per change | `n/a`: it needs pull request metadata. |
 | Test | leading | The eval pass rate over time | The `pass_rate` of the newest result file in `<[evals] dir>/results`, in percent. `n/a` without `[evals]`. |
 | Test | leading | How long a production incident takes to become a permanent eval | The median days from the commit that added an incident to the commit that added the eval that its `Eval` section names. `n/a` without `[evals]`. |

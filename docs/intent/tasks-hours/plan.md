@@ -33,7 +33,7 @@ status: approved
 - [x] t11: Write step 6 of `write-plan` with the labels (`init-engineer`). Files: `src/harness_text.rs`, `tests/golden/harness/skills/spec-dna-write-plan.md`. Verify: `cargo test --test harness_skills` passes.
 - [x] t12: Put the hours of the `finish` evals on the tasks (total 4.5), give `finish-3` a skipped task, and remove the fallback line of the reference solutions (`init-engineer`). Files: `src/eval_pack_fixtures_rest.rs`, `tests/fixtures/eval-solutions/finish-1/good.sh`, `tests/fixtures/eval-solutions/finish-3/good.sh`. Verify: `cargo test --test eval_pack` passes.
 - [x] t13: Write the line with no space before its marker, and test the version `99.99.99` (`init-engineer`). Files: `src/adapters.rs`. Verify: `cargo test --bin spec-dna adapters` passes.
-- [ ] t14: Update the docs of the plan type and of the commands (`core-engineer`; `hygiene-engineer` for `finish`). Files: `docs/types.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t14: Update the docs of the plan type and of the commands (`core-engineer`; `hygiene-engineer` for `finish`). Files: `docs/types.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` passes.
 - [ ] t15: Update SD923, the change guide and the glossary with the terms "skipped task" and "spike" (`diagnostics-engineer`; `architect`). Files: `docs/diagnostics.md`, `docs/guides/change.md`, `docs/glossary.md`. Verify: `pre-commit run --all-files` passes.
 - [ ] t16: Write the entry of the change (`release-engineer`). Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
 
