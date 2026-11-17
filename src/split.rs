@@ -863,6 +863,11 @@ fn destination(
                         "`{path}` is not under a document root of spec-dna.toml"
                     ))
                 })?;
+            if let Some((area, name)) = config.area_case_clash(&path) {
+                return Err(Fatal::Usage(format!(
+                    "the area `{area}` of `{path}` differs from the area `{name}` of `areas` only in case; use `{name}`"
+                )));
+            }
             if repo.root.join(&path).exists() {
                 return Err(Fatal::Usage(format!(
                     "`{path}` exists, but it is not a document of a root"

@@ -352,3 +352,65 @@ fn history_writes_the_type_line_when_the_folder_gives_another_type() {
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
 }
+
+// A pair of area names that differ only in case (D30 of 0.7.0)
+
+#[test]
+fn the_reader_stops_a_pair_of_areas_that_differ_only_in_case() {
+    for (areas, a, b) in [
+        ("areas = [\"valves\", \"Valves\"]\n", "valves", "Valves"),
+        (
+            "areas = [\"Sensors\", \"valves\", \"sensors\"]\n",
+            "Sensors",
+            "sensors",
+        ),
+    ] {
+        let r = Repo::with(areas, "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n");
+        let (code, out, err) = r.run(&["check", "--all"]);
+        assert_eq!(code, 3, "{areas}: {out}{err}");
+        assert!(
+            err.contains("differ only in case")
+                && err.contains(&format!("`{a}`"))
+                && err.contains(&format!("`{b}`")),
+            "{err}"
+        );
+    }
+    // The same name twice stays a different message. A pair of other names is fine.
+    let r = Repo::with(
+        "areas = [\"valves\", \"valve\"]\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn new_stops_for_an_area_that_differs_from_a_name_of_areas_only_in_case() {
+    let r = Repo::with(
+        "areas = [\"valves\"]\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    let (code, out, err) = r.run(&["new", "requirements", "Valves/closing"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`Valves`") && err.contains("`valves`") && err.contains("only in case"),
+        "{err}"
+    );
+    assert!(!r.exists("docs"), "nothing is written");
+    // The name of `areas` is fine, and a file under no area is fine.
+    let (code, out, err) = r.run(&["new", "requirements", "valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["new", "requirements", "Valves"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Another type has no area.
+    let (code, out, err) = r.run(&["new", "rule", "Valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn new_checks_no_area_when_areas_is_empty() {
+    let r = Repo::mixed();
+    let (code, out, err) = r.run(&["new", "requirements", "Valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.exists("docs/requirements/Valves/closing.md"));
+}

@@ -307,6 +307,9 @@ pub struct Facts {
     /// The proposed areas of `requirements/`: at most 8 names of one folder
     /// each, or none if `init` finds fewer than 2.
     pub areas: Vec<String>,
+    /// The folders that `areas` leaves out because their name differs from
+    /// a proposed name only in case: the proposed name and the other name.
+    pub areas_dropped: Vec<(String, String)>,
 }
 
 /// One Markdown file.
@@ -1303,7 +1306,7 @@ pub fn detect(
     apps.sort();
     facts.stack = stack;
     facts.apps = apps;
-    facts.areas = areas_of(&facts.rows, &mds, &facts.apps);
+    (facts.areas, facts.areas_dropped) = areas_of(&facts.rows, &mds, &facts.apps);
 
     // Tests.
     for g in DEFAULT_TEST_GLOBS {
@@ -1403,8 +1406,11 @@ fn is_area_name(name: &str) -> bool {
 /// first. If they give fewer than 2 areas, the second source is the folders of
 /// the apps (the directories of the manifests of the stack). The result has at
 /// most 8 names, in the order of the names. A result of fewer than 2 names is
-/// empty: one area is the same as no area.
-fn areas_of(rows: &[Row], mds: &[Md], apps: &[String]) -> Vec<String> {
+/// empty: one area is the same as no area. Of 2 folders that differ only in
+/// case, the result has the first (the most documents, then the name), because
+/// the reader of the configuration stops a pair (D30 of 0.7.0). The second
+/// result lists each folder that was left out, with the name that was kept.
+fn areas_of(rows: &[Row], mds: &[Md], apps: &[String]) -> (Vec<String>, Vec<(String, String)>) {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         if r.path == "." || r.ty.unwrap_or(r.default_type) != DocType::Requirements {
@@ -1429,25 +1435,43 @@ fn areas_of(rows: &[Row], mds: &[Md], apps: &[String]) -> Vec<String> {
     let mut named: Vec<(String, usize)> = counts.into_iter().collect();
     // The most documents first, then the name.
     named.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let mut names: Vec<String> = named.into_iter().map(|n| n.0).collect();
+    let mut dropped: Vec<(String, String)> = Vec::new();
+    let mut names = one_of_each_case(named.into_iter().map(|n| n.0), &mut dropped);
     if names.len() < 2 {
-        names = Vec::new();
-        for a in apps {
-            let name = a.rsplit('/').next().unwrap_or(a);
-            if is_area_name(name)
-                && !NOT_APPS.contains(&name.to_ascii_lowercase().as_str())
-                && !names.iter().any(|n| n == name)
-            {
-                names.push(name.to_string());
-            }
-        }
+        dropped.clear();
+        let apps = apps
+            .iter()
+            .map(|a| a.rsplit('/').next().unwrap_or(a))
+            .filter(|name| {
+                is_area_name(name) && !NOT_APPS.contains(&name.to_ascii_lowercase().as_str())
+            });
+        names = one_of_each_case(apps.map(str::to_string), &mut dropped);
     }
     if names.len() < 2 {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     names.truncate(MAX_AREAS);
     names.sort();
-    names
+    dropped.retain(|(kept, _)| names.contains(kept));
+    (names, dropped)
+}
+
+/// The names in order, with no name that differs only in case from an
+/// earlier name or is the same as one. Each name that is left out for case
+/// goes to `dropped`, with the name that stays.
+fn one_of_each_case(
+    names: impl Iterator<Item = String>,
+    dropped: &mut Vec<(String, String)>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        match out.iter().find(|o| crate::config::same_area_name(o, &n)) {
+            Some(kept) if *kept == n => {}
+            Some(kept) => dropped.push((kept.clone(), n)),
+            None => out.push(n),
+        }
+    }
+    out
 }
 
 fn owner(rows: &[Row], path: &str) -> Option<usize> {
@@ -1868,5 +1892,29 @@ mod tests {
             "{:?}",
             f.rows
         );
+    }
+
+    #[test]
+    fn areas_propose_one_name_of_a_pair_that_differs_only_in_case() {
+        let doc = "# Note\n\n## Requirements\n\n- **open**: The controller SHALL open the valve.\n";
+        let files: Vec<(String, String)> = [
+            "docs/specs/valves/a.md",
+            "docs/specs/valves/b.md",
+            "docs/specs/Valves/c.md",
+            "docs/specs/sensors/d.md",
+            "docs/specs/pumps/e.md",
+            "docs/specs/Pumps/f.md",
+        ]
+        .iter()
+        .map(|p| (p.to_string(), doc.to_string()))
+        .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let f = facts(&refs);
+        // The most documents win, then the name: `valves` has 2 documents, and
+        // `Pumps` is before `pumps`.
+        assert_eq!(f.areas, ["Pumps", "sensors", "valves"], "{:?}", f.areas);
     }
 }

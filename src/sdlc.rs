@@ -223,7 +223,8 @@ fn off(json: bool, empty: &str) -> u8 {
 
 /// The commits that deleted an `intent.md` under `dir`, the newest first, as
 /// `log` lists them. `dir` is a folder of the `intent` layer, from the
-/// repository root. A move out that keeps the id as an alias is not an end.
+/// repository root. A move out of `intent.md` that meets the 3 conditions of
+/// `Git::moved_out` is not an end.
 /// With `only`, the list keeps the deletions of these folders (from the
 /// repository root) and nothing else: the check for a move out and the reads
 /// that follow run for them only. `log` and the pointer of a locked link
@@ -531,7 +532,9 @@ fn folder_of(path: &str) -> &str {
 fn lives(git: &Git, dirs: &[String]) -> Result<Vec<Life>, Fatal> {
     let mut touches = Vec::new();
     // The commit and the path of each `intent.md` that a commit moved out of
-    // its folder with the id as an alias. Such a deletion is not an end.
+    // its folder with the 3 conditions of `Git::moved_out` true (a copy or an
+    // alias, and no other file of the folder removed). Such a deletion is not
+    // an end.
     let mut moved: HashSet<(String, String)> = HashSet::new();
     for d in dirs {
         let found = git.artifact_touches(d).map_err(Fatal::Io)?;

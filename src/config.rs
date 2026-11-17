@@ -1127,6 +1127,38 @@ pub const DEFAULT_TEST_GLOBS: [&str; 10] = [
 ];
 
 impl Config {
+    /// The area of a document path (from the repository root): its first
+    /// folder under the folder of the layer of `requirements`, or under a
+    /// root of the type `requirements`. A file that is directly in that folder
+    /// is in no area.
+    pub fn area_of_path<'a>(&self, path: &'a str) -> Option<&'a str> {
+        let root = &self.roots[self.root_of(path)?];
+        let rel = root.rel(path);
+        let rest = if root.single_type == Some(DocType::Requirements) {
+            rel
+        } else {
+            let dir = self
+                .layers
+                .layer_of_type(DocType::Requirements)
+                .and_then(|i| self.layers.layers()[i].dir())?;
+            rel.strip_prefix(dir)?.strip_prefix('/')?
+        };
+        let (area, tail) = rest.split_once('/')?;
+        (!area.is_empty() && !tail.is_empty()).then_some(area)
+    }
+
+    /// The area of `path` and the name of `areas` that it equals in lowercase
+    /// ASCII and not in bytes, if there is one. `new` and `mv` stop for it.
+    /// With an empty `areas` there is none.
+    pub fn area_case_clash<'a>(&self, path: &'a str) -> Option<(&'a str, &str)> {
+        let area = self.area_of_path(path)?;
+        self.areas
+            .iter()
+            .map(String::as_str)
+            .find(|a| *a != area && same_area_name(a, area))
+            .map(|a| (area, a))
+    }
+
     pub fn parse(text: &str) -> Result<Config, String> {
         let table: Table = text
             .parse()
@@ -1847,7 +1879,31 @@ fn areas_list(areas: &[String]) -> Result<Vec<String>, String> {
         }
         out.push(a.clone());
     }
+    if let Some((a, b)) = area_case_pair(out.iter().map(String::as_str)) {
+        return Err(format!(
+            "`areas`: `{a}` and `{b}` differ only in case; use one of them (a case-insensitive file system gives one folder for both)"
+        ));
+    }
     Ok(out)
+}
+
+/// True if 2 area names are the same name in lowercase ASCII. The compare
+/// changes no other letter: `É` and `é` are 2 names.
+pub fn same_area_name(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
+/// The first pair of names that differ only in case, as `(earlier, later)`.
+/// A name that is listed twice is no pair.
+pub fn area_case_pair<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<(&'a str, &'a str)> {
+    let mut seen: Vec<&'a str> = Vec::new();
+    for n in names {
+        if let Some(&first) = seen.iter().find(|&&o| o != n && same_area_name(o, n)) {
+            return Some((first, n));
+        }
+        seen.push(n);
+    }
+    None
 }
 
 /// Reads `[groups]`: each key is a group, and its value is a list of areas
@@ -2732,6 +2788,50 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         Config::parse(&format!(
             "spec-dna = \"0.1.0\"\n{head}\n[[roots]]\npath = \"docs\"\n{tail}"
         ))
+    }
+
+    #[test]
+    fn area_names_compare_in_lowercase_ascii() {
+        assert!(same_area_name("Valves", "valves"));
+        assert!(!same_area_name("valves", "valve"));
+        // Only ASCII letters change case.
+        assert!(!same_area_name("\u{c9}t\u{e9}", "\u{e9}t\u{e9}"));
+        assert_eq!(
+            area_case_pair(["a", "Valves", "b", "valves"]),
+            Some(("Valves", "valves"))
+        );
+        assert_eq!(area_case_pair(["a", "a", "b"]), None);
+        assert_eq!(area_case_pair(["\u{c9}", "\u{e9}"]), None);
+        let e = with("areas = [\"b\", \"B\"]", "").unwrap_err();
+        assert!(e.contains("`b` and `B` differ only in case"), "{e}");
+        // The exact duplicate has its own message.
+        let e = with("areas = [\"b\", \"b\"]", "").unwrap_err();
+        assert!(e.contains("listed twice"), "{e}");
+    }
+
+    #[test]
+    fn the_area_of_a_path_is_the_first_folder_under_the_requirements_layer() {
+        let c = with("areas = [\"valves\"]", "type = \"mixed\"\n").unwrap();
+        assert_eq!(
+            c.area_of_path("docs/requirements/valves/a.md"),
+            Some("valves")
+        );
+        assert_eq!(
+            c.area_of_path("docs/requirements/valves/x/a.md"),
+            Some("valves")
+        );
+        assert_eq!(c.area_of_path("docs/requirements/a.md"), None);
+        assert_eq!(c.area_of_path("docs/rules/valves/a.md"), None);
+        assert_eq!(
+            c.area_case_clash("docs/requirements/Valves/a.md"),
+            Some(("Valves", "valves"))
+        );
+        assert_eq!(c.area_case_clash("docs/requirements/valves/a.md"), None);
+        assert_eq!(c.area_case_clash("docs/requirements/other/a.md"), None);
+        // A root of the type `requirements` has no layer folder in its paths.
+        let c = with("areas = [\"valves\"]", "type = \"requirements\"\n").unwrap();
+        assert_eq!(c.area_of_path("docs/valves/a.md"), Some("valves"));
+        assert_eq!(c.area_of_path("docs/a.md"), None);
     }
 
     #[test]

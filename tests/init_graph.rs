@@ -669,3 +669,38 @@ fn the_skill_describes_the_places() {
     let (_, out, _) = r2.run(&["init", "--dry-run", "--non-interactive", "--json"]);
     assert!(out.contains("\"default_type\":null"), "{out}");
 }
+
+#[test]
+fn two_folders_that_differ_only_in_case_give_one_area_and_a_note() {
+    // The 2 folders are in 2 roots, so a file system that ignores case keeps
+    // them apart. `Valves` has the most documents.
+    let r = Repo::empty();
+    for (folder, n) in [
+        ("specs/valves", 2),
+        ("specs/sensors", 2),
+        ("requirements/Valves", 3),
+    ] {
+        for i in 0..n {
+            r.write(
+                &format!("docs/{folder}/note-{i}.md"),
+                "---\nstatus: active\n---\n# Note\n\n## Requirements\n\n- **open**: The controller SHALL open the valve.\n",
+            );
+        }
+    }
+    r.commit("docs");
+    let (code, out, err) = r.run(&["init", "--non-interactive", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("areas = [\"Valves\", \"sensors\"]"), "{out}");
+    assert!(
+        out.lines().any(|l| l.starts_with("note: ")
+            && l.contains("`Valves`")
+            && l.contains("`valves`")
+            && l.contains("differ only in case")),
+        "{out}"
+    );
+    // The file that `init` writes passes its own reader.
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}

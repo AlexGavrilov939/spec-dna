@@ -1592,6 +1592,25 @@ fn two_documents_for_one_area_file_stop_the_plan() {
 }
 
 #[test]
+fn a_pair_of_areas_that_differ_only_in_case_stops_the_plan_with_exit_code_1() {
+    let repo = Repo::from_fixture("v05", &[]);
+    let before = tree_bytes(&repo.dir);
+    let map = "[areas]\n\"irrigation/pumps\" = \"pumps\"\n\"irrigation/sensors\" = \"Pumps\"\n";
+    for extra in [&[][..], &["--dry-run"], &["--json"]] {
+        let (code, out, err) = upgrade_areas(&repo, map, extra);
+        assert_eq!(code, 1, "{extra:?}: {out}{err}");
+        assert!(
+            err.contains("differ only in case")
+                && err.contains("`pumps`")
+                && err.contains("`Pumps`"),
+            "{err}"
+        );
+        assert_eq!(before, tree_bytes(&repo.dir), "{extra:?}");
+        assert_eq!(status(&repo), "", "{extra:?}");
+    }
+}
+
+#[test]
 fn an_area_target_that_exists_stops_the_plan() {
     let repo = Repo::from_fixture("v05", &[]);
     repo.write(

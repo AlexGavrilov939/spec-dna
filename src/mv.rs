@@ -110,6 +110,14 @@ fn move_document(
             "`{to_path}` has the same id `{new_id}`"
         )));
     }
+    // An area that differs from a name of `areas` only in case stops the move
+    // before any other check. On a file system that ignores case, the folder
+    // of the other case is the same folder.
+    if let Some((area, name)) = config.area_case_clash(&to_path) {
+        return Err(Fatal::Usage(format!(
+            "the area `{area}` of `{to_path}` differs from the area `{name}` of `areas` only in case; use `{name}`"
+        )));
+    }
     // The new id can be a front matter alias of the moved document itself.
     // The move then drops that alias. A file at the path, the id of another
     // document, a legacy alias and an ambiguous alias stop the move.

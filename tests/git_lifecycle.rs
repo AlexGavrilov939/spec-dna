@@ -418,10 +418,33 @@ fn moved_out_needs_a_rename_and_the_old_id_as_an_alias() {
     r.commit("move with an inline alias");
     assert_eq!(moved_out_of_head(&r), [true]);
 
-    // Condition 2 fails: a plain `git mv` writes no alias.
+    // Condition 2 holds without an alias: a plain `git mv` is `R100` (D31 of
+    // 0.7.0).
     let r = with_long_intent();
     r.git(&["mv", INTENT, "docs/roadmap.md"]);
     r.commit("plain move");
+    assert_eq!(moved_out_of_head(&r), [true]);
+
+    // Condition 2 fails: a near copy with no alias is no `R100`.
+    let r = with_long_intent();
+    r.write(
+        "docs/roadmap.md",
+        &format!("---\nstatus: draft\n---\n{LONG}\nA new line.\n"),
+    );
+    std::fs::remove_file(r.dir.join(INTENT)).unwrap();
+    r.commit("move with an edit and no alias");
+    assert_eq!(moved_out_of_head(&r), [false]);
+
+    // Condition 3 fails: the same commit removes another file of the folder.
+    let r = with_long_intent();
+    r.write(
+        "docs/intent/slug/plan.md",
+        "---\nstatus: draft\n---\n# Plan\n",
+    );
+    r.commit("a plan");
+    r.git(&["mv", INTENT, "docs/roadmap.md"]);
+    r.git(&["rm", "-q", "docs/intent/slug/plan.md"]);
+    r.commit("move the intent and remove the plan");
     assert_eq!(moved_out_of_head(&r), [false]);
 
     // Condition 2 fails: the alias is another id.

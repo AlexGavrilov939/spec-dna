@@ -280,8 +280,15 @@ last line `Hours: <number>` or `Hours: <a>-<b>` of the commit message that
 deleted the intent (a dash if there is none). A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
 default branch, has no entry. A move of intent.md out of the intent folder
-that keeps its id as an alias (spec-dna mv) does not end a change. A plain
-git mv, which writes no alias, still reads as a deletion. --since limits the walk to the commits after <rev>. In a
+does not end a change if 3 conditions are true. Git finds the rename. The
+new file is the same text, or it has the old id in its aliases
+(spec-dna mv writes it). The same commit removes no other file of the
+change folder. Thus a plain git mv of intent.md is a move, and a git mv of
+the whole folder, or a finish that removes the spec and the plan, ends the
+change. 2 cases stay as they were in 0.6.1 and read as a move: a folder
+that holds only intent.md, moved with git mv, and a finish that adds a near
+copy with the old id in its aliases to such a folder. --since limits the walk
+to the commits after <rev>. In a
 shallow clone, a note says that older changes can be missing, and --json has
 shallow: true. With the policy none, it says that the change process is off
 and lists nothing. Exit codes: 2 usage, 3 configuration or a revision that is
@@ -295,8 +302,10 @@ playbook names. It reads git and the committed files only: the plan and
 design times, the survival rate of the intents, the spec commits after the
 first plan commit, the time from plan approval to the merged pull request,
 and how often the merged diff stays inside the plan (SD913). A move of
-intent.md out of the intent folder that keeps its id as an alias (spec-dna
-mv) does not end a life: stats drops that change. An indicator
+intent.md out of the intent folder does not end a life if git finds the
+rename, the new file is the same text or has the old id in its aliases, and
+the same commit removes no other file of the folder (see log): stats drops
+that change. An indicator
 that git cannot give prints n/a with the reason, and --json has value null
 and a reason. With --group, it counts only the changes that have an area of
 the group. An unknown group is a usage error, and so is stats without --sdlc.
@@ -2165,6 +2174,11 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "`{path}` is in another root or excluded; use --root"
         )));
     }
+    if let Some((area, name)) = cfg.area_case_clash(&path) {
+        return Err(Fatal::Usage(format!(
+            "the area `{area}` of `{path}` differs from the area `{name}` of `areas` only in case; use `{name}`"
+        )));
+    }
     let file = repo.root.join(&path);
     if file.exists() {
         return Err(Fatal::Usage(format!("`{path}` exists")));
@@ -2703,7 +2717,33 @@ fn index(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         .map(|o| o.parsed.title.clone())
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| templates::title_of(mv::parent(&path)));
-    let text = registry::render(&path, &entries, existing.as_deref(), &title);
+    let status = registry::index_status(&cfg, &path, existing.as_deref()).map_err(|_| {
+        let dir = mv::parent(&path);
+        let base = cfg.roots[root].path.as_str();
+        let rel = dir
+            .strip_prefix(base)
+            .map_or(dir, |r| r.trim_start_matches('/'));
+        let layer = cfg
+            .layers
+            .layers()
+            .iter()
+            .find(|l| l.types.len() > 1 && l.dir() == Some(rel));
+        Fatal::Usage(match layer {
+            Some(l) => {
+                let names: Vec<&str> = l.types.iter().map(|t| t.name()).collect();
+                format!(
+                    "the folder `{dir}` is the folder of the layer `{}`, which holds more than one type ({}), so the place gives no type; index a folder under another layer, or set `default-type` of the root",
+                    l.name,
+                    names.join(", ")
+                )
+            }
+            None => format!(
+                "the place `{}` gives no type; index a folder of a layer, or set `default-type` of the root",
+                if dir.is_empty() { "." } else { dir }
+            ),
+        })
+    })?;
+    let text = registry::render(&path, &entries, existing.as_deref(), &title, status);
     let mut changed = std::collections::HashMap::from([(path.clone(), text)]);
     // Links to a section of the old file that names an entry go to the entry.
     let mut rewritten = 0;
