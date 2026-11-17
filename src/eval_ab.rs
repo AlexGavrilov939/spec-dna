@@ -36,9 +36,15 @@ use std::path::Path;
 pub const PACK: &str = "pack";
 /// The command that the arm `without` denies.
 const DENIED: &str = "Bash(spec-dna skill:*)";
-/// The evals of the pair `agents-line`: the first eval of each skill that a
-/// discipline names.
-pub const AGENTS_LINE_EVALS: [&str; 5] = ["tdd-1", "debug-1", "verify-1", "review-1", "execute-1"];
+/// The evals of the pair `agents-line`: the first eval of `tdd`, `debug` and
+/// `execute`, and 2 evals that name the group (`skill = "agents-line"`).
+pub const AGENTS_LINE_EVALS: [&str; 5] = [
+    "tdd-1",
+    "debug-1",
+    "execute-1",
+    "agents-line-1",
+    "agents-line-2",
+];
 
 /// The options of `eval run --ab`.
 pub struct Opts {
@@ -1087,33 +1093,6 @@ fn error_text(repo: &Repo, message: &str) -> String {
     text.chars().take(200).collect()
 }
 
-fn interval(i: &verdict::Interval) -> String {
-    Obj::new()
-        .num("value", r6(i.value))
-        .num("low", r6(i.low))
-        .num("high", r6(i.high))
-        .end()
-}
-
-fn arm_json(a: Option<&verdict::Arm>) -> String {
-    let zero = verdict::Arm {
-        runs: 0,
-        passes: 0,
-        cost: 0.0,
-    };
-    let a = a.unwrap_or(&zero);
-    let obj = Obj::new()
-        .num("runs", a.runs)
-        .num("passes", a.passes)
-        .num("pass_rate", r6(a.pass_rate()))
-        .num("cost_usd", r6(a.cost));
-    match a.cost_per_correct() {
-        Some(c) => obj.num("cost_per_correct_usd", r6(c)),
-        None => obj.raw("cost_per_correct_usd", "null"),
-    }
-    .end()
-}
-
 fn side_json(s: &Option<Side>) -> String {
     let Some(s) = s else {
         return "null".to_string();
@@ -1165,14 +1144,14 @@ fn item_json(it: &Item) -> String {
     let obj = Obj::new()
         .str("name", &it.name)
         .num("evals", it.evals)
-        .raw("with", &arm_json(a.map(|a| &a.with)))
-        .raw("without", &arm_json(a.map(|a| &a.without)));
+        .raw("with", &verdict::arm_json(a.map(|a| &a.with)))
+        .raw("without", &verdict::arm_json(a.map(|a| &a.without)));
     let obj = match a {
-        Some(a) => obj.raw("difference", &interval(&a.difference)),
+        Some(a) => obj.raw("difference", &verdict::interval_json(&a.difference)),
         None => obj.raw("difference", "null"),
     };
     let obj = match a.and_then(|a| a.cost_ratio.as_ref()) {
-        Some(r) => obj.raw("cost_ratio", &interval(r)),
+        Some(r) => obj.raw("cost_ratio", &verdict::interval_json(r)),
         None => obj.raw("cost_ratio", "null"),
     };
     let obj = obj.opt_str("verdict", verdict_of.map(|a| a.verdict.name()));

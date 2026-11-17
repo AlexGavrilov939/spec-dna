@@ -3017,6 +3017,11 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                 .into(),
         ));
     }
+    if a.release && sub != Some("verdict") {
+        return Err(Fatal::Usage(
+            "--release is an option of `eval verdict`".into(),
+        ));
+    }
     if sub == Some("records") {
         // `records` reads one file that can be outside the repository. It takes
         // no option, and it needs no configuration.
@@ -3059,17 +3064,16 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                 return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
             }
         }
-        if a.release && sub != Some("verdict") {
-            return Err(Fatal::Usage(
-                "--release is an option of `eval verdict`".into(),
-            ));
-        }
         if a.positional.len() > 1 {
             return Err(Fatal::Usage(format!(
                 "`eval {}` takes no argument",
                 a.positional[0]
             )));
         }
+    }
+    if a.release {
+        // The table of the release is in the binary. It needs no project.
+        return Ok(eval_release_cmd(a.json));
     }
     let repo = Repo::discover(cwd)?;
     let cfg = repo.load_config()?;
@@ -3197,6 +3201,19 @@ fn eval_pack_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8, Fa
         table.dir
     );
     Ok(0)
+}
+
+/// `eval verdict --release`: the table of the release (`verdict::RELEASE`),
+/// one line for each name that has a row. It reads no file and starts no agent.
+fn eval_release_cmd(json: bool) -> u8 {
+    if json {
+        println!("{}", verdict::release_json(verdict::RELEASE));
+    } else {
+        for row in verdict::RELEASE {
+            println!("{}", verdict::release_line(row));
+        }
+    }
+    0
 }
 
 /// `eval verdict`: the verdict of each skill and of `agents-line`. It reads

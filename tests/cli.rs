@@ -4921,7 +4921,7 @@ fn eval_pack_and_eval_run_ab_need_the_evals_table_and_eval_verdict_does_not() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(out.lines().count(), 12, "{out}");
     assert!(out.starts_with("brainstorm unmeasured -\n"), "{out}");
-    assert!(out.ends_with("agents-line unmeasured -\n"), "{out}");
+    assert!(out.ends_with("agents-line inconclusive release\n"), "{out}");
 }
 
 // The status of a generated index (D29 of 0.7.0)

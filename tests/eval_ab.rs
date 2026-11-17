@@ -150,8 +150,9 @@ printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%
 
 const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
 
-/// The 5 skills that a discipline names, with the `agents-line` evals.
-const DISCIPLINED: [&str; 5] = ["tdd", "debug", "verify", "review", "execute"];
+/// The groups of the evals of the pair `agents-line`: `tdd-1`, `debug-1` and
+/// `execute-1`, and the 2 evals that name the group.
+const DISCIPLINED: [&str; 4] = ["tdd", "debug", "execute", "agents-line"];
 
 fn pack_eval(id: &str, skill: &str, runs: u32) -> String {
     format!(
@@ -180,7 +181,9 @@ impl Fx {
         assert_eq!(code, 0, "{out}{err}");
         repo.write("evals/check.sh", CHECK_SH);
         for skill in packed {
-            for n in 1..=5 {
+            // The group `agents-line` has 2 evals of its own.
+            let last = if *skill == "agents-line" { 2 } else { 5 };
+            for n in 1..=last {
                 let id = format!("{skill}-{n}");
                 repo.write(
                     &format!("evals/pack/{id}.json"),
@@ -798,10 +801,20 @@ fn the_target_agents_line_runs_5_evals_with_no_skill_folder_in_each_arm() {
         out.contains("eval run --ab agents-line (dry run): 5 evals, 10 runs"),
         "{out}"
     );
-    for id in ["tdd-1", "debug-1", "verify-1", "review-1", "execute-1"] {
+    for id in [
+        "tdd-1",
+        "debug-1",
+        "execute-1",
+        "agents-line-1",
+        "agents-line-2",
+    ] {
         assert!(out.contains(&format!("{id}: 1 runs")), "{id}: {out}");
     }
     assert!(!out.contains("tdd-2"), "{out}");
+    assert!(
+        !out.contains("verify-1") && !out.contains("review-1"),
+        "{out}"
+    );
     let (code, out, err) = fx.run(&["agents-line", "--max-total-usd", "100", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("\"target\":\"agents-line\""), "{out}");
@@ -1251,8 +1264,11 @@ fn verdicts(out: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
+/// The names that the table of the release holds a row for.
+const RELEASED: [&str; 5] = ["execute", "tdd", "verify", "debug", "agents-line"];
+
 #[test]
-fn eval_verdict_prints_unmeasured_for_each_name_when_nothing_is_measured() {
+fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_others() {
     let fx = Fx::new(&["brainstorm"], &[], 1);
     let (code, out, err) = fx.raw(&["eval", "verdict"], &[]);
     assert_eq!(code, 0, "{out}{err}");
@@ -1276,16 +1292,95 @@ fn eval_verdict_prints_unmeasured_for_each_name_when_nothing_is_measured() {
         ]
     );
     for (name, verdict, source) in rows {
-        assert_eq!(verdict, "unmeasured", "{name}");
-        assert_eq!(source, "-", "{name}");
+        if RELEASED.contains(&name.as_str()) {
+            assert_eq!(source, "release", "{name}");
+            assert_eq!(verdict, if name == "tdd" { "on" } else { "inconclusive" });
+        } else {
+            assert_eq!(verdict, "unmeasured", "{name}");
+            assert_eq!(source, "-", "{name}");
+        }
     }
     assert!(fx.calls().is_empty(), "the command starts no agent");
     let (code, out, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("{\"name\":\"tdd\",\"verdict\":\"unmeasured\",\"source\":null,\"file\":null}"),
+        out.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"release\",\"file\":null}"),
         "{out}"
     );
+    assert!(
+        out.contains(
+            "{\"name\":\"brainstorm\",\"verdict\":\"unmeasured\",\"source\":null,\"file\":null}"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn eval_verdict_release_prints_the_table_of_the_release() {
+    let fx = Fx::new(&["brainstorm"], &[], 1);
+    let (code, out, err) = fx.raw(&["eval", "verdict", "--release"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 5, "{out}");
+    let names: Vec<&str> = lines.iter().map(|l| l.split(' ').next().unwrap()).collect();
+    assert_eq!(names, RELEASED);
+    // `tdd` is on by rule 1, and the 4 other names are inconclusive.
+    let tdd = lines[1];
+    assert!(
+        tdd.starts_with(
+            "tdd on (rule 1): with 10/20 0.50, without 1/20 0.05, cost per correct 1.99"
+        ),
+        "{tdd}"
+    );
+    assert!(
+        tdd.contains(
+            "difference 0.45 [0.15, 0.75], cost ratio -, batch 20261117T082902Z-tdd, claude 2.1.326"
+        ),
+        "{tdd}"
+    );
+    for l in [lines[0], lines[2], lines[3], lines[4]] {
+        assert!(l.split(' ').nth(1) == Some("inconclusive:"), "{l}");
+    }
+    assert!(fx.calls().is_empty(), "the command starts no agent");
+
+    let (code, json, err) = fx.raw(&["eval", "verdict", "--release", "--json"], &[]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(
+        json.starts_with("{\"release\":[{\"name\":\"execute\","),
+        "{json}"
+    );
+    assert!(
+        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261117T082902Z-tdd\",\"claude_code\":\"2.1.326\",\"models\":[\"claude-fable-5-2\",\"claude-opus-5-5\"],\"with\":{\"runs\":20,\"passes\":10,"),
+        "{json}"
+    );
+    assert!(json.contains("\"cost_ratio\":null"), "{json}");
+    assert_eq!(json.matches("\"name\":").count(), 5, "{json}");
+    // The table needs no project: it reads no result file of the project.
+    fx.repo.write(
+        "evals/results/skills-20261120T100000Z.json",
+        "{\"skills\":[{\"name\":\"tdd\",\"verdict\":\"off\"}]}\n",
+    );
+    let (_, again, _) = fx.raw(&["eval", "verdict", "--release"], &[]);
+    assert_eq!(again, out);
+}
+
+#[test]
+fn release_is_an_option_of_eval_verdict_only() {
+    let fx = Fx::new(&["brainstorm"], &[], 1);
+    for args in [
+        vec!["eval", "pack", "--release"],
+        vec!["eval", "run", "--release"],
+        vec!["eval", "records", "x.json", "--release"],
+        vec!["check", "--release"],
+        vec!["eval", "verdict", "--release", "tdd"],
+    ] {
+        let (code, out, err) = fx.raw(&args, &[]);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert!(
+            err.contains("Run `spec-dna --help` for usage."),
+            "{args:?}: {err}"
+        );
+    }
 }
 
 #[test]
@@ -1323,7 +1418,10 @@ fn eval_verdict_reads_the_newest_file_that_holds_each_name() {
         get("debug").2,
         "project evals/results/skills-20261121T100000Z.json"
     );
-    assert_eq!(get("verify").1, "unmeasured");
+    assert_eq!(get("brainstorm").1, "unmeasured");
+    // A name that the release holds, and no result file of the project holds.
+    assert_eq!(get("verify").1, "inconclusive");
+    assert_eq!(get("verify").2, "release");
     let (_, json, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
     assert!(
         json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"project\",\"file\":\"evals/results/skills-20261120T100000Z.json\"}"),
@@ -1338,7 +1436,8 @@ fn eval_verdict_works_with_no_evals_table_and_gives_3_for_a_bad_configuration() 
     r.commit("start");
     let (code, out, err) = r.run(&["eval", "verdict"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("tdd unmeasured -\n"), "{out}");
+    assert!(out.contains("brainstorm unmeasured -\n"), "{out}");
+    assert!(out.contains("tdd on release\n"), "{out}");
     r.write("spec-dna.toml", "this is = not [ toml\n");
     let (code, _, _) = r.run(&["eval", "verdict"]);
     assert_eq!(code, 3);

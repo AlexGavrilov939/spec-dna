@@ -274,14 +274,256 @@ pub fn decide(
     (Verdict::Inconclusive, None)
 }
 
-/// The verdicts that the binary holds for the release. The run step fills it
-/// from the committed result of the pilot and of the full run before the tag.
-/// It is empty until then, so no skill has a verdict of the release.
-pub const RELEASE: &[(&str, Verdict)] = &[];
+/// One row of the table of the release: the analysis of the newest batch of
+/// the committed records (`bench/results/evals/`) that holds the name. A test
+/// computes the table from the records and compares it with `RELEASE`, so the
+/// constant and the records agree. Costs and intervals have 6 decimals.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Row {
+    pub name: &'static str,
+    /// The stem of the file of the batch.
+    pub batch: &'static str,
+    pub claude_code: Option<&'static str>,
+    /// The sorted union of the models of the records.
+    pub models: &'static [&'static str],
+    pub with: Arm,
+    pub without: Arm,
+    pub difference: Interval,
+    pub cost_ratio: Option<Interval>,
+    pub verdict: Verdict,
+    pub rule: Option<u8>,
+}
+
+/// The table of the release. A name that has no record has no row, and
+/// `eval verdict` prints it as `unmeasured`.
+pub const RELEASE: &[Row] = &[
+    Row {
+        name: "execute",
+        batch: "20261117T082858Z-execute",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 20,
+            passes: 16,
+            cost: 24.34259,
+        },
+        without: Arm {
+            runs: 20,
+            passes: 15,
+            cost: 26.609628,
+        },
+        difference: Interval {
+            value: 0.05,
+            low: -0.25,
+            high: 0.3,
+        },
+        cost_ratio: Some(Interval {
+            value: 0.857629,
+            low: 0.580575,
+            high: 1.177308,
+        }),
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "tdd",
+        batch: "20261117T082902Z-tdd",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5"],
+        with: Arm {
+            runs: 20,
+            passes: 10,
+            cost: 19.937457,
+        },
+        without: Arm {
+            runs: 20,
+            passes: 1,
+            cost: 19.680766,
+        },
+        difference: Interval {
+            value: 0.45,
+            low: 0.15,
+            high: 0.75,
+        },
+        cost_ratio: None,
+        verdict: Verdict::On,
+        rule: Some(1),
+    },
+    Row {
+        name: "verify",
+        batch: "20261117T082906Z-verify",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 20,
+            passes: 20,
+            cost: 16.238337,
+        },
+        without: Arm {
+            runs: 20,
+            passes: 20,
+            cost: 14.753787,
+        },
+        difference: Interval {
+            value: 0.0,
+            low: 0.0,
+            high: 0.0,
+        },
+        cost_ratio: Some(Interval {
+            value: 1.100622,
+            low: 0.92935,
+            high: 1.314506,
+        }),
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "debug",
+        batch: "20261117T082910Z-debug",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 20,
+            passes: 15,
+            cost: 14.636573,
+        },
+        without: Arm {
+            runs: 20,
+            passes: 13,
+            cost: 12.482311,
+        },
+        difference: Interval {
+            value: 0.1,
+            low: -0.1,
+            high: 0.3,
+        },
+        cost_ratio: None,
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "agents-line",
+        batch: "20261117T082914Z-agents-line",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 20,
+            passes: 13,
+            cost: 21.098643,
+        },
+        without: Arm {
+            runs: 20,
+            passes: 13,
+            cost: 22.61437,
+        },
+        difference: Interval {
+            value: 0.0,
+            low: -0.45,
+            high: 0.4,
+        },
+        cost_ratio: None,
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+];
 
 /// The verdict of the release for a name, if the table holds one.
 pub fn release(name: &str) -> Option<Verdict> {
-    RELEASE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+    RELEASE.iter().find(|r| r.name == name).map(|r| r.verdict)
+}
+
+fn r6(x: f64) -> f64 {
+    crate::eval_run::r6(x)
+}
+
+/// The JSON of an interval, with 6 decimals.
+pub fn interval_json(i: &Interval) -> String {
+    json::Obj::new()
+        .num("value", r6(i.value))
+        .num("low", r6(i.low))
+        .num("high", r6(i.high))
+        .end()
+}
+
+/// The JSON of the counts of an arm. An arm with no pass has the cost per
+/// correct outcome `null`.
+pub fn arm_json(a: Option<&Arm>) -> String {
+    let zero = Arm {
+        runs: 0,
+        passes: 0,
+        cost: 0.0,
+    };
+    let a = a.unwrap_or(&zero);
+    let obj = json::Obj::new()
+        .num("runs", a.runs)
+        .num("passes", a.passes)
+        .num("pass_rate", r6(a.pass_rate()))
+        .num("cost_usd", r6(a.cost));
+    match a.cost_per_correct() {
+        Some(c) => obj.num("cost_per_correct_usd", r6(c)),
+        None => obj.raw("cost_per_correct_usd", "null"),
+    }
+    .end()
+}
+
+/// One line of `eval verdict --release`, for the report and the release notes.
+pub fn release_line(r: &Row) -> String {
+    let verdict = match r.rule {
+        Some(rule) => format!("{} (rule {rule})", r.verdict.name()),
+        None => r.verdict.name().to_string(),
+    };
+    let per = |a: &Arm| {
+        a.cost_per_correct()
+            .map_or("-".to_string(), |c| format!("{:.6}", r6(c)))
+    };
+    let ratio = r.cost_ratio.map_or("-".to_string(), |c| {
+        format!("{:.2} [{:.2}, {:.2}]", c.value, c.low, c.high)
+    });
+    format!(
+        "{} {verdict}: with {}/{} {:.2}, without {}/{} {:.2}, cost per correct {} and {} USD, difference {:.2} [{:.2}, {:.2}], cost ratio {ratio}, batch {}, claude {}",
+        r.name,
+        r.with.passes,
+        r.with.runs,
+        r.with.pass_rate(),
+        r.without.passes,
+        r.without.runs,
+        r.without.pass_rate(),
+        per(&r.with),
+        per(&r.without),
+        r.difference.value,
+        r.difference.low,
+        r.difference.high,
+        r.batch,
+        r.claude_code.unwrap_or("-"),
+    )
+}
+
+/// The JSON of `eval verdict --release`.
+pub fn release_json(rows: &[Row]) -> String {
+    let items = rows.iter().map(|r| {
+        let models: Vec<String> = r.models.iter().map(|m| (*m).to_string()).collect();
+        let obj = json::Obj::new()
+            .str("name", r.name)
+            .str("verdict", r.verdict.name());
+        let obj = match r.rule {
+            Some(n) => obj.num("rule", n),
+            None => obj.raw("rule", "null"),
+        };
+        obj.str("batch", r.batch)
+            .opt_str("claude_code", r.claude_code)
+            .strs("models", &models)
+            .raw("with", &arm_json(Some(&r.with)))
+            .raw("without", &arm_json(Some(&r.without)))
+            .raw("difference", &interval_json(&r.difference))
+            .raw(
+                "cost_ratio",
+                &r.cost_ratio
+                    .as_ref()
+                    .map_or("null".to_string(), interval_json),
+            )
+            .end()
+    });
+    json::Obj::new().raw("release", &json::array(items)).end()
 }
 
 /// The 11 names of the skills and `agents-line`, the names that a result and
@@ -615,7 +857,7 @@ mod tests {
             Source::Project("evals/results/skills-20261121T100000Z.json".into())
         );
         assert_eq!(resolve("debug", &files).verdict, Some(Verdict::On));
-        let none = resolve("verify", &files);
+        let none = resolve("brainstorm", &files);
         assert_eq!((none.verdict, none.source), (None, Source::None));
         assert!(is_on("debug", &files));
         assert!(!is_on("tdd", &files));
@@ -646,11 +888,489 @@ mod tests {
     }
 
     #[test]
-    fn the_table_of_the_release_is_empty_until_the_run_fills_it() {
-        assert!(RELEASE.is_empty());
-        assert_eq!(release("tdd"), None);
+    fn the_names_are_the_11_skills_and_agents_line() {
         assert_eq!(names().len(), 12);
         assert_eq!(names()[11], "agents-line");
+    }
+
+    // The committed records (`bench/results/evals/*.jsonl`).
+
+    const RECORD_KEYS: [&str; 9] = [
+        "skill",
+        "eval",
+        "run",
+        "arm",
+        "pass",
+        "cost",
+        "tokens",
+        "models",
+        "claude_code",
+    ];
+
+    struct Rec {
+        skill: String,
+        eval: String,
+        run: u32,
+        with: bool,
+        pass: bool,
+        cost: Option<f64>,
+        models: Vec<String>,
+        claude_code: Option<String>,
+    }
+
+    fn records_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("bench/results/evals")
+    }
+
+    /// The file stems of the records in the order of a batch: the stamp, then
+    /// the number of the suffix (`<stamp>-2-<target>` is the second file of
+    /// the second), then the stem.
+    fn batch_order(stem: &str) -> (String, u32, String) {
+        let (stamp, rest) = stem.split_at(stem.find('Z').map_or(0, |i| i + 1));
+        let n = rest
+            .strip_prefix('-')
+            .and_then(|r| r.split_once('-'))
+            .and_then(|(n, _)| n.parse::<u32>().ok())
+            .unwrap_or(1);
+        (stamp.to_string(), n, stem.to_string())
+    }
+
+    /// Reads one record. It fails on a key that is missing, in another order,
+    /// or outside its form.
+    fn read_record(line: &str) -> Result<Rec, String> {
+        let v = json::parse(line)?;
+        let json::Value::Obj(fields) = &v else {
+            return Err("no object".into());
+        };
+        let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+        if keys != RECORD_KEYS {
+            return Err(format!("keys {keys:?}"));
+        }
+        let text = |k: &str| v.get(k).as_str().map(str::to_string);
+        let skill = text("skill")
+            .filter(|s| names().contains(&s.as_str()))
+            .ok_or("skill")?;
+        let eval = text("eval")
+            .filter(|s| crate::eval_records::valid_eval_id(s))
+            .ok_or("eval")?;
+        let run = match v.get("run") {
+            json::Value::Num(n) if n.fract() == 0.0 && (1.0..=100.0).contains(n) => *n as u32,
+            _ => return Err("run".into()),
+        };
+        let with = match v.get("arm").as_str() {
+            Some("with") => true,
+            Some("without") => false,
+            _ => return Err("arm".into()),
+        };
+        let pass = match v.get("pass") {
+            json::Value::Bool(b) => *b,
+            _ => return Err("pass".into()),
+        };
+        let cost = match v.get("cost") {
+            json::Value::Null => None,
+            json::Value::Num(n) if *n >= 0.0 && (n * 1e6 - (n * 1e6).round()).abs() < 1e-6 => {
+                Some(*n)
+            }
+            _ => return Err("cost".into()),
+        };
+        match v.get("tokens") {
+            json::Value::Null => {}
+            t @ json::Value::Obj(f) => {
+                let k: Vec<&str> = f.iter().map(|(k, _)| k.as_str()).collect();
+                if k != ["in", "out", "cache_read", "cache_write"]
+                    || !k.iter().all(|k| {
+                        matches!(t.get(k), json::Value::Num(n) if *n >= 0.0 && n.fract() == 0.0)
+                    })
+                {
+                    return Err("tokens".into());
+                }
+            }
+            _ => return Err("tokens".into()),
+        }
+        let models: Vec<String> = v
+            .get("models")
+            .as_arr()
+            .iter()
+            .map(|m| {
+                m.as_str()
+                    .filter(|m| crate::eval_records::valid_model(m))
+                    .map(str::to_string)
+            })
+            .collect::<Option<_>>()
+            .ok_or("models")?;
+        let mut sorted = models.clone();
+        sorted.sort();
+        sorted.dedup();
+        if models.is_empty() || models.len() > 8 || sorted != models {
+            return Err("models".into());
+        }
+        let claude_code = match v.get("claude_code") {
+            json::Value::Null => None,
+            c => Some(
+                c.as_str()
+                    .filter(|c| crate::eval_records::valid_claude_code(c))
+                    .ok_or("claude_code")?
+                    .to_string(),
+            ),
+        };
+        Ok(Rec {
+            skill,
+            eval,
+            run,
+            with,
+            pass,
+            cost,
+            models,
+            claude_code,
+        })
+    }
+
+    /// Each file of the records: its stem and its records, in the order of
+    /// the batches.
+    fn load() -> Vec<(String, Vec<Rec>)> {
+        let mut files: Vec<(String, Vec<Rec>)> = std::fs::read_dir(records_dir())
+            .expect("bench/results/evals exists")
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let stem = name.strip_suffix(".jsonl")?.to_string();
+                let text = std::fs::read_to_string(e.path()).unwrap();
+                assert!(
+                    text.ends_with('\n') && !text.contains("\n\n"),
+                    "{name}: lines"
+                );
+                assert!(!text.contains('\r'), "{name}: CR");
+                let recs = text
+                    .lines()
+                    .enumerate()
+                    .map(|(i, l)| {
+                        read_record(l).unwrap_or_else(|e| panic!("{name}:{}: {e}", i + 1))
+                    })
+                    .collect();
+                Some((stem, recs))
+            })
+            .collect();
+        files.sort_by_key(|(stem, _)| batch_order(stem));
+        files
+    }
+
+    /// The `max-budget-usd` of an eval of the pack, for a record with no cost.
+    fn budget(eval: &str) -> f64 {
+        crate::eval_pack::all()
+            .iter()
+            .find(|e| e.id == eval)
+            .unwrap_or_else(|| panic!("a record with no cost names `{eval}`, not in the pack"))
+            .max_budget_usd
+    }
+
+    /// The analysis of the records of one name in one batch, with the sorted
+    /// union of the models. The records keep the order of the file, and the
+    /// evals the order of their first appearance.
+    fn analysis_of(recs: &[Rec], name: &str) -> (Analysis, Vec<String>, Option<String>) {
+        let mine: Vec<&Rec> = recs.iter().filter(|r| r.skill == name).collect();
+        let mut evals: Vec<&str> = Vec::new();
+        for r in &mine {
+            if !evals.contains(&r.eval.as_str()) {
+                evals.push(&r.eval);
+            }
+        }
+        let by_eval: Vec<Vec<Pair>> = evals
+            .iter()
+            .map(|e| {
+                let runs: Vec<&&Rec> = mine.iter().filter(|r| r.eval == *e).collect();
+                runs.chunks(2)
+                    .map(|c| {
+                        assert!(c[0].with && !c[1].with, "{e}: arms");
+                        assert_eq!(c[0].run, c[1].run, "{e}: the arms of a pair");
+                        Pair {
+                            with_passed: c[0].pass,
+                            with_cost: c[0].cost.unwrap_or_else(|| budget(e)),
+                            without_passed: c[1].pass,
+                            without_cost: c[1].cost.unwrap_or_else(|| budget(e)),
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut models: Vec<String> = mine.iter().flat_map(|r| r.models.clone()).collect();
+        models.sort();
+        models.dedup();
+        (
+            analyze(&by_eval),
+            models,
+            mine.first().and_then(|r| r.claude_code.clone()),
+        )
+    }
+
+    fn rounded(a: &Arm) -> Arm {
+        Arm {
+            runs: a.runs,
+            passes: a.passes,
+            cost: r6(a.cost),
+        }
+    }
+
+    fn rounded_interval(i: &Interval) -> Interval {
+        Interval {
+            value: r6(i.value),
+            low: r6(i.low),
+            high: r6(i.high),
+        }
+    }
+
+    /// The rows that the records give: for each name, the newest batch that
+    /// has records of the name decides.
+    fn computed() -> Vec<(String, Row2)> {
+        let files = load();
+        let mut rows = Vec::new();
+        for name in names() {
+            let Some((stem, recs)) = files
+                .iter()
+                .rev()
+                .find(|(_, recs)| recs.iter().any(|r| r.skill == name))
+            else {
+                continue;
+            };
+            let (a, models, claude_code) = analysis_of(recs, name);
+            rows.push((
+                name.to_string(),
+                Row2 {
+                    batch: stem.clone(),
+                    claude_code,
+                    models,
+                    with: rounded(&a.with),
+                    without: rounded(&a.without),
+                    difference: rounded_interval(&a.difference),
+                    cost_ratio: a.cost_ratio.as_ref().map(rounded_interval),
+                    verdict: a.verdict,
+                    rule: a.rule,
+                },
+            ));
+        }
+        rows
+    }
+
+    /// A row with owned text.
+    #[derive(Debug)]
+    struct Row2 {
+        batch: String,
+        claude_code: Option<String>,
+        models: Vec<String>,
+        with: Arm,
+        without: Arm,
+        difference: Interval,
+        cost_ratio: Option<Interval>,
+        verdict: Verdict,
+        rule: Option<u8>,
+    }
+
+    fn rust_text(rows: &[(String, Row2)]) -> String {
+        let iv = |i: &Interval| {
+            format!(
+                "Interval {{ value: {:?}, low: {:?}, high: {:?} }}",
+                i.value, i.low, i.high
+            )
+        };
+        let arm = |a: &Arm| {
+            format!(
+                "Arm {{ runs: {}, passes: {}, cost: {:?} }}",
+                a.runs, a.passes, a.cost
+            )
+        };
+        let mut out = String::from("pub const RELEASE: &[Row] = &[\n");
+        for (name, r) in rows {
+            let models: Vec<String> = r.models.iter().map(|m| format!("{m:?}")).collect();
+            let v = match r.verdict {
+                Verdict::On => "On",
+                Verdict::Off => "Off",
+                Verdict::Inconclusive => "Inconclusive",
+            };
+            out += &format!(
+                "    Row {{\n        name: {name:?},\n        batch: {:?},\n        claude_code: {},\n        models: &[{}],\n        with: {},\n        without: {},\n        difference: {},\n        cost_ratio: {},\n        verdict: Verdict::{v},\n        rule: {:?},\n    }},\n",
+                r.batch,
+                r.claude_code
+                    .as_ref()
+                    .map_or("None".to_string(), |c| format!("Some({c:?})")),
+                models.join(", "),
+                arm(&r.with),
+                arm(&r.without),
+                iv(&r.difference),
+                r.cost_ratio
+                    .as_ref()
+                    .map_or("None".to_string(), |c| format!("Some({})", iv(c))),
+                r.rule,
+            );
+        }
+        out + "];\n"
+    }
+
+    #[test]
+    fn the_release_table_agrees_with_the_committed_records() {
+        let rows = computed();
+        let same = rows.len() == RELEASE.len()
+            && rows.iter().zip(RELEASE).all(|((name, r), c)| {
+                *name == c.name
+                    && r.batch == c.batch
+                    && r.claude_code.as_deref() == c.claude_code
+                    && r.models
+                        .iter()
+                        .map(String::as_str)
+                        .eq(c.models.iter().copied())
+                    && r.with == c.with
+                    && r.without == c.without
+                    && r.difference == c.difference
+                    && r.cost_ratio == c.cost_ratio
+                    && r.verdict == c.verdict
+                    && r.rule == c.rule
+            });
+        assert!(
+            same,
+            "RELEASE does not agree with bench/results/evals. Paste this text:\n{}",
+            rust_text(&rows)
+        );
+    }
+
+    #[test]
+    fn each_committed_record_has_the_9_keys_and_safe_values() {
+        let files = load();
+        assert!(!files.is_empty(), "no committed record");
+        for (stem, recs) in &files {
+            let at = |i: usize| format!("{stem}:{}", i + 1);
+            // The pairs: the arm `with` comes first, and then its arm `without`.
+            assert_eq!(recs.len() % 2, 0, "{stem}");
+            for (i, c) in recs.chunks(2).enumerate() {
+                assert!(c[0].with && !c[1].with, "{}: arms", at(i * 2));
+                assert_eq!(
+                    (&c[0].skill, &c[0].eval, c[0].run),
+                    (&c[1].skill, &c[1].eval, c[1].run),
+                    "{}: the 2 arms of a pair",
+                    at(i * 2)
+                );
+            }
+            // The runs of an eval are 1 to n, each once.
+            let mut keys: Vec<(&str, &str)> = recs
+                .iter()
+                .map(|r| (r.skill.as_str(), r.eval.as_str()))
+                .collect();
+            keys.dedup();
+            keys.sort_unstable();
+            keys.dedup();
+            for (skill, eval) in keys {
+                let mut runs: Vec<u32> = recs
+                    .iter()
+                    .filter(|r| r.skill == skill && r.eval == eval && r.with)
+                    .map(|r| r.run)
+                    .collect();
+                runs.sort_unstable();
+                let want: Vec<u32> = (1..=runs.len() as u32).collect();
+                assert_eq!(runs, want, "{stem}: {skill} {eval}");
+            }
+            // The text has no path, no address and no mail.
+            let text =
+                std::fs::read_to_string(records_dir().join(format!("{stem}.jsonl"))).unwrap();
+            for bad in ["/", "\\", "@", "http"] {
+                assert!(!text.contains(bad), "{stem}: `{bad}`");
+            }
+        }
+    }
+
+    #[test]
+    fn the_records_of_the_pilot_repeat_its_published_result() {
+        let files = load();
+        let pilot = |target: &str| {
+            let stem = files
+                .iter()
+                .find(|(s, _)| {
+                    s.starts_with("20261117T0828") && s.ends_with(&format!("Z-{target}"))
+                        || (s.starts_with("20261117T0829") && s.ends_with(&format!("Z-{target}")))
+                })
+                .unwrap_or_else(|| panic!("no pilot file of {target}"));
+            analysis_of(&stem.1, target).0
+        };
+        let near = |x: f64, y: f64| (x - y).abs() < 1e-4;
+        // (name, with passes, without passes, difference, low, high, verdict, rule)
+        let cases = [
+            (
+                "execute",
+                16,
+                15,
+                0.05,
+                -0.25,
+                0.3,
+                Verdict::Inconclusive,
+                None,
+            ),
+            ("tdd", 10, 1, 0.45, 0.15, 0.75, Verdict::On, Some(1)),
+            ("verify", 20, 20, 0.0, 0.0, 0.0, Verdict::Inconclusive, None),
+            ("debug", 15, 13, 0.1, -0.1, 0.3, Verdict::Inconclusive, None),
+            (
+                "agents-line",
+                13,
+                13,
+                0.0,
+                -0.45,
+                0.4,
+                Verdict::Inconclusive,
+                None,
+            ),
+        ];
+        for (name, w, o, value, low, high, verdict, rule) in cases {
+            let a = pilot(name);
+            assert_eq!((a.with.runs, a.without.runs), (20, 20), "{name}");
+            assert_eq!((a.with.passes, a.without.passes), (w, o), "{name}");
+            assert!(
+                near(a.difference.value, value),
+                "{name}: {:?}",
+                a.difference
+            );
+            assert!(near(a.difference.low, low), "{name}: {:?}", a.difference);
+            assert!(near(a.difference.high, high), "{name}: {:?}", a.difference);
+            assert_eq!((a.verdict, a.rule), (verdict, rule), "{name}");
+            if name == "verify" {
+                let r = a.cost_ratio.expect("verify has a cost ratio");
+                assert!(near(r.value, 1.100622), "{r:?}");
+                assert!(near(r.low, 0.92935), "{r:?}");
+                assert!(near(r.high, 1.314506), "{r:?}");
+            }
+            if name == "tdd" {
+                assert!(a.cost_ratio.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn a_release_row_prints_as_a_line_and_as_json() {
+        let row = Row {
+            name: "tdd",
+            batch: "20261117T082902Z-tdd",
+            claude_code: Some("2.1.326"),
+            models: &["claude-a", "claude-b"],
+            with: Arm {
+                runs: 20,
+                passes: 10,
+                cost: 19.937455,
+            },
+            without: Arm {
+                runs: 20,
+                passes: 1,
+                cost: 19.680765,
+            },
+            difference: Interval {
+                value: 0.45,
+                low: 0.15,
+                high: 0.75,
+            },
+            cost_ratio: None,
+            verdict: Verdict::On,
+            rule: Some(1),
+        };
+        assert_eq!(
+            release_line(&row),
+            "tdd on (rule 1): with 10/20 0.50, without 1/20 0.05, cost per correct 1.993746 and 19.680765 USD, difference 0.45 [0.15, 0.75], cost ratio -, batch 20261117T082902Z-tdd, claude 2.1.326"
+        );
+        let j = release_json(&[row]);
+        assert!(j.starts_with("{\"release\":[{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261117T082902Z-tdd\",\"claude_code\":\"2.1.326\",\"models\":[\"claude-a\",\"claude-b\"],\"with\":{\"runs\":20,\"passes\":10,\"pass_rate\":0.5,\"cost_usd\":19.937455,\"cost_per_correct_usd\":1.993746},"), "{j}");
+        assert!(j.ends_with("\"cost_ratio\":null}]}"), "{j}");
     }
 
     /// The simulation of D33 on the bootstrap above. Each trial draws 5 evals
