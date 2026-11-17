@@ -347,7 +347,8 @@ pub fn resolve(name: &str, files: &[(String, Vec<u8>)]) -> Resolved {
         .iter()
         .filter(|(p, _)| is_result_name(p.rsplit('/').next().unwrap_or(p)))
         .collect();
-    candidates.sort_by(|a, b| b.0.rsplit('/').next().cmp(&a.0.rsplit('/').next()));
+    candidates
+        .sort_by_key(|(p, _)| std::cmp::Reverse(result_order(p.rsplit('/').next().unwrap_or(p))));
     for (path, bytes) in candidates {
         if let Some((_, v)) = read_result(bytes).into_iter().find(|(n, _)| n == name) {
             return Resolved {
@@ -365,6 +366,21 @@ pub fn resolve(name: &str, files: &[(String, Vec<u8>)]) -> Resolved {
             verdict: None,
             source: Source::None,
         },
+    }
+}
+
+/// The order of a result file: the time of its stamp, then the number of its
+/// suffix (`-2` is the second file of the same second), then its name. A
+/// plain sort of names is wrong, because `-` sorts before `.`, so
+/// `skills-<stamp>-2.json` would come before `skills-<stamp>.json`.
+fn result_order(base: &str) -> (String, u32, String) {
+    let rest = base
+        .strip_prefix("skills-")
+        .and_then(|r| r.strip_suffix(".json"))
+        .unwrap_or("");
+    match rest.split_once('-') {
+        Some((stamp, n)) => (stamp.to_string(), n.parse().unwrap_or(0), base.to_string()),
+        None => (rest.to_string(), 1, base.to_string()),
     }
 }
 
@@ -603,6 +619,30 @@ mod tests {
         assert_eq!((none.verdict, none.source), (None, Source::None));
         assert!(is_on("debug", &files));
         assert!(!is_on("tdd", &files));
+    }
+
+    #[test]
+    fn a_second_file_of_the_same_second_is_newer_and_the_suffix_sorts_by_number() {
+        let f = |p: &str, v: &str| {
+            (
+                p.to_string(),
+                format!(r#"{{"skills":[{{"name":"tdd","verdict":"{v}"}}]}}"#).into_bytes(),
+            )
+        };
+        let dir = "evals/results/";
+        let files = vec![
+            f(&format!("{dir}skills-20261120T100000Z-10.json"), "off"),
+            f(&format!("{dir}skills-20261120T100000Z.json"), "on"),
+            f(
+                &format!("{dir}skills-20261120T100000Z-9.json"),
+                "inconclusive",
+            ),
+            f(&format!("{dir}skills-20261119T235959Z-99.json"), "on"),
+        ];
+        assert_eq!(resolve("tdd", &files).verdict, Some(Verdict::Off));
+        let files = &files[1..3];
+        assert_eq!(resolve("tdd", files).verdict, Some(Verdict::Inconclusive));
+        assert_eq!(resolve("tdd", &files[..1]).verdict, Some(Verdict::On));
     }
 
     #[test]
