@@ -611,3 +611,40 @@ pub fn openspec_with(research: bool, keys: bool) -> Repo {
 pub fn openspec() -> Repo {
     openspec_with(false, false)
 }
+
+// --- a project that `init` made ---
+
+/// The files of a project of a tool, with no document of the project: the
+/// tree that `spec-dna init` meets.
+fn tool_files(files: Vec<(&'static str, &'static str)>) -> Vec<(&'static str, &'static str)> {
+    files
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with("docs/"))
+        .collect()
+}
+
+/// A repository with the files of a tool, then the output of `spec-dna init
+/// --non-interactive`, each in 1 commit. The result has the repository and the
+/// commit of `init`.
+pub fn after_init(files: Vec<(&'static str, &'static str)>) -> (Repo, String) {
+    let repo = Repo::new();
+    for (path, text) in tool_files(files) {
+        repo.write(path, text);
+    }
+    repo.commit("project");
+    let (code, out, err) = repo.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    repo.commit("init");
+    let sha = repo.git_out(&["rev-parse", "HEAD"]);
+    (repo, sha)
+}
+
+/// A project of Spec Kit after `init`.
+pub fn speckit_after_init() -> (Repo, String) {
+    after_init(speckit_files())
+}
+
+/// A project of OpenSpec after `init`.
+pub fn openspec_after_init() -> (Repo, String) {
+    after_init(openspec_files())
+}

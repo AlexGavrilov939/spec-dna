@@ -1093,7 +1093,7 @@ These limits apply:
 ## import
 
 ```text
-spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research]
+spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research] [--json]
 ```
 
 `import` moves a project of Spec Kit 1.4.1 or OpenSpec 2.0.0 into the layout of spec-dna, in one diff that a person can read. The reasons are in [ADR 0014](adr/0014-import.md). It needs a project that `init` made. Without `spec-dna.toml` it stops with exit code 3 and says `run spec-dna init first`. It reads the committed tree (`HEAD`), and it starts only from a clean tree, also with `--dry-run`. It computes the whole plan in memory, runs the proof, and then writes. It never deletes a file and never commits. A second run after the commit prints `spec-dna import: nothing to change`.
@@ -1108,7 +1108,7 @@ spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--k
 
 ### What moves and what is written
 
-A source that gives one target moves with `git mv`, and the plan then edits the file in place. It keeps its old id as an alias if it was a document before (its root covers it). A target goes to the folder of the layer that holds its type, in the first root that can hold the type. With no such layer, the command stops with exit code 2 and names `spec-dna layer add <layer> --types <type>`. The current truth gets `status: active`.
+A source that gives one target moves with `git mv`, and the plan then edits the file in place. It keeps its old id as an alias if it was a document before (its root covers it). A target goes to the folder of the layer that holds its type: in a root of that type (for example the root `specs` of the type `requirements` that `init` writes for Spec Kit), else in the first mixed root. If a layer holds a type and no root can hold it, the first run adds a root `docs` of the type `mixed` to `spec-dna.toml`. With no such layer, the command stops with exit code 2 and names `spec-dna layer add <layer> --types <type>`. The current truth gets `status: active`.
 
 | Source | Target |
 | --- | --- |
@@ -1126,23 +1126,24 @@ If the plan needs a change of `spec-dna.toml` (the legacy key `FR-{n}`, an area 
 
 ### The proof
 
-The proof has 5 steps and stops the write (exit code 1) if one fails. It does not claim byte equality.
+The proof has 6 steps and stops the write (exit code 1) if one fails. It does not claim byte equality.
 
 1. Each requirement of a source has one target requirement or one target delta line, and the normal forms of the sentences are equal. The normal form joins the white space and removes the link destinations, the alias markers and a marker `[NEEDS CLARIFICATION: ...]`. The proof also checks that the open question holds the text of the marker. It reads the sentence of the target from the parse of the planned text.
 2. Each source file has exactly one state: `moved`, `written`, `kept` or `skipped`. A kept or skipped file is not moved and not written.
 3. Each id of the project before the import resolves to the same document.
 4. `check` on the new tree gives no new error of the codes SD101 to SD106, SD201 to SD204, SD301 to SD306 and SD401 to SD405. The report counts the other new findings, such as SD608.
 5. The plan on the planned tree is empty. A second run writes nothing.
+6. No line of a source vanishes. A line with a word of BCP 14 (`MUST`, `SHALL`, `SHOULD`, `MAY`, also with `NOT`) must be in a target, else the write stops, and the message names the file and the line. Another line that no target holds is listed in the report as `dropped`. A heading, a task line and the line of a requirement need no copy, because the reader rewrites them. The reader keeps a line of a `tasks.md` that is no task, and the text of a delta spec outside its blocks, as plain text.
 
 The proof also counts the scenario headings of the source and of the target of an OpenSpec spec, because no hash covers a scenario.
 
 ### Output
 
-The text has one line for each source file: `moved <from> -> <to>`, `wrote <to> (from <sources>)`, `kept <path>: <reason>` or `skipped <path>: <reason>` (`would move` and `would write` for `--dry-run`). Then come one line `pair <from> -> <id>` for each requirement, the line `proof: ok (<n> requirements, <n> scenarios, <n> ids)`, the report, `to commit: git add -A -- <paths>` and `to remove the sources: git rm -r -- <paths>`. The output has no diff: run `git diff` after the write. The report says when a moved file has an edit that is too large for a git rename (a similarity below one half). With `strict`, SD608 is an error for each imported active requirement, and with `--skip-open` SD917 and SD921 are errors too. The report names them.
+The text has one line for each source file: `moved <from> -> <to>`, `wrote <to> (from <sources>)`, `kept <path>: <reason>` or `skipped <path>: <reason>` (`would move` and `would write` for `--dry-run`). Then come one line `pair <from> -> <id>` for each requirement, the line `proof: ok (<n> requirements, <n> scenarios, <n> ids)`, the report, `to commit: git add -A -- <paths>` and `to remove the sources: git rm -r -- <paths>`. The output has no diff: run `git diff` after the write. The report says when a moved file has an edit that is too large for a git rename (a similarity below one half). This happens for most OpenSpec domain specs, because each requirement heading becomes a list item. The constitution is a small case. `git rm` names the files that the plan wrote, and a folder only if it holds no kept file. A source file that is not valid UTF-8, and a target that differs from an existing file only in case, stop the plan (exit code 1). With `strict`, SD608 is an error for each imported active requirement, and with `--skip-open` SD917 and SD921 are errors too. The report names them.
 
 With `--json`, the command prints one object: `version`, `source` (`speckit` or `openspec`), `dry_run`, `config_only`, `sources` (each with `path`, `state`, `to` as a list and `reason`), `pairs` (each with `from` as `<path>:<line>`, `id` and `delta`, the slug of the change or `null`), `proof` (`ok`, `requirements`, `scenarios`, `ids` and `failures`) and `report` (`errors` with `code` and `count`, `outside_links` and `notes`). A run that writes only `spec-dna.toml` has `config_only: true`, and its `sources` and `pairs` are empty. A failed proof prints the object, and the exit code is 1.
 
-An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `specs/` is absent for Spec Kit; `openspec/` is absent, or `openspec/specs/` has files and no domain folder (another major version) for OpenSpec; or a spec file that the import reads has no requirement (no `FR-nnn` line, no `### Requirement:` heading). The message names the file, the rule and the supported version. An `openspec/` folder with no `specs/` is no stop, so a second run after the move of each spec changes nothing.
+An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `specs/` is absent for Spec Kit; `openspec/` is absent, or `openspec/specs/` has files and no domain folder (another major version) for OpenSpec; or a spec file that the import reads has no requirement (no `FR-nnn` line, no `### Requirement:` heading). The message names the file, the rule and the supported version. An `openspec/` folder with no `specs/`, and a `.specify/` folder with no `specs/`, are no stop, so a second run after the move of each spec or after the `git rm` of the report changes nothing.
 
 | Code | Meaning of `import` |
 | --- | --- |

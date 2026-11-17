@@ -8,7 +8,7 @@
 //! splice (`config_text`), so each comment and each other byte stays.
 
 use crate::config::{self, Config};
-use crate::config_text::{at, insert_keys, k, set_value};
+use crate::config_text::{append_tables, at, insert_keys, k, line_ending, set_value};
 use crate::model::DocType;
 use crate::repo::Fatal;
 use crate::upgrade_docs::valid_area;
@@ -29,6 +29,9 @@ pub struct Needs {
     /// The types that the plan writes. The plan adds the ones that a non-empty
     /// `types` list lacks.
     pub types: Vec<DocType>,
+    /// A root of the type `mixed` that no root of the file replaces, for the
+    /// types that a layer holds and no root can hold: its path.
+    pub root: Option<String>,
 }
 
 /// The new text of the file, and a note for each change (for the report).
@@ -120,6 +123,17 @@ pub fn plan(text: &str, cfg: &Config, root: usize, needs: &Needs) -> Result<Conf
         notes.push(format!(
             "legacy key `{LEGACY_KEY}` in the root `{}`",
             r.path
+        ));
+    }
+    if let Some(path) = &needs.root {
+        let eol = line_ending(&out);
+        append_tables(
+            &mut out,
+            &format!("[[roots]]\npath = \"{path}\"\ntype = \"mixed\"\n"),
+            eol,
+        );
+        notes.push(format!(
+            "root `{path}` of the type `mixed`, for the layers that no root holds"
         ));
     }
     let new_areas: Vec<&String> = needs

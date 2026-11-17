@@ -5252,7 +5252,7 @@ fn the_help_of_import_lists_the_options_and_the_exit_codes() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "usage: spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research]\n"
+            "usage: spec-dna import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research] [--json]\n"
         ),
         "{out}"
     );

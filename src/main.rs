@@ -126,7 +126,7 @@ change, 1 a tree that is not clean, a stop of a move or a failed proof, 2 usage,
     ),
     (
         "import",
-        "import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research]",
+        "import speckit|openspec [--dry-run] [--skip-open] [--areas <file>] [--keep none|research] [--json]",
         "Moves a project of Spec Kit 1.4.1 or OpenSpec 2.0.0 into the layout of
 spec-dna. It needs a project that init made and a tree that is clean (also with
 --dry-run). It reads the committed tree (HEAD), builds the whole plan in

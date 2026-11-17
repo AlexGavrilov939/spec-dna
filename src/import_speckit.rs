@@ -153,10 +153,8 @@ pub fn read(ctx: &Ctx) -> Result<Read, Fatal> {
             }
         )));
     }
+    // No `specs/` is no stop: a second run after the sources are gone.
     let specs = ctx.under("specs/");
-    if specs.is_empty() {
-        return Err(layout_error("`specs/` is not in the tree"));
-    }
     let mut read = Read {
         universe: tool.iter().chain(&specs).map(|f| f.to_string()).collect(),
         ..Read::default()
@@ -270,6 +268,14 @@ pub fn item(key: &str, body: &str) -> String {
     out
 }
 
+/// The stop for a requirement or a principle with no sentence: its text is a
+/// list, or empty.
+pub fn no_sentence(path: &str, line: usize, key: &str) -> Fatal {
+    Fatal::Refused(format!(
+        "{path}:{line}: `{key}` has no sentence (its text is empty, or it starts with a list); write the sentence before the list, commit, then run import again. import changes nothing"
+    ))
+}
+
 fn constitution(ctx: &Ctx, read: &mut Read) -> Result<(), Fatal> {
     let skip = |read: &mut Read, why: &str| {
         read.sources.push(SourceFile::skipped(CONSTITUTION, why));
@@ -299,6 +305,9 @@ fn constitution(ctx: &Ctx, read: &mut Read) -> Result<(), Fatal> {
             "{CONSTITUTION}:{}: cannot make a key from this principle heading; rename it, commit, then run import again",
             p.line + 1
         )));
+    }
+    if let Some(p) = found.iter().find(|p| split_sentence(&p.body).0.is_empty()) {
+        return Err(no_sentence(CONSTITUTION, p.line + 1, &p.key));
     }
     let dir = ctx.places.rules_dir()?;
     let to = format!("{dir}/constitution.md");
@@ -364,10 +373,9 @@ fn fr_lines(text: &str) -> Vec<(String, u32, String)> {
         .reqs
         .iter()
         .filter(|r| {
-            r.colon
-                && r.key
-                    .strip_prefix("FR-")
-                    .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+            r.key
+                .strip_prefix("FR-")
+                .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
         })
         .map(|r| (r.key.clone(), r.line, r.text.clone()))
         .collect()
@@ -750,22 +758,19 @@ fn open_feature(
     if let Some(t) = tasks {
         let linked_tasks = (ctx.link)(t, &tasks_path, &plan_to);
         let mut files: Vec<String> = Vec::new();
-        let mut order: Vec<Vec<String>> = Vec::new();
-        let mut items: Vec<String> = Vec::new();
-        let flush = |items: &mut Vec<String>, order: &mut Vec<Vec<String>>| {
-            if !items.is_empty() {
-                order.push(std::mem::take(items));
-            }
-        };
+        let mut order: Vec<String> = Vec::new();
         for line in linked_tasks.lines() {
             if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
                 if lvl >= 2 {
-                    flush(&mut items, &mut order);
-                    order.push(vec![format!("**{}**", plain_heading(&text))]);
+                    order.push(String::new());
+                    order.push(format!("**{}**", plain_heading(&text)));
+                    order.push(String::new());
                 }
                 continue;
             }
             let Some(task) = task_line(line) else {
+                // A line that is no task stays as it is.
+                order.push(line.trim_end().to_string());
                 continue;
             };
             let (text, path) = plan_task(&task.rest);
@@ -786,9 +791,8 @@ fn open_feature(
                     files.push(p);
                 }
             }
-            items.push(item);
+            order.push(item);
         }
-        flush(&mut items, &mut order);
         let mut pb: Vec<Vec<String>> =
             vec![vec![format!("# {title}")], vec!["## Files".to_string()]];
         pb.push(if files.is_empty() {
@@ -797,12 +801,7 @@ fn open_feature(
             files.iter().map(|f| format!("- `{f}`")).collect()
         });
         pb.push(vec!["## Order".to_string()]);
-        // A group heading and its tasks are one block each.
-        let mut grouped: Vec<Vec<String>> = Vec::new();
-        for b in order {
-            grouped.push(b);
-        }
-        pb.extend(grouped);
+        pb.push(order);
         let plan = with_front_matter(&join_blocks(&pb), "draft", &[], &[]);
         targets.push((
             plan_to.clone(),
@@ -1043,12 +1042,8 @@ mod tests {
             "{}",
             e.message()
         );
-        let r = run(&[(".specify/init-options.json", "{}\n")]);
-        assert!(
-            r.err().message().contains("specs/"),
-            "{}",
-            r.err().message()
-        );
+        // No `specs/` is no stop: a second run after the sources are gone.
+        assert!(run(&[(".specify/init-options.json", "{}\n")]).read.is_ok());
         // An older layout has `memory/` and `scripts/` at the top.
         let r = run(&[("memory/constitution.md", "# C\n"), ("scripts/a.sh", "x\n")]);
         assert!(
@@ -1439,5 +1434,84 @@ mod tests {
             i.contains("\n## Intent\n\nThe source has no section for the user stories.\n"),
             "{i}"
         );
+    }
+
+    #[test]
+    fn a_requirement_line_with_no_colon_is_a_delta_line() {
+        let spec = "# Feature Specification: A\n\n- **FR-001** The system MUST do it.\n- **FR-002**: The system MUST do more.\n";
+        let r = run(&tool(&[("specs/001-a/spec.md", spec)]));
+        let ids: Vec<&str> = r.ok().pairs.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["requirements/a#fr-001", "requirements/a#fr-002"]);
+        let s = r.target("docs/intent/a/spec.md");
+        assert!(
+            s.contains("- ADD requirements/a#fr-001: The system MUST do it.\n"),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn the_lines_of_tasks_md_that_are_no_task_stay_in_the_plan() {
+        let tasks = "# Tasks\n\nPrerequisites: a database.\n\n## Phase 1\n\n- [ ] T001 Do it in src/a.py\n\nCheckpoint: it MUST pass.\n\n## Dependencies\n\n- Phase 2 needs phase 1.\n";
+        let r = run(&tool(&[
+            ("specs/003-x/spec.md", SPEC_OPEN),
+            ("specs/003-x/tasks.md", tasks),
+        ]));
+        let t = r.target("docs/intent/x/plan.md");
+        let want = "---\nstatus: draft\n---\n# Album export\n\n## Files\n\n- `src/a.py`\n\n## Order\n\nPrerequisites: a database.\n\n**Phase 1**\n\n- [ ] t001: Do it. Files: `src/a.py`.\n\nCheckpoint: it MUST pass.\n\n**Dependencies**\n\n- Phase 2 needs phase 1.\n";
+        assert_eq!(t, want);
+    }
+
+    #[test]
+    fn a_principle_with_no_sentence_stops_the_import() {
+        let c = "# C\n\n## Core Principles\n\n### I. Small\n\n- one\n- two\n";
+        let r = run(&tool(&[(".specify/memory/constitution.md", c)]));
+        assert!(matches!(r.err(), Fatal::Refused(_)));
+        assert!(
+            r.err().message().contains("no sentence"),
+            "{}",
+            r.err().message()
+        );
+    }
+
+    #[test]
+    fn a_moved_extra_file_that_was_a_document_keeps_its_old_id_as_an_alias() {
+        let text = format!(
+            "{CFG}\n[[roots]]\npath = \"specs\"\ntype = \"requirements\"\nstatus = \"active\"\n"
+        );
+        let mut all = vec![("spec-dna.toml", text.as_str())];
+        let files = tool(&[
+            ("specs/001-a/spec.md", SPEC_DONE),
+            ("specs/001-a/tasks.md", TASKS_DONE),
+            ("specs/001-a/notes.md", "# Notes\n"),
+        ]);
+        all.extend_from_slice(&files);
+        let tree = TreeData::from_map(
+            all.iter()
+                .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
+                .collect(),
+        );
+        let cfg = Config::parse(&text).unwrap();
+        let places = Places::of(&cfg);
+        let r = tree
+            .with(|t| {
+                let (before, _) = corpus_of(t, &cfg)?;
+                read(&Ctx {
+                    tree: t,
+                    cfg: &cfg,
+                    places: &places,
+                    areas: &[],
+                    skip_open: false,
+                    keep_research: true,
+                    link: &|x, _, _| x.to_string(),
+                    before: &before,
+                })
+            })
+            .unwrap();
+        let t = r
+            .targets
+            .iter()
+            .find(|t| t.path == "docs/research/imported/001-a/notes.md")
+            .unwrap();
+        assert!(t.text.contains("aliases:\n  - 001-a/notes\n"), "{}", t.text);
     }
 }

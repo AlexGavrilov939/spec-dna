@@ -18,8 +18,8 @@ use crate::config::{self, Config, Profile};
 use crate::finish;
 use crate::import_config::{self, Needs};
 use crate::import_docs::{
-    CONFIG_PATH, ConfigChange, Ctx, DocsInput, Places, Plan, Read, State, corpus_of, link_map,
-    plan_docs, similarity,
+    self, CONFIG_PATH, ConfigChange, Ctx, DocsInput, Places, Plan, Read, State, corpus_of,
+    link_map, plan_docs, similarity,
 };
 use crate::import_openspec;
 use crate::import_proof::{self, Proof};
@@ -126,6 +126,26 @@ pub fn plan(tree: &Tree, o: &PlanOpts) -> Result<Planned, Fatal> {
     })?;
     let cfg = Config::parse(&text).map_err(Fatal::Config)?;
     import_config::check_areas(&cfg, &o.areas)?;
+    // A type that a layer holds and no root can hold gets a root of the type
+    // `mixed` (the file `spec-dna.toml` gets it, if a target needs it).
+    let mut want = vec![DocType::Rule, DocType::Requirements, DocType::Intent];
+    if o.keep_research {
+        want.push(DocType::Research);
+    }
+    let missing = import_docs::types_without_root(&cfg, &want);
+    let root_path = import_docs::fallback_root(&cfg);
+    let cfg = if missing.is_empty() {
+        cfg
+    } else {
+        let mut t = text.clone();
+        let eol = crate::config_text::line_ending(&t);
+        crate::config_text::append_tables(
+            &mut t,
+            &format!("[[roots]]\npath = \"{root_path}\"\ntype = \"mixed\"\n"),
+            eol,
+        );
+        Config::parse(&t).map_err(Fatal::Config)?
+    };
     let places = Places::of(&cfg);
     if o.keep_research {
         places.research_dir()?;
@@ -154,7 +174,8 @@ pub fn plan(tree: &Tree, o: &PlanOpts) -> Result<Planned, Fatal> {
     // The keys of `--areas` name a source folder.
     for (name, _) in &o.areas {
         let part = format!("/{name}/");
-        if !read.universe.iter().any(|p| p.contains(&part)) {
+        let imported = matches!(before.resolve(name), crate::model::Res::Found(..));
+        if !imported && !read.universe.iter().any(|p| p.contains(&part)) {
             return Err(Fatal::Refused(format!(
                 "--areas: `{name}` is not the name of a source folder, so import changes nothing"
             )));
@@ -164,6 +185,12 @@ pub fn plan(tree: &Tree, o: &PlanOpts) -> Result<Planned, Fatal> {
         legacy_key: read.fr_lines,
         areas: o.areas.iter().map(|(_, a)| a.clone()).collect(),
         types: types_of(&places, &read),
+        root: (!missing.is_empty()
+            && read
+                .targets
+                .iter()
+                .any(|t| t.path.starts_with(&format!("{root_path}/"))))
+        .then(|| root_path.clone()),
     };
     let root = places.requirements_root.unwrap_or(0);
     let cplan = import_config::plan(&text, &cfg, root, &needs)?;
@@ -332,10 +359,10 @@ fn paths_arg(paths: &[String]) -> String {
 /// The lines of the files: one for each source file that moves, stays or is
 /// skipped, and one for each file that the plan writes.
 fn file_lines(plan: &Plan, dry: bool) -> Vec<String> {
-    let (mv_word, wr_word) = if dry {
-        ("would move", "would write")
+    let (mv_word, wr_word, ed_word) = if dry {
+        ("would move", "would write", "would edit")
     } else {
-        ("moved", "wrote")
+        ("moved", "wrote", "edited")
     };
     let mut out = Vec::new();
     for s in &plan.sources {
@@ -343,6 +370,9 @@ fn file_lines(plan: &Plan, dry: bool) -> Vec<String> {
             State::Moved => out.push(format!("{mv_word} {} -> {}", s.path, s.to.join(", "))),
             State::Kept => out.push(format!("kept {}: {}", s.path, s.reason)),
             State::Skipped => out.push(format!("skipped {}: {}", s.path, s.reason)),
+            State::Written if s.to == [s.path.clone()] => {
+                out.push(format!("{ed_word} {}: {}", s.path, s.reason));
+            }
             State::Written => {}
         }
     }
@@ -408,6 +438,24 @@ fn output_text(plan: &Plan, proof: &Proof, dry: bool, config_only: bool, source:
     for n in &plan.notes {
         out.push_str(&format!("  note: {n}\n"));
     }
+    if !proof.dropped.is_empty() {
+        out.push_str(&format!(
+            "  dropped {} line(s) of the sources that no target holds (a heading or a task line that the reader rewrote is no loss):\n",
+            proof.dropped.len()
+        ));
+        for d in proof.dropped.iter().take(20) {
+            out.push_str(&format!("    {d}\n"));
+        }
+        if proof.dropped.len() > 20 {
+            out.push_str(&format!("    and {} more\n", proof.dropped.len() - 20));
+        }
+    }
+    if proof.removed_anchors > 0 {
+        out.push_str(&format!(
+            "  {} anchor(s) of headings of moved documents are gone, because the heading became a list item; the ids of the requirements stay\n",
+            proof.removed_anchors
+        ));
+    }
     for (code, n) in &proof.ignored {
         out.push_str(&format!(
             "  {code}: {n} new finding(s) in the imported documents, which the proof does not guard\n"
@@ -425,7 +473,8 @@ fn output_text(plan: &Plan, proof: &Proof, dry: bool, config_only: bool, source:
     }
     if !plan.removes.is_empty() {
         out.push_str(&format!(
-            "to remove the sources: git rm -r -- {}\n",
+            "to remove the sources: git rm {}-- {}\n",
+            if plan.removes_recursive { "-r " } else { "" },
             paths_arg(&plan.removes)
         ));
     }
@@ -469,6 +518,12 @@ fn output_json(plan: &Plan, proof: &Proof, dry: bool, config_only: bool, source:
         .num("ids", proof.ids)
         .strs("failures", &proof.failures)
         .end();
+    let mut notes: Vec<String> = Vec::new();
+    if config_only {
+        notes.extend(plan.config.notes.iter().map(|n| format!("config: {n}")));
+    }
+    notes.extend(plan.notes.iter().cloned());
+    notes.extend(proof.dropped.iter().map(|d| format!("dropped {d}")));
     let report = Obj::new()
         .raw(
             "errors",
@@ -480,7 +535,7 @@ fn output_json(plan: &Plan, proof: &Proof, dry: bool, config_only: bool, source:
             ),
         )
         .num("outside_links", plan.outside_links.len())
-        .strs("notes", &plan.notes)
+        .strs("notes", &notes)
         .end();
     Obj::new()
         .str("version", VERSION)

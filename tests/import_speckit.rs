@@ -453,3 +453,111 @@ fn a_link_of_a_written_source_to_a_moved_file_goes_to_the_target_and_a_second_ru
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(out.trim(), "spec-dna import: nothing to change");
 }
+
+// --- the checker: text that must not vanish ---
+
+#[test]
+fn a_source_file_that_is_not_utf_8_stops_the_plan_and_names_the_file() {
+    let repo = fx::speckit();
+    let spec = fx::SK_SPEC_1.replace(
+        "create an album with a title",
+        "create a calf\u{e9} with a title",
+    );
+    // The byte `0xE9` alone is Latin-1, no valid UTF-8.
+    let mut bytes = spec.into_bytes();
+    let at = bytes.windows(2).position(|w| w == [0xc3, 0xa9]).unwrap();
+    bytes.splice(at..at + 2, [0xe9]);
+    fs::write(repo.dir.join("specs/001-photo-albums/spec.md"), bytes).unwrap();
+    repo.commit("a Latin-1 byte");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("specs/001-photo-albums/spec.md"), "{err}");
+    assert!(err.contains("not valid UTF-8"), "{err}");
+    assert_eq!(status(&repo), "");
+}
+
+#[test]
+fn a_requirement_line_with_no_colon_is_a_delta_line_too() {
+    let repo = fx::speckit();
+    let spec = fx::SK_SPEC_3.replace(
+        "- **FR-002**:",
+        "- **FR-003** The system MUST log each export.\n- **FR-002**:",
+    );
+    repo.write("specs/003-album-export/spec.md", &spec);
+    repo.commit("an FR line with no colon");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = repo.read("docs/intent/album-export/spec.md");
+    assert!(
+        t.contains("- ADD requirements/album-export#fr-003: The system MUST log each export.\n"),
+        "{t}"
+    );
+}
+
+#[test]
+fn the_lines_of_tasks_md_that_are_no_task_stay_in_the_plan() {
+    let repo = fx::speckit();
+    let tasks = format!(
+        "{}\n## Dependencies\n\n- Phase 2 needs phase 1.\n\nPrerequisites: a running database.\n\nCheckpoint: the export MUST pass before the release.\n",
+        fx::SK_TASKS_3
+    );
+    repo.write("specs/003-album-export/tasks.md", &tasks);
+    repo.commit("more text in tasks.md");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let plan = repo.read("docs/intent/album-export/plan.md");
+    for part in [
+        "- Phase 2 needs phase 1.",
+        "Prerequisites: a running database.",
+        "Checkpoint: the export MUST pass before the release.",
+    ] {
+        assert!(plan.contains(part), "`{part}` not in:\n{plan}");
+    }
+}
+
+#[test]
+fn the_report_names_the_files_that_it_wrote_and_never_a_folder_with_a_kept_file() {
+    let repo = fx::speckit();
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The folder of the open feature holds `plan.md` and `data-model.md`,
+    // which stay.
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("to remove the sources:"))
+        .expect("a line to remove the sources");
+    assert_eq!(
+        line,
+        "to remove the sources: git rm -- specs/003-album-export/spec.md specs/003-album-export/tasks.md"
+    );
+}
+
+#[test]
+fn a_crlf_source_keeps_one_line_ending_in_the_front_matter() {
+    let repo = fx::speckit();
+    repo.write(
+        "specs/002-album-sharing/spec.md",
+        &fx::SK_SPEC_2.replace('\n', "\r\n"),
+    );
+    repo.commit("crlf");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let bytes = fs::read(repo.dir.join("docs/requirements/album-sharing.md")).unwrap();
+    let t = String::from_utf8(bytes).unwrap();
+    assert!(
+        t.starts_with("---\r\nstatus: active\r\naliases:\r\n  - 002-album-sharing\r\n---\r\n"),
+        "{t:?}"
+    );
+    assert!(!t.replace("\r\n", "").contains('\n'), "a lone LF in {t:?}");
+}
+
+#[test]
+fn a_run_after_the_sources_are_gone_changes_nothing() {
+    let repo = imported();
+    repo.commit("import");
+    repo.git(&["rm", "-rq", "specs"]);
+    repo.commit("remove the specs");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.trim(), "spec-dna import: nothing to change");
+}

@@ -183,7 +183,11 @@ pub struct Plan {
     /// (file, link).
     pub outside_links: Vec<(String, String)>,
     pub notes: Vec<String>,
+    /// The paths of `git rm`: files, and a folder only if it holds no kept
+    /// file.
     pub removes: Vec<String>,
+    /// True if `removes` has a folder (`git rm -r`).
+    pub removes_recursive: bool,
     pub universe: Vec<String>,
 }
 
@@ -291,6 +295,33 @@ pub struct Places {
     pub requirements_root: Option<usize>,
 }
 
+/// The path of the root that the import adds when no root holds a type that a
+/// layer has: the first of `docs` and `docs-spec-dna` that no root uses.
+pub fn fallback_root(cfg: &Config) -> String {
+    let used = |p: &str| cfg.roots.iter().any(|r| r.path == p);
+    if used("docs") {
+        "docs-spec-dna".to_string()
+    } else {
+        "docs".to_string()
+    }
+}
+
+/// The types that a layer holds and that no root can hold: the types of
+/// `want` that need a root.
+pub fn types_without_root(cfg: &Config, want: &[DocType]) -> Vec<DocType> {
+    want.iter()
+        .copied()
+        .filter(|&t| {
+            place_of(cfg, t).is_none()
+                && cfg
+                    .layers
+                    .layer_of_type(t)
+                    .and_then(|i| cfg.layers.layers()[i].dir())
+                    .is_some()
+        })
+        .collect()
+}
+
 fn join_path(a: &str, b: &str) -> String {
     let a = a.trim_matches('/');
     if a.is_empty() || a == "." {
@@ -302,20 +333,25 @@ fn join_path(a: &str, b: &str) -> String {
     }
 }
 
-/// The folder for a type: the first root that can hold it, with the folder of
-/// the layer that has the type (a root of that type has no layer folder).
+/// The folder for a type: a root of that type (it has no layer folder), else
+/// the first mixed root, with the folder of the layer that has the type.
 fn place_of(cfg: &Config, ty: DocType) -> Option<(usize, String)> {
-    for (i, root) in cfg.roots.iter().enumerate() {
-        match root.single_type {
-            Some(t) if t == ty => return Some((i, join_path(&root.path, ""))),
-            Some(_) => continue,
-            None => {}
-        }
-        let layer = cfg.layers.layer_of_type(ty)?;
-        let dir = cfg.layers.layers()[layer].dir()?;
-        return Some((i, join_path(&root.path, dir)));
+    if let Some((i, root)) = cfg
+        .roots
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.single_type == Some(ty))
+    {
+        return Some((i, join_path(&root.path, "")));
     }
-    None
+    let (i, root) = cfg
+        .roots
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.single_type.is_none())?;
+    let layer = cfg.layers.layer_of_type(ty)?;
+    let dir = cfg.layers.layers()[layer].dir()?;
+    Some((i, join_path(&root.path, dir)))
 }
 
 impl Places {
@@ -696,7 +732,37 @@ pub fn with_front_matter(
     if !aliases.is_empty() {
         out = add_aliases(&out, aliases);
     }
-    out
+    crlf_front(text, out)
+}
+
+/// The text with its aliases, with the line ending of the text.
+pub fn add_aliases_eol(text: &str, aliases: &[String]) -> String {
+    crlf_front(text, add_aliases(text, aliases))
+}
+
+/// A text of CRLF has a front matter of CRLF: the lines that the plan added
+/// have the line ending of the source.
+fn crlf_front(source: &str, out: String) -> String {
+    if !source.contains("\r\n") {
+        return out;
+    }
+    match frontmatter::split(&out) {
+        Some((_, body_at)) => {
+            let (front, body) = out.split_at(body_at);
+            format!(
+                "{}{body}",
+                front.replace("\r\n", "\n").replace('\n', "\r\n")
+            )
+        }
+        None => out,
+    }
+}
+
+/// The stop for a file that is not valid UTF-8.
+pub fn not_utf8(path: &str) -> Fatal {
+    Fatal::Refused(format!(
+        "`{path}` is not valid UTF-8, and import would change a character of it; convert the file to UTF-8, commit, then run `spec-dna import` again. import changes nothing"
+    ))
 }
 
 // --- what a reader gets ---
@@ -727,14 +793,15 @@ impl Ctx<'_> {
             .map(|(_, a)| a.as_str())
     }
 
-    /// The text of a file of the tree. A file that is not UTF-8 is read with
-    /// the replacement character, and the proof then fails on a changed
-    /// sentence.
+    /// The text of a file of the tree. A file that is not valid UTF-8 stops
+    /// the plan (exit code 1): a copy with the replacement character would
+    /// change a character with no sign in the proof.
     pub fn text(&self, path: &str) -> Result<String, Fatal> {
         let got = (self.tree.read)(&[path.to_string()])?;
-        got.get(path)
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .ok_or_else(|| Fatal::Io(format!("{path}: not in the tree")))
+        let bytes = got
+            .get(path)
+            .ok_or_else(|| Fatal::Io(format!("{path}: not in the tree")))?;
+        String::from_utf8(bytes.clone()).map_err(|_| not_utf8(path))
     }
 
     /// The files of the tree below a folder (`prefix` ends with `/`), in path
@@ -774,7 +841,11 @@ impl Ctx<'_> {
                 .push(SourceFile::kept(path, "not a Markdown file"));
         } else if self.keep_research {
             let to = format!("{}/imported/{folder}/{rel}", self.places.research_dir()?);
-            let text = (self.link)(&self.text(path)?, path, &to);
+            let mut text = (self.link)(&self.text(path)?, path, &to);
+            let id = id_of(self.cfg, &to).unwrap_or_default();
+            if let Some(alias) = self.old_alias(path, &id) {
+                text = add_aliases_eol(&text, &[alias]);
+            }
             read.sources.push(SourceFile {
                 path: path.to_string(),
                 state: State::Moved,
@@ -877,6 +948,25 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
             )));
         }
     }
+    // A file that differs from a target only in case is the same file on a
+    // file system that ignores case, and `git mv` would stop half way.
+    let lower: HashMap<String, &str> = tree
+        .files
+        .iter()
+        .map(|f| (f.to_lowercase(), f.as_str()))
+        .collect();
+    for t in &read.targets {
+        if let Some(other) = lower.get(&t.path.to_lowercase())
+            && *other != t.path
+            && Some(*other) != t.moved_from.as_deref()
+        {
+            return Err(stop(format!(
+                "`{other}` exists, and the target `{}` differs from it only in case; a file system that ignores case has one file for both, so the write would stop half way. Rename or remove `{other}`, commit, then run import again. import changes nothing",
+                t.path
+            )));
+        }
+    }
+    let removes_hint = removes_of(&read.sources, &read.removes, tree.files);
     let (corpus, texts) = corpus_of(tree, fin)?;
     let map = link_map(read);
     let mut moves: Vec<(String, String)> = Vec::new();
@@ -906,10 +996,10 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
                 });
                 if !same {
                     return Err(stop(format!(
-                        "`{}` exists with other text than the plan writes from `{}`. If the import is complete, remove the sources with `git rm -r -- {}` and commit; else move or remove `{}`, commit, then run import again",
+                        "`{}` exists with other text than the plan writes from `{}`. If the import is complete, remove the sources with `git rm -r -- {}` (the report of the first run has the list) and commit; else move or remove `{}`, commit, then run import again",
                         t.path,
                         t.sources.join("`, `"),
-                        read.removes.join(" "),
+                        removes_hint.join(" "),
                         t.path
                     )));
                 }
@@ -941,11 +1031,32 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
         let dir = mv::parent(path);
         let new = rewrite_links(text, dir, dir, &map, &corpus);
         if &new != text {
+            // The plan writes this text, so the file must be valid UTF-8.
+            let bytes = (tree.read)(std::slice::from_ref(path))?;
+            if bytes
+                .get(path)
+                .is_some_and(|b| std::str::from_utf8(b).is_err())
+            {
+                return Err(not_utf8(path));
+            }
             writes.insert(path.clone(), new);
             edited.push(path.clone());
         }
     }
     edited.sort();
+    // A kept file whose links changed is written, not kept.
+    for s in &mut sources {
+        if s.state == State::Kept && edited.contains(&s.path) {
+            s.state = State::Written;
+            s.to = vec![s.path.clone()];
+            s.reason = "its links to a moved file changed".to_string();
+        }
+    }
+    let (removes, recursive) = {
+        let list = removes_of(&sources, &read.removes, tree.files);
+        let rec = list.iter().any(|p| read.removes.contains(p));
+        (list, rec)
+    };
     // The links of a file that is no document.
     let mut outside = Vec::new();
     let outside_files: Vec<String> = tree
@@ -983,9 +1094,41 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
         edited,
         outside_links: outside,
         notes: read.notes.clone(),
-        removes: read.removes.clone(),
+        removes,
+        removes_recursive: recursive,
         universe: read.universe.clone(),
     })
+}
+
+/// The paths for `git rm`: each file that the plan wrote from a source, or a
+/// folder of `hints` if each file in it is written or moved. A folder with a
+/// kept file is never a path: the command would remove the only copy of the
+/// kept file.
+pub fn removes_of(sources: &[SourceFile], hints: &[String], files: &[String]) -> Vec<String> {
+    let written: BTreeSet<&str> = sources
+        .iter()
+        .filter(|s| s.state == State::Written && s.to != [s.path.clone()])
+        .map(|s| s.path.as_str())
+        .collect();
+    let gone: BTreeSet<&str> = sources
+        .iter()
+        .filter(|s| s.state == State::Moved)
+        .map(|s| s.path.as_str())
+        .collect();
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for f in &written {
+        let folder = hints
+            .iter()
+            .find(|h| f.starts_with(&format!("{h}/")))
+            .filter(|h| {
+                files
+                    .iter()
+                    .filter(|x| x.starts_with(&format!("{h}/")))
+                    .all(|x| written.contains(x.as_str()) || gone.contains(x.as_str()))
+            });
+        out.insert(folder.map_or_else(|| f.to_string(), |h| h.to_string()));
+    }
+    out.into_iter().collect()
 }
 
 /// The path that a relative link of `from` names, if it is a file or a folder
@@ -1317,5 +1460,130 @@ mod tests {
     fn the_scenarios_of_a_text_count_headings_and_items_outside_code() {
         let t = "#### Scenario: A\n\n- **WHEN** x\n\n```\n#### Scenario: no\n```\n\n  - Scenario: B\n    - Scenario: C\n";
         assert_eq!(count_scenarios(t), 3);
+    }
+
+    #[test]
+    fn an_existing_file_that_differs_only_in_case_stops_the_plan() {
+        let read = Read {
+            targets: vec![target("docs/rules/c.md", Some("x/c.md"), "x/c.md", "A\n")],
+            ..Read::default()
+        };
+        let e = plan_of(&[("x/c.md", "A\n"), ("docs/rules/C.md", "B\n")], &read).unwrap_err();
+        assert!(matches!(e, Fatal::Refused(_)));
+        let m = e.message();
+        assert!(
+            m.contains("docs/rules/C.md") && m.contains("docs/rules/c.md"),
+            "{m}"
+        );
+        assert!(m.contains("only in case"), "{m}");
+    }
+
+    #[test]
+    fn a_kept_document_with_an_edited_link_is_written() {
+        let doc = "---\nstatus: active\n---\n# Plan\n\nSee [the spec](../../src/c.md).\n";
+        let mut read = Read {
+            targets: vec![target(
+                "docs/rules/c.md",
+                Some("src/c.md"),
+                "src/c.md",
+                "A\n",
+            )],
+            ..Read::default()
+        };
+        read.sources.push(SourceFile::kept(
+            "docs/requirements/plan.md",
+            "an extra file",
+        ));
+        let p = plan_of(
+            &[("src/c.md", "A\n"), ("docs/requirements/plan.md", doc)],
+            &read,
+        )
+        .unwrap();
+        assert_eq!(p.edited, ["docs/requirements/plan.md"]);
+        let s = &p.sources[0];
+        assert_eq!(
+            (s.state, s.to.as_slice()),
+            (
+                State::Written,
+                &["docs/requirements/plan.md".to_string()][..]
+            )
+        );
+    }
+
+    #[test]
+    fn the_sources_to_remove_are_the_files_that_the_plan_wrote() {
+        let mut read = Read {
+            removes: vec!["specs/f".into()],
+            ..Read::default()
+        };
+        for f in ["specs/f/spec.md", "specs/f/tasks.md", "specs/g/spec.md"] {
+            read.sources.push(SourceFile {
+                path: f.into(),
+                state: State::Written,
+                to: vec![format!("docs/{f}")],
+                reason: String::new(),
+            });
+            read.targets
+                .push(target(&format!("docs/{f}"), None, f, "T\n"));
+        }
+        read.removes.push("specs/g".into());
+        read.sources
+            .push(SourceFile::kept("specs/f/plan.md", "an extra file"));
+        let files = [
+            ("specs/f/spec.md", "a\n"),
+            ("specs/f/tasks.md", "b\n"),
+            ("specs/f/plan.md", "c\n"),
+            ("specs/g/spec.md", "d\n"),
+        ];
+        let p = plan_of(&files, &read).unwrap();
+        // `specs/f` holds a kept file, so the plan names its files. `specs/g`
+        // holds none.
+        assert_eq!(
+            p.removes,
+            ["specs/f/spec.md", "specs/f/tasks.md", "specs/g"]
+        );
+    }
+
+    #[test]
+    fn the_front_matter_has_the_line_ending_of_the_source() {
+        let t = with_front_matter("# T\r\n\r\nText.\r\n", "active", &[], &["old".to_string()]);
+        assert_eq!(
+            t,
+            "---\r\nstatus: active\r\naliases:\r\n  - old\r\n---\r\n# T\r\n\r\nText.\r\n"
+        );
+        let t = with_front_matter("---\r\nowner: me\r\n---\r\n# T\r\n", "draft", &[], &[]);
+        assert_eq!(t, "---\r\nstatus: draft\r\nowner: me\r\n---\r\n# T\r\n");
+    }
+
+    #[test]
+    fn a_source_that_is_not_utf_8_stops_the_read() {
+        let t = TreeData::from_map(
+            [("a.md".to_string(), b"calf\xe9 MUST\n".to_vec())]
+                .into_iter()
+                .collect(),
+        );
+        let e = t
+            .with(|t| {
+                let (before, _) = corpus_of(t, &cfg())?;
+                let places = Places::of(&cfg());
+                Ctx {
+                    tree: t,
+                    cfg: &cfg(),
+                    places: &places,
+                    areas: &[],
+                    skip_open: false,
+                    keep_research: false,
+                    link: &|x, _, _| x.to_string(),
+                    before: &before,
+                }
+                .text("a.md")
+            })
+            .unwrap_err();
+        assert!(matches!(e, Fatal::Refused(_)));
+        assert!(
+            e.message().contains("a.md") && e.message().contains("not valid UTF-8"),
+            "{}",
+            e.message()
+        );
     }
 }

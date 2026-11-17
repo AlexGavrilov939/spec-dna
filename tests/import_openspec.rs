@@ -360,3 +360,114 @@ fn a_link_of_a_proposal_to_a_moved_spec_goes_to_the_target() {
     );
     assert!(t.contains("[design](plan.md)"), "{t}");
 }
+
+// --- the checker: text that must not vanish ---
+
+#[test]
+fn a_source_file_that_is_not_utf_8_stops_the_plan_and_names_the_file() {
+    let repo = fx::openspec();
+    let mut bytes = fx::OS_SPEC_BILLING.as_bytes().to_vec();
+    let at = bytes.windows(7).position(|w| w == b"invoice").unwrap();
+    bytes.splice(at..at + 7, *b"calf\xe9 in");
+    std::fs::write(repo.dir.join("openspec/specs/billing/spec.md"), bytes).unwrap();
+    repo.commit("a Latin-1 byte");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("openspec/specs/billing/spec.md"), "{err}");
+    assert!(err.contains("not valid UTF-8"), "{err}");
+    assert_eq!(status(&repo), "");
+}
+
+#[test]
+fn an_existing_file_that_differs_only_in_case_stops_the_plan_before_a_write() {
+    let repo = fx::openspec();
+    repo.write(
+        "docs/requirements/Billing.md",
+        "---\nstatus: active\n---\n# Billing\n\n- **other-rule**: The system SHALL do it.\n",
+    );
+    repo.commit("a document in another case");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("docs/requirements/Billing.md"), "{err}");
+    assert!(err.contains("docs/requirements/billing.md"), "{err}");
+    assert!(err.contains("only in case"), "{err}");
+    assert_eq!(status(&repo), "");
+}
+
+#[test]
+fn an_area_for_a_domain_that_holds_only_its_spec_ends_in_a_second_run_that_changes_nothing() {
+    let repo = fx::openspec();
+    // The delta of a change keeps the folder `specs/auth/`, so no change here.
+    repo.git(&["rm", "-rq", "openspec/changes", "openspec/specs/auth"]);
+    repo.commit("only the billing spec");
+    let areas = repo.dir.join("..").join(format!(
+        "money-{}.toml",
+        repo.dir.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::write(&areas, "[areas]\nbilling = \"money\"\n").unwrap();
+    let a = areas.to_str().unwrap();
+    for _ in 0..2 {
+        let (code, out, err) = import(&repo, &["--areas", a]);
+        assert_eq!(code, 0, "{out}{err}");
+        repo.commit("import");
+    }
+    assert!(repo.dir.join("docs/requirements/money/billing.md").exists());
+    let (code, out, err) = import(&repo, &["--areas", a]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.trim(), "spec-dna import: nothing to change");
+    std::fs::remove_file(&areas).unwrap();
+}
+
+#[test]
+fn the_text_of_a_delta_spec_outside_the_blocks_stays_as_plain_text() {
+    let repo = fx::openspec();
+    let delta = format!(
+        "Notes of the author before the blocks.\n\n{}\n### Notes\n\nThe rollout MUST be slow.\n\n## Migration plan\n\nCopy the data first.\n",
+        fx::OS_DELTA_REPORTS
+    );
+    repo.write("openspec/changes/add-reports/specs/reports/spec.md", &delta);
+    repo.commit("more text");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = repo.read("docs/intent/add-reports/spec.md");
+    for part in [
+        "Notes of the author before the blocks.",
+        "The rollout MUST be slow.",
+        "Copy the data first.",
+    ] {
+        assert!(t.contains(part), "`{part}` not in:\n{t}");
+    }
+}
+
+#[test]
+fn the_lines_of_tasks_md_that_are_no_task_stay_in_the_plan() {
+    let repo = fx::openspec();
+    let tasks = format!(
+        "{}\nCheckpoint: the report MUST be reviewed.\n",
+        fx::OS_TASKS_REPORTS
+    );
+    repo.write("openspec/changes/add-reports/tasks.md", &tasks);
+    repo.commit("more text");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let plan = repo.read("docs/intent/add-reports/plan.md");
+    assert!(
+        plan.contains("Checkpoint: the report MUST be reviewed."),
+        "{plan}"
+    );
+}
+
+#[test]
+fn a_requirement_with_a_list_and_no_sentence_stops_the_plan() {
+    let repo = fx::openspec();
+    repo.write(
+        "openspec/specs/billing/spec.md",
+        "# B\n\n## Requirements\n\n### Requirement: Invoice Issue\n\n- The system SHALL issue it.\n- The system SHALL mail it.\n",
+    );
+    repo.commit("a list only");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("openspec/specs/billing/spec.md:5"), "{err}");
+    assert!(err.contains("no sentence"), "{err}");
+    assert_eq!(status(&repo), "");
+}

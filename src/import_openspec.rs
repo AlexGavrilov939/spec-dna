@@ -45,7 +45,13 @@ pub fn read(ctx: &Ctx) -> Result<Read, Fatal> {
         .iter()
         .filter_map(|f| f["openspec/specs/".len()..].split_once('/').map(|(d, _)| d))
         .collect();
-    if domains.is_empty() && !specs.is_empty() {
+    // A file with a front matter in `openspec/specs/` is a document that an
+    // earlier run wrote there (a root of the type requirements).
+    let foreign = specs.iter().any(|f| {
+        !f["openspec/specs/".len()..].contains('/')
+            && !ctx.text(f).is_ok_and(|t| t.starts_with("---\n"))
+    });
+    if domains.is_empty() && foreign {
         return Err(layout_error(
             "`openspec/specs/` has no domain folder, so the layout belongs to another major version",
         ));
@@ -77,7 +83,7 @@ pub fn read(ctx: &Ctx) -> Result<Read, Fatal> {
             Some((d, rest)) => by_domain.entry(d).or_default().push(rest),
             None => read
                 .sources
-                .push(SourceFile::skipped(f, "not in a domain folder")),
+                .push(SourceFile::kept(f, "a file of the folder of the specs")),
         }
     }
     for (domain, files) in by_domain {
@@ -123,6 +129,9 @@ fn blocks(l: &Lines, path: &str) -> Result<Vec<Block>, Fatal> {
             )));
         }
         let (sentence, rest) = split_sentence(&l.block(h.line + 1, l.own_end(i)));
+        if sentence.is_empty() {
+            return Err(crate::import_speckit::no_sentence(path, h.line + 1, &key));
+        }
         let end = l.tree_end(i);
         let mut scenarios = Vec::new();
         for (j, c) in l.headings.iter().enumerate().skip(i + 1) {
@@ -322,7 +331,9 @@ struct DeltaSpec {
     domain: String,
     path: String,
     blocks: Vec<Delta>,
-    purpose: Option<String>,
+    /// The text outside the requirement blocks: a purpose, a text before the
+    /// first block, a note and another section. A heading is a bold line.
+    other: String,
     renamed: bool,
 }
 
@@ -333,7 +344,7 @@ fn delta_spec(ctx: &Ctx, path: &str, domain: &str) -> Result<DeltaSpec, Fatal> {
         domain: domain.to_string(),
         path: path.to_string(),
         blocks: Vec::new(),
-        purpose: None,
+        other: String::new(),
         renamed: false,
     };
     for (i, h) in l.headings.iter().enumerate() {
@@ -354,13 +365,7 @@ fn delta_spec(ctx: &Ctx, path: &str, domain: &str) -> Result<DeltaSpec, Fatal> {
                 spec.renamed = true;
                 continue;
             }
-            "PURPOSE" => {
-                let t = l.block(h.line + 1, l.tree_end(i));
-                if !t.is_empty() {
-                    spec.purpose = Some(t);
-                }
-                continue;
-            }
+            "PURPOSE" => continue,
             _ => continue,
         };
         let end = l.tree_end(i);
@@ -383,6 +388,9 @@ fn delta_spec(ctx: &Ctx, path: &str, domain: &str) -> Result<DeltaSpec, Fatal> {
             }
             let own_end = l.own_end(j);
             let tree_end = l.tree_end(j);
+            if verb != "REMOVE" && l.block(b.line + 1, own_end).is_empty() {
+                return Err(crate::import_speckit::no_sentence(path, b.line + 1, &key));
+            }
             let (sentence, more) = if verb == "REMOVE" {
                 (String::new(), l.block(b.line + 1, tree_end))
             } else {
@@ -397,6 +405,48 @@ fn delta_spec(ctx: &Ctx, path: &str, domain: &str) -> Result<DeltaSpec, Fatal> {
             });
         }
     }
+    // The text outside the blocks.
+    let mut inside = vec![false; l.lines.len()];
+    for h in &l.headings {
+        if h.level == 3 && requirement_name(&h.text).is_some() {
+            let i = l
+                .headings
+                .iter()
+                .position(|x| x.line == h.line)
+                .unwrap_or(0);
+            for slot in inside.iter_mut().take(l.tree_end(i)).skip(h.line) {
+                *slot = true;
+            }
+        }
+    }
+    let mut other: Vec<String> = Vec::new();
+    for (n, line) in l.lines.iter().enumerate() {
+        if inside[n] {
+            continue;
+        }
+        if let Some(h) = l.headings.iter().find(|h| h.line == n) {
+            let word = h
+                .text
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_uppercase();
+            let verb_heading = h.level == 2
+                && matches!(
+                    word.as_str(),
+                    "ADDED" | "MODIFIED" | "REMOVED" | "RENAMED" | "PURPOSE"
+                );
+            if h.level == 1 || verb_heading {
+                continue;
+            }
+            other.push(String::new());
+            other.push(format!("**{}**", h.text));
+            other.push(String::new());
+            continue;
+        }
+        other.push(line.trim_end().to_string());
+    }
+    spec.other = crate::import_docs::trim_blank(&other.join("\n"));
     if spec.blocks.is_empty() && !spec.renamed {
         return Err(Fatal::Config(format!(
             "{path}: the delta spec has no requirement (no `### Requirement:` heading); the import supports {VERSION}"
@@ -448,42 +498,39 @@ fn shift_headings(text: &str, shift: usize) -> String {
 }
 
 /// The text of a task file as the lines of `Order`: a group heading is a
-/// bold line, and a box line is a task (decision I13).
-fn order_blocks(tasks: &str) -> Vec<Vec<String>> {
-    let mut out: Vec<Vec<String>> = Vec::new();
-    let mut items: Vec<String> = Vec::new();
+/// bold line, a box line is a task, and another line stays (decision I13).
+fn order_lines(tasks: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     let mut n = 0;
     for line in tasks.lines() {
         if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
             if lvl >= 2 {
-                if !items.is_empty() {
-                    out.push(std::mem::take(&mut items));
-                }
-                out.push(vec![format!("**{text}**")]);
+                out.push(String::new());
+                out.push(format!("**{text}**"));
+                out.push(String::new());
             }
             continue;
         }
         let t = line.trim_start();
-        let Some(rest) = t.strip_prefix("- [") else {
-            continue;
-        };
-        let done = match rest.chars().next() {
-            Some(' ') => false,
-            Some('x' | 'X') => true,
-            _ => continue,
-        };
-        let Some(rest) = rest[1..].strip_prefix("] ") else {
+        let task = t.strip_prefix("- [").and_then(|rest| {
+            let done = match rest.chars().next()? {
+                ' ' => false,
+                'x' | 'X' => true,
+                _ => return None,
+            };
+            Some((done, rest[1..].strip_prefix("] ")?.trim()))
+        });
+        let Some((done, rest)) = task else {
+            out.push(line.trim_end().to_string());
             continue;
         };
         n += 1;
-        let rest = rest.trim();
         let word = rest.split_whitespace().next().unwrap_or("");
         let num = word.trim_end_matches('.');
         let numbered = !num.is_empty()
             && num
                 .split('.')
-                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-            && num.bytes().next().is_some_and(|b| b.is_ascii_digit());
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
         let (id, text) = if numbered {
             (
                 format!("t{}", num.replace('.', "-")),
@@ -492,16 +539,25 @@ fn order_blocks(tasks: &str) -> Vec<Vec<String>> {
         } else {
             (format!("t{n}"), rest)
         };
-        items.push(format!(
+        out.push(format!(
             "- [{}] {id}: {}.",
             if done { "x" } else { " " },
             text.trim_end_matches('.').trim()
         ));
     }
-    if !items.is_empty() {
-        out.push(items);
-    }
     out
+}
+
+/// A text with no run of blank lines.
+fn collapse(t: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for l in t.lines() {
+        if l.trim().is_empty() && out.last().is_some_and(|p| p.trim().is_empty()) {
+            continue;
+        }
+        out.push(l);
+    }
+    out.join("\n")
 }
 
 fn change(ctx: &Ctx, read: &mut Read, name: &str, files: &[&str]) -> Result<(), Fatal> {
@@ -657,7 +713,7 @@ fn change(ctx: &Ctx, read: &mut Read, name: &str, files: &[&str]) -> Result<(), 
         if has("tasks.md") {
             let linked = (ctx.link)(&ctx.text(&tasks)?, &tasks, &plan_to);
             pb.push(vec!["## Order".to_string()]);
-            pb.extend(order_blocks(&linked));
+            pb.push(order_lines(&linked));
             sources.push(tasks.clone());
             written.insert(tasks.clone(), vec![plan_to.clone()]);
         }
@@ -679,9 +735,13 @@ fn change(ctx: &Ctx, read: &mut Read, name: &str, files: &[&str]) -> Result<(), 
         for sp in &specs {
             let linked_path = &sp.path;
             let id = domain_id(ctx, &sp.domain)?;
-            if let Some(p) = &sp.purpose {
-                scen.push(vec![format!("### {}", sp.domain), String::new(), p.clone()]);
-                count += count_scenarios(p);
+            if !sp.other.is_empty() {
+                scen.push(vec![
+                    format!("### {}", sp.domain),
+                    String::new(),
+                    collapse(&sp.other),
+                ]);
+                count += count_scenarios(&sp.other);
             }
             for b in &sp.blocks {
                 let one = b.sentence.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -1353,6 +1413,44 @@ mod tests {
         let t = r.target("docs/intent/add-two-factor/spec.md");
         assert!(
             t.contains("- ADD requirements/media/auth#second-factor:"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_text_of_a_delta_spec_outside_the_blocks_is_plain_text_in_the_scenarios() {
+        let delta = "Intro of the author.\n\n## Purpose\n\nWhy.\n\n## ADDED Requirements\n\nBefore the first block.\n\n### Requirement: Report\n\nThe system SHALL report.\n\n### Notes\n\nThe rollout MUST be slow.\n\n## Migration plan\n\nCopy first.\n";
+        let r = run(&base(&[
+            ("openspec/changes/add-reports/proposal.md", "## Why\n\nx\n"),
+            ("openspec/changes/add-reports/specs/reports/spec.md", delta),
+        ]));
+        let t = r.target("docs/intent/add-reports/spec.md");
+        let want = "\n## Scenarios\n\n### reports\n\nIntro of the author.\n\nWhy.\n\nBefore the first block.\n\n**Notes**\n\nThe rollout MUST be slow.\n\n**Migration plan**\n\nCopy first.\n";
+        assert!(t.contains(want), "{t}");
+    }
+
+    #[test]
+    fn a_requirement_with_a_list_and_no_sentence_stops_the_import() {
+        let spec = "# A\n\n### Requirement: Sign In\n\n- The system SHALL do it.\n";
+        let r = run(&base(&[("openspec/specs/auth/spec.md", spec)]));
+        assert!(matches!(r.err(), Fatal::Refused(_)));
+        let m = r.err().message();
+        assert!(
+            m.contains("openspec/specs/auth/spec.md:3") && m.contains("no sentence"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn a_task_file_keeps_its_plain_lines() {
+        let tasks = "Intro.\n\n## 1. A\n\n- [ ] 1.1 Do it\n\nCheckpoint: it MUST pass.\n";
+        let r = run(&base(&[
+            ("openspec/changes/x/proposal.md", "## Why\n\nx\n"),
+            ("openspec/changes/x/tasks.md", tasks),
+        ]));
+        let t = r.target("docs/intent/x/plan.md");
+        assert!(
+            t.contains("## Order\n\nIntro.\n\n**1. A**\n\n- [ ] t1-1: Do it.\n\nCheckpoint: it MUST pass.\n"),
             "{t}"
         );
     }

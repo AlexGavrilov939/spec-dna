@@ -17,6 +17,12 @@
 //!    other codes (evidence, budgets, changes), and the report counts them.
 //! 5. The plan on the planned tree is empty: a second run writes nothing.
 //!
+//! 6. No line of a source with a word of BCP 14 (and no other line, but the
+//!    headings and the task lines that the reader rewrites) vanishes: each is
+//!    in a target of its source. A line with a BCP 14 word that no target holds
+//!    stops the write. Another line that no target holds is listed as
+//!    `dropped` in the report.
+//!
 //! The hash of a requirement covers its sentence only, so the proof also
 //! counts the scenarios of each target that has a count.
 //!
@@ -33,7 +39,7 @@ use crate::import_docs::{
     PairKind, Plan, State, apply, corpus_of, count_scenarios, is_document, strip_clarification,
 };
 use crate::model::{Corpus, Doc, Res};
-use crate::parse::{ItemSection, parse, strip_link_destinations, strip_markers};
+use crate::parse::{ItemSection, has_bcp14, parse, strip_link_destinations, strip_markers};
 use crate::repo::Fatal;
 use crate::upgrade_docs::Tree;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -49,6 +55,12 @@ pub struct Proof {
     /// The ids that the proof resolved in both trees.
     pub ids: usize,
     pub failures: Vec<String>,
+    /// The lines of a source with no word of BCP 14 that no target holds, as
+    /// `<path>:<line>: <text>`. The report lists them.
+    pub dropped: Vec<String>,
+    /// The anchors of headings of a moved document that its target has no
+    /// more, because the heading became a list item or a title.
+    pub removed_anchors: usize,
     /// The new diagnostics of the codes that the proof ignores, as (code,
     /// count). The report lists them.
     pub ignored: Vec<(String, usize)>,
@@ -109,6 +121,7 @@ pub fn prove(
     pairs(&mut proof, plan, &after, &texts);
     scenarios(&mut proof, plan, &texts);
     states(&mut proof, tree, plan);
+    text_loss(&mut proof, tree, plan, &texts)?;
     ids(&mut proof, plan, &before, &after);
     errors(&mut proof, fin, &before, &after, &texts);
     // Step 5: the plan on the planned tree is empty.
@@ -272,10 +285,9 @@ fn states(proof: &mut Proof, tree: &Tree, plan: &Plan) {
             }
             State::Kept | State::Skipped => {
                 let touched = moved.iter().any(|m| s.covers(m))
-                    || plan
-                        .writes
-                        .keys()
-                        .any(|w| s.covers(w) && in_tree.contains(w.as_str()));
+                    || plan.writes.keys().any(|w| {
+                        s.covers(w) && in_tree.contains(w.as_str()) && !plan.edited.contains(w)
+                    });
                 if touched {
                     proof.failures.push(format!(
                         "`{}`: the state is {}, and the plan moves or writes it",
@@ -299,6 +311,145 @@ fn states(proof: &mut Proof, tree: &Tree, plan: &Plan) {
             ));
         }
     }
+}
+
+/// The words of a text: lowercase runs of letters and digits.
+fn tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// The line without its list marker, its task box and its bold key.
+fn line_body(line: &str) -> &str {
+    let mut t = line.trim();
+    if let Some(r) = t
+        .strip_prefix("- ")
+        .or_else(|| t.strip_prefix("* "))
+        .or_else(|| t.strip_prefix("+ "))
+    {
+        t = r.trim_start();
+    } else {
+        let d = t.chars().take_while(char::is_ascii_digit).count();
+        if d > 0 && (t[d..].starts_with(". ") || t[d..].starts_with(") ")) {
+            t = t[d + 2..].trim_start();
+        }
+    }
+    if let Some(r) = t
+        .strip_prefix("[ ] ")
+        .or_else(|| t.strip_prefix("[x] "))
+        .or_else(|| t.strip_prefix("[X] "))
+    {
+        t = r.trim_start();
+    }
+    if let Some(r) = t.strip_prefix("**")
+        && let Some(i) = r.find("**")
+        && !r[..i].contains(char::is_whitespace)
+    {
+        t = r[i + 2..].trim_start_matches(':').trim_start();
+    }
+    t
+}
+
+fn contains_seq(stream: &[String], line: &[String]) -> bool {
+    line.is_empty()
+        || stream
+            .windows(line.len())
+            .any(|w| w.iter().zip(line).all(|(a, b)| a == b))
+}
+
+/// A task line of a source: a box, then an id or a number.
+fn is_task_line(line: &str) -> bool {
+    let t = line.trim_start();
+    (t.starts_with("- [ ] ") || t.starts_with("- [x] ") || t.starts_with("- [X] "))
+        && t[6..]
+            .chars()
+            .next()
+            .is_some_and(|c| c == 'T' || c.is_ascii_digit())
+}
+
+/// Step 6: no line of a source vanishes. A heading, and the line of a task,
+/// are rewritten by the readers, so the proof needs no copy of them (a line of
+/// them with a BCP 14 word still needs one).
+fn text_loss(
+    proof: &mut Proof,
+    tree: &Tree,
+    plan: &Plan,
+    texts: &HashMap<String, String>,
+) -> Result<(), Fatal> {
+    let sources: Vec<&crate::import_docs::SourceFile> = plan
+        .sources
+        .iter()
+        .filter(|s| {
+            matches!(s.state, State::Moved | State::Written)
+                && !s.path.ends_with('/')
+                && s.to != [s.path.clone()]
+        })
+        .collect();
+    let paths: Vec<String> = sources.iter().map(|s| s.path.clone()).collect();
+    let bytes = (tree.read)(&paths)?;
+    for s in sources {
+        let Some(b) = bytes.get(&s.path) else {
+            continue;
+        };
+        let source = String::from_utf8_lossy(b);
+        let mut stream: Vec<String> = Vec::new();
+        for t in plan.targets.iter().filter(|t| t.sources.contains(&s.path)) {
+            stream.extend(tokens(
+                texts.get(&t.path).map_or(t.text.as_str(), String::as_str),
+            ));
+        }
+        let prefix = format!("{}:", s.path);
+        let pair_tokens: Vec<Vec<String>> = plan
+            .pairs
+            .iter()
+            .filter(|p| p.from.starts_with(&prefix))
+            .map(|p| tokens(&p.sentence))
+            .collect();
+        let words: std::collections::HashSet<&String> = stream.iter().collect();
+        for (i, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let bcp = has_bcp14(trimmed);
+            let heading = crate::import_docs::heading_of(line).is_some();
+            if heading && !bcp {
+                continue;
+            }
+            let toks = tokens(line_body(line));
+            if toks.is_empty() {
+                continue;
+            }
+            let found = if is_task_line(line) {
+                toks.iter().all(|w| {
+                    words.contains(w)
+                        || w == "p"
+                        || (w.starts_with(['t', 'u'])
+                            && w[1..].bytes().all(|b| b.is_ascii_digit() || b == b's'))
+                        || w.bytes().all(|b| b.is_ascii_digit())
+                })
+            } else {
+                contains_seq(&stream, &toks) || pair_tokens.iter().any(|p| contains_seq(p, &toks))
+            };
+            if found {
+                continue;
+            }
+            if bcp {
+                proof.failures.push(format!(
+                    "{}:{}: the line `{trimmed}` has a word of BCP 14, and no target holds it, so the write would lose a requirement",
+                    s.path,
+                    i + 1
+                ));
+            } else {
+                proof
+                    .dropped
+                    .push(format!("{}:{}: {trimmed}", s.path, i + 1));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The ids of a document of the tree before: its id, its aliases, the id of
@@ -343,7 +494,20 @@ fn ids(proof: &mut Proof, plan: &Plan, before: &Corpus, after: &Corpus) {
             let was = &before.docs[bi as usize].path;
             let want = moved.get(was.as_str()).copied().unwrap_or(was.as_str());
             proof.ids += 1;
+            // A heading of a moved document can become a list item or a
+            // title: its anchor is gone on purpose. A requirement key stays.
+            let heading_only = matches!(
+                &before.resolve(&id),
+                Res::Found(bi, Some(f), true) if before.docs[*bi as usize].req(f).is_none()
+            );
             match after.resolve(&id) {
+                Res::Found(ai, Some(_), false)
+                    if heading_only
+                        && moved.contains_key(was.as_str())
+                        && after.docs[ai as usize].path == want =>
+                {
+                    proof.removed_anchors += 1;
+                }
                 Res::Found(ai, _, true) if after.docs[ai as usize].path == want => {}
                 Res::Found(ai, _, true) => proof.failures.push(format!(
                     "`{id}` resolves to `{was}` before the plan, and to `{}` after it; `{want}` must keep it",
@@ -658,7 +822,10 @@ mod tests {
             }];
             plan
         };
-        let files = [("src/feature.md", SOURCE)];
+        let files = [(
+            "src/feature.md",
+            "# Feature\n\nThe door MUST offer [NEEDS CLARIFICATION: which formats?] formats.\n",
+        )];
         let good = run(&mk("- [ ] fr-1: which formats?"), &files);
         assert!(good.ok(), "{:?}", good.failures);
         let bad = run(&mk("- none."), &files);
@@ -682,5 +849,92 @@ mod tests {
             f.contains("second run would stop") && f.contains("other text"),
             "{f}"
         );
+    }
+
+    fn with_source(text: &str, source: &str) -> Proof {
+        run(&moved_plan(text), &[("src/feature.md", source)])
+    }
+
+    #[test]
+    fn a_dropped_line_with_a_bcp_14_word_stops_the_write_and_names_the_line() {
+        let source = format!("{SOURCE}\nThe lock MUST not vanish.\n");
+        let p = with_source(&planned_text(), &source);
+        let f = p.failures.join("\n");
+        assert!(f.contains("src/feature.md:6"), "{f}");
+        assert!(f.contains("The lock MUST not vanish."), "{f}");
+        // The same line in the target is no loss, also in another layout.
+        let kept = format!("{}\n  The lock MUST not vanish.\n", planned_text());
+        let p = with_source(&kept, &source);
+        assert!(p.ok(), "{:?}", p.failures);
+        assert!(p.dropped.is_empty(), "{:?}", p.dropped);
+    }
+
+    #[test]
+    fn a_dropped_line_with_no_bcp_14_word_is_listed_and_no_failure() {
+        let source = format!("{SOURCE}\nA note for the reader.\n");
+        let p = with_source(&planned_text(), &source);
+        assert!(p.ok(), "{:?}", p.failures);
+        assert_eq!(p.dropped, ["src/feature.md:6: A note for the reader."]);
+    }
+
+    #[test]
+    fn a_heading_and_a_line_of_a_pair_are_no_dropped_lines() {
+        // The heading `# Feature` is in the target; a heading that the reader
+        // rewrote and the line of a requirement need no copy.
+        let source = format!("{SOURCE}\n## A heading that goes\n");
+        let p = with_source(&planned_text(), &source);
+        assert!(p.ok(), "{:?}", p.failures);
+        assert!(p.dropped.is_empty(), "{:?}", p.dropped);
+    }
+
+    #[test]
+    fn a_heading_that_became_a_list_item_is_no_lost_id() {
+        let old = "---\nstatus: active\n---\n# Old\n\n## Old heading\n\n- **a-key**: The door MUST open.\n";
+        let new = "---\nstatus: active\naliases:\n  - requirements/old\n---\n# Old\n\n- **a-key**: The door MUST open.\n";
+        let mut plan = moved_plan(&planned_text());
+        plan.moves.push((
+            "docs/requirements/old.md".into(),
+            "docs/requirements/new-name.md".into(),
+        ));
+        plan.writes
+            .insert("docs/requirements/new-name.md".into(), new.into());
+        let files = [
+            ("src/feature.md", SOURCE),
+            ("docs/requirements/old.md", old),
+        ];
+        let p = run(&plan, &files);
+        assert!(p.ok(), "{:?}", p.failures);
+        // The key of the requirement must stay.
+        let lost = new.replace("a-key", "b-key");
+        plan.writes
+            .insert("docs/requirements/new-name.md".into(), lost);
+        let p = run(&plan, &files);
+        assert!(
+            p.failures.join("\n").contains("requirements/old#a-key"),
+            "{:?}",
+            p.failures
+        );
+    }
+
+    #[test]
+    fn a_kept_document_with_an_edited_link_is_no_failure_of_step_2() {
+        let doc = "---\nstatus: active\n---\n# Plan\n\nSee [it](../../src/feature.md).\n";
+        let mut plan = moved_plan(&planned_text());
+        plan.universe.push("docs/requirements/plan.md".into());
+        plan.sources
+            .push(SourceFile::kept("docs/requirements/plan.md", "a file"));
+        plan.writes.insert(
+            "docs/requirements/plan.md".into(),
+            doc.replace("../../src/feature.md", "feature.md"),
+        );
+        let files = [
+            ("src/feature.md", SOURCE),
+            ("docs/requirements/plan.md", doc),
+        ];
+        let p = run(&plan, &files);
+        assert!(!p.ok());
+        plan.edited.push("docs/requirements/plan.md".into());
+        let p = run(&plan, &files);
+        assert!(p.ok(), "{:?}", p.failures);
     }
 }

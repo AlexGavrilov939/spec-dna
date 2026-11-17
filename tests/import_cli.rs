@@ -297,7 +297,7 @@ fn the_text_output_has_a_line_for_each_source_and_the_commands_to_run() {
         "wrote docs/intent/album-export/spec.md (from specs/003-album-export/spec.md)",
         "wrote docs/intent/album-export/plan.md (from specs/003-album-export/tasks.md)",
         "proof: ok",
-        "to remove the sources: git rm -r -- specs/003-album-export",
+        "to remove the sources: git rm -- specs/003-album-export/spec.md specs/003-album-export/tasks.md",
     ] {
         assert!(out.contains(line), "`{line}` not in:\n{out}");
     }
@@ -442,4 +442,16 @@ fn a_target_that_exists_with_other_text_stops_the_plan_and_names_git_rm() {
     assert_eq!(code, 1, "{out}{err}");
     assert!(err.contains("docs/intent/album-export/spec.md"), "{err}");
     assert!(err.contains("git rm"), "{err}");
+    assert!(
+        !err.contains("git rm -r -- specs/003-album-export "),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_json_of_the_first_run_has_the_notes_of_the_configuration() {
+    let repo = fx::speckit_with(false, false);
+    let (code, out, err) = import(&repo, &["speckit", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("legacy key `FR-{n}`"), "{out}");
 }
