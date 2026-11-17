@@ -1869,4 +1869,28 @@ mod tests {
             f.rows
         );
     }
+
+    #[test]
+    fn areas_propose_one_name_of_a_pair_that_differs_only_in_case() {
+        let doc = "# Note\n\n## Requirements\n\n- **open**: The controller SHALL open the valve.\n";
+        let files: Vec<(String, String)> = [
+            "docs/specs/valves/a.md",
+            "docs/specs/valves/b.md",
+            "docs/specs/Valves/c.md",
+            "docs/specs/sensors/d.md",
+            "docs/specs/pumps/e.md",
+            "docs/specs/Pumps/f.md",
+        ]
+        .iter()
+        .map(|p| (p.to_string(), doc.to_string()))
+        .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let f = facts(&refs);
+        // The most documents win, then the name: `valves` has 2 documents, and
+        // `Pumps` is before `pumps`.
+        assert_eq!(f.areas, ["Pumps", "sensors", "valves"], "{:?}", f.areas);
+    }
 }
