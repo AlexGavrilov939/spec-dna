@@ -1865,3 +1865,50 @@ fn a_document_whose_id_names_2_documents_is_no_top_file() {
     );
     assert!(!repo.dir.join("docs/lab/product.md").exists());
 }
+
+// --- the rename of the skills of 0.6 (0.7.0, D41) ---
+
+#[test]
+#[ignore = "workflow-pack t18"]
+fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
+    let repo = project_06(None);
+    let toml = repo.read("spec-dna.toml").replace(
+        "[harness]\nlevel = \"none\"\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\"intent\", \"spec\", \"plan\", \"review\"]\n",
+    );
+    assert!(toml.contains("skills = [\"intent\""), "{toml}");
+    repo.write("spec-dna.toml", &toml);
+    repo.commit("a 0.6 project with the 4 skills");
+    // The old names stop each command, but `upgrade` reads the file.
+    let (code, _, err) = repo.run(&["check"]);
+    assert_eq!(code, 3, "{err}");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("brainstorm") && out.contains("write-plan"),
+        "{out}"
+    );
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let toml = repo.read("spec-dna.toml");
+    // `intent` is `brainstorm`, `spec` is `specify` and `clarify`, `plan` is
+    // `write-plan`, and `review` stays. The list has the order of D2.
+    assert!(
+        toml.contains(
+            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\"]\n"
+        ),
+        "{toml}"
+    );
+    assert!(
+        !toml.contains("\"intent\", \"spec\""),
+        "no old name stays: {toml}"
+    );
+    repo.commit("upgrade");
+    // A second run has nothing to change, and the project checks clean.
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("nothing to change"), "{out}");
+    assert_eq!(status(&repo), "");
+    let (code, out, err) = repo.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+}

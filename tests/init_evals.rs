@@ -8,11 +8,15 @@ mod common;
 use common::*;
 use std::fs;
 
-const SKILLS: [&str; 4] = [
-    ".claude/skills/spec-dna-intent/SKILL.md",
-    ".claude/skills/spec-dna-spec/SKILL.md",
-    ".claude/skills/spec-dna-plan/SKILL.md",
+/// The 7 skills that are on by default, in the order of D2.
+const SKILLS: [&str; 7] = [
+    ".claude/skills/spec-dna-brainstorm/SKILL.md",
+    ".claude/skills/spec-dna-specify/SKILL.md",
+    ".claude/skills/spec-dna-clarify/SKILL.md",
+    ".claude/skills/spec-dna-write-plan/SKILL.md",
     ".claude/skills/spec-dna-review/SKILL.md",
+    ".claude/skills/spec-dna-finish/SKILL.md",
+    ".claude/skills/spec-dna-post-mortem/SKILL.md",
 ];
 
 const STARTER: [&str; 3] = [
@@ -80,7 +84,7 @@ fn a_new_project_with_the_defaults_passes_check_and_has_no_sd506() {
         "{cfg}"
     );
     assert!(
-        cfg.contains("skills = [\"intent\", \"spec\", \"plan\", \"review\"]\nreview-md = true\nprotect-tests = \"fix-branches\"\n"),
+        cfg.contains("skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]\nreview-md = true\nprotect-tests = \"fix-branches\"\n"),
         "{cfg}"
     );
     let (code, out, err) = r.run(&["check"]);
@@ -388,7 +392,7 @@ fn an_upgraded_project_gets_no_evals() {
 #[test]
 fn reconfigure_keeps_the_current_value_of_a_part_key() {
     let r = Repo::with_config(
-        "\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"lean\"\nskills = [\"spec\"]\nreview-md = false\nprotect-tests = \"off\"\n",
+        "\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"lean\"\nskills = [\"specify\"]\nreview-md = false\nprotect-tests = \"off\"\n",
     );
     r.write("docs/a.md", "# A\n\nText.\n");
     r.commit("start");
@@ -396,7 +400,7 @@ fn reconfigure_keeps_the_current_value_of_a_part_key() {
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(
-        cfg.contains("skills = [\"spec\"]\nreview-md = false\nprotect-tests = \"off\"\n"),
+        cfg.contains("skills = [\"specify\"]\nreview-md = false\nprotect-tests = \"off\"\n"),
         "{cfg}"
     );
     assert!(r.dir.join(SKILLS[1]).exists());
@@ -496,12 +500,12 @@ fn a_review_md_with_no_marker_gives_review_md_false() {
 #[test]
 fn a_skill_with_no_marker_leaves_the_default_skills() {
     let r = Repo::new();
-    r.write(SKILLS[1], "---\nname: spec-dna-spec\n---\nMine.\n");
+    r.write(SKILLS[1], "---\nname: spec-dna-specify\n---\nMine.\n");
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(
-        cfg.contains("skills = [\"intent\", \"plan\", \"review\"]\n"),
+        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]\n"),
         "{cfg}"
     );
     assert!(out.contains(&format!("note: {}", SKILLS[1])), "{out}");
@@ -512,18 +516,18 @@ fn the_answers_keys_set_the_parts() {
     let r = Repo::new();
     let (code, out, err) = init_with(
         &r,
-        "harness-skills = [\"intent\", \"review\"]\nharness-review-md = false\nharness-protect-tests = \"always\"\n",
+        "harness-skills = [\"brainstorm\", \"review\"]\nharness-review-md = false\nharness-protect-tests = \"always\"\n",
         &[],
     );
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(
         cfg.contains(
-            "skills = [\"intent\", \"review\"]\nreview-md = false\nprotect-tests = \"always\"\n"
+            "skills = [\"brainstorm\", \"review\"]\nreview-md = false\nprotect-tests = \"always\"\n"
         ),
         "{cfg}"
     );
-    assert!(r.dir.join(SKILLS[0]).exists() && r.dir.join(SKILLS[3]).exists());
+    assert!(r.dir.join(SKILLS[0]).exists() && r.dir.join(SKILLS[4]).exists());
     assert!(!r.dir.join(SKILLS[1]).exists() && !r.dir.join("REVIEW.md").exists());
     let settings = r.read(".claude/settings.json");
     assert!(
@@ -538,11 +542,16 @@ fn the_answers_keys_set_the_parts() {
 fn a_bad_answer_of_the_parts_gives_exit_code_2_and_writes_nothing() {
     for (answers, want) in [
         ("harness-skills = [\"build\"]\n", "unknown skill `build`"),
+        // A name of 0.6 gives the new names and the command `upgrade`.
+        ("harness-skills = [\"plan\"]\n", "write-plan"),
         (
-            "harness-skills = [\"spec\", \"spec\"]\n",
-            "`spec` more than once",
+            "harness-skills = [\"specify\", \"specify\"]\n",
+            "`specify` more than once",
         ),
-        ("harness-skills = \"spec\"\n", "must be an array of strings"),
+        (
+            "harness-skills = \"specify\"\n",
+            "must be an array of strings",
+        ),
         ("harness-review-md = \"yes\"\n", "must be true or false"),
         (
             "harness-protect-tests = \"never\"\n",
@@ -554,7 +563,7 @@ fn a_bad_answer_of_the_parts_gives_exit_code_2_and_writes_nothing() {
             "harness level",
         ),
         (
-            "harness = \"none\"\nharness-skills = [\"spec\"]\n",
+            "harness = \"none\"\nharness-skills = [\"specify\"]\n",
             "harness level",
         ),
     ] {
@@ -605,10 +614,10 @@ fn request_bytes(out: &str) -> usize {
 }
 
 #[test]
-fn the_4_skill_descriptions_add_588_bytes_to_the_prefix_of_each_request() {
+fn the_7_skill_descriptions_that_are_on_add_their_listing_to_the_prefix_of_each_request() {
     // The sum has the length of the version in the markers, so the test
     // compares 2 runs of the same version.
-    let with = {
+    let (with, listing) = {
         let r = Repo::new();
         let (code, out, err) = r.run(&["init", "--non-interactive"]);
         assert_eq!(code, 0, "{out}{err}");
@@ -616,7 +625,20 @@ fn the_4_skill_descriptions_add_588_bytes_to_the_prefix_of_each_request() {
             out.contains("the CLAUDE.md line, the agent descriptions and the skill descriptions")
         );
         assert!(out.contains("per-request prefix: "), "{out}");
-        request_bytes(&out)
+        // The listing of Claude Code: one line for each skill.
+        let listing: usize = SKILLS
+            .iter()
+            .map(|f| {
+                let name = f.split('/').nth(2).unwrap();
+                let d = r
+                    .read(f)
+                    .lines()
+                    .find_map(|l| l.strip_prefix("description: ").map(str::to_string))
+                    .unwrap();
+                format!("- {name}: {d}\n").len()
+            })
+            .sum();
+        (request_bytes(&out), listing)
     };
     let without = {
         let r = Repo::new();
@@ -624,7 +646,9 @@ fn the_4_skill_descriptions_add_588_bytes_to_the_prefix_of_each_request() {
         assert_eq!(code, 0, "{out}{err}");
         request_bytes(&out)
     };
-    assert_eq!(with, without + 588);
+    // D6: the listing of the 7 skills that are on has 1,250 bytes or fewer.
+    assert!(listing > 0 && listing <= 1250, "{listing}");
+    assert_eq!(with, without + listing);
 }
 
 #[test]
@@ -750,7 +774,7 @@ mod terminal {
             "",
             "none, none, main",
             "",
-            "skills=spec,plan review-md=false protect-tests=always",
+            "skills=specify,write-plan review-md=false protect-tests=always",
             "",
             "none",
             "y",
@@ -759,7 +783,7 @@ mod terminal {
         assert_eq!(code, 0, "{out}");
         for want in [
             "12. Agent harness (none, lean, full) [lean]: ",
-            "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=intent,spec,plan,review review-md=true protect-tests=fix-branches]: ",
+            "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,review,finish,post-mortem review-md=true protect-tests=fix-branches]: ",
             "13. Models (role=model[:effort] ...) [",
             "14. Evals (none, skeleton) [skeleton]: ",
         ] {
@@ -768,7 +792,7 @@ mod terminal {
         let cfg = r.read("spec-dna.toml");
         assert!(
             cfg.contains(
-                "skills = [\"spec\", \"plan\"]\nreview-md = false\nprotect-tests = \"always\"\n"
+                "skills = [\"specify\", \"write-plan\"]\nreview-md = false\nprotect-tests = \"always\"\n"
             ),
             "{cfg}"
         );

@@ -22,7 +22,7 @@ fn answers(level: &str) -> String {
     );
     // The level `none` takes no part of the harness.
     if level != "none" {
-        text.push_str("harness-skills = [\"intent\", \"spec\", \"plan\", \"review\"]\n");
+        text.push_str("harness-skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]\n");
         text.push_str("harness-review-md = true\n");
     }
     if level == "full" {
