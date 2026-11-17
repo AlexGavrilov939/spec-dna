@@ -15,6 +15,8 @@ status: approved
 - `docs/glossary.md` The term import.
 - `CHANGELOG.md` The entry of the change.
 - `.claude/agents/ownership.md` The owners of the new files.
+- `docs/adr/0022-the-plan-of-the-import.md` The build amendment of the rules.
+- `docs/design/0.7.0.md` The deviations of the build, in section 15.
 
 ## Order
 

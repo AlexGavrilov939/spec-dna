@@ -313,14 +313,6 @@ fn states(proof: &mut Proof, tree: &Tree, plan: &Plan) {
     }
 }
 
-/// The words of a text: lowercase runs of letters and digits.
-fn tokens(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-        .collect()
-}
-
 /// The line without its list marker, its task box and its bold key.
 fn line_body(line: &str) -> &str {
     let mut t = line.trim();
@@ -352,13 +344,6 @@ fn line_body(line: &str) -> &str {
     t
 }
 
-fn contains_seq(stream: &[String], line: &[String]) -> bool {
-    line.is_empty()
-        || stream
-            .windows(line.len())
-            .any(|w| w.iter().zip(line).all(|(a, b)| a == b))
-}
-
 /// A task line of a source: a box, then an id or a number.
 fn is_task_line(line: &str) -> bool {
     let t = line.trim_start();
@@ -369,9 +354,63 @@ fn is_task_line(line: &str) -> bool {
             .is_some_and(|c| c == 'T' || c.is_ascii_digit())
 }
 
-/// Step 6: no line of a source vanishes. A heading, and the line of a task,
-/// are rewritten by the readers, so the proof needs no copy of them (a line of
-/// them with a BCP 14 word still needs one).
+/// The normal form of a line for the compare of step 6: no link destination,
+/// no bold marker, no backtick, and the white space joined. It is the form of
+/// step 1 without the markers of aliases and the clarification.
+fn line_form(s: &str) -> String {
+    let t = strip_link_destinations(s)
+        .replace("**", "")
+        .replace('`', "");
+    normalize(&t)
+}
+
+/// The units of a target: each line, and each paragraph (the lines up to a
+/// blank line, joined with a space), in the line form. A source line must be
+/// in one unit, so the words of 2 lines are no copy.
+fn units(text: &str) -> String {
+    let mut out = String::new();
+    let mut para: Vec<String> = Vec::new();
+    let flush = |para: &mut Vec<String>, out: &mut String| {
+        if para.len() > 1 {
+            out.push_str(&para.join(" "));
+            out.push('\u{1}');
+        }
+        para.clear();
+    };
+    for l in text.lines() {
+        if l.trim().is_empty() {
+            flush(&mut para, &mut out);
+            continue;
+        }
+        let f = line_form(line_body(l));
+        out.push_str(&f);
+        out.push('\u{1}');
+        para.push(f);
+    }
+    flush(&mut para, &mut out);
+    out
+}
+
+/// The part of a task line that must stay: its text, with no box, no id, no
+/// mark and no path (the reader moves them).
+fn task_text(line: &str) -> String {
+    let t = line.trim_start();
+    let t = t
+        .strip_prefix("- [ ] ")
+        .or_else(|| t.strip_prefix("- [x] "))
+        .or_else(|| t.strip_prefix("- [X] "))
+        .unwrap_or(t)
+        .trim();
+    let word = t.split_whitespace().next().unwrap_or("");
+    let rest = t[word.len()..].trim();
+    crate::import_speckit::plan_task(rest).0
+}
+
+/// Step 6: no line of a source vanishes. A heading is rewritten by the
+/// readers, so the proof needs no copy of it (a heading with a BCP 14 word
+/// still needs one). A line of a source must be in one line or one paragraph
+/// of a target, in the line form, or in the sentence of a pair. The task
+/// lines are compared on their text.
 fn text_loss(
     proof: &mut Proof,
     tree: &Tree,
@@ -394,51 +433,37 @@ fn text_loss(
             continue;
         };
         let source = String::from_utf8_lossy(b);
-        let mut stream: Vec<String> = Vec::new();
+        let mut hay = String::new();
         for t in plan.targets.iter().filter(|t| t.sources.contains(&s.path)) {
-            stream.extend(tokens(
+            hay.push_str(&units(
                 texts.get(&t.path).map_or(t.text.as_str(), String::as_str),
             ));
         }
         let prefix = format!("{}:", s.path);
-        let pair_tokens: Vec<Vec<String>> = plan
-            .pairs
-            .iter()
-            .filter(|p| p.from.starts_with(&prefix))
-            .map(|p| tokens(&p.sentence))
-            .collect();
-        let words: std::collections::HashSet<&String> = stream.iter().collect();
+        for p in plan.pairs.iter().filter(|p| p.from.starts_with(&prefix)) {
+            hay.push_str(&line_form(&p.sentence));
+            hay.push('\u{1}');
+        }
         for (i, line) in source.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
             let bcp = has_bcp14(trimmed);
-            let heading = crate::import_docs::heading_of(line).is_some();
-            if heading && !bcp {
+            if crate::import_docs::heading_of(line).is_some() && !bcp {
                 continue;
             }
-            let toks = tokens(line_body(line));
-            if toks.is_empty() {
-                continue;
-            }
-            let found = if is_task_line(line) {
-                toks.iter().all(|w| {
-                    words.contains(w)
-                        || w == "p"
-                        || (w.starts_with(['t', 'u'])
-                            && w[1..].bytes().all(|b| b.is_ascii_digit() || b == b's'))
-                        || w.bytes().all(|b| b.is_ascii_digit())
-                })
+            let form = if is_task_line(line) {
+                line_form(task_text(line).trim_end_matches('.'))
             } else {
-                contains_seq(&stream, &toks) || pair_tokens.iter().any(|p| contains_seq(p, &toks))
+                line_form(line_body(line))
             };
-            if found {
+            if form.is_empty() || hay.contains(&form) {
                 continue;
             }
             if bcp {
                 proof.failures.push(format!(
-                    "{}:{}: the line `{trimmed}` has a word of BCP 14, and no target holds it, so the write would lose a requirement",
+                    "{}:{}: the line `{trimmed}` has a word of BCP 14, and no line or paragraph of a target holds it, so the write would lose a requirement",
                     s.path,
                     i + 1
                 ));
@@ -936,5 +961,57 @@ mod tests {
         plan.edited.push("docs/requirements/plan.md".into());
         let p = run(&plan, &files);
         assert!(p.ok(), "{:?}", p.failures);
+    }
+
+    #[test]
+    fn words_in_order_over_2_lines_of_a_target_are_no_copy_of_a_line() {
+        // `alpha` ends a paragraph and `beta MUST gamma` starts the next one.
+        let source = format!("{SOURCE}\nalpha beta MUST gamma\n");
+        let text = format!("{}\nalpha\n\nbeta MUST gamma\n", planned_text());
+        let p = with_source(&text, &source);
+        assert!(
+            p.failures.join("\n").contains("src/feature.md:6"),
+            "{:?}",
+            p.failures
+        );
+        // The same words in 1 line are a copy.
+        let text = format!("{}\nalpha beta MUST gamma\n", planned_text());
+        assert!(with_source(&text, &source).ok());
+    }
+
+    #[test]
+    fn the_compare_of_a_line_ignores_link_destinations_and_markup() {
+        let source = format!("{SOURCE}\nThe page MUST follow [the **plan**](./plan.md).\n");
+        let text = format!(
+            "{}\nThe page MUST follow [the plan](../../spec-dna.toml).\n",
+            planned_text()
+        );
+        let p = with_source(&text, &source);
+        assert!(p.ok(), "{:?}", p.failures);
+        assert!(p.dropped.is_empty(), "{:?}", p.dropped);
+    }
+
+    #[test]
+    fn a_task_line_is_compared_on_its_text() {
+        let source = "# T\n\n- [ ] T002 [P] [US1] Write the builder in src/zip.py (each archive MUST be signed)\n- [ ] T004 Document why each export MUST be logged\n";
+        let target = "---\nstatus: draft\n---\n# T\n\n- [ ] t002: Write the builder (each archive MUST be signed). Files: `src/zip.py`.\n- [ ] t004: Document why each export MUST be logged.\n";
+        let p = run(&moved_plan_of(target), &[("src/feature.md", source)]);
+        assert!(p.ok(), "{:?}", p.failures);
+        assert!(p.dropped.is_empty(), "{:?}", p.dropped);
+        // A task whose text lost the part in parentheses stops the write.
+        let lost = target.replace(" (each archive MUST be signed)", "");
+        let p = run(&moved_plan_of(&lost), &[("src/feature.md", source)]);
+        assert!(
+            p.failures.join("\n").contains("src/feature.md:3"),
+            "{:?}",
+            p.failures
+        );
+    }
+
+    /// A plan with no pair, for the text of a source.
+    fn moved_plan_of(text: &str) -> Plan {
+        let mut plan = moved_plan(text);
+        plan.pairs.clear();
+        plan
     }
 }

@@ -246,7 +246,7 @@ fn an_area_in_the_file_of_areas_places_the_done_feature_and_the_delta_lines() {
     let a = areas.to_str().unwrap();
     let (code, out, err) = import(&repo, &["--areas", a]);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(status(&repo), " M spec-dna.toml");
+    assert_eq!(status(&repo), "M  spec-dna.toml");
     repo.commit("config");
     let (code, out, err) = import(&repo, &["--areas", a]);
     assert_eq!(code, 0, "{out}{err}");
@@ -560,4 +560,112 @@ fn a_run_after_the_sources_are_gone_changes_nothing() {
     let (code, out, err) = import(&repo, &[]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(out.trim(), "spec-dna import: nothing to change");
+}
+
+// --- the second check ---
+
+#[test]
+fn the_text_in_parentheses_of_a_task_stays_and_a_held_line_is_no_dropped_line() {
+    let repo = fx::speckit();
+    let tasks = "# Tasks\n\nRun the tasks in order.\n\n- [ ] T002 [P] [US1] Write the archive builder in src/export/zip.py (each archive MUST be signed)\n- [ ] T003 Check that each archive is signed in tests/test_sign.py\n- [ ] T004 Document why each export MUST be logged\n- [ ] T005 The export MUST stream the photos in src/export/stream.py\n";
+    repo.write("specs/003-album-export/tasks.md", tasks);
+    repo.commit("tasks");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let plan = repo.read("docs/intent/album-export/plan.md");
+    for part in [
+        "Write the archive builder (each archive MUST be signed). Files: `src/export/zip.py`.",
+        "Document why each export MUST be logged.",
+        "The export MUST stream the photos. Files: `src/export/stream.py`.",
+    ] {
+        assert!(plan.contains(part), "`{part}` not in:\n{plan}");
+    }
+    assert!(!out.contains("dropped"), "{out}");
+}
+
+#[test]
+fn a_held_line_with_a_rewritten_link_is_no_loss() {
+    let repo = fx::speckit();
+    let spec = format!(
+        "{}\nThe album page MUST follow [the plan](./plan.md).\n",
+        fx::SK_SPEC_1
+    );
+    repo.write("specs/001-photo-albums/spec.md", &spec);
+    repo.commit("a line with a link");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("dropped"), "{out}");
+}
+
+#[test]
+fn the_text_before_the_title_of_an_open_spec_stays_in_the_intent() {
+    let repo = fx::speckit();
+    let spec = format!(
+        "Review note: each export MUST be logged.\n\n{}",
+        fx::SK_SPEC_3
+    );
+    repo.write("specs/003-album-export/spec.md", &spec);
+    repo.commit("a note before the title");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = repo.read("docs/intent/album-export/intent.md");
+    assert!(
+        t.contains("Review note: each export MUST be logged."),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_folder_that_differs_only_in_case_from_a_tracked_folder_stops_the_plan() {
+    let repo = fx::speckit();
+    repo.write(
+        "docs/Intent/x/intent.md",
+        "---\nstatus: draft\n---\n# X\n\n## Intent\n\nx\n",
+    );
+    repo.commit("a folder in another case");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("docs/Intent") && err.contains("docs/intent"),
+        "{err}"
+    );
+    assert!(err.contains("only in case"), "{err}");
+    assert_eq!(status(&repo), "");
+    assert!(!repo.dir.join("docs/rules").exists());
+}
+
+#[test]
+fn a_plain_git_commit_after_the_import_holds_every_edit() {
+    let repo = fx::speckit();
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // No `git add`: the import staged what it wrote.
+    repo.git(&["commit", "-q", "-m", "plain commit"]);
+    assert_eq!(status(&repo), "");
+    let c = repo.git_out(&["show", "HEAD:docs/rules/constitution.md"]);
+    assert!(
+        c.contains("## Rules") && !c.contains("Core Principles"),
+        "{c}"
+    );
+    let d = repo.git_out(&["show", "HEAD:docs/requirements/photo-albums.md"]);
+    assert!(d.contains("  - 001-photo-albums"), "{d}");
+}
+
+#[test]
+fn a_locked_index_gives_advice_for_a_lock_and_not_git_reset() {
+    let repo = fx::speckit();
+    fs::write(repo.dir.join(".git/index.lock"), "").unwrap();
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 4, "{out}{err}");
+    assert!(err.contains("index.lock"), "{err}");
+    assert!(!err.contains("git reset --hard"), "{err}");
+    assert!(err.contains("Wait until it ends"), "{err}");
+}
+
+#[test]
+fn a_held_line_is_no_dropped_line_in_the_baseline() {
+    let repo = fx::speckit();
+    let (code, out, err) = import(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("dropped"), "{out}");
 }

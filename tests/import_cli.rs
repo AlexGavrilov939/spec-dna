@@ -193,7 +193,7 @@ fn the_first_run_writes_only_spec_dna_toml_and_the_second_run_the_documents() {
     let repo = fx::speckit_with(false, false);
     let (code, out, err) = import(&repo, &["speckit"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(status(&repo), " M spec-dna.toml");
+    assert_eq!(status(&repo), "M  spec-dna.toml");
     assert!(
         repo.read("spec-dna.toml")
             .contains("legacy-keys = [\"FR-{n}\"]")
@@ -232,7 +232,7 @@ fn the_first_run_adds_an_area_and_a_missing_type() {
     let cfg = repo.read("spec-dna.toml");
     assert!(cfg.contains("areas = [\"media\"]"), "{cfg}");
     assert!(cfg.contains("\"rule\""), "{cfg}");
-    assert_eq!(status(&repo), " M spec-dna.toml");
+    assert_eq!(status(&repo), "M  spec-dna.toml");
     fs::remove_file(&areas).unwrap();
 }
 

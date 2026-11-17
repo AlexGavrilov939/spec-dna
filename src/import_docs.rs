@@ -966,6 +966,34 @@ pub fn plan_docs(input: &DocsInput, config: ConfigChange) -> Result<Plan, Fatal>
             )));
         }
     }
+    // A folder of a target that differs from a tracked folder only in case is
+    // the same folder on a file system that ignores case.
+    let mut dirs: HashMap<String, String> = HashMap::new();
+    for f in tree.files.iter() {
+        let mut end = 0;
+        while let Some(i) = f[end..].find('/') {
+            end += i;
+            dirs.entry(f[..end].to_lowercase())
+                .or_insert_with(|| f[..end].to_string());
+            end += 1;
+        }
+    }
+    for t in &read.targets {
+        let mut end = 0;
+        while let Some(i) = t.path[end..].find('/') {
+            end += i;
+            let dir = &t.path[..end];
+            if let Some(other) = dirs.get(&dir.to_lowercase())
+                && other != dir
+            {
+                return Err(stop(format!(
+                    "the folder `{other}` exists, and the target `{}` has the folder `{dir}`, which differs from it only in case; a file system that ignores case has one folder for both, so the write would mix them. Rename `{other}`, commit, then run import again. import changes nothing",
+                    t.path
+                )));
+            }
+            end += 1;
+        }
+    }
     let removes_hint = removes_of(&read.sources, &read.removes, tree.files);
     let (corpus, texts) = corpus_of(tree, fin)?;
     let map = link_map(read);
@@ -1584,6 +1612,25 @@ mod tests {
             e.message().contains("a.md") && e.message().contains("not valid UTF-8"),
             "{}",
             e.message()
+        );
+    }
+
+    #[test]
+    fn a_folder_that_differs_only_in_case_stops_the_plan() {
+        let read = Read {
+            targets: vec![target("docs/intent/x/intent.md", None, "src/x.md", "A\n")],
+            ..Read::default()
+        };
+        let e = plan_of(
+            &[("src/x.md", "A\n"), ("docs/Intent/y/intent.md", "B\n")],
+            &read,
+        )
+        .unwrap_err();
+        assert!(matches!(e, Fatal::Refused(_)));
+        let m = e.message();
+        assert!(
+            m.contains("docs/Intent") && m.contains("docs/intent") && m.contains("only in case"),
+            "{m}"
         );
     }
 }

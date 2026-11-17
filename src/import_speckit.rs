@@ -14,8 +14,8 @@
 //!   Each file stays, because the sources are written, not moved.
 
 use crate::import_docs::{
-    Ctx, Lines, Pair, PairKind, Read, SourceFile, State, Target, id_of, indent, plain_heading,
-    requirements_path, slug, split_sentence, with_front_matter,
+    Ctx, Lines, Pair, PairKind, Read, SourceFile, State, Target, id_of, indent, is_list_line,
+    plain_heading, requirements_path, slug, split_sentence, with_front_matter,
 };
 use crate::model::is_slug;
 use crate::parse::parse;
@@ -91,8 +91,8 @@ pub fn task_line(line: &str) -> Option<TaskLine> {
 
 /// The text of a task and its path, for a line of `tasks.md` (decision I9):
 /// the marks `[P]` and `[US1]` go, and the path is the token after the last
-/// ` in ` that has a `/` or a `.`, with no white space and with a final group
-/// in parentheses removed.
+/// ` in ` that has a `/` or a `.`, with no white space. A final group in
+/// parentheses is no part of the path: its text goes to the text of the task.
 pub fn plan_task(rest: &str) -> (String, Option<String>) {
     let words: Vec<&str> = rest
         .split_whitespace()
@@ -106,9 +106,13 @@ pub fn plan_task(rest: &str) -> (String, Option<String>) {
     let rest = words.join(" ");
     if let Some(i) = rest.rfind(" in ") {
         let mut cand = rest[i + 4..].trim();
+        // A final group in parentheses is no part of the path. Its text stays
+        // in the text of the task.
+        let mut group = "";
         if cand.ends_with(')')
             && let Some(p) = cand.rfind(" (")
         {
+            group = cand[p + 1..].trim();
             cand = cand[..p].trim_end();
         }
         let cand = cand
@@ -120,7 +124,13 @@ pub fn plan_task(rest: &str) -> (String, Option<String>) {
             && !cand.contains('`')
             && cand.contains(['/', '.'])
         {
-            return (rest[..i].trim_end().to_string(), Some(cand.to_string()));
+            let head = rest[..i].trim_end();
+            let text = if group.is_empty() {
+                head.to_string()
+            } else {
+                format!("{head} {group}")
+            };
+            return (text, Some(cand.to_string()));
         }
     }
     (rest, None)
@@ -533,6 +543,14 @@ pub fn section_lines(l: &Lines, from: usize, to: usize, title: &str, level: usiz
                 continue;
             }
             skipping = false;
+            // A line that no blank line parts from the list before it would
+            // join the last item.
+            if let Some(last) = blocks.last_mut().map(|b| &mut b.1)
+                && last.last().is_some_and(|x| !x.trim().is_empty())
+                && !is_list_line(line)
+            {
+                last.push(String::new());
+            }
         }
         if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
             let lvl = (lvl + 1).min(6);
@@ -719,6 +737,17 @@ fn open_feature(
             String::new(),
             preamble,
         ]);
+    }
+    // The text before the title is no heading, so it stays as plain text.
+    if let Some(h1) = l.headings.iter().find(|h| h.level == 1) {
+        let before = l.block(0, h1.line);
+        if !before.is_empty() {
+            blocks.push(vec![
+                "### Text before the title of the source".to_string(),
+                String::new(),
+                before,
+            ]);
+        }
     }
     let intent = with_front_matter(
         &join_blocks(&blocks),
@@ -1373,7 +1402,7 @@ mod tests {
             ),
             (
                 "Write the endpoint in src/albums/create.py (new file)",
-                "Write the endpoint",
+                "Write the endpoint (new file)",
                 Some("src/albums/create.py"),
             ),
             (
@@ -1513,5 +1542,25 @@ mod tests {
             .find(|t| t.path == "docs/research/imported/001-a/notes.md")
             .unwrap();
         assert!(t.text.contains("aliases:\n  - 001-a/notes\n"), "{}", t.text);
+    }
+
+    #[test]
+    fn a_task_keeps_the_text_in_parentheses_after_the_path() {
+        let (t, p) =
+            plan_task("[P] Write the builder in src/export/zip.py (each archive MUST be signed)");
+        assert_eq!(t, "Write the builder (each archive MUST be signed)");
+        assert_eq!(p.as_deref(), Some("src/export/zip.py"));
+    }
+
+    #[test]
+    fn the_text_before_the_title_and_a_lazy_line_stay_in_the_intent() {
+        let spec = "Review note: each export MUST be logged.\n\n# Feature Specification: A\n\n## Requirements\n\n- Another item.\n- **FR-001**: The system MUST do it.\nNote: a lazy line.\n";
+        let r = run(&tool(&[("specs/001-a/spec.md", spec)]));
+        let i = r.target("docs/intent/a/intent.md");
+        assert!(
+            i.contains("Review note: each export MUST be logged."),
+            "{i}"
+        );
+        assert!(i.contains("- Another item.\n\nNote: a lazy line."), "{i}");
     }
 }

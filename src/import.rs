@@ -312,10 +312,21 @@ fn check_paths(repo: &Repo, tree: &Tree, plan: &Plan) -> Result<(), Fatal> {
 /// `git mv` is exit code 4 with the restore commands. With `config_only` the
 /// write is the file `spec-dna.toml` only.
 fn write_all(repo: &Repo, plan: &Plan, fin: &Config, config_only: bool) -> Result<(), Fatal> {
-    let fail = |what: String| Fatal::Io(format!("{what}; the write stopped half way, {RESTORE}"));
+    let fail = |what: String| {
+        if what.contains("index.lock") {
+            // Another git process holds the index. It can be a second run of
+            // the import, so a reset would destroy its work.
+            Fatal::Io(format!(
+                "{what}; another git process holds the index. Wait until it ends, look at `git status`, then run `spec-dna import` again. If no other process runs, remove the file `.git/index.lock` first"
+            ))
+        } else {
+            Fatal::Io(format!("{what}; the write stopped half way, {RESTORE}"))
+        }
+    };
     if config_only {
-        return mv::write(&repo.config_path(), &plan.config.new)
-            .map_err(|e| fail(e.message().to_string()));
+        mv::write(&repo.config_path(), &plan.config.new)
+            .map_err(|e| fail(e.message().to_string()))?;
+        return repo.git.add_paths(&[CONFIG_PATH.to_string()]).map_err(fail);
     }
     for (from, to) in &plan.moves {
         if let Some(dir) = repo.root.join(to).parent() {
@@ -334,7 +345,9 @@ fn write_all(repo: &Repo, plan: &Plan, fin: &Config, config_only: bool) -> Resul
         let root = fin.root_of(from).map_or("", |r| &fin.roots[r].path);
         mv::remove_empty_parents(repo, root, from);
     }
-    Ok(())
+    // `git mv` staged the renames only. A plain `git commit` must hold each
+    // edit too, so the import stages each file that it wrote.
+    repo.git.add_paths(&plan.written_paths()).map_err(fail)
 }
 
 fn shell_word(p: &str) -> String {

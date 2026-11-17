@@ -471,3 +471,27 @@ fn a_requirement_with_a_list_and_no_sentence_stops_the_plan() {
     assert!(err.contains("no sentence"), "{err}");
     assert_eq!(status(&repo), "");
 }
+
+// --- the second check ---
+
+#[test]
+fn a_held_line_with_a_rewritten_link_is_no_loss() {
+    let repo = fx::openspec();
+    let spec = format!(
+        "{}\nSee [the billing spec](../billing/spec.md): sign in MUST come first.\n",
+        fx::OS_SPEC_AUTH
+    );
+    repo.write("openspec/specs/auth/spec.md", &spec);
+    repo.commit("a line with a link");
+    let (code, out, err) = import(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("dropped"), "{out}");
+}
+
+#[test]
+fn a_held_line_is_no_dropped_line_in_the_baseline() {
+    let repo = fx::openspec();
+    let (code, out, err) = import(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("dropped"), "{out}");
+}
