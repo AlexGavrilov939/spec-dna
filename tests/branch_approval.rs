@@ -1349,3 +1349,116 @@ fn a_skip_label_in_an_approved_plan_gives_no_sd910() {
     assert_eq!(found, want(&[]), "{out}");
     assert_eq!(code, 0, "{out}");
 }
+
+// SD926 approver-agent (owner review of 0.7.0, item 1): an item of
+// `[change] approvers` that is the address of an agent or a bot.
+
+/// The pairs (line, target) of the SD926 items of a `check --all --json`
+/// output, in the order of the output.
+fn sd926_items(out: &str) -> Vec<(u32, String)> {
+    out.split("{\"code\":\"SD926\"")
+        .skip(1)
+        .map(|item| {
+            let line = item
+                .split("\"line\":")
+                .nth(1)
+                .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|n| n.parse().ok())
+                .expect("a line");
+            let target = item
+                .split("\"target\":\"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .expect("a target")
+                .to_string();
+            (line, target)
+        })
+        .collect()
+}
+
+/// The number of the line that starts with `approvers` in `spec-dna.toml`.
+fn approvers_line(r: &Repo) -> u32 {
+    let text = r.read("spec-dna.toml");
+    let n = text
+        .lines()
+        .position(|l| l.starts_with("approvers"))
+        .expect("an approvers line");
+    u32::try_from(n).unwrap() + 1
+}
+
+#[test]
+fn sd926_warns_on_an_agent_address_in_approvers() {
+    let r = start(&branch_keys(&[APPROVER, "noreply@anthropic.com"]));
+    // The item is in the base tree, so it is not new: `--all` lists it.
+    let (code, all, err) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 0, "a warning gives exit code 0: {all}{err}");
+    assert_eq!(
+        sd926_items(&all),
+        [(approvers_line(&r), "noreply@anthropic.com".to_string())],
+        "{all}"
+    );
+    assert!(all.contains("\"severity\":\"warning\""), "{all}");
+    assert!(
+        all.contains("`[change] approvers` lists `noreply@anthropic.com`, the address of an agent or a bot; a commit of this author can come from an agent, so it proves no approval of a person"),
+        "{all}"
+    );
+    assert!(
+        all.contains("Remove the address from `[change] approvers` in spec-dna.toml, in a pull request of its own (SD503). List the e-mails of the persons that approve."),
+        "{all}"
+    );
+}
+
+#[test]
+fn sd926_warns_on_a_bot_address_in_approvers() {
+    let bot_a = "41898282+github-actions[bot]@users.noreply.github.com";
+    let bot_b = "dependabot[bot]@users.noreply.github.com";
+    let r = start(&branch_keys(&[APPROVER, bot_a, bot_b]));
+    let (code, all, err) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 0, "{all}{err}");
+    let line = approvers_line(&r);
+    assert_eq!(
+        sd926_items(&all),
+        [(line, bot_a.to_string()), (line, bot_b.to_string())],
+        "one diagnostic for each item: {all}"
+    );
+}
+
+#[test]
+fn sd926_is_silent_for_a_hidden_address_of_a_person() {
+    // Guard: the hidden address of a person is no agent address. The same
+    // fixture with an agent address warns, so the silence is the rule.
+    let r = start(&branch_keys(&[
+        APPROVER,
+        NOREPLY,
+        "bot@users.noreply.github.com",
+    ]));
+    let (code, all, err) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 0, "{all}{err}");
+    assert!(!all.contains("SD926"), "{all}");
+    let r = start(&branch_keys(&[APPROVER, NOREPLY, "noreply@anthropic.com"]));
+    let (_, all, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(sd926_items(&all).len(), 1, "{all}");
+}
+
+#[test]
+fn sd926_is_off_with_policy_none() {
+    let keys = branch_keys(&["noreply@anthropic.com"]);
+    let r = start(&keys);
+    let (_, all, _) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(sd926_items(&all).len(), 1, "on with the policy: {all}");
+    let text = r
+        .read("spec-dna.toml")
+        .replace("policy = \"three-class\"", "policy = \"none\"");
+    r.write("spec-dna.toml", &text);
+    let (code, all, err) = r.run(&["check", "--all", "--json"]);
+    assert_eq!(code, 0, "{all}{err}");
+    assert!(!all.contains("SD926"), "{all}");
+    // A rule of the group, or of the code, turns it off too.
+    let r = start(&keys);
+    let text = r
+        .read("spec-dna.toml")
+        .replace("[rules]\n", "[rules]\nSD926 = \"off\"\n");
+    r.write("spec-dna.toml", &text);
+    let (_, all, _) = r.run(&["check", "--all", "--json"]);
+    assert!(!all.contains("SD926"), "{all}");
+}
