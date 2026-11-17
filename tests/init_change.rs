@@ -852,11 +852,29 @@ fn with_no_user_e_mail_init_writes_base_and_prints_a_note() {
                     && all.contains("[change] approvers"),
                 "{profile}: {all}"
             );
+            assert!(!all_notes_say_reconfigure(&all), "{profile}: {all}");
         }
         r.commit("init");
         let (code, out, err) = r.run(&["check", "--all"]);
         assert_eq!(code, 0, "{profile}: {out}{err}");
+        if profile == "standard" {
+            // The file now sets `approval`, so `--reconfigure` keeps it, also
+            // when the e-mail is set later. The note must not say otherwise.
+            git(&r.dir, &["config", "user.email", OWNER]);
+            let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+            assert_eq!(code, 0, "{out}{err}");
+            let t = r.change().unwrap();
+            assert_eq!(text(&t, "approval"), "base");
+            assert!(!t.contains_key("approvers"), "{t:?}");
+        }
     }
+}
+
+/// True if a note of `init` tells the user to run `--reconfigure` for the keys.
+fn all_notes_say_reconfigure(text: &str) -> bool {
+    text.lines()
+        .filter(|l| l.contains("user.email"))
+        .any(|l| l.contains("--reconfigure"))
 }
 
 #[test]

@@ -511,7 +511,7 @@ fn settle_approval(plan: &mut Plan) {
     }
     if plan.approvers.is_empty() {
         plan.approval = Approval::Base;
-        let note = "git has no `user.email`, so `init` writes `[change] approval = \"base\"` and no approvers. Set `git config user.email`, and run `init --reconfigure`, or set `[change] approval` and `[change] approvers` in spec-dna.toml (docs/config.md)".to_string();
+        let note = "git has no `user.email`, so `init` writes `[change] approval = \"base\"` and no approvers. To use the approval in the branch, set `[change] approval = \"branch\"` and `[change] approvers` in spec-dna.toml (docs/config.md)".to_string();
         if !plan.notes.contains(&note) {
             plan.notes.push(note);
         }
