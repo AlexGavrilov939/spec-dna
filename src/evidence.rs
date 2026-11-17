@@ -43,7 +43,7 @@ fn trim_word(word: &str) -> &str {
 /// each as `<doc-id>#<key>`. The first word that is not such an id ends the
 /// tag, for example `*/` or `-->`. The word `partial`, in any ASCII case, is
 /// the exception when it is the first word: it makes each id of the tag
-/// partial. After an id, the word `partial` ends the tag as any other word.
+/// partial, with or without one colon after it. After an id, the word `partial` ends the tag as any other word.
 pub fn tags(line: &str) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     let mut rest = line;
@@ -61,7 +61,13 @@ pub fn tags(line: &str) -> Vec<(String, bool)> {
                 continue;
             }
             let id = trim_word(word);
-            if first && id.eq_ignore_ascii_case("partial") {
+            // One colon after the word is part of the form: `partial: <id>`.
+            if first
+                && id
+                    .strip_suffix(':')
+                    .unwrap_or(id)
+                    .eq_ignore_ascii_case("partial")
+            {
                 partial = true;
                 first = false;
                 continue;
@@ -235,6 +241,15 @@ mod tests {
             .into_iter()
             .map(|(t, p)| if p { format!("~{t}") } else { t })
             .collect()
+    }
+
+    #[test]
+    fn tags_reads_partial_with_one_trailing_colon() {
+        assert_eq!(ids("# covers: partial: a#b"), ["~a#b"]);
+        assert_eq!(ids("# covers: Partial: a#b, c#d"), ["~a#b", "~c#d"]);
+        // One colon only, and only on the first word.
+        assert!(ids("# covers: partial:: a#b").is_empty());
+        assert_eq!(ids("# covers: a#b partial: c#d"), ["a#b"]);
     }
 
     #[test]

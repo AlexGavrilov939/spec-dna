@@ -568,7 +568,7 @@ A `verified-by` path that is not in the git tree gives SD103. A tag that names n
 
 ### A partial tag
 
-The word `partial` comes first after `covers:` (in any ASCII case), and it applies to each id of the tag: `# covers: partial loans#renew, loans#fines`. The word `partial` after an id is not this form: it ends the tag, as any other word, and the tag stays full.
+The word `partial` comes first after `covers:` (in any ASCII case, with or without one colon after it), and it applies to each id of the tag: `# covers: partial loans#renew, loans#fines`. The word `partial` after an id is not this form: it ends the tag, as any other word, and the tag stays full.
 
 - Alone, a partial tag does not clear SD608 or SD916, and it does not clear the stage `test` of `next` and `status`. The messages name it.
 - A full tag or a `verified-by` of the same requirement is evidence, also next to a partial tag.
