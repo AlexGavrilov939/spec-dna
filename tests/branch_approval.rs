@@ -889,7 +889,8 @@ fn a_status_set_back_to_draft_takes_the_approval_away() {
     step_code(&r);
     let (code, out, found) = check(&r);
     // A `draft` plan needs no approval, but the code needs an approved plan.
-    assert_eq!(found, want(&[(CODE, 2), (TEST, 2)]), "{out}");
+    // The step back names reason 9 (ADR 0019), where 0.7.0 part A gave reason 2.
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
@@ -1418,6 +1419,23 @@ fn a_plan_approved_again_clears_the_work_after_the_new_approval() {
     let (code, out, found) = check(&r);
     assert_eq!(found, want(&[]), "{out}");
     assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_plan_set_back_to_draft_in_the_working_tree_gives_reason_9() {
+    // No commit holds the step back, so the message names the working tree.
+    let r = start_branch();
+    ok_flow(&r);
+    r.write(PLAN, &plan("draft", &FILES));
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        findings_of(&out)[0]
+            .1
+            .contains(&format!("the working tree set `{PLAN}` back to `draft`")),
+        "{out}"
+    );
 }
 
 #[test]
