@@ -590,6 +590,23 @@ fn clean_env(cmd: &mut Command) {
     }
 }
 
+/// The git settings of the agent and of the checks: a neutral identity, no
+/// signature, and no global or system configuration of the person. Thus a
+/// commit of the agent or of a check never depends on the machine.
+fn neutral_git_env(cmd: &mut Command) {
+    cmd.env("GIT_AUTHOR_NAME", "spec-dna eval")
+        .env("GIT_AUTHOR_EMAIL", "eval@example.invalid")
+        .env("GIT_COMMITTER_NAME", "spec-dna eval")
+        .env("GIT_COMMITTER_EMAIL", "eval@example.invalid")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .env("GIT_CONFIG_KEY_1", "tag.gpgsign")
+        .env("GIT_CONFIG_VALUE_1", "false");
+}
+
 /// Runs git in the copy. The author, the dates and the signature are fixed,
 /// and the global and the system configuration do not apply.
 fn git_in(dir: &Path, args: &[&str]) -> Result<String, Fatal> {
@@ -703,6 +720,7 @@ pub(crate) fn one_attempt(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     clean_env(&mut cmd);
+    neutral_git_env(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| start_failed(&e))?;
     let stdout = read_capped(child.stdout.take().expect("stdout is piped"));
     let status = child
@@ -729,6 +747,7 @@ pub(crate) fn one_attempt(
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
         clean_env(&mut cmd);
+        neutral_git_env(&mut cmd);
         let ok = cmd
             .status()
             .map_err(|e| Fatal::Io(format!("cannot run `sh`: {e}")))?

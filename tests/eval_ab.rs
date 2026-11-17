@@ -85,6 +85,11 @@ case "$mode" in
     break)
         rm -f "$STUB_BREAK_FILE"
         ;;
+    commit)
+        echo 'status: done' > notes.txt
+        git add -A
+        git commit -qm agent && git log -1 --format='%an <%ae> %cn <%ce>' > "$STUB_DIR/who-$n"
+        ;;
 esac
 pass=0
 case "$STUB_PASS" in
@@ -880,6 +885,47 @@ fn an_error_in_the_middle_of_a_run_writes_the_partial_result_before_exit_code_4(
     assert!(out.contains("\"stopped\":\"error\""), "{out}");
     assert!(err.contains("cannot copy"), "{err}");
     fx.assert_clean();
+}
+
+/// A home folder with a git configuration that breaks a commit: a signature
+/// with a program that fails, and another identity.
+fn hostile_home(fx: &Fx) -> String {
+    let home = fx.path("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        home.join(".gitconfig"),
+        "[user]\n\tname = Real Person\n\temail = real@example.org\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /usr/bin/false\n",
+    )
+    .unwrap();
+    home.to_string_lossy().into_owned()
+}
+
+#[test]
+fn the_agent_and_the_checks_commit_with_a_neutral_identity_and_no_signature() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The checks commit too, and they read the identity of the agent commit.
+    let eval = pack_eval("tdd-1", "tdd", 1).replace(
+        "\"checks\":[",
+        "\"checks\":[{\"name\":\"agent-identity\",\"run\":\"git log -1 --format=%ae | grep -q '^eval@example.invalid$'\"},{\"name\":\"check-commits\",\"run\":\"git commit --allow-empty -qm c\"},",
+    );
+    fx.repo.write("evals/pack/tdd-1.json", &eval);
+    fx.modes(&["commit", "commit"]);
+    let home = hostile_home(&fx);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("HOME", &home), ("XDG_CONFIG_HOME", &home)],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    for n in [1, 2] {
+        let who = fs::read_to_string(fx.path(&format!("who-{n}")))
+            .unwrap_or_else(|e| panic!("the agent commit {n} failed: {e}"));
+        assert!(who.contains("<eval@example.invalid>"), "{who}");
+        assert!(!who.contains("real@example.org"), "{who}");
+    }
+    assert!(
+        out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"passed\":true},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"passed\":true}"),
+        "{out}"
+    );
 }
 
 #[test]

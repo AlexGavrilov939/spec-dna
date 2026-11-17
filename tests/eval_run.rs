@@ -1078,3 +1078,39 @@ fn a_refused_run_without_ab_counts_as_a_failed_run_and_is_not_retried() {
     );
     assert_eq!(code, 0, "{out}{err}");
 }
+
+#[test]
+fn the_agent_and_the_checks_commit_with_a_neutral_identity_and_no_signature() {
+    let fx = Fx::with(&[Ev {
+        checks: vec![
+            (
+                "agent-identity",
+                "git log -1 --format=%ae | grep -q '^eval@example.invalid$'",
+            ),
+            ("check-commits", "git commit --allow-empty -qm c"),
+        ],
+        ..ev("example")
+    }]);
+    // A git configuration of the person that breaks each commit.
+    let home = fx.path("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        home.join(".gitconfig"),
+        "[user]\n\tname = Real Person\n\temail = real@example.org\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /usr/bin/false\n",
+    )
+    .unwrap();
+    let h = home.to_string_lossy().into_owned();
+    let (code, out, err) = fx.run_env(
+        &[],
+        &[
+            ("HOME", &h),
+            ("XDG_CONFIG_HOME", &h),
+            (
+                "STUB_EDIT",
+                "echo 'status: done' > notes.txt; git add -A; git commit -qm agent",
+            ),
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("example: 1 of 1 runs passed"), "{out}");
+}

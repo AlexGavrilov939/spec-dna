@@ -133,6 +133,7 @@ Details of the steps 9 and 10:
 - The runner never passes `--bare`, because an eval must load `CLAUDE.md`, the skills and the hooks.
 - The environment is the environment of `eval run`, without `CLAUDE_PROJECT_DIR`, `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`. A session that starts `eval run` keeps its `CLAUDECODE`, and `claude -p` starts under it (Claude Code 2.1.325).
 - The runner keeps at most 16 MiB of the output of `claude` in memory. The output is one JSON object, or a list of events that ends with the object of type `result`.
+- The agent and the checks run with a neutral git setup: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (`eval@example.invalid`), `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, and `commit.gpgsign` and `tag.gpgsign` set to `false` through `GIT_CONFIG_COUNT`. Thus a `git commit` of the agent or of a check never depends on the identity or the signing of the machine. The copy is always a git repository with one base commit.
 - The script of a check sources `check.sh` of the project, never the copy. Then it runs the `run` text of the check.
 - The environment of a check has `SPEC_DNA_CHECK_SH`, the absolute path of `check.sh`, and `SPEC_DNA_EVAL_BASE`, the id of the base commit.
 
