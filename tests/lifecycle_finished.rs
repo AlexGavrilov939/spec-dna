@@ -1040,3 +1040,36 @@ fn a_deletion_with_no_commit_keeps_the_pointer_of_the_last_release() {
     let (_, json, _) = r.run(&["check", "--all", "--json"]);
     assert!(json.contains("\"commit\":null"), "{json}");
 }
+
+#[test]
+fn check_reads_only_the_changes_that_a_dead_locked_link_names() {
+    // 3 other changes ended in the history. Their commits need no read: the
+    // dead link names only `dose`. `git diff-tree` runs once for each ended
+    // change that the code reads (`moved_out`).
+    let r = linked();
+    for slug in ["alpha", "beta", "gamma"] {
+        let path = format!("docs/intent/{slug}/intent.md");
+        r.write(&path, &intent("accepted", "routine"));
+        r.commit(&format!("add {slug}"));
+        std::fs::remove_dir_all(r.dir.join(format!("docs/intent/{slug}"))).unwrap();
+        r.commit(&format!("finish {slug}"));
+    }
+    r.write("src/dose.py", "x = 2\n");
+    finish(&r);
+    let trace = r.dir.join("..").join(format!(
+        "trace-{}.txt",
+        r.dir.file_name().unwrap().to_string_lossy()
+    ));
+    // The extra changes were added and finished in the branch: SD910 reports
+    // them, and it does not matter here.
+    let (_, out, _) = r.run_env(
+        &["check", "--all"],
+        &[("GIT_TRACE", trace.to_str().unwrap())],
+        &[],
+    );
+    assert_eq!(info_lines(&out).len(), 1, "{out}");
+    let log = std::fs::read_to_string(&trace).unwrap_or_default();
+    let _ = std::fs::remove_file(&trace);
+    let reads = log.lines().filter(|l| l.contains("diff-tree")).count();
+    assert_eq!(reads, 1, "{log}");
+}

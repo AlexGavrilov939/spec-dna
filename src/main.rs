@@ -1324,18 +1324,31 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // The pointer of a link into a finished change needs the history. The
     // list is only for the info lines of `--all` and for `--json`.
     let locked = if a.all || a.json {
-        let cache: std::cell::RefCell<std::collections::HashMap<String, Vec<sdlc::EndedChange>>> =
-            Default::default();
-        let ended = |folder: &str| {
-            let dir = folder.rsplit_once('/')?.0;
-            repo.head_commit()?;
-            cache
-                .borrow_mut()
-                .entry(dir.to_string())
-                .or_insert_with(|| sdlc::ended_changes(&repo.git, dir).unwrap_or_default())
+        // One `git log` for each folder of the `intent` layer that holds a
+        // folder that a dead link names, and only for those folders.
+        let ended = |folders: &[String]| {
+            let mut out = std::collections::HashMap::new();
+            if repo.head_commit().is_none() {
+                return out;
+            }
+            let mut dirs: Vec<&str> = folders
                 .iter()
-                .find(|e| e.folder == folder)
-                .cloned()
+                .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d))
+                .collect();
+            dirs.sort();
+            dirs.dedup();
+            for dir in dirs {
+                let here: Vec<String> = folders
+                    .iter()
+                    .filter(|f| f.rsplit_once('/').is_some_and(|(d, _)| d == dir))
+                    .cloned()
+                    .collect();
+                for e in sdlc::ended_changes(&repo.git, dir, &here).unwrap_or_default() {
+                    // The list is the newest first: keep the first of a folder.
+                    out.entry(e.folder.clone()).or_insert(e);
+                }
+            }
+            out
         };
         check::locked_links(&cfg, head, &ended)
     } else {

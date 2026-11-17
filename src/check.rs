@@ -759,15 +759,16 @@ fn names_target(d: &Doc, names: &[String], slug: Option<&str>) -> bool {
 /// text of an accepted decision that is absent. A reference that names a
 /// document that exists, with a section that is absent, is not in the list. A
 /// target that an amendment of the decision names is not in the list either.
-/// `ended` gives the change that ended in a folder, from the repository root.
-/// The function calls it only for a link that no amendment names and that
-/// points into a folder of a change.
+/// `ended` gets the folders of the changes (from the repository root) that the
+/// remaining links name, and it gives the change that ended in each folder. The
+/// function calls it once, and only if such a link exists.
 pub fn locked_links(
     config: &Config,
     c: &Corpus,
-    ended: &dyn Fn(&str) -> Option<crate::sdlc::EndedChange>,
+    ended: &dyn Fn(&[String]) -> HashMap<String, crate::sdlc::EndedChange>,
 ) -> Vec<LockedLink> {
-    let mut out: Vec<LockedLink> = Vec::new();
+    // A link with the folder of its change, if the target was in one.
+    let mut found: Vec<(LockedLink, Option<(String, String)>)> = Vec::new();
     for d in &c.docs {
         let Some(editable) = editable_chunks(config, d) else {
             continue;
@@ -813,35 +814,48 @@ pub fn locked_links(
             if names_target(d, &place_names(&r.target, &gone, &full), slug) {
                 continue;
             }
-            let general = "the new place of the text, or the reason for its removal".to_string();
-            let (pointer, commit) = match &change {
-                Some((dir, slug)) => match ended(&from_root(&format!("{dir}/{slug}"))) {
-                    Some(e) => (
-                        format!(
-                            "the change `{slug}` ({} in commit {} on {})",
-                            if e.finished { "finished" } else { "closed" },
-                            e.commit.get(..12).unwrap_or(&e.commit),
-                            e.date
-                        ),
-                        Some(e.commit),
-                    ),
-                    None => (
-                        format!("the change `{slug}` (`spec-dna log` names its commit)"),
-                        None,
-                    ),
-                },
-                None => (general, None),
-            };
             let link = LockedLink {
                 path: d.path.clone(),
                 line: r.line,
                 target: r.target.clone(),
-                pointer,
-                commit,
+                pointer: match &change {
+                    Some((_, slug)) => {
+                        format!("the change `{slug}` (`spec-dna log` names its commit)")
+                    }
+                    None => "the new place of the text, or the reason for its removal".to_string(),
+                },
+                commit: None,
             };
-            if !out.contains(&link) {
-                out.push(link);
-            }
+            let folder = change.map(|(dir, slug)| (from_root(&format!("{dir}/{slug}")), slug));
+            found.push((link, folder));
+        }
+    }
+    let mut folders: Vec<String> = found
+        .iter()
+        .filter_map(|(_, f)| f.as_ref().map(|(folder, _)| folder.clone()))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    let ended = if folders.is_empty() {
+        HashMap::new()
+    } else {
+        ended(&folders)
+    };
+    let mut out: Vec<LockedLink> = Vec::new();
+    for (mut link, folder) in found {
+        if let Some((folder, slug)) = folder
+            && let Some(e) = ended.get(&folder)
+        {
+            link.pointer = format!(
+                "the change `{slug}` ({} in commit {} on {})",
+                if e.finished { "finished" } else { "closed" },
+                e.commit.get(..12).unwrap_or(&e.commit),
+                e.date
+            );
+            link.commit = Some(e.commit.clone());
+        }
+        if !out.contains(&link) {
+            out.push(link);
         }
     }
     out.sort();

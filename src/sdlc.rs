@@ -224,9 +224,24 @@ fn off(json: bool, empty: &str) -> u8 {
 /// The commits that deleted an `intent.md` under `dir`, the newest first, as
 /// `log` lists them. `dir` is a folder of the `intent` layer, from the
 /// repository root. A move out that keeps the id as an alias is not an end.
-/// `log` and the pointer of a locked link (`check`) both read this list.
-pub fn ended(git: &Git, dir: &str, since: Option<&str>) -> Result<Vec<DeletedIntent>, String> {
-    let found = git.deleted_intents(dir, since)?;
+/// With `only`, the list keeps the deletions of these folders (from the
+/// repository root) and nothing else: the check for a move out and the reads
+/// that follow run for them only. `log` and the pointer of a locked link
+/// (`check`) both read this list.
+pub fn ended(
+    git: &Git,
+    dir: &str,
+    since: Option<&str>,
+    only: Option<&[String]>,
+) -> Result<Vec<DeletedIntent>, String> {
+    let mut found = git.deleted_intents(dir, since)?;
+    if let Some(only) = only {
+        found.retain(|e| {
+            e.path
+                .strip_suffix("/intent.md")
+                .is_some_and(|f| only.iter().any(|o| o == f))
+        });
+    }
     let moved = git.moved_out(dir, &found)?;
     Ok(found
         .into_iter()
@@ -249,10 +264,11 @@ pub struct EndedChange {
     pub finished: bool,
 }
 
-/// The ended changes under the folder `dir` of the `intent` layer, the newest
-/// first, with the result of each (see `Outcome::of`).
-pub fn ended_changes(git: &Git, dir: &str) -> Result<Vec<EndedChange>, String> {
-    let list = ended(git, dir, None)?;
+/// The ended changes of the folders `folders` under the folder `dir` of the
+/// `intent` layer, the newest first, with the result of each (see
+/// `Outcome::of`). It reads no other change.
+pub fn ended_changes(git: &Git, dir: &str, folders: &[String]) -> Result<Vec<EndedChange>, String> {
+    let list = ended(git, dir, None, Some(folders))?;
     let mut specs = Vec::new();
     let mut kept = Vec::new();
     for e in &list {
@@ -340,7 +356,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
     let mut raw = Vec::new();
     if repo.head_commit().is_some() {
         for dir in lifecycle::intent_dirs(cfg) {
-            raw.extend(ended(git, &dir, since).map_err(Fatal::Io)?);
+            raw.extend(ended(git, &dir, since, None).map_err(Fatal::Io)?);
         }
     }
     raw.sort_by_key(|e| std::cmp::Reverse(e.time));
