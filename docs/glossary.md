@@ -90,4 +90,4 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | verdict | The result of the measure of a skill: `on`, `off` or `inconclusive`. `eval verdict` prints it, or `unmeasured` | | [evals](evals.md#the-verdict) |
 | `verified-by` | A front matter field with the paths of the tests or verification records of a document | | [config](config.md#evidence) |
 | `verifier` | The subagent that checks finished work. It runs the tests, reads the diff and reports each defect. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |
-| workflow pack | The set of 11 skills of spec-dna: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`. 7 are on by default | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
+| workflow pack | The set of 11 skills of spec-dna: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`. `spec-dna skill list` shows which are on by default | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
