@@ -36,7 +36,7 @@ status: approved
 - [x] t15: Make the demo read the default skills (`init-engineer`). Files: `scripts/demo-replay.sh`. Verify: `scripts/demo-replay.sh`. Hours: 0.25.
 - [x] t16: Document the preset, the profiles and SD507 (`init-engineer`; `diagnostics-engineer`). Files: `docs/init.md`, `docs/profiles.md`, `docs/diagnostics.md`. Verify: `pre-commit run --all-files`. Hours: 0.75.
 - [x] t17: Replace "the 7 skills that are on by default" with the rule (`init-engineer`; `core-engineer`). Files: `docs/harness.md`, `docs/commands.md`, `docs/config.md`. Verify: `pre-commit run --all-files`. Hours: 0.5.
-- [ ] t18: Update the quickstart and write the entry (`init-engineer`; `release-engineer`). Files: `docs/quickstart.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 0.25.
+- [x] t18: Update the quickstart and write the entry (`init-engineer`; `release-engineer`). Files: `docs/quickstart.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 0.25.
 - [ ] t19: Add the owners and the change set of ADR 0023 (`architect`; the owner accepts). Files: `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files`. Hours: 0.25.
 
 ## Risks
