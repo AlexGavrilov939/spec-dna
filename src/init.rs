@@ -3021,7 +3021,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     }
 
     io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `code-simplifier`. none writes nothing. The files are for Claude Code only.");
+    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 4 skills that are off by default (`execute`, `tdd`, `verify` and `debug`). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }

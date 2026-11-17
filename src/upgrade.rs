@@ -242,8 +242,12 @@ pub fn source_of(text: &str) -> Result<Source, Fatal> {
     let file = config::FILE_NAME;
     // The names of 0.6 in `[harness] skills` give exit code 3 in the parser,
     // so `upgrade` renames them first (D4).
-    let renamed = upgrade_config::rename_skills(text).text;
-    let text = renamed.as_str();
+    let rename = upgrade_config::rename_skills(text);
+    // A list that the rename cannot splice stays: the person changes it.
+    if let Some(by_hand) = rename.by_hand.first() {
+        return Err(Fatal::Config(format!("{file}: {by_hand}")));
+    }
+    let text = rename.text.as_str();
     let Some(pin) = config::scan_pin(text) else {
         let why = match Config::parse(text) {
             Err(e) => e,

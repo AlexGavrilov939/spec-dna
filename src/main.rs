@@ -90,7 +90,9 @@ With --reconfigure, it asks the questions again.",
         "Moves a project that pins 0.4.0 or later to the version of this binary. It
 reads the committed tree (HEAD), builds the whole plan in memory, proves that
 each old id, alias, requirement and section still resolves to the same text,
-and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the
+and then writes. It changes the pin and the 0.5 names in spec-dna.toml, the 0.6 skill names in
+[harness] skills (intent is brainstorm, spec is specify and clarify, plan is
+write-plan), the
 type and the status in the front matter, and the adapter and harness files. It
 moves each proposed, accepted or rejected change to intent/<slug>/intent.md
 with git mv, and keeps its old id as an alias. With --layout, it also moves

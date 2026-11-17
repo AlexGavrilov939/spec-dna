@@ -1921,3 +1921,23 @@ fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
     let (code, out, err) = repo.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+#[test]
+fn a_skills_list_of_many_lines_with_an_old_name_stops_upgrade_with_the_new_list() {
+    let repo = project_06(None);
+    let toml = repo.read("spec-dna.toml").replace(
+        "[harness]\nlevel = \"none\"\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\n  \"spec\",  # the spec\n  \"review\",\n]\n",
+    );
+    assert!(toml.contains("\"spec\",  # the spec"), "{toml}");
+    repo.write("spec-dna.toml", &toml);
+    repo.commit("a list of many lines");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("by hand") && err.contains("[\"specify\", \"clarify\", \"review\"]"),
+        "{err}"
+    );
+    // The file stays as it was.
+    assert_eq!(repo.read("spec-dna.toml"), toml);
+}

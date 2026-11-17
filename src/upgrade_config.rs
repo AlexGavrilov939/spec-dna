@@ -862,10 +862,14 @@ pub fn rename_skills(text: &str) -> Repair {
                 said.join(", ")
             ));
         }
-        Err(_) => out.by_hand.push(format!(
-            "`skills` of `[harness]` has names of 0.6 ({}); the list has many lines, so rename them by hand",
-            said.join(", ")
-        )),
+        Err(_) => {
+            let quoted: Vec<String> = new.iter().map(|n| format!("\"{n}\"")).collect();
+            out.by_hand.push(format!(
+                "`skills` of `[harness]` has names of 0.6 ({}); the list has many lines, so change it by hand to [{}], then run `spec-dna upgrade` again",
+                said.join(", "),
+                quoted.join(", ")
+            ))
+        }
     }
     out
 }
