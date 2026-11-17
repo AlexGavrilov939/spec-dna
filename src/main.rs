@@ -46,6 +46,8 @@ mod hash;
 mod hook;
 mod import;
 mod import_config;
+mod import_docs;
+mod import_proof;
 mod index;
 mod init;
 mod json;
