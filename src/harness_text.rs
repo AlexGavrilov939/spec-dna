@@ -266,7 +266,6 @@ pub fn body(skill: Skill) -> String {
 /// The body of the skill with the bare name `name` (`write-plan`), or `None`
 /// for another name. The adapter skill `spec-dna` and the names of 0.6 give
 /// `None`.
-#[allow(dead_code)] // The command `skill` (task t17) reads it.
 pub fn skill_body(name: &str) -> Option<String> {
     Skill::from_key(name).map(body)
 }
