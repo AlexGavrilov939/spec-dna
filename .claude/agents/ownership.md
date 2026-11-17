@@ -170,7 +170,7 @@ src/config_text.rs                   COR: the edits of TOML text by path
 src/evals.rs                         COR: the eval file form and its rules, which SD506 and `eval run` share
 src/eval_run.rs                      COR: `eval run`
 src/harness.rs                       INI: the roles, the generated files, the settings merge. DIA: the function `check` (SD501, SD502, SD504, SD505)
-src/harness_text.rs                  INI: the texts of the stage skills and `REVIEW.md`
+src/harness_text.rs                  INI: the texts of the 11 skills of the workflow pack and `REVIEW.md`
 src/hook.rs                          INI
 src/skeleton.rs                      INI: the starter files of the evals and the eval workflow
 src/json.rs                          COR: the writer. TRN: the transcript reader
@@ -214,6 +214,7 @@ tests/init_change.rs, tests/init_language.rs   INI
 tests/init_graph.rs                  INI
 tests/harness.rs, tests/hook.rs      INI
 tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/init_evals.rs   INI
+tests/skill_cmd.rs                   INI: the cases of `skill list` and `skill show`. COR: the arguments and the help
 tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
 tests/config_step4.rs, tests/eval_run.rs, tests/stats_evals.rs   COR
 tests/context_layers.rs              CTX
@@ -221,7 +222,7 @@ tests/upgrade_cli.rs, tests/upgrade_review_fixes.rs   INI
 tests/upgrade_config.rs, tests/upgrade_pin.rs   COR
 tests/upgrade_first_pr.rs            DIA
 tests/upgrade_fixtures.rs            TST
-tests/golden/                        The agent of the command. INI: tests/golden/harness/ and tests/golden/evals/. COR: tests/golden/upgrade/config/
+tests/golden/                        The agent of the command. INI: tests/golden/harness/ (also tests/golden/harness/old-skills/, the skill files that 0.6.1 wrote) and tests/golden/evals/. COR: tests/golden/upgrade/config/
 tests/fixtures/corpus/               TST
 tests/fixtures/brownfield/           INI
 tests/fixtures/layouts/              INI
