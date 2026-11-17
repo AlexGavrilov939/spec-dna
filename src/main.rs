@@ -222,8 +222,11 @@ with the status closed runs the first two steps and deletes the folder. The
 folder must be tracked and clean. --dry-run prints the diff of each file and
 `remove <path>` for each deleted file, and writes nothing. Without it, the
 command writes the files, deletes the folder, and stages the paths with
-`git add`. It makes no commit. It is the only command that deletes documents. Exit codes: 1 a stop,
-3 pin, base or configuration, 4 write error, 5 no folder.",
+`git add`. It makes no commit. If the plan has a section Hours, it adds the
+numbers and prints the line `Hours: <total>`: put the line in the commit
+message, and keep it in the squash message. It is the only command that
+deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
+write error, 5 no folder.",
     ),
     (
         "next",
@@ -265,7 +268,9 @@ history of git. It reads each commit that deleted an intent.md. The status of
 the intent in the parent of that commit gives the result: accepted is
 finished, and any other status is closed. For each change it prints the date,
 the result, the slug, the class, the counts of the delta lines (add, change,
-remove) of its spec, the commit and the title. A change that one pull request
+remove) of its spec, the hours, the commit and the title. The hours are the
+number of the last line `Hours: <number>` of the commit message that deleted
+the intent (a dash if there is none). A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
 default branch, has no entry. A move of intent.md out of the intent folder
 that keeps its id as an alias (spec-dna mv) does not end a change. A plain
@@ -1316,7 +1321,39 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let (new_errors, new_warnings) = (count(Severity::Error, true), count(Severity::Warning, true));
     let failed = if a.all { errors > 0 } else { new_errors > 0 };
     // Not diagnostics: no code, no severity, no effect on the exit code.
-    let locked = check::locked_links(&cfg, head);
+    // The pointer of a link into a finished change needs the history. The
+    // list is only for the info lines of `--all` and for `--json`.
+    let locked = if a.all || a.json {
+        // One `git log` for each folder of the `intent` layer that holds a
+        // folder that a dead link names, and only for those folders.
+        let ended = |folders: &[String]| {
+            let mut out = std::collections::HashMap::new();
+            if repo.head_commit().is_none() {
+                return out;
+            }
+            let mut dirs: Vec<&str> = folders
+                .iter()
+                .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d))
+                .collect();
+            dirs.sort();
+            dirs.dedup();
+            for dir in dirs {
+                let here: Vec<String> = folders
+                    .iter()
+                    .filter(|f| f.rsplit_once('/').is_some_and(|(d, _)| d == dir))
+                    .cloned()
+                    .collect();
+                for e in sdlc::ended_changes(&repo.git, dir, &here).unwrap_or_default() {
+                    // The list is the newest first: keep the first of a folder.
+                    out.entry(e.folder.clone()).or_insert(e);
+                }
+            }
+            out
+        };
+        check::locked_links(&cfg, head, &ended)
+    } else {
+        Vec::new()
+    };
     let mut order: Vec<usize> = (0..outcome.head.len()).collect();
     order.sort_by(|&x, &y| outcome.head[x].cmp(&outcome.head[y]));
     if a.json {
@@ -1353,6 +1390,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .num("line", l.line)
                 .str("target", &l.target)
                 .str("pointer", &l.pointer)
+                .opt_str("commit", l.commit.as_deref())
                 .end()
         });
         let approvals_json = report.approvals.iter().map(|x| {
@@ -2915,6 +2953,7 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
                 .num("step", 6)
                 .raw("diagnostics", "[]")
                 .raw("files", &json::array(writes.chain(removes)))
+                .raw("hours", &plan.hours.text().unwrap_or("null".to_string()))
                 .end()
         );
         return;
@@ -2942,6 +2981,17 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
             "spec-dna finish `{slug}`: applied {lines}, wrote {} files and deleted the folder `{folder}` ({} files). `finish` staged the paths with `git add`. Read the diff, then commit it with the code",
             plan.writes.len(),
             plan.removes.len()
+        );
+    }
+    // `finish` makes no commit, so the person or the agent that commits writes
+    // the line in the message.
+    for item in &plan.hours.bad {
+        println!("note: the item \"{item}\" of Hours has no number of hours; no total");
+    }
+    if let Some(total) = plan.hours.text() {
+        println!("Hours: {total}");
+        println!(
+            "add this line to the commit message of the change; keep it in the squash message"
         );
     }
 }

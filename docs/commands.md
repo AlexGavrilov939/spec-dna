@@ -170,12 +170,12 @@ The text output gives the errors first, then SD606 and SD607, then the other war
 An accepted decision cannot change its locked text (SD405), so `check` gives no SD101 and no SD102 for a link or a reference there. After `finish` deletes an intent, such a link is dead. With `--all`, `check` prints one info line for each of these locked links, after the diagnostics and before the count line:
 
 ```text
-docs/decisions/timer.md:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that points to the change `dose` (`spec-dna log` names its commit)
+docs/decisions/timer.md:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to the change `dose` (finished in commit 9b446b2c2bf3 on 2026-11-16)
 ```
 
-The line is not a diagnostic. It has no code, no severity and no rule, it is not in the counts, and it does not change the exit code. If the target was in the folder of an intent, the line names the change. Otherwise it says "the new place of the text, or the reason for its removal". Add the amendment to the decision: an amendment section can name the new place as plain text. Without `--all`, `check` prints no such line. A reference to a document that exists, with an absent section, is not a locked link.
+The line is not a diagnostic. It has no code, no severity and no rule, it is not in the counts, and it does not change the exit code. If the target was in the folder of an intent, the line names the change, and the commit that `log` gives for it ("finished in" or "closed in"). If the history has no such commit (a shallow clone, or a deletion that is not committed yet), the line says "the change `<slug>` (`spec-dna log` names its commit)". For another target, it says "the new place of the text, or the reason for its removal". Add an amendment to the decision that names the target. An amendment section clears the line when a code span or a word of prose with a `/` in the section equals the target as written (with no `#` fragment), the id or the path of the place that is gone (from the root of the documents or of the repository, with or without `.md`), or, for a change folder, when the slug of the change is in a code span. A link to the target in the amendment gives SD102, because that text can change. Without `--all`, `check` prints no such line. A reference to a document that exists, with an absent section, is not a locked link.
 
-The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target` and `pointer` (the text after "points to" in the info line). The list is empty if there is no locked link. The field `approvals` is always in the output too, after `locked_links`. It lists the approval commits that cleared a gate of SD910, in the order of the walk. Each entry has `commit` (the full id), `path` (the artifact that the commit approved) and `author` (the author e-mail). The list is empty with `[change] approval = "base"`, and also when no gate needed an approval commit ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
+The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target`, `pointer` (the text after "points to" in the info line) and `commit` (the full id of the commit that the pointer names, or `null`). The list is empty if there is no locked link. The field `approvals` is always in the output too, after `locked_links`. It lists the approval commits that cleared a gate of SD910, in the order of the walk. Each entry has `commit` (the full id), `path` (the artifact that the commit approved) and `author` (the author e-mail). The list is empty with `[change] approval = "base"`, and also when no gate needed an approval commit ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 
 ## context
 
@@ -357,7 +357,7 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
 
 `finish` ends a change ([Finish](design/0.6.0.md#finish)). It applies the delta of the spec of `<intent folder>/<slug>/` to the requirements, checks the evidence, and deletes the folder. The author runs it in the pull request of the code. The review then sees the code and the new current truth in one diff. It stops at the first step that fails. A stop writes nothing.
 
-1. Step 0: no document outside the folder links into it. It reads a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` and `from`. It skips a stub, a generated index and the locked text of an accepted decision. It lists each reference and stops, also in the profile `lite`.
+1. Step 0: no document outside the folder links into it. It reads a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` and `from`. It skips a stub, a generated index and the locked text of an accepted decision. It lists each reference and stops, also in the profile `lite`. `check` runs the same search for each change folder and reports a reference as SD612 ([diagnostics.md](diagnostics.md#links-drift-and-quality-sd601-to-sd612)), so the author sees the stop before `finish` runs.
 2. Step 1: the intent is `accepted` and the plan is `approved`. The spec is `approved` for a `higher-risk` change and for a spec that has a delta line. An intent with the status `closed` runs steps 0 and 1, and then `finish` deletes the folder. It applies no delta.
 3. Step 2: no open concern (SD919), no open question (SD922), and each decision of `Decisions` is `accepted` (SD920).
 4. Step 3: each delta line is valid against the tree (SD914). A `CHANGE` or `REMOVE` hash is the hash of the requirement now. The delta is the delta of the base tree: an approved delta must not change. The pull request changes each interface document of `Interfaces`, or a file that it cites.
@@ -376,6 +376,16 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
 
 If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code.
 
+If the plan has a section `Hours` ([types.md](types.md#sections-that-carry-list-items)), `finish` adds its items and prints the line `Hours: <total>` (also with `--dry-run`), with no zero after the last digit (`3.5`, `4`). The next line says to add this line to the commit message of the change and to keep it in the squash message, because `finish` makes no commit. An item that has no number of hours gives the note `the item "<text>" of Hours has no number of hours; no total`, and no `Hours:` line. A plan with no `Hours` item prints nothing. `log` and `stats --sdlc` read the line from the commit that deletes `intent.md`. Nothing checks the value: the line is a record.
+
+These rules apply to `Hours`:
+
+- A nested item under an item of `Hours` is not counted. Only the top-level items are.
+- Two sections `Hours` in one plan are added together.
+- `finish` reads an item with an optional `h` (`1.5h`). The line `Hours:` of a commit message has no `h`: `Hours: 3.5h` is not read, and the value is absent.
+- A number of the line `Hours:` has up to 7 digits before the `.` and up to 2 after it. A longer number is not read.
+- `log` reads the commit that deletes `intent.md`. For a merge-commit merge, that is the commit of the branch, so the line must be in that commit and not only in the message of the merge commit.
+
 These rules apply to the files:
 
 - `finish` writes a generated index again if it lists a deleted file, so `check` gives no SD610.
@@ -389,10 +399,10 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 `--dry-run` writes nothing. It prints the diff of each file that `finish` would write, and `remove <path>` for each file that it would delete. With `--json`, the output is one object:
 
 ```json
-{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}]}
+{"slug":"dose-limit","ok":true,"dry_run":true,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/..."},{"path":"docs/intent/dose-limit/intent.md","action":"remove","diff":""}],"hours":3.5}
 ```
 
-A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
+`hours` is the total of the section `Hours`, or `null`. A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty, and the output has no `hours`. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
 
 `finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
 
@@ -445,11 +455,11 @@ The status of the intent in the parent of that commit gives the result:
 | `accepted` | `finished` |
 | any other status, also `draft` | `closed` |
 
-For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the commit and the title. The counts and the class come from the parent tree too. A line that has no valid form is not counted. The newest change comes first.
+For each change, `log` gives the date of the commit (UTC), the result, the slug and the class. It also gives the counts of the delta lines of its spec (`add`, `change` and `remove`), the hours, the commit and the title. The counts and the class come from the parent tree too. The hours are the number of the last line `Hours: <number>` of the message of that commit. The line can be in any paragraph, because a host can write the messages of a squash as a list. A line with other text after the number is not such a line. `finish` prints the line, and the person or the agent that commits puts it in the message. With no such line, the hours are absent: `-` in the text and `null` in `--json`. One git process reads the messages of all the listed commits. A line that has no valid form is not counted. The newest change comes first.
 
 ```text
-2024-04-05 finished dose-limit higher-risk add 1 change 2 remove 0 3f2a9c1b7e0d Dose limit
-2024-03-18 closed old-idea routine add 0 change 0 remove 0 91be40d27c5a Old idea
+2024-04-05 finished dose-limit higher-risk add 1 change 2 remove 0 hours 3.5 3f2a9c1b7e0d Dose limit
+2024-03-18 closed old-idea routine add 0 change 0 remove 0 hours - 91be40d27c5a Old idea
 ```
 
 `--since <rev>` limits `log` to the commits after `<rev>` (`<rev>..HEAD`). A `<rev>` that is not a commit is exit code 3.
@@ -470,7 +480,7 @@ In a shallow clone, `log` can miss the changes that the clone does not have. It 
 With `--json`, the output is one object:
 
 ```json
-{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
+{"changes":[{"slug":"dose-limit","class":"higher-risk","title":"Dose limit","result":"finished","delta":{"add":1,"change":2,"remove":0},"hours":3.5,"commit":"3f2a9c1b7e0d4a11...","date":"2024-04-05"}],"shallow":false}
 ```
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--since` that is not a commit; 4 git.
@@ -501,6 +511,7 @@ The command rebuilds the life of each change from the commits that touched its `
 | Build | leading | Time from plan approval to the merged pull request | The median days from the first commit that sets the plan `approved` to the commit that deleted the folder. It counts finished changes. |
 | Build | leading | Share of changes that merge from the first implementation pass | `n/a`: it needs pull request metadata. |
 | Build | lagging | How often the merged diff still matches the committed `plan.md` | The percent of finished changes whose diff has no path that SD913 reports for the scope of the plan. |
+| Build | lagging | Hours of work per finished change | The median of the hours of the finished changes. The hours are the last line `Hours: <number>` of the message of the commit that deleted the `intent.md` (the commit that [`log`](#log) lists). Unit `hours`. The count is the number of finished changes that have such a line, and the note gives the total. A change with no line does not count. |
 | Build | lagging | Rework cycles per change | `n/a`: it needs pull request metadata. |
 | Test | leading | The eval pass rate over time | The `pass_rate` of the newest result file in `<[evals] dir>/results`, in percent. `n/a` without `[evals]`. |
 | Test | leading | How long a production incident takes to become a permanent eval | The median days from the commit that added an incident to the commit that added the eval that its `Eval` section names. `n/a` without `[evals]`. |
@@ -557,14 +568,14 @@ Plan lagging: Survival rate: the share of intent.md files that are accepted rath
 Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
 ```
 
-With `--json`, the output is one object with the 14 indicators of the table, in its order:
+With `--json`, the output is one object with the 15 indicators of the table, in its order:
 
 ```json
 {"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
 ```
 
-- `value` is a number with 1 decimal, or `null` for an indicator with no value.
-- `unit` is `days`, `percent` or `commits per change`.
+- `value` is a number with 1 decimal, or `null` for an indicator with no value. The row of the hours has up to 2 decimals and no zero after the last digit (`2.25`, `3.5`, `6`).
+- `unit` is `days`, `percent`, `commits per change` or `hours`.
 - `count` is the number of changes that the value counts. For the 2 Test indicators, it is the number of result files and incidents. It is `null` for an indicator that git cannot give.
 - `reason` is `null` for a full value. Each `null` value has a reason.
 

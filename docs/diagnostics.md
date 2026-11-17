@@ -34,7 +34,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD301 to SD306 | Front matter, types, statuses and sections | [Front matter, types and sections](#front-matter-types-and-sections-sd301-to-sd306) |
 | SD401 to SD405 | Status changes, supersede links and locked text | [Status and locked text](#status-and-locked-text-sd401-to-sd405) |
 | SD501 to SD506 | Adapters, harness files, configuration and evals | [Adapters, harness, configuration and evals](#adapters-harness-configuration-and-evals-sd501-to-sd506) |
-| SD601 to SD611 | Links, drift, evidence and quality | [Links, drift and quality](#links-drift-and-quality-sd601-to-sd611) |
+| SD601 to SD612 | Links, drift, evidence and quality | [Links, drift and quality](#links-drift-and-quality-sd601-to-sd612) |
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
@@ -120,7 +120,7 @@ These paths do not count. Each one is a file that `init` writes with the configu
 
 Each other path that differs from the base counts. Examples are documents, code, lint configurations such as `.markdownlint-cli2.yaml`, `CODEOWNERS`, other workflows and a deleted file. A move gives 2 paths, the old path and the new path, because the diff has no rename detection.
 
-## Links, drift and quality (SD601 to SD611)
+## Links, drift and quality (SD601 to SD612)
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
@@ -135,6 +135,7 @@ Each other path that differs from the base counts. Examples are documents, code,
 | SD609 | incident-unlinked | warning | An incident links no requirement, rule, decision or procedure. |
 | SD610 | index-stale | warning | A generated index (`spec-dna index`) does not match its entries. A change added, removed or renamed an entry document, or changed its title or status, or edited the rows manually. |
 | SD611 | decision-links-intent | warning | An accepted decision links an `intent` document in its locked text, or in `depends-on`. You can delete a finished intent (SD202 allows it), but you cannot remove the link from the locked text (SD405). SD611 does not report a link in an amendment, history or live section. SD901 reports it, so name the intent as plain text there. After `spec-dna finish` deletes the intent, the link is dead, and `check --all` names it in an [info line](#locked-references). [types.md](types.md#links-between-types) gives the link directions. |
+| SD612 | link-into-change | warning | A document outside the folder of a change has a reference into that folder: a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` or `from`. `spec-dna finish <slug>` stops on it at step 0 ([Stops of `finish`](#stops-of-finish)), late, in the pull request of the code. SD612 shows the same reference early. It reads the references and the exceptions of step 0: a stub, a generated index and the locked text of an accepted decision are not sources. It reports a reference that SD611 or SD901 reports in the same run (the same document, line and target) once, as SD611 or SD901. When SD901 is off (`lite`, or a rule), SD612 reports the reference. It is a warning in each profile, it is in no rule group, and the policy `none` does not turn it off: the folder of a change exists with that policy too. `[rules] SD612` changes its severity. Name the change as plain text. It is new in 0.7.0. |
 
 ## Budgets (SD701 to SD704)
 
@@ -395,7 +396,7 @@ SD506 needs the table `[evals]`, with any `[change] policy`. It reads the files 
 
 | Step | Stop |
 | --- | --- |
-| 0 | A document outside the folder links into it: a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` or `from`. `finish` reports each reference as SD101 (an id) or SD102 (a link). A stub, a generated index and the locked text of an accepted decision are not sources. The folder is not tracked by git, or it differs from `HEAD` (an edit that is not committed, or an untracked file): this stop has a reason and no diagnostic |
+| 0 | A document outside the folder links into it: a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` or `from`. `finish` reports each reference as SD101 (an id) or SD102 (a link), and `check` reports it as SD612. A stub, a generated index and the locked text of an accepted decision are not sources. The folder is not tracked by git, or it differs from `HEAD` (an edit that is not committed, or an untracked file): this stop has a reason and no diagnostic |
 | 1 | The intent is not `accepted`, the plan is not `approved`, or the spec is not `approved` (for a `higher-risk` change, and for a spec that has a delta line). A `closed` intent passes: `finish` then deletes the folder and does nothing else |
 | 2 | SD919 (an open concern), SD922 (an open question) or SD920 (a needed decision that is absent or not `accepted`) |
 | 3 | SD914: a delta line is not valid, its target is absent or in a layer that `moves-to` does not allow, or its hash is not the hash of the requirement. Also SD914: the delta differs from the delta that the base tree has (an approved delta must not change). Also SD914: an interface of `Interfaces` that the diff does not change, or an `ADD` item of `Interfaces` whose document the tree does not have and no delta line adds |
@@ -408,7 +409,9 @@ The base of step 3 is the merge base of `--base` (or of `origin/HEAD`, or of the
 
 A reference in the locked text of an accepted decision gives no SD101 and no SD102. This text cannot change (SD405). A reference to a finished intent must stay in it (SD611 warned when the author wrote it). The locked text is each part of the body outside the amendment, history and live sections.
 
-`check --all` prints one info line for each such reference whose target no longer exists, after the diagnostics: ``<path>:<line>: info: the locked text links `<target>`, which no longer exists; add an amendment that points to <pointer>``. The pointer is the change (``the change `<slug>` (`spec-dna log` names its commit)``) if the target was in the folder of an intent. Otherwise it is "the new place of the text, or the reason for its removal". The line is not a diagnostic: it has no code and no severity, it is not in the counts, and it does not change the exit code. An absent anchor in a link of the locked text stays SD602. `check --json` always has the field `locked_links`, a list of `{path, line, target, pointer}`.
+`check --all` prints one info line for each such reference whose target no longer exists, after the diagnostics: ``<path>:<line>: info: the locked text links `<target>`, which no longer exists; add an amendment that names `<target>` and points to <pointer>``. The pointer is the change if the target was in the folder of an intent: ``the change `<slug>` (finished in commit <short id> on <date>)``, or "closed in" for a closed change. The commit is the newest commit that [`log`](commands.md#log) gives for the folder. `check --all` and `check --json` read the history only when such a link exists. For each folder of the `intent` layer that holds a change that a dead link names, `check` runs one `git log` over the deleted `intent.md` files, then one `git diff-tree` and one read of the parent `intent.md` for each deleted change that a dead link names. It reads no other change. If the history has no such commit (a shallow clone, or a deletion that is not committed yet), the pointer is ``the change `<slug>` (`spec-dna log` names its commit)``. For another target, the pointer is "the new place of the text, or the reason for its removal". The line is not a diagnostic: it has no code and no severity, it is not in the counts, and it does not change the exit code. An absent anchor in a link of the locked text stays SD602. `check --json` always has the field `locked_links`, a list of `{path, line, target, pointer, commit}`. `commit` is the full id of the commit that the pointer names, or `null`.
+
+An amendment section of the same decision (`amendment-sections`, with its sub-sections) clears the line when it names the target. A code span, or a word of prose with a `/`, on a line of the section must equal one of these: the target as written, with no `#` fragment; the id or the path of the place that is gone, from the root of the documents or of the repository, with or without `.md`. For a target in the folder of a change, the slug of the change in a code span also clears the line. A cleared link is not in `locked_links`. A link to the dead target in the amendment still gives SD102, because that text can change.
 
 The front matter is not locked, so a broken `supersedes` or `depends-on` still gives SD101. The same reference in one of these sections still gives SD101 or SD102, because the author can change that text. A decision that is not accepted has no locked text.
 

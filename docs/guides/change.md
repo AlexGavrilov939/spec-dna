@@ -103,6 +103,8 @@ spec-dna finish sensor-timeout
 
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
+If the plan has a section `Hours`, `finish` adds the items and prints the line `Hours: <total>`. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
+
 ## The approval commit
 
 This section is for a project with `[change] approval = "branch"`. `check` then walks the commits of the branch from the oldest. A commit that edits an artifact or a path of `Files` needs the approval of the artifact before it. The approval is in the base tree, or in an approval commit that comes before this commit.
@@ -172,7 +174,7 @@ A small fix has no folder and no stage. It is a pull request only. It must keep 
 ```sh
 spec-dna status                 # each change, its class, its stage and its next gate
 spec-dna next sensor-timeout    # the checklist to the next gate of one change
-spec-dna log                    # the finished and the closed changes, from the git history
+spec-dna log                    # the finished and the closed changes, with their hours, from the git history
 ```
 
 The last line of `next` gives the edit or the command that ends the current stage.
@@ -184,6 +186,7 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 | Code | What happened | What to do |
 | --- | --- | --- |
 | SD910 | A `spec.md` or a `plan.md` that is not a `draft`, or code, changed, and no approval of the document before it counts | With `approval = "base"`, merge the approval first, in its own pull request. With `"branch"`, the message names one of 8 reasons and its fix ([the approval commit](#the-approval-commit)) |
+| SD612 | A document outside the folder of a change links into the folder, and `finish` would stop on it | Name the change as plain text, or link the document that the change moves its text into |
 | SD913 | The diff touches a file that `Files` of the plan does not list | Add the file to `Files` before the pull request of `finish`, or remove the edit |
 | SD914 | A delta line is not valid, or its hash is not the hash of the current text | Run `spec-dna show`. Correct the line in its own pull request before `finish` |
 | SD916 | A new or changed requirement has no evidence | Add a test with a `covers:` tag, or a `verified-by` path |

@@ -221,6 +221,108 @@ fn off(json: bool, empty: &str) -> u8 {
     0
 }
 
+/// The commits that deleted an `intent.md` under `dir`, the newest first, as
+/// `log` lists them. `dir` is a folder of the `intent` layer, from the
+/// repository root. A move out that keeps the id as an alias is not an end.
+/// With `only`, the list keeps the deletions of these folders (from the
+/// repository root) and nothing else: the check for a move out and the reads
+/// that follow run for them only. `log` and the pointer of a locked link
+/// (`check`) both read this list.
+pub fn ended(
+    git: &Git,
+    dir: &str,
+    since: Option<&str>,
+    only: Option<&[String]>,
+) -> Result<Vec<DeletedIntent>, String> {
+    let mut found = git.deleted_intents(dir, since)?;
+    if let Some(only) = only {
+        found.retain(|e| {
+            e.path
+                .strip_suffix("/intent.md")
+                .is_some_and(|f| only.iter().any(|o| o == f))
+        });
+    }
+    let moved = git.moved_out(dir, &found)?;
+    Ok(found
+        .into_iter()
+        .zip(moved)
+        .filter(|(_, m)| !m)
+        .map(|(e, _)| e)
+        .collect())
+}
+
+/// A change that left the default branch, for the pointer of a locked link.
+#[derive(Clone, Debug)]
+pub struct EndedChange {
+    /// The folder of the change, from the repository root.
+    pub folder: String,
+    /// The commit that deleted its `intent.md`: the commit that `log` lists.
+    pub commit: String,
+    /// The date of the commit, as `YYYY-MM-DD` in UTC.
+    pub date: String,
+    /// True for `finished`, false for `closed`.
+    pub finished: bool,
+}
+
+/// The ended changes of the folders `folders` under the folder `dir` of the
+/// `intent` layer, the newest first, with the result of each (see
+/// `Outcome::of`). It reads no other change.
+pub fn ended_changes(git: &Git, dir: &str, folders: &[String]) -> Result<Vec<EndedChange>, String> {
+    let list = ended(git, dir, None, Some(folders))?;
+    let mut specs = Vec::new();
+    let mut kept = Vec::new();
+    for e in &list {
+        let (Some(parent), Some(folder)) = (&e.parent, e.path.strip_suffix("/intent.md")) else {
+            continue;
+        };
+        specs.push((parent.clone(), e.path.clone()));
+        kept.push((e, folder));
+    }
+    let texts = git.read_at(&specs)?;
+    Ok(kept
+        .into_iter()
+        .zip(texts)
+        .map(|((e, folder), text)| EndedChange {
+            folder: folder.to_string(),
+            commit: e.commit.clone(),
+            date: utc_date(e.time),
+            finished: text
+                .map(|b| Outcome::of(&status_of(&String::from_utf8_lossy(&b))) == Outcome::Finished)
+                .unwrap_or(false),
+        })
+        .collect())
+}
+
+/// The number of the last line `Hours: <number>` of a commit message. The line
+/// can be in any paragraph, because a host can write the messages of a squash
+/// as a list. A line with other text after the number is not such a line. The
+/// number has up to 7 digits, and up to 2 decimals after a `.`. A longer number
+/// would lose digits or read as `inf` in JSON, so the line gives no value.
+fn hours_line(message: &str) -> Option<f64> {
+    message.lines().rev().find_map(|line| {
+        let number = line.strip_prefix("Hours:")?.trim_matches([' ', '\t']);
+        let (whole, frac) = match number.split_once('.') {
+            Some((w, f)) => (w, Some(f)),
+            None => (number, None),
+        };
+        let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+        (digits(whole) && whole.len() <= 7 && frac.is_none_or(|f| digits(f) && f.len() <= 2))
+            .then(|| number.parse().ok())
+            .flatten()
+    })
+}
+
+/// The hours of the commits, by commit: the value of the last `Hours:` line of
+/// the message. A commit with no such line is not in the map.
+fn hours_of(git: &Git, commits: &[String]) -> Result<HashMap<String, f64>, Fatal> {
+    let messages = git.commit_messages(commits).map_err(Fatal::Io)?;
+    Ok(commits
+        .iter()
+        .zip(messages)
+        .filter_map(|(c, m)| Some((c.clone(), hours_line(&m?)?)))
+        .collect())
+}
+
 // log
 
 struct Entry {
@@ -228,6 +330,8 @@ struct Entry {
     outcome: Outcome,
     commit: String,
     time: i64,
+    /// The hours of the line `Hours:` of the commit message.
+    hours: Option<f64>,
 }
 
 /// `spec-dna log [--since <rev>]`: the finished and the closed changes.
@@ -253,16 +357,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
     let mut raw = Vec::new();
     if repo.head_commit().is_some() {
         for dir in lifecycle::intent_dirs(cfg) {
-            let found = git.deleted_intents(&dir, since).map_err(Fatal::Io)?;
-            // A move out that keeps the id as an alias is not an end.
-            let moved = git.moved_out(&dir, &found).map_err(Fatal::Io)?;
-            raw.extend(
-                found
-                    .into_iter()
-                    .zip(moved)
-                    .filter(|(_, m)| !m)
-                    .map(|(e, _)| e),
-            );
+            raw.extend(ended(git, &dir, since, None).map_err(Fatal::Io)?);
         }
     }
     raw.sort_by_key(|e| std::cmp::Reverse(e.time));
@@ -276,6 +371,8 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
         kept.push(e);
     }
     let trees = read_trees(git, &at)?;
+    let commits: Vec<String> = kept.iter().map(|e| e.commit.clone()).collect();
+    let hours = hours_of(git, &commits)?;
     let entries: Vec<Entry> = kept
         .iter()
         .zip(&at)
@@ -287,6 +384,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
                 facts,
                 commit: e.commit.clone(),
                 time: e.time,
+                hours: hours.get(&e.commit).copied(),
             }
         })
         .collect();
@@ -303,6 +401,10 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
                 .str("title", &e.facts.title)
                 .str("result", e.outcome.name())
                 .raw("delta", &delta)
+                .raw(
+                    "hours",
+                    &e.hours.map_or("null".to_string(), |h| h.to_string()),
+                )
                 .str("commit", &e.commit)
                 .str("date", &utc_date(e.time))
                 .end()
@@ -321,7 +423,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
     }
     for e in &entries {
         println!(
-            "{} {} {} {} add {} change {} remove {} {} {}",
+            "{} {} {} {} add {} change {} remove {} hours {} {} {}",
             utc_date(e.time),
             e.outcome.name(),
             e.facts.slug,
@@ -329,6 +431,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
             e.facts.delta[0],
             e.facts.delta[1],
             e.facts.delta[2],
+            e.hours.map_or("-".to_string(), |h| h.to_string()),
             short(&e.commit),
             e.facts.title
         );
@@ -527,6 +630,9 @@ struct Measured {
     /// the deletion), its first parent and its time. If there is no such commit, it is the
     /// deleting commit.
     merged: Option<(String, Option<String>, i64)>,
+    /// The hours of the line `Hours:` in the message of the commit that
+    /// deleted the `intent.md` (`life.end`), the commit that `log` lists.
+    hours: Option<f64>,
 }
 
 /// One row of the indicator table.
@@ -540,6 +646,19 @@ struct Indicator {
     /// The word of the count in the text line, for 1 and for any other number.
     noun: (&'static str, &'static str),
     reason: Option<String>,
+    /// Writes the value. Most rows have 1 decimal.
+    show: fn(f64) -> String,
+}
+
+/// The value with 1 decimal.
+fn one_decimal(v: f64) -> String {
+    format!("{v:.1}")
+}
+
+/// A number of hours with up to 2 decimals and no zero after the last digit,
+/// as `finish` and the note of the row write it.
+fn hours_text(v: f64) -> String {
+    crate::finish::format_hours((v * 100.0).round() as u64)
 }
 
 const CHANGES: (&str, &str) = ("change", "changes");
@@ -548,6 +667,12 @@ impl Indicator {
     /// Sets the word that the text line uses for the count.
     fn counting(mut self, noun: (&'static str, &'static str)) -> Self {
         self.noun = noun;
+        self
+    }
+
+    /// Sets the function that writes the value.
+    fn shown(mut self, show: fn(f64) -> String) -> Self {
+        self.show = show;
         self
     }
 }
@@ -561,6 +686,7 @@ fn na(play: &'static str, kind: &'static str, name: &'static str, reason: &str) 
         unit: None,
         count: None,
         noun: CHANGES,
+        show: one_decimal,
         reason: Some(reason.to_string()),
     }
 }
@@ -596,6 +722,7 @@ fn computed(
         unit: Some(unit),
         count: Some(count),
         noun: CHANGES,
+        show: one_decimal,
         reason,
     }
 }
@@ -672,6 +799,11 @@ pub fn stats(
         with_tree.push(life);
     }
     let trees = read_trees(git, &at)?;
+    let ends: Vec<String> = with_tree
+        .iter()
+        .filter_map(|l| l.end.as_ref().map(|e| e.commit.clone()))
+        .collect();
+    let hours = hours_of(git, &ends)?;
     // Pair the ended lives of a folder, the newest first, with its commits of
     // the first-parent walk.
     let mut next_ended: HashMap<String, usize> = HashMap::new();
@@ -705,11 +837,17 @@ pub fn stats(
         {
             continue;
         }
+        let hours = life
+            .end
+            .as_ref()
+            .and_then(|e| hours.get(&e.commit))
+            .copied();
         measured.push(Measured {
             life,
             facts,
             outcome,
             merged,
+            hours,
         });
     }
     measured.reverse();
@@ -728,10 +866,7 @@ pub fn stats(
                 .str("play", r.play)
                 .str("kind", r.kind)
                 .str("name", r.name)
-                .raw(
-                    "value",
-                    &r.value.map_or("null".to_string(), |v| format!("{v:.1}")),
-                )
+                .raw("value", &r.value.map_or("null".to_string(), r.show))
                 .opt_str("unit", r.unit)
                 .raw(
                     "count",
@@ -760,7 +895,8 @@ pub fn stats(
             Some(v) => {
                 let n = r.count.unwrap_or(0);
                 line.push_str(&format!(
-                    "{v:.1} {} ({n} {})",
+                    "{} {} ({n} {})",
+                    (r.show)(v),
                     r.unit.unwrap_or(""),
                     if n == 1 { r.noun.0 } else { r.noun.1 }
                 ));
@@ -913,6 +1049,22 @@ fn indicators(
         "no finished change has a plan and a readable diff in the history yet",
         shallow,
     ));
+    // Build, lagging: the line `Hours:` of the commit message.
+    let v: Vec<f64> = ms.iter().filter(finished).filter_map(|m| m.hours).collect();
+    let total = v.iter().sum::<f64>();
+    rows.push(computed(
+        ("Build", "lagging", "Hours of work per finished change"),
+        median(v.clone()),
+        "hours",
+        v.len(),
+        &format!(
+            "the value is the median of the finished changes that have a line `Hours:` in the commit that deletes the folder; the total is {} hours",
+            hours_text(total)
+        ),
+        "no finished change has an `Hours:` line in the commit that deletes its folder",
+        shallow,
+    )
+    .shown(hours_text));
     rows.push(na(
         "Build",
         "lagging",
@@ -1328,4 +1480,31 @@ fn plan_match(git: &Git, ms: &[Measured]) -> Result<(usize, usize), Fatal> {
         }
     }
     Ok((clean, total))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hours_line_is_the_last_whole_line_with_a_number() {
+        for (message, want) in [
+            ("feat: x\n\nHours: 3.5\n\nCo-authored-by: A", Some(3.5)),
+            ("Hours: 1\nHours: 2\n", Some(2.0)),
+            ("Hours: 1\nHours: soon\n", Some(1.0)),
+            ("Hours:4\t\r\nlast", Some(4.0)),
+            ("Hours: 12345.25", Some(12345.25)),
+            ("Hours: 1234567", Some(1_234_567.0)),
+            ("Hours: 12345678", None),
+            ("Hours: 1.234", None),
+            ("Hours: 3 total", None),
+            ("hours: 3", None),
+            ("  Hours: 3", None),
+            ("Hours: .5", None),
+            ("Hours: ", None),
+            ("", None),
+        ] {
+            assert_eq!(hours_line(message), want, "{message:?}");
+        }
+    }
 }

@@ -121,9 +121,62 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
         }
     }
     let mut out = apply_severity(config, out);
+    // SD612 skips a reference that SD611 or SD901 reports in this run, so it
+    // reads the diagnostics after their severity.
+    let into_change = links_into_changes(config, c, &out);
+    out.extend(apply_severity(config, into_change));
     out.extend(layer_limits(config, c, &layers));
     out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
     out.sort();
+    out
+}
+
+/// SD612: a reference from a document outside the folder of a change into the
+/// folder, that step 0 of `finish` stops on. The references and the exceptions
+/// are those of step 0 (`finish::refs_into`). `reported` has the diagnostics of
+/// the run after their severity. A reference that SD611 or SD901 reports (the
+/// same document, line and target) gives no SD612, so one reference gives
+/// one warning. When SD901 is off, SD612 reports the reference.
+fn links_into_changes(config: &Config, c: &Corpus, reported: &[Diag]) -> Vec<Diag> {
+    let changes = crate::change::collect(c);
+    let folders: Vec<&str> = changes
+        .iter()
+        .filter(|ch| crate::finish::valid_slug(&ch.slug))
+        .map(|ch| ch.dir.as_str())
+        .collect();
+    if folders.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<Diag> = Vec::new();
+    for r in crate::finish::refs_into(config, c, &folders) {
+        let d = &c.docs[r.doc as usize];
+        if let Some(to) = r.to {
+            let id = &c.docs[to as usize].id;
+            if reported.iter().any(|x| {
+                matches!(x.code, Code::DecisionLinksChange | Code::LinkDirection)
+                    && x.path == d.path
+                    && x.line == r.line
+                    && x.target == *id
+            }) {
+                continue;
+            }
+        }
+        let folder = folders[r.folder];
+        let slug = folder.rsplit('/').next().unwrap_or(folder);
+        let new = diag(
+            d,
+            r.line,
+            Code::LinkIntoChange,
+            r.target.clone(),
+            format!(
+                "`{}` names the folder `{folder}` of the change `{slug}`, and `finish {slug}` stops on it; name the change as plain text",
+                r.target
+            ),
+        );
+        if !out.contains(&new) {
+            out.push(new);
+        }
+    }
     out
 }
 
@@ -631,7 +684,8 @@ pub(crate) fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
 /// no longer exists. `check` gives no SD101 and no SD102 for it, because the
 /// author cannot edit the text. `check --all` names it in an info line, and
 /// `check --json` has it in `locked_links`. It is not a diagnostic: it has no
-/// code, no severity and no effect on the exit code.
+/// code, no severity and no effect on the exit code. An amendment section of
+/// the same decision that names the target clears the line (`names_target`).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LockedLink {
     pub path: String,
@@ -640,70 +694,178 @@ pub struct LockedLink {
     pub target: String,
     /// Where the amendment must point.
     pub pointer: String,
+    /// The commit that deleted the folder of the change that the pointer names,
+    /// or `None` if the history has no such commit.
+    pub commit: Option<String>,
 }
 
 impl LockedLink {
     /// The info line of `check --all`.
     pub fn line_text(&self) -> String {
         format!(
-            "{}:{}: info: the locked text links `{}`, which no longer exists; add an amendment that points to {}",
-            self.path, self.line, self.target, self.pointer
+            "{}:{}: info: the locked text links `{}`, which no longer exists; add an amendment that names `{}` and points to {}",
+            self.path, self.line, self.target, self.target, self.pointer
         )
     }
 }
 
+/// The names of a place that is gone, as an amendment can write them: the
+/// target as written (with no fragment), the id or the path of the place from
+/// the root of the documents, and the path from the root of the repository,
+/// each with and without `.md`.
+fn place_names(target: &str, gone: &str, full: &str) -> Vec<String> {
+    let mut names = vec![target.split('#').next().unwrap_or("").to_string()];
+    for base in [gone, full] {
+        let bare = base.strip_suffix(".md").unwrap_or(base);
+        for name in [bare.to_string(), format!("{bare}.md")] {
+            if !name.is_empty() && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// True if a line of the decision is in an amendment section. The sections of
+/// history and the live sections are not amendments.
+fn in_amendment(d: &Doc, line: u32) -> bool {
+    d.parsed
+        .chunks
+        .iter()
+        .rposition(|ch| ch.line <= line)
+        .is_some_and(|i| d.amendments.contains(&i))
+}
+
+/// True if an amendment section of the decision names the target that is
+/// gone. A code span, or a word of prose with a `/`, on a line of the section
+/// must equal one of the `names` (a `#` fragment of the token does not
+/// count). For a change folder, the slug in a code span also names it.
+fn names_target(d: &Doc, names: &[String], slug: Option<&str>) -> bool {
+    let bare = |t: &str| t.split('#').next().unwrap_or("").to_string();
+    let p = &d.parsed;
+    p.code_spans
+        .iter()
+        .chain(&p.path_words)
+        .filter(|t| in_amendment(d, t.line))
+        .any(|t| names.contains(&bare(&t.text)))
+        || slug.is_some_and(|s| {
+            p.code_spans
+                .iter()
+                .any(|t| in_amendment(d, t.line) && t.text == s)
+        })
+}
+
 /// The locked links of a tree: each document or link target of the locked
 /// text of an accepted decision that is absent. A reference that names a
-/// document that exists, with a section that is absent, is not in the list.
-pub fn locked_links(config: &Config, c: &Corpus) -> Vec<LockedLink> {
-    let mut out: Vec<LockedLink> = Vec::new();
+/// document that exists, with a section that is absent, is not in the list. A
+/// target that an amendment of the decision names is not in the list either.
+/// `ended` gets the folders of the changes (from the repository root) that the
+/// remaining links name, and it gives the change that ended in each folder. The
+/// function calls it once, and only if such a link exists.
+pub fn locked_links(
+    config: &Config,
+    c: &Corpus,
+    ended: &dyn Fn(&[String]) -> HashMap<String, crate::sdlc::EndedChange>,
+) -> Vec<LockedLink> {
+    // A link with the folder of its change, if the target was in one.
+    let mut found: Vec<(LockedLink, Option<(String, String)>)> = Vec::new();
     for d in &c.docs {
         let Some(editable) = editable_chunks(config, d) else {
             continue;
+        };
+        let root = config.roots.get(d.root).map_or("", |r| r.path.as_str());
+        let from_root = |rel: &str| {
+            if root.is_empty() {
+                rel.to_string()
+            } else {
+                format!("{root}/{rel}")
+            }
         };
         for r in &d.parsed.refs {
             if !in_locked_text(d, &editable, r.line) {
                 continue;
             }
             // The place of the target that is gone, to find its change.
-            let gone = match r.kind {
+            let (gone, full) = match r.kind {
                 RefKind::Wiki => match c.resolve(&r.target) {
-                    Res::Missing => r.target.split('#').next().unwrap_or("").to_string(),
+                    Res::Missing => {
+                        let id = r.target.split('#').next().unwrap_or("").to_string();
+                        let full = from_root(&id);
+                        (id, full)
+                    }
                     _ => continue,
                 },
                 RefKind::Link | RefKind::Image => match c.resolve_link(&d.path, &r.target) {
-                    LinkRes::Missing(path) => match config.roots.get(d.root) {
-                        Some(root) if !root.path.is_empty() => path
-                            .strip_prefix(&format!("{}/", root.path))
-                            .unwrap_or(&path)
-                            .to_string(),
-                        _ => path,
-                    },
+                    LinkRes::Missing(path) => {
+                        let rel = match config.roots.get(d.root) {
+                            Some(root) if !root.path.is_empty() => path
+                                .strip_prefix(&format!("{}/", root.path))
+                                .unwrap_or(&path)
+                                .to_string(),
+                            _ => path.clone(),
+                        };
+                        (rel, path)
+                    }
                     _ => continue,
                 },
             };
+            let change = intent_slug(config, &gone);
+            let slug = change.as_ref().map(|(_, s)| s.as_str());
+            if names_target(d, &place_names(&r.target, &gone, &full), slug) {
+                continue;
+            }
             let link = LockedLink {
                 path: d.path.clone(),
                 line: r.line,
                 target: r.target.clone(),
-                pointer: match intent_slug(config, &gone) {
-                    Some(slug) => format!("the change `{slug}` (`spec-dna log` names its commit)"),
+                pointer: match &change {
+                    Some((_, slug)) => {
+                        format!("the change `{slug}` (`spec-dna log` names its commit)")
+                    }
                     None => "the new place of the text, or the reason for its removal".to_string(),
                 },
+                commit: None,
             };
-            if !out.contains(&link) {
-                out.push(link);
-            }
+            let folder = change.map(|(dir, slug)| (from_root(&format!("{dir}/{slug}")), slug));
+            found.push((link, folder));
+        }
+    }
+    let mut folders: Vec<String> = found
+        .iter()
+        .filter_map(|(_, f)| f.as_ref().map(|(folder, _)| folder.clone()))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    let ended = if folders.is_empty() {
+        HashMap::new()
+    } else {
+        ended(&folders)
+    };
+    let mut out: Vec<LockedLink> = Vec::new();
+    for (mut link, folder) in found {
+        if let Some((folder, slug)) = folder
+            && let Some(e) = ended.get(&folder)
+        {
+            link.pointer = format!(
+                "the change `{slug}` ({} in commit {} on {})",
+                if e.finished { "finished" } else { "closed" },
+                e.commit.get(..12).unwrap_or(&e.commit),
+                e.date
+            );
+            link.commit = Some(e.commit.clone());
+        }
+        if !out.contains(&link) {
+            out.push(link);
         }
     }
     out.sort();
     out
 }
 
-/// The name of the change whose folder holds a path, if the path is in the
-/// folder of a layer that has the type `intent`. `rel` is relative to the
+/// The folder of the layer `intent` and the name of the change whose folder
+/// holds a path, if the path is in such a folder. `rel` is relative to the
 /// root, and it has no extension for an id.
-fn intent_slug(config: &Config, rel: &str) -> Option<String> {
+fn intent_slug(config: &Config, rel: &str) -> Option<(String, String)> {
     config
         .layers
         .layers()
@@ -713,7 +875,7 @@ fn intent_slug(config: &Config, rel: &str) -> Option<String> {
         .find_map(|dir| {
             let rest = rel.strip_prefix(dir)?.strip_prefix('/')?;
             let slug = rest.split('/').next().filter(|s| !s.is_empty())?;
-            Some(slug.to_string())
+            Some((dir.to_string(), slug.to_string()))
         })
 }
 

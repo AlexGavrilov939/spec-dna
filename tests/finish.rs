@@ -1227,3 +1227,91 @@ fn a_write_error_exits_with_4_and_changes_nothing() {
     assert_eq!(tree(&r), before);
     assert!(staged(&r).is_empty());
 }
+
+// The hours of the change
+
+/// The plan of `Fx`, with a section `Hours` after `Order`.
+fn plan_with_hours(hours: &str) -> String {
+    format!(
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Hours\n\n{hours}\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
+    )
+}
+
+/// A fixture whose plan has the given `Hours` items, committed on `feature`.
+fn with_hours(hours: &str) -> Repo {
+    let r = Fx::default().start();
+    r.write(PLAN, &plan_with_hours(hours));
+    r.commit("hours");
+    r
+}
+
+#[test]
+fn finish_prints_the_total_of_the_hours() {
+    let r = with_hours("- 1.5: code\n- 2: review");
+    // A dry run prints the line, and it writes nothing.
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.lines().any(|l| l == "Hours: 3.5"), "{out}");
+    assert!(
+        out.contains(
+            "add this line to the commit message of the change; keep it in the squash message"
+        ),
+        "{out}"
+    );
+    let (code, out, err) = fin(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"hours\":3.5"), "{out}");
+    assert_eq!(out.trim_end().lines().count(), 1, "{out}");
+    // A run prints it too. `finish` makes no commit.
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.lines().any(|l| l == "Hours: 3.5"), "{out}");
+    assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "2");
+}
+
+#[test]
+fn the_total_of_the_hours_has_no_zero_after_the_last_digit() {
+    // 1.25 and 0.75 give a whole number. The `h` and a task box are allowed.
+    let r = with_hours("- 1.25h\n- [x] 0.75 for the review\n- 1");
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.lines().any(|l| l == "Hours: 3"), "{out}");
+    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
+    assert!(
+        json.contains("\"hours\":3}") || json.contains("\"hours\":3,"),
+        "{json}"
+    );
+    // The sum of 0.1 and 0.2 is exact.
+    let r = with_hours("- 0.1\n- 0.2");
+    let (_, out, _) = fin(&r, &["--dry-run"]);
+    assert!(out.lines().any(|l| l == "Hours: 0.3"), "{out}");
+}
+
+#[test]
+fn an_item_of_hours_with_no_number_gives_a_note_and_no_total() {
+    let r = with_hours("- 2: review\n- some time\n- 12345: too many digits");
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("note: the item \"some time\" of Hours has no number of hours; no total"),
+        "{out}"
+    );
+    assert!(
+        out.contains("note: the item \"12345: too many digits\" of Hours has no number of hours"),
+        "{out}"
+    );
+    assert!(!out.lines().any(|l| l.starts_with("Hours:")), "{out}");
+    let (code, json, _) = fin(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{json}");
+    assert!(json.contains("\"hours\":null"), "{json}");
+}
+
+#[test]
+fn a_plan_with_no_hours_prints_no_hours_line() {
+    let r = Fx::default().start();
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("Hours"), "{out}");
+    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
+    assert!(json.contains("\"hours\":null"), "{json}");
+}
