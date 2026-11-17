@@ -710,3 +710,30 @@ fn stats_text_with_evals_matches_the_golden_file() {
     assert!(!out.contains(VERSION), "{out}");
     golden("stats-sdlc-evals.txt", &out);
 }
+
+#[test]
+fn the_result_of_eval_run_ab_is_no_complete_result() {
+    // The result of `--ab` has no `pass_rate` at the top level, so the
+    // indicator skips it and counts it in the note.
+    let r = repo(EVALS);
+    r.write(
+        "evals/results/eval-20260201T100000Z.json",
+        &result("2026-02-01T10:00:00Z", "0.9", "null"),
+    );
+    r.write(
+        "evals/results/skills-20260301T100000Z.json",
+        "{\"spec_dna\":\"0.7.0\",\"claude_code\":\"2.1.325\",\"models\":[],\"started\":\"2026-03-01T10:00:00Z\",\"target\":\"tdd\",\"seed\":24,\"resamples\":2000,\"max_total_usd\":100,\"estimate_usd\":40,\"spend_usd\":3,\"excluded\":{\"with\":0,\"without\":0},\"stopped\":null,\"skills\":[]}\n",
+    );
+    r.commit_at("results", &at("02-01"));
+    let out = stats(&r);
+    assert_eq!(
+        line(&out, PASS_LINE),
+        format!("{PASS_LINE}90.0 percent (1 result file)")
+    );
+    assert!(
+        note_after(&out, PASS_LINE)
+            .unwrap()
+            .contains("; 1 file skipped: not a complete result"),
+        "{out}"
+    );
+}

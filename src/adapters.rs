@@ -195,6 +195,102 @@ pub fn remove_line(text: &str) -> String {
     }
 }
 
+/// The 5 disciplines of D3: the skill, the item in the `Rules:` list of the
+/// line, and the start of the rule in the block `Disciplines` of the skill.
+const DISCIPLINE_ITEMS: [(&str, &str, &str); 5] = [
+    ("tdd", "test first (tdd)", "- Test first:"),
+    ("debug", "cause first (debug)", "- Cause first:"),
+    (
+        "verify",
+        "proof before done (verify)",
+        "- Proof before done:",
+    ),
+    ("review", "review is data (review)", "- Review is data:"),
+    ("execute", "isolated work (execute)", "- Isolated work:"),
+];
+
+/// The line without the discipline of `skill`, with its own marker. The
+/// `eval run --ab` arm `without` uses it. For a skill with no discipline, it
+/// is the line of `line()`.
+pub fn line_without(skill: &str) -> String {
+    let body = match DISCIPLINE_ITEMS.iter().find(|d| d.0 == skill) {
+        Some((_, item, _)) => body_without(LINE_BODY, item),
+        None => LINE_BODY.to_string(),
+    };
+    format!(
+        "{body} <!-- spec-dna v{VERSION} h:{} -->",
+        hex(&hash_normalized(&body))
+    )
+}
+
+/// The text of the line without one item of its list `Rules: a, b, c.`. If
+/// the list has no other item, the sentence goes too.
+fn body_without(body: &str, item: &str) -> String {
+    const START: &str = "Rules: ";
+    const END: &str = ". Detail:";
+    let (Some(a), Some(b)) = (body.find(START), body.find(END)) else {
+        return body.to_string();
+    };
+    let kept: Vec<&str> = body[a + START.len()..b]
+        .split(", ")
+        .filter(|i| *i != item)
+        .collect();
+    if kept.is_empty() {
+        format!("{}{}", &body[..a], &body[b + ". ".len()..])
+    } else {
+        format!("{}{START}{}{}", &body[..a], kept.join(", "), &body[b..])
+    }
+}
+
+/// The text of a generated file without the name of the skill `skill`: the
+/// discipline in the generated line of a root instruction file, and in the
+/// block `Disciplines` of the adapter skill, and the rule for `write-plan`
+/// (`REPLACE_RULE`). A text with none of them stays as it is. The marker of
+/// each changed text holds the new hash.
+pub fn without_skill(text: &str, skill: &str) -> String {
+    let mut out = text.to_string();
+    if let Some((start, end, ..)) = find_line(&out) {
+        let line = format!("{}\n", line_without(skill));
+        out = format!("{}{line}{}", &out[..start], &out[end..]);
+    }
+    if let Some((start, end, _, _, body)) = find_block(&out, "skill") {
+        let mut new = body.to_string();
+        if let Some((_, _, bullet)) = DISCIPLINE_ITEMS.iter().find(|d| d.0 == skill) {
+            new = new
+                .lines()
+                .filter(|l| !l.starts_with(bullet))
+                .collect::<Vec<_>>()
+                .join("\n");
+            new.push('\n');
+        }
+        if skill == "write-plan" {
+            new = new.replace(&format!("\n\n{REPLACE_RULE}"), "");
+        }
+        if new != body {
+            let new = new.trim_end_matches('\n');
+            let block = format!(
+                "<!-- spec-dna:begin skill v{VERSION} h:{} -->\n{new}\n<!-- spec-dna:end skill -->\n",
+                hex(&hash_normalized(new))
+            );
+            out = format!("{}{block}{}", &out[..start], &out[end..]);
+        }
+    }
+    out
+}
+
+/// The generated lines of a root instruction file: the line of the adapter
+/// and the line of the harness, each with its marker. A line that only quotes
+/// the marker form is no generated line, because the marker ends the line.
+pub fn generated_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| {
+            (l.contains("<!-- spec-dna v") || l.contains("<!-- spec-dna harness v"))
+                && l.ends_with(" -->")
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 /// Returns true if the text has content that spec-dna did not generate.
 pub fn has_own_text(text: &str) -> bool {
     !remove_line(&remove_old_blocks(text)).trim().is_empty()
@@ -473,5 +569,67 @@ mod tests {
         // line has 400 bytes or fewer (D6), and a line feed ends it.
         let bytes = line().len() + 1 + skill_prefix_bytes();
         assert!(bytes <= 401 + 111, "{bytes} bytes");
+    }
+
+    #[test]
+    fn each_discipline_item_is_in_the_line_and_in_the_block() {
+        for (skill, item, bullet) in DISCIPLINE_ITEMS {
+            assert!(LINE_BODY.contains(item), "{skill}");
+            assert!(DISCIPLINES.contains(bullet), "{skill}");
+            assert!(DISCIPLINES.contains(&format!("(`{skill}`)")), "{skill}");
+        }
+    }
+
+    #[test]
+    fn the_line_without_a_discipline_loses_one_item_and_keeps_a_valid_marker() {
+        for (skill, item, _) in DISCIPLINE_ITEMS {
+            let l = line_without(skill);
+            assert!(!l.contains(item), "{skill}: {l}");
+            assert!(!l.contains(&format!("({skill})")), "{skill}: {l}");
+            let (_, _, version, hash, body) = find_line(&l).expect("a generated line");
+            assert_eq!(version, VERSION);
+            assert_eq!(hash, hex(&hash_normalized(body)));
+            assert!(l.contains("Rules: "), "{l}");
+            assert!(l.contains(". Detail: `spec-dna skill show <name>`."), "{l}");
+        }
+        assert!(line_without("tdd").contains("Rules: cause first (debug), proof"));
+        assert!(line_without("execute").contains("review is data (review). Detail:"));
+        // A skill with no discipline keeps the line.
+        assert_eq!(line_without("specify"), line());
+        // The last item of the list: the sentence goes too.
+        assert_eq!(
+            body_without(
+                "Run it. Rules: test first (tdd). Detail: x.",
+                "test first (tdd)"
+            ),
+            "Run it. Detail: x."
+        );
+    }
+
+    #[test]
+    fn a_text_without_a_skill_loses_the_discipline_in_the_line_and_in_the_block() {
+        let agents = upsert_line("# Rules\n\nOwn text.\n");
+        let skill = skill_file(&[]);
+        for (name, _, bullet) in DISCIPLINE_ITEMS {
+            let a = without_skill(&agents, name);
+            assert!(a.starts_with("# Rules\n\nOwn text.\n\n"), "{a}");
+            assert!(!a.contains(&format!("({name})")), "{a}");
+            assert!(find_line(&a).is_some(), "{a}");
+            let k = without_skill(&skill, name);
+            assert!(!k.contains(bullet), "{name}");
+            assert!(!k.contains(&format!("(`{name}`)")), "{name}");
+            let (_, _, _, hash, body) = find_block(&k, "skill").expect("the block");
+            assert_eq!(hash, hex(&hash_normalized(body.trim_end_matches('\n'))));
+            // Only one bullet goes.
+            assert_eq!(k.matches("\n- ").count() + 1, skill.matches("\n- ").count());
+        }
+        // The rule of `write-plan` goes with its name.
+        let k = without_skill(&skill, "write-plan");
+        assert!(!k.contains("write-plan"), "{k}");
+        assert!(skill.contains("write-plan"));
+        // A skill with no discipline and no rule: the text stays.
+        assert_eq!(without_skill(&agents, "specify"), agents);
+        assert_eq!(without_skill(&skill, "specify"), skill);
+        assert_eq!(without_skill("plain text\n", "tdd"), "plain text\n");
     }
 }

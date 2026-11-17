@@ -754,9 +754,12 @@ spec-dna index <dir or file> [--replace]
 
 ```text
 spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]
+spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
+spec-dna eval pack
+spec-dna eval verdict
 ```
 
-`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts the headless agent of the Claude Code adapter (`claude -p`) on a copy of a fixture. Then it runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand, is a usage error. [evals.md](evals.md) is the guide to the start, the cost and the CI job.
+`eval run` tests the agent setup of the project ([ADR 0008](adr/0008-harness-and-evals.md)). It starts the headless agent of the Claude Code adapter (`claude -p`) on a copy of a fixture. Then it runs the checks of the eval. It needs the table `[evals]` in `spec-dna.toml`. `eval` with no subcommand, or with another subcommand than `run`, `pack` and `verdict`, is a usage error. [evals.md](evals.md) is the guide to the start, the cost and the CI job.
 
 spec-dna itself makes no network call. `claude` makes network calls, and each run costs money. A pin that differs from the version of the binary stops the command, as it stops `check`. The runner has no time limit of its own. In CI, `timeout-minutes` of the workflow limits the job.
 
@@ -774,6 +777,7 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | `--dry-run` | Checks the evals and prints each eval with its runs and the estimate. It starts no process, and writes no file. Exit code 0, or 3 if the estimate is above the cap |
 | `--isolate` | Adds `--setting-sources project --strict-mcp-config`, so a run does not load the user and local settings or the MCP servers of the person. It is off by default, so CI and a laptop run the same command. A test with `claude` 2.1.325 (probe P2 of the design page) showed the effect. The flag removes the user skills, the user agents and the plugins that the user settings enable. The test found no trace of the user `CLAUDE.md`. This proof is weak, because it uses the answer of the model. The flag keeps the plugins that `CLAUDE_CODE_PLUGIN_DIRS` names. To remove these plugins, unset the variable before the command. `--strict-mcp-config` removes the MCP servers of the account of the person. A clean `CLAUDE_CONFIG_DIR` also removes the login |
 | `--json` | Prints the result as one JSON object, and no text |
+| `--ab <target>` | Runs the evals of the pack in 2 arms, with the skill and without it. See [eval run --ab](#eval-run---ab) |
 
 ### Exit codes
 
@@ -784,6 +788,28 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand |
 | 3 | No `[evals]` table, an invalid eval file, no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, or a `claude` that is absent or cannot start |
 | 4 | A git or file error of `eval run` itself: the temporary folder, the copy, the base commit or the result file |
+
+### eval run --ab
+
+`eval run --ab <target>` measures a skill against no skill ([ADR 0016](adr/0016-skill-evals.md)). The target is a skill, `all` or `agents-line`. It reads the pack in `<[evals] dir>/pack/`, runs each eval in the arms `with` and `without` in pairs, and writes `<[evals] dir>/results/skills-<YYYYMMDD>T<HHMMSS>Z.json` (or the folder of `--out`). The result has the pass rates, the costs, the difference and the cost ratio with a 90% interval, and a verdict. [evals.md](evals.md#the-pack-and-the-measure-of-a-skill) gives the arms, the rules of the verdict and the result file.
+
+`--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`, and `--resume` rejects a different `--runs`. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
+
+| Code | Meaning of `eval run --ab` |
+| --- | --- |
+| 0 | The target is complete, with any verdict. Also `--dry-run`, also with an estimate above the cap |
+| 2 | Usage error: no target, more than one target, an unknown target, `--min-pass-rate`, or a bad value of `SPEC_DNA_EVAL_BACKOFF` |
+| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
+| 4 | A git or file error: the temporary folder, the copy, the base commit or the result file. After the first run, the command writes the partial result (`"stopped": "error"`) before it exits |
+| 129, 130, 143 | SIGHUP, SIGINT or SIGTERM. The partial result is written first |
+
+### eval pack
+
+`eval pack` writes the 55 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
+
+### eval verdict
+
+`eval verdict` prints one line for each of the 11 skills and for `agents-line`: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source (`project <file>`, `release` or `-`). For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name, and then the table of the release that the binary holds. It starts no agent and needs no `[evals]` table. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`. Exit code 0, or 3 for a configuration error.
 
 ## transcript
 

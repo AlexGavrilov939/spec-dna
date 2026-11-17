@@ -1,0 +1,12 @@
+{
+  "id": "sync-dedupe",
+  "task": "The sync adds the lines of `supplier.csv` to `items.csv`. Run the sync twice with the same file. A second run must not add a duplicate line, so the item bolt stays one line.",
+  "fixture": "evals/fixtures/absent",
+  "allowed-tools": ["Read", "Edit", "Bash(sh:*)"],
+  "max-turns": 15,
+  "max-budget-usd": 1.5,
+  "runs": 3,
+  "checks": [
+    { "name": "bolt-once", "run": "[ \"$(grep -c '^bolt,' items.csv)\" -eq 1 ]" }
+  ]
+}

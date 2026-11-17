@@ -863,6 +863,7 @@ impl Profile {
             "SD912" => (None, Some(W), Some(E)),
             "SD917" | "SD921" | "SD923" | "SD924" | "SD925" => (None, Some(W), Some(E)),
             "SD918" => (None, Some(W), Some(W)),
+            "SD507" => (None, None, Some(W)),
             _ => return Some(code.severity()),
         };
         match self {

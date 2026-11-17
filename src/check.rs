@@ -1523,6 +1523,9 @@ pub struct EvalTree {
     /// reader could not read is absent. At most `evals::MAX_BYTES + 1` bytes
     /// of a file are enough for the check.
     pub json: Vec<(String, Vec<u8>)>,
+    /// The bytes of each result file `skills-<stamp>.json` of `<dir>/results`,
+    /// for SD507 and `eval verdict`.
+    pub results: Vec<(String, Vec<u8>)>,
 }
 
 /// SD506: each eval file of the tree that `evals::parse_eval` rejects, and the
@@ -1572,6 +1575,36 @@ pub fn evals_invalid(evals: &Evals, tree: &EvalTree) -> Vec<Diag> {
         ));
     }
     out
+}
+
+/// SD507: each skill of `[harness] skills` that the design does not turn on,
+/// when neither a result file of the project nor the table of the release
+/// gives it the verdict `on` (ADR 0016). `results` holds the files of
+/// `<[evals] dir>/results`. The diagnostic is on the line `line` of
+/// `spec-dna.toml`. The severity is the default of the code. The caller
+/// applies the rules.
+pub fn skill_unproven(
+    harness: &crate::harness::Harness,
+    results: &[(String, Vec<u8>)],
+    line: u32,
+) -> Vec<Diag> {
+    harness
+        .skills
+        .iter()
+        .filter(|s| !s.default_on() && !crate::verdict::is_on(s.key(), results))
+        .map(|s| Diag {
+            path: "spec-dna.toml".to_string(),
+            line,
+            code: Code::SkillUnproven,
+            doc: "spec-dna.toml".to_string(),
+            target: s.key().to_string(),
+            message: format!(
+                "the skill `{}` is in [harness] skills, and neither a result file of the project nor the table of the release gives it the verdict `on`",
+                s.key()
+            ),
+            severity: Code::SkillUnproven.severity(),
+        })
+        .collect()
 }
 
 /// The result of the gate against the base.
