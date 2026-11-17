@@ -344,3 +344,18 @@ fn strict_with_branch_is_exit_code_3() {
         assert_eq!(code, 0, "{p}\n{out}\n{err}");
     }
 }
+
+#[test]
+fn an_approver_that_is_no_e_mail_is_exit_code_3() {
+    // A wildcard matches each author, so the condition would be empty (ADR
+    // 0012). An item with no `@` is no e-mail.
+    for item in ["*", "owner", "*@example.test", "owner@*"] {
+        rejects(
+            &table(&format!("approval = \"branch\"\napprovers = [\"{item}\"]")),
+            &["change.approvers", item, "e-mail"],
+        );
+    }
+    accepts(&table(
+        "approval = \"branch\"\napprovers = [\"owner@example.test\"]",
+    ));
+}

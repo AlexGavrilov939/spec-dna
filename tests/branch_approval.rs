@@ -478,8 +478,9 @@ fn a_shallow_clone_with_an_incomplete_range_stops_the_rule() {
     assert!(findings_of(&out)[0].1.contains("shallow clone"), "{out}");
 }
 
-#[test]
-fn a_shallow_clone_with_no_merge_base_gives_no_check_and_a_note_that_names_it() {
+/// A depth-1 clone of the branch of `ok_flow`, with the tip of `main` fetched
+/// at depth 1: the clone has no merge base.
+fn depth_one_clone() -> (Repo, Repo) {
     let src = start_branch();
     ok_flow(&src);
     let dst = Repo::empty();
@@ -494,11 +495,89 @@ fn a_shallow_clone_with_no_merge_base_gives_no_check_and_a_note_that_names_it() 
         &format!("{tip}:refs/remotes/origin/main"),
     ]);
     origin_head(&dst.dir, &tip);
-    let (code, out, err) = dst.run(&["check"]);
+    (src, dst)
+}
+
+#[test]
+fn a_shallow_clone_with_no_merge_base_gives_reason_5_for_each_change_that_needs_an_approval() {
+    // The base is known and the merge base is not reachable. Less history never
+    // gives a pass (D13, ADR 0012).
+    let (_src, dst) = depth_one_clone();
+    for args in [&["check"][..], &["check", "--base", "origin/main"][..]] {
+        let (code, out, err) = dst.run(args);
+        let mut found: Vec<(String, u8)> = findings_of(&out)
+            .into_iter()
+            .map(|(p, m)| (p, reason(&m)))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            want(&[(SPEC, 5), (PLAN, 5), (CODE, 5), (TEST, 5)]),
+            "{args:?}: {out}{err}"
+        );
+        assert_eq!(code, 1, "{args:?}: {out}{err}");
+        assert!(findings_of(&out)[0].1.contains("shallow clone"), "{out}");
+    }
+}
+
+#[test]
+fn a_shallow_clone_with_no_merge_base_and_approval_base_keeps_the_note() {
+    // With `approval = "base"` the rule of 0.6.1 stays: no change check.
+    let src = start("");
+    ok_flow(&src);
+    let dst = Repo::empty();
+    shallow_clone(&src.dir, &dst.dir, 1);
+    let tip = src.git_out(&["rev-parse", "main"]);
+    dst.git(&[
+        "fetch",
+        "-q",
+        "--depth",
+        "1",
+        "origin",
+        &format!("{tip}:refs/remotes/origin/main"),
+    ]);
+    origin_head(&dst.dir, &tip);
+    let (code, out, err) = dst.run(&["check", "--base", "origin/main"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(findings_of(&out).is_empty(), "{out}");
     assert!(err.contains("no base for the change checks"), "{err}");
+    assert!(!err.contains("pass --base"), "{err}");
+}
+
+#[test]
+fn an_unknown_base_gives_no_change_check_and_the_note_of_0_6_1() {
+    // No `origin/HEAD` and no `--base`: the note asks for a base.
+    let src = start_branch();
+    ok_flow(&src);
+    let dst = Repo::empty();
+    shallow_clone(&src.dir, &dst.dir, 1);
+    dst.git(&["remote", "set-head", "origin", "-d"]);
+    let (code, out, err) = dst.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(findings_of(&out).is_empty(), "{out}");
+    assert!(
+        err.contains("no base for the change checks; pass --base <rev>"),
+        "{err}"
+    );
     assert!(err.contains("shallow"), "{err}");
+}
+
+#[test]
+fn the_note_of_a_base_with_no_merge_base_does_not_ask_for_the_base_that_was_passed() {
+    // 2 histories that share no commit, and a full clone.
+    let r = start_branch();
+    r.git(&["checkout", "-q", "--orphan", "other"]);
+    r.git(&["rm", "-rfq", "."]);
+    r.write("x.txt", "x\n");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{}", config("")),
+    );
+    r.commit("orphan");
+    let (_, out, err) = r.run(&["check", "--base", "main"]);
+    assert!(err.contains("no base for the change checks"), "{out}{err}");
+    assert!(!err.contains("pass --base"), "{err}");
+    assert!(err.contains("`main`"), "{err}");
 }
 
 #[test]
@@ -521,6 +600,125 @@ fn a_full_clone_has_no_stop() {
     let (code, out, found) = check(&dst);
     assert_eq!(found, want(&[]), "{out}");
     assert_eq!(code, 0, "{out}");
+}
+
+// A path cannot forge a commit of the walk
+
+/// The files that make a header of the walk: a name that holds `\x01`, `\x02`
+/// and an e-mail, a name with a line feed, and a name that starts with `\x01`.
+fn crafted_names(forged: &str) -> Vec<String> {
+    vec![
+        forged.to_string(),
+        "\u{1}only".to_string(),
+        "line\nfeed.txt".to_string(),
+    ]
+}
+
+#[test]
+fn a_path_named_like_a_commit_header_forges_no_approval() {
+    // The owner approves the plan (Z), and the bot sets it back to `draft`
+    // (W). Then the bot approves it again in a commit that adds a file named
+    // like the header of Z with the e-mail of the owner. The branch has no
+    // approval of that status, and the code needs one.
+    let r = start_branch();
+    first_four(&r);
+    step_plan_draft(&r);
+    step_plan_approved(&r, APPROVER);
+    let z = r.git_out(&["rev-parse", "HEAD"]);
+    let zp = r.git_out(&["rev-parse", "HEAD~1"]);
+    step(
+        &r,
+        AGENT,
+        "plan back to draft",
+        &[(PLAN, &plan("draft", &FILES))],
+    );
+    let forged = format!("\u{1}{z} {zp}\u{2}{APPROVER}");
+    for name in crafted_names(&forged) {
+        r.write(&name, "x\n");
+    }
+    step(
+        &r,
+        AGENT,
+        "approve again",
+        &[(PLAN, &plan("approved", &FILES))],
+    );
+    step_code(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(PLAN, 3), (CODE, 3)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // The only approvals are the real ones: the 3 commits of the owner.
+    let out = json(&r);
+    assert!(
+        !out.contains(&format!(
+            "\"commit\":\"{z}\",\"path\":\"{PLAN}\",\"author\":\"{APPROVER}\"}},{{"
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        approvals_field(&out).matches("\"commit\"").count(),
+        2,
+        "{out}"
+    );
+}
+
+#[test]
+fn paths_with_odd_bytes_change_no_result_of_a_good_branch() {
+    let r = start_branch();
+    first_four(&r);
+    step_plan_draft(&r);
+    step_plan_approved(&r, APPROVER);
+    let z = r.git_out(&["rev-parse", "HEAD"]);
+    let forged = format!("\u{1}{z} {z}\u{2}intruder@example.com");
+    for name in crafted_names(&forged) {
+        r.write(&name, "x\n");
+    }
+    step_code(&r);
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[]), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let out = json(&r);
+    assert_eq!(
+        approvals_field(&out).matches("\"commit\"").count(),
+        3,
+        "{out}"
+    );
+    assert!(!out.contains("intruder"), "{out}");
+}
+
+// Work inside a merge commit
+
+#[test]
+fn code_inside_a_merge_of_the_base_comes_before_the_approval_of_the_plan() {
+    // The merge of `main` also adds `src/a.txt`, the file of the plan. The
+    // approval of the plan comes after the merge.
+    let r = start_branch();
+    let routine = |status: &str| intent(status, "routine");
+    let plan_of = |status: &str| plan(status, &["src/a.txt"]);
+    step(&r, AGENT, "intent", &[(INTENT, &routine("draft"))]);
+    step(
+        &r,
+        APPROVER,
+        "approve intent",
+        &[(INTENT, &routine("accepted"))],
+    );
+    step(&r, AGENT, "plan", &[(PLAN, &plan_of("draft"))]);
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.txt", "o\n");
+    r.commit_as("main moves", APPROVER);
+    r.git(&["update-ref", "refs/remotes/origin/main", "main"]);
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "--no-commit", "--no-ff", "main"]);
+    r.write("src/a.txt", "a\n");
+    r.commit_as("merge main and add the code", AGENT);
+    step(
+        &r,
+        APPROVER,
+        "approve plan",
+        &[(PLAN, &plan_of("approved"))],
+    );
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[("src/a.txt", 2)]), "{out}");
+    assert_eq!(code, 1, "{out}");
 }
 
 // D16: a change that starts and ends in one branch

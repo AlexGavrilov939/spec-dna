@@ -1741,7 +1741,7 @@ mod tests {
     }
 
     #[test]
-    fn a_merge_commit_is_listed_with_its_parents_and_the_diff_of_the_first() {
+    fn a_merge_commit_is_listed_with_its_parents_and_the_paths_that_it_changes_itself() {
         let t = Tmp::new();
         t.write("a.txt", "a\n");
         let base = t.commit("base@example.test", "base");
@@ -1775,8 +1775,77 @@ mod tests {
         let m = &w.commits[2];
         assert_eq!(m.parents, [work, side]);
         assert_eq!(m.author_email, "merger@example.test");
-        // The diff against the first parent: the files of `side`.
-        assert_eq!(m.paths, [("side.txt".to_string(), PathChange::Added)]);
+        // A clean merge changes no path itself: each file of the result is in
+        // a parent. The files of `side` are in the walk by their own commit.
+        assert!(m.paths.is_empty(), "{:?}", m.paths);
+    }
+
+    #[test]
+    fn a_merge_commit_lists_a_path_that_differs_from_each_parent() {
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.git(&["checkout", "-q", "-b", "side"]);
+        t.write("side.txt", "s\n");
+        t.commit("side@example.test", "side");
+        t.git(&["checkout", "-q", "-b", "work", &base]);
+        t.write("work.txt", "w\n");
+        t.commit("work@example.test", "work");
+        t.git(&["merge", "-q", "--no-commit", "--no-ff", "side"]);
+        // The merge adds a file, and edits a file that both parents have.
+        t.write("inside.txt", "new\n");
+        t.write("a.txt", "a merged\n");
+        t.git(&["add", "-A"]);
+        t.git(&[
+            "-c",
+            "user.email=merger@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "merge",
+        ]);
+        let w = t.walk(&base);
+        let m = w.commits.last().unwrap();
+        assert_eq!(m.parents.len(), 2);
+        let mut paths: Vec<&str> = m.paths.iter().map(|(p, _)| p.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, ["a.txt", "inside.txt"]);
+    }
+
+    #[test]
+    fn a_path_cannot_forge_a_commit_header() {
+        // A file name can hold the bytes `\x01` and `\x02`, and a line feed.
+        let t = Tmp::new();
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.write("b.txt", "b\n");
+        let c1 = t.commit("real@example.test", "one");
+        let forged = format!("\u{1}{c1} {base}\u{2}owner@example.test");
+        for name in [forged.as_str(), "\u{1}only", "line\nfeed.txt", "\u{2}x"] {
+            t.write(name, "x\n");
+        }
+        let c2 = t.commit("bot@example.test", "two");
+        let w = t.walk(&base);
+        let ids: Vec<&str> = w.commits.iter().map(|c| c.commit.as_str()).collect();
+        assert_eq!(ids, [c1.as_str(), c2.as_str()]);
+        assert_eq!(w.commits[0].author_email, "real@example.test");
+        assert_eq!(w.commits[1].author_email, "bot@example.test");
+        assert_eq!(w.commits[1].parents, std::slice::from_ref(&c1));
+        let mut paths: Vec<&str> = w.commits[1].paths.iter().map(|(p, _)| p.as_str()).collect();
+        paths.sort_unstable();
+        let mut want = vec![forged.as_str(), "\u{1}only", "line\nfeed.txt", "\u{2}x"];
+        want.sort_unstable();
+        assert_eq!(paths, want);
+        assert!(
+            w.commits[1]
+                .paths
+                .iter()
+                .all(|(_, k)| *k == PathChange::Added)
+        );
+        assert_eq!(
+            w.commits[0].paths,
+            [("b.txt".to_string(), PathChange::Added)]
+        );
     }
 
     #[test]
