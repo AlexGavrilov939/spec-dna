@@ -887,7 +887,10 @@ fn the_counts_name_the_skipped_tasks() {
         ],
     );
     let text = next_text(&r);
-    assert!(text.contains("tasks of `Order`: 1 of 3 done\n"), "{text}");
+    assert!(
+        text.contains("tasks of `Order`: 1 of 3 done [skill: execute]"),
+        "{text}"
+    );
     assert!(!text.contains("not needed"), "{text}");
     let (_, text, _) = r.run(&["status"]);
     assert!(!text.contains("skipped"), "{text}");
@@ -904,12 +907,25 @@ fn the_counts_name_the_skipped_tasks() {
             ),
         )],
     );
+    assert_stage(&r, "deploy");
+    // With files, the stage stays at build, and the item is checked.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [x] t1: Read the code.\n- [ ] t2: Try it. Skip: the code is clear.",
+            ),
+        )],
+    );
     let text = next_text(&r);
     assert!(
         text.contains("[x] tasks of `Order`: 1 of 2 done, 1 not needed"),
         "{text}"
     );
-    assert_stage(&r, "deploy");
+    assert_stage(&r, "build");
 }
 
 #[test]
@@ -932,7 +948,10 @@ fn a_skip_with_no_reason_does_not_close_the_task() {
     let json = next_json(&r);
     assert!(json.contains("\"next_task\":{\"id\":\"t1\""), "{json}");
     let text = next_text(&r);
-    assert!(text.contains("tasks of `Order`: 0 of 2 done\n"), "{text}");
+    assert!(
+        text.contains("tasks of `Order`: 0 of 2 done [skill: execute]"),
+        "{text}"
+    );
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
         out.contains("\"tasks\":{\"done\":0,\"skipped\":0,\"total\":2,"),

@@ -143,8 +143,12 @@ pub fn limit(mut items: Vec<Item>) -> Vec<Item> {
 /// The progress of the task list of a plan.
 #[derive(Clone, Debug, Default)]
 pub struct Tasks {
-    /// The tasks with `- [x]`. A duplicate id does not count.
+    /// The tasks with `- [x]` and no reason in `Skip:`. A duplicate id does not
+    /// count.
     pub done: usize,
+    /// The tasks with a reason in `Skip:`: they are not needed, and they are
+    /// closed whatever their box.
+    pub skipped: usize,
     /// All tasks. A duplicate id does not count.
     pub total: usize,
     pub next: Option<PlanTask>,
@@ -158,7 +162,8 @@ pub fn tasks(ch: &Change, head: &Corpus) -> Tasks {
         .filter(|t| !t.duplicate)
         .collect();
     Tasks {
-        done: all.iter().filter(|t| t.done).count(),
+        done: all.iter().filter(|t| t.is_done()).count(),
+        skipped: all.iter().filter(|t| t.skipped()).count(),
         total: all.len(),
         next: ch.next_open_task(head),
     }
@@ -501,7 +506,7 @@ impl<'a> Ctx<'a> {
         let changed = self.files_changed(ch);
         let build_done = if no_files {
             let t = tasks(ch, head);
-            t.done == t.total
+            t.done + t.skipped == t.total
         } else {
             changed == Some(true)
         };
@@ -537,10 +542,14 @@ impl<'a> Ctx<'a> {
             // The tasks of the plan, also if the plan is a draft.
             let t = tasks(ch, head);
             if t.total > 0 {
+                let skipped = match t.skipped {
+                    0 => String::new(),
+                    n => format!(", {n} not needed"),
+                };
                 items.push(item(
-                    t.done == t.total,
+                    t.done + t.skipped == t.total,
                     Step::Execute,
-                    format!("tasks of `Order`: {} of {} done", t.done, t.total),
+                    format!("tasks of `Order`: {} of {} done{skipped}", t.done, t.total),
                 ));
             }
             if let Some(task) = &t.next {
@@ -992,6 +1001,7 @@ pub fn status(
                 .end();
             let tasks = Obj::new()
                 .num("done", r.tasks.done)
+                .num("skipped", r.tasks.skipped)
                 .num("total", r.tasks.total)
                 .raw("next_task", &opt_task_json(r.tasks.next.as_ref()))
                 .end();
@@ -1078,6 +1088,9 @@ pub fn status(
         );
         if r.tasks.total > 0 {
             line.push_str(&format!(" tasks {}/{}", r.tasks.done, r.tasks.total));
+            if r.tasks.skipped > 0 {
+                line.push_str(&format!(" skipped {}", r.tasks.skipped));
+            }
             if let Some(t) = &r.tasks.next {
                 line.push_str(&format!(" next-task {}", t.id));
             }
