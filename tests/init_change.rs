@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BIN: &str = env!("CARGO_BIN_EXE_spec-dna");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The e-mail that `Repo::empty` sets as `user.email`.
+const OWNER: &str = "owner@example.test";
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 struct Repo {
@@ -52,7 +54,18 @@ impl Repo {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
+        // The e-mail of the project, for the key `approvers`. The tests that
+        // need no e-mail use `without_email`.
+        git(&dir, &["config", "user.email", OWNER]);
         Repo { dir }
+    }
+
+    /// A repository where git has no `user.email`. `run` also hides the
+    /// global git configuration of the machine.
+    fn without_email() -> Repo {
+        let r = Repo::empty();
+        git(&r.dir, &["config", "--unset", "user.email"]);
+        r
     }
 
     fn write(&self, path: &str, text: &str) {
@@ -78,6 +91,9 @@ impl Repo {
         let out = Command::new(BIN)
             .args(args)
             .current_dir(&self.dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", &self.dir)
             .output()
             .expect("binary runs");
         (
@@ -132,7 +148,7 @@ fn list(t: &toml::Table, key: &str) -> Vec<String> {
 const CODEOWNERS_LINE: &str = "docs/intent/*/spec.md @OWNER";
 
 #[test]
-fn a_new_project_gets_three_class_block_and_the_five_keys() {
+fn a_new_project_gets_three_class_block_and_the_seven_keys() {
     let r = Repo::empty();
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -151,6 +167,8 @@ fn a_new_project_gets_three_class_block_and_the_five_keys() {
     assert_eq!(
         keys,
         [
+            "approval",
+            "approvers",
             "gate",
             "high-risk-layers",
             "high-risk-paths",
@@ -779,4 +797,136 @@ fn reconfigure_names_each_missing_type_and_warns_only_when_one_is_missing() {
     r.commit("adopt spec-dna");
     let (_, out, _) = r.run(&["init", "--reconfigure", "--non-interactive", "--dry-run"]);
     assert!(!out.contains("warning:"), "{out}");
+}
+
+// The keys `approval` and `approvers` (design 0.7.0, D15). With a `user.email`,
+// `lite` and `standard` write `approval = "branch"` and the e-mail as the one
+// approver. `strict` writes `base`. With no `user.email`, `init` writes `base`
+// and no approvers, and it prints a note.
+
+#[test]
+fn lite_and_standard_write_branch_and_the_git_e_mail() {
+    for profile in ["lite", "standard"] {
+        let r = Repo::empty();
+        let (code, out, err) = r.init_with(&format!("profile = \"{profile}\"\n"), &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let t = r.change().unwrap();
+        assert_eq!(text(&t, "approval"), "branch", "{profile}");
+        assert_eq!(list(&t, "approvers"), [OWNER], "{profile}");
+        r.commit("init");
+        let (code, out, _) = r.run(&["check", "--all"]);
+        assert_eq!(code, 0, "{profile}: {out}");
+    }
+}
+
+#[test]
+fn strict_writes_base_and_no_approvers() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("profile = \"strict\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert!(!t.contains_key("approvers"), "{t:?}");
+    r.commit("init");
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn with_no_user_e_mail_init_writes_base_and_prints_a_note() {
+    for profile in ["lite", "standard", "strict"] {
+        let r = Repo::without_email();
+        let (code, out, err) = r.init_with(&format!("profile = \"{profile}\"\n"), &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let t = r.change().unwrap();
+        assert_eq!(text(&t, "approval"), "base", "{profile}");
+        assert!(!t.contains_key("approvers"), "{profile}: {t:?}");
+        if profile != "strict" {
+            // The note names git and the 2 keys to set.
+            let all = format!("{out}{err}");
+            assert!(
+                all.contains("note: ")
+                    && all.contains("user.email")
+                    && all.contains("[change] approval")
+                    && all.contains("[change] approvers"),
+                "{profile}: {all}"
+            );
+        }
+        r.commit("init");
+        let (code, out, err) = r.run(&["check", "--all"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+    }
+}
+
+#[test]
+fn the_policy_none_writes_no_approval_keys_when_it_writes_no_table() {
+    // A project with no `[change]` table keeps none, so it gets no approval key.
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n\n[[roots]]\npath = \"docs\"\n"),
+    );
+    r.write("docs/terms.md", "# Terms\n");
+    r.commit("start");
+    let (code, out, err) = r.init_with("graph = \"small\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.change().is_none(), "{}", r.read("spec-dna.toml"));
+}
+
+#[test]
+fn reconfigure_keeps_the_approval_keys_of_the_file() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The project sets `base` and 2 e-mails by hand. `init` never overwrites it.
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("approval = \"branch\"", "approval = \"base\"")
+        .replace(
+            &format!("approvers = [\"{OWNER}\"]"),
+            "approvers = [\"a@example.test\", \"b@example.test\"]",
+        );
+    assert!(cfg.contains("approval = \"base\""), "{cfg}");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt and edit");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert_eq!(list(&t, "approvers"), ["a@example.test", "b@example.test"]);
+}
+
+#[test]
+fn reconfigure_adds_the_keys_to_a_file_of_0_6() {
+    // A table of 0.6 has no approval key. `--reconfigure` writes the keys of
+    // the profile (D41).
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"{VERSION}\"\nprofile = \"standard\"\n\n[[roots]]\npath = \"docs\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n"
+        ),
+    );
+    r.write("docs/terms.md", "# Terms\n");
+    r.commit("start");
+    let (code, out, err) = r.init_with("graph = \"default\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(list(&t, "approvers"), [OWNER]);
+}
+
+#[test]
+fn a_switch_to_strict_writes_base() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("profile = \"standard\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(text(&r.change().unwrap(), "approval"), "branch");
+    r.commit("init");
+    let (code, out, err) = r.init_with("profile = \"strict\"\n", &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(text(&r.change().unwrap(), "approval"), "base");
+    r.commit("strict");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
 }
