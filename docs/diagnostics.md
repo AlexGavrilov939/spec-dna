@@ -38,7 +38,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
-| SD905, SD910 to SD922 | Changes | [Changes](#changes-sd905-and-sd910-to-sd922) |
+| SD905, SD910 to SD925 | Changes | [Changes](#changes-sd905-and-sd910-to-sd925) |
 
 ## References and evidence (SD101 to SD106)
 
@@ -174,9 +174,9 @@ These codes are new in 0.6.0. The rule group `layers` sets their severity ([prof
 | SD903 | history-in-requirements | warning | A recognized requirement of a `rule`, `requirements` or `interface` document has a calendar date, `round <n>`, `iteration <n>`, or a phrase of `[lint] history-terms`. |
 | SD904 | term-forbidden | warning | A recognized requirement of a `rule`, `requirements` or `interface` document uses a forbidden synonym of a `terms` document. The check is off when `language` is not English. |
 
-## Changes (SD905 and SD910 to SD922)
+## Changes (SD905 and SD910 to SD925)
 
-These codes are new in 0.6.0. They apply only to a project with a `[change]` table whose `policy` is not `none`. SD918 also needs an `[evals]` table. With `policy = "none"`, SD905 and SD910 to SD922 are off, and no rule enables them. The rule group `changes` sets their severity ([profiles.md](profiles.md)). The change lifecycle is in [change.md](guides/change.md).
+These codes are new in 0.6.0. They apply only to a project with a `[change]` table whose `policy` is not `none`. SD918 also needs an `[evals]` table. With `policy = "none"`, SD905 and SD910 to SD925 are off, and no rule enables them. The rule group `changes` sets their severity ([profiles.md](profiles.md)). The change lifecycle is in [change.md](guides/change.md).
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
@@ -185,7 +185,7 @@ These codes are new in 0.6.0. They apply only to a project with a `[change]` tab
 | SD911 | change-stale | warning | A started change has had no commit for more than `stale-days` days (a key of the `intent` layer). It is a state code: `check --all` shows it, and it is never new. Off in `lite`. |
 | SD912 | started-limit | warning | More changes than `max-started` of the `intent` layer have an `accepted` intent. The diagnostic is on `spec-dna.toml`. It is new when the head has more started changes than the lifecycle base. Off in `lite`, an error in `strict`. |
 | SD913 | outside-plan | warning | The diff of a change touches a file that no item of `Files` matches. The intent folder and the documents that the delta names are always in scope. Off in `lite`. |
-| SD914 | delta-invalid | error | A delta line has an invalid form, names an absent target, targets a layer that `moves-to` does not allow, or has a hash that does not match the requirement. SD914 also reports an `Interfaces` item that names an absent interface document, or an interface that the diff does not change. It is a warning for a spec that the diff does not touch, and with no lifecycle base. |
+| SD914 | delta-invalid | error | A delta line has an invalid form, names an absent target, targets a layer that `moves-to` does not allow, or has a hash that does not match the requirement. SD914 also reports an `Interfaces` item that is not `CHANGE <interface id>: <text>`, `ADD <interface id>: <text>` or `none`, that names an absent interface document, that has the place of another type, or that names an interface that the diff does not change. It is a warning for a spec that the diff does not touch, and with no lifecycle base. |
 | SD915 | finish-incomplete | error | The diff deletes an intent folder whose base status is not `closed`, and the head does not have the result of its delta. For a change with no delta, the diff changes no `Files` path and no requirement hash. |
 | SD916 | delta-evidence-missing | error | An `ADD` or `CHANGE` requirement has no `covers:` tag and no `verified-by` when `finish` runs, or when the diff deletes the intent folder. For a change with no delta, the same applies to each requirement whose hash differs from the base. |
 | SD917 | class-too-low | warning | The `class` of an intent is lower than the minimum that the diff gives. Off in `lite`, an error in `strict`. |
@@ -194,6 +194,9 @@ These codes are new in 0.6.0. They apply only to a project with a `[change]` tab
 | SD920 | decision-needed-unaccepted | error | A decision that `Decisions` of an `approved` spec names does not exist. Also, when `finish` runs or the diff deletes the intent folder, a decision that `Decisions` names is absent or is not `accepted`. |
 | SD921 | truth-changed-without-change | warning | A requirement of a `rule`, `requirements` or `interface` document of a `forever` layer changed, was added or was removed, and no file under the folder of the `intent` layer changed. It runs on the lifecycle base, and only with a `[change] policy` other than `none`. A plan that covers the document gives an exemption. Off in `lite`, an error in `strict`. |
 | SD922 | question-open | error | A spec with the status `approved` has an open question (`- [ ]` in `Open questions`). |
+| SD923 | task-incomplete | warning | A task of an `approved` plan has no `Files:` or no `Verify:`, or its `Files:` has a glob or a folder. A `draft` plan is not checked. Off in `lite`, an error in `strict`. |
+| SD924 | task-too-large | warning | A task of an `approved` plan lists more paths in `Files:` than `[change] max-task-files` (default 3). Off in `lite`, an error in `strict`. |
+| SD925 | checkbox-missing | warning | An item of `Concerns` or `Open questions` of a spec has no task box, so SD919 and SD922 cannot see if it is open. A spec of each status gives it, except the spec of a `closed` change. Off in `lite`, an error in `strict`. |
 
 ## Checks of the layers and of the requirement text
 
@@ -212,7 +215,7 @@ These codes are new in 0.6.0. They apply only to a project with a `[change]` tab
 
 The checks of the change codes read these trees:
 
-- SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision) and SD922 read one tree. They need no base and no history.
+- SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925 read one tree. They need no base and no history.
 - These codes compare the head with the lifecycle base. They do not run if git cannot name this base:
   - SD905 (the part for a change with no delta);
   - SD910, SD913, SD915, SD916, SD917 and SD918;
@@ -285,7 +288,7 @@ A change whose intent has the status `closed` does not proceed, so its spec give
     - a partial clone without the blobs;
     - an edit that no commit holds;
     - an edit that a side branch made and merged after `finish`.
-  - If a plan lists no path, and it has an item that is not a path, the message names the first such item.
+  - If a plan lists no path, and it has an item that is not a path, the message names the first such item. If its `Files` section has a paragraph and no list item, and the paragraph does not start with `none` ([Files and paths](types.md#files-and-paths)), the message says: "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`". SD915 gives the same text.
   - For a change with no delta, a requirement document is in scope only if `Files` lists it.
   - SD913 gives one diagnostic for each path outside the scope of every change of the diff, also for a path that is deleted. A generated index is not reported.
   - A change with no `plan.md` has no `Files`, so each path outside its folder gives SD913.
@@ -306,7 +309,11 @@ A change whose intent has the status `closed` does not proceed, so its spec give
     - The key exists for `ADD`, or it does not exist for `CHANGE` and `REMOVE`.
     - The hash is not the hash that `show` prints. It is also not the hash without link destinations (a `mv` that rewrote a link keeps the line).
   - The check skips a line that the head already applies. For an `ADD` or `CHANGE` line, the requirement has the text of the line. For a `REMOVE` line, the base has the key and the head has not.
-  - An item of `Interfaces` must be `CHANGE <interface id>: <text>`, and the id must name a document of the type `interface`.
+  - An item of `Interfaces` has one of 3 forms:
+    - `CHANGE <interface id>: <text>`. The id must name a document of the type `interface`.
+    - `ADD <interface id>: <text>`, for a new interface. The id names an `interface` document, or it names no document and its place gives the type `interface`. Else the message says "the place of `<id>` gives the type `<type>`, not `interface`".
+    - One item that starts with `none` ([the `none` rule](types.md#the-none-rule)). The section then states "no interface", and it gives no SD914.
+  - When `finish` runs, or when the diff deletes the folder of the change, an `ADD` item needs the document in the head tree, or a delta line `ADD <id>#<key>` that adds it. Else SD914 says "the spec adds the interface `<id>`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD <id>#<key>` lines". A document that the diff adds is a change of the interface, so the rule "the diff changes the interface" holds.
   - The target of the diagnostic is `<id>#<key>`. For an `Interfaces` item it is the id, and for an invalid form it is the text of the item.
   - `check` reports SD914 as an error (in the profiles that make it an error) for a spec that the diff touches. It reports a warning for another spec. It also reports a warning for each spec when git cannot name the lifecycle base (the merge base with `--base`, with `origin/HEAD` or with the branch of `[change] base`).
   - The check that the diff changes an interface of `Interfaces` is part of SD914 too. The pull request must change the interface document, or a file that it cites.
@@ -321,8 +328,16 @@ A change whose intent has the status `closed` does not proceed, so its spec give
   - The diff must also add or change a `*.json` file directly in `[evals] dir`. A changed eval counts. A deleted eval does not count. A file in a subfolder (`results/`, a fixture) does not count.
   - The check gives one diagnostic for each added incident, on line 1 of the incident, with its id as the target. The diagnostic is always new.
   - `policy = "none"`, the profile `lite` and a configuration with no `[evals]` disable it.
-- SD919. Each open concern (a task list item with an empty box) of an `approved` spec gives one diagnostic. A resolved concern, an item with no box, and a spec with another status give none.
-- SD922. Each open question (a task list item with an empty box in `Open questions`) of an `approved` spec gives one diagnostic. A resolved question (`- [x]`), an item with no box, and a spec with another status give none. `Concerns` and `Open questions` are 2 sections: an open concern gives SD919, and an open question gives SD922.
+- SD919. Each open concern (a task list item with an empty box) of an `approved` spec gives one diagnostic. A resolved concern, an item with no box, and a spec with another status give none. One item that starts with `none` ([the `none` rule](types.md#the-none-rule)), such as `- [ ] None.`, is no open concern.
+- SD922. Each open question (a task list item with an empty box in `Open questions`) of an `approved` spec gives one diagnostic. A resolved question (`- [x]`), an item with no box, and a spec with another status give none. One item that starts with `none`, such as `- [ ] None.`, is no open question. `Concerns` and `Open questions` are 2 sections: an open concern gives SD919, and an open question gives SD922.
+- SD923:
+  - The check reads each task of the section `Order` of a plan whose status is `approved`. A `draft` plan is not checked, so a plan of 0.6.1 gives no new diagnostic until it is approved. The plan of a change whose intent is `closed` is not checked. A task whose id an earlier task has is not checked.
+  - A task needs 2 labels:
+    - `Files:` lists the exact paths of the task, or `none` (`Files: none.`). The paths follow the rules of [Files and paths](types.md#files-and-paths). A path with `*`, `?` or `[`, a path that ends with `/`, and a path that names a folder of the tree are not exact: the check reports them as a glob or a folder. A label with no path and with text that does not start with `none` is also not valid.
+    - `Verify:` has a command in a code span, or the check in words.
+  - One diagnostic names each problem of the task. Its target is the id of the task.
+- SD924. The check reads the same tasks as SD923. It counts the distinct paths of the label `Files:` of a task, and it gives one diagnostic if the count is above `[change] max-task-files`. The target is the id of the task. A task of 3 paths or less and one `Verify:` is the size that a person can review.
+- SD925. The check reads the items of `Concerns` and `Open questions` of each spec, in each status. An item with no task box gives one diagnostic. The target is the text of the item (80 characters at most). A section with one item that starts with `none` gives none. The message of `Open questions` names SD922, and the message of `Concerns` names SD919. The spec template writes a box.
 - SD920. Each `[[id]]` of `Decisions` in an `approved` spec must name a document. A fragment and a label are not part of the id. If the diff deletes the folder of the change, or `finish` runs, each such decision must also have the status `accepted`. The check reads the spec from the base tree, and the decision from the head tree.
 - SD915:
   - The check applies to a change that the diff deletes: the base tree has its folder, and the head tree has not.
@@ -383,7 +398,7 @@ SD506 needs the table `[evals]`, with any `[change] policy`. It reads the files 
 | 0 | A document outside the folder links into it: a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` or `from`. `finish` reports each reference as SD101 (an id) or SD102 (a link). A stub, a generated index and the locked text of an accepted decision are not sources. The folder is not tracked by git, or it differs from `HEAD` (an edit that is not committed, or an untracked file): this stop has a reason and no diagnostic |
 | 1 | The intent is not `accepted`, the plan is not `approved`, or the spec is not `approved` (for a `higher-risk` change, and for a spec that has a delta line). A `closed` intent passes: `finish` then deletes the folder and does nothing else |
 | 2 | SD919 (an open concern), SD922 (an open question) or SD920 (a needed decision that is absent or not `accepted`) |
-| 3 | SD914: a delta line is not valid, its target is absent or in a layer that `moves-to` does not allow, or its hash is not the hash of the requirement. Also SD914: the delta differs from the delta that the base tree has (an approved delta must not change). Also SD914: an interface of `Interfaces` that the diff does not change |
+| 3 | SD914: a delta line is not valid, its target is absent or in a layer that `moves-to` does not allow, or its hash is not the hash of the requirement. Also SD914: the delta differs from the delta that the base tree has (an approved delta must not change). Also SD914: an interface of `Interfaces` that the diff does not change, or an `ADD` item of `Interfaces` whose document the tree does not have and no delta line adds |
 | 4 | The result would not give the result of a delta line (`check` would report SD915), or two lines edit the same lines of a file |
 | 5 | SD916 (a requirement that the change adds or changes has no evidence), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
 

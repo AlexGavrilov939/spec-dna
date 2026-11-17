@@ -159,7 +159,7 @@ These rules apply to the lifecycle base:
 - A shallow clone can fail to find the merge base. Then `change_base` is `null`.
 - For a stacked pull request, pass the branch below it as `--base`. SD910 trusts `--base`.
 
-The checks of one tree are SD905 (the delta part), SD912, SD914, SD919, SD920 (the absent decision) and SD922. They need no base. SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
+The checks of one tree are SD905 (the delta part), SD912, SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925. They need no base. SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
 
 A change can remove or rename a path or an identifier that a document cites. Then `check` gives a warning that names the document (SD606, SD607). In an accepted decision, an amendment section that cites the new path or identifier clears these warnings.
 
@@ -263,7 +263,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 
 `new` copies the template and makes 4 changes:
 
-- It writes the H1 from the id.
+- It writes the H1 from the id. For `intent`, `spec` and `plan`, it writes the placeholder `{{The title of the change.}}` in place of a title from the slug. `check` gives SD306 until the author writes the title, and `status` shows the placeholder until then.
 - It sets the first status of the type.
 - It removes `was-type` from the copy.
 - It removes `type:` where the place gives the type.
@@ -305,7 +305,8 @@ A change has no stage field. The stage is the first row of this table that match
 - A line that asks to approve a spec or a plan appears only when the file exists. With no file, the last line asks to write it with `spec-dna new`.
 - With `[change] approval = "branch"`, each line that asks for an approval also says that an approver commits the `status` line alone. A commit that changes more than the `status` line is no approval commit.
 - If the plan lists no path because the items of `Files` are not paths, the last line says so and shows the first such item. A path is a code span, or a plain path ([Files and paths](types.md#files-and-paths)).
-- A routine change with an approved plan that lists no files has no step for the diff. The plan states this with one `Files` item that starts with `none` ([Files and paths](types.md#files-and-paths)). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage passes `build` when each task of `Order` is done, or when `Order` has no task, with or without a base. A higher-risk change keeps the step of the files.
+- A routine change with an approved plan that lists no files has no step for the diff. The plan states this with one `Files` item that starts with `none` ([Files and paths](types.md#files-and-paths)). The line `[x] the plan lists no files: the change edits no file` replaces the step of the files. The stage passes `build` when each task of `Order` is done, or when `Order` has no task, with or without a base. A higher-risk change keeps the step of the files. A paragraph under `Files` that starts with `none` (`None.`, `None: research only.`) states the same.
+- If the `Files` section of the plan has a paragraph and no list item, and the paragraph does not start with `none`, the plan lists no path. The line is "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`" ([A paragraph under `Files`](types.md#a-paragraph-under-files)). With an `approved` plan, it is the last line. With a `draft` plan, it comes first among the lines of the plan, and the line of the approval stays the last. `status` shows it in the same way.
 - A file of `Files` differs from the base if the diff against the base has a path that a `Files` item matches. The diff is the diff of the working tree. A file of the folder of the change does not count. With no base, the diff is unknown. Then a change with an approved plan stays in `build`.
 - A change that has a delta uses its `ADD` and `CHANGE` lines as the requirements to prove. A `REMOVE` line needs no evidence. A change with no delta line uses the requirements whose hash differs from the base. If the diff has a changed file of another change, only the documents that `Files` lists count. This is the rule of step 5 of `finish`.
 - A requirement has evidence in the cases of [evidence](config.md#evidence). A `covers:` tag can name a requirement of an `ADD` line before `finish` writes it.

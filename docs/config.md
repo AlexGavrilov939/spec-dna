@@ -124,14 +124,15 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD922. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD925. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
-| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD922 are off, and no rule can enable them. |
+| `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD925 are off, and no rule can enable them. |
 | `change.gate` | string | none | `"block"`, `"warn"` or `"off"`. It sets the severity of SD910: error, warning or off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority. |
 | `change.high-risk-layers` | array of strings | `["interfaces", "rules"]`, without the names that the graph does not have | The layers whose documents make a change higher-risk. Each name must be a layer of the graph, or the exit code is 3. |
 | `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
 | `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
+| `change.max-task-files` | integer | `3` | The most paths that one task of an approved plan lists in its label `Files:` before SD924. An integer from 1 to 20, or the exit code is 3. |
 | `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
 | `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
 | `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
@@ -346,6 +347,7 @@ gate = "block"                              # "block", "warn" or "off"
 high-risk-layers = ["interfaces", "rules"]  # layers whose documents make a change higher-risk
 high-risk-paths = []                        # globs from the repository root
 max-fanout = 8                              # documents that one change can touch before SD905
+max-task-files = 3                          # paths that one task of an approved plan lists before SD924 (1 to 20)
 approval = "branch"                         # "base" or "branch": where an approval can be (default: "base")
 approvers = ["owner@example.test"]          # the author e-mails of the approval commits
 base = "main"                               # a local branch, for a repository with no remote (default: none)
@@ -363,7 +365,7 @@ The table `[change]` sets the change process: the change classes that the projec
 | `two-class` | `routine`, `higher-risk` | Each change has an intent. It runs the same checks as `three-class`. |
 | `none` | none | No change process: the layers and their checks only. |
 
-With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD922) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
+With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD925) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
 
 The key `gate` sets the severity of SD910. The order of the sources for SD910 is:
 
@@ -374,7 +376,7 @@ The key `gate` sets the severity of SD910. The order of the sources for SD910 is
 
 With `gate = "block"`, a change to the artifact of a stage needs the approval of the earlier artifact. With `approval = "base"`, the base tree must show it. With `approval = "branch"`, an approval commit of an approver in the branch also counts.
 
-`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905.
+`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905. `max-task-files` is the limit of SD924, and it is the size of a task that a person can review. `init` does not write it, and an absent key means 3.
 
 The lifecycle checks compare the head with the merge base of a base revision and `HEAD`. The base revision is the first of these:
 

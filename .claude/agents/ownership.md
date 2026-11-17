@@ -158,7 +158,7 @@ src/git.rs, src/index.rs             COR
 src/templates.rs                     COR
 src/layer.rs                         COR: the layer graph, its levels, the file order and `layer add`/`layer list`
 src/change.rs                        COR: the change model, the delta lines, the tasks of a plan
-src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 to SD917, SD919 to SD922) and the lifecycle base
+src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 to SD917, SD919 to SD925) and the lifecycle base
 src/approval.rs                      DIA: the walk of the commits of a branch and the approval commits (ADR 0012)
 src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
 src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
@@ -205,7 +205,7 @@ docs/assets/                         ARC (OWN)
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA
-tests/layers_checks.rs, tests/sd921.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
+tests/layers_checks.rs, tests/sd921.rs, tests/task_checks.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
 tests/finish.rs                      HYG
 tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
 tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
