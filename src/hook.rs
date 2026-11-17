@@ -1494,10 +1494,24 @@ fn status_of(text: &str) -> Option<String> {
         if line.trim_end() == "---" {
             return None;
         }
-        let Some(rest) = line.strip_prefix("status:") else {
+        // The key as `check` reads it: the text before the first `:`, with no
+        // white space at its end, and a space or a tab after the colon.
+        let Some((key, rest)) = line.split_once(':') else {
             continue;
         };
-        let value = rest.split(" #").next().unwrap_or(rest).trim();
+        let key = key.trim_end();
+        let key = key
+            .strip_prefix('"')
+            .and_then(|k| k.strip_suffix('"'))
+            .unwrap_or(key);
+        if key != "status" || !(rest.is_empty() || rest.starts_with([' ', '\t'])) {
+            continue;
+        }
+        let end = rest
+            .match_indices('#')
+            .find(|(i, _)| rest[..*i].ends_with([' ', '\t']))
+            .map_or(rest.len(), |(i, _)| i);
+        let value = rest[..end].trim();
         return Some(value.trim_matches(['"', '\'']).to_string());
     }
     None
@@ -2410,6 +2424,25 @@ mod tests {
         assert_eq!(program("/usr/bin/git"), "git");
         assert_eq!(program("C:\\bin\\spec-dna.exe"), "spec-dna");
         assert_eq!(program("spec-dna-x"), "spec-dna-x");
+    }
+
+    #[test]
+    fn approvals_read_a_status_key_as_check_does() {
+        for line in [
+            "status : accepted",
+            "status\t: accepted",
+            "\"status\": accepted",
+            "status: accepted # why",
+        ] {
+            assert_eq!(
+                status_of(&format!("---\n{line}\n---\n")),
+                Some("accepted".to_string()),
+                "{line}"
+            );
+        }
+        // No space after the colon: the key is another word.
+        assert_eq!(status_of("---\nstatus:accepted\n---\n"), None);
+        assert_eq!(status_of("---\nstatus-x: accepted\n---\n"), None);
     }
 
     #[test]
