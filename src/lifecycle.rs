@@ -802,7 +802,9 @@ fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
                 }
                 for p in &t.files {
                     let dir = p.trim_start_matches("./").trim_end_matches('/');
-                    if p.contains(['*', '?', '[']) {
+                    // One definition of a glob: `*` or `?`. `[` and `]` are plain
+                    // characters, as in the scope of the change (ADR 0019).
+                    if crate::glob::is_glob(p) {
                         problems.push(format!("its `Files:` has the glob `{p}`"));
                     } else if p.ends_with('/') || c.dirs.contains(dir) {
                         problems.push(format!("its `Files:` has the folder `{p}`"));
