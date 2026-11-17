@@ -908,3 +908,29 @@ fn sd612_has_no_report_for_a_link_inside_the_folder_or_a_plain_name() {
     let out = r.check();
     assert!(code_lines(&out, "SD612").is_empty(), "{out}");
 }
+
+#[test]
+fn sd612_pairs_with_the_exact_line_that_sd611_reports() {
+    // SD611 reports the id in the locked text. The link in the amendment is a
+    // second reference to the same target, and `finish` stops on it.
+    let r = Repo::new("standard", "", "", "");
+    r.write(
+        "docs/decisions/pump.md",
+        &decision(
+            "Use [[intent/alpha/intent]].",
+            "See [Alpha](../intent/alpha/intent.md).",
+        ),
+    );
+    r.write(
+        "docs/intent/alpha/intent.md",
+        &doc("intent", "draft", "", INTENT),
+    );
+    let out = r.check();
+    let sd611 = code_lines(&out, "SD611");
+    let sd612 = code_lines(&out, "SD612");
+    assert_eq!(sd611.len(), 1, "{out}");
+    assert_eq!(sd612.len(), 1, "{out}");
+    assert!(sd612[0].starts_with("docs/decisions/pump.md:"), "{out}");
+    let line = |l: &str| l.split(':').nth(1).unwrap().to_string();
+    assert_ne!(line(sd611[0]), line(sd612[0]), "{out}");
+}

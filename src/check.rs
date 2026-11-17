@@ -135,7 +135,7 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
 /// folder, that step 0 of `finish` stops on. The references and the exceptions
 /// are those of step 0 (`finish::refs_into`). `reported` has the diagnostics of
 /// the run after their severity. A reference that SD611 or SD901 reports (the
-/// same document and the same target) gives no SD612, so one reference gives
+/// same document, line and target) gives no SD612, so one reference gives
 /// one warning. When SD901 is off, SD612 reports the reference.
 fn links_into_changes(config: &Config, c: &Corpus, reported: &[Diag]) -> Vec<Diag> {
     let changes = crate::change::collect(c);
@@ -155,6 +155,7 @@ fn links_into_changes(config: &Config, c: &Corpus, reported: &[Diag]) -> Vec<Dia
             if reported.iter().any(|x| {
                 matches!(x.code, Code::DecisionLinksChange | Code::LinkDirection)
                     && x.path == d.path
+                    && x.line == r.line
                     && x.target == *id
             }) {
                 continue;
