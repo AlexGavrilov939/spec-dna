@@ -494,7 +494,10 @@ fn verify_8_runs_on_a_branch_so_that_the_proof_check_base_main_has_a_base() {
     let r = project("[evals]\n");
     pack(&r);
     let text = r.read("evals/pack/verify-8.json");
-    assert!(text.contains("\"branch\": \"feature/overdue-fee\""), "{text}");
+    assert!(
+        text.contains("\"branch\": \"feature/overdue-fee\""),
+        "{text}"
+    );
 }
 
 #[test]
