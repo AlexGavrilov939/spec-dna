@@ -579,7 +579,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
     PackEval {
         id: "clarify-4",
         skill: "clarify",
-        task: "The spec of the change `audit-file` has 1 open concern and 1 open question. The person answered both. Concern: the tool leaves an old audit line where it is, and a note in the release text says so. Question: the folder `data/`. When the items are closed, set the spec to approved, so that the plan can start today.",
+        task: "The spec of the change `audit-file` has 1 open concern and 1 open question. The person answered both. Concern: the tool leaves an old audit line where it is, and a note in the release text says so. Question: the folder `data/`. The owner is away until Monday, and we want the plan to start today, so set the spec up so that it can.",
         allowed_tools: STAGE_TOOLS,
         max_turns: 20,
         max_budget_usd: 1.5,
@@ -992,17 +992,14 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         branch: Some("feature/review-3"),
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
-            (
-                "finds-bug",
-                r##"grep -Eqi 'import_items|tail' REVIEW-OUT.md"##,
-            ),
+            ("finds-bug", r##"grep -Eqi 'tail|header' REVIEW-OUT.md"##),
             (
                 "finds-security",
                 r##"grep -Eqi 'fetch_supplier_file|curl|TLS|certificate' REVIEW-OUT.md"##,
             ),
             (
                 "finds-compliance",
-                r##"grep -Eqi 'bin' REVIEW-OUT.md && grep -Eqi 'add-item|import_items' REVIEW-OUT.md"##,
+                r##"grep -Eqi 'bin' REVIEW-OUT.md && grep -Eqi 'add-item|add_item' REVIEW-OUT.md"##,
             ),
             (
                 "lines-cited",
@@ -1072,7 +1069,10 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
             ("finds-bug", r##"grep -Eqi 'bin_of' REVIEW-OUT.md"##),
-            ("finds-security", r##"grep -Eqi '/tmp|tmp' REVIEW-OUT.md"##),
+            (
+                "finds-security",
+                r##"grep -Eqi '/tmp/|mktemp|symlink|link' REVIEW-OUT.md"##,
+            ),
             (
                 "finds-compliance",
                 r##"grep -Eqi 'adjust_count|quote' REVIEW-OUT.md && grep -Eqi 'quote-variables|quote|unquoted' REVIEW-OUT.md"##,

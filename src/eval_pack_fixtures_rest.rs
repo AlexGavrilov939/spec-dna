@@ -1745,8 +1745,7 @@ sync_items() {
 "##;
 
 /// `tests/test_audit.sh`.
-pub const TESTS_TEST_AUDIT_SH: &str = r##"# covers: requirements/inventory#audit-file
-. "$(dirname "$0")/../src/audit.sh"
+pub const TESTS_TEST_AUDIT_SH: &str = r##". "$(dirname "$0")/../src/audit.sh"
 STOCK_DIR="$(mktemp -d)"
 audit_line clerk bolt 3 4
 [ -s "$STOCK_DIR/audit.log" ] || { echo 'audit_line failed'; exit 1; }
@@ -1770,9 +1769,7 @@ printf 'bolt,3,A1\nnut,9,A2\ngear,1,A3\n' > "$STOCK_DIR/items.csv"
 "##;
 
 /// `tests/test_stock.sh`.
-pub const TESTS_TEST_STOCK_SH_V1: &str = r##"# covers: requirements/inventory#add-item
-# covers: requirements/inventory#low-stock
-. "$(dirname "$0")/../src/stock.sh"
+pub const TESTS_TEST_STOCK_SH_V1: &str = r##". "$(dirname "$0")/../src/stock.sh"
 STOCK_DIR="$(mktemp -d)"
 add_item bolt 3 A1
 add_item nut 9 A2
@@ -1780,9 +1777,7 @@ add_item nut 9 A2
 "##;
 
 /// `tests/test_stock.sh`.
-pub const TESTS_TEST_STOCK_SH_V2: &str = r##"# covers: requirements/inventory#add-item
-# covers: requirements/inventory#low-stock
-. "$(dirname "$0")/../src/stock.sh"
+pub const TESTS_TEST_STOCK_SH_V2: &str = r##". "$(dirname "$0")/../src/stock.sh"
 STOCK_DIR="$(mktemp -d)"
 add_item bolt 3 A1
 add_item nut 9 A2
@@ -1791,9 +1786,7 @@ add_item gear 12 A3
 "##;
 
 /// `tests/test_stock.sh`.
-pub const REVIEW_3_TESTS_TEST_STOCK_SH: &str = r##"# covers: requirements/inventory#add-item
-# covers: requirements/inventory#low-stock
-. "$(dirname "$0")/../src/audit.sh"
+pub const REVIEW_3_TESTS_TEST_STOCK_SH: &str = r##". "$(dirname "$0")/../src/audit.sh"
 . "$(dirname "$0")/../src/stock.sh"
 STOCK_DIR="$(mktemp -d)"
 add_item bolt 3 A1
