@@ -73,33 +73,36 @@ Check: `spec-dna check` gives no SD914 (a delta or interface item) and no SD920 
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run `spec-dna check` again.";
 
-const CLARIFY_PARTS: &str = r"When to use: `spec.md` has an open concern or an open question.
+const CLARIFY_PARTS: &str = r"When to use: `spec.md` has an open concern or an open question, and nobody has approved the spec.
 
 Commands:
 
 1. Read `Concerns` and `Open questions` of `spec.md`.
-2. Ask the person about each open item. Write the answer in the item, and mark its box `[x]`.
-3. Give each item a task box, `- [ ]` or `- [x]`.
+2. Give each item a box: `- [ ]` is open, and `- [x]` is resolved. If no item applies, write one item `- none`.
+3. Ask the person about each open item. Write the answer in the item, then change its box to `- [x]`.
+4. Run `spec-dna check`.
 
 Artifact: `Concerns` and `Open questions` of `spec.md`, each item answered.
 
-Check: `spec-dna check` gives no SD919, SD922 and SD925.
+Check: `spec-dna check` gives no SD919 (an open concern), no SD922 (an open question) and no SD925 (an item with no box).
 
-If the check fails: Ask the person about the item that the message names. Do not mark an item that is not answered.";
+If the check fails: Ask the person about the item that the message names. Do not mark an item that has no answer. Add a box to an item that has none.";
 
-const WRITE_PLAN_PARTS: &str = r"When to use: Before the code of a change.
+const WRITE_PLAN_PARTS: &str = r"When to use: Before the code of a change. The intent is `accepted`, and a higher-risk change has an approved spec.
 
 Commands:
 
-1. Run `spec-dna new plan <slug>`. Run `spec-dna context <file>...` for the files that you plan to change.
-2. Under `Files`, list each path of the scope. Under `Order`, write one small task for each step: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
-3. Write `Risks` and `Proof`.
+1. Run `spec-dna next <slug>`. Run `spec-dna context <file>...` for the files that you plan to change.
+2. Run `spec-dna new plan <slug>`.
+3. Under `Files`, list each path of the scope. Write each path in a code span.
+4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most 3 exact paths and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
+5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
 
-Artifact: `plan.md` with `Files` and small tasks.
+Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: `spec-dna check` gives no SD913, SD923 and SD924.
+Check: `spec-dna check` gives no SD913 (a file that `Files` does not list), no SD923 (a task with no exact `Files:` or no `Verify:`) and no SD924 (a task with too many paths).
 
-If the check fails: Split a task that lists too many paths. Give each task exact paths in `Files:` and one `Verify:`. Run `spec-dna check` again.";
+If the check fails: Split a task that lists more than 3 paths. Give each task exact paths and one `Verify:`. Run `spec-dna check` again.";
 
 const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is open.
 
