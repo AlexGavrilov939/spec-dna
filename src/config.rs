@@ -1094,7 +1094,7 @@ pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
     (0, 0),           // research: cold material, no budget
     (6_000, 12_000),  // intent
     (10_000, 20_000), // spec
-    (6_000, 12_000),  // plan
+    (0, 0),           // plan: it grows with the size of the change, so it has no default budget
 ];
 
 /// The default required sections of each type: a list of groups. A document

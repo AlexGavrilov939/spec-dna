@@ -1219,3 +1219,78 @@ fn a_document_of_another_type_does_not_satisfy_an_add_item_after_the_folder_is_d
         "{out}"
     );
 }
+
+// The budget of a plan (design 0.7.0, section 15)
+
+/// A draft plan of `n` tasks of about 310 characters each.
+fn plan_of(n: usize) -> String {
+    let tasks: String = (1..=n)
+        .map(|i| format!("- [ ] t{i}: Write the failing test of the close time of valve {i}, then close the valve within 2 seconds and log the time of the close in the report of the run. Files: `src/valve_{i}.py`, `tests/test_valve_{i}.py`. Verify: `python3 -m pytest tests/test_valve_{i}.py` passes, and the new test failed before the code.\n"))
+        .collect();
+    format!(
+        "---\nstatus: draft\n---\n# Faster close\n\n## Files\n\n- `src/`\n- `tests/`\n\n## Order\n\n{tasks}\n## Risks\n\n- A slow valve.\n\n## Proof\n\nThe tests pass.\n"
+    )
+}
+
+/// A fixture with a draft intent, the plan `plan`, and the extra tables `more`.
+fn repo_with_plan(plan: &str, more: &str) -> Repo {
+    let r = repo_with(&format!(
+        "{}\n{more}",
+        config("standard", "", "max-started = 1\n", "")
+    ));
+    r.write(
+        "docs/intent/faster-close/intent.md",
+        "---\nstatus: draft\nclass: routine\n---\n# Faster close\n\n## Intent\n\nText.\n",
+    );
+    r.write("docs/intent/faster-close/plan.md", plan);
+    r
+}
+
+/// The codes SD701 to SD704 of the text of `check`.
+fn budget_codes(out: &str) -> Vec<&'static str> {
+    ["SD701", "SD702", "SD703", "SD704"]
+        .into_iter()
+        .filter(|c| out.contains(&format!(" {c} ")))
+        .collect()
+}
+
+#[test]
+fn a_plan_of_40_tasks_gives_no_budget_diagnostic() {
+    let r = repo_with_plan(&plan_of(40), "");
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn budgets_plan_gives_the_plan_a_budget() {
+    let more = "[budgets.plan]\nsoft = 3000\nhard = 9000\n";
+    // About 4,000 characters: over the soft budget.
+    let r = repo_with_plan(&plan_of(12), more);
+    let (code, out) = check(&r);
+    assert_eq!(budget_codes(&out), ["SD701"], "{out}");
+    assert_eq!(code, 0, "{out}");
+    // About 12,500 characters: over the hard budget of a new document.
+    let r = repo_with_plan(&plan_of(40), more);
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).contains(&"SD702"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_zero_budget_turns_the_budget_of_a_type_off() {
+    let intent = format!(
+        "---\nstatus: draft\nclass: routine\n---\n# Faster close\n\n## Intent\n\n{}\n",
+        "The valve closes too slowly, and the bed overflows.\n\n".repeat(300)
+    );
+    let r = repo_with_plan(&plan_of(1), "");
+    r.write("docs/intent/faster-close/intent.md", &intent);
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).contains(&"SD702"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    let r = repo_with_plan(&plan_of(1), "[budgets.intent]\nsoft = 0\nhard = 0\n");
+    r.write("docs/intent/faster-close/intent.md", &intent);
+    let (code, out) = check(&r);
+    assert!(budget_codes(&out).is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
