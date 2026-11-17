@@ -11,8 +11,8 @@ The harness is optional. `init` asks for a level.
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. It proposes the 7 skills that are on by default |
-| `full` | `lean`, and `implementer` and `code-simplifier`. It also proposes the 4 skills that are off by default: `execute`, `tdd`, `verify` and `debug` |
+| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. It proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) |
+| `full` | `lean`, and `implementer` and `code-simplifier`. It proposes the 11 skills, also the skills that are off by default |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
 
@@ -65,7 +65,7 @@ helper = { claude-code = "haiku" }
 sonnet = "high"
 ```
 
-A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no `protect-tests` hook. A new configuration from `spec-dna init` has all 3 keys. It has the 7 skills that are on by default if the change policy is not `none` (the level `full` has all 11), `review-md = true` and `protect-tests = "fix-branches"`. [init.md](init.md#parts-of-the-harness) gives the defaults.
+A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no `protect-tests` hook. A new configuration from `spec-dna init` has all 3 keys. It has the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) if the change policy is not `none` (the level `full` has all 11), `review-md = true` and `protect-tests = "fix-branches"`. The profile `lite` has fewer skills, no `REVIEW.md` and `protect-tests = "off"`. [init.md](init.md#parts-of-the-harness) gives the defaults.
 
 | Key | Meaning |
 | --- | --- |
@@ -141,7 +141,7 @@ The workflow pack has 11 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage
 
 The floor is a check that fails when the artifact is wrong. It does not check what the skill adds, such as the order of a test and its code. Where the floor is `None`, the text of the skill is the only control.
 
-- The 7 skills that are on by default are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. The 4 skills that are off have no check of what they add. `init` writes them only when `skills` lists them, and the level `full` proposes them.
+- The 7 skills of the design (D2) are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. The 4 other skills have no check of what they add. They are on by default only with the verdict `on` ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). `init` writes a skill only when `skills` lists it, and the level `full` proposes the 11.
 - Each body has 5 parts in this order: when to use the skill, the commands, the artifact, the check, and the action when the check fails.
 - The text of a skill is static. It holds no value of the configuration, so the file is the same in each project. The binary holds the text, so the pin fixes it.
 - A skill never sets `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat, and that commit changes only the `status` line. The line of `AGENTS.md` has the same words. [The change guide](guides/change.md#choose-the-class) gives who approves each document.
@@ -180,7 +180,7 @@ Nothing proves that Claude Code selects the spec-dna skill first. No eval has th
 ### Budgets
 
 - A description has 160 characters or fewer, and a body has 2,500 bytes or fewer.
-- The listing of Claude Code (`- spec-dna-<name>: <description>` and a line feed for each skill) has 1,900 bytes or fewer for the 11 skills, and 1,250 bytes or fewer for the 7 skills that are on.
+- The listing of Claude Code (`- spec-dna-<name>: <description>` and a line feed for each skill) has 1,900 bytes or fewer for the 11 skills, and 1,250 bytes or fewer for the 7 skills of the design (D2).
 - The block of disciplines has 700 bytes or fewer. The line of `AGENTS.md`, with its marker, has 400 bytes or fewer.
 - A test fixes each limit.
 
@@ -300,7 +300,7 @@ An eval tests the agent setup of a project: its instruction files, skills, agent
 - The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
 - `verifier`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request.
 - The `CLAUDE.md` line is part of each request (about 200 tokens). The line of `AGENTS.md` has 400 bytes or fewer, so it adds about 100 tokens.
-- The descriptions of the skills are part of each request: 1,250 bytes or fewer for the 7 skills that are on, and 1,900 bytes or fewer for the 11 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
+- The descriptions of the skills are part of each request: 1,250 bytes or fewer for the 7 skills of the design (D2), and 1,900 bytes or fewer for the 11 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
 - `init` prints the bytes that the harness adds to each request, with the skill descriptions in the sum.
 
 These options make each request smaller. `init` does not write them, because they remove features that some teams use:
@@ -357,6 +357,6 @@ A 0.6 project that lists the skills `intent`, `spec` or `plan` in `[harness] ski
 | Skill `plan` | `write-plan` |
 | Skill `review` | `review`, with a new text |
 
-`spec-dna upgrade` renames these names in `[harness] skills` before it reads the file. It changes only the value of `skills`, not the type names `intent`, `spec` and `plan` in other keys. It puts the names in the order of the table, and it adds a name only once. A second run changes nothing. Only `upgrade` renames: `init` gives exit code 3 for an old name in `skills`, and exit code 2 for an old name in an answer, and its message names the new name. A list of many lines that the rename would change in length stays. Then `upgrade` stops with exit code 3 and prints the list that you write by hand.
+`spec-dna upgrade` renames these names in `[harness] skills` before it reads the file. It changes only the value of `skills`, not the type names `intent`, `spec` and `plan` in other keys. It puts the names in the order of the table, and it adds a name only once. It adds a new name only if the name is on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). For each name that it leaves out, the report has a line with the name and the fix: add the name to `skills`. A valid name of the list, such as `review`, stays, also when it is off by default. `upgrade` applies no preset of a profile: use `init --reconfigure` for the other parts. A second run changes nothing. Only `upgrade` renames: `init` gives exit code 3 for an old name in `skills`, and exit code 2 for an old name in an answer, and its message names the new name. A list of many lines that the rename would change in length stays. Then `upgrade` stops with exit code 3 and prints the list that you write by hand.
 
-`init` and `upgrade` remove the unedited file of each old skill: `.claude/skills/spec-dna-intent/SKILL.md`, `.claude/skills/spec-dna-spec/SKILL.md` and `.claude/skills/spec-dna-plan/SKILL.md`. They keep an edited file and name it, and `check` reports SD501. `spec-dna upgrade` writes the files of the new names that the list has. The 4 skills that are off stay off until `skills` lists them.
+`init` and `upgrade` remove the unedited file of each old skill: `.claude/skills/spec-dna-intent/SKILL.md`, `.claude/skills/spec-dna-spec/SKILL.md` and `.claude/skills/spec-dna-plan/SKILL.md`. They keep an edited file and name it, and `check` reports SD501. `spec-dna upgrade` writes the files of the new names that the list has. A skill that is off by default stays off until `skills` lists it.

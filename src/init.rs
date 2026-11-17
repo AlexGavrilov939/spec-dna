@@ -236,6 +236,11 @@ impl Parts {
 pub struct Plan {
     pub kind: &'static str,
     pub profile: Profile,
+    /// The profile whose preset gives the defaults of the parts (D37, ADR
+    /// 0023). For a new project it is the answer to question 1. For
+    /// `--reconfigure` it is the profile of the current file: a new answer
+    /// changes the severities, and no other default.
+    pub preset: Profile,
     pub graph: GraphChoice,
     /// For `custom`: the graph of the current file, and true if the file has
     /// the tables `[layers]`. `None` if there is no current file.
@@ -347,6 +352,41 @@ impl Plan {
             GraphChoice::Custom => self.custom.as_ref().is_some_and(|c| c.1),
             _ => true,
         }
+    }
+}
+
+impl Plan {
+    /// Sets the answer to question 1 and, for a new project, the preset of
+    /// the profile (D37, ADR 0023).
+    fn set_profile(&mut self, profile: Profile) {
+        self.profile = profile;
+        self.apply_preset(profile);
+    }
+
+    /// The defaults of a profile for a new project: the change policy, the
+    /// gate, the answer to question 14 and the profile of the parts. A later
+    /// answer replaces each of them. `--reconfigure` keeps the current values,
+    /// so the call changes nothing for it. The skills, `review-md` and
+    /// `protect-tests` follow `preset` in `settle_parts`, and `strict` gets
+    /// `approval = "base"` and `protect-approvals` in `settle_approval` and
+    /// `settle_approvals_hook`.
+    fn apply_preset(&mut self, profile: Profile) {
+        if self.kind == "reconfigure" {
+            return;
+        }
+        self.preset = profile;
+        self.change_policy = match profile {
+            Profile::Lite => ChangePolicy::TwoClass,
+            Profile::Standard | Profile::Strict => ChangePolicy::ThreeClass,
+        };
+        self.change_gate = match profile {
+            Profile::Lite => Gate::Warn,
+            Profile::Standard | Profile::Strict => Gate::Block,
+        };
+        self.evals = match profile {
+            Profile::Lite => EvalsAnswer::None,
+            Profile::Standard | Profile::Strict => EvalsAnswer::Skeleton,
+        };
     }
 }
 
@@ -521,6 +561,12 @@ fn settle_approval(plan: &mut Plan) {
         }
     };
     if plan.profile == Profile::Strict {
+        if plan.kind == "reconfigure" && plan.approval == Approval::Branch {
+            note(
+                plan,
+                "the profile `strict` reads the approvals of the base only, so `init` changes `approval = \"branch\"` to `\"base\"`. `approvers` stays in the file and has no effect until the approval is `branch` again".to_string(),
+            );
+        }
         plan.approval = Approval::Base;
         if plan.approvers_given.as_ref().is_some_and(|l| !l.is_empty()) {
             note(
@@ -764,6 +810,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
             "greenfield"
         },
         profile: Profile::Standard,
+        preset: Profile::Standard,
         graph: GraphChoice::of_size(documents),
         custom: None,
         areas: facts.areas.clone(),
@@ -852,6 +899,7 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     p.language = cfg.language.clone();
     p.notes.clear();
     p.profile = cfg.profile;
+    p.preset = cfg.profile;
     p.layout = false;
     // The current layers are the default of question 2.
     p.graph = GraphChoice::Custom;
@@ -2331,26 +2379,55 @@ fn settle_parts(plan: &mut Plan) {
         plan.harness.skills = if plan.change_policy == ChangePolicy::None {
             Vec::new()
         } else {
-            // The 7 skills that are on by default (D2). The level `full` also
-            // proposes the 4 that are off (D39).
-            proposed_skills(plan.harness.level)
+            profile_skills(plan.preset, plan.harness.level, &|s| s.default_on())
                 .into_iter()
                 .filter(|s| !plan.parts.unmarked_skills.contains(s))
                 .collect()
         };
     }
     if plan.parts.derive_review {
-        plan.harness.review_md = !plan.parts.unmarked_review;
+        plan.harness.review_md = plan.preset != Profile::Lite && !plan.parts.unmarked_review;
     }
     if plan.parts.derive_protect {
         // `[evidence] tests` is empty only for the link style `verified-by`.
         // An empty list of detected globs renders no table, and the default
-        // globs apply.
-        plan.harness.protect_tests = if plan.style == Style::VerifiedBy {
-            Protect::Off
-        } else {
-            Protect::FixBranches
-        };
+        // globs apply. `lite` asks before no edit of a test file.
+        plan.harness.protect_tests =
+            if plan.style == Style::VerifiedBy || plan.preset == Profile::Lite {
+                Protect::Off
+            } else {
+                Protect::FixBranches
+            };
+    }
+}
+
+/// The notes of the profile (ADR 0023). `strict` with the answer `skeleton`
+/// writes no eval pack, so a note names `eval pack`. `--reconfigure` with
+/// another profile keeps the current values, so a note says that the preset is
+/// for a new project. The note on `eval pack` goes when the folder
+/// `<dir>/pack/` exists. The call is idempotent.
+fn profile_notes(plan: &mut Plan, pack_exists: bool) {
+    let mut add = |n: String| {
+        if !plan.notes.contains(&n) {
+            plan.notes.push(n);
+        }
+    };
+    let mut new = Vec::new();
+    if plan.profile == Profile::Strict && plan.evals == EvalsAnswer::Skeleton && !pack_exists {
+        new.push(format!(
+            "the profile `strict` uses the verdicts of the skills; run `spec-dna eval pack` to write the {} evals of the pack into `{}/pack/` before `spec-dna eval run --ab` (docs/evals.md)",
+            crate::eval_pack::all().len(),
+            plan.evals_table.dir
+        ));
+    }
+    if plan.kind == "reconfigure" && plan.profile != plan.preset {
+        new.push(format!(
+            "the profile `{}` sets other defaults only for a new project; answer questions 4, 5, 12 and 14 to change them (docs/profiles.md)",
+            plan.profile.name()
+        ));
+    }
+    for n in new {
+        add(n);
     }
 }
 
@@ -2476,7 +2553,7 @@ fn apply_parts(plan: &mut Plan, words: &[String]) -> Result<(), String> {
 }
 
 /// The bytes of the skill listing that `skills` adds to each request. It
-/// counts the skills that are on by default.
+/// counts each skill of the list.
 fn skill_listing_bytes(skills: &[Skill]) -> usize {
     skills
         .iter()
@@ -2484,14 +2561,25 @@ fn skill_listing_bytes(skills: &[Skill]) -> usize {
         .sum()
 }
 
-/// The skills that a level proposes (D39): the 7 that are on by default, and
-/// at the level `full` also the 4 that are off.
-fn proposed_skills(level: Level) -> Vec<Skill> {
+/// The skills that a profile and a level propose (D37, D39, ADR 0023). `on`
+/// gives the default of a skill: the caller passes `|s| s.default_on()`, and a
+/// test passes a fake table. The level `full` proposes the 11 skills and
+/// ignores the verdicts. `lite` proposes `brainstorm`, `write-plan` and
+/// `finish` that are on by default. `standard` and `strict` propose each skill
+/// that is on by default, also a skill outside D2 with the verdict `on`. The
+/// result has the order of D2.
+fn profile_skills(profile: Profile, level: Level, on: &dyn Fn(Skill) -> bool) -> Vec<Skill> {
     if level == Level::Full {
-        Skill::ALL.to_vec()
-    } else {
-        Skill::default_on_list()
+        return Skill::ALL.to_vec();
     }
+    Skill::ALL
+        .into_iter()
+        .filter(|s| on(*s))
+        .filter(|s| {
+            profile != Profile::Lite
+                || matches!(s, Skill::Brainstorm | Skill::WritePlan | Skill::Finish)
+        })
+        .collect()
 }
 
 /// The note for a project that also has the plugin Superpowers (D5). A spec-dna
@@ -2961,8 +3049,9 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         &Question::Profile.prompt("Profile (lite, standard, strict)"),
         plan.profile.name(),
     );
-    plan.profile =
-        Profile::from_name(&p).ok_or(format!("profile `{p}`: use lite, standard or strict"))?;
+    plan.set_profile(
+        Profile::from_name(&p).ok_or(format!("profile `{p}`: use lite, standard or strict"))?,
+    );
 
     io.say(&format!(
         "    Documents found: {}. small: foundation, pending, rules, requirements, decisions, intent and incidents (fewer than {SMALL_LIMIT} documents). default: also interfaces, procedures and research. custom: the layers of the current spec-dna.toml.",
@@ -3189,7 +3278,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     }
 
     io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 4 skills that are off by default (`execute`, `tdd`, `verify` and `debug`). none writes nothing. The files are for Claude Code only.");
+    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 11 skills, also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -3201,8 +3290,8 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
     settle_evals(plan);
     if plan.harness.level != Level::None {
         settle_parts(plan);
-        // The level `full` proposes the 4 skills that are off too (D39).
-        let proposed = proposed_skills(plan.harness.level);
+        // The level `full` proposes the skills that are off by default too (D39).
+        let proposed = profile_skills(plan.preset, plan.harness.level, &|s| s.default_on());
         io.say(&format!(
             "    The {} skills add {} bytes to each request (their descriptions). `REVIEW.md` adds none. `protect-tests` asks before an edit of a test file that git tracks, on a branch of the form `fix/...`, and it needs a test glob.",
             proposed.len(),
@@ -3305,7 +3394,7 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
         ));
     }
     if let Some(p) = s("profile")? {
-        plan.profile = Profile::from_name(&p).ok_or(format!("answers: profile `{p}`"))?;
+        plan.set_profile(Profile::from_name(&p).ok_or(format!("answers: profile `{p}`"))?);
     }
     if let Some(g) = s("graph")? {
         plan.graph = parse_graph(&g, plan).map_err(|e| format!("answers: {e}"))?;
@@ -3563,6 +3652,8 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_evals(&mut plan);
     settle_approvals_hook(&mut plan);
     let mut offered = before.clone();
+    // The offered defaults are the defaults of the profile that was chosen.
+    offered.apply_preset(plan.profile);
     settle(&mut offered);
     settle_change(&mut offered);
     settle_approval(&mut offered);
@@ -3611,6 +3702,8 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let (skeleton, skeleton_notes) = skeleton_changes(repo, &plan, &parsed.evidence_tests);
     changes.extend(skeleton);
     plan.notes.extend(skeleton_notes);
+    let pack_exists = repo.root.join(&plan.evals_table.dir).join("pack").exists();
+    profile_notes(&mut plan, pack_exists);
 
     let preview = o.dry_run || interactive || !write;
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
@@ -4479,9 +4572,20 @@ mod tests {
         let mut plan = plan_of_empty_repo();
         settle_parts(&mut plan);
         let line = parts_line(&plan.harness);
+        // The skills are the ones that are on by default in this build.
+        let names: Vec<&str> = Skill::ALL
+            .iter()
+            .filter(|s| s.default_on())
+            .map(|s| s.key())
+            .collect();
+        let skills = if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(",")
+        };
         assert_eq!(
             line,
-            "skills=brainstorm,specify,clarify,write-plan,review,finish,post-mortem review-md=true protect-tests=fix-branches"
+            format!("skills={skills} review-md=true protect-tests=fix-branches")
         );
         let words: Vec<String> = line.split_whitespace().map(str::to_string).collect();
         let mut again = plan.clone();
@@ -4522,7 +4626,8 @@ mod tests {
     fn the_default_skills_follow_the_final_policy_and_the_link_style() {
         let mut plan = plan_of_empty_repo();
         settle_parts(&mut plan);
-        assert_eq!(plan.harness.skills.len(), 7);
+        let on: Vec<Skill> = Skill::ALL.into_iter().filter(|s| s.default_on()).collect();
+        assert_eq!(plan.harness.skills, on);
         // A later answer changes the default, because no one set the part.
         plan.change_policy = ChangePolicy::None;
         plan.style = Style::VerifiedBy;
@@ -4538,11 +4643,99 @@ mod tests {
 
     #[test]
     fn the_listing_of_the_7_skills_that_are_on_has_at_most_1250_bytes() {
-        let n = skill_listing_bytes(&proposed_skills(Level::Lean));
+        // D6 is a budget for the 7 skills of D2.
+        let d2: Vec<Skill> = Skill::ALL.into_iter().filter(|s| s.in_d2()).collect();
+        let n = skill_listing_bytes(&d2);
         assert!(n > 588 && n <= 1250, "{n} bytes");
         // The 11 skills of the level `full` have 1,900 bytes or fewer.
-        let n = skill_listing_bytes(&proposed_skills(Level::Full));
+        let n = skill_listing_bytes(&profile_skills(Profile::Standard, Level::Full, &|_| false));
         assert!(n <= 1900, "{n} bytes");
+    }
+
+    /// The fake table of the tests of ADR 0023: `brainstorm` and `tdd` are
+    /// `on`, `clarify` and `debug` are `inconclusive`, `review` is `off`, and
+    /// the other skills have no verdict.
+    fn fake_verdict(s: Skill) -> Option<crate::verdict::Verdict> {
+        use crate::verdict::Verdict;
+        match s {
+            Skill::Brainstorm | Skill::Tdd => Some(Verdict::On),
+            Skill::Clarify | Skill::Debug => Some(Verdict::Inconclusive),
+            Skill::Review => Some(Verdict::Off),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_skills_of_each_profile_follow_a_fake_table() {
+        use Skill::*;
+        let cases: [(bool, [Vec<Skill>; 3]); 2] = [
+            // `true`: a skill is on only with the verdict `on`.
+            (
+                true,
+                [
+                    vec![Brainstorm],
+                    vec![Brainstorm, Tdd],
+                    vec![Brainstorm, Tdd],
+                ],
+            ),
+            // `false`: D33.
+            (
+                false,
+                [
+                    vec![Brainstorm, WritePlan, Finish],
+                    vec![
+                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Finish, PostMortem,
+                    ],
+                    vec![
+                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Finish, PostMortem,
+                    ],
+                ],
+            ),
+        ];
+        for (needs_on, [lite, standard, strict]) in cases {
+            let on = |s: Skill| crate::verdict::on_by_default(s.in_d2(), fake_verdict(s), needs_on);
+            for (profile, want) in [
+                (Profile::Lite, lite),
+                (Profile::Standard, standard),
+                (Profile::Strict, strict),
+            ] {
+                assert_eq!(
+                    profile_skills(profile, Level::Lean, &on),
+                    want,
+                    "{} with needs_on {needs_on}",
+                    profile.name()
+                );
+                // The level `full` ignores the verdicts (D39).
+                assert_eq!(
+                    profile_skills(profile, Level::Full, &on),
+                    Skill::ALL.to_vec(),
+                    "{} full",
+                    profile.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_profile_sets_the_preset_of_a_new_project() {
+        let mut plan = plan_of_empty_repo();
+        plan.set_profile(Profile::Lite);
+        assert_eq!(plan.change_policy, ChangePolicy::TwoClass);
+        assert_eq!(plan.change_gate, Gate::Warn);
+        assert_eq!(plan.evals, EvalsAnswer::None);
+        settle_parts(&mut plan);
+        assert!(!plan.harness.review_md);
+        assert_eq!(plan.harness.protect_tests, Protect::Off);
+        for p in [Profile::Standard, Profile::Strict] {
+            let mut plan = plan_of_empty_repo();
+            plan.set_profile(p);
+            assert_eq!(plan.change_policy, ChangePolicy::ThreeClass);
+            assert_eq!(plan.change_gate, Gate::Block);
+            assert_eq!(plan.evals, EvalsAnswer::Skeleton);
+            settle_parts(&mut plan);
+            assert!(plan.harness.review_md);
+            assert_eq!(plan.harness.protect_tests, Protect::FixBranches);
+        }
     }
 
     #[test]

@@ -1,0 +1,31 @@
+# case v061, recorded with spec-dna 0.6.1
+exit 0
+doc docs/decisions/0001-drip-first.md decisions/0001-drip-first decision accepted
+doc docs/intent/drip-schedule/intent.md intent/drip-schedule/intent intent accepted
+doc docs/intent/drip-schedule/plan.md intent/drip-schedule/plan plan approved
+doc docs/intent/drip-schedule/spec.md intent/drip-schedule/spec spec approved
+doc docs/requirements/valves.md requirements/valves requirements active
+file 5c29d03cbb5a5da32a0a14cc24aa6a04a0661797 .claude/agents/Explore.md
+file 01e9d39a65d2125d30b5349cfc53e2cdce092cc1 .claude/agents/fallback-advisor.md
+file 11551c1cbdf5863bfda981539943fa99cb98ec69 .claude/agents/model-team.md
+file 5a1aa592fcf620ba714fb080d263a47e13152d8a .claude/agents/verifier.md
+file 3ae7bddf16e96064cc3677456f01bce17a7faf8d .claude/settings.json
+file 7fc2466e8b8cd27931e2f486a811abc5ae892130 .claude/skills/spec-dna-intent/SKILL.md
+file 2248b9af79431533eb3bcac49fd1c0bb15993ef8 .claude/skills/spec-dna-plan/SKILL.md
+file 18def8d5d719d7d23d84fa01b39102ad708321c5 .claude/skills/spec-dna-review/SKILL.md
+file 5e300f9cbd113465e8de33aaf44224b1e70b3d37 .claude/skills/spec-dna-spec/SKILL.md
+file 90536cf6b35ab97c0df091021cbf0681a5c3f3dd .claude/skills/spec-dna/SKILL.md
+file 207898d2e2951b3182bc4eac9748936bbb378e36 AGENTS.md
+file a241770b381bf1b8d22d95e93daaabbd81066c6f CLAUDE.md
+file dc12e1a78b06c788c853f08d6c2e0cd3152512b9 REVIEW.md
+file d41471ce319577773d2de328d1a7404c2d5d2357 docs/decisions/0001-drip-first.md
+file ac181e4f7884512810ea020b08a0e88b4815e456 docs/intent/drip-schedule/intent.md
+file 9cbfd12e56a41f8cb8ac7b95092d518778e6136b docs/intent/drip-schedule/plan.md
+file 3c7be354715a8eb1efe3760608137f949012d629 docs/intent/drip-schedule/spec.md
+file b6c5da1e8d4d6a98369d31e53317614a79b4ca9c docs/requirements/valves.md
+file c4a8c5cafdda7030f3c42b670e3b369b188170f4 evals/check.sh
+file 7a9ebc1780ffaaf52160560edbae0bf284280635 evals/example.json
+file 4212b1264159efb12c63d75c76cd50704d649bd7 evals/fixtures/example/notes.txt
+file bb3da0534c6961e7332d238b90cdaa6427de479a spec-dna.toml
+file ee7888a41ff124f9e2fc23efb23d625e7390d7e6 src/schedule.sh
+file 2e25f800513373fd4a9f26ab4ea37e09343c6e2e tests/schedule_test.sh

@@ -1607,9 +1607,11 @@ pub fn evals_invalid(evals: &Evals, tree: &EvalTree) -> Vec<Diag> {
     out
 }
 
-/// SD507: each skill of `[harness] skills` that the design does not turn on,
-/// when neither a result file of the project nor the table of the release
-/// gives it the verdict `on` (ADR 0016). `results` holds the files of
+/// SD507: each skill of `[harness] skills` that is off by default (ADR 0023).
+/// The rule is `verdict::on_by_default` with the 7 skills of D2, the verdict
+/// and the constant `DEFAULT_ON_NEEDS_VERDICT_ON`. The verdict of the newest
+/// result file of the project that holds the skill comes first, and then the
+/// table of the release (`verdict::resolve`). `results` holds the files of
 /// `<[evals] dir>/results`. The diagnostic is on the line `line` of
 /// `spec-dna.toml`. The severity is the default of the code. The caller
 /// applies the rules.
@@ -1621,7 +1623,14 @@ pub fn skill_unproven(
     harness
         .skills
         .iter()
-        .filter(|s| !s.default_on() && !crate::verdict::is_on(s.key(), results))
+        .filter(|s| {
+            let verdict = crate::verdict::resolve(s.key(), results).verdict;
+            !crate::verdict::on_by_default(
+                s.in_d2(),
+                verdict,
+                crate::verdict::DEFAULT_ON_NEEDS_VERDICT_ON,
+            )
+        })
         .map(|s| Diag {
             path: "spec-dna.toml".to_string(),
             line,
@@ -1629,7 +1638,7 @@ pub fn skill_unproven(
             doc: "spec-dna.toml".to_string(),
             target: s.key().to_string(),
             message: format!(
-                "the skill `{}` is in [harness] skills, and neither a result file of the project nor the table of the release gives it the verdict `on`",
+                "the skill `{}` is in [harness] skills, and it is off by default (ADR 0023): neither a result file of the project nor the table of the release gives it the verdict `on`",
                 s.key()
             ),
             severity: Code::SkillUnproven.severity(),

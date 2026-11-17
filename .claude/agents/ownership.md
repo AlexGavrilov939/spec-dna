@@ -90,6 +90,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Harness role or generated file | `src/harness.rs` and `src/harness_text.rs`; `docs/harness.md`; `tests/golden/harness/`; the harness tests; `CHANGELOG.md` | ARC | INI, and DIA for the function `check` | COR, TST, DOC | REL |
 | Hook | `src/hook.rs`; the `hook` section of `docs/commands.md`; the hooks section of `docs/harness.md`; `tests/hook*.rs` | ARC | INI | TST | REL |
 | Eval file form or runner | `src/evals.rs`, `src/eval_run.rs`, `src/eval_ab.rs`, `src/verdict.rs` and `src/eval_records.rs`; the `eval` section and the exit codes of `docs/commands.md`; `docs/evals.md`; `tests/eval_run.rs`, `tests/eval_ab.rs` and `tests/eval_records.rs`; `bench/results/evals/`; SD506 and SD507 in `docs/diagnostics.md` | ARC | COR | DIA, INI, TST | REL |
+| Default skills (ADR 0023) | `DEFAULT_ON_NEEDS_VERDICT_ON` and `RELEASE` in `src/verdict.rs`; `Skill::in_d2` in `src/harness.rs`; the preset of `src/init.rs`; `rename_skills` in `src/upgrade_config.rs`; SD507 in `src/check.rs`; `docs/profiles.md`, `docs/init.md` and `docs/commands.md` (`skill list`); `tests/init_profiles.rs` and `tests/evals_checks.rs`; `CHANGELOG.md`. A change of the constant or of `RELEASE` edits `src/verdict.rs` only | OWN (the value of the constant) | COR (`src/verdict.rs`, `src/upgrade_config.rs`), INI (`src/init.rs`, `src/harness.rs`) and DIA (`src/check.rs`) | TST | REL, DOC |
 | Eval skeleton or workflow | `src/skeleton.rs`; question 14 in `src/init.rs`; `tests/golden/evals/`; `docs/init.md` | ARC | INI | COR, DIA, REL | DOC |
 | Upgrade plan | `src/upgrade.rs`, `src/upgrade_old.rs`, `src/upgrade_config.rs`, `src/upgrade_docs.rs`, `src/upgrade_proof.rs` and `src/config_text.rs`; `tests/upgrade_*.rs`, `tests/fixtures/upgrade/` and `tests/golden/upgrade/`; the doc page of the command, when it exists; `CHANGELOG.md` | ARC | INI (the command), COR (the configuration) and HYG (the documents) | DIA, TST | DOC, REL |
 | Import | `src/import.rs`, `src/import_config.rs`, `src/import_docs.rs`, `src/import_speckit.rs`, `src/import_openspec.rs` and `src/import_proof.rs`; `tests/common/import.rs` and `tests/import_*.rs`; the `import` section of `docs/commands.md`; the term import in `docs/glossary.md`; `CHANGELOG.md` | ARC | INI (the command), COR (the configuration), HYG (the documents, the readers and the proof) | DIA, TST | DOC, REL |
@@ -175,7 +176,7 @@ src/config_text.rs                   COR: the edits of TOML text by path
 src/evals.rs                         COR: the eval file form and its rules, which SD506 and `eval run` share
 src/eval_run.rs                      COR: `eval run`, and the attempt that `--ab` uses (the refused run, the back-off)
 src/eval_ab.rs                       COR: `eval run --ab`: the arms, the pairs and the result file
-src/verdict.rs                       COR: the bootstrap, the rules of the verdict, the table of the release and the reader of the results (`eval verdict`, SD507)
+src/verdict.rs                       COR: the bootstrap, the rules of the verdict, the table of the release, the rule of ADR 0023 and its constant, and the reader of the results (`eval verdict`, SD507)
 src/eval_records.rs                  COR: `eval records`, the reader of a result file of `--ab` and the writer of the records
 src/eval_pack.rs                     INI: the evals of the pack, their fixtures and `eval pack`
 src/eval_pack_pilot.rs, src/eval_pack_rest.rs, src/eval_pack_fixtures_rest.rs   INI: the data of the evals of the pack (15 pilot evals of `execute`, `tdd` and `debug`, 35 other evals and their fixtures)
@@ -223,7 +224,7 @@ tests/approve_cmd.rs                 COR
 tests/tree_binary.rs                 COR
 tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
 tests/common/mod.rs, tests/common_helpers.rs   TST: the shared git fixtures. Every agent uses them
-tests/init_change.rs, tests/init_language.rs   INI
+tests/init_change.rs, tests/init_language.rs, tests/init_profiles.rs   INI
 tests/init_graph.rs                  INI
 tests/harness.rs, tests/hook.rs      INI
 tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/init_evals.rs   INI
@@ -241,14 +242,14 @@ tests/import_speckit.rs, tests/import_openspec.rs   HYG
 tests/upgrade_cli.rs, tests/upgrade_review_fixes.rs   INI
 tests/upgrade_config.rs, tests/upgrade_pin.rs   COR
 tests/upgrade_first_pr.rs            DIA
-tests/upgrade_fixtures.rs            TST
+tests/upgrade_fixtures.rs, tests/upgrade_v061.rs   TST
 tests/golden/                        The agent of the command. INI: tests/golden/harness/ (also tests/golden/harness/old-skills/, the skill files that 0.6.1 wrote) and tests/golden/evals/. COR: tests/golden/upgrade/config/
 tests/fixtures/corpus/               TST
 tests/fixtures/brownfield/           INI
 tests/fixtures/layouts/              INI
 tests/fixtures/demo/                 INI
 tests/fixtures/transcripts*/         TRN
-tests/fixtures/upgrade/              TST: the projects of 0.4 and 0.5
+tests/fixtures/upgrade/              TST: the projects of 0.4, 0.5 and 0.6.1
 bench/tool/                          TST
 bench/retrieval/                     CTX
 bench/harness/                       TST

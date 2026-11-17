@@ -453,7 +453,7 @@ These keys select the parts of the harness that `init` writes besides the agents
 
 | Key | Values | Meaning |
 | --- | --- | --- |
-| `skills` | a list of the 11 names | The skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes the 7 skills that are on by default when `[change] policy` is not `none` (also the 4 others at the level `full`), and `[]` when it is `none`. An old name `intent`, `spec` or `plan` is an error (exit code 3): the message names the new names and `spec-dna upgrade`. |
+| `skills` | a list of the 11 names | The skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) when `[change] policy` is not `none` (all 11 at the level `full`, and 3 at most for the profile `lite`), and `[]` when it is `none`. `upgrade` renames an old name to the new names that are on by default. An old name `intent`, `spec` or `plan` is an error (exit code 3): the message names the new names and `spec-dna upgrade`. |
 | `review-md` | `true` or `false` | `true` writes `REVIEW.md` in the repository root. |
 | `protect-tests` | `"fix-branches"`, `"always"` or `"off"` | It selects when the hook `protect-tests` asks before an edit of a tracked test file. `"fix-branches"` asks only on a branch that starts with `fix/`. `"always"` removes the branch test. `"off"` writes no hook. An empty `[evidence] tests` list also writes no hook. |
 

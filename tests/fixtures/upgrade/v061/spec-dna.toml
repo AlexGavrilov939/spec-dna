@@ -1,0 +1,84 @@
+# spec-dna configuration (docs/config.md). `spec-dna init` wrote it; edit it freely.
+spec-dna = "0.6.1"
+profile = "standard"  # lite, standard or strict (docs/profiles.md)
+# install-source = "https://github.com/AlexGavrilov939/spec-dna"  # a local or private clone
+
+[evidence]
+tests = ["**/tests/**", "**/*_test.*"]  # test files with `covers: <doc-id>#<key>` tags
+
+[change]  # the change process (docs/config.md)
+policy = "three-class"  # "three-class", "two-class" or "none"
+gate = "block"  # "block", "warn" or "off"
+high-risk-layers = ["rules"]  # a delta in these layers makes a change higher-risk
+high-risk-paths = []  # globs from the repository root
+max-fanout = 8  # documents that one change can touch before SD905
+
+[evals]  # agent evals (docs/config.md)
+dir = "evals"
+min-pass-rate = 0.8  # the share of evals that must pass
+runs = 3  # the runs of an eval that sets no `runs`
+max-total-usd = 20  # eval run refuses or stops above this spend
+
+[harness]
+level = "lean"
+deny = ["NotebookEdit"]
+context-meter = [300000, 600000]
+subagent-meter = 250000
+fanout-cap = 10
+skills = ["intent", "spec", "plan", "review"]
+review-md = true
+protect-tests = "fix-branches"
+
+[harness.roles]
+orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
+advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
+verifier = { claude-code = "opus", effort = "high" }
+researcher = { claude-code = "haiku", effort = "high" }
+helper = { claude-code = "haiku" }
+
+[harness.efforts]
+sonnet = "high"
+
+# The layer graph (docs/config.md). `spec-dna layer add` adds a layer.
+[layers.foundation]
+types = ["product", "system", "terms"]
+files = ["product.md", "system.md", "terms.md"]
+max-chars = 30000
+
+[layers.pending]
+types = ["roadmap", "questions"]
+files = ["roadmap.md", "questions.md"]
+moves-to = ["intent"]
+linked-from = ["intent", "requirements", "decisions"]
+context = "on-request"
+max-docs = 2
+
+[layers.rules]
+types = ["rule"]
+max-docs = 30
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.decisions]
+types = ["decision"]
+
+[layers.intent]
+types = ["intent", "spec", "plan"]
+moves-to = ["rules", "requirements", "decisions"]
+keep = "until-finished"
+context = "on-request"
+max-docs = 30
+max-started = 3
+stale-days = 14
+
+[layers.incidents]
+types = ["incident"]
+moves-to = ["intent"]
+linked-from = ["rules", "decisions", "requirements", "intent"]
+context = "on-request"
+
+# 5 Markdown files, mostly documentation
+[[roots]]
+path = "docs"
+type = "mixed"

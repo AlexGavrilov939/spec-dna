@@ -75,9 +75,19 @@ grep -q '^Model team: ' CLAUDE.md || fail "init wrote no model-team line"
 for f in verifier Explore fallback-advisor model-team; do
     [ -f ".claude/agents/$f.md" ] || fail "init wrote no .claude/agents/$f.md"
 done
-# The skills that are on by default, REVIEW.md and the starter files of the
-# evals (the defaults of a new project). The "Start" block adds them to the commit.
-for f in .claude/skills/spec-dna-brainstorm/SKILL.md .claude/skills/spec-dna-write-plan/SKILL.md .claude/skills/spec-dna-review/SKILL.md REVIEW.md evals/check.sh evals/example.json evals/fixtures/example/notes.txt; do
+# The skills that are on by default (ADR 0023): `spec-dna skill list --json`
+# gives them, so the demo names none. Each one has its file, and no other skill
+# has one. Then REVIEW.md and the starter files of the evals (the defaults of a
+# new project). The "Start" block adds them to the commit.
+on_skills=$(spec-dna skill list --json | grep -o '"name":"[^"]*"[^}]*"default":"on"' | sed 's/^"name":"\([^"]*\)".*/\1/')
+on_count=0
+for name in $on_skills; do
+    [ -f ".claude/skills/spec-dna-$name/SKILL.md" ] || fail "init wrote no skill file for $name"
+    on_count=$((on_count + 1))
+done
+skill_files=$(find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -path '*/spec-dna-*' ! -path '.claude/skills/spec-dna/*' | wc -l | tr -d ' ')
+[ "$skill_files" = "$on_count" ] || fail "init wrote $skill_files skill files, and $on_count skills are on by default"
+for f in REVIEW.md evals/check.sh evals/example.json evals/fixtures/example/notes.txt; do
     [ -f "$f" ] || fail "init wrote no $f"
 done
 [ -e .github/workflows/agent-evals.yml ] && fail "init wrote the workflow of the evals for the CI answer none"

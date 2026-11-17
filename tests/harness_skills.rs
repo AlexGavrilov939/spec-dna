@@ -24,7 +24,8 @@ const NAMES: [&str; 11] = [
     "post-mortem",
 ];
 
-/// The 7 skills that are on by default.
+/// The 7 skills of D2. The tests that name them pin `skills`. A test of the
+/// defaults of `init` reads them with `default_skills`.
 const ON: [&str; 7] = [
     "brainstorm",
     "specify",
@@ -35,7 +36,7 @@ const ON: [&str; 7] = [
     "post-mortem",
 ];
 
-/// The 4 skills that are off by default.
+/// The 4 skills that D2 leaves off.
 const OFF: [&str; 4] = ["execute", "tdd", "verify", "debug"];
 
 /// The 3 names of 0.6 that end, and the paths of their files.
@@ -69,6 +70,20 @@ fn path(name: &str) -> String {
 
 fn paths(names: &[&str]) -> Vec<String> {
     names.iter().map(|n| path(n)).collect()
+}
+
+/// The skills that are on by default in this build (ADR 0023), in the order
+/// of D2. They come from `skill list --json` in a folder with no
+/// `spec-dna.toml`, so a new table of the release changes no test.
+fn default_skills() -> Vec<String> {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["skill", "list", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out.split("{\"name\":\"")
+        .skip(1)
+        .filter(|item| item.contains("\"default\":\"on\""))
+        .map(|item| item.split('"').next().unwrap().to_string())
+        .collect()
 }
 
 /// The `skills` list of a configuration, in the TOML form.
@@ -460,23 +475,29 @@ fn the_request_bytes_grow_by_the_listing_of_the_skills_only() {
 }
 
 #[test]
-fn a_new_project_gets_the_7_skills_that_are_on_and_a_preview_with_their_bytes() {
+fn a_new_project_gets_the_skills_that_are_on_by_default_and_their_bytes() {
+    let on = default_skills();
+    let on_refs: Vec<&str> = on.iter().map(String::as_str).collect();
     let r = Repo::new();
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
-    assert!(cfg.contains(&format!("skills = {}\n", list(&ON))), "{cfg}");
-    for n in ON {
-        assert!(r.dir.join(path(n)).exists(), "{n}");
+    assert!(
+        cfg.contains(&format!("skills = {}\n", list(&on_refs))),
+        "{cfg}"
+    );
+    for n in NAMES {
+        assert_eq!(
+            r.dir.join(path(n)).exists(),
+            on.iter().any(|o| o == n),
+            "{n}"
+        );
     }
-    for n in OFF {
-        assert!(!r.dir.join(path(n)).exists(), "{n}");
-    }
-    let listing: usize = ON
+    let listing: usize = on_refs
         .iter()
         .map(|n| listing_line(n, description_of(&r.read(&path(n)))).len())
         .sum();
-    assert!(listing <= 1250, "{listing}");
+    assert!(listing <= 1900, "{listing}");
 }
 
 #[test]
@@ -808,7 +829,7 @@ fn the_line_of_agents_md_names_the_rules_the_skill_command_and_the_approval_rule
 }
 
 #[test]
-fn level_full_proposes_the_4_skills_that_are_off() {
+fn level_full_proposes_the_11_skills_and_lean_the_skills_that_are_on_by_default() {
     let r = Repo::new();
     let (code, out, err) = init_with(&r, "harness = \"full\"\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
@@ -817,16 +838,18 @@ fn level_full_proposes_the_4_skills_that_are_off() {
         cfg.contains(&format!("skills = {}\n", list(&NAMES))),
         "{cfg}"
     );
-    for n in OFF {
+    for n in NAMES {
         assert!(r.dir.join(path(n)).exists(), "{n}");
     }
-    // The level `lean` proposes the 7 skills that are on.
+    // The level `lean` proposes the skills that are on by default.
+    let on = default_skills();
+    let on_refs: Vec<&str> = on.iter().map(String::as_str).collect();
     let r = Repo::new();
     let (code, out, err) = init_with(&r, "harness = \"lean\"\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         r.read("spec-dna.toml")
-            .contains(&format!("skills = {}\n", list(&ON)))
+            .contains(&format!("skills = {}\n", list(&on_refs)))
     );
 }
 

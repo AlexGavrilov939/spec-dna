@@ -217,7 +217,7 @@ If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the 
 /// The `description` of a skill. It is in each request, so it is one short
 /// sentence. It starts with the scope of D5 and then the trigger of D2. The limits of D6 are 160
 /// characters for one description, 1,900 bytes for the listing of the 11
-/// skills and 1,250 bytes for the listing of the 7 skills that are on.
+/// skills and 1,250 bytes for the listing of the 7 skills of D2.
 pub fn description(skill: Skill) -> &'static str {
     match skill {
         Skill::Brainstorm => {
@@ -336,13 +336,19 @@ mod tests {
     fn the_listings_keep_the_budgets_of_d6() {
         let all = listing(&Skill::ALL);
         assert!(all <= 1900, "the 11 skills: {all} bytes");
-        let on = listing(&Skill::default_on_list());
-        assert!(on <= 1250, "the 7 skills on: {on} bytes");
+        // D6 is a budget for the 7 skills of D2.
+        let d2: Vec<Skill> = Skill::ALL.into_iter().filter(|s| s.in_d2()).collect();
+        let on = listing(&d2);
+        assert!(on <= 1250, "the 7 skills of D2: {on} bytes");
     }
 
     #[test]
-    fn the_skills_that_are_on_by_default_are_the_7_of_d2() {
-        let on: Vec<&str> = Skill::default_on_list().iter().map(|s| s.key()).collect();
+    fn the_skills_of_d2_are_the_7_that_the_design_turns_on() {
+        let on: Vec<&str> = Skill::ALL
+            .iter()
+            .filter(|s| s.in_d2())
+            .map(|s| s.key())
+            .collect();
         assert_eq!(
             on,
             [

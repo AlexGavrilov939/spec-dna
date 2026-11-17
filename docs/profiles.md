@@ -28,7 +28,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `changes` | SD926 (an agent or bot address in `approvers`) | warning | warning | warning |
 | `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted), SD922 (question open) | warning | error | error |
 
-The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) is always an error. SD506 (an eval file that is not valid, or an absent `check.sh`) is in no group, so it is an error in every profile. SD507 (a skill that has no verdict `on`) is in no group too. It is off in `lite` and `standard`, and a warning in `strict`. Only a rule for SD506 or SD507 in `[rules]` can change them. SD612 (a link into the folder of a change) is also in no group: it is a warning in each profile, and a rule for SD612 changes it.
+The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) is always an error. SD506 (an eval file that is not valid, or an absent `check.sh`) is in no group, so it is an error in every profile. SD507 (a skill in `skills` that is off by default, see [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) is in no group too. It is off in `lite` and `standard`, and a warning in `strict`. Only a rule for SD506 or SD507 in `[rules]` can change them. SD612 (a link into the folder of a change) is also in no group: it is a warning in each profile, and a rule for SD612 changes it.
 
 The rule groups `layers` and `changes` are new in 0.6.0. The word `rules` still names the severity table of the file. A layer named `rules` is not that table: `[rules]` is the severity table, and `[layers.rules]` is the layer.
 
@@ -59,6 +59,29 @@ Choose a profile for the stage of the project:
 - `strict`: a mature corpus. Drift, requirements without evidence and every budget diagnostic fail `check`. Too many started changes, a class that is too low and a truth that changed without a change fail `check` too. The requirement lint gives warnings.
 
 In `standard`, a mature corpus that links no tests yet gets one SD608 for each active requirement. `check` prints more than 10 warnings of one code as one count. The gate against the base reports only the new warnings. To disable them until the project links tests, set `[rules] evidence = "off"`.
+
+## What `init` writes for each profile
+
+`spec-dna init` expands the profile of a new project into keys, so the file shows the whole workflow (ADR 0017 and [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The profile has no hidden effect: the binary reads the keys, and the answer to each question replaces its key.
+
+| Key | lite | standard | strict |
+| --- | --- | --- | --- |
+| `[change] policy` | `two-class` | `three-class` | `three-class` |
+| `[change] gate` | `warn` | `block` | `block` |
+| `[change] approval` | `branch`, with the e-mail of git as the approver | `branch`, as `lite` | `base` |
+| `[harness] skills` at the level `lean` | `brainstorm`, `write-plan` and `finish`, each only if it is on by default | each skill that is on by default | each skill that is on by default |
+| `[harness] skills` at the level `full` | the 11 skills | the 11 skills | the 11 skills |
+| `[harness] review-md` | `false` | `true` | `true` |
+| `[harness] protect-tests` | `off` | `fix-branches` (`off` for the link style `verified-by`) | as `standard` |
+| `[evals]` (question 14) | `none` | `skeleton` | `skeleton`, and a note on `eval pack` |
+| `[harness] protect-approvals` | not written | not written | `true` |
+
+- A skill is on by default when `spec-dna skill list` says so. The rule of [ADR 0023](adr/0023-default-skills-from-the-release-table.md) reads the 7 skills of the design, the verdict of the skill in the table of the release, and a constant of the release. A skill outside the 7 can be on by default when its verdict is `on`. `full` ignores the verdicts: a person chooses it.
+- With the policy `none`, `init` writes no skill.
+- `lite`, `standard` and `strict` differ in the approval, the hook and the severities, and `strict` also reads the verdicts. `standard` and `strict` have the same rule for the skills.
+- `strict` writes no eval pack: the pack has 57 evals in 812 files. `init` prints a note with the command `spec-dna eval pack`, which writes the pack before `spec-dna eval run --ab`.
+- An answer to question 4, 5, 12 or 14 replaces the value of the table.
+- `init --reconfigure` keeps the current values. A part that the file does not set (`skills`, `review-md` or `protect-tests`) gets the default of the profile of the file. A new answer to question 1 changes the severities, and `init` prints a note. For the profile `strict`, `init` also writes `approval = "base"` (the key `approvers` stays, and the note says so) and `protect-approvals = true`, because `strict` reads the approvals of the base only (ADR 0018). `upgrade` applies no preset.
 
 ## Overrides
 

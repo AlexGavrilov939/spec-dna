@@ -6,21 +6,61 @@ mod common;
 
 use common::Repo;
 
-/// The 11 names, with the kind, the stage and the default of each, in the
-/// order of D2.
-const SKILLS: [(&str, &str, &str, &str); 11] = [
-    ("brainstorm", "stage", "plan", "on"),
-    ("specify", "stage", "design", "on"),
-    ("clarify", "stage", "design", "on"),
-    ("write-plan", "stage", "build", "on"),
-    ("execute", "stage", "build", "off"),
-    ("tdd", "stage", "test", "off"),
-    ("review", "stage", "deploy", "on"),
-    ("verify", "stage", "deploy", "off"),
-    ("finish", "stage", "closed", "on"),
-    ("debug", "event", "-", "off"),
-    ("post-mortem", "event", "-", "on"),
+/// The 11 names, with the kind, the stage and a flag for the 7 skills of D2,
+/// in the order of D2. The default of a skill follows the rule of ADR 0023,
+/// so the tests read it with `expected_defaults`.
+const SKILLS: [(&str, &str, &str, bool); 11] = [
+    ("brainstorm", "stage", "plan", true),
+    ("specify", "stage", "design", true),
+    ("clarify", "stage", "design", true),
+    ("write-plan", "stage", "build", true),
+    ("execute", "stage", "build", false),
+    ("tdd", "stage", "test", false),
+    ("review", "stage", "deploy", true),
+    ("verify", "stage", "deploy", false),
+    ("finish", "stage", "closed", true),
+    ("debug", "event", "-", false),
+    ("post-mortem", "event", "-", true),
 ];
+
+/// The default of each skill (`on` or `off`), in the order of D2, for each
+/// value of the constant of ADR 0023: the first list is for `true`, and the
+/// second is for `false`. The verdicts come from the table of this build
+/// (`eval verdict --release`), so a new table changes no test.
+fn expected_defaults() -> [Vec<&'static str>; 2] {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["eval", "verdict", "--release", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let verdict = |name: &str| -> Option<String> {
+        let key = format!("{{\"name\":\"{name}\",\"verdict\":\"");
+        out.find(&key)
+            .map(|at| out[at + key.len()..].split('"').next().unwrap().to_string())
+    };
+    let word = |on: bool| if on { "on" } else { "off" };
+    let list = |needs_on: bool| -> Vec<&'static str> {
+        SKILLS
+            .iter()
+            .map(|(name, _, _, in_d2)| {
+                let v = verdict(name);
+                let on = v.as_deref() == Some("on")
+                    || (!needs_on && *in_d2 && v.as_deref() != Some("off"));
+                word(on)
+            })
+            .collect()
+    };
+    [list(true), list(false)]
+}
+
+/// The `default` of each item of the JSON of `skill list`.
+fn defaults_of_json(out: &str) -> Vec<String> {
+    out.split("{\"name\":\"")
+        .skip(1)
+        .map(|item| {
+            let at = item.find("\"default\":\"").expect("a default") + 11;
+            item[at..].split('"').next().unwrap().to_string()
+        })
+        .collect()
+}
 
 fn project(harness: &str) -> Repo {
     let r = Repo::with_config(&format!("\n[[roots]]\npath = \"docs\"\n\n{harness}"));
@@ -47,10 +87,18 @@ fn list_prints_one_line_for_each_skill_with_no_configuration() {
         .map(|l| l.split_whitespace().collect())
         .collect();
     assert_eq!(lines.len(), 11, "{out}");
-    for (l, (name, kind, stage, default)) in lines.iter().zip(SKILLS) {
-        // The name, the kind, the stage, the state and the default.
-        assert_eq!(l, &[name, kind, stage, "-", default], "{out}");
+    for (l, (name, kind, stage, _)) in lines.iter().zip(SKILLS) {
+        // The name, the kind, the stage and the state. The default is checked
+        // below.
+        assert_eq!(l[..4], [name, kind, stage, "-"], "{out}");
     }
+    // The default column is the default of one value of the constant.
+    let defaults: Vec<&str> = lines.iter().map(|l| l[4]).collect();
+    assert!(
+        expected_defaults().contains(&defaults),
+        "{defaults:?} is the default of no value of the constant: {:?}\n{out}",
+        expected_defaults()
+    );
 }
 
 #[test]
@@ -86,16 +134,23 @@ fn list_json_has_the_fields_of_the_contract() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.starts_with(
-            "{\"skills\":[{\"name\":\"brainstorm\",\"kind\":\"stage\",\"stage\":\"plan\",\"state\":null,\"default\":\"on\"},"
+            "{\"skills\":[{\"name\":\"brainstorm\",\"kind\":\"stage\",\"stage\":\"plan\",\"state\":null,\"default\":\""
         ),
         "{out}"
     );
     // An event skill has no stage.
     assert!(
         out.contains(
-            "{\"name\":\"debug\",\"kind\":\"event\",\"stage\":null,\"state\":null,\"default\":\"off\"}"
+            "{\"name\":\"debug\",\"kind\":\"event\",\"stage\":null,\"state\":null,\"default\":\""
         ),
         "{out}"
+    );
+    // The field `default` is the default of one value of the constant.
+    let defaults = defaults_of_json(&out);
+    assert!(
+        expected_defaults().iter().any(|e| *e == defaults),
+        "{defaults:?} is the default of no value of the constant: {:?}",
+        expected_defaults()
     );
     assert_eq!(out.matches("\"name\":").count(), 11, "{out}");
     let r = project("[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\"]\n");

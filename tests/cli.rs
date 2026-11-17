@@ -808,6 +808,21 @@ fn lint_severity_follows_the_root() {
     );
 }
 
+/// The skills that are on by default in this build, from `skill list --json`
+/// in a folder with no `spec-dna.toml`. A test that names the files of the
+/// default skills reads them here, so a new table of the release changes no
+/// test.
+fn default_skills() -> Vec<String> {
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["skill", "list", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out.split("{\"name\":\"")
+        .skip(1)
+        .filter(|item| item.contains("\"default\":\"on\""))
+        .map(|item| item.split('"').next().unwrap().to_string())
+        .collect()
+}
+
 #[test]
 fn fresh_project_init_check_uninstall() {
     let r = Repo::empty();
@@ -815,7 +830,13 @@ fn fresh_project_init_check_uninstall() {
     assert_eq!(code, 0, "{err}");
     assert!(
         out.starts_with(
-            "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/Explore.md\nwrote .claude/skills/spec-dna-brainstorm/SKILL.md\nwrote .claude/skills/spec-dna-specify/SKILL.md\nwrote .claude/skills/spec-dna-clarify/SKILL.md\nwrote .claude/skills/spec-dna-write-plan/SKILL.md\nwrote .claude/skills/spec-dna-review/SKILL.md\nwrote .claude/skills/spec-dna-finish/SKILL.md\nwrote .claude/skills/spec-dna-post-mortem/SKILL.md\nwrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: "
+            &format!(
+                "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/Explore.md\n{}wrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: ",
+                default_skills()
+                    .iter()
+                    .map(|n| format!("wrote .claude/skills/spec-dna-{n}/SKILL.md\n"))
+                    .collect::<String>()
+            )
         ),
         "{out}"
     );
@@ -874,10 +895,32 @@ fn fresh_project_init_check_uninstall() {
         assert_eq!(r.read(p), t, "{p} is unchanged");
     }
     let status = git(&r.dir, &["status", "--porcelain"]);
-    assert_eq!(
-        status,
-        " D .claude/agents/Explore.md\n D .claude/agents/fallback-advisor.md\n D .claude/agents/model-team.md\n D .claude/agents/verifier.md\n D .claude/settings.json\n D .claude/skills/spec-dna-brainstorm/SKILL.md\n D .claude/skills/spec-dna-clarify/SKILL.md\n D .claude/skills/spec-dna-finish/SKILL.md\n D .claude/skills/spec-dna-post-mortem/SKILL.md\n D .claude/skills/spec-dna-review/SKILL.md\n D .claude/skills/spec-dna-specify/SKILL.md\n D .claude/skills/spec-dna-write-plan/SKILL.md\n D .claude/skills/spec-dna/SKILL.md\n D AGENTS.md\n D CLAUDE.md\n D REVIEW.md\n D evals/check.sh\n D evals/example.json\n D evals/fixtures/example/notes.txt\n D spec-dna.toml\n"
-    );
+    let mut deleted: Vec<String> = [
+        ".claude/agents/Explore.md",
+        ".claude/agents/fallback-advisor.md",
+        ".claude/agents/model-team.md",
+        ".claude/agents/verifier.md",
+        ".claude/settings.json",
+        ".claude/skills/spec-dna/SKILL.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "REVIEW.md",
+        "evals/check.sh",
+        "evals/example.json",
+        "evals/fixtures/example/notes.txt",
+        "spec-dna.toml",
+    ]
+    .iter()
+    .map(|p| p.to_string())
+    .chain(
+        default_skills()
+            .iter()
+            .map(|n| format!(".claude/skills/spec-dna-{n}/SKILL.md")),
+    )
+    .collect();
+    deleted.sort();
+    let want: String = deleted.iter().map(|p| format!(" D {p}\n")).collect();
+    assert_eq!(status, want);
 }
 
 #[test]
