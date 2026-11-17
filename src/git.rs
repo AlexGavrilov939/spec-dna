@@ -475,6 +475,65 @@ impl Git {
         (!s.is_empty()).then_some(s)
     }
 
+    /// True if `path` is tracked, HEAD has it, and its text is the same in
+    /// HEAD, in the index and in the working tree. A repository with no
+    /// commit gives `false`.
+    pub fn is_clean_in_head(&self, path: &str) -> Result<bool, String> {
+        let in_head = self
+            .cmd(&["cat-file", "-e", &format!("HEAD:{path}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("cannot run git: {e}"))?
+            .success();
+        if !in_head {
+            return Ok(false);
+        }
+        let spec = format!(":(literal){path}");
+        let out = self.run(&[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=all",
+            "--",
+            &spec,
+        ])?;
+        Ok(out.is_empty())
+    }
+
+    /// The e-mail of the author of the next commit (`git var
+    /// GIT_AUTHOR_IDENT`): the environment variables `GIT_AUTHOR_*` count.
+    pub fn author_email(&self) -> Result<String, String> {
+        let out = self.run(&["var", "GIT_AUTHOR_IDENT"])?;
+        let ident = String::from_utf8_lossy(&out);
+        let start = ident.rfind('<').ok_or("git gave no author e-mail")?;
+        let end = ident[start..]
+            .find('>')
+            .ok_or("git gave no author e-mail")?;
+        Ok(ident[start + 1..start + end].to_string())
+    }
+
+    /// Commits the file `path` alone (`git commit --only`). Other staged
+    /// changes stay staged and out of the commit. The command passes no
+    /// `--no-verify` and no `--no-gpg-sign`, so the hooks and the signing of
+    /// the person apply. It returns the id of the new commit, or the output of
+    /// git.
+    pub fn commit_only(&self, message: &str, path: &str) -> Result<String, String> {
+        let spec = format!(":(literal){path}");
+        let out = self
+            .cmd(&["commit", "--only", "-m", message, "--", &spec])
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        if !out.status.success() {
+            let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&out.stderr));
+            return Err(text.trim().to_string());
+        }
+        let id = self.run(&["rev-parse", "HEAD"])?;
+        Ok(String::from_utf8_lossy(&id).trim().to_string())
+    }
+
     /// Returns true if `ancestor` is `descendant` or one of its ancestors. An
     /// unknown revision gives false.
     pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {

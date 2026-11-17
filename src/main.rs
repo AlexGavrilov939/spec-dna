@@ -18,6 +18,7 @@ macro_rules! eprintln {
 
 mod adapters;
 mod approval;
+mod approve;
 mod change;
 mod check;
 mod cite;
@@ -235,6 +236,22 @@ range `<low>-<high>`): put the line in the commit message, and keep it in the
 squash message. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
+    ),
+    (
+        "approve",
+        "approve <slug> intent|spec|plan [--json]",
+        "Sets the status line of one artifact of the change <slug> and commits
+that file alone: intent to accepted, spec or plan to approved. It is for a
+person: run it in a terminal of your own. The file must be tracked and have
+the text of HEAD. The status must be draft. An intent needs a class. A spec
+needs an accepted intent. A plan needs an approved spec for a higher-risk
+change, and an accepted intent for a routine change. With approval = branch,
+the author of the commit (git user.email, or GIT_AUTHOR_EMAIL) must be in
+[change] approvers. The commit message is `docs: approve the <artifact> of
+<slug>`. The command passes no --no-verify and no --no-gpg-sign. If git
+fails to commit, the file gets its old text back. An artifact that already
+has the approval status needs no commit. Exit codes: 1 a refusal, 2 usage, 3
+pin or configuration, 4 git or write error, 5 no folder or no file.",
     ),
     (
         "next",
@@ -814,6 +831,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
         "finish" => finish(&Repo::discover(&cwd)?, &a),
+        "approve" => approve(&Repo::discover(&cwd)?, &a),
         "next" => next(&Repo::discover(&cwd)?, &a),
         "status" => status(&Repo::discover(&cwd)?, &a),
         "log" => log(&Repo::discover(&cwd)?, &a),
@@ -2879,6 +2897,13 @@ fn next(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let cfg = repo.load_config()?;
     warn_pin(&cfg);
     stage::next(repo, &cfg, slug, a.base.as_deref(), a.json, !a.no_cache)
+}
+
+/// `approve <slug> intent|spec|plan`: the status commit of a person
+/// (`approve.rs`).
+fn approve(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 2, 2)?;
+    approve::run(repo, &a.positional[0], &a.positional[1], a.json)
 }
 
 /// The areas of the group `name` of `spec-dna.toml`. An unknown group is a

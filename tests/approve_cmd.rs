@@ -213,15 +213,15 @@ fn approve_keeps_other_staged_changes_out_of_the_commit() {
 #[test]
 fn approve_keeps_a_crlf_line_end_and_a_quoted_value() {
     let r = start_branch();
-    let text = intent_with("status: \"draft\"  # the owner decides\r\nclass: higher-risk\r\n")
-        .replace("\n#", "\r\n#");
+    let text = intent_with("status: \"draft\"  # the owner decides\nclass: higher-risk\n")
+        .replace('\n', "\r\n");
     r.git(&["config", "core.autocrlf", "false"]);
     step(&r, AGENT, "intent draft", &[(INTENT, &text)]);
     let (code, out, err) = approve(&r, APPROVER, &["valve-timeout", "intent"]);
     assert_eq!(code, 0, "{out}{err}");
     let want = text.replacen("\"draft\"", "\"accepted\"", 1);
     assert_eq!(r.read(INTENT), want);
-    // A single-quoted value and an indented front matter keep their form.
+    // A single-quoted value keeps its form.
     let r = start_branch();
     let text = intent_with("status: 'draft'\nclass: routine\n");
     step(&r, AGENT, "intent draft", &[(INTENT, &text)]);
