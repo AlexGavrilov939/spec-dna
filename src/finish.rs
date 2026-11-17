@@ -704,43 +704,67 @@ fn new_document_problem(cx: &Ctx, ch: &Change, d: &Delta) -> Option<String> {
     None
 }
 
-/// Step 0. Each reference from a document outside the folder to a document or a
-/// file in the folder: a Markdown link or image, `[[id]]`, `depends-on`,
-/// `supersedes` and `from`. A stub and a generated index are not sources. The
-/// locked text of an accepted decision is not a source: its text cannot change
-/// (SD405), so SD101 and SD102 do not report it either. The front matter is
-/// not locked.
-fn inbound(cx: &Ctx) -> Vec<Diag> {
-    let head = cx.head;
-    let folder = cx.folder;
+/// A reference from a document outside the folder of a change to a document or a
+/// file in that folder (`refs_into`).
+pub(crate) struct RefInto {
+    /// The document that has the reference.
+    pub doc: u32,
+    pub line: u32,
+    /// `UnresolvedReference` for an id and a field, `UnresolvedLink` for a
+    /// Markdown link or image.
+    pub code: Code,
+    /// The target as the text writes it.
+    pub target: String,
+    /// The place of the folder in the list that `refs_into` got.
+    pub folder: usize,
+    /// The document that the reference names, if it names one.
+    pub to: Option<u32>,
+}
+
+/// Each reference from a document outside a folder to a document or a file in
+/// it: a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` and
+/// `from`. A stub and a generated index are not sources. The locked text of an
+/// accepted decision is not a source: its text cannot change (SD405), so SD101
+/// and SD102 do not report it either. The front matter is not locked. Step 0
+/// of `finish` gives one folder, and SD612 (`check`) gives all the folders of
+/// the changes. One pass over the references resolves each target once.
+pub(crate) fn refs_into(config: &Config, head: &Corpus, folders: &[&str]) -> Vec<RefInto> {
     let mut out = Vec::new();
-    let hit = |d: &Doc, line: u32, code: Code, target: &str, out: &mut Vec<Diag>| {
-        out.push(as_error(check::diag(
-            d,
-            line,
-            code,
-            target,
-            format!(
-                "`{target}` names the folder `{folder}` of the change, and `finish` deletes the folder"
-            ),
-        )));
+    // The first folder that holds the path and does not hold the source.
+    let folder_of = |source: &str, path: &str| {
+        folders
+            .iter()
+            .position(|f| in_folder(f, path) && !in_folder(f, source))
     };
-    for d in &head.docs {
-        if in_folder(folder, &d.path) || d.moved_to.is_some() || d.generated.is_some() {
+    for (di, d) in head.docs.iter().enumerate() {
+        if d.moved_to.is_some() || d.generated.is_some() {
             continue;
         }
-        let editable = check::editable_chunks(cx.config, d);
+        let editable = check::editable_chunks(config, d);
         let locked = |line: u32| {
             editable
                 .as_ref()
                 .is_some_and(|e| check::in_locked_text(d, e, line))
         };
-        let names_folder = |r: Res| match r {
-            Res::Found(t, _, _) => in_folder(folder, &head.docs[t as usize].path),
-            Res::Ambiguous(v) => v
-                .iter()
-                .any(|&t| in_folder(folder, &head.docs[t as usize].path)),
-            _ => false,
+        let mut hit = |line: u32, code: Code, target: &str, folder: usize, to: Option<u32>| {
+            out.push(RefInto {
+                doc: di as u32,
+                line,
+                code,
+                target: target.to_string(),
+                folder,
+                to,
+            });
+        };
+        // The folder and the document of an id.
+        let by_id = |r: Res| match r {
+            Res::Found(t, _, _) => {
+                folder_of(&d.path, &head.docs[t as usize].path).map(|f| (f, Some(t)))
+            }
+            Res::Ambiguous(v) => v.iter().find_map(|&t| {
+                folder_of(&d.path, &head.docs[t as usize].path).map(|f| (f, Some(t)))
+            }),
+            _ => None,
         };
         for r in &d.parsed.refs {
             if locked(r.line) {
@@ -748,13 +772,13 @@ fn inbound(cx: &Ctx) -> Vec<Diag> {
             }
             match r.kind {
                 RefKind::Wiki => {
-                    if names_folder(head.resolve(&r.target)) {
-                        hit(d, r.line, Code::UnresolvedReference, &r.target, &mut out);
+                    if let Some((f, to)) = by_id(head.resolve(&r.target)) {
+                        hit(r.line, Code::UnresolvedReference, &r.target, f, to);
                     }
                 }
                 RefKind::Link | RefKind::Image => {
-                    if link_into(head, &d.path, &r.target, folder) {
-                        hit(d, r.line, Code::UnresolvedLink, &r.target, &mut out);
+                    if let Some((f, to)) = link_into(head, &d.path, &r.target, &folder_of) {
+                        hit(r.line, Code::UnresolvedLink, &r.target, f, to);
                     }
                 }
             }
@@ -765,33 +789,58 @@ fn inbound(cx: &Ctx) -> Vec<Diag> {
             .chain(&d.depends_on)
             .chain(d.from.iter());
         for (t, line) in fields {
-            if names_folder(head.resolve(t)) {
-                hit(d, *line, Code::UnresolvedReference, t, &mut out);
+            if let Some((f, to)) = by_id(head.resolve(t)) {
+                hit(*line, Code::UnresolvedReference, t, f, to);
             }
         }
     }
     out
 }
 
-/// True if a Markdown link resolves to a path in the folder. A link to the
-/// folder itself counts.
-fn link_into(c: &Corpus, from: &str, target: &str, folder: &str) -> bool {
-    if matches!(
-        c.resolve_link(from, target),
-        LinkRes::External | LinkRes::SelfAnchor(_) | LinkRes::Missing(_)
-    ) {
-        return false;
-    }
+/// Step 0. Each reference into the folder, as an error of `finish`.
+fn inbound(cx: &Ctx) -> Vec<Diag> {
+    let folder = cx.folder;
+    refs_into(cx.config, cx.head, &[folder])
+        .into_iter()
+        .map(|r| {
+            as_error(check::diag(
+                &cx.head.docs[r.doc as usize],
+                r.line,
+                r.code,
+                &r.target,
+                format!(
+                    "`{}` names the folder `{folder}` of the change, and `finish` deletes the folder",
+                    r.target
+                ),
+            ))
+        })
+        .collect()
+}
+
+/// The folder that a Markdown link names, and the document that it resolves
+/// to. A link to the folder itself counts. `folder_of` gives the folder of a
+/// path, for the document `from`.
+fn link_into(
+    c: &Corpus,
+    from: &str,
+    target: &str,
+    folder_of: &dyn Fn(&str, &str) -> Option<usize>,
+) -> Option<(usize, Option<u32>)> {
+    let to = match c.resolve_link(from, target) {
+        LinkRes::External | LinkRes::SelfAnchor(_) | LinkRes::Missing(_) => return None,
+        LinkRes::File(_, to, _) | LinkRes::Dir(to) => to,
+    };
     let path = target.split(['#', '?']).next().unwrap_or("").trim();
     if path.is_empty() {
-        return false;
+        return None;
     }
     let base = if path.starts_with('/') {
         ""
     } else {
         parent(from)
     };
-    join(base, path).is_some_and(|p| in_folder(folder, &p))
+    let joined = join(base, path)?;
+    folder_of(from, &joined).map(|f| (f, to))
 }
 
 /// One edit of a text: the byte range to replace, and the new text. An insert

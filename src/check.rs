@@ -121,9 +121,61 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
         }
     }
     let mut out = apply_severity(config, out);
+    // SD612 skips a reference that SD611 or SD901 reports in this run, so it
+    // reads the diagnostics after their severity.
+    let into_change = links_into_changes(config, c, &out);
+    out.extend(apply_severity(config, into_change));
     out.extend(layer_limits(config, c, &layers));
     out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
     out.sort();
+    out
+}
+
+/// SD612: a reference from a document outside the folder of a change into the
+/// folder, that step 0 of `finish` stops on. The references and the exceptions
+/// are those of step 0 (`finish::refs_into`). `reported` has the diagnostics of
+/// the run after their severity. A reference that SD611 or SD901 reports (the
+/// same document and the same target) gives no SD612, so one reference gives
+/// one warning. When SD901 is off, SD612 reports the reference.
+fn links_into_changes(config: &Config, c: &Corpus, reported: &[Diag]) -> Vec<Diag> {
+    let changes = crate::change::collect(c);
+    let folders: Vec<&str> = changes
+        .iter()
+        .filter(|ch| crate::finish::valid_slug(&ch.slug))
+        .map(|ch| ch.dir.as_str())
+        .collect();
+    if folders.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<Diag> = Vec::new();
+    for r in crate::finish::refs_into(config, c, &folders) {
+        let d = &c.docs[r.doc as usize];
+        if let Some(to) = r.to {
+            let id = &c.docs[to as usize].id;
+            if reported.iter().any(|x| {
+                matches!(x.code, Code::DecisionLinksChange | Code::LinkDirection)
+                    && x.path == d.path
+                    && x.target == *id
+            }) {
+                continue;
+            }
+        }
+        let folder = folders[r.folder];
+        let slug = folder.rsplit('/').next().unwrap_or(folder);
+        let new = diag(
+            d,
+            r.line,
+            Code::LinkIntoChange,
+            r.target.clone(),
+            format!(
+                "`{}` names the folder `{folder}` of the change `{slug}`, and `finish {slug}` stops on it; name the change as plain text",
+                r.target
+            ),
+        );
+        if !out.contains(&new) {
+            out.push(new);
+        }
+    }
     out
 }
 

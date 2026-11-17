@@ -793,3 +793,118 @@ fn the_names_of_sd611_and_sd405_changed_and_the_codes_did_not() {
     let text = r3.run(&["check"]);
     assert!(text.contains("error SD405 decision-locked: "), "{text}");
 }
+
+// SD612
+
+/// The lines of the output of `check` that carry a code.
+fn code_lines<'a>(out: &'a str, code: &str) -> Vec<&'a str> {
+    out.lines()
+        .filter(|l| l.contains(&format!(" {code} ")))
+        .collect()
+}
+
+/// The default graph (no `[change]` table) with the change `alpha`. The change
+/// `beta` and a roadmap link it, and so does a rule.
+fn links_into_alpha(profile: &str) -> Repo {
+    let r = Repo::new(profile, "", "", "");
+    r.write(
+        "docs/intent/alpha/intent.md",
+        &doc("intent", "draft", "", INTENT),
+    );
+    r.write(
+        "docs/intent/beta/intent.md",
+        &doc(
+            "intent",
+            "draft",
+            "",
+            "## Intent\n\nAfter [[intent/alpha/intent]].",
+        ),
+    );
+    r.write(
+        "docs/roadmap.md",
+        &doc("roadmap", "active", "", "- [Alpha](intent/alpha/intent.md)"),
+    );
+    r.write(
+        "docs/rules/pump.md",
+        &doc(
+            "rule",
+            "active",
+            "",
+            "## Rules\n\n- See [Alpha](../intent/alpha/intent.md).",
+        ),
+    );
+    r
+}
+
+#[test]
+fn a_link_into_a_change_folder_gives_sd612_once() {
+    let out = links_into_alpha("standard").check();
+    let found = code_lines(&out, "SD612");
+    assert_eq!(found.len(), 2, "{out}");
+    assert!(
+        found
+            .iter()
+            .any(|l| l.starts_with("docs/intent/beta/intent.md:")),
+        "{out}"
+    );
+    assert!(
+        found.iter().any(|l| l.starts_with("docs/roadmap.md:")),
+        "{out}"
+    );
+    assert!(
+        found.iter().all(|l| l.contains(": warning SD612 link-into-change: ")
+            && l.contains("names the folder `docs/intent/alpha` of the change `alpha`, and `finish alpha` stops on it; name the change as plain text")),
+        "{out}"
+    );
+    // The rule gives SD901, and no SD612.
+    assert_eq!(code_lines(&out, "SD901").len(), 1, "{out}");
+    assert!(
+        !found.iter().any(|l| l.starts_with("docs/rules/pump.md:")),
+        "{out}"
+    );
+    // SD901 is off in `lite`, so SD612 reports the rule too.
+    let out = links_into_alpha("lite").check();
+    assert_eq!(code_lines(&out, "SD612").len(), 3, "{out}");
+    assert!(code_lines(&out, "SD901").is_empty(), "{out}");
+}
+
+#[test]
+fn sd612_is_a_warning_in_each_profile_and_a_rule_changes_it() {
+    for profile in ["lite", "standard", "strict"] {
+        let out = links_into_alpha(profile).check();
+        assert_eq!(severity(&out, "SD612"), Some("warning"), "{profile}: {out}");
+    }
+    let off = Repo::new("standard", "", "[rules]\nSD612 = \"off\"\n", "");
+    let r = links_into_alpha("standard");
+    let config = std::fs::read_to_string(off.dir.join("spec-dna.toml")).unwrap();
+    std::fs::write(r.dir.join("spec-dna.toml"), config).unwrap();
+    assert_eq!(severity(&r.check(), "SD612"), None);
+    let strict = Repo::new("standard", "", "[rules]\nSD612 = \"error\"\n", "");
+    let config = std::fs::read_to_string(strict.dir.join("spec-dna.toml")).unwrap();
+    std::fs::write(r.dir.join("spec-dna.toml"), config).unwrap();
+    assert_eq!(severity(&r.check(), "SD612"), Some("error"));
+}
+
+#[test]
+fn sd612_has_no_report_for_a_link_inside_the_folder_or_a_plain_name() {
+    let r = Repo::new("standard", "", "", "");
+    r.write(
+        "docs/intent/alpha/intent.md",
+        &doc(
+            "intent",
+            "draft",
+            "",
+            "## Intent\n\nSee [the spec](spec.md).",
+        ),
+    );
+    r.write(
+        "docs/intent/alpha/spec.md",
+        &doc("spec", "draft", "", "## Delta\n\n- None."),
+    );
+    r.write(
+        "docs/roadmap.md",
+        &doc("roadmap", "active", "", "- The change `alpha` is open."),
+    );
+    let out = r.check();
+    assert!(code_lines(&out, "SD612").is_empty(), "{out}");
+}
