@@ -91,6 +91,43 @@ pub fn task_line(line: &str) -> Option<TaskLine> {
     })
 }
 
+/// The text of a task and its path, for a line of `tasks.md` (decision I9):
+/// the marks `[P]` and `[US1]` go, and the path is the token after the last
+/// ` in ` that has a `/` or a `.`, with no white space and with a final group
+/// in parentheses removed.
+pub fn plan_task(rest: &str) -> (String, Option<String>) {
+    let words: Vec<&str> = rest
+        .split_whitespace()
+        .filter(|w| {
+            !(*w == "[P]"
+                || w.strip_prefix("[US")
+                    .and_then(|d| d.strip_suffix(']'))
+                    .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())))
+        })
+        .collect();
+    let rest = words.join(" ");
+    if let Some(i) = rest.rfind(" in ") {
+        let mut cand = rest[i + 4..].trim();
+        if cand.ends_with(')')
+            && let Some(p) = cand.rfind(" (")
+        {
+            cand = cand[..p].trim_end();
+        }
+        let cand = cand
+            .strip_suffix('.')
+            .filter(|c| !c.is_empty())
+            .unwrap_or(cand);
+        if !cand.is_empty()
+            && !cand.contains(char::is_whitespace)
+            && !cand.contains('`')
+            && cand.contains(['/', '.'])
+        {
+            return (rest[..i].trim_end().to_string(), Some(cand.to_string()));
+        }
+    }
+    (rest, None)
+}
+
 /// A folder of `specs/`: `<digits>-<name>` with a slug as name.
 fn feature_name(folder: &str) -> Option<&str> {
     let (digits, name) = folder.split_once('-')?;
@@ -385,7 +422,7 @@ fn feature(
     if done {
         done_feature(ctx, read, folder, name, &text, &frs)?;
     } else {
-        open_feature(ctx, read, folder, name, &text, &frs, tasks_text.as_deref())?;
+        open_feature(ctx, read, folder, name, &text, tasks_text.as_deref())?;
     }
     for f in files {
         let p = path(f);
@@ -447,18 +484,357 @@ fn done_feature(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A line of `- **FR-nnn**` at the start of a list item.
+fn is_fr_item(line: &str) -> bool {
+    let t = line.trim_start();
+    let Some(t) = t
+        .strip_prefix("- **FR-")
+        .or_else(|| t.strip_prefix("* **FR-"))
+    else {
+        return false;
+    };
+    let d = t.chars().take_while(char::is_ascii_digit).count();
+    d > 0 && t[d..].starts_with("**")
+}
+
+/// The lines `from..to` of a text for a sub-section of the intent: each
+/// heading goes one level down and loses its annotation, and a requirement
+/// line `FR-nnn` is not in the text (it is in the delta). A heading with no
+/// text under it goes too.
+fn section_lines(l: &Lines, from: usize, to: usize, title: &str, level: usize) -> Vec<String> {
+    let mut blocks: Vec<(usize, Vec<String>)> =
+        vec![(level, vec![format!("{} {title}", "#".repeat(level))])];
+    let mut fence = false;
+    let mut skipping = false;
+    for line in &l.lines[from..to] {
+        if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
+            fence = !fence;
+            blocks.last_mut().unwrap().1.push(line.to_string());
+            continue;
+        }
+        if fence {
+            blocks.last_mut().unwrap().1.push(line.to_string());
+            continue;
+        }
+        if is_fr_item(line) {
+            skipping = true;
+            continue;
+        }
+        if skipping {
+            if line.starts_with("  ") || line.starts_with('\t') || line.trim().is_empty() {
+                continue;
+            }
+            skipping = false;
+        }
+        if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
+            let lvl = (lvl + 1).min(6);
+            blocks.push((
+                lvl,
+                vec![format!("{} {}", "#".repeat(lvl), plain_heading(&text))],
+            ));
+        } else {
+            blocks.last_mut().unwrap().1.push(line.to_string());
+        }
+    }
+    let blank = |b: &(usize, Vec<String>)| b.1[1..].iter().all(|x| x.trim().is_empty());
+    let mut keep = vec![false; blocks.len()];
+    for i in (0..blocks.len()).rev() {
+        let inner = blocks[i + 1..]
+            .iter()
+            .zip(&keep[i + 1..])
+            .take_while(|(b, _)| b.0 > blocks[i].0)
+            .any(|(_, k)| *k);
+        keep[i] = !blank(&blocks[i]) || inner;
+    }
+    blocks
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, k)| *k)
+        .flat_map(|(b, _)| b.1)
+        .collect()
+}
+
+/// Joins blocks of lines with one blank line between them.
+fn join_blocks(blocks: &[Vec<String>]) -> String {
+    let mut out = String::new();
+    for b in blocks {
+        let t = crate::import_docs::trim_blank(&b.join("\n"));
+        if t.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&collapse_blank(&t));
+    }
+    out.push('\n');
+    out
+}
+
+fn collapse_blank(t: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for l in t.lines() {
+        if l.trim().is_empty() && out.last().is_some_and(|p| p.trim().is_empty()) {
+            continue;
+        }
+        out.push(l);
+    }
+    out.join("\n")
+}
+
+/// The title of a feature: the text after `Feature Specification:` of the H1.
+fn title_of(l: &Lines, name: &str) -> String {
+    let h1 = l
+        .headings
+        .iter()
+        .find(|h| h.level == 1)
+        .map(|h| h.text.as_str());
+    let t = h1.map_or("", |t| {
+        let lower = t.to_lowercase();
+        match lower.find("feature specification:") {
+            Some(i) => t[i + "feature specification:".len()..].trim(),
+            None => t.trim(),
+        }
+    });
+    if t.is_empty() {
+        crate::import_docs::humanize(name)
+    } else {
+        t.to_string()
+    }
+}
+
 fn open_feature(
     ctx: &Ctx,
     read: &mut Read,
     folder: &str,
     name: &str,
     text: &str,
-    frs: &[(String, u32, String)],
     tasks: Option<&str>,
 ) -> Result<(), Fatal> {
-    let _ = (ctx, read, folder, name, text, frs, tasks);
-    Err(Fatal::Config("an open feature: not built yet".into()))
+    let spec_path = format!("specs/{folder}/spec.md");
+    let tasks_path = format!("specs/{folder}/tasks.md");
+    let dir = format!("{}/{name}", ctx.places.intent_dir()?);
+    let (intent_to, spec_to, plan_to) = (
+        format!("{dir}/intent.md"),
+        format!("{dir}/spec.md"),
+        format!("{dir}/plan.md"),
+    );
+    let req_to = requirements_path(ctx.places.requirements_dir()?, ctx.area_of(folder), name);
+    let req_id = id_of(ctx.cfg, &req_to).unwrap_or_default();
+    let linked = (ctx.link)(text, &spec_path, &intent_to);
+    let l = Lines::new(&linked);
+    let title = title_of(&l, name);
+
+    // The requirements: the pairs read the source, the lines read the text
+    // with its links for the new place.
+    let src = fr_lines(text);
+    let lines = parse(&linked);
+    let nested = |key: &str| -> Option<String> {
+        let r = lines.reqs.iter().find(|r| r.key == key)?;
+        let rest = linked.get(r.sentence.end as usize..r.end as usize)?;
+        let rest = crate::mv::dedent(rest.trim_start_matches('\n').trim_end());
+        (!rest.trim().is_empty()).then(|| crate::import_docs::trim_blank(&rest))
+    };
+    let mut delta = Vec::new();
+    let mut questions = Vec::new();
+    let mut details: Vec<Vec<String>> = Vec::new();
+    for (key, line, sentence) in &src {
+        let lower = key.to_lowercase();
+        let own = lines
+            .reqs
+            .iter()
+            .find(|r| &r.key == key)
+            .map_or(sentence.as_str(), |r| r.text.as_str());
+        let (clean, question) = crate::import_docs::strip_clarification(own);
+        delta.push(format!("- ADD {req_id}#{lower}: {clean}"));
+        let (_, q) = crate::import_docs::strip_clarification(sentence);
+        if let Some(q) = &q {
+            questions.push(format!("- [ ] {lower}: {q}"));
+        }
+        let _ = question;
+        if let Some(n) = nested(key) {
+            details.push(vec![format!("### Details of {lower}"), String::new(), n]);
+        }
+        read.pairs.push(Pair {
+            from: format!("{spec_path}:{line}"),
+            id: format!("{req_id}#{lower}"),
+            delta: Some(name.to_string()),
+            target: spec_to.clone(),
+            key: lower,
+            kind: PairKind::Delta,
+            sentence: sentence.clone(),
+            question: q,
+            verb: Some("ADD"),
+        });
+    }
+
+    // intent.md
+    let mut stories: Option<String> = None;
+    let mut sections: Vec<Vec<String>> = Vec::new();
+    let first_h2 = l
+        .headings
+        .iter()
+        .find(|h| h.level == 2)
+        .map_or(l.lines.len(), |h| h.line);
+    let h1_line = l
+        .headings
+        .iter()
+        .find(|h| h.level == 1)
+        .map_or(0, |h| h.line + 1);
+    let preamble = l.block(h1_line.min(first_h2), first_h2);
+    for (i, h) in l.headings.iter().enumerate() {
+        if h.level != 2 {
+            continue;
+        }
+        let title2 = plain_heading(&h.text);
+        let lower = title2.to_lowercase();
+        let end = l.tree_end(i);
+        if stories.is_none() && (lower.contains("user scenarios") || lower.contains("user stor")) {
+            stories = Some(l.block(h.line + 1, end));
+        } else {
+            sections.push(section_lines(&l, h.line + 1, end, &title2, 3));
+        }
+    }
+    let mut blocks: Vec<Vec<String>> = vec![
+        vec![format!("# {title}")],
+        vec!["## Intent".to_string()],
+        vec![
+            stories
+                .unwrap_or_else(|| "The source has no section for the user stories.".to_string()),
+        ],
+    ];
+    blocks.extend(sections);
+    blocks.extend(details);
+    if !preamble.is_empty() {
+        blocks.push(vec![
+            "### Metadata of the source".to_string(),
+            String::new(),
+            preamble,
+        ]);
+    }
+    let intent = with_front_matter(
+        &join_blocks(&blocks),
+        "draft",
+        &[("class", "higher-risk")],
+        &[],
+    );
+
+    // spec.md
+    let mut sb: Vec<Vec<String>> = vec![
+        vec![format!("# {title}")],
+        vec!["## Delta".to_string()],
+        delta,
+        vec!["## Open questions".to_string()],
+    ];
+    sb.push(if questions.is_empty() {
+        vec!["- none.".to_string()]
+    } else {
+        questions
+    });
+    sb.push(vec!["## Concerns".to_string()]);
+    sb.push(vec!["- none.".to_string()]);
+    let spec = with_front_matter(&join_blocks(&sb), "draft", &[], &[]);
+
+    let mut targets = vec![
+        (
+            intent_to.clone(),
+            intent,
+            vec![spec_path.clone()],
+            Some(spec_path.clone()),
+        ),
+        (spec_to.clone(), spec, vec![spec_path.clone()], None),
+    ];
+    let mut spec_state = vec![intent_to, spec_to];
+
+    // plan.md
+    if let Some(t) = tasks {
+        let linked_tasks = (ctx.link)(t, &tasks_path, &plan_to);
+        let mut files: Vec<String> = Vec::new();
+        let mut order: Vec<Vec<String>> = Vec::new();
+        let mut items: Vec<String> = Vec::new();
+        let flush = |items: &mut Vec<String>, order: &mut Vec<Vec<String>>| {
+            if !items.is_empty() {
+                order.push(std::mem::take(items));
+            }
+        };
+        for line in linked_tasks.lines() {
+            if let Some((lvl, text)) = crate::import_docs::heading_of(line) {
+                if lvl >= 2 {
+                    flush(&mut items, &mut order);
+                    order.push(vec![format!("**{}**", plain_heading(&text))]);
+                }
+                continue;
+            }
+            let Some(task) = task_line(line) else {
+                continue;
+            };
+            let (text, path) = plan_task(&task.rest);
+            let text = text.trim_end_matches('.').trim();
+            let text = if text.is_empty() {
+                task.id.as_str()
+            } else {
+                text
+            };
+            let mut item = format!(
+                "- [{}] {}: {text}.",
+                if task.done { "x" } else { " " },
+                task.id.to_lowercase()
+            );
+            if let Some(p) = path {
+                item.push_str(&format!(" Files: `{p}`."));
+                if !files.contains(&p) {
+                    files.push(p);
+                }
+            }
+            items.push(item);
+        }
+        flush(&mut items, &mut order);
+        let mut pb: Vec<Vec<String>> =
+            vec![vec![format!("# {title}")], vec!["## Files".to_string()]];
+        pb.push(if files.is_empty() {
+            vec!["- none".to_string()]
+        } else {
+            files.iter().map(|f| format!("- `{f}`")).collect()
+        });
+        pb.push(vec!["## Order".to_string()]);
+        // A group heading and its tasks are one block each.
+        let mut grouped: Vec<Vec<String>> = Vec::new();
+        for b in order {
+            grouped.push(b);
+        }
+        pb.extend(grouped);
+        let plan = with_front_matter(&join_blocks(&pb), "draft", &[], &[]);
+        targets.push((
+            plan_to.clone(),
+            plan,
+            vec![tasks_path.clone()],
+            Some(tasks_path.clone()),
+        ));
+        read.sources.push(SourceFile {
+            path: tasks_path,
+            state: State::Written,
+            to: vec![plan_to],
+            reason: "an open feature".to_string(),
+        });
+    }
+    read.sources.push(SourceFile {
+        path: spec_path.clone(),
+        state: State::Written,
+        to: std::mem::take(&mut spec_state),
+        reason: "an open feature".to_string(),
+    });
+    for (path, text, sources, link_of) in targets {
+        read.targets.push(Target {
+            path,
+            text,
+            moved_from: None,
+            sources,
+            link_of,
+            scenarios: None,
+        });
+    }
+    read.removes.push(format!("specs/{folder}"));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -838,5 +1214,230 @@ mod tests {
         assert_eq!(s.state, State::Skipped);
         assert!(s.reason.contains("--skip-open"), "{}", s.reason);
         assert!(r.ok().targets.is_empty());
+    }
+
+    // --- the open features ---
+
+    const SPEC_OPEN: &str = "# Feature Specification: Album export\n\n**Feature Branch**: `003-album-export`\n**Status**: Draft\n\n## User Scenarios & Testing *(mandatory)*\n\n### User Story 1 - Export an album (Priority: P1)\n\nA person downloads an album as one archive.\n\n## Requirements *(mandatory)*\n\n### Functional Requirements\n\n- **FR-001**: The system MUST export an album as one archive.\n- **FR-002**: The system MUST offer [NEEDS CLARIFICATION: which file formats?] as formats.\n\n### Key Entities\n\n- **Archive**: One file with the photos.\n\n## Success Criteria *(mandatory)*\n\n- **SC-001**: A person exports 100 photos in 1 minute.\n";
+
+    const TASKS_OPEN: &str = "# Tasks: Album export\n\n## Phase 1: Setup\n\n- [x] T001 Create the export module in src/export/__init__.py\n\n## Phase 2: User Story 1\n\n- [ ] T002 [P] [US1] Write the archive builder in src/export/zip.py\n- [ ] T003 Add a progress line to the export screen\n";
+
+    fn open() -> Run {
+        run(&tool(&[
+            ("specs/003-album-export/spec.md", SPEC_OPEN),
+            ("specs/003-album-export/tasks.md", TASKS_OPEN),
+            ("specs/003-album-export/plan.md", "# Plan\n"),
+        ]))
+    }
+
+    #[test]
+    fn an_open_feature_gives_a_draft_intent_spec_and_plan_and_its_sources_stay() {
+        let r = open();
+        for f in ["intent", "spec", "plan"] {
+            r.target(&format!("docs/intent/album-export/{f}.md"));
+        }
+        let s = r.source("specs/003-album-export/spec.md");
+        assert_eq!(s.state, State::Written);
+        assert_eq!(
+            s.to,
+            [
+                "docs/intent/album-export/intent.md",
+                "docs/intent/album-export/spec.md"
+            ]
+        );
+        let t = r.source("specs/003-album-export/tasks.md");
+        assert_eq!(
+            (t.state, t.to.as_slice()),
+            (
+                State::Written,
+                &["docs/intent/album-export/plan.md".to_string()][..]
+            )
+        );
+        assert_eq!(
+            r.source("specs/003-album-export/plan.md").state,
+            State::Kept
+        );
+        assert_eq!(r.ok().removes, ["specs/003-album-export"]);
+        let link: Vec<(&str, Option<&str>)> = r
+            .ok()
+            .targets
+            .iter()
+            .map(|t| (t.path.as_str(), t.link_of.as_deref()))
+            .collect();
+        assert!(
+            link.contains(&(
+                "docs/intent/album-export/intent.md",
+                Some("specs/003-album-export/spec.md")
+            )),
+            "{link:?}"
+        );
+        assert!(
+            link.contains(&(
+                "docs/intent/album-export/plan.md",
+                Some("specs/003-album-export/tasks.md")
+            )),
+            "{link:?}"
+        );
+        assert!(r.ok().targets.iter().all(|t| t.moved_from.is_none()));
+    }
+
+    #[test]
+    fn the_intent_holds_the_user_stories_and_the_other_sections_but_not_the_requirements() {
+        let t = open()
+            .target("docs/intent/album-export/intent.md")
+            .to_string();
+        let want = "---\nstatus: draft\nclass: higher-risk\n---\n# Album export\n\n## Intent\n\n### User Story 1 - Export an album (Priority: P1)\n\nA person downloads an album as one archive.\n\n### Requirements\n\n#### Key Entities\n\n- **Archive**: One file with the photos.\n\n### Success Criteria\n\n- **SC-001**: A person exports 100 photos in 1 minute.\n\n### Metadata of the source\n\n**Feature Branch**: `003-album-export`\n**Status**: Draft\n";
+        assert_eq!(t, want);
+    }
+
+    #[test]
+    fn the_spec_has_a_delta_line_and_an_open_question_for_each_marker() {
+        let r = open();
+        let t = r.target("docs/intent/album-export/spec.md");
+        let want = "---\nstatus: draft\n---\n# Album export\n\n## Delta\n\n- ADD requirements/album-export#fr-001: The system MUST export an album as one archive.\n- ADD requirements/album-export#fr-002: The system MUST offer as formats.\n\n## Open questions\n\n- [ ] fr-002: which file formats?\n\n## Concerns\n\n- none.\n";
+        assert_eq!(t, want);
+        let pairs: Vec<_> = r
+            .ok()
+            .pairs
+            .iter()
+            .map(|p| {
+                (
+                    p.from.as_str(),
+                    p.id.as_str(),
+                    p.delta.as_deref(),
+                    p.kind,
+                    p.verb,
+                    p.question.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                (
+                    "specs/003-album-export/spec.md:16",
+                    "requirements/album-export#fr-001",
+                    Some("album-export"),
+                    PairKind::Delta,
+                    Some("ADD"),
+                    None
+                ),
+                (
+                    "specs/003-album-export/spec.md:17",
+                    "requirements/album-export#fr-002",
+                    Some("album-export"),
+                    PairKind::Delta,
+                    Some("ADD"),
+                    Some("which file formats?")
+                ),
+            ]
+        );
+        assert!(r.ok().pairs[1].sentence.contains("[NEEDS CLARIFICATION"));
+        assert!(!r.ok().fr_lines, "an open feature needs no legacy key");
+    }
+
+    #[test]
+    fn the_plan_lists_the_paths_and_the_tasks() {
+        let t = open()
+            .target("docs/intent/album-export/plan.md")
+            .to_string();
+        let want = "---\nstatus: draft\n---\n# Album export\n\n## Files\n\n- `src/export/__init__.py`\n- `src/export/zip.py`\n\n## Order\n\n**Phase 1: Setup**\n\n- [x] t001: Create the export module. Files: `src/export/__init__.py`.\n\n**Phase 2: User Story 1**\n\n- [ ] t002: Write the archive builder. Files: `src/export/zip.py`.\n- [ ] t003: Add a progress line to the export screen.\n";
+        assert_eq!(t, want);
+    }
+
+    #[test]
+    fn a_plan_with_no_path_says_none_and_a_feature_with_no_tasks_has_no_plan() {
+        let r = run(&tool(&[
+            ("specs/003-x/spec.md", SPEC_OPEN),
+            ("specs/003-x/tasks.md", "- [ ] T001 Think about it\n"),
+        ]));
+        let t = r.target("docs/intent/x/plan.md");
+        assert!(t.contains("\n## Files\n\n- none\n"), "{t}");
+        let r = run(&tool(&[("specs/003-x/spec.md", SPEC_OPEN)]));
+        assert!(r.ok().targets.iter().all(|t| !t.path.ends_with("plan.md")));
+        r.target("docs/intent/x/spec.md");
+    }
+
+    #[test]
+    fn a_task_gives_its_text_and_its_path() {
+        for (rest, text, path) in [
+            (
+                "Create the export module in src/export/__init__.py",
+                "Create the export module",
+                Some("src/export/__init__.py"),
+            ),
+            (
+                "[P] [US1] Write the archive builder in src/export/zip.py",
+                "Write the archive builder",
+                Some("src/export/zip.py"),
+            ),
+            (
+                "Add a progress line to the export screen",
+                "Add a progress line to the export screen",
+                None,
+            ),
+            (
+                "Write the endpoint in src/albums/create.py (new file)",
+                "Write the endpoint",
+                Some("src/albums/create.py"),
+            ),
+            (
+                "Work in the team repo in progress",
+                "Work in the team repo in progress",
+                None,
+            ),
+            (
+                "Fix a bug in the parser in src/p.rs.",
+                "Fix a bug in the parser",
+                Some("src/p.rs"),
+            ),
+            ("Read in a file", "Read in a file", None),
+            ("Edit in `src/a.rs`", "Edit in `src/a.rs`", None),
+        ] {
+            let (t, p) = plan_task(rest);
+            assert_eq!((t.as_str(), p.as_deref()), (text, path), "{rest}");
+        }
+    }
+
+    #[test]
+    fn the_area_of_a_feature_is_in_its_delta_lines() {
+        let r = run_with(
+            &tool(&[("specs/003-album-export/spec.md", SPEC_OPEN)]),
+            false,
+            false,
+            &[("003-album-export", "media")],
+        );
+        let t = r.target("docs/intent/album-export/spec.md");
+        assert!(
+            t.contains("- ADD requirements/media/album-export#fr-001:"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_nested_text_of_a_requirement_line_stays_in_the_intent() {
+        let spec = "# Feature Specification: A\n\n## Requirements\n\n- **FR-001**: The system MUST do it.\n  - It does it fast.\n  - It does it twice.\n";
+        let r = run(&tool(&[("specs/001-a/spec.md", spec)]));
+        let i = r.target("docs/intent/a/intent.md");
+        assert!(
+            i.contains("### Details of fr-001\n\n- It does it fast.\n- It does it twice.\n"),
+            "{i}"
+        );
+        let s = r.target("docs/intent/a/spec.md");
+        assert!(
+            s.contains("- ADD requirements/a#fr-001: The system MUST do it.\n"),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn a_feature_with_no_user_story_section_still_has_an_intent_section() {
+        let spec = "# Feature Specification: A\n\n## Requirements\n\n- **FR-001**: The system MUST do it.\n";
+        let r = run(&tool(&[("specs/001-a/spec.md", spec)]));
+        let i = r.target("docs/intent/a/intent.md");
+        assert!(
+            i.contains("\n## Intent\n\nThe source has no section for the user stories.\n"),
+            "{i}"
+        );
     }
 }

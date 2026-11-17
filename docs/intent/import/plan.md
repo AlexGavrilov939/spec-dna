@@ -28,7 +28,7 @@ status: approved
 - [x] t8: Add the normal form and the 5 steps of the proof (`hygiene-engineer`; the unit tests come first). Files: `src/import_proof.rs`. Verify: `cargo test --bin spec-dna import_proof`.
 - [x] t9: Plan the targets, the moves, the writes, the aliases, the links and the clashes (`hygiene-engineer`; the unit tests come first). Files: `src/import_docs.rs`. Verify: `cargo test --bin spec-dna import_docs`.
 - [x] t10: Read the constitution and the done features of Spec Kit (`hygiene-engineer`; the unit tests come first). Files: `src/import_speckit.rs`. Verify: `cargo test --bin spec-dna import_speckit`.
-- [ ] t11: Read the open features of Spec Kit: the intent, the delta, the questions and the tasks (`hygiene-engineer`; the unit tests come first). Files: `src/import_speckit.rs`. Verify: `cargo test --bin spec-dna import_speckit`.
+- [x] t11: Read the open features of Spec Kit: the intent, the delta, the questions and the tasks (`hygiene-engineer`; the unit tests come first). Files: `src/import_speckit.rs`. Verify: `cargo test --bin spec-dna import_speckit`.
 - [ ] t12: Read the domain specs of OpenSpec (`hygiene-engineer`; the unit tests come first). Files: `src/import_openspec.rs`. Verify: `cargo test --bin spec-dna import_openspec`.
 - [ ] t13: Read the open changes, the delta specs and the archive of OpenSpec (`hygiene-engineer`; the unit tests come first). Files: `src/import_openspec.rs`. Verify: `cargo test --bin spec-dna import_openspec`.
 - [ ] t14: Run the import: the project, the clean tree, D25, the first run of the configuration, the proof and the write (`init-engineer`). Files: `src/import.rs`. Verify: `cargo test --test import_speckit --test import_openspec`.
