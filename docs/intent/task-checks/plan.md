@@ -29,20 +29,26 @@ status: approved
 - `docs/commands.md` The H1 of `new`, and the line of `next` and `status`.
 - `.claude/agents/ownership.md` The owner of `tests/task_checks.rs`.
 - `CHANGELOG.md` The entry of the change.
+- `src/init.rs` The `--reconfigure` rewrite keeps `max-task-files`.
+- `tests/init_change.rs` The test of that fix.
+- `tests/new_place.rs` The old assert of the title of a new change.
+- `docs/guides/change.md` The `ADD` form and the new codes.
+- `tests/finish.rs` The `finish` test of the `ADD` item.
+- `docs/init.md` The list of the kept keys.
 
 ## Order
 
-- [ ] t1: Write the failing tests of SD923, SD924, `max-task-files` and SD925 (`diagnostics-engineer`). Add the forms of `Interfaces`, also an `ADD` item when the diff deletes the folder: SD914 with no document, and nothing with the document. Files: `tests/task_checks.rs`, `tests/lifecycle_checks.rs`. Verify: `cargo test --test task_checks --test lifecycle_checks` fails on each new case.
-- [ ] t2: Write the failing tests of the parser, of the lines of `next` for a paragraph (the line of D28 first), and of the H1 placeholder (`core-engineer`). Files: `tests/change_model.rs`, `tests/lifecycle_commands.rs`, `tests/templates_new.rs`. Verify: `cargo test --test change_model --test lifecycle_commands --test templates_new` fails on the new tests only.
-- [ ] t3: Keep the first paragraph of `Files` and the items of `Hours` in the parser, and set `PARSER_VERSION` 14 and `FORMAT` 2 (`core-engineer`). Files: `src/parse.rs`, `src/index.rs`. Verify: `cargo test --bin spec-dna` passes.
-- [ ] t4: Add the `none` rule and the paragraph under `Files` to the change model, `next`, `status`, SD913 and SD915. Files: `src/change.rs`, `src/stage.rs`, `src/lifecycle.rs`. Verify: `cargo test --test change_model --test lifecycle_commands` passes.
-- [ ] t5: Add the codes SD923, SD924 and SD925 and their checks, with a limit of 3 paths (`diagnostics-engineer`). Files: `src/diag.rs`, `src/lifecycle.rs`. Verify: the cases of `standard` in `cargo test --test task_checks` pass.
-- [ ] t6: Add the key `max-task-files` (an integer from 1 to 20, default 3), and the 3 codes to the group `changes` and the profile table (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`. Verify: `cargo test --test task_checks` passes.
-- [ ] t7: Accept `none` and `ADD <interface id>: <text>` in `Interfaces` (`diagnostics-engineer`; `hygiene-engineer` for `finish`, `core-engineer` for `sdlc`). Files: `src/lifecycle.rs`, `src/finish.rs`, `src/sdlc.rs`. Verify: `cargo test --test lifecycle_checks` passes.
-- [ ] t8: Write the box of the concern and the H1 placeholder (`core-engineer`). Files: `src/templates.rs`, `src/main.rs`. Verify: `cargo test --test templates_new` passes.
-- [ ] t9: Update the docs of the codes, the profiles and the key. Files: `docs/diagnostics.md`, `docs/profiles.md`, `docs/config.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t10: Update the docs of the types and the commands, and the change log. Files: `docs/types.md`, `docs/commands.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t11: Name the owner of the new test file (`architect`; the owner accepts). Files: `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t1: Write the failing tests of SD923, SD924, `max-task-files` and SD925 (`diagnostics-engineer`). Add the forms of `Interfaces`, also an `ADD` item when the diff deletes the folder: SD914 with no document, and nothing with the document. Files: `tests/task_checks.rs`, `tests/lifecycle_checks.rs`. Verify: `cargo test --test task_checks --test lifecycle_checks` fails on each new case.
+- [x] t2: Write the failing tests of the parser, of the lines of `next` for a paragraph (the line of D28 first), and of the H1 placeholder (`core-engineer`). Files: `tests/change_model.rs`, `tests/lifecycle_commands.rs`, `tests/templates_new.rs`. Verify: `cargo test --test change_model --test lifecycle_commands --test templates_new` fails on the new tests only.
+- [x] t3: Keep the first paragraph of `Files` and the items of `Hours` in the parser, and set `PARSER_VERSION` 14 and `FORMAT` 2 (`core-engineer`). Files: `src/parse.rs`, `src/index.rs`. Verify: `cargo test --bin spec-dna` passes.
+- [x] t4: Add the `none` rule and the paragraph under `Files` to the change model, `next`, `status`, SD913 and SD915. Files: `src/change.rs`, `src/stage.rs`, `src/lifecycle.rs`. Verify: `cargo test --test change_model --test lifecycle_commands` passes.
+- [x] t5: Add the codes SD923, SD924 and SD925 and their checks, with a limit of 3 paths (`diagnostics-engineer`). Files: `src/diag.rs`, `src/lifecycle.rs`. Verify: the cases of `standard` in `cargo test --test task_checks` pass.
+- [x] t6: Add the key `max-task-files` (an integer from 1 to 20, default 3), and the 3 codes to the group `changes` and the profile table (`core-engineer`). Files: `src/config.rs`, `schema/spec-dna.schema.json`. Verify: `cargo test --test task_checks` passes.
+- [x] t7: Accept `none` and `ADD <interface id>: <text>` in `Interfaces` (`diagnostics-engineer`; `hygiene-engineer` for `finish`, `core-engineer` for `sdlc`). Files: `src/lifecycle.rs`, `src/finish.rs`, `src/sdlc.rs`. Verify: `cargo test --test lifecycle_checks` passes.
+- [x] t8: Write the box of the concern and the H1 placeholder (`core-engineer`). Files: `src/templates.rs`, `src/main.rs`. Verify: `cargo test --test templates_new` passes.
+- [x] t9: Update the docs of the codes, the profiles and the key. Files: `docs/diagnostics.md`, `docs/profiles.md`, `docs/config.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t10: Update the docs of the types and the commands, and the change log. Files: `docs/types.md`, `docs/commands.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t11: Name the owner of the new test file (`architect`; the owner accepts). Files: `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
 
 ## Risks
 
