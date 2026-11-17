@@ -846,7 +846,7 @@ pub fn rename_skills_with(text: &str, on: &dyn Fn(Skill) -> bool) -> Repair {
     // A new name goes into the list if it is on by default or if the list
     // has it already.
     let wanted =
-        |name: &str| list.iter().any(|x| x == name) || Skill::from_key(name).is_some_and(|s| on(s));
+        |name: &str| list.iter().any(|x| x == name) || Skill::from_key(name).is_some_and(on);
     let mut new: Vec<String> = Vec::new();
     for n in &list {
         let names: Vec<&str> = match old_of(n) {

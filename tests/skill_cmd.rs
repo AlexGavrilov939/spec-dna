@@ -95,7 +95,7 @@ fn list_prints_one_line_for_each_skill_with_no_configuration() {
     // The default column is the default of one value of the constant.
     let defaults: Vec<&str> = lines.iter().map(|l| l[4]).collect();
     assert!(
-        expected_defaults().iter().any(|e| *e == defaults),
+        expected_defaults().contains(&defaults),
         "{defaults:?} is the default of no value of the constant: {:?}\n{out}",
         expected_defaults()
     );

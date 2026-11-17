@@ -648,11 +648,6 @@ fn result_order(base: &str) -> (String, u32, String) {
     }
 }
 
-/// True if the project or the release gives the name the verdict `on`.
-pub fn is_on(name: &str, files: &[(String, Vec<u8>)]) -> bool {
-    resolve(name, files).verdict == Some(Verdict::On)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,8 +876,6 @@ mod tests {
         assert_eq!(resolve("debug", &files).verdict, Some(Verdict::On));
         let none = resolve("brainstorm", &files);
         assert_eq!((none.verdict, none.source), (None, Source::None));
-        assert!(is_on("debug", &files));
-        assert!(!is_on("tdd", &files));
     }
 
     #[test]
