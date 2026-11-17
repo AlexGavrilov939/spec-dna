@@ -266,7 +266,7 @@ fn reconfigure_gives_a_missing_part_the_default_of_the_profile() {
     // A `lite` file with a `[harness]` table and no `review-md`,
     // `protect-tests` or `skills`.
     let r = Repo::with_config(
-        "profile = \"lite\"\n\n[harness]\nlevel = \"lean\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+        "profile = \"lite\"\n\n[change]\npolicy = \"two-class\"\ngate = \"warn\"\n\n[harness]\nlevel = \"lean\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
     );
     r.git(&["config", "user.email", OWNER]);
     r.commit("start");

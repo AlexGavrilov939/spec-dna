@@ -686,8 +686,12 @@ fn the_descriptions_of_the_default_skills_add_their_listing_to_the_prefix_of_eac
         let r = Repo::new();
         let (code, out, err) = r.run(&["init", "--non-interactive"]);
         assert_eq!(code, 0, "{out}{err}");
+        // The text names the skill descriptions only when a skill is on.
         assert!(
             out.contains("the CLAUDE.md line, the agent descriptions and the skill descriptions")
+                || (default_skills().is_empty()
+                    && out.contains("the CLAUDE.md line and the agent descriptions")),
+            "{out}"
         );
         assert!(out.contains("per-request prefix: "), "{out}");
         // The listing of Claude Code: one line for each skill.
