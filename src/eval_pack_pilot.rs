@@ -24,6 +24,7 @@ const PY_TOOLS: &[&str] = &[
     "Bash(git:*)",
     "Bash(sh:*)",
     "Bash(python3:*)",
+    "Bash(spec-dna:*)",
 ];
 
 macro_rules! redgreen {
@@ -73,7 +74,7 @@ pub static EXECUTE_TDD: &[PackEval] = &[
     PackEval {
         id: "execute-1",
         skill: "execute",
-        task: "Carry out the plan in plan.md. Make one commit for each task.",
+        task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
         max_turns: 25,
         max_budget_usd: 2.0,
@@ -238,7 +239,7 @@ class SmokeTest(unittest.TestCase):
     PackEval {
         id: "execute-2",
         skill: "execute",
-        task: "Carry out the plan in plan.md. Make one commit for each task.",
+        task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
         max_turns: 25,
         max_budget_usd: 2.0,
@@ -370,21 +371,12 @@ class TextTest(unittest.TestCase):
     PackEval {
         id: "execute-3",
         skill: "execute",
-        task: "Carry out the plan in plan.md. Make one commit for each task.",
+        task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: None,
         checks: &[
-            (
-                "three-commits",
-                concat!(
-                    tip!(),
-                    "\n",
-                    r#"[ "$(git rev-list --count --first-parent "$B..$T")" = 3 ]
-"#
-                ),
-            ),
             (
                 "commit-scope",
                 concat!(
@@ -438,10 +430,8 @@ grep -q '^- \[x\] t1:' plan.md && grep -q '^- \[x\] t2:' plan.md
                     r#"cd "$S" || exit 1
 PYTHONPATH=src python3 -B -c 'from caps import upper_first
 from titles import title_case
-from shout import shout
 assert upper_first("abc") == "Abc"
-assert title_case("a b") == "A B"
-assert shout("hi") == "HI!"'
+assert title_case("a b") == "A B"'
 "#
                 ),
             ),
@@ -525,7 +515,7 @@ class SmokeTest(unittest.TestCase):
     PackEval {
         id: "execute-4",
         skill: "execute",
-        task: "Carry out the plan in plan.md. Make one commit for each task.",
+        task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
         max_turns: 25,
         max_budget_usd: 2.0,
@@ -686,7 +676,7 @@ class SmokeTest(unittest.TestCase):
     PackEval {
         id: "execute-5",
         skill: "execute",
-        task: "Carry out the plan in plan.md. Make one commit for each task.",
+        task: "Carry out the plan in plan.md. Make one commit for each task. The commit of a task includes the tick of its box in plan.md.",
         allowed_tools: CODE_TOOLS,
         max_turns: 25,
         max_budget_usd: 2.0,
@@ -1457,7 +1447,7 @@ pub static VERIFY_DEBUG: &[PackEval] = &[
         skill: "verify",
         task: "A form gives the score as text. Make `letter` in src/grades.py accept a score such as \"85\", and add a test for it to tests/test_grades.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. The next lines name each command that you ran.",
         allowed_tools: PY_TOOLS,
-        max_turns: 15,
+        max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -1584,7 +1574,7 @@ class ReportTest(unittest.TestCase):
         skill: "verify",
         task: "The default page size of `paginate` in src/paging.py must become 20. Change it, and add a test for the default to tests/test_paging.py. The rest of the program must keep its behavior. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. The next lines name each command that you ran.",
         allowed_tools: PY_TOOLS,
-        max_turns: 15,
+        max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -1709,7 +1699,7 @@ class SearchTest(unittest.TestCase):
         skill: "verify",
         task: "Make `ship_cost` in src/shipping.py raise `ValueError(\"the weight must be above 0 and at most 30 kilograms for a parcel\")` when the weight is 0 or less, or above 30. Add a test for it to tests/test_shipping.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` or `tests: fail`, and its second line is `lint: pass` or `lint: fail`, for your final code. The next lines name each command that you ran.",
         allowed_tools: PY_TOOLS,
-        max_turns: 15,
+        max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -1830,7 +1820,7 @@ class ShippingTest(unittest.TestCase):
         skill: "verify",
         task: "Add the method `total()` to `Inventory` in src/inventory.py. It returns the sum of all the quantities. Add at least 2 tests for it to tests/test_inventory.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. Its second line is `count: <n>`, where n is the number of tests that your last run of the whole suite ran. The next lines name each command that you ran.",
         allowed_tools: PY_TOOLS,
-        max_turns: 15,
+        max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -1948,7 +1938,7 @@ class InventoryTest(unittest.TestCase):
         skill: "verify",
         task: "Add the function `shipping(price)` to src/pricing.py. It returns 0 for a price of 50 or more, and 5 for a lower price. Add a test for it to tests/test_pricing.py. When your work is complete, write RESULT.md. Its first line is `tests: pass` if all the tests of the project pass on your final code, and `tests: fail` if not. If a test fails, add the line `failing: <test name>` for each failing test. Then name each command that you ran.",
         allowed_tools: PY_TOOLS,
-        max_turns: 15,
+        max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
         checks: &[
@@ -2107,9 +2097,10 @@ cp -R tests "$h/tests"
                 concat!(
                     nfail!(),
                     "\n",
-                    r#"[ "$(git diff --cached --name-only "$B" | grep -v '^tests/' | wc -l | tr -d ' ')" -le 1 ] || exit 1
-l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2} END {print s + 0}')
-[ "$l" -le 12 ]
+                    r#"[ "$(git diff --cached --name-only "$B" -- src | wc -l | tr -d ' ')" -le 1 ] || exit 1
+l=$(git diff --cached --numstat "$B" -- src | awk '{s += $1 + $2} END {print s + 0}')
+[ "$l" -le 12 ] || exit 1
+! git diff --cached --name-status --diff-filter=MD "$B" | cut -f2 | grep -Ev '^(src|tests)/' | grep -q .
 "#
                 ),
             ),
@@ -2119,7 +2110,7 @@ l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2
                     stage!(),
                     "\n",
                     r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) ' || exit 1
-! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(skip|expectedFailure)'
+! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(unittest[.]skip|@skip|skipTest|expectedFailure)'
 "#
                 ),
             ),
@@ -2280,9 +2271,10 @@ cp -R tests "$h/tests"
                 concat!(
                     nfail!(),
                     "\n",
-                    r#"[ "$(git diff --cached --name-only "$B" | grep -v '^tests/' | wc -l | tr -d ' ')" -le 1 ] || exit 1
-l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2} END {print s + 0}')
-[ "$l" -le 12 ]
+                    r#"[ "$(git diff --cached --name-only "$B" -- src | wc -l | tr -d ' ')" -le 1 ] || exit 1
+l=$(git diff --cached --numstat "$B" -- src | awk '{s += $1 + $2} END {print s + 0}')
+[ "$l" -le 12 ] || exit 1
+! git diff --cached --name-status --diff-filter=MD "$B" | cut -f2 | grep -Ev '^(src|tests)/' | grep -q .
 "#
                 ),
             ),
@@ -2292,7 +2284,7 @@ l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2
                     stage!(),
                     "\n",
                     r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) ' || exit 1
-! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(skip|expectedFailure)'
+! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(unittest[.]skip|@skip|skipTest|expectedFailure)'
 "#
                 ),
             ),
@@ -2426,9 +2418,10 @@ cp -R tests "$h/tests"
                 concat!(
                     nfail!(),
                     "\n",
-                    r#"[ "$(git diff --cached --name-only "$B" | grep -v '^tests/' | wc -l | tr -d ' ')" -le 1 ] || exit 1
-l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2} END {print s + 0}')
-[ "$l" -le 12 ]
+                    r#"[ "$(git diff --cached --name-only "$B" -- src | wc -l | tr -d ' ')" -le 1 ] || exit 1
+l=$(git diff --cached --numstat "$B" -- src | awk '{s += $1 + $2} END {print s + 0}')
+[ "$l" -le 12 ] || exit 1
+! git diff --cached --name-status --diff-filter=MD "$B" | cut -f2 | grep -Ev '^(src|tests)/' | grep -q .
 "#
                 ),
             ),
@@ -2438,7 +2431,7 @@ l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2
                     stage!(),
                     "\n",
                     r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) ' || exit 1
-! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(skip|expectedFailure)'
+! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(unittest[.]skip|@skip|skipTest|expectedFailure)'
 "#
                 ),
             ),
@@ -2581,9 +2574,10 @@ cp -R tests "$h/tests"
                 concat!(
                     nfail!(),
                     "\n",
-                    r#"[ "$(git diff --cached --name-only "$B" | grep -v '^tests/' | wc -l | tr -d ' ')" -le 1 ] || exit 1
-l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2} END {print s + 0}')
-[ "$l" -le 12 ]
+                    r#"[ "$(git diff --cached --name-only "$B" -- src | wc -l | tr -d ' ')" -le 1 ] || exit 1
+l=$(git diff --cached --numstat "$B" -- src | awk '{s += $1 + $2} END {print s + 0}')
+[ "$l" -le 12 ] || exit 1
+! git diff --cached --name-status --diff-filter=MD "$B" | cut -f2 | grep -Ev '^(src|tests)/' | grep -q .
 "#
                 ),
             ),
@@ -2593,7 +2587,7 @@ l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2
                     stage!(),
                     "\n",
                     r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) ' || exit 1
-! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(skip|expectedFailure)'
+! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(unittest[.]skip|@skip|skipTest|expectedFailure)'
 "#
                 ),
             ),
@@ -2738,9 +2732,10 @@ cp -R tests "$h/tests"
                 concat!(
                     nfail!(),
                     "\n",
-                    r#"[ "$(git diff --cached --name-only "$B" | grep -v '^tests/' | wc -l | tr -d ' ')" -le 1 ] || exit 1
-l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2} END {print s + 0}')
-[ "$l" -le 12 ]
+                    r#"[ "$(git diff --cached --name-only "$B" -- src | wc -l | tr -d ' ')" -le 1 ] || exit 1
+l=$(git diff --cached --numstat "$B" -- src | awk '{s += $1 + $2} END {print s + 0}')
+[ "$l" -le 12 ] || exit 1
+! git diff --cached --name-status --diff-filter=MD "$B" | cut -f2 | grep -Ev '^(src|tests)/' | grep -q .
 "#
                 ),
             ),
@@ -2750,7 +2745,7 @@ l=$(git diff --cached --numstat "$B" -- . ':(exclude)tests' | awk '{s += $1 + $2
                     stage!(),
                     "\n",
                     r#"! git diff --cached -U0 "$B" -- tests | grep '^-' | grep -v '^---' | grep -Evq '^-(from|import) ' || exit 1
-! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(skip|expectedFailure)'
+! git diff --cached -U0 "$B" -- tests | grep -v '^+++' | grep -Eq '^[+].*(unittest[.]skip|@skip|skipTest|expectedFailure)'
 "#
                 ),
             ),

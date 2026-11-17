@@ -1,3 +1,2 @@
 cp -R "$REF/files/." .
-echo "# Refund" >> README.md
-echo "# done" >> src/refund.py
+echo "# tidy" >> src/refund.py

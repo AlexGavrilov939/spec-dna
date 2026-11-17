@@ -1,2 +1,2 @@
 cp -R "$REF/files/." .
-echo "# note" >> README.md
+echo "# tidy" >> src/checkout.py
