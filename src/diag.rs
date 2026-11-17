@@ -119,6 +119,7 @@ codes! {
     TaskIncomplete = "SD923", "task-incomplete", Warning, "Complete the task of the approved plan. Write `Files:` with each exact path of the task (no glob, no folder), or `Files: none`. Write `Verify:` with a command in a code span, or the check in words.";
     TaskTooLarge = "SD924", "task-too-large", Warning, "Split the task. Write each part as its own task with at most `[change] max-task-files` paths in `Files:` and one `Verify:`.";
     CheckboxMissing = "SD925", "checkbox-missing", Warning, "Write the task box at the start of the item: `- [ ]` for an open item, `- [x]` for a resolved item. SD919 and SD922 read the box. To state that the section has no item, write one item that starts with the word `none`, followed by `:`, `.` or the end.";
+ApproverAgent = "SD926", "approver-agent", Warning, "Remove the address from `[change] approvers` in spec-dna.toml, in a pull request of its own (SD503). List the e-mails of the persons that approve.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

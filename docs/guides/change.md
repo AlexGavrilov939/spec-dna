@@ -9,14 +9,14 @@ The example change adds a requirement: when a moisture sensor times out, the con
 | Class | Use it when | Documents | Who approves the plan |
 | --- | --- | --- | --- |
 | `small-fix` | The change keeps each requirement as it is | None: a pull request only | Not applicable |
-| `routine` | The change edits requirements outside the high-risk layers | `intent.md`, `plan.md` | The agent |
+| `routine` | The change edits requirements outside the high-risk layers | `intent.md`, `plan.md` | The agent, when the owner says so |
 | `higher-risk` | The change edits a rule or an interface, or a path of `[change] high-risk-paths` | `intent.md`, `spec.md`, `plan.md` | The owner |
 
 If the class of an intent is too low for its diff, `check` reports SD917. The high-risk layers are `interfaces` and `rules` by default (`[change] high-risk-layers`).
 
 ## A higher-risk change
 
-Each document needs the approval of the document before it. With `[change] approval = "base"`, the base tree must show the approval, so a higher-risk change has 4 pull requests or more: the intent, the spec, the plan, and the code with `finish`. To approve a document, set its status in the pull request. The merge records the approval. With `[change] gate = "warn"`, one pull request can hold all the steps, and `check` reports a warning.
+Each document needs the approval of the document before it. With `[change] approval = "base"`, the base tree must show the approval, so a higher-risk change has 4 pull requests or more: the intent, the spec, the plan, and the code with `finish`. To approve a document, run `spec-dna approve <slug> <artifact>` in that pull request ([commands.md](../commands.md#approve)). The merge records the approval. With `[change] gate = "warn"`, one pull request can hold all the steps, and `check` reports a warning.
 
 With `[change] approval = "branch"`, an approval commit in the branch also counts, so the approvals and the work can be in one pull request. [The approval commit](#the-approval-commit) gives the rule. The floor stays 2 pull requests, because `finish` follows in a later pull request.
 
@@ -60,7 +60,7 @@ The spec has 4 more sections:
 - `Concerns`: a task list. Resolve each concern (`- [x]`). Write its resolution before the approval (SD919).
 - `Open questions`: a task list. Answer each question (`- [x]`), and write the answer after it, before the approval (SD922).
 
-Open a pull request. The owner sets `status: approved` and merges it.
+Open a pull request. The owner runs `spec-dna approve sensor-timeout <artifact>` in it, and merges it.
 
 ### 3. Write the plan
 
@@ -81,7 +81,7 @@ The items of `Files` and the `Files:` paths of the tasks are the scope of the ch
 
 For a spike, write one task for each way that you try. When the spike ends, add `Skip: <reason>` to each task that is not needed, and tick it (`- [x]`). `next`, `status` and the counts then treat the task as closed, and `finish` leaves its hours out. A commit that adds `Skip:` to an approved plan adds no path to `Files`, so it needs no new approval. A `Skip:` with no reason does not skip the task: SD923 reports it.
 
-Open a pull request. The owner sets `status: approved` and merges it.
+Open a pull request. The owner runs `spec-dna approve sensor-timeout <artifact>` in it, and merges it.
 
 ### 4. Write the code and the tests
 
@@ -135,26 +135,31 @@ An approval commit meets all these conditions:
 The steps of a higher-risk change in one branch:
 
 1. Commit the intent as a `draft`, with its class.
-2. An approver commits `status: accepted` in `intent.md`, in a commit of its own.
-3. Commit the spec as a `draft`. An approver commits `status: approved` in it. Do the same for the plan.
+2. An approver runs `spec-dna approve sensor-timeout intent`. The command sets `status: accepted` and commits it alone.
+3. Commit the spec as a `draft`. An approver runs `spec-dna approve sensor-timeout spec`. Do the same for the plan.
 4. Commit the code.
 
-A `draft` spec or plan needs no approval of the artifact before it. The approval commit of a plan fixes its `Files`: a path that a later commit adds to `Files` has no approved plan (SD910, reason 8). This holds for a plan that an approval commit of the branch approved. A plan that the base tree already approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope. This is for a plan that an approval commit of the branch approved. A plan that the base tree already approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope.
+A `draft` spec or plan needs no approval of the artifact before it. The approval commit of a plan fixes its `Files`: a path that a later commit adds to `Files` has no approved plan (SD910, reason 8). This holds for a plan that an approval commit of the branch approved. A plan that the base tree already approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope.
 
 - An approval holds while the artifact keeps its approval status at the head. If a later commit sets an approved artifact back (a plan back to `draft` after the code), SD910 gives reason 9 to the work that used the approval, and to the work between the step back and the next approval commit. To rework an approved plan, set it back to `draft`, change it, and approve it again with an approval commit before new work. An approval from the base tree follows the rule of 0.6: SD401 reports the step back.
 - The e-mail of an author is not a proof. A person can set any e-mail. The control is the code host: `CODEOWNERS` for `docs/intent/`, a protected default branch and required signed commits.
-- In this repository, an agent writes an approval commit only when the owner says so explicitly in the chat ([AGENTS.md](../../AGENTS.md)). This is the rule of this repository, not advice for each project: another project decides for itself. List in `approvers` the e-mails of the persons that approve, and list each e-mail that one person uses. A person that hides the e-mail on the code host has a `noreply` address too.
+- An agent writes an approval commit only when the owner says so explicitly in the chat. This is the default rule of each project: `init` writes it into the generated line of `AGENTS.md`, and each skill repeats it. A person approves with `spec-dna approve <slug> <artifact>` in a terminal of their own ([commands.md](../commands.md#approve)). List in `approvers` the e-mails of the persons that approve, and list each e-mail that one person uses. A person that hides the e-mail on the code host has a `noreply` address too. Do not list the address of an agent or a bot: `check` warns about it (SD926).
 - The check needs the full history. Use `fetch-depth: 0` in the step of the checkout in your workflow. A shallow clone gives no approval, and `check` reports SD910 as with `approval = "base"`. If the clone is so shallow that the merge base is not reachable, `check` reports SD910 with reason 5 for each change that needs an approval, and it does not skip the check. `init` writes `fetch-depth: 0` in the workflows that it generates.
 - A merge commit that merges another branch into the branch stops the rule. Rebase the branch, or merge the base into it. A required check must also run on the event `merge_group` of a merge queue.
 - A squash merge keeps the net diff only, so a change that starts and ends in one pull request leaves no record. `check` reports SD910 (reason 7) for a branch that adds a change and finishes it. Merge the artifacts and their approvals in a pull request first, and `finish` in a later one.
 - `status` shows the source of each approval, `base` or `branch <short sha>`. `check --json` lists the approval commits in `approvals`.
+
+### Change the approval rule
+
+- Stricter: set `[harness] protect-approvals = true` in `spec-dna.toml`. The profile `strict` has it. A hook of the agent then denies each commit that sets an approval status, and each call of `spec-dna approve` by the agent, also on the word of the owner. A person runs `spec-dna approve` ([harness.md](../harness.md#spec-dna-hook-protect-approvals)).
+- Less strict: do not edit the generated line, because `check` reports the edit (SD501). Write the rule of the project in `AGENTS.md`, after the generated line, and name the exception. For example: "In this project, an agent approves a routine plan with no word of the owner." spec-dna has no key for this direction. The generated line and the skills keep the default sentence, so the agent reads both texts.
 
 ## A routine change
 
 A routine change has no spec and no delta. With `approval = "base"`, it has 3 pull requests:
 
 1. The intent, with `class: routine` and `status: accepted`.
-2. The plan. The agent sets `status: approved`.
+2. The plan. The owner runs `spec-dna approve <slug> plan`, or tells the agent to approve it.
 3. The code. Edit the requirements in the same pull request as the code. Then run `spec-dna finish <slug>`.
 
 With `approval = "branch"`, the intent, its approval commit, the plan, its approval commit and the code can be in one pull request. `finish` follows in a later pull request ([the approval commit](#the-approval-commit)).

@@ -37,7 +37,7 @@
       "default": "en"
     },
     "change": {
-      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD925 are off, and no rule can turn them on).",
+      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD926 are off, and no rule can turn them on).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -45,7 +45,7 @@
       ],
       "properties": {
         "policy": {
-          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD925 are off and no rule can turn them on.",
+          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD926 are off and no rule can turn them on.",
           "enum": [
             "three-class",
             "two-class",
@@ -104,7 +104,7 @@
           "default": "base"
         },
         "approvers": {
-          "description": "The author e-mails of the approval commits that count with `approval = \"branch\"`. The compare ignores case. Each item is not empty. Required and not empty when `approval` is `branch`. Default: none.",
+          "description": "The author e-mails of the approval commits that count with `approval = \"branch\"`. The compare ignores case. Each item is not empty. List persons only: the address of an agent or a bot gives SD926. Required and not empty when `approval` is `branch`. Default: none.",
           "type": "array",
           "items": {
             "type": "string",
@@ -419,6 +419,10 @@
             "always",
             "off"
           ]
+        },
+        "protect-approvals": {
+          "description": "If true, the harness writes the hook `protect-approvals`: it denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value. `init` writes true for the profile `strict`. Default false.",
+          "type": "boolean"
         },
         "roles": {
           "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",

@@ -38,7 +38,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
-| SD905, SD910 to SD925 | Changes | [Changes](#changes-sd905-and-sd910-to-sd925) |
+| SD905, SD910 to SD926 | Changes | [Changes](#changes-sd905-and-sd910-to-sd926) |
 
 ## References and evidence (SD101 to SD106)
 
@@ -178,9 +178,9 @@ These codes are new in 0.6.0. The rule group `layers` sets their severity ([prof
 | SD903 | history-in-requirements | warning | A recognized requirement of a `rule`, `requirements` or `interface` document has a calendar date, `round <n>`, `iteration <n>`, or a phrase of `[lint] history-terms`. |
 | SD904 | term-forbidden | warning | A recognized requirement of a `rule`, `requirements` or `interface` document uses a forbidden synonym of a `terms` document. The check is off when `language` is not English. |
 
-## Changes (SD905 and SD910 to SD925)
+## Changes (SD905 and SD910 to SD926)
 
-These codes are new in 0.6.0, except SD923, SD924 and SD925, which are new in 0.7.0. They apply only to a project with a `[change]` table whose `policy` is not `none`. SD918 also needs an `[evals]` table. With `policy = "none"`, SD905 and SD910 to SD925 are off, and no rule enables them. The rule group `changes` sets their severity ([profiles.md](profiles.md)). The change lifecycle is in [change.md](guides/change.md).
+These codes are new in 0.6.0, except SD923 to SD926, which are new in 0.7.0. They apply only to a project with a `[change]` table whose `policy` is not `none`. SD918 also needs an `[evals]` table. With `policy = "none"`, SD905 and SD910 to SD926 are off, and no rule enables them. The rule group `changes` sets their severity ([profiles.md](profiles.md)). The change lifecycle is in [change.md](guides/change.md).
 
 | Code | Name | Severity | Meaning |
 | --- | --- | --- | --- |
@@ -201,6 +201,7 @@ These codes are new in 0.6.0, except SD923, SD924 and SD925, which are new in 0.
 | SD923 | task-incomplete | warning | A task of an `approved` plan has no `Files:` or no `Verify:`, its `Files:` has a glob or a folder, or its `Skip:` has no reason. A glob has `*` or `?`. A `draft` plan is not checked. Off in `lite`, an error in `strict`. |
 | SD924 | task-too-large | warning | A task of an `approved` plan lists more paths in `Files:` than `[change] max-task-files` (default 3). Off in `lite`, an error in `strict`. |
 | SD925 | checkbox-missing | warning | An item of `Concerns` or `Open questions` of a spec has no task box, so SD919 and SD922 cannot see if it is open. A spec of each status gives it, except the spec of a `closed` change. Off in `lite`, an error in `strict`. |
+| SD926 | approver-agent | warning | An item of `[change] approvers` is the address of an agent or a bot, so a commit of this author can come from an agent and it proves no approval of a person. The addresses are `noreply@anthropic.com` and each address that ends with `[bot]@users.noreply.github.com`. The diagnostic is on the line of the key `approvers` in `spec-dna.toml`, and the target is the item. One diagnostic for each item, with `approval = "branch"` and with `"base"`. A warning in each profile. A project that wants an agent identity as an approver sets `[rules] SD926 = "off"`. |
 
 ## Checks of the layers and of the requirement text
 
@@ -220,6 +221,7 @@ These codes are new in 0.6.0, except SD923, SD924 and SD925, which are new in 0.
 The checks of the change codes read these trees:
 
 - SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925 read one tree. They need no base and no history.
+- SD926 reads `spec-dna.toml` only. It needs no base and no history. The hidden address of a person, such as `1234+name@users.noreply.github.com`, is not on the list. The target is the item as the file writes it, and the compare of the address ignores case. SD926 is not a state code. It is new when the configuration of the base does not list the address. Against a base that lists it already, `check` shows it only with `--all`.
 - These codes compare the head with the lifecycle base. They do not run if git cannot name this base:
   - SD905 (the part for a change with no delta);
   - SD910, SD913, SD915, SD916, SD917 and SD918;

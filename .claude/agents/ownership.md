@@ -160,6 +160,7 @@ src/layer.rs                         COR: the layer graph, its levels, the file 
 src/change.rs                        COR: the change model, the delta lines, the tasks of a plan
 src/lifecycle.rs                     DIA: the checks of a change (SD905, SD910 to SD917, SD919 to SD925) and the lifecycle base
 src/approval.rs                      DIA: the walk of the commits of a branch and the approval commits (ADR 0012)
+src/approve.rs                       COR: approve, the status commit of a person
 src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
 src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
 src/sdlc.rs                          COR: `log` and `stats --sdlc`
@@ -214,12 +215,15 @@ tests/sd202.rs                       DIA
 tests/layers_checks.rs, tests/sd921.rs, tests/task_checks.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
 tests/finish.rs                      HYG
 tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
-tests/change_model.rs, tests/change_config.rs, tests/tree_binary.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
+tests/approve_cmd.rs                 COR
+tests/tree_binary.rs                 COR
+tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
 tests/common/mod.rs, tests/common_helpers.rs   TST: the shared git fixtures. Every agent uses them
 tests/init_change.rs, tests/init_language.rs   INI
 tests/init_graph.rs                  INI
 tests/harness.rs, tests/hook.rs      INI
 tests/harness_roles.rs, tests/harness_skills.rs, tests/hook_protect.rs, tests/init_evals.rs   INI
+tests/hook_approvals.rs              INI
 tests/skill_cmd.rs                   INI: the cases of `skill list` and `skill show`. COR: the arguments and the help
 tests/harness_check_step4.rs, tests/evals_checks.rs   DIA
 tests/config_step4.rs, tests/eval_run.rs, tests/eval_ab.rs, tests/eval_records.rs, tests/stats_evals.rs   COR

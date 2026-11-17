@@ -646,7 +646,8 @@ fn question_5_is_asked_unless_the_policy_is_none() {
     assert!(out.contains("13. Models"), "{out}");
     assert_eq!(text(&r.change().unwrap(), "policy"), "none");
     assert!(out.contains("14. Evals"), "{out}");
-    // The other policies ask question 5: 15 answers and the confirmation.
+    // The other policies ask question 5 (the gate and the approvers): 16
+    // answers and the confirmation.
     let r = Repo::empty();
     let two = [
         "",
@@ -654,6 +655,7 @@ fn question_5_is_asked_unless_the_policy_is_none() {
         "",
         "two-class",
         "warn",
+        "",
         "",
         "",
         "",
@@ -975,4 +977,253 @@ fn reconfigure_keeps_max_task_files() {
     r.commit("reconfigure");
     let (code, out, err) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}{err}");
+}
+
+// The approvers (owner review of 0.7.0, item 1): `init` never writes the
+// address of an agent or a bot as an approver.
+
+/// A repository where git has the given `user.email`.
+fn repo_with_email(email: &str) -> Repo {
+    let r = Repo::empty();
+    git(&r.dir, &["config", "user.email", email]);
+    r
+}
+
+/// The text that the note of an agent address must hold.
+const AGENT_NOTE: &str = "the address of an agent or a bot, so `init` writes `[change] approval = \"base\"` and no approvers";
+
+#[test]
+fn init_with_an_agent_git_email_writes_base_and_a_note() {
+    let r = repo_with_email("noreply@anthropic.com");
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert!(t.get("approvers").is_none(), "{t:?}");
+    assert!(out.contains(AGENT_NOTE), "{out}");
+    assert!(
+        out.contains("spec-dna init --reconfigure --approver <your e-mail>"),
+        "{out}"
+    );
+}
+
+#[test]
+fn init_with_a_bot_git_email_writes_base_and_a_note() {
+    let r = repo_with_email("41898282+github-actions[bot]@users.noreply.github.com");
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert!(t.get("approvers").is_none(), "{t:?}");
+    assert!(out.contains(AGENT_NOTE), "{out}");
+}
+
+#[test]
+fn init_without_a_terminal_and_an_agent_git_email_writes_base() {
+    // The cloud case: no `--non-interactive`, and stdin is not a terminal.
+    let r = repo_with_email("noreply@anthropic.com");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert!(t.get("approvers").is_none(), "{t:?}");
+    assert!(out.contains(AGENT_NOTE), "{out}");
+}
+
+#[test]
+fn init_person_git_email_keeps_the_part_a_result() {
+    // Guard: the hidden address of a person is not an agent address.
+    let r = repo_with_email("1234+someone@users.noreply.github.com");
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(
+        list(&t, "approvers"),
+        ["1234+someone@users.noreply.github.com"]
+    );
+    assert!(!out.contains(AGENT_NOTE), "{out}");
+}
+
+#[test]
+fn init_approver_flags_write_branch_and_the_list() {
+    let r = repo_with_email("noreply@anthropic.com");
+    let (code, out, err) = r.run(&[
+        "init",
+        "--non-interactive",
+        "--approver",
+        "first@example.test",
+        "--approver=second@example.test",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(
+        list(&t, "approvers"),
+        ["first@example.test", "second@example.test"]
+    );
+    assert!(!out.contains(AGENT_NOTE), "{out}");
+}
+
+#[test]
+fn init_rejects_an_agent_address_in_approver() {
+    for bad in [
+        "noreply@anthropic.com",
+        "NoReply@Anthropic.com",
+        "49699333+dependabot[bot]@users.noreply.github.com",
+    ] {
+        let r = Repo::empty();
+        let (code, out, err) = r.run(&["init", "--non-interactive", "--approver", bad]);
+        assert_eq!(code, 2, "{bad}: {out}{err}");
+        assert!(
+            err.contains(&format!(
+                "`--approver`: `{bad}` is the address of an agent or a bot; give the e-mail of a person"
+            )),
+            "{bad}: {err}"
+        );
+        assert!(!r.exists("spec-dna.toml"), "{bad}: nothing is written");
+        assert!(!r.exists("AGENTS.md"), "{bad}: nothing is written");
+    }
+}
+
+#[test]
+fn init_answers_approvers_key_sets_the_list() {
+    let r = repo_with_email("noreply@anthropic.com");
+    let (code, out, err) = r.init_with(
+        "approvers = [\"one@example.test\", \"two@example.test\"]\n",
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(
+        list(&t, "approvers"),
+        ["one@example.test", "two@example.test"]
+    );
+    // An empty list means no approvers, also with a person e-mail in git.
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("approvers = []\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert!(t.get("approvers").is_none(), "{t:?}");
+}
+
+#[test]
+fn init_answers_rejects_an_agent_address() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with("approvers = [\"noreply@anthropic.com\"]\n", &[]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`approvers`: `noreply@anthropic.com` is the address of an agent or a bot"),
+        "{err}"
+    );
+    assert!(!r.exists("spec-dna.toml"));
+    // A value that is no e-mail is a usage error too.
+    let (code, out, err) = r.init_with("approvers = [\"nobody\"]\n", &[]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("`approvers`"), "{err}");
+}
+
+#[test]
+fn init_approver_flag_with_strict_writes_base_and_a_note() {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with(
+        "profile = \"strict\"\n",
+        &["--approver", "first@example.test"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "base");
+    assert!(t.get("approvers").is_none(), "{t:?}");
+    assert!(
+        out.contains(
+            "`strict` reads the approvals of the base only, so `init` writes no approvers"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn init_reconfigure_approver_flag_replaces_the_list() {
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The project set `base` and its list by hand.
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("approval = \"branch\"", "approval = \"base\"")
+        .replace(
+            &format!("approvers = [\"{OWNER}\"]"),
+            "approvers = [\"a@example.test\"]",
+        );
+    r.write("spec-dna.toml", &cfg);
+    r.commit("adopt and edit");
+    let (code, out, err) = r.run(&[
+        "init",
+        "--reconfigure",
+        "--non-interactive",
+        "--approver",
+        "new@example.test",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(list(&t, "approvers"), ["new@example.test"]);
+    // `--reconfigure` with no list keeps both keys.
+    r.commit("reconfigure");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(list(&t, "approvers"), ["new@example.test"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn question_5_asks_the_approvers_and_the_git_email_of_a_person_is_the_default() {
+    // Answers: questions 1 to 3 keep their defaults, 4 is the policy, 5 is the
+    // gate, then the approvers prompt of question 5, then questions 6 to 14
+    // (question 12 has 2 prompts) and the confirmation.
+    let r = repo_with_email("noreply@anthropic.com");
+    let mut a = vec![
+        "",
+        "",
+        "",
+        "two-class",
+        "warn",
+        "one@example.test two@example.test",
+    ];
+    a.extend(std::iter::repeat_n("", 10));
+    a.push("y");
+    let (code, out) = on_terminal(&r.dir, &["init"], &a);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("5. Approvers: the e-mails whose approval commits count, comma-separated, or none [none]: "),
+        "{out}"
+    );
+    let t = r.change().unwrap();
+    assert_eq!(text(&t, "approval"), "branch");
+    assert_eq!(
+        list(&t, "approvers"),
+        ["one@example.test", "two@example.test"]
+    );
+    // A person e-mail in git is the default of the prompt.
+    let r = repo_with_email("person@example.test");
+    let mut a = vec!["", "", "", "two-class", "warn", ""];
+    a.extend(std::iter::repeat_n("", 10));
+    a.push("y");
+    let (code, out) = on_terminal(&r.dir, &["init"], &a);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("or none [person@example.test]: "), "{out}");
+    assert_eq!(
+        list(&r.change().unwrap(), "approvers"),
+        ["person@example.test"]
+    );
+    // An agent address in the answer is a usage error.
+    let r = Repo::empty();
+    let a = ["", "", "", "two-class", "warn", "noreply@anthropic.com"];
+    let (code, out) = on_terminal(&r.dir, &["init"], &a);
+    assert_eq!(code, 2, "{out}");
+    assert!(!r.exists("spec-dna.toml"));
 }

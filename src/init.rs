@@ -39,6 +39,8 @@ pub struct Opts {
     pub reconfigure: bool,
     pub dry_run: bool,
     pub json: bool,
+    /// Each `--approver <e-mail>` (owner review of 0.7.0, item 1).
+    pub approvers: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,6 +268,10 @@ pub struct Plan {
     /// and from `git_email`, unless the current file sets `approval`.
     pub approval: Approval,
     pub approvers: Vec<String>,
+    /// The list that a person gave: `--approver`, the answers key
+    /// `approvers` or the approvers prompt of question 5. `Some(vec![])`
+    /// means "no approvers". `None`: no source gave a list.
+    pub approvers_given: Option<Vec<String>>,
     /// True if the table `[change]` of the current file has the key
     /// `approval`. Then `init` keeps the 2 keys.
     pub approval_set: bool,
@@ -498,33 +504,186 @@ fn settle_change(plan: &mut Plan) {
     }
 }
 
-/// Sets `[change] approval` and `[change] approvers` (design 0.7.0, D15).
-/// `strict` gets `base`, because it reads the approvals of the base only.
-/// Else a current file that sets `approval` keeps its 2 keys. Else `branch`
-/// with the e-mail of git as the one approver, or, if git has no e-mail,
-/// `base` and a note.
+/// Sets `[change] approval` and `[change] approvers` (design 0.7.0, D15, and
+/// the owner review, item 1). The sources, in the order of priority: the list
+/// that a person gave (`approvers_given`), the current file that sets
+/// `approval` (it keeps its 2 keys), and the e-mail of git, if it is not the
+/// address of an agent or a bot. `strict` gets `base` and no new approvers,
+/// because it reads the approvals of the base only. With no person to list,
+/// the result is `base`, no approvers and a note. The call is idempotent.
 fn settle_approval(plan: &mut Plan) {
     if !plan.writes_change() {
         return;
     }
+    let note = |plan: &mut Plan, n: String| {
+        if !plan.notes.contains(&n) {
+            plan.notes.push(n);
+        }
+    };
     if plan.profile == Profile::Strict {
         plan.approval = Approval::Base;
+        if plan.approvers_given.as_ref().is_some_and(|l| !l.is_empty()) {
+            note(
+                plan,
+                "`strict` reads the approvals of the base only, so `init` writes no approvers"
+                    .to_string(),
+            );
+        }
+        return;
+    }
+    if let Some(list) = &plan.approvers_given {
+        plan.approval = if list.is_empty() {
+            Approval::Base
+        } else {
+            Approval::Branch
+        };
+        plan.approvers = list.clone();
         return;
     }
     if plan.approval_set {
+        for e in plan
+            .approvers
+            .clone()
+            .iter()
+            .filter(|e| config::is_agent_address(e))
+        {
+            note(
+                plan,
+                format!(
+                    "`[change] approvers` lists `{e}`, the address of an agent or a bot, and `init` keeps it. Remove it in a pull request of its own (SD926)"
+                ),
+            );
+        }
         return;
     }
     if plan.approvers.is_empty() {
-        plan.approvers = plan.git_email.iter().cloned().collect();
-    }
-    if plan.approvers.is_empty() {
-        plan.approval = Approval::Base;
-        let note = "git has no `user.email`, so `init` writes `[change] approval = \"base\"` and no approvers. To use the approval in the branch, set `[change] approval = \"branch\"` and `[change] approvers` in spec-dna.toml (docs/config.md)".to_string();
-        if !plan.notes.contains(&note) {
-            plan.notes.push(note);
+        let email = plan.git_email.clone().filter(|e| !e.trim().is_empty());
+        match email {
+            Some(e) if !config::is_agent_address(&e) => plan.approvers = vec![e],
+            Some(e) => note(
+                plan,
+                format!(
+                    "git `user.email` is `{e}`, the address of an agent or a bot, so `init` writes `[change] approval = \"base\"` and no approvers. To use the approval in the branch, run `spec-dna init --reconfigure --approver <your e-mail>` (docs/config.md)"
+                ),
+            ),
+            None => note(
+                plan,
+                "git has no `user.email`, so `init` writes `[change] approval = \"base\"` and no approvers. To use the approval in the branch, set `[change] approval = \"branch\"` and `[change] approvers` in spec-dna.toml (docs/config.md)".to_string(),
+            ),
         }
+    }
+    plan.approval = if plan.approvers.is_empty() {
+        Approval::Base
     } else {
-        plan.approval = Approval::Branch;
+        Approval::Branch
+    };
+}
+
+/// The e-mails of a list that a person gave, checked one by one. An item
+/// follows the rules of the config reader (not empty, an `@`, no `*`), and it
+/// is never the address of an agent or a bot. `source` names where the list
+/// comes from, for the message. The result has no item twice (the compare
+/// ignores case).
+fn parse_approvers(source: &str, items: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in items {
+        let e = raw.trim();
+        if e.is_empty() || e.contains('*') || !e.contains('@') {
+            return Err(format!(
+                "{source}: `{e}` is not an e-mail; give the e-mail in full, such as `owner@example.test` (docs/config.md)"
+            ));
+        }
+        if config::is_agent_address(e) {
+            return Err(format!(
+                "{source}: `{e}` is the address of an agent or a bot; give the e-mail of a person (docs/config.md)"
+            ));
+        }
+        if !out.iter().any(|x| x.eq_ignore_ascii_case(e)) {
+            out.push(e.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// The default of the approvers prompt: the list of the first source that has
+/// one. The sources are the list that a flag or an answers file gave, the
+/// current list of `--reconfigure` (if it is not empty), and the e-mail of git if it is not the
+/// address of an agent or a bot. The result can be empty.
+fn approvers_default(plan: &Plan) -> Vec<String> {
+    if let Some(list) = &plan.approvers_given {
+        return list.clone();
+    }
+    if plan.approval_set && !plan.approvers.is_empty() {
+        return plan.approvers.clone();
+    }
+    plan.git_email
+        .iter()
+        .filter(|e| !config::is_agent_address(e))
+        .cloned()
+        .collect()
+}
+
+/// The second prompt of question 5: the e-mails whose approval commits count.
+/// The prompt runs for `lite` and `standard`, and only when `init` writes the
+/// table `[change]` with a policy other than `none`. The answer `none` or an
+/// empty list gives `approval = "base"`.
+fn ask_approvers(plan: &mut Plan, io: &mut Ask) -> Result<(), String> {
+    if plan.profile == Profile::Strict
+        || plan.change_policy == ChangePolicy::None
+        || !plan.writes_change()
+    {
+        return Ok(());
+    }
+    if let Some(e) = plan.git_email.iter().find(|e| config::is_agent_address(e)) {
+        io.say(&format!(
+            "    git `user.email` is `{e}`, the address of an agent or a bot, so it is not offered."
+        ));
+    }
+    io.say("    An approval commit of one of these e-mails counts in the branch (`approval = \"branch\"`). List persons only. none writes `approval = \"base\"`: the merge is the approval.");
+    let default = approvers_default(plan);
+    let shown = if default.is_empty() {
+        "none".to_string()
+    } else {
+        default.join(", ")
+    };
+    let a = io.line(
+        &Question::Gate.prompt(
+            "Approvers: the e-mails whose approval commits count, comma-separated, or none",
+        ),
+        &shown,
+    );
+    // Enter, or the default typed again, takes the default as it is. A list
+    // that holds an agent address is the current list of `--reconfigure`: it
+    // stays, and `check` gives SD926 for it.
+    let list = if a == shown {
+        default
+    } else if a.eq_ignore_ascii_case("none") {
+        Vec::new()
+    } else {
+        parse_approvers("question 5", &words(&a))?
+    };
+    // The current list of `--reconfigure` as the answer changes nothing.
+    let same = plan.approval_set
+        && plan.approvers_given.is_none()
+        && list.len() == plan.approvers.len()
+        && list
+            .iter()
+            .all(|e| plan.approvers.iter().any(|x| x.eq_ignore_ascii_case(e)));
+    if !same {
+        plan.approvers_given = Some(list);
+    }
+    Ok(())
+}
+
+/// `strict` gets `[harness] protect-approvals = true` in a file that has no
+/// such key, so the profile has no hidden effect (ADR 0017). A file that has
+/// the key keeps its value, and the level `none` writes no key.
+fn settle_approvals_hook(plan: &mut Plan) {
+    if plan.profile == Profile::Strict
+        && plan.harness.level != Level::None
+        && plan.harness.protect_approvals.is_none()
+    {
+        plan.harness.protect_approvals = Some(true);
     }
 }
 
@@ -618,6 +777,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         change_base: None,
         approval: Approval::Base,
         approvers: Vec::new(),
+        approvers_given: None,
         approval_set: false,
         git_email: None,
         documents,
@@ -2853,6 +3013,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
             plan.change_gate.name(),
         );
         plan.change_gate = parse_gate(&a)?;
+        ask_approvers(plan, io)?;
     }
 
     let found: Vec<String> = facts
@@ -3103,12 +3264,13 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
             Some(_) => Err(format!("answers: `{k}` must be an array of strings")),
         }
     };
-    const KEYS: [&str; 26] = [
+    const KEYS: [&str; 27] = [
         "profile",
         "graph",
         "areas",
         "change-policy",
         "gate",
+        "approvers",
         "evidence",
         "evidence-style",
         "language",
@@ -3162,6 +3324,13 @@ fn apply_answers(plan: &mut Plan, text: &str) -> Result<bool, String> {
     }
     if let Some(v) = s("gate")? {
         plan.change_gate = parse_gate(&v).map_err(|e| format!("answers: {e}"))?;
+    }
+    // The flag `--approver` has priority over the key.
+    if let Some(v) = l("approvers")? {
+        let list = parse_approvers("answers: `approvers`", &v)?;
+        if plan.approvers_given.is_none() {
+            plan.approvers_given = Some(list);
+        }
     }
     if let Some(e) = s("evidence")? {
         plan.evidence = parse_evidence(&e)?;
@@ -3308,6 +3477,8 @@ fn answer_error(e: String) -> Fatal {
 
 /// Runs `init`.
 pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
+    // A bad `--approver` stops `init` before it reads or writes anything.
+    let flag_approvers = parse_approvers("`--approver`", &o.approvers).map_err(Fatal::Usage)?;
     let cfg_path = repo.config_path();
     let exists = cfg_path.exists();
     if exists {
@@ -3363,6 +3534,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         plan.evals_table.dir = ".spec-dna/evals".to_string();
     }
     let before = plan.clone();
+    if !flag_approvers.is_empty() {
+        plan.approvers_given = Some(flag_approvers);
+    }
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let interactive = !o.non_interactive && o.answers.is_none() && terminal;
     let mut write = true;
@@ -3387,12 +3561,14 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_approval(&mut plan);
     settle_parts(&mut plan);
     settle_evals(&mut plan);
+    settle_approvals_hook(&mut plan);
     let mut offered = before.clone();
     settle(&mut offered);
     settle_change(&mut offered);
     settle_approval(&mut offered);
     settle_parts(&mut offered);
     settle_evals(&mut offered);
+    settle_approvals_hook(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
     let parsed = Config::parse(&text)
@@ -3401,6 +3577,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // text, so `check` finds no difference.
     let mut new_harness = plan.harness.clone();
     new_harness.tests = parsed.evidence_tests.clone();
+    // The hook `protect-approvals` reads the folders of the `intent` layer, as
+    // `check` reads them from this text.
+    new_harness.intent_dirs = crate::lifecycle::intent_dirs(&parsed);
     let mut changes = Vec::new();
     let old = std::fs::read_to_string(&cfg_path).ok();
     if old.as_deref() != Some(text.as_str()) {
@@ -4207,6 +4386,92 @@ mod tests {
             },
         );
         defaults(&facts, None)
+    }
+
+    /// Runs the approvers prompt with an empty answer. Returns the text of the
+    /// prompt and the plan.
+    fn approvers_prompt(git_email: Option<&str>) -> (String, Plan) {
+        let mut plan = plan_of_empty_repo();
+        plan.git_email = git_email.map(str::to_string);
+        let mut input = std::io::Cursor::new(b"\n".to_vec());
+        let mut out = Vec::new();
+        {
+            let mut io = Ask {
+                input: &mut input,
+                out: &mut out,
+            };
+            ask_approvers(&mut plan, &mut io).unwrap();
+        }
+        (String::from_utf8(out).unwrap(), plan)
+    }
+
+    #[test]
+    fn the_approvers_prompt_offers_the_git_email_of_a_person_only() {
+        // A person e-mail is the default, and the empty answer takes it.
+        let (out, plan) = approvers_prompt(Some("person@example.test"));
+        assert!(out.contains("or none [person@example.test]: "), "{out}");
+        assert_eq!(
+            plan.approvers_given,
+            Some(vec!["person@example.test".into()])
+        );
+        // The address of an agent, a bot and no e-mail give the default `none`.
+        for email in [
+            Some("noreply@anthropic.com"),
+            Some("41898282+github-actions[bot]@users.noreply.github.com"),
+            None,
+        ] {
+            let (out, plan) = approvers_prompt(email);
+            assert!(out.contains("or none [none]: "), "{email:?}: {out}");
+            assert_eq!(plan.approvers_given, Some(Vec::new()), "{email:?}");
+        }
+        // The answer is checked like a flag.
+        let mut plan = plan_of_empty_repo();
+        let mut input = std::io::Cursor::new(b"noreply@anthropic.com\n".to_vec());
+        let mut out = Vec::new();
+        let mut io = Ask {
+            input: &mut input,
+            out: &mut out,
+        };
+        let e = ask_approvers(&mut plan, &mut io).unwrap_err();
+        assert!(e.contains("is the address of an agent or a bot"), "{e}");
+    }
+
+    #[test]
+    fn the_approvers_prompt_keeps_a_current_list_with_an_agent_address() {
+        // Enter keeps the default. The default is the current list, also if it
+        // holds an agent address (`check` gives SD926 for it).
+        let mut plan = plan_of_empty_repo();
+        plan.approval_set = true;
+        plan.approvers = vec!["noreply@anthropic.com".into(), "p@example.test".into()];
+        let mut input = std::io::Cursor::new(b"\n".to_vec());
+        let mut out = Vec::new();
+        let mut io = Ask {
+            input: &mut input,
+            out: &mut out,
+        };
+        ask_approvers(&mut plan, &mut io).unwrap();
+        assert_eq!(plan.approvers_given, None);
+        // A typed answer that differs is parsed.
+        let mut input = std::io::Cursor::new(b"noreply@anthropic.com\n".to_vec());
+        let mut io = Ask {
+            input: &mut input,
+            out: &mut out,
+        };
+        assert!(ask_approvers(&mut plan, &mut io).is_err());
+    }
+
+    #[test]
+    fn the_approvers_prompt_falls_through_an_empty_current_list() {
+        // A file of an agent session has `approval = "base"` and no approvers.
+        // The next source, the git e-mail of a person, is the default.
+        let mut plan = plan_of_empty_repo();
+        plan.approval_set = true;
+        plan.approvers = Vec::new();
+        plan.git_email = Some("person@example.test".into());
+        assert_eq!(approvers_default(&plan), ["person@example.test"]);
+        // A current list comes first.
+        plan.approvers = vec!["kept@example.test".into()];
+        assert_eq!(approvers_default(&plan), ["kept@example.test"]);
     }
 
     #[test]
