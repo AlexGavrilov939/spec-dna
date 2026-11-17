@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Feedback of a second project: plan
 
