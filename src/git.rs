@@ -473,7 +473,6 @@ impl Git {
     /// repository (the local file, then the global and system files), or
     /// `None` if the key is not set or its value is empty. It never builds a
     /// name from the user and the host.
-    #[allow(dead_code)] // `init` is the caller, but `tests/git_lifecycle.rs` has no use of it.
     pub fn user_email(&self) -> Option<String> {
         let out = self.run(&["config", "--get", "user.email"]).ok()?;
         let s = String::from_utf8_lossy(&out).trim().to_string();

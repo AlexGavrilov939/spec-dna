@@ -526,13 +526,14 @@ fn reconfigure_of_a_file_with_no_change_table_stays_with_none() {
     let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(r.change().is_none(), "an upgrade adds no table");
-    // An answer for a policy writes the table with the 5 keys.
+    // An answer for a policy writes the table with the 5 keys and the 2 keys
+    // of the approval.
     let (code, out, err) = r.init_with("change-policy = \"three-class\"\n", &["--reconfigure"]);
     assert_eq!(code, 0, "{out}{err}");
     let t = r.change().unwrap();
     assert_eq!(text(&t, "policy"), "three-class");
     assert_eq!(text(&t, "gate"), "block");
-    assert_eq!(t.len(), 5);
+    assert_eq!(t.len(), 7);
     // The new table is a change of its own: no SD503, and no SD502.
     r.commit("choose a policy");
     let (code, out, err) = r.run(&["check", "--base", "HEAD~1"]);

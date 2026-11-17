@@ -114,7 +114,16 @@ The numbers are the numbers of the question in the `--json` output.
 
 Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the types of the project, so `init` writes no `types` key. Question 3 writes `areas = [...]`, if the answer has a name. `init` never proposes a group: add a `[groups]` table manually.
 
-Questions 4 and 5 write the table `[change]` with 5 keys: `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`) and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
+Questions 4 and 5 write the table `[change]` with 5 keys (and the 2 keys of the approval, below): `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`) and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
+
+The table also has the keys `approval` and `approvers` (see [Approval in the branch](config.md#approval-in-the-branch)). No question asks for them. `init` writes them from the profile:
+
+| Profile | `git config user.email` is set | The e-mail is not set |
+| --- | --- | --- |
+| `lite`, `standard` | `approval = "branch"` and `approvers = ["<the e-mail>"]` | `approval = "base"`, no `approvers`, and a note that names the 2 keys |
+| `strict` | `approval = "base"` | `approval = "base"` |
+
+`strict` reads the approvals of the base only, so `init` never writes `branch` for it. An empty `approvers` with `approval = "branch"` is an error, so `init` never writes that pair. With `--reconfigure`, a file that has the key `approval` keeps `approval` and `approvers`, except that `strict` writes `base`. A file with no `approval` key, such as a file of 0.6, gets the keys of its profile. The generated workflows use `fetch-depth: 0`, because the rule of `branch` reads the commits of the branch.
 
 A file that has no `[change]` table has the policy `none`. For it, the answer `none` writes no table, and another policy writes the table. With `--reconfigure`, the current values are the defaults. `init` keeps `high-risk-paths`, `max-fanout` and the layers of `high-risk-layers` that the graph has. If the file has a `[change]` table with no `gate`, the profile sets SD910. Question 5 then proposes the gate with the same severity: `warn` for `lite`, `block` for the other profiles.
 
@@ -261,7 +270,7 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 
 - `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[context]`, `[groups]` and `[templates]`
 - the table `[evals]`, as question 14 says: `skeleton` keeps it as it is
-- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths`, `max-fanout` and `base`. `base` is the local branch of the change checks. `init` never asks for it, and it stays as you set it. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
+- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths`, `max-fanout`, `approval`, `approvers` and `base`. `base` is the local branch of the change checks. `init` never asks for it, and it stays as you set it. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
 - `language`: it is the default of question 7. The answer `en` removes the key
 - every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs

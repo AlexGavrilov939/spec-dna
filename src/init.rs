@@ -20,7 +20,7 @@
 //! table. It never removes a file then.
 
 use crate::adapters::{self, VERSION};
-use crate::config::{self, ChangePolicy, Config, DEFAULT_BUDGETS, Gate, Profile, Rules};
+use crate::config::{self, Approval, ChangePolicy, Config, DEFAULT_BUDGETS, Gate, Profile, Rules};
 use crate::detect::{self, Facts, GitInfo, Row};
 use crate::diag::Severity;
 use crate::harness::{self, Effort, GoneRole, Harness, Level, Model, Protect, Role, Skill};
@@ -258,6 +258,16 @@ pub struct Plan {
     /// `[change] base`. No question asks for it. `--reconfigure` keeps the
     /// value that the file sets. The config loader has checked the name.
     pub change_base: Option<String>,
+    /// `[change] approval` and `[change] approvers` (design 0.7.0, D15). No
+    /// question asks for them. `settle_approval` sets them from the profile
+    /// and from `git_email`, unless the current file sets `approval`.
+    pub approval: Approval,
+    pub approvers: Vec<String>,
+    /// True if the table `[change]` of the current file has the key
+    /// `approval`. Then `init` keeps the 2 keys.
+    pub approval_set: bool,
+    /// The value of `git config user.email`, or `None` if it is not set.
+    pub git_email: Option<String>,
     /// The documents that detection found in the roots.
     pub documents: usize,
     /// The root of a new project (`docs`, or the directory of `--root`).
@@ -360,13 +370,20 @@ impl Plan {
             return String::new();
         }
         let mut out = format!(
-            "\n[change]  # the change process (docs/config.md)\npolicy = {}  # \"three-class\", \"two-class\" or \"none\"\ngate = {}  # \"block\", \"warn\" or \"off\"\nhigh-risk-layers = {}  # a delta in these layers makes a change higher-risk\nhigh-risk-paths = {}  # globs from the repository root\nmax-fanout = {}  # documents that one change can touch before SD905\n",
+            "\n[change]  # the change process (docs/config.md)\npolicy = {}  # \"three-class\", \"two-class\" or \"none\"\ngate = {}  # \"block\", \"warn\" or \"off\"\nhigh-risk-layers = {}  # a delta in these layers makes a change higher-risk\nhigh-risk-paths = {}  # globs from the repository root\nmax-fanout = {}  # documents that one change can touch before SD905\napproval = {}  # \"base\" or \"branch\": where an approval can be\n",
             toml_str(self.change_policy.name()),
             toml_str(self.change_gate.name()),
             toml_list(&self.high_risk_layers_written()),
             toml_list(&self.high_risk_paths),
-            self.max_fanout
+            self.max_fanout,
+            toml_str(self.approval.name())
         );
+        if !self.approvers.is_empty() {
+            out.push_str(&format!(
+                "approvers = {}  # the author e-mails of the approval commits\n",
+                toml_list(&self.approvers)
+            ));
+        }
         if let Some(b) = &self.change_base {
             out.push_str(&format!(
                 "base = {}  # the local branch that the change checks use as the base\n",
@@ -473,6 +490,36 @@ fn settle_change(plan: &mut Plan) {
     }
 }
 
+/// Sets `[change] approval` and `[change] approvers` (design 0.7.0, D15).
+/// `strict` gets `base`, because it reads the approvals of the base only.
+/// Else a current file that sets `approval` keeps its 2 keys. Else `branch`
+/// with the e-mail of git as the one approver, or, if git has no e-mail,
+/// `base` and a note.
+fn settle_approval(plan: &mut Plan) {
+    if !plan.writes_change() {
+        return;
+    }
+    if plan.profile == Profile::Strict {
+        plan.approval = Approval::Base;
+        return;
+    }
+    if plan.approval_set {
+        return;
+    }
+    if plan.approvers.is_empty() {
+        plan.approvers = plan.git_email.iter().cloned().collect();
+    }
+    if plan.approvers.is_empty() {
+        plan.approval = Approval::Base;
+        let note = "git has no `user.email`, so `init` writes `[change] approval = \"base\"` and no approvers. Set `git config user.email`, and run `init --reconfigure`, or set `[change] approval` and `[change] approvers` in spec-dna.toml (docs/config.md)".to_string();
+        if !plan.notes.contains(&note) {
+            plan.notes.push(note);
+        }
+    } else {
+        plan.approval = Approval::Branch;
+    }
+}
+
 /// The types that a graph has, in the order of `DocType::ALL`.
 fn graph_types(g: &Graph) -> Vec<DocType> {
     DocType::ALL
@@ -560,6 +607,10 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         high_risk_paths: Vec::new(),
         max_fanout: config::DEFAULT_MAX_FANOUT,
         change_base: None,
+        approval: Approval::Base,
+        approvers: Vec::new(),
+        approval_set: false,
+        git_email: None,
         documents,
         root: docs_root.to_string(),
         notes: language_note.into_iter().collect(),
@@ -652,6 +703,17 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     p.high_risk_paths = cfg.high_risk_paths.clone();
     p.max_fanout = cfg.max_fanout;
     p.change_base = cfg.change_base.clone();
+    p.approval = cfg.change_approval;
+    p.approvers = cfg.change_approvers.clone();
+    p.approval_set = text
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| {
+            t.get("change")
+                .and_then(toml::Value::as_table)
+                .map(|c| c.contains_key("approval"))
+        })
+        .unwrap_or(false);
     p.kept_types = cfg.types.clone();
     p.exclude = cfg.exclude.clone();
     p.evidence = cfg.rules.iter().find(|r| r.0 == "evidence").map(|r| r.1);
@@ -3220,6 +3282,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         plan.harness_notes = apply_conflicts(h, &existing, true);
     }
     unmarked_parts(&mut plan, &existing);
+    plan.git_email = repo.git.user_email();
     // A folder `evals/` of the project is not the folder of the evals (D50).
     if !plan.evals_current
         && plan.evals_table.dir == config::DEFAULT_EVALS_DIR
@@ -3251,11 +3314,13 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // preview shows the defaults with the same rule.
     settle(&mut plan);
     settle_change(&mut plan);
+    settle_approval(&mut plan);
     settle_parts(&mut plan);
     settle_evals(&mut plan);
     let mut offered = before.clone();
     settle(&mut offered);
     settle_change(&mut offered);
+    settle_approval(&mut offered);
     settle_parts(&mut offered);
     settle_evals(&mut offered);
     let text = render(&plan);
