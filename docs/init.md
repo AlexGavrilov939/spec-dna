@@ -98,11 +98,11 @@ Question 5 has 2 prompts: the gate and the approvers. Question 12 has 2 prompts:
 
 | # | Question | Default |
 | --- | --- | --- |
-| 1 | The profile: `lite`, `standard` or `strict` ([profiles.md](profiles.md)) | `standard` |
+| 1 | The profile: `lite`, `standard` or `strict` ([profiles.md](profiles.md)). In a new project, the answer also sets the defaults of the questions 4, 5, 12 and 14 ([The preset of a profile](#the-preset-of-a-profile)) | `standard` |
 | 2 | The layer graph: `small`, `default` or `custom`. The question shows the number of documents and the types that the small graph has no layer for. `custom` keeps the `[layers]` tables of the current `spec-dna.toml`, so it is only for `--reconfigure` | By the number of documents: fewer than 30 gives `small`, 30 or more gives `default`. In `--reconfigure`, `custom` |
 | 3 | The areas of `requirements/`: folder names, or `none` for one folder. The question shows the detected areas | The detected areas, at most 8. `none` if fewer than 2 are detected |
-| 4 | The change policy: `three-class`, `two-class` or `none` ([config.md](config.md#the-table-change)) | `three-class` in a new project. In `--reconfigure`, the current policy; `none` for a file with no `[change]` table |
-| 5 | The gate: `block`, `warn` or `off`. It sets the severity of SD910. Then the approvers: the e-mails whose approval commits count, or `none` ([The approvers](#the-approvers)). `init` does not ask the question if the policy is `none`, and it does not ask the approvers for the profile `strict` | `block`. In `--reconfigure`, the current gate. For the approvers, see [The approvers](#the-approvers) |
+| 4 | The change policy: `three-class`, `two-class` or `none` ([config.md](config.md#the-table-change)) | `three-class` in a new project, and `two-class` for `lite`. In `--reconfigure`, the current policy; `none` for a file with no `[change]` table |
+| 5 | The gate: `block`, `warn` or `off`. It sets the severity of SD910. Then the approvers: the e-mails whose approval commits count, or `none` ([The approvers](#the-approvers)). `init` does not ask the question if the policy is `none`, and it does not ask the approvers for the profile `strict` | `block` in a new project, and `warn` for `lite`. In `--reconfigure`, the current gate. For the approvers, see [The approvers](#the-approvers) |
 | 6 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 7 | The language of normative text, as a BCP 47 tag, and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected language and aliases. `en` if detection finds none |
 | 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
@@ -111,7 +111,7 @@ Question 5 has 2 prompts: the gate and the approvers. Question 12 has 2 prompts:
 | 11 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 | 12 | The Claude Code harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code. Then the parts, as words `skills=<names or none>`, `review-md=<true or false>` and `protect-tests=<fix-branches, always or off>`, in any order. A word that you omit keeps its default | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean`. For the parts, see [Parts of the harness](#parts-of-the-harness) |
 | 13 | The models: `role=model[:effort]` words, such as `verifier=sonnet:medium`. `advisor=<model>/<agent model>[:effort]` sets the advisor and the model of `fallback-advisor`. `none` disables a role. The question is not asked if the level is `none` | `orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku`, and for `full` also `implementer=sonnet:high code-simplifier=sonnet:high`. The words `reviewer=` and `spec-writer=` of spec-dna 0.5 give exit code 3: the role `reviewer` is now `verifier`, and the role `spec-writer` ended. The detected values replace the main model and the advisor |
-| 14 | The evals: `none` or `skeleton` ([Evals](#evals)). The question says what `skeleton` writes. It is not asked for the harness level `none`. The answer is then `none` in a new project, and the current state in `--reconfigure` | `skeleton` in a new project, and `none` for the level `none`. In `--reconfigure`, `skeleton` if the file has the table `[evals]`, else `none`, also for the level `none` |
+| 14 | The evals: `none` or `skeleton` ([Evals](#evals)). The question says what `skeleton` writes. It is not asked for the harness level `none`. The answer is then `none` in a new project, and the current state in `--reconfigure` | `skeleton` in a new project, `none` for the profile `lite`, and `none` for the level `none`. In `--reconfigure`, `skeleton` if the file has the table `[evals]`, else `none`, also for the level `none` |
 
 The numbers are the numbers of the question in the `--json` output.
 
@@ -120,6 +120,19 @@ Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the
 Questions 4 and 5 write the table `[change]` with 5 keys (and the 2 keys of the approval, below): `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`) and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
 
 The table also has the keys `approval` and `approvers` (see [Approval in the branch](config.md#approval-in-the-branch)). The second prompt of question 5 asks for them, as [The approvers](#the-approvers) says.
+
+### The preset of a profile
+
+The answer to question 1 sets the defaults of a new project. The answers to the other questions replace them. [profiles.md](profiles.md#what-init-writes-for-each-profile) gives the table of the keys. In short:
+
+- `lite` asks for `two-class` and `warn`. It writes no `REVIEW.md`, `protect-tests = "off"`, no `[evals]` table and no starter file. Its skills are `brainstorm`, `write-plan` and `finish`, each one only if it is on by default.
+- `standard` asks for `three-class` and `block`. It writes `REVIEW.md`, `protect-tests = "fix-branches"` and the starter files of the evals. Its skills are the skills that are on by default.
+- `strict` is as `standard`, with `approval = "base"` and `protect-approvals = true`. `init` writes no eval pack for it: the pack has 57 evals and 812 files. With the answer `skeleton`, the preview and the result print a note that names `spec-dna eval pack` and the folder `<dir>/pack/`. With `--json`, the note is an item of `notes`.
+- The level `full` of question 12 proposes the 11 skills, for each profile.
+
+A skill is on by default when `spec-dna skill list` says so ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The rule reads the 7 skills of the design, the verdict of each skill in the table of the release, and one constant. With the constant `true`, a skill is on only with the verdict `on`. With `false`, a skill of the 7 stays on unless its verdict is `off`. A skill outside the 7 is on only with the verdict `on`. `init` never reads a table of the project for this: the default is the same in each project of a release.
+
+`--reconfigure` keeps the current values and applies no preset. A part that the file does not set gets the default of the profile of the file. If the answer to question 1 differs from the file, `init` changes the severities and the keys of ADR 0018 (`approval = "base"` and `protect-approvals` for `strict`, in a file that has no such key), and it prints this note: "the profile `<p>` sets other defaults only for a new project; answer questions 4, 5, 12 and 14 to change them".
 
 ### The approvers
 
@@ -170,13 +183,13 @@ The second prompt of question 12 sets 3 keys of `[harness]`. An omitted word kee
 
 | Part | Writes | Default of a new project |
 | --- | --- | --- |
-| `skills` | The skills `.claude/skills/spec-dna-<name>/SKILL.md`. The 11 names are `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem` ([harness.md](harness.md#the-workflow-pack-and-reviewmd)) | The 7 skills that are on by default (all but `execute`, `tdd`, `verify` and `debug`) at the level `lean`, and all 11 at the level `full`, if the answer to question 4 is not `none`, else `none` |
-| `review-md` | `REVIEW.md` | `true` |
-| `protect-tests` | The hook `protect-tests` in `.claude/settings.json` | `fix-branches`. `off` if `[evidence] tests` is empty, which is the link style `verified-by` |
+| `skills` | The skills `.claude/skills/spec-dna-<name>/SKILL.md`. The 11 names are `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem` ([harness.md](harness.md#the-workflow-pack-and-reviewmd)) | The skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) at the level `lean`, and all 11 at the level `full`, if the answer to question 4 is not `none`, else `none`. `lite` proposes only `brainstorm`, `write-plan` and `finish` of them |
+| `review-md` | `REVIEW.md` | `true`, and `false` for `lite` |
+| `protect-tests` | The hook `protect-tests` in `.claude/settings.json` | `fix-branches`. `off` if `[evidence] tests` is empty, which is the link style `verified-by`, and `off` for `lite` |
 
 - The defaults follow the final answers, so a later answer to question 4 or 6 changes them.
-- The descriptions of the 7 skills that are on add 1,250 bytes or fewer to each request, and the 11 skills add 1,900 bytes or fewer. `REVIEW.md` adds none. `init` prints the total bytes that the harness adds, and the bytes that the adapters add (the line of 400 bytes or fewer, and the description of the adapter skill).
-- In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of a new project. So `init --reconfigure` offers the new parts to a project that has none of them.
+- The descriptions of the 7 skills of the design (D2) add 1,250 bytes or fewer to each request, and the 11 skills add 1,900 bytes or fewer. A release that turns on fewer skills adds fewer bytes. `REVIEW.md` adds none. `init` prints the total bytes that the harness adds, and the bytes that the adapters add (the line of 400 bytes or fewer, and the description of the adapter skill).
+- In `--reconfigure`, a part that the current `[harness]` table sets keeps its value. A part with no key in the table gets the default of the profile of the file. So `init --reconfigure` offers the new parts to a project that has none of them.
 - A `REVIEW.md` with no harness marker gives `review-md=false`. A skill file with no marker leaves that skill out of the default. A note names each such file, and `init` does not change it. A skill file of 0.6 for a name that ended (`spec-dna-intent`, `spec-dna-spec` or `spec-dna-plan`) is different: if it has a marker and you did not edit it, `init` removes it. If you edited it, `init` keeps it and names it with `kept <path>: edited by hand (SD501)`. An answer that asks for such a file stops `init` with exit code 2.
 - The answer keys are `harness-skills` (an array of names, `[]` for none), `harness-review-md` (`true` or `false`) and `harness-protect-tests`. They need a harness level other than `none`.
 - The key `protect-approvals` is no part of the prompt, and no answers key sets it. `init` writes `protect-approvals = true` for the profile `strict` in a new configuration, and in a file that has no such key. A file that has the key keeps its value. The key adds the hook that denies an approval by an agent ([harness.md](harness.md#spec-dna-hook-protect-approvals)).

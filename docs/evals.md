@@ -335,7 +335,7 @@ tdd on (rule 1): with 10/20 0.50, without 1/20 0.05, cost per correct 1.993746 a
 
 A name that has no record has no row. `--release` reads the binary only: it needs no project and no `[evals]` table. With `--json`, it prints `{"release":[{"name","verdict","rule","batch","claude_code","models","with","without","difference","cost_ratio"}]}`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd`. `--release` is an option of `eval verdict` only.
 
-SD507 `skill-unproven` reports a skill of `[harness] skills` that is off by default and has no verdict `on` in the project or in the release. It is a warning in the profile `strict`, and off in `lite` and `standard`. [diagnostics.md](diagnostics.md) gives the code.
+SD507 `skill-unproven` reports a skill of `[harness] skills` that is off by default ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)): the verdict of the project comes first, then the verdict of the release. It is a warning in the profile `strict`, and off in `lite` and `standard`. [diagnostics.md](diagnostics.md) gives the code.
 
 ### The cost
 
