@@ -378,6 +378,14 @@ If no step stops, `finish` writes all the files in one pass. Then it deletes the
 
 If the plan has a section `Hours` ([types.md](types.md#sections-that-carry-list-items)), `finish` adds its items and prints the line `Hours: <total>` (also with `--dry-run`), with no zero after the last digit (`3.5`, `4`). The next line says to add this line to the commit message of the change and to keep it in the squash message, because `finish` makes no commit. An item that has no number of hours gives the note `the item "<text>" of Hours has no number of hours; no total`, and no `Hours:` line. A plan with no `Hours` item prints nothing. `log` and `stats --sdlc` read the line from the commit that deletes `intent.md`. Nothing checks the value: the line is a record.
 
+These rules apply to `Hours`:
+
+- A nested item under an item of `Hours` is not counted. Only the top-level items are.
+- Two sections `Hours` in one plan are added together.
+- `finish` reads an item with an optional `h` (`1.5h`). The line `Hours:` of a commit message has no `h`: `Hours: 3.5h` is not read, and the value is absent.
+- A number of the line `Hours:` has up to 7 digits before the `.` and up to 2 after it. A longer number is not read.
+- `log` reads the commit that deletes `intent.md`. For a merge-commit merge, that is the commit of the branch, so the line must be in that commit and not only in the message of the merge commit.
+
 These rules apply to the files:
 
 - `finish` writes a generated index again if it lists a deleted file, so `check` gives no SD610.
@@ -560,14 +568,14 @@ Plan lagging: Survival rate: the share of intent.md files that are accepted rath
 Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
 ```
 
-With `--json`, the output is one object with the 14 indicators of the table, in its order:
+With `--json`, the output is one object with the 15 indicators of the table, in its order:
 
 ```json
 {"indicators":[{"play":"Plan","kind":"lagging","name":"Survival rate: the share of intent.md files that are accepted rather than closed","value":66.7,"unit":"percent","count":3,"reason":null},{"play":"Build","kind":"lagging","name":"Rework cycles per change","value":null,"unit":null,"count":null,"reason":"it needs pull request metadata"}]}
 ```
 
-- `value` is a number with 1 decimal, or `null` for an indicator with no value.
-- `unit` is `days`, `percent` or `commits per change`.
+- `value` is a number with 1 decimal, or `null` for an indicator with no value. The row of the hours has up to 2 decimals and no zero after the last digit (`2.25`, `3.5`, `6`).
+- `unit` is `days`, `percent`, `commits per change` or `hours`.
 - `count` is the number of changes that the value counts. For the 2 Test indicators, it is the number of result files and incidents. It is `null` for an indicator that git cannot give.
 - `reason` is `null` for a full value. Each `null` value has a reason.
 
