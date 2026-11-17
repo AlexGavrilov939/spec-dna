@@ -362,3 +362,41 @@ fn gives_no_output_on_bad_json_or_no_repository() {
     let out = child.wait_with_output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).starts_with(DENY_START));
 }
+
+#[test]
+fn an_unresolved_folder_inspects_the_cwd_and_the_project() {
+    let r = project();
+    r.write(INTENT, &intent("accepted"));
+    let other = Repo::empty();
+    let cwd = r.dir.to_string_lossy().into_owned();
+    // The folder has a variable or `~`, so the hook cannot read it: it
+    // inspects the repository of the `cwd` too.
+    for cmd in [
+        "cd $WORK && git commit -am x",
+        "cd ~user/work && git commit -am x",
+        "git -C $WORK commit -am x",
+        "cd \"$(pwd)/sub\" && git commit -am x",
+        "cd ${PWD} && git commit -am x",
+    ] {
+        let ev = event(cmd, &cwd);
+        let (code, out, err) = hook_in(&other.dir, None, None, ev.as_bytes());
+        assert_eq!(code, 0, "{err}");
+        assert_denies(&out, &[INTENT]);
+    }
+    // The repository of `CLAUDE_PROJECT_DIR` too, when the `cwd` is another.
+    let ev = event("cd $WORK && git commit -am x", &other.dir.to_string_lossy());
+    let (_, out, _) = hook_in(&other.dir, Some(&r.dir), None, ev.as_bytes());
+    assert_denies(&out, &[INTENT]);
+    // `$CLAUDE_PROJECT_DIR` is a plain variable that the hook expands.
+    let ev = event(
+        "cd $CLAUDE_PROJECT_DIR && git commit -am x",
+        &other.dir.to_string_lossy(),
+    );
+    let (_, out, _) = hook_in(&other.dir, Some(&r.dir), None, ev.as_bytes());
+    assert_denies(&out, &[INTENT]);
+    // None of these repositories has a pending approval: the call passes.
+    let clean = project();
+    let ev = event("cd $WORK && git commit -am x", &clean.dir.to_string_lossy());
+    let (code, out, _) = hook_in(&clean.dir, Some(&clean.dir), None, ev.as_bytes());
+    assert_eq!((code, out.as_str()), (0, ""));
+}

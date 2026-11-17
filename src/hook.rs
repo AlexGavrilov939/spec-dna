@@ -1558,11 +1558,24 @@ pub fn approvals(
             .filter(|p| !p.is_empty())?
             .to_string(),
     };
-    let mut dir = PathBuf::from(start);
+    let start = PathBuf::from(start);
+    // The folder that the commit runs in. `None`: a `cd` or a `-C` has a target
+    // that the hook cannot read, so the hook fails closed (see `fallbacks`).
+    let mut dir = Some(start.clone());
+    let mut ask = |here: &Option<PathBuf>, amend: bool| -> Option<String> {
+        let dirs = match here {
+            Some(d) => vec![d.clone()],
+            None => fallbacks(&start, project),
+        };
+        dirs.iter()
+            .find_map(|d| moved_to_approval(d, amend, &opts.intent, git))
+    };
     for words in &segments {
         if program(&words[0]) == "cd" {
             if let Some(target) = words.get(1) {
-                dir = moved(&dir, target)?;
+                dir = dir
+                    .as_deref()
+                    .and_then(|d| moved(d, &start, project, target));
             }
             continue;
         }
@@ -1577,26 +1590,67 @@ pub fn approvals(
         let mut i = g + 1;
         while i < g + 1 + c {
             if words[i] == "-C" {
-                here = moved(&here, words.get(i + 1)?)?;
+                here = match (here.as_deref(), words.get(i + 1)) {
+                    (Some(d), Some(t)) => moved(d, &start, project, t),
+                    _ => None,
+                };
                 i += 1;
             }
             i += 1;
         }
         let amend = words[g + 1 + c..].iter().any(|w| w == "--amend");
-        if let Some(reason) = moved_to_approval(&here, amend, &opts.intent, git) {
+        if let Some(reason) = ask(&here, amend) {
             return Some(deny(&reason));
         }
     }
     None
 }
 
-/// The folder that `cd <target>` or `git -C <target>` gives. A target with `$`
-/// or `~` gives `None`: the hook cannot read it.
-fn moved(from: &Path, target: &str) -> Option<PathBuf> {
-    if target.contains(['$', '~']) {
+/// The repositories to inspect when a folder cannot be read: the `cwd` of the
+/// event and `CLAUDE_PROJECT_DIR`. The hook allows the call only if none of
+/// them has an approval that this commit would record.
+fn fallbacks(start: &Path, project: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs = vec![start.to_path_buf()];
+    if let Some(p) = project.filter(|p| !p.as_os_str().is_empty() && *p != start) {
+        dirs.push(p.to_path_buf());
+    }
+    dirs
+}
+
+/// The folder that `cd <target>` or `git -C <target>` gives. A target that
+/// starts with `~`, `$PWD`, `${PWD}`, `$CLAUDE_PROJECT_DIR` or
+/// `${CLAUDE_PROJECT_DIR}` is expanded (`~` is `$HOME`; `$PWD` is the folder
+/// before the move). Another `$` or `~` gives `None`: the hook cannot read it.
+fn moved(from: &Path, start: &Path, project: Option<&Path>, target: &str) -> Option<PathBuf> {
+    if !target.contains(['$', '~']) {
+        return Some(from.join(target));
+    }
+    let (base, rest): (PathBuf, &str) = if let Some(r) = target.strip_prefix('~') {
+        (std::env::var_os("HOME").map(PathBuf::from)?, r)
+    } else {
+        let var = target.strip_prefix('$')?;
+        let (name, rest) = match var.strip_prefix('{') {
+            Some(b) => b.split_once('}')?,
+            None => {
+                let end = var
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(var.len());
+                var.split_at(end)
+            }
+        };
+        let base = match name {
+            "PWD" => from.to_path_buf(),
+            "CLAUDE_PROJECT_DIR" => project
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| start.to_path_buf()),
+            _ => return None,
+        };
+        (base, rest)
+    };
+    if rest.contains(['$', '~']) || !(rest.is_empty() || rest.starts_with('/')) {
         return None;
     }
-    Some(from.join(target))
+    Some(base.join(rest.trim_start_matches('/')))
 }
 
 /// The reason to deny a commit in `dir`, if the commit sets the status of an
