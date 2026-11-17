@@ -1,0 +1,12 @@
+{
+  "id": "audit-sync",
+  "task": "The sync adds the lines of `supplier.csv` to `items.csv`. Run the sync. It must write one audit line in `audit.log` for each item that it adds.",
+  "fixture": "evals/fixtures/audit-sync",
+  "allowed-tools": ["Read", "Edit", "Bash(sh:*)"],
+  "max-turns": 15,
+  "max-budget-usd": 1.5,
+  "runs": 3,
+  "checks": [
+    { "name": "audit-written", "run": "[ -s audit.log ]" }
+  ]
+}
