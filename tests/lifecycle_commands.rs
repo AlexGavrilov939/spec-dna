@@ -355,6 +355,60 @@ fn an_add_line_without_evidence_is_in_the_stage_test_until_a_tag_names_it() {
 }
 
 #[test]
+fn next_and_status_name_a_partial_tag_at_the_stage_test() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+            ("src/dose.py", "x = 2\n"),
+            (
+                "tests/test_valves.py",
+                "# covers: partial requirements/valves/closing#flush\n",
+            ),
+        ],
+    );
+    // A partial tag is not evidence: the stage stays `test`.
+    assert_stage(&r, "test");
+    let text = next_text(&r);
+    assert!(
+        text.contains("1 of 1 requirement(s) that the change adds or changes have no full evidence; 1 of them have a partial `covers:` tag only"),
+        "{text}"
+    );
+    assert_eq!(
+        items(&text).last().copied().unwrap(),
+        "[ ] `requirements/valves/closing#flush` has a partial `covers:` tag only (tests/test_valves.py:1); add a test that covers all of it [skill: tdd]"
+    );
+    // `status` shows the count in a token, also with a target of no tag.
+    let (code, out, err) = r.run(&["status"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(" tasks 0/1 next-task t1 partial 1 areas"),
+        "{out}"
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(out.contains("\"partial\":1"), "{out}");
+    // A full tag next to it is evidence.
+    stage(
+        &r,
+        &[(
+            "tests/test_all.py",
+            "# covers: requirements/valves/closing#flush\n",
+        )],
+    );
+    assert_stage(&r, "deploy");
+    let (_, out, _) = r.run(&["status"]);
+    assert!(!out.contains("partial"), "{out}");
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(out.contains("\"partial\":0"), "{out}");
+}
+
+#[test]
 fn a_routine_requirement_with_a_new_hash_and_no_evidence_is_in_the_stage_test() {
     let r = start();
     stage(

@@ -778,7 +778,7 @@ fn an_indicator_that_git_cannot_give_has_a_null_value_and_a_reason() {
     empty.commit("start");
     let out = stats_json(&empty, &[]);
     let rows: Vec<&str> = out.split("{\"play\"").skip(1).collect();
-    assert_eq!(rows.len(), 15, "{out}");
+    assert_eq!(rows.len(), 16, "{out}");
     for row in rows {
         if row.contains("\"value\":null") {
             assert!(row.contains("\"reason\":\""), "{row}");

@@ -75,7 +75,7 @@ spec-dna new plan sensor-timeout
 - `Risks`: what can fail, and what reduces the risk.
 - `Proof`: the tests, with their `covers:` ids, and the commands that show the result.
 
-The items of `Files` and the `Files:` paths of the tasks are the scope of the change (SD913).
+The items of `Files` and the `Files:` paths of the tasks are the scope of the change (SD913). A plan has no default size budget, because it grows with the number of tasks. `[budgets.plan]` sets one.
 
 #### A spike
 
@@ -108,6 +108,18 @@ spec-dna finish sensor-timeout
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
 `finish` adds the `Hours:` labels of the tasks that are not skipped, and prints the line `Hours: <total>`. The total is a number, or a range `<low>-<high>` if a task has a range. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
+
+### A delta that depends on a spike
+
+A spike is a short task that tries or measures one option before you decide. Sometimes the text of a delta line depends on its result. `finish` applies the delta of the base tree, and it stops when the pull request of `finish` changes the delta (SD914, step 3). Thus the edit of the delta must merge before the pull request of `finish`.
+
+- Run the spike before the approval of the spec when you can. Before a plan exists, a spike gives no SD913. When the plan comes in the same branch, SD913 reports the file of the spike: list it in `Files`, or merge the spike in a pull request of its own.
+- An approved spec stays `approved` after a text edit. `check` asks for no new approval of the edit.
+- With `approval = "branch"`, run the spike in the first pull request, after the approval commit of the plan. Edit the delta in the same pull request. The count stays 2 pull requests.
+- With `approval = "base"`, edit the delta in a pull request before the pull request of `finish`, for example the pull request of the spike.
+- If the approver must read the new delta, set the spec to `draft` in the commit of the edit. Then the approver commits `status: approved` alone. With `approval = "branch"`, that commit is the approval. With `"base"`, only the merge records the review. If the base tree already has the spec `approved`, `check` gives SD401 for the commit with `draft` until the approval commit follows.
+- To add a path to `Files` of a plan that an approval commit approved, use the same 2 commits. Else the new path gives SD910 (reason 8).
+- Do not edit the delta in the pull request of `finish`. A new approval commit there does not help, because the squash merge keeps no commit of the branch.
 
 ## The approval commit
 
@@ -191,9 +203,9 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 | --- | --- | --- |
 | SD910 | A `spec.md` or a `plan.md` that is not a `draft`, or code, changed, and no approval of the document before it counts | With `approval = "base"`, merge the approval first, in its own pull request. With `"branch"`, the message names one of 8 reasons and its fix ([the approval commit](#the-approval-commit)) |
 | SD612 | A document outside the folder of a change links into the folder, and `finish` would stop on it | Name the change as plain text, or link the document that the change moves its text into |
-| SD913 | The diff touches a file that `Files` of the plan does not list | Add the file to `Files` before the pull request of `finish`, or remove the edit |
-| SD914 | A delta line is not valid, or its hash is not the hash of the current text | Run `spec-dna show`. Correct the line in its own pull request before `finish` |
-| SD916 | A new or changed requirement has no evidence | Add a test with a `covers:` tag, or a `verified-by` path |
+| SD913 | A change of the diff has a plan, and the diff touches a file that no `Files` of the diff lists. Before a plan exists, SD913 gives nothing | List the file in `Files`, also an edit of `clarify` such as the questions, or move the edit to a pull request of its own |
+| SD914 | A delta line is not valid, or its hash is not the hash of the current text | Run `spec-dna show`. Correct the line in its own pull request before `finish` ([a delta that depends on a spike](#a-delta-that-depends-on-a-spike)) |
+| SD916 | A new or changed requirement has no full evidence. A `covers: partial` tag alone is not evidence | Add a test with a `covers:` tag that covers all of it, or a `verified-by` path |
 | SD917 | The class of the intent is too low for the diff | Set a higher class. Add the documents of that class |
 | SD919 | An approved spec has an open concern | Resolve the concern. Write its resolution |
 | SD922 | An approved spec has an open question | Answer the question (`- [x]`). Write the answer after it |
