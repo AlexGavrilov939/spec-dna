@@ -46,6 +46,41 @@ fn last_segment(raw: &str) -> &str {
     s.rsplit('/').next().unwrap_or(s)
 }
 
+/// The folders of a layer of changes (`docs/intent`) that hold nothing but
+/// change folders in the base tree. Git does not keep an empty folder, so
+/// `finish` that deletes the last change folder removes the layer folder too.
+/// The layer is still there and the next change goes into it, so a document
+/// that names the layer folder is not drift (0.7.1). A folder that held another
+/// file is not in the set.
+fn emptied_layer_dirs(base: &Corpus) -> HashSet<&str> {
+    let change_folders: HashSet<&str> = base
+        .docs
+        .iter()
+        .filter(|d| matches!(d.ty, DocType::Intent | DocType::Spec | DocType::Plan))
+        .filter_map(|d| d.path.rsplit_once('/').map(|(dir, _)| dir))
+        .collect();
+    let layer_dirs: HashSet<&str> = change_folders
+        .iter()
+        .filter_map(|f| f.rsplit_once('/').map(|(dir, _)| dir))
+        .collect();
+    layer_dirs
+        .into_iter()
+        .filter(|layer| {
+            let prefix = format!("{layer}/");
+            base.files
+                .iter()
+                .filter(|f| f.starts_with(&prefix))
+                .all(|f| {
+                    // A file at any depth of a change folder (an image in a
+                    // subfolder) belongs to the change.
+                    change_folders
+                        .iter()
+                        .any(|c| f.strip_prefix(c).is_some_and(|r| r.starts_with('/')))
+                })
+        })
+        .collect()
+}
+
 /// Finds the drift of the head tree against the base tree. `untracked` is
 /// true when the head tree includes untracked files (`check` without
 /// `--base`). The profile and the rules of the root of each document set the
@@ -99,11 +134,12 @@ fn find(
         .map(|e| e.path.as_str())
         .filter(|p| !head_files.contains(*p))
         .collect();
+    let emptied = emptied_layer_dirs(base);
     let gone_dirs: HashSet<&str> = base
         .dirs
         .iter()
         .map(String::as_str)
-        .filter(|d| !head.dirs.contains(*d))
+        .filter(|d| !head.dirs.contains(*d) && !emptied.contains(*d))
         .collect();
     let mut renamed: HashMap<&str, &str> = HashMap::new();
     if !gone_files.is_empty() {
