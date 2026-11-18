@@ -275,12 +275,19 @@ fn upgrade_writes_the_new_skills_and_changes_no_other_key() {
             "{}: removed",
             case.name
         );
+        // The version mark of each generated file moves from 0.6.1 to the
+        // version of the binary, so `Explore.md`, `fallback-advisor.md`,
+        // `verifier.md` and `REVIEW.md` change by their mark only.
         let modified: BTreeSet<String> = [
+            ".claude/agents/Explore.md",
+            ".claude/agents/fallback-advisor.md",
             ".claude/agents/model-team.md",
+            ".claude/agents/verifier.md",
             ".claude/skills/spec-dna-review/SKILL.md",
             ".claude/skills/spec-dna/SKILL.md",
             "AGENTS.md",
             "CLAUDE.md",
+            "REVIEW.md",
             "spec-dna.toml",
         ]
         .iter()

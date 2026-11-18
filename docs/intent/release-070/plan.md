@@ -10,6 +10,7 @@ status: approved
 - `tests/cli.rs` The test of the verdict list, with no value of the table.
 - `tests/eval_ab.rs` The tests of `eval verdict`, with the values of the table.
 - `tests/upgrade_cli.rs` The test of a skills list that the upgrade cannot edit.
+- `tests/upgrade_v061.rs` The files that change by their version mark when the binary is 0.7.0.
 - `Cargo.toml`, `Cargo.lock`, `spec-dna.toml` The version and the pin, in one commit.
 - `src/init.rs`, `tests/golden/evals/agent-evals.yml`, `docs/quickstart.md` The checkout SHA that `init` writes, only if it differs from CI.
 - `CHANGELOG.md` The section 0.7.0.
