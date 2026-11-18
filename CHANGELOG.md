@@ -53,6 +53,11 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - `init --reconfigure` with another profile than the file keeps the current values, and it prints a note: the profile sets other defaults only for a new project. A part that the file does not set (`skills`, `review-md`, `protect-tests`) gets the default of the profile of the file.
 - The fixture `tests/fixtures/upgrade/v061/`: a project that the real binary 0.6.1 wrote, with a change that has an accepted intent, an approved spec and an approved plan, and the tests of its upgrade (`tests/upgrade_v061.rs`). `make.sh v061` records it.
 
+### Fixed
+
+- A `Files` item with more than one code span gives each span as a path. Before, it gave only the first span, so a file that a later span names got a false SD913. A span that holds a template placeholder is still no path.
+- The tasks under a heading of a lower level inside `## Order` (`### Part two` under `## Order`) are tasks of the plan. Before, the heading ended the section, so `next`, `status` and `finish` did not see these tasks: a plan with `Files: none` moved to the next stage with every task open, and SD923 and SD924 skipped them. A heading groups tasks and is not a task. After the upgrade, such a plan can show open tasks, and SD923 or SD924 can report them. The version of the parser moves to 16, so the index of an old project is rebuilt once ([docs/types.md](docs/types.md#sections-that-carry-list-items)).
+
 ### Changed
 
 - The generated line of `AGENTS.md` and `CLAUDE.md` has no space before its marker `<!-- spec-dna v... -->`, so a version up to `99.99.99` fits in 400 bytes. The text of the line and its hash do not change. `check` gives SD502 for a line with the space, and `init` and `upgrade` write the new form.

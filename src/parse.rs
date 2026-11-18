@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 15;
+pub const PARSER_VERSION: u32 = 16;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -118,8 +118,9 @@ pub struct ListItem {
     /// task box, before a nested list, with no space at the start and at the
     /// end. Line ends and blank lines stay as they are.
     pub text: String,
-    /// The first inline code span of the item text, without a nested list.
-    pub code: Option<String>,
+    /// The inline code spans of the item text, in the order of the text,
+    /// without a nested list and without an empty span.
+    pub codes: Vec<String>,
     /// True if the item has a nested list.
     pub nested: bool,
     pub line: u32,
@@ -533,6 +534,10 @@ struct ItemScan {
     heading: Option<String>,
     /// The section of the last heading.
     section: Option<ItemSection>,
+    /// The level of the heading that opened `section`, from 1 to 6.
+    section_level: u8,
+    /// The level of the heading that the parser reads now.
+    heading_level: u8,
     /// The list items that are open now, outer first.
     open: Vec<OpenItem>,
     /// The depth of the block quotes that are open now.
@@ -547,7 +552,7 @@ struct OpenItem {
     /// The section, if this is a top-level item of a section that matters.
     section: Option<ItemSection>,
     task: Option<bool>,
-    code: Option<String>,
+    codes: Vec<String>,
     first_list: Option<usize>,
 }
 
@@ -562,10 +567,22 @@ impl ItemScan {
         out: &mut Vec<ListItem>,
     ) {
         match ev {
-            Event::Start(Tag::Heading { .. }) => self.heading = Some(String::new()),
+            Event::Start(Tag::Heading { level, .. }) => {
+                self.heading = Some(String::new());
+                self.heading_level = *level as u8;
+            }
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(h) = self.heading.take() {
-                    self.section = ItemSection::from_heading(&h);
+                    let named = ItemSection::from_heading(&h);
+                    // A heading below `Order` groups its tasks: the section
+                    // goes on, unless the heading names a section itself.
+                    let groups = named.is_none()
+                        && self.section == Some(ItemSection::Order)
+                        && self.heading_level > self.section_level;
+                    if !groups {
+                        self.section = named;
+                        self.section_level = self.heading_level;
+                    }
                 }
             }
             Event::Text(t) | Event::Code(t) if self.heading.is_some() => {
@@ -601,7 +618,7 @@ impl ItemScan {
                 self.open.push(OpenItem {
                     section: self.section.filter(|_| top),
                     task: None,
-                    code: None,
+                    codes: Vec::new(),
                     first_list: None,
                 });
             }
@@ -618,9 +635,9 @@ impl ItemScan {
             Event::Code(t) => {
                 if let Some(item) = self.open.last_mut()
                     && item.first_list.is_none()
-                    && item.code.is_none()
+                    && !t.trim().is_empty()
                 {
-                    item.code = Some(t.trim().to_string());
+                    item.codes.push(t.trim().to_string());
                 }
             }
             Event::End(TagEnd::Item) => {
@@ -644,7 +661,7 @@ impl ItemScan {
                     section,
                     task: item.task,
                     text: body[text_start..text_end].trim().to_string(),
-                    code: item.code.filter(|c| !c.is_empty()),
+                    codes: item.codes,
                     nested: item.first_list.is_some(),
                     line: lines.line(body_start + range.start),
                     range: (body_start + range.start) as u32..(body_start + end) as u32,
@@ -1463,19 +1480,59 @@ mod tests {
     }
 
     #[test]
-    fn the_first_code_span_of_an_item_is_kept() {
-        let src = "## Files\n\n- `a/b.rs` and `c.rs`\n- see [`d.rs`](x.md)\n- plain\n- ``\n- text, then:\n  - `nested.rs`\n- ```double `tick` ```\n\n```md\n- in a fence `e.rs`\n```\n";
+    fn every_code_span_of_an_item_is_kept() {
+        let src = "## Files\n\n- `a/b.rs` and `c.rs`\n- `package.json`, `pnpm-workspace.yaml`: the workspace.\n- see [`d.rs`](x.md)\n- plain\n- ``\n- `` and `f.rs`\n- text, then:\n  - `nested.rs`\n- one `g.rs`, then:\n  - `nested.rs`\n- ```double `tick` ```\n\n```md\n- in a fence `e.rs`\n```\n";
         let d = parse(src);
-        let codes: Vec<Option<&str>> = d.items.iter().map(|i| i.code.as_deref()).collect();
+        let codes: Vec<Vec<&str>> = d
+            .items
+            .iter()
+            .map(|i| i.codes.iter().map(String::as_str).collect())
+            .collect();
         assert_eq!(
             codes,
             [
-                Some("a/b.rs"),
-                Some("d.rs"),
-                None,
-                None,
-                None,
-                Some("double `tick`")
+                vec!["a/b.rs", "c.rs"],
+                vec!["package.json", "pnpm-workspace.yaml"],
+                vec!["d.rs"],
+                vec![],
+                vec![],
+                vec!["f.rs"],
+                vec![],
+                vec!["g.rs"],
+                vec!["double `tick`"]
+            ]
+        );
+    }
+
+    #[test]
+    fn a_heading_inside_order_groups_its_tasks() {
+        let src = "# Plan\n\n## Order\n\n- [ ] t1: One.\n\n### Part two\n\n- [ ] t2: Two.\n\n#### Deeper\n\n- [x] t3: Three.\n\n### Open questions\n\n- [ ] q\n\n### Back\n\n- not kept, the heading ends the section `Open questions`\n\n## Risks\n\n- [ ] not kept\n\n### Under risks\n\n- [ ] not kept\n";
+        let got: Vec<_> = items(src)
+            .into_iter()
+            .map(|(s, t, x, _, _)| (s, t, x))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (ItemSection::Order, Some(false), "t1: One.".to_string()),
+                (ItemSection::Order, Some(false), "t2: Two.".to_string()),
+                (ItemSection::Order, Some(true), "t3: Three.".to_string()),
+                (ItemSection::OpenQuestions, Some(false), "q".to_string()),
+            ]
+        );
+        // A heading of the same level or above ends `Order`. A section other
+        // than `Order` ends at any heading.
+        let src = "## Order\n\n- [ ] t1: a\n\n## Notes\n\n- [ ] not kept\n\n# Order\n\n- [ ] t2: b\n\n## Files\n\n- `x`\n\n### Details\n\n- not kept\n";
+        let got: Vec<(ItemSection, String)> = items(src)
+            .into_iter()
+            .map(|(s, _, x, _, _)| (s, x))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (ItemSection::Order, "t1: a".to_string()),
+                (ItemSection::Order, "t2: b".to_string()),
+                (ItemSection::Files, "`x`".to_string()),
             ]
         );
     }
@@ -1679,7 +1736,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_version_is_15() {
-        assert_eq!(PARSER_VERSION, 15);
+    fn parser_version_is_16() {
+        assert_eq!(PARSER_VERSION, 16);
     }
 }

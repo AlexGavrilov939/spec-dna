@@ -129,7 +129,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level.
+The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: a heading of a lower level than the heading of `Order` (`###` under `##`) groups tasks, and the section goes on, unless that heading names another section.
 
 | Section | Document | Items |
 | --- | --- | --- |
@@ -138,8 +138,8 @@ The parser keeps the list items of 8 sections for each document. The heading tex
 | `Decisions` | spec | Links `[[decisions/<slug>]]` |
 | `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved. An item with no box gives SD925 |
 | `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922). An item with no box gives SD925 |
-| `Files` | plan | An item is a path or a glob from the repository root. Its first code span is the path. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
-| `Order` | plan | The tasks of the plan, in order. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
+| `Files` | plan | An item is a path or a glob from the repository root. Each code span of the item is a path (`` `package.json`, `pnpm-workspace.yaml`: the workspace `` gives 2 paths). An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
+| `Order` | plan | The tasks of the plan, in order, also the tasks under a heading of a lower level. A heading groups tasks and is not a task. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
 
 Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range. It keeps the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
@@ -175,7 +175,7 @@ The next task is the first task that is not closed (not done and not skipped) an
 
 ### Files and paths
 
-A `Files` item of a plan, and an entry of the label `Files:` of a task, gives paths and globs. The code span is the first choice. Write each path in a code span, as `` `src/valve.py` ``.
+A `Files` item of a plan, and an entry of the label `Files:` of a task, gives paths and globs. A code span is the first choice, and each code span of a `Files` item is a path. Write each path in a code span, as `` `src/valve.py` ``.
 
 An item that has no code span, or an entry that has none, is a plain path if it follows these rules:
 

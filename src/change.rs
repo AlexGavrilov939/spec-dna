@@ -116,9 +116,10 @@ impl Change {
 
     /// The patterns of the plan: the paths of the `Files` section, then the
     /// paths of the label `Files:` of the tasks of `Order`, in the order of the
-    /// file, with no repeat. A `Files` item gives one pattern: its first code
-    /// span, or, with no code span, its text if the text is a plain path
-    /// ([`plain_path`]). An item that gives no pattern has no effect
+    /// file, with no repeat. A `Files` item gives the patterns of its code
+    /// spans (each span is a pattern), or, with no code span, its text if the
+    /// text is a plain path ([`plain_path`]). An item that gives no pattern has
+    /// no effect
     /// ([`Change::files_not_paths`]). Each reader of the scope of a change uses
     /// this list.
     pub fn files(&self, corpus: &Corpus) -> Vec<String> {
@@ -127,7 +128,7 @@ impl Change {
         };
         let mut out: Vec<String> = Vec::new();
         let items = section_items(&corpus.docs[a.doc as usize], ItemSection::Files)
-            .filter_map(item_pattern)
+            .flat_map(item_patterns)
             .chain(self.tasks(corpus).into_iter().flat_map(|t| t.files));
         for p in items {
             if !out.contains(&p) {
@@ -150,7 +151,7 @@ impl Change {
             return Vec::new();
         }
         section_items(&corpus.docs[a.doc as usize], ItemSection::Files)
-            .filter(|i| item_pattern(i).is_none())
+            .filter(|i| item_patterns(i).is_empty())
             .map(|i| shown(&i.text))
             .filter(|t| !t.is_empty())
             .collect()
@@ -254,13 +255,18 @@ fn starts_with_none(text: &str) -> bool {
     word.eq_ignore_ascii_case("none")
 }
 
-/// The pattern of a `Files` item. A code span is the first choice. An item
-/// with no code span is a pattern only if its whole text is a plain path.
-fn item_pattern(item: &ListItem) -> Option<String> {
-    match &item.code {
-        Some(c) => usable_code(c).then(|| c.clone()),
-        None => plain_path(&item.text),
+/// The patterns of a `Files` item. Each code span is a pattern, except a
+/// template placeholder. An item with no code span gives a pattern only if its
+/// whole text is a plain path.
+fn item_patterns(item: &ListItem) -> Vec<String> {
+    if item.codes.is_empty() {
+        return plain_path(&item.text).into_iter().collect();
     }
+    item.codes
+        .iter()
+        .filter(|c| usable_code(c))
+        .cloned()
+        .collect()
 }
 
 /// True if a code span can be a pattern. A template placeholder is not one.
@@ -1127,12 +1133,25 @@ mod tests {
     }
 
     #[test]
-    fn files_are_the_first_code_span_of_each_item() {
+    fn files_are_the_code_spans_of_each_item() {
         let plan = "---\nstatus: draft\n---\n# P\n\n## Files\n\n- `src/valve.py` and `src/other.py`\n- `docs/`: the folder\n- no code here\n- [`tests/*.py`](x.md)\n  - `nested.py`\n\n## Order\n\n- `not-a-file.py`\n";
         let c = corpus(&[("docs/intent/x/plan.md", plan)]);
         let ch = &collect(&c)[0];
-        // A code span in a link text is a code span.
-        assert_eq!(ch.files(&c), ["src/valve.py", "docs/", "tests/*.py"]);
+        // A code span in a link text is a code span. Each span of an item is
+        // a pattern.
+        assert_eq!(
+            ch.files(&c),
+            ["src/valve.py", "src/other.py", "docs/", "tests/*.py"]
+        );
+        let plan = "---\nstatus: draft\n---\n# P\n\n## Files\n\n- `package.json`, `pnpm-workspace.yaml`: the workspace.\n- `{{path}}` and `src/b.py`\n- `{{path}}`\n\n## Order\n\n- `not-a-file.py`\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(
+            ch.files(&c),
+            ["package.json", "pnpm-workspace.yaml", "src/b.py"]
+        );
+        // The item with only a placeholder gives no pattern.
+        assert_eq!(ch.files_not_paths(&c), ["`{{path}}`"]);
     }
 
     #[test]
@@ -1696,6 +1715,25 @@ mod tests {
         let d = parse(src);
         let items = d.items.iter().filter(|i| i.section == ItemSection::Order);
         tasks_of(items)
+    }
+
+    #[test]
+    fn a_heading_inside_order_does_not_hide_its_tasks() {
+        let src = "# P\n\n## Order\n\n### Part one\n\n- [x] t1: One.\n\n### Part two\n\n- [ ] t2: Two.\n- [ ] t1: Again.\n\n## Risks\n\n- [ ] t9: not a task\n";
+        let t = tasks_of_source(src);
+        let ids: Vec<(&str, bool, bool)> = t
+            .iter()
+            .map(|t| (t.id.as_str(), t.done, t.duplicate))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("t1", true, false),
+                ("t2", false, false),
+                ("t1", false, true)
+            ]
+        );
+        assert_eq!(next_open_task(&t).map(|t| t.id.as_str()), Some("t2"));
     }
 
     #[test]
