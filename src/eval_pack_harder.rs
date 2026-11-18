@@ -8,8 +8,10 @@
 //! A task of a `verify` eval never says "run the tests" and never says
 //! "verify". Each fixture is a change in progress: `docs/intent/<slug>/` has an
 //! accepted intent and an approved plan, and `## Proof` of the plan lists more
-//! than the unit tests. The task is task `t2` of the plan. A naive change
-//! passes the unit tests and fails one more proof.
+//! than the unit tests. The task is task `t2` of the plan. The plan lists each
+//! file that the reference solution edits, except `RESULT.md`, so the right work
+//! gives no SD913 (a test proves it). A naive change passes the unit tests and
+//! fails one more proof.
 //!
 //! The checks are shell commands (no model grader):
 //!
@@ -303,13 +305,15 @@ status: approved
 ## Files
 
 - `docs/requirements/billing.md` The requirement.
+- `docs/interfaces/invoices.md` The invoice document.
+- `docs/rules/collections.md` The collections rule.
 - `src/fees.py` The fee.
 - `tests/test_fees.py` The test of the fee.
 
 ## Order
 
 - [x] t1: Add the fee. Files: `src/fees.py`. Verify: `sh test.sh`.
-- [ ] t2: Rename `late-fee` to `overdue-fee`, and raise the fee to 8 percent. Files: `docs/requirements/billing.md`, `src/fees.py`, `tests/test_fees.py`. Verify: `sh test.sh`.
+- [ ] t2: Rename `late-fee` to `overdue-fee`, and raise the fee to 8 percent. Files: `docs/requirements/billing.md`, `docs/interfaces/invoices.md`, `docs/rules/collections.md`, `src/fees.py`, `tests/test_fees.py`. Verify: `sh test.sh`.
 
 ## Risks
 
@@ -320,6 +324,10 @@ status: approved
 - `sh test.sh` passes.
 - `spec-dna check --base main` reports no new error.
 "#;
+
+/// `VERIFY_TOML` with `max-task-files = 5`: task `t2` lists the 3 documents and
+/// the 2 files of the code that the rename edits.
+const V8_TOML: &str = "spec-dna = \"{{VERSION}}\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n\n[change]\npolicy = \"three-class\"\nbase = \"main\"\nmax-task-files = 5\n";
 
 const V8_BILLING: &str = r#"---
 status: active
@@ -379,7 +387,7 @@ static VERIFY_8_FILES: &[(&str, &str)] = &[
     ("docs/interfaces/invoices.md", V8_INVOICES),
     ("docs/requirements/billing.md", V8_BILLING),
     ("docs/rules/collections.md", V8_COLLECTIONS),
-    ("spec-dna.toml", VERIFY_TOML),
+    ("spec-dna.toml", V8_TOML),
     ("src/fees.py", V8_FEES),
     ("test.sh", TEST_SH),
     ("tests/test_fees.py", V8_TEST),
@@ -400,12 +408,13 @@ status: approved
 ## Files
 
 - `src/money.py` The price text.
+- `src/invoice.py` The invoice line.
 - `tests/test_money.py` The tests of the price text.
 
 ## Order
 
 - [x] t1: Add `format_price`. Files: `src/money.py`. Verify: `sh test.sh`.
-- [ ] t2: Show a price with no cents as a whole number, so `format_price(1000)` gives `10`. Invoice lines keep their text. Files: `src/money.py`, `tests/test_money.py`. Verify: `sh test.sh`.
+- [ ] t2: Show a price with no cents as a whole number, so `format_price(1000)` gives `10`. Invoice lines keep their text. Files: `src/money.py`, `src/invoice.py`, `tests/test_money.py`. Verify: `sh test.sh`.
 
 ## Risks
 
@@ -765,7 +774,7 @@ pub static VERIFY: &[PackEval] = &[
         task: result_task!("half-up-tax"),
         allowed_tools: HARDER_TOOLS,
         max_turns: 20,
-        max_budget_usd: 1.5,
+        max_budget_usd: 2.5,
         branch: None,
         checks: &[
             (
@@ -798,7 +807,7 @@ rm -rf "$t"
         task: result_task!("bucket-cap"),
         allowed_tools: HARDER_TOOLS,
         max_turns: 20,
-        max_budget_usd: 1.5,
+        max_budget_usd: 2.5,
         branch: None,
         checks: &[
             (
@@ -830,13 +839,23 @@ rm -rf "$t"
         task: result_task!("overdue-fee"),
         allowed_tools: HARDER_TOOLS,
         max_turns: 20,
-        max_budget_usd: 1.5,
+        max_budget_usd: 2.5,
         branch: Some("feature/overdue-fee"),
         checks: &[
             (
                 "feature-done",
-                r#"grep -q '\*\*overdue-fee\*\*' docs/requirements/billing.md && ! grep -q '\*\*late-fee\*\*' docs/requirements/billing.md && grep -q '8 percent' docs/requirements/billing.md && PYTHONPATH=src python3 -B -c 'from fees import late_fee
-assert late_fee(1000) == 80'
+                r#"grep -q '\*\*overdue-fee\*\*' docs/requirements/billing.md && ! grep -q '\*\*late-fee\*\*' docs/requirements/billing.md && grep -q '8 percent' docs/requirements/billing.md && PYTHONPATH=src python3 -B -c 'import fees
+new = []
+old = []
+for name in dir(fees):
+    f = getattr(fees, name)
+    if name[0] != "_" and callable(f) and getattr(f, "__module__", None) == "fees":
+        try:
+            new.append(f(1000) == 80 and f(2000) == 160)
+            old.append(f(1000) == 50)
+        except BaseException:
+            pass
+assert any(new) and not any(old)'
 "#,
             ),
             (
@@ -867,7 +886,7 @@ rm -rf "$t"
         task: result_task!("whole-price"),
         allowed_tools: HARDER_TOOLS,
         max_turns: 20,
-        max_budget_usd: 1.5,
+        max_budget_usd: 2.5,
         branch: None,
         checks: &[
             (
@@ -923,7 +942,7 @@ assert format_price(1050) == "10.50"'; then real=yes; else real=no; fi
         task: result_task!("stock-cap"),
         allowed_tools: HARDER_TOOLS,
         max_turns: 20,
-        max_budget_usd: 1.5,
+        max_budget_usd: 2.5,
         branch: None,
         checks: &[
             (

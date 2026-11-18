@@ -1,0 +1,2 @@
+# A guard: it passes with and without the fix of the fixture. It proves that a rename with the old rate fails.
+fail: feature-done

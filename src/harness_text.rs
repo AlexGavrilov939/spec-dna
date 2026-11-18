@@ -174,7 +174,7 @@ const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its task
 
 Commands:
 
-1. Run `spec-dna finish <slug> --dry-run`. Read each step and each stop.
+1. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop.
 2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
 3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message. Keep it in the squash message.
 
@@ -182,7 +182,7 @@ Artifact: The result of `spec-dna finish`: the delta applied, and the folder of 
 
 Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --base origin/HEAD` gives no error. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
-If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. A stop at step 0 lists each open task of `plan.md`: do the task, or write a reason in `Skip:`. If a status stops it, ask the approver. SD910 reason 7 means that the branch added the artifacts and finished the change. Put `finish` in a new pull request. Do not delete the folder by hand.";
+If the check fails: A command that the tool denies is no stop of `finish`: run the plain command again. A stop is a line `stopped at step N` that `spec-dna finish` prints. The stop changes nothing. Fix that step, then run `spec-dna finish <slug>` again. A stop at step 0 lists each open task of `plan.md` (do the task, or write a reason in `Skip:`) or each reference into the folder. If the stop names a status, ask the approver. If `spec-dna finish` prints no stop, read its message: it can name an edit that is not committed. If `spec-dna check --base origin/HEAD` gives SD910 reason 7, the branch added the artifacts and finished the change: put `finish` in a new pull request. Do not delete the folder by hand.";
 
 const DEBUG_PARTS: &str = r"When to use: A test or a command fails, and you do not know the cause.
 

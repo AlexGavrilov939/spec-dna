@@ -4,7 +4,8 @@
 //! folder for each scenario:
 //!
 //! - `expect` says what the checks must give. `all-pass`: each check passes.
-//!   `fail: <name>...`: each named check fails.
+//!   `fail: <name>...`: each named check fails. A line `pass: <name>...` can
+//!   follow: each named check passes. A line that starts with `#` is a comment.
 //! - `solve.sh` is the work that the stub `claude` does in the temporary copy.
 //!   It reads `$SOL` (its own folder) and `$REF` (the folder `reference`). A
 //!   scenario with no `solve.sh` leaves the fixture as it is.
@@ -18,7 +19,7 @@
 //! real run. No test starts an agent.
 #![cfg(unix)]
 
-use crate::common::{Repo, path_with, stub_bin};
+use crate::common::{BIN, Repo, git, git_out, path_with, stub_bin};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -184,6 +185,11 @@ fn prove_n(skill: &str, n: usize) {
             if has_solution {
                 assert_eq!(exit, 0, "{id}/{name}: the solution failed");
             }
+            let expect: String = expect
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
             let expect = expect.trim();
             if expect == "all-pass" {
                 let failed: Vec<&str> = checks
@@ -196,9 +202,24 @@ fn prove_n(skill: &str, n: usize) {
                     "{id}/{name}: these checks fail: {failed:?}"
                 );
             } else {
-                let wanted = expect
-                    .strip_prefix("fail:")
+                let mut lines = expect.lines();
+                let wanted = lines
+                    .next()
+                    .and_then(|l| l.strip_prefix("fail:"))
                     .unwrap_or_else(|| panic!("{id}/{name}: bad expect"));
+                if let Some(kept) = lines.next() {
+                    let kept = kept
+                        .strip_prefix("pass:")
+                        .unwrap_or_else(|| panic!("{id}/{name}: bad expect"));
+                    for want in kept.split_whitespace() {
+                        let got = checks.iter().find(|c| c.0 == want);
+                        assert!(got.is_some(), "{id}/{name}: no check {want}: {checks:?}");
+                        assert!(
+                            got.unwrap().1,
+                            "{id}/{name}: the check {want} fails: {checks:?}"
+                        );
+                    }
+                }
                 for want in wanted.split_whitespace() {
                     let got = checks.iter().find(|c| c.0 == want);
                     assert!(got.is_some(), "{id}/{name}: no check {want}: {checks:?}");
@@ -226,6 +247,91 @@ fn the_debug_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
 #[test]
 fn the_verify_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
     prove("verify");
+}
+
+/// The paths that SD913 names in the output of `spec-dna check`.
+fn outside_plan(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter(|l| l.contains(" SD913 outside-plan: `"))
+        .filter_map(|l| l.split('`').nth(1))
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn the_reference_of_each_verify_eval_keeps_inside_the_files_of_its_plan() {
+    // The plan of a fixture must list each file that the reference edits. If
+    // not, the check of the agent reports SD913 for the right work, and no
+    // solution can be clean. Only `RESULT.md` is outside: the task asks for it.
+    let lab = Lab::new();
+    let ids = lab.ids("verify");
+    assert_eq!(ids.len(), 5, "{ids:?}");
+    let mut problems = Vec::new();
+    for id in ids {
+        let work = lab.tmp.dir.join(format!("scope-{id}"));
+        copy_tree(
+            &lab.repo.dir.join(format!("evals/pack/fixtures/{id}")),
+            &work,
+        );
+        git(&work, &["init", "-q", "-b", "main"]);
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-q", "--no-verify", "-m", "base"]);
+        let base = git_out(&work, &["rev-parse", "HEAD"]);
+        let json = fs::read_to_string(lab.repo.dir.join(format!("evals/pack/{id}.json"))).unwrap();
+        if let Some(branch) = json
+            .split("\"branch\": \"")
+            .nth(1)
+            .and_then(|t| t.split('"').next())
+        {
+            git(&work, &["switch", "-q", "-c", branch]);
+        }
+        let reference = solutions().join(&id).join("reference");
+        let status = std::process::Command::new("sh")
+            .arg(reference.join("solve.sh"))
+            .current_dir(&work)
+            .env("SOL", &reference)
+            .env("REF", &reference)
+            .env("SPEC_DNA_EVAL_BASE", &base)
+            .status()
+            .unwrap();
+        assert!(status.success(), "{id}: the reference solution failed");
+        git(&work, &["add", "-A"]);
+        let out = std::process::Command::new(BIN)
+            .args(["check", "--base", &base])
+            .current_dir(&work)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("spec-dna check: "),
+            "{id}: no check ran: {text}"
+        );
+        let outside: Vec<String> = outside_plan(&text)
+            .into_iter()
+            .filter(|p| p != "RESULT.md")
+            .collect();
+        if !outside.is_empty() {
+            problems.push(format!("{id}: {outside:?}"));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "the reference edits files that the plan does not list: {problems:?}"
+    );
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
 }
 
 #[test]
@@ -271,7 +377,13 @@ fn the_pilot_evals_keep_the_limits_of_the_design_and_name_no_skill_in_the_task()
             let turns = number(&text, "max-turns");
             let budget = number(&text, "max-budget-usd");
             assert!((12.0..=40.0).contains(&turns), "{id}: {turns} turns");
-            assert!((1.5..=2.0).contains(&budget), "{id}: {budget} USD");
+            // The runs of `verify` reach 1.49 USD, and 2 failed at 1.55 USD
+            // against a budget of 1.5, so its group has one higher budget.
+            let top = if skill == "verify" { 2.5 } else { 2.0 };
+            assert!((1.5..=top).contains(&budget), "{id}: {budget} USD");
+            if skill == "verify" {
+                assert_eq!(budget, 2.5, "{id}: the group verify has one budget");
+            }
             let task = text
                 .split("\"task\": \"")
                 .nth(1)
