@@ -4,6 +4,10 @@ name: Benchmark
 # corpus. A person starts it by hand. It commits nothing.
 # The file must be on master: GitHub runs a workflow_dispatch file from the
 # default branch. The input "ref" selects the code to measure.
+# With the input "base_ref", the job also builds that ref and runs both
+# binaries in turns on the same runner (bench/tool/pair.py). This is the
+# release rule of 0.7.0: the median of the paired ratios of the mode `full`
+# must be 1.10 or less.
 on:
   workflow_dispatch:
     inputs:
@@ -20,6 +24,14 @@ on:
         description: Number of timed runs of each mode
         type: number
         default: 15
+      base_ref:
+        description: Optional ref to compare with, as v0.6.1. Both binaries run in turns in this job
+        type: string
+        default: ""
+      pairs:
+        description: Number of pairs of runs of the paired benchmark (with base_ref)
+        type: number
+        default: 100
 
 permissions: {}
 
@@ -47,11 +59,24 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
+      - name: Check out the base
+        if: ${{ inputs.base_ref != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.base_ref }}
+          path: base
+          persist-credentials: false
+
       - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
 
       - name: Build
         run: cargo build --locked --release
+
+      - name: Build the base
+        if: ${{ inputs.base_ref != '' }}
+        run: cargo build --locked --release
+        working-directory: base
 
       - name: Write the corpus
         run: python3 bench/gen/gen.py --model spec-dna --size "$SIZE" --out "$RUNNER_TEMP/corpus"
@@ -85,6 +110,24 @@ jobs:
         env:
           SIZE: ${{ inputs.size }}
           RUNS: ${{ inputs.runs }}
+
+      # Both binaries run in turns on this runner, so the drift of the runner
+      # cancels. The step fails if the median ratio of `full` is over 1.10.
+      - name: Run the paired benchmark
+        if: ${{ inputs.base_ref != '' }}
+        run: |
+          python3 bench/tool/pair.py \
+            --corpus "$RUNNER_TEMP/corpus" \
+            --base-bin "$GITHUB_WORKSPACE/base/target/release/spec-dna" \
+            --head-bin "$GITHUB_WORKSPACE/target/release/spec-dna" \
+            --pairs "$PAIRS" \
+            --limit 1.10 \
+            --work "$RUNNER_TEMP/pair" \
+            --out "$RUNNER_TEMP/pair-$SIZE.json" |
+            tee "$RUNNER_TEMP/pair-$SIZE.txt"
+        env:
+          SIZE: ${{ inputs.size }}
+          PAIRS: ${{ inputs.pairs }}
 
       # The two agreement flags must be true. A missing flag is also a failure.
       - name: Check that the modes agree
@@ -141,9 +184,18 @@ jobs:
             else
               echo "run.py wrote no result."
             fi
+            if [ -f "$RUNNER_TEMP/pair-$SIZE.txt" ]; then
+              echo
+              echo "### Paired benchmark (base $BASE_REF)"
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/pair-$SIZE.txt"
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           REF: ${{ inputs.ref }}
+          BASE_REF: ${{ inputs.base_ref }}
           SIZE: ${{ inputs.size }}
           RUNS: ${{ inputs.runs }}
 
@@ -155,5 +207,7 @@ jobs:
           path: |
             ${{ runner.temp }}/tool-synthetic-${{ inputs.size }}.json
             ${{ runner.temp }}/tool-synthetic-${{ inputs.size }}.txt
+            ${{ runner.temp }}/pair-${{ inputs.size }}.json
+            ${{ runner.temp }}/pair-${{ inputs.size }}.txt
           if-no-files-found: error
           retention-days: 30
