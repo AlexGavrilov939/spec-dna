@@ -8,7 +8,7 @@ Changes for 0.7.1.
 
 ### Fixed
 
-- An open task now gates each change. Before, only a plan that lists no files kept the stage `build` while a task of `Order` was open. With a `covers:` tag for each delta requirement and 0 of 27 tasks done, `next` gave the stage `deploy` and `finish --dry-run` passed. Now the stage stays `build` for each plan while a task is open (not `[x]` and with no reason in `Skip:`), and `next` names it. `finish` stops at step 0 and lists the open tasks. A change with the intent status `closed` is not checked. The skills `execute` and `finish`, [docs/commands.md](docs/commands.md) and the change guide say the same.
+- An open task now gates each change. Before, only a plan that lists no files kept the stage `build` while a task of `Order` was open. With a `covers:` tag for each delta requirement and no task done, `next` gave the stage `deploy` and `finish --dry-run` passed. Now the stage stays `build` for each plan while a task is open (not `[x]` and with no reason in `Skip:`), and `next` names it. `finish` stops at step 0 and lists the open tasks. A change with the intent status `closed` is not checked. The skills `execute` and `finish`, [docs/commands.md](docs/commands.md) and the change guide say the same.
 - The 200 records of the pilot of 0.7.0 have token counts. They had `"tokens": null`, because the result files of the pilot had none. The transcripts of the pilot runs hold the `modelUsage` of each run, so the counts come from them, matched by cost inside the transcripts of the same batch. The same match reproduces the counts of the 330 records of the later batches. The verdicts and the table of the release do not change.
 - SD606 no longer warns on a document that names the layer folder of the changes (`docs/intent/`) after `finish` deleted the last change folder. Git has no empty folder, so the layer folder left the tree with its last change, and the warning was false: the layer exists, and the next change goes into it. A folder that held another file, the change folder itself and a folder that is no layer folder still give SD606.
 - The evals `verify-8` and `verify-9` no longer give SD913 for the right work, except for `RESULT.md`, which the task asks for. The plan of `verify-9` lists `src/invoice.py`, and the plan of `verify-8` lists `docs/interfaces/invoices.md` and `docs/rules/collections.md`. In 4 of 4 runs of `verify-9`, in both arms, the run failed. The check `feature-done` of `verify-8` tests the behavior: a callable that `fees` defines gives 80 for 1,000 and 160 for 2,000, and no such callable gives 50 for 1,000. A run that renames `late_fee` to `overdue_fee` passes. A helper with the old rate kept, and an `overdue_fee` next to a `late_fee` at 5 percent, fail. A `fees.py` that imports `exit` or `sleep` is not a fault. The scenarios `wrong-renamed-old-fee` and `honest-stop` are guards: they give the same result with and without the fix. The evals `verify-6` to `verify-10` have `max-budget-usd` 2.5, because 2 runs with all checks green stopped at 1.55 and 1.54 USD against 1.5. The estimate of `verify` is 100 USD. Issue #68.
@@ -26,7 +26,7 @@ Changes for 0.7.1.
 
 ### Verdicts of the skills, rerun for 0.7.1
 
-The evals that this part changed ran again with 15 runs for each arm (3 runs of each of 5 evals), with `claude` 2.1.327. The table shows the old and the new result. The table of the release (`spec-dna eval verdict --release`) holds the new rows. The default skills do not change, because they do not depend on the verdict (D33).
+The evals that this part changed ran again with 15 runs for each arm (3 runs of each of 5 evals), with `claude` 2.1.327. The table shows the old and the new result. The table of the release (`spec-dna eval verdict --release`) holds the new rows. The default skills do not change: `brainstorm` and `finish` are on unless a project sets them `off`, `tdd` was `on` already, and `execute` and `verify` are not `on` (D33).
 
 | Skill | 0.7.0, with / without | 0.7.1, with / without | Difference (90% interval) | Cost per correct, with / without (USD) | Verdict |
 | --- | --- | --- | --- | --- | --- |
@@ -35,8 +35,9 @@ The evals that this part changed ran again with 15 runs for each arm (3 runs of 
 | `brainstorm` | 15/15, 15/15 | 13/15, 11/15 | +0.13 (0.00 to +0.33) | 0.90 / 1.41 | on (rule 2) |
 | `execute` | 15/15, 15/15 | 15/15, 15/15 | 0.00 (0.00 to 0.00) | 1.39 / 1.33 | inconclusive |
 | `tdd` | 6/10, 0/10 | 11/15, 0/15 | +0.73 (+0.47 to +0.93) | 1.40 / - | on (rule 1) |
-| `agents-line` | not in the table | 15/15, 6/15 | +0.60 (+0.20 to +1.00) | 1.14 / 3.22 | on (rule 1) |
+| `agents-line` | 10/10, 6/10 | 15/15, 6/15 | +0.60 (+0.20 to +1.00) | 1.14 / 3.22 | on (rule 1) |
 
+- The row of `agents-line` of 0.7.0 used `execute-1`, and the pair uses `execute-10` now, so the 2 rows do not compare one to one.
 - `finish` and `verify` no longer score below no skill. The effect of the new text of `finish` is not proved: 3 runs failed in 0.7.0, none fails now, and the difference to no skill is 0.
 - `execute` stays at the ceiling in both arms, as the evals of `execute-6` to `execute-10` were meant to prevent. These evals do not show what the skill adds.
 - `brainstorm` is `on` by rule 2 (the cost), with a pass-rate difference of +0.13 that includes 0.
