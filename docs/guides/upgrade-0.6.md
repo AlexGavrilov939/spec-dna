@@ -132,7 +132,7 @@ Before the commit, run `git reset --hard` and `git clean -fd`.
 
 After the merge, the undo needs 1 or 2 pull requests:
 
-1. If `skills` has a name that 0.6 does not know (each name except `review`), remove it with the 0.7.0 binary first. Run `spec-dna init --reconfigure`, and give the word `skills=review` or `skills=none` in question 12 (the answers key `harness-skills`). `init` removes each unedited skill file that the configuration no longer has. Merge this change in a pull request of its own, because SD503 of 0.6 counts the skill file of a new name.
+1. If `skills` has a name that 0.6 does not know (each name except `review`), remove it with the 0.7.0 binary first. Run `spec-dna init --reconfigure`, and give the word `skills=review` or `skills=none` in question 12. In an answers file, set `harness-skills = ["review"]` or `harness-skills = []`. `init` removes each unedited skill file that the configuration no longer has. Merge this change in a pull request of its own, because SD503 of 0.6 counts the skill file of a new name.
 2. Install the 0.6 binary of the old pin. Write back the old configuration with `git checkout <the commit before the upgrade> -- spec-dna.toml`.
 3. Run `spec-dna init`. It writes the generated files of 0.6.
 4. Commit, and open a pull request with this commit only. It changes `spec-dna.toml` and the generated files of 0.6 only, so SD503 of 0.6 accepts it.

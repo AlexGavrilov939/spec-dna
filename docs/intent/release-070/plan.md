@@ -17,6 +17,7 @@ status: approved
 - `docs/guides/upgrade-0.6.md` The guide of the upgrade from 0.6 (new).
 - `docs/guides/upgrade-0.5.md`, `docs/README.md` The links to the new guide.
 - `README.md`, `docs/config.md` The version, and the text of the README on the import and the profiles.
+- `docs/commands.md` The link to the guide of the upgrade from 0.6.
 - `docs/research/matrix.md` The versions of the 3 tools on the date of the release.
 
 ## Order
