@@ -56,7 +56,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 ### Fixed
 
 - A `Files` item with more than one code span gives each span as a path. Before, it gave only the first span, so a file that a later span names got a false SD913. A span that holds a template placeholder is still no path.
-- The tasks under a heading of a lower level inside `## Order` (`### Part two` under `## Order`) are tasks of the plan. Before, the heading ended the section, so `next`, `status` and `finish` did not see these tasks: a plan with `Files: none` moved to the next stage with every task open, and SD923 and SD924 skipped them. A heading groups tasks and is not a task. After the upgrade, such a plan can show open tasks, and SD923 or SD924 can report them. The version of the parser moves to 16, so the index of an old project is rebuilt once ([docs/types.md](docs/types.md#sections-that-carry-list-items)).
+- The tasks under a heading of a lower level inside `## Order` (`### Part two` under `## Order`) are tasks of the plan. Before, the heading ended the section, so `next`, `status` and `finish` did not see these tasks: a plan with `Files: none` moved to the next stage with every task open, and SD923 and SD924 skipped them. A heading groups tasks and is not a task, and the section goes on after a subsection with another name (`### Open questions`) until a heading of the level of `Order`. After the upgrade, such a plan can show open tasks, and SD923 or SD924 can report them. The version of the parser moves to 16, so the index of an old project is rebuilt once ([docs/types.md](docs/types.md#sections-that-carry-list-items)).
 
 ### Changed
 

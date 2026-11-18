@@ -129,7 +129,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: a heading of a lower level than the heading of `Order` (`###` under `##`) groups tasks, and the section goes on, unless that heading names another section.
+The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again.
 
 | Section | Document | Items |
 | --- | --- | --- |
@@ -138,7 +138,7 @@ The parser keeps the list items of 8 sections for each document. The heading tex
 | `Decisions` | spec | Links `[[decisions/<slug>]]` |
 | `Concerns` | spec | A task list: `- [ ]` is open, `- [x]` is resolved. An item with no box gives SD925 |
 | `Open questions` | spec | A task list, as `Concerns`: `- [ ]` is an open question, `- [x]` is resolved and ends with its resolution. A spec with an open question cannot be `approved` (SD922). An item with no box gives SD925 |
-| `Files` | plan | An item is a path or a glob from the repository root. Each code span of the item is a path (`` `package.json`, `pnpm-workspace.yaml`: the workspace `` gives 2 paths). An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
+| `Files` | plan | An item is a path or a glob from the repository root. Each code span of the item is a path (`` `package.json`, `pnpm-workspace.yaml`: the workspace `` gives 2 paths), so write no other word in a code span of a `Files` item. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
 | `Order` | plan | The tasks of the plan, in order, also the tasks under a heading of a lower level. A heading groups tasks and is not a task. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
 

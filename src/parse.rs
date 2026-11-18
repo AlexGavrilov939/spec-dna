@@ -534,8 +534,10 @@ struct ItemScan {
     heading: Option<String>,
     /// The section of the last heading.
     section: Option<ItemSection>,
-    /// The level of the heading that opened `section`, from 1 to 6.
-    section_level: u8,
+    /// The level of the heading `Order` that is open now, from 1 to 6. Each
+    /// heading of a lower level is inside `Order` until a heading of this
+    /// level or a higher level ends it.
+    order_level: Option<u8>,
     /// The level of the heading that the parser reads now.
     heading_level: u8,
     /// The list items that are open now, outer first.
@@ -574,15 +576,18 @@ impl ItemScan {
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(h) = self.heading.take() {
                     let named = ItemSection::from_heading(&h);
+                    let level = self.heading_level;
+                    self.order_level = match (named, self.order_level) {
+                        (Some(ItemSection::Order), _) => Some(level),
+                        (_, Some(order)) if level > order => Some(order),
+                        _ => None,
+                    };
                     // A heading below `Order` groups its tasks: the section
-                    // goes on, unless the heading names a section itself.
-                    let groups = named.is_none()
-                        && self.section == Some(ItemSection::Order)
-                        && self.heading_level > self.section_level;
-                    if !groups {
-                        self.section = named;
-                        self.section_level = self.heading_level;
-                    }
+                    // goes on, also after a subsection with another name.
+                    self.section = match (named, self.order_level) {
+                        (None, Some(_)) => Some(ItemSection::Order),
+                        _ => named,
+                    };
                 }
             }
             Event::Text(t) | Event::Code(t) if self.heading.is_some() => {
@@ -1506,7 +1511,7 @@ mod tests {
 
     #[test]
     fn a_heading_inside_order_groups_its_tasks() {
-        let src = "# Plan\n\n## Order\n\n- [ ] t1: One.\n\n### Part two\n\n- [ ] t2: Two.\n\n#### Deeper\n\n- [x] t3: Three.\n\n### Open questions\n\n- [ ] q\n\n### Back\n\n- not kept, the heading ends the section `Open questions`\n\n## Risks\n\n- [ ] not kept\n\n### Under risks\n\n- [ ] not kept\n";
+        let src = "# Plan\n\n## Order\n\n- [ ] t1: One.\n\n### Part two\n\n- [ ] t2: Two.\n\n#### Deeper\n\n- [x] t3: Three.\n\n### Open questions\n\n- [ ] q\n\n### Part three\n\n- [ ] t4: Four.\n\n## Risks\n\n- [ ] not kept\n\n### Under risks\n\n- [ ] not kept\n";
         let got: Vec<_> = items(src)
             .into_iter()
             .map(|(s, t, x, _, _)| (s, t, x))
@@ -1518,11 +1523,12 @@ mod tests {
                 (ItemSection::Order, Some(false), "t2: Two.".to_string()),
                 (ItemSection::Order, Some(true), "t3: Three.".to_string()),
                 (ItemSection::OpenQuestions, Some(false), "q".to_string()),
+                (ItemSection::Order, Some(false), "t4: Four.".to_string()),
             ]
         );
         // A heading of the same level or above ends `Order`. A section other
         // than `Order` ends at any heading.
-        let src = "## Order\n\n- [ ] t1: a\n\n## Notes\n\n- [ ] not kept\n\n# Order\n\n- [ ] t2: b\n\n## Files\n\n- `x`\n\n### Details\n\n- not kept\n";
+        let src = "## Order\n\n- [ ] t1: a\n\n## Notes\n\n- [ ] not kept\n\n## Order\n\n- [ ] t2: b\n\n## Files\n\n- `x`\n\n### Details\n\n- not kept\n";
         let got: Vec<(ItemSection, String)> = items(src)
             .into_iter()
             .map(|(s, _, x, _, _)| (s, x))
