@@ -466,6 +466,23 @@ fn no_eval_of_execute_has_a_turn_cap_under_40_and_the_evals_of_agents_line_keep_
 }
 
 #[test]
+fn the_evals_of_verify_keep_headroom_of_turns_for_the_arm_with_the_skill() {
+    // In the rerun of 0.7.1, 9 of 9 runs with the skill stopped at 20 turns:
+    // the arm with the skill reads the skills `tdd` and `execute` and makes
+    // 1 or 2 commits, so it needs about 2 turns more than the other arm.
+    let r = project("[evals]\n");
+    let (code, out, err) = pack(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    for id in ["verify-6", "verify-7", "verify-8", "verify-9", "verify-10"] {
+        let text = r.read(&format!("evals/pack/{id}.json"));
+        let turns = number(&text, "max-turns");
+        assert!(turns >= 40.0, "{id}: {turns} turns");
+        // The budget stays the guard of the cost.
+        assert!(number(&text, "max-budget-usd") <= 2.5, "{id}");
+    }
+}
+
+#[test]
 fn the_fixture_of_execute_10_has_a_requirement_that_a_covers_tag_can_name() {
     // `execute-10` is the plain edit of the pair `agents-line`, and an agent
     // with the line can tag a test with `covers:`.
