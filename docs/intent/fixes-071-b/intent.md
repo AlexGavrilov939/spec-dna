@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # Fixes of 0.7.1, part B: the findings of a second project and the release
