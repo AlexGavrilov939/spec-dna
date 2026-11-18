@@ -1,0 +1,3 @@
+# A guard: it gives the same result with and without the fix of the fixture. It pins the result of an honest stop.
+fail: feature-done
+pass: claim-true result-rewritten suite-green original-tests-ran old-tests-kept

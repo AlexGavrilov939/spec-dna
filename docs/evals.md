@@ -339,7 +339,7 @@ SD507 `skill-unproven` reports a skill of `[harness] skills` that is off by defa
 
 ### The cost
 
-The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its evals. The 11 skills have 55 evals, 4 runs and 2 arms: 440 runs. The pilot of the 4 skills that are off (`execute`, `tdd`, `verify` and `debug`) and the pair `agents-line` is 200 runs. `--dry-run` prints the number of runs and the estimate. The default `max-total-usd` is 20, so a real run needs `--max-total-usd`. The command prints a note if the estimate is above the cap, and it checks the spend before each run (exit code 3, `"stopped": "max-total-usd"` and the partial result).
+The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its evals. The 5 evals of `verify` have one budget, 2.5 USD, because runs of 1.49 to 1.55 USD ran against the first budget of 1.5 USD, and a cap that tight scores cost and not skill. Thus the estimate of `verify` is 100 USD. The 11 skills have 55 evals, 4 runs and 2 arms: 440 runs. The pilot of the 4 skills that are off (`execute`, `tdd`, `verify` and `debug`) and the pair `agents-line` is 200 runs. `--dry-run` prints the number of runs and the estimate. The default `max-total-usd` is 20, so a real run needs `--max-total-usd`. The command prints a note if the estimate is above the cap, and it checks the spend before each run (exit code 3, `"stopped": "max-total-usd"` and the partial result).
 
 ### The records of a release
 
