@@ -39,16 +39,16 @@ The full run measured each skill against no skill in a fixture project, with `cl
 
 ### Benchmark
 
-The workflow `bench` measured `v0.6.1` and the commit of this release on the synthetic medium corpus (1,194 documents, 15 timed runs for each mode, `ubuntu-24.04`). It ran 5 times for each ref, in turns. Median of `full` in ms:
+The rule of the release (owner decision of 2026-11-18): both binaries run in one job, on one runner, in turns, and the median of the paired ratios head / base of the mode `full` is at most 1.10. The workflow `bench` does it with the inputs `ref` and `base_ref` (`bench/tool/pair.py`). The run measured `v0.6.1` and the head `defa999` on the synthetic medium corpus (1,194 documents, `ubuntu-24.04`), with 100 pairs for each mode:
 
-| Run | 1 | 2 | 3 | 4 | 5 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `v0.6.1` | 95.7 | 61.7 | 101.7 | 62.7 | 95.5 |
-| 0.7.0 | 102.3 | 87.1 | 96.2 | 106.6 | 70.8 |
+| Mode | `v0.6.1` median (ms) | 0.7.0 median (ms) | Median of the paired ratios | Mean | Range |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `full` | 64.5 | 66.4 | 1.024 | 1.026 | 0.987 to 1.077 |
+| `warm` | 40.7 | 42.8 | 1.058 | 1.056 | 0.999 to 1.126 |
 
-A shared runner gives a wide spread for one ref: `v0.6.1` took 61.7 to 101.7 ms. The mean of the 5 medians is 83.5 ms for `v0.6.1` and 92.6 ms for 0.7.0 (ratio 1.11), and the median of the 5 medians is 95.5 and 96.2 ms (ratio 1.01). The first 2 runs of each ref give the ratio 1.20. The result is not settled: the ratio is 1.01 to 1.20, depending on the statistic. The release rule (the mean of 2 medians of `full` at most 1.10 times that of `v0.6.1`, in 2 pairs) is not met. The binaries of both refs, run in turns on one machine (2 times 40 pairs, `check --all --json --no-cache`), give 95.5 and 96.0 ms for `v0.6.1`, and 97.5 and 97.9 ms for 0.7.0, which is 2% slower. That is another method, and it is not the rule.
+The rule is met: 1.024 is below 1.10, and no pair of `full` is above 1.08. The first rule (2 pairs of separate jobs, the mean of the medians) gave 1.20 on one pair and 1.01 to 1.11 for other statistics, because a shared runner drifts between 2 jobs by more than 10%. The paired run removes that drift. A check of the owner on one machine (60 alternating runs of both binaries on the medium corpus) gave +3% for `full` and `warm`.
 
-The speed targets hold on the medium corpus. The medians of 0.7.0 over the 5 runs are 63.8 ms for `warm` (target 1,000 ms), 53.1 ms for `incremental` (target 100 ms) and 15.2 ms for `context_0` (target 200 ms), and the slowest run of each is 79.3, 63.9 and 20.1 ms. The targets are for a mature corpus of about 2.3k documents, so this is a deviation that section 15 of the design records. The start of the binary takes 0.6 to 1.1 ms (0.6 ms for `v0.6.1`).
+The same job measured the head alone on the medium corpus (15 timed runs for each mode). The speed targets hold: `warm` 76.5 ms (target 1,000 ms), `incremental` 67.7 ms (target 100 ms) and `context_0` 21.1 ms (target 200 ms). `full` is 100.6 ms, `cold` 100.9 ms and the start of the binary 0.6 ms. On the large corpus (11,820 documents, 15 runs) the head gives `full` 663.3 ms, `warm` 488.1 ms, `incremental` 423.1 ms and `context_0` 110.8 ms. The targets are for a mature corpus of about 2.3k documents, so the medium corpus is the gate, and the large corpus is a second point (a deviation that [docs/design/0.7.0.md](docs/design/0.7.0.md#15-deviations-during-the-build) records).
 
 ### Known limits
 
@@ -58,7 +58,7 @@ The speed targets hold on the medium corpus. The medians of 0.7.0 over the 5 run
 - `import` reads the layouts of Spec Kit 1.4.1 and OpenSpec 2.0.0 only. The versions Spec Kit 1.4.2 and OpenSpec 2.1.0 were not tested. [ADR 0022](docs/adr/0022-the-plan-of-the-import.md) and [docs/commands.md](docs/commands.md#import) list the other limits.
 - The hook `protect-approvals` reads the text of a command. It is a guard for an agent that follows rules, not a security control, and it lets a command pass when its input is larger than 1 MiB.
 - The eval run used one machine and one account, so the costs are of that account.
-- The benchmark gate ran on the synthetic corpus of the `bench` workflow, not on a consumer corpus (a deviation that [docs/design/0.7.0.md](docs/design/0.7.0.md#15-deviations-during-the-build) records).
+- The benchmark gate ran on the synthetic corpus of the `bench` workflow and on a shared runner, not on a consumer corpus (a deviation that [docs/design/0.7.0.md](docs/design/0.7.0.md#15-deviations-during-the-build) records).
 - ADRs 0018 to 0023 have the status `proposed`. The owner accepts them.
 
 ### Added
