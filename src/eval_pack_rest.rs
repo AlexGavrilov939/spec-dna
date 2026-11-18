@@ -394,11 +394,11 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "no-unaccepted-decision",
-                r###"! awk '$0=="## Decisions"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Fq '[[decisions/sqlite-later'"###,
+                r###"! awk '$0=="## Decisions"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Fq 'decisions/sqlite-later'"###,
             ),
             (
                 "delta-line",
-                r###"awk '$0=="## Delta"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Eq '^- (ADD requirements/inventory#[a-z0-9-]+|CHANGE requirements/inventory#[a-z0-9-]+@[0-9a-f]{16}): .*audit\.log'"###,
+                r###"awk '$0=="## Delta"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Eq '^- (ADD requirements/inventory#[a-z0-9-]+|CHANGE requirements/inventory#audit-log@[0-9a-f]{16}): .*audit\.log'"###,
             ),
         ],
         files: fx::SPECIFY_4_FILES,
