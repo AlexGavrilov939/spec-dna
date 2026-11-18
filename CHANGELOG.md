@@ -10,7 +10,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 - Install the 0.7.0 binary. Then run `spec-dna upgrade --pin-file <spec-dna-pin.toml>` on a clean tree, commit the files that it prints in one pull request, and let each teammate install 0.7.0. [docs/guides/upgrade-0.6.md](docs/guides/upgrade-0.6.md) gives the steps, the report and the undo. Before the upgrade, each command of 0.7.0 stops with exit code 3 on a 0.6 file, and `upgrade` is the command that reads it.
 - `upgrade` moves the pin, renames the skills of 0.6 in `[harness] skills` (`intent` is `brainstorm`, `spec` is `specify` and `clarify`, `plan` is `write-plan`; `review` stays), writes the generated files of 0.7.0, removes the unedited skill files of 0.6, proves that no id and no requirement text changed, and prints a report. It applies no preset of a profile and changes no other key. It never commits.
-- Skills that are on by default: 0.7.0 turns a skill on by default only with the verdict `on` in the table of the release (see "Verdicts of the skills"). `clarify`, `write-plan`, `tdd` and `post-mortem` are on. `brainstorm`, `specify`, `execute`, `review`, `verify` and `finish` are off by default. `upgrade` keeps a name that your list has, and it leaves out a new name that is off by default, with a line in the report. Add a name to `skills` in `[harness]` and run `spec-dna init` to turn it on. `spec-dna skill show <name>` prints the text of a skill that is off.
+- Skills that are on by default: `brainstorm`, `specify`, `clarify`, `write-plan`, `tdd`, `review`, `finish` and `post-mortem`, and the line of `AGENTS.md`. `execute`, `verify` and `debug` are off, because no verdict `on` in the table of the release names them (see "Verdicts of the skills"; the rule is [ADR 0023](docs/adr/0023-default-skills-from-the-release-table.md)). The 7 skills of the design are on unless their verdict is `off`, and no verdict is `off`. `upgrade` keeps a name that your list has, and it leaves out a new name that is off by default, with a line in the report. Add a name to `skills` in `[harness]` and run `spec-dna init` to turn it on. `spec-dna skill show <name>` prints the text of a skill that is off.
 - A `skills` list of many lines, where the rename changes the length, stops `upgrade` with exit code 3. Write the list by hand and run `upgrade` again.
 - The cache has a new format, so each project rebuilds it once. Some `--json` outputs have new fields. The field `class` can be `null`, and the text line of `log` has 2 new tokens (see "Changed").
 - Each teammate needs 0.7.0 for the hook `protect-approvals`. An upgraded project keeps `approval = "base"`.
@@ -23,7 +23,7 @@ The full run measured each skill against no skill in a fixture project, with `cl
 | Skill | With | Without | Difference (90% interval) | Cost per correct, with / without (USD) | Verdict |
 | --- | ---: | ---: | --- | --- | --- |
 | `brainstorm` | 15/15 | 15/15 | 0.00 (0.00 to 0.00) | 0.81 / 0.90 | inconclusive |
-| `specify` | 0/15 | 1/15 | -0.07 (-0.20 to 0.00) | - / 23.07 | inconclusive (see the limits) |
+| `specify` | 15/15 | 11/15 | +0.27 (0.00 to +0.60) | 1.40 / 2.06 | inconclusive |
 | `clarify` | 15/15 | 12/15 | +0.20 (0.00 to +0.47) | 0.68 / 1.07 | on (rule 2) |
 | `write-plan` | 15/15 | 8/15 | +0.47 (+0.13 to +0.80) | 1.65 / 2.79 | on (rule 1) |
 | `execute` | 15/15 | 15/15 | 0.00 (0.00 to 0.00) | 1.41 / 1.46 | inconclusive |
@@ -35,7 +35,7 @@ The full run measured each skill against no skill in a fixture project, with `cl
 | `post-mortem` | 7/15 | 0/15 | +0.47 (+0.20 to +0.73) | 3.18 / - | on (rule 1) |
 | `agents-line` | 10/10 | 6/10 | +0.40 (+0.10 to +0.70) | 1.18 / 1.98 | on (rule 1) |
 
-`agents-line` is the line of `AGENTS.md`, not a skill. The 500 runs of the records cost 566 US dollars. The account spent about 578 US dollars with the smoke runs and the attempts that a refusal cut off, below the cap of 600. `verify`, `tdd` and `agents-line` have 2 runs for each eval, and `execute` has 3, so their verdicts are weak.
+`agents-line` is the line of `AGENTS.md`, not a skill. The first run of `specify` had a defect in its check (see "Known limits"), so the table holds the rerun with the fixed checks (15 + 15 runs, `claude` 2.1.327); the records of the first run stay in `bench/results/evals/` as history. The 530 runs of the records cost 610 US dollars. The account spent about 621 US dollars in all with the smoke runs and the attempts that a refusal cut off, below the cap of 660. `verify`, `tdd` and `agents-line` have 2 runs for each eval, and `execute` has 3, so their verdicts are weak.
 
 ### Benchmark
 
@@ -52,8 +52,9 @@ The speed targets hold on the medium corpus. The medians of 0.7.0 over the 5 run
 
 ### Known limits
 
-- The eval `specify` has a defect. Its check `at-approval-clean` failed in 29 of 30 runs, in both arms, so the verdict of `specify` says nothing about the skill. The cause is likely an open concern or question that the spec keeps at the approval (SD919 and SD922). The run was not repeated, because the cap did not allow it. `specify` stays off by default until a repeated run gives a verdict.
-- The default of a skill follows the rule "on only with the verdict `on`" (the constant `DEFAULT_ON_NEEDS_VERDICT_ON` of `src/verdict.rs` is `true`). With `false`, a skill of the 7 of D2 stays on unless its verdict is `off`. The owner can set the constant in a later version.
+- The first run of the eval `specify` had a defect: its check `at-approval-clean` failed on open concerns and questions (SD919, SD922) that `specify` is meant to write, in 29 of 30 runs and in both arms. The checks are fixed, the rerun gave 15/15 against 11/15, and the verdict stays `inconclusive` (the interval of the difference touches 0). The skill text did not change. The fix also lets `delta-line` and `no-unaccepted-decision` of `specify-4` accept a `CHANGE` of the existing requirement and a mention of the decision that is not a link.
+- `execute`, `verify` and `debug` have no verdict `on`, so they are off by default. `finish` (12/15 with the skill, 15/15 without) and `verify` (4/10 against 7/10) scored below no skill, and the evals of `brainstorm` and `execute` hit the ceiling (15/15 in both arms), so their verdicts say little. Issues for 0.7.1 track the study of the failed runs.
+- The 200 records of the pilot (part A, 5 files of 2026-11-17 08:28 to 08:29) have no token counts (`tokens` is null), because the result files of the pilot did not hold them. The records of the full run have them. The pilot records stay as history.
 - `import` reads the layouts of Spec Kit 1.4.1 and OpenSpec 2.0.0 only. The versions Spec Kit 1.4.2 and OpenSpec 2.1.0 were not tested. [ADR 0022](docs/adr/0022-the-plan-of-the-import.md) and [docs/commands.md](docs/commands.md#import) list the other limits.
 - The hook `protect-approvals` reads the text of a command. It is a guard for an agent that follows rules, not a security control, and it lets a command pass when its input is larger than 1 MiB.
 - The eval run used one machine and one account, so the costs are of that account.

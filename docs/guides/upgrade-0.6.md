@@ -5,7 +5,7 @@ Version 0.7.0 replaces the 4 stage skills of 0.6 with a workflow pack of 11 skil
 ## What changes
 
 - **Skills.** The workflow pack has 11 skills ([harness.md](../harness.md#the-workflow-pack-and-reviewmd)). The skill names `intent`, `spec` and `plan` of 0.6 end with no alias. `intent` is now `brainstorm`, `spec` is now `specify` and `clarify`, and `plan` is now `write-plan`. `review` stays, with a new text.
-- **Default skills.** The default of a skill comes from its verdict in the table of the release ([ADR 0023](../adr/0023-default-skills-from-the-release-table.md)). In 0.7.0, a skill is on by default only with the verdict `on`. `spec-dna skill list` prints the default of each skill, and `spec-dna eval verdict --release` prints the verdicts.
+- **Default skills.** The default of a skill comes from its verdict in the table of the release ([ADR 0023](../adr/0023-default-skills-from-the-release-table.md)). In 0.7.0, a skill of the 7 of the design (`brainstorm`, `specify`, `clarify`, `write-plan`, `review`, `finish` and `post-mortem`) is on unless its verdict is `off`, and no verdict is `off`. `tdd` is on too, because its verdict is `on`. `execute`, `verify` and `debug` have no verdict `on`, so they are off by default. `spec-dna skill list` prints the default of each skill, and `spec-dna eval verdict --release` prints the verdicts.
 - **Profiles.** For a new project, `init` writes the keys of the workflow that the profile gives ([profiles.md](../profiles.md#what-init-writes-for-each-profile)). `upgrade` applies no profile, so each key of your project stays.
 - **Approval.** With the new keys `[change] approval` and `[change] approvers`, an approval commit of a person in the branch counts ([config.md](../config.md#approval-in-the-branch)). An upgraded project has no such key, so it keeps the rule of 0.6: only the base tree gives an approval.
 - **Plans.** A task of `Order` can have the labels `Hours:` and `Skip:` ([types.md](../types.md#tasks-of-a-plan)). `finish` adds the hours of the tasks that are not skipped, and prints the line `Hours: <total>`. The type `plan` has no default budget.
@@ -61,7 +61,7 @@ proof: ok (<n> ids, <n> requirements, <n> sections, <n> types)
 report:
   edits of spec-dna.toml beyond the pin (<n>):
     `skills` of `[harness]` got the names of 0.7.0: `<old>` is now `<new>`, `<old>` ended
-    `skills`: `<old>` ended, and `<new>` is off by default in 0.7.0 (no verdict `on`); add "<new>" to `skills` of [harness] to turn it on
+    `skills`: `<old>` ended, and `<new>` is off by default (no verdict `on`); add "<new>" to `skills` of [harness] to turn it on
   errors of `check --all` on the new tree: none
 ```
 
