@@ -819,6 +819,31 @@ impl Git {
         Ok(added)
     }
 
+    /// Returns the newest commit of `HEAD` that added the literal path, or
+    /// `None` if no commit did (a path that is not committed). A shallow clone
+    /// gives `None`: its boundary commit shows each file as added, and the
+    /// commit is not the true add. The lookup is one `git log`.
+    pub fn added_by(&self, path: &str) -> Result<Option<String>, String> {
+        if self.is_shallow() {
+            return Ok(None);
+        }
+        let spec = format!(":(literal){path}");
+        let out = self.run(&[
+            "-c",
+            "log.showRoot=true",
+            "log",
+            "-1",
+            "--no-renames",
+            "--diff-filter=A",
+            "--format=%H",
+            "HEAD",
+            "--",
+            &spec,
+        ])?;
+        let id = String::from_utf8_lossy(&out).trim().to_string();
+        Ok((!id.is_empty()).then_some(id))
+    }
+
     /// Returns the commits (id and committer date) that touched a path, the
     /// newest first. A touch is an addition, a change or a deletion of the
     /// file. The path is a literal path from the repository root.

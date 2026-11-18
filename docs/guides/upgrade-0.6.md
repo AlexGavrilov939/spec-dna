@@ -69,7 +69,7 @@ report:
 - The first line of `edits` names the new names of each old name. `ended` means that the list keeps no new name for it.
 - Each other line names a new name that the list leaves out, because it is off by default. With `--json`, these lines are in `report.edits`.
 - A line `kept <path>: edited by hand (SD501)` names a skill file of 0.6 that you edited. Move your text to a file that spec-dna does not generate, and delete the old file.
-- The last line counts each error code of `check --all` on the new tree. The proof refuses a new error of the rule groups `references` and `ids`. Another code can report an old problem, or a check of 0.7.0, such as SD923 in `strict`. The gate of the pull request reports only the new findings.
+- The last line counts each error code of `check --all` on the new tree. The proof refuses a new error of the rule groups `references` and `ids`. Another code can report an old problem, or a check of 0.7.0, such as SD923 in `strict`. The proof reads no history, so it can count SD923 or SD924 for an approved plan of 0.6. `check` skips such a plan (see below). The gate of the pull request reports only the new findings.
 
 A skill that the list leaves out is still available. `next` names the skill of each step, and `spec-dna skill show <name>` prints its text. To get the skill file, add the name to `skills` in `[harness]`, and run `spec-dna init`. You can do this before the commit of the upgrade. `init` prints a `git add` command for the new file, so run it and the command of `upgrade`. In `strict`, SD507 then gives a warning for each skill in `skills` that is off by default.
 
@@ -112,7 +112,7 @@ To measure a skill in your project, run `spec-dna eval pack` and `spec-dna eval 
 | SD925 | An item of `Concerns` or `Open questions` with no task box |
 | SD926 | The address of an agent or a bot in `approvers` |
 
-SD923, SD924 and SD925 are off in `lite`, warnings in `standard` and errors in `strict`. SD612 and SD926 are warnings in each profile, and SD507 is a warning in `strict` only. [profiles.md](../profiles.md) gives each severity. A warning never fails `check`.
+SD923, SD924 and SD925 are off in `lite`, warnings in `standard` and errors in `strict`. SD923 and SD924 skip an approved plan that a commit added when `spec-dna.toml` pinned a version before 0.7.0 (a plan of 0.6). [diagnostics.md](../diagnostics.md#checks-of-the-change-lifecycle) gives the rule and the note. SD612 and SD926 are warnings in each profile, and SD507 is a warning in `strict` only. [profiles.md](../profiles.md) gives each severity. A warning never fails `check`.
 
 The gate compares the head with the base, so a finding that the base also has fails no pull request. Run `spec-dna check --all` to list the old findings once.
 

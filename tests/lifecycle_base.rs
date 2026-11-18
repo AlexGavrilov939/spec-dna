@@ -1280,3 +1280,134 @@ fn an_add_item_with_a_glob_id_does_not_widen_the_scope_of_sd913() {
         "{out}"
     );
 }
+
+// `--base` across releases (design 0.7.1, B10)
+
+const APPROVER: &str = "approver@example.com";
+
+fn branch_keys() -> String {
+    format!("gate = \"block\"\napproval = \"branch\"\napprovers = [\"{APPROVER}\"]\n")
+}
+
+/// The squash replay of the design: `main` has the tag `v0`, then 2 squash
+/// commits (the artifacts of a routine change, then its code). `origin/HEAD`
+/// is at the tip when `with_origin` is true. `HEAD` is the tip of `main`.
+fn squashed(keys: &str, with_origin: bool) -> Repo {
+    let r = Repo::with_config(&config("standard", keys));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("src/dose.py", "x = 1\n");
+    r.commit("base");
+    r.git(&["tag", "v0"]);
+    let squash = |branch: &str, n: u32| {
+        r.git(&["switch", "-q", "main"]);
+        r.git(&["merge", "-q", "--squash", branch]);
+        r.commit_as(&format!("{branch} (#{n})"), APPROVER);
+        r.git(&["branch", "-q", "-D", branch]);
+    };
+    r.git(&["switch", "-q", "-c", "pr1"]);
+    r.write(INTENT, &intent("accepted", "routine"));
+    r.commit_as("intent", APPROVER);
+    r.write(PLAN, &plan("approved", &["src/dose.py"]));
+    r.commit_as("plan", APPROVER);
+    squash("pr1", 1);
+    r.git(&["switch", "-q", "-c", "pr2"]);
+    r.write("src/dose.py", "x = 2\n");
+    r.commit_as("code", APPROVER);
+    squash("pr2", 2);
+    if with_origin {
+        origin_head(&r.dir, "main");
+    }
+    r
+}
+
+fn raised_note(rev: &str, sha12: &str) -> String {
+    format!(
+        "note: `--base {rev}` is older than the merge base of HEAD and origin/HEAD ({sha12}), so the change checks use that merge base: the commits between them are merged pull requests, and a squash merge keeps no approval commit"
+    )
+}
+
+#[test]
+fn an_older_base_uses_the_merge_base_with_origin_head_for_the_change_checks() {
+    let r = squashed(&branch_keys(), true);
+    let (code, out, err) = r.run(&["check", "--base", "v0"]);
+    assert!(!has(&out, "SD910"), "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
+    let note = raised_note("v0", &short_of(&r, "origin/HEAD"));
+    assert_eq!(err.matches(&note).count(), 1, "{err}");
+    // `--json` reads the same base, and the note stays on stderr.
+    let (code, out, err) = r.run(&["check", "--base", "v0", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let full = r.git_out(&["rev-parse", "origin/HEAD"]);
+    assert!(
+        out.contains(&format!("\"change_base\":\"{full}\"")),
+        "{out}"
+    );
+    assert!(!out.contains("is older than"), "{out}");
+    assert!(err.contains(&note), "{err}");
+    // `status` follows the same rule.
+    assert_eq!(
+        status_base(&r, &["--base", "v0"]),
+        short_of(&r, "origin/HEAD")
+    );
+}
+
+#[test]
+fn an_older_base_with_no_origin_head_keeps_the_walk_of_0_7_0() {
+    let r = squashed(&branch_keys(), false);
+    let (code, out, err) = r.run(&["check", "--base", "v0"]);
+    assert!(has(&out, "SD910"), "{out}{err}");
+    assert!(out.contains("reason 4"), "{out}");
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(!err.contains("is older than"), "{err}");
+}
+
+#[test]
+fn a_base_at_the_merge_base_with_origin_head_gives_no_note() {
+    // Guard: `--base origin/HEAD` is the newer base itself.
+    let r = squashed(&branch_keys(), true);
+    let (code, out, err) = r.run(&["check", "--base", "origin/HEAD"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("is older than"), "{err}");
+}
+
+#[test]
+fn the_config_base_without_origin_head_does_not_start_the_rule() {
+    // The shape of the pack fixtures: no remote, `base = "main"`, `HEAD` on
+    // `main`. The merge base with `main` is `HEAD`, and the rule would turn the
+    // change checks off. SD913 still reports a path outside `Files`.
+    let r = local_repo("three-class", "base = \"main\"\n");
+    r.git(&["checkout", "-q", "main"]);
+    r.git(&["merge", "-q", "--ff-only", "feature"]);
+    r.write("src/other.py", "y = 2\n");
+    r.commit("outside the plan");
+    let older = r.git_out(&["rev-parse", "HEAD~2"]);
+    let (_, out, err) = r.run(&["check", "--base", &older]);
+    let found = lines(&out, "SD913");
+    assert_eq!(found.len(), 1, "{out}{err}");
+    assert!(found[0].starts_with("src/other.py:"), "{out}");
+    assert!(!err.contains("is older than"), "{err}");
+}
+
+#[test]
+fn an_older_base_gives_sd503_the_newer_merge_base_too() {
+    // A merged pull request edits `spec-dna.toml` and a file. It is before the
+    // merge base with `origin/HEAD`, so it is not part of this change.
+    let r = Repo::with_config(&config("standard", ""));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("src/dose.py", "x = 1\n");
+    r.commit("base");
+    r.git(&["tag", "v0"]);
+    let toml = r.read("spec-dna.toml");
+    r.write("spec-dna.toml", &format!("{toml}\n# a note\n"));
+    r.write("src/dose.py", "x = 2\n");
+    r.commit("a merged pull request");
+    origin_head(&r.dir, "main");
+    let (code, out, err) = r.run(&["check", "--base", "v0"]);
+    assert!(!has(&out, "SD503"), "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
+    // Without `origin/HEAD`, the older base keeps SD503.
+    r.git(&["update-ref", "-d", "refs/remotes/origin/HEAD"]);
+    let (code, out, _) = r.run(&["check", "--base", "v0"]);
+    assert!(has(&out, "SD503"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}

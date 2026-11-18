@@ -2,7 +2,9 @@
 //! and of the key `[change] max-task-files` (design 0.7.0, D40). The checks
 //! read the tasks of an `approved` plan. They read one tree: a task has a
 //! `Files:` label with exact paths, and a `Verify:` label, and it lists no
-//! more paths than the limit. A draft plan is not checked.
+//! more paths than the limit. A draft plan is not checked. A plan that a commit
+//! added when `spec-dna.toml` pinned a version before 0.7.0 is skipped, with a
+//! note (design 0.7.1, B5).
 
 mod common;
 
@@ -546,4 +548,191 @@ fn a_files_path_with_brackets_matches_the_same_path() {
         assert!(lines(&out, c).is_empty(), "{c}: {out}{err}");
     }
     assert_eq!(code, 0, "{out}{err}");
+}
+
+// A plan that was added under a pin before 0.7.0 (design 0.7.1, B5)
+
+const PLAN_PATH: &str = "docs/intent/dose/plan.md";
+
+/// The task lines of an early plan: `t1` has a folder in `Files:`, and `t2`
+/// has no `Verify:`. Both give a finding.
+const EARLY_ORDER: &str =
+    "- [ ] t1: Write it. Files: `src`. Verify: `cargo test`.\n- [ ] t2: Test it. Files: none.";
+
+/// The note of the plan `docs/intent/dose/plan.md` that `pin` marks, with `n`
+/// tasks.
+fn early_note(pin: &str, n: usize) -> String {
+    format!(
+        "note: `{PLAN_PATH}` was added when spec-dna.toml pinned {pin}, before 0.7.0, so SD923 and SD924 skip its {n} task(s) with a finding; to check them, give each task exact paths in `Files:` and one `Verify:`"
+    )
+}
+
+/// A repository whose first commit pins `pin` and adds the `approved` plan
+/// with the tasks `order`. The second commit moves the pin to the version of
+/// the binary.
+fn early_plan(profile: &str, pin: &str, order: &str) -> Repo {
+    let r = Repo::new();
+    let toml = config(profile, "");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{toml}"));
+    r.write("src/a.rs", "fn a() {}\n");
+    change(&r, "accepted", "approved", order);
+    r.commit("add the plan");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{toml}"),
+    );
+    // With the pin 0.7.0 the commit changes nothing.
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--allow-empty", "-m", "move the pin"]);
+    r
+}
+
+#[test]
+fn a_plan_added_under_an_earlier_pin_gives_no_sd923_and_one_note() {
+    let r = early_plan("standard", "0.6.1", EARLY_ORDER);
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(lines(&out, "SD923").is_empty(), "{out}");
+    assert!(lines(&out, "SD924").is_empty(), "{out}");
+    let note = early_note("0.6.1", 2);
+    assert_eq!(err.matches(&note).count(), 1, "{err}");
+    // `--json` has the note on stderr only, and no diagnostic.
+    let (_, out, err) = r.run(&["check", "--all", "--json"]);
+    assert!(
+        !out.contains("SD923") && !out.contains("was added"),
+        "{out}"
+    );
+    assert_eq!(err.matches(&note).count(), 1, "{err}");
+}
+
+#[test]
+fn an_earlier_plan_that_a_later_commit_edits_is_still_skipped() {
+    // The lookup reads the commit that added the plan, not the last commit
+    // that touched it: a tick of `t1` after the move of the pin changes nothing.
+    let r = early_plan("standard", "0.6.1", EARLY_ORDER);
+    let ticked = EARLY_ORDER.replacen("- [ ] t1", "- [x] t1", 1);
+    change(&r, "accepted", "approved", &ticked);
+    r.commit("tick t1");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(lines(&out, "SD923").is_empty(), "{out}");
+    assert!(err.contains(&early_note("0.6.1", 2)), "{err}");
+}
+
+#[test]
+fn an_earlier_plan_counts_a_task_once_for_both_codes() {
+    // `t1` gives SD923 (a folder) and SD924 (4 paths): one task.
+    let order = "- [ ] t1: Write it. Files: `src`, `a`, `b`, `c`. Verify: `cargo test`.";
+    let r = early_plan("standard", "0.6.1", order);
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(lines(&out, "SD923").is_empty() && lines(&out, "SD924").is_empty());
+    assert!(err.contains(&early_note("0.6.1", 1)), "{err}");
+}
+
+#[test]
+fn the_same_plan_added_after_the_move_of_the_pin_keeps_sd923() {
+    let r = Repo::new();
+    let toml = config("strict", "");
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.6.1\"\n{toml}"));
+    r.write("src/a.rs", "fn a() {}\n");
+    r.commit("start");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{toml}"),
+    );
+    r.commit("move the pin");
+    change(&r, "accepted", "approved", EARLY_ORDER);
+    r.commit("add the plan");
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let got = lines(&out, "SD923");
+    assert_eq!(got.len(), 2, "{out}");
+    assert!(got.iter().all(|l| l.contains(": error SD923 ")), "{out}");
+    assert!(!err.contains("was added when"), "{err}");
+}
+
+#[test]
+fn an_earlier_plan_in_strict_gives_no_error() {
+    let r = early_plan("strict", "0.6.1", EARLY_ORDER);
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(lines(&out, "SD923").is_empty(), "{out}");
+}
+
+#[test]
+fn a_plan_that_no_commit_added_is_the_current_form() {
+    // The plan is in the working tree only: no commit adds it.
+    let r = Repo::new();
+    let toml = config("strict", "");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{toml}"),
+    );
+    r.write("src/a.rs", "fn a() {}\n");
+    r.commit("start");
+    change(&r, "accepted", "approved", EARLY_ORDER);
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(lines(&out, "SD923").len(), 2, "{out}");
+    assert!(!err.contains("was added when"), "{err}");
+}
+
+#[test]
+fn a_pin_of_0_7_0_or_later_at_the_add_is_the_current_form() {
+    // Guard: the pin 0.7.0 at the add commit is not before 0.7.0.
+    let r = early_plan("standard", "0.7.0", EARLY_ORDER);
+    let (_, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(lines(&out, "SD923").len(), 2, "{out}");
+    assert!(!err.contains("was added when"), "{err}");
+}
+
+#[test]
+fn no_note_without_a_diagnostic_that_would_show() {
+    // The finding is old: without `--all`, nothing shows, so there is no note.
+    let r = early_plan("standard", "0.6.1", EARLY_ORDER);
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("was added when"), "{err}");
+    // A plan with no finding gives no note with `--all` either.
+    let r = early_plan("standard", "0.6.1", FULL);
+    let (_, out, err) = r.run(&["check", "--all"]);
+    assert!(lines(&out, "SD923").is_empty(), "{out}");
+    assert!(!err.contains("was added when"), "{err}");
+}
+
+#[test]
+fn a_shallow_clone_finds_no_commit_and_keeps_sd923() {
+    // The boundary commit of a shallow clone shows each file as added, with
+    // the pin 0.6.1. The lookup must not read it as the add commit.
+    let r = Repo::new();
+    let toml = config("standard", "");
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.6.1\"\n{toml}"));
+    r.write("src/a.rs", "fn a() {}\n");
+    r.commit("start");
+    change(&r, "accepted", "approved", EARLY_ORDER);
+    r.commit("add the plan");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{toml}"),
+    );
+    r.commit("move the pin");
+    // The full history gives the note.
+    let (_, out, err) = r.run(&["check", "--all"]);
+    assert!(lines(&out, "SD923").is_empty(), "{out}");
+    assert!(err.contains("was added when"), "{err}");
+    let dst = Repo::empty();
+    let clone = dst.dir.join("clone");
+    shallow_clone(&r.dir, &clone, 2);
+    let out = std::process::Command::new(BIN)
+        .args(["check", "--all"])
+        .current_dir(&clone)
+        .output()
+        .expect("binary runs");
+    let (out, err) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert_eq!(lines(&out, "SD923").len(), 2, "{out}{err}");
+    assert!(!err.contains("was added when"), "{err}");
 }
