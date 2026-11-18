@@ -1977,15 +1977,15 @@ fn a_skills_list_of_many_lines_with_an_old_name_stops_upgrade_with_the_new_list(
     let repo = project_06(None);
     let toml = repo.read("spec-dna.toml").replace(
         "[harness]\nlevel = \"none\"\n",
-        "[harness]\nlevel = \"lean\"\nskills = [\n  \"intent\",  # the intent\n  \"review\",\n]\n",
+        "[harness]\nlevel = \"lean\"\nskills = [\n  \"intent\",  # the intent\n  \"spec\",  # the spec\n  \"review\",\n]\n",
     );
-    assert!(toml.contains("\"intent\",  # the intent"), "{toml}");
+    assert!(toml.contains("\"spec\",  # the spec"), "{toml}");
     repo.write("spec-dna.toml", &toml);
     repo.commit("a list of many lines");
     let (code, out, err) = upgrade(&repo, &[]);
     assert_eq!(code, 3, "{out}{err}");
     assert!(
-        err.contains("by hand") && err.contains(&renamed(&["brainstorm"])),
+        err.contains("by hand") && err.contains(&renamed(&["brainstorm", "specify", "clarify"])),
         "{err}"
     );
     // The file stays as it was.
