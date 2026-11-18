@@ -117,6 +117,16 @@ A key that spec-dna writes into can have a value of the wrong type, for example 
 
 spec-dna finds its hook handlers by the command prefix `spec-dna hook <name>`. It changes or removes only these handlers.
 
+Each agent file ends with one shared paragraph, after its role text. It starts with `Scratch folder:` and has these rules:
+
+- Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`.
+- Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository.
+- Delete only the subfolder that you made. In the scratchpad, never delete or change a file outside it. Never delete the scratchpad folder itself.
+
+The last 2 rules limit only the scratchpad. They do not stop `implementer` or `code-simplifier` from editing the files of the repository.
+
+The scratchpad folder is shared with the parent session, so a subagent must not remove it. `init` does not change `.gitignore`. The paragraph is text only. The paragraph adds no bytes to the request of the main session, because that request holds only the descriptions of the agents.
+
 A file of your own in `.claude/agents` stays. If its agent name is the name of a role file, `init` disables that role by default. `init` never replaces your file.
 
 `init` stops with exit code 2 for a file with no marker at the path of a skill or of `REVIEW.md`. This applies when the configuration generates that path. Move the file, remove the skill from `skills`, or set `review-md = false`. For a new configuration, `init` leaves such a skill or `REVIEW.md` out of the defaults, and it names the file.
@@ -142,6 +152,7 @@ The workflow pack has 11 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage
 The floor is a check that fails when the artifact is wrong. It does not check what the skill adds, such as the order of a test and its code. Where the floor is `None`, the text of the skill is the only control.
 
 - The Default column is the default of 0.7.0, from the table of the release ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The 7 skills of the design (D2) are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. A skill of D2 is on unless its verdict is `off`, and no verdict is `off` in 0.7.0. The 4 other skills have no check of what they add, so each needs the verdict `on`: only `tdd` has it. `execute`, `verify` and `debug` have no verdict `on`, so they are off by default. `init` writes a skill only when `skills` lists it, and the level `full` proposes the 11. `spec-dna skill show <name>` prints the text of a skill that is off.
+- `tdd` gives one way for the commit of the red test: the subject `test: <what the test checks> (red)`, and a skip of only the hook that runs the tests, named in the body of the commit. The green commit runs all hooks. `write-plan` ends a plan with the task `Review by the owner` (`Files: none`), which a person ticks after the review and before `spec-dna finish` runs.
 - Each body has 5 parts in this order: when to use the skill, the commands, the artifact, the check, and the action when the check fails.
 - The text of a skill is static. It holds no value of the configuration, so the file is the same in each project. The binary holds the text, so the pin fixes it.
 - A skill never sets `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat, and that commit changes only the `status` line. The line of `AGENTS.md` has the same words. [The change guide](guides/change.md#choose-the-class) gives who approves each document.

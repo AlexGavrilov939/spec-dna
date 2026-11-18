@@ -103,6 +103,7 @@ Commands:
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
 6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
+7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` The owner reviews the pull request of the change, the one that gets the result of `spec-dna finish`. After this review, and before `spec-dna finish <slug>` runs, a person ticks the task `- [x]` and writes its real hours. `finish` stops while a task is open.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
@@ -131,7 +132,8 @@ Commands:
 
 1. Write a test for the requirement. Write `covers: <doc-id>#<key>` in the test.
 2. Run the test before you write the code. Read its output. It must fail, for the reason that the requirement gives.
-3. Write the smallest code that makes the test pass. Run the test again, then the other tests.
+3. Commit the test alone, before the code, with the subject `test: <what the test checks> (red)`. If a hook of the project runs the tests, it rejects this commit. Skip only that hook, for this commit only. Use the skip option of the hook runner. If it has none for one hook, use `git commit --no-verify`, and run the lint and format hooks manually first. Name the skip in the body of the commit.
+4. Write the smallest code that makes the test pass. Run the test again, then the other tests. Make the green commit with all hooks on. Never skip a hook for it.
 
 Artifact: A test with a `covers:` tag, run red before the code.
 
@@ -587,6 +589,42 @@ mod tests {
             "6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.\n"
         ));
         assert!(!b.contains("## Hours") && !b.contains("number of hours"));
+    }
+
+    #[test]
+    fn write_plan_ends_the_plan_with_a_review_task_for_the_owner() {
+        let c = part(Skill::WritePlan, "Commands:");
+        assert!(
+            c.contains("`- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.`"),
+            "{c}"
+        );
+        // The person ticks the task before `finish` runs, because `finish`
+        // stops while a task is open.
+        assert!(c.contains("before `spec-dna finish <slug>` runs"), "{c}");
+        assert!(c.contains("`finish` stops while a task is open."), "{c}");
+    }
+
+    #[test]
+    fn tdd_gives_one_way_for_the_red_commit() {
+        let c = part(Skill::Tdd, "Commands:");
+        assert!(
+            c.contains("the subject `test: <what the test checks> (red)`"),
+            "{c}"
+        );
+        assert!(
+            c.contains("Skip only that hook, for this commit only."),
+            "{c}"
+        );
+        assert!(c.contains("`git commit --no-verify`"), "{c}");
+        assert!(c.contains("run the lint and format hooks manually"), "{c}");
+        assert!(
+            c.contains("Name the skip in the body of the commit."),
+            "{c}"
+        );
+        assert!(
+            c.contains("green commit with all hooks on. Never skip a hook for it."),
+            "{c}"
+        );
     }
 
     #[test]

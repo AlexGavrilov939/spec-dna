@@ -18,4 +18,6 @@ Answer in 200 words or fewer:
 - Reason: the evidence for them.
 - Risk: what can fail, and the check that shows it.
 
-<!-- spec-dna harness v{VERSION} h:511d6bf279dbadda -->
+Scratch folder: Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the subfolder that you made. In the scratchpad, never delete or change a file outside it. Never delete the scratchpad folder itself.
+
+<!-- spec-dna harness v{VERSION} h:08fe1d1220a265ec -->

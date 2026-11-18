@@ -1729,14 +1729,15 @@ mod tests {
     fn an_unedited_agent_file_changes_only_its_marker() {
         // The marker has the version, so the file is written again. The text
         // above the marker is the text of 0.5, except for a blank line between
-        // `Answer:` and its list (0.6.1, for markdownlint MD032). The test
-        // ignores blank lines.
+        // `Answer:` and its list (0.6.1, for markdownlint MD032), and the
+        // paragraph `Scratch folder:` (0.7.1). The test ignores blank lines
+        // and this paragraph.
         let c = case(&["harness-full"]);
         let p = plan_of(&c);
         let above = |t: &str| {
             let head = t.trim_end().rsplit_once('\n').unwrap().0;
             head.lines()
-                .filter(|l| !l.trim().is_empty())
+                .filter(|l| !l.trim().is_empty() && !l.starts_with("Scratch folder:"))
                 .collect::<Vec<_>>()
                 .join("\n")
         };

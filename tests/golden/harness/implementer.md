@@ -16,4 +16,6 @@ You make the one change that the brief describes. Stay inside the files and the 
 
 Report: the files that you changed, the commands that you ran with their result, and the open issues. Do not commit.
 
-<!-- spec-dna harness v{VERSION} h:e1e095bf7a999f53 -->
+Scratch folder: Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the subfolder that you made. In the scratchpad, never delete or change a file outside it. Never delete the scratchpad folder itself.
+
+<!-- spec-dna harness v{VERSION} h:64f9684dec464592 -->

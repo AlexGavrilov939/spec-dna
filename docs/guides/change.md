@@ -93,6 +93,15 @@ Write the code in the files of the plan. Link each test to the requirement that 
 
 A `covers:` tag can name an `ADD` requirement before `finish` writes it. If the work differs from the plan, update `plan.md` in the same commit as the work.
 
+Write the test first, and commit it alone before the code. The `tdd` skill gives the way. The commit of the red test has the subject `test: <what the test checks> (red)`. If a hook of the project runs the tests, that hook rejects the commit, because the test fails. Skip only that hook, for that commit only:
+
+- Use the skip option of the hook runner, so that the lint and format hooks still run.
+- If the runner has no option for one hook, use `git commit --no-verify`. Run the lint and format hooks manually before the commit.
+- Name the skip in the body of the commit, for example `Skipped hook: the hook that runs the tests. The test is red by design.`
+- The commit with the code (the green commit) runs all hooks. Never skip a hook for it.
+
+The evals of `tdd` read the order of the commits, not their subjects. A test commit before the code commit passes them.
+
 The code can come in more than one pull request. Run `finish` in the last pull request. The pull request of `finish` deletes the folder, so the checks read the spec and the plan from the base tree. Correct `Files` or the delta in an earlier pull request.
 
 Before you open the pull request, run:
@@ -108,6 +117,8 @@ spec-dna finish sensor-timeout
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
 `finish` adds the `Hours:` labels of the tasks that are not skipped, and prints the line `Hours: <total>`. The total is a number, or a range `<low>-<high>` if a task has a range. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
+
+The review by the owner takes time too. End the plan with a task for it: `- [ ] t9: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.` The task has `Files: none` and a `Verify:`, so SD923 accepts it. The owner reviews the pull request of the change, the one that gets the result of `finish`. After this review, and before you run `spec-dna finish <slug>`, a person ticks the task (`- [x]`) and writes its real `Hours:`. Since 0.7.1, `finish` stops while a task is open.
 
 ### A delta that depends on a spike
 

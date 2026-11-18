@@ -210,6 +210,41 @@ fn the_texts_of_the_new_agents_follow_the_plan() {
     }
 }
 
+/// The paragraph of the scratch folder, as each agent file holds it.
+const SCRATCH: &str = "Scratch folder: Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the subfolder that you made. In the scratchpad, never delete or change a file outside it. Never delete the scratchpad folder itself.";
+
+#[test]
+fn each_agent_file_ends_with_the_rule_of_the_scratch_folder() {
+    let r = full_repo();
+    let agents = r.dir.join(".claude/agents");
+    let mut seen = 0;
+    for e in fs::read_dir(&agents).unwrap() {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        if name == "model-team.md" {
+            continue;
+        }
+        let t = r.read(&format!(".claude/agents/{name}"));
+        // The paragraph is the last paragraph before the marker.
+        let end = t.rfind("\n<!-- spec-dna harness v").expect("marker");
+        let body = t[..end].trim_end();
+        assert!(body.ends_with(&format!("\n\n{SCRATCH}")), "{name}\n{t}");
+        assert_eq!(t.matches("Scratch folder:").count(), 1, "{name}");
+        seen += 1;
+    }
+    // The 5 roles of the level `full`.
+    assert_eq!(seen, 5);
+}
+
+#[test]
+fn the_verifier_does_not_tell_to_remove_a_shared_folder() {
+    let r = full_repo();
+    let v = r.read(".claude/agents/verifier.md");
+    // The old sentence made a subagent delete the scratchpad of its parent.
+    assert!(!v.contains("temporary directory"), "{v}");
+    assert!(!v.contains("remove them at the end"), "{v}");
+    assert!(v.contains("your own scratch folder"), "{v}");
+}
+
 #[test]
 fn the_team_page_and_the_claude_line_name_the_new_roles() {
     let r = full_repo();

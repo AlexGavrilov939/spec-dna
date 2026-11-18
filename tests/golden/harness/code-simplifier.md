@@ -16,4 +16,6 @@ You simplify the code of the diff that the brief names. Keep the behavior. Do no
 
 Report: the files that you changed, the commands that you ran with their result, and each simplification that you did not make, with the reason. Do not commit.
 
-<!-- spec-dna harness v{VERSION} h:625434e136ae52dc -->
+Scratch folder: Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the subfolder that you made. In the scratchpad, never delete or change a file outside it. Never delete the scratchpad folder itself.
+
+<!-- spec-dna harness v{VERSION} h:0dfd705346fdbf14 -->

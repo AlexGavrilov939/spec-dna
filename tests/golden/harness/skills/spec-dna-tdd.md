@@ -9,7 +9,8 @@ Commands:
 
 1. Write a test for the requirement. Write `covers: <doc-id>#<key>` in the test.
 2. Run the test before you write the code. Read its output. It must fail, for the reason that the requirement gives.
-3. Write the smallest code that makes the test pass. Run the test again, then the other tests.
+3. Commit the test alone, before the code, with the subject `test: <what the test checks> (red)`. If a hook of the project runs the tests, it rejects this commit. Skip only that hook, for this commit only. Use the skip option of the hook runner. If it has none for one hook, use `git commit --no-verify`, and run the lint and format hooks manually first. Name the skip in the body of the commit.
+4. Write the smallest code that makes the test pass. Run the test again, then the other tests. Make the green commit with all hooks on. Never skip a hook for it.
 
 Artifact: A test with a `covers:` tag, run red before the code.
 
@@ -19,4 +20,4 @@ If the check fails: Add the tag, or fix its id. If the test passes before the co
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:e9a8ad0c80296a74 -->
+<!-- spec-dna harness v{VERSION} h:2975d0f3a88d7989 -->

@@ -615,7 +615,7 @@ fn the_upgrade_regenerates_an_old_file_and_keeps_an_edited_one() {
     r.write(edited, &by_hand);
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("verifier.md:22: error SD502"), "{out}");
+    assert!(out.contains("verifier.md:24: error SD502"), "{out}");
     let (code, out, err) = r.run3(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(r.read(old), old_text, "the old file is generated again");
