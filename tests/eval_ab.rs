@@ -1309,7 +1309,15 @@ const RELEASED: [&str; 12] = [
 ];
 
 /// The names with the verdict `on` in the table of the release.
-const RELEASED_ON: [&str; 5] = ["clarify", "write-plan", "tdd", "post-mortem", "agents-line"];
+const RELEASED_ON: [&str; 7] = [
+    "brainstorm",
+    "clarify",
+    "write-plan",
+    "tdd",
+    "finish",
+    "post-mortem",
+    "agents-line",
+];
 
 #[test]
 fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_others() {
@@ -1350,7 +1358,7 @@ fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_ot
     );
     assert!(
         out.contains(
-            "{\"name\":\"brainstorm\",\"verdict\":\"inconclusive\",\"source\":\"release\",\"file\":null}"
+            "{\"name\":\"brainstorm\",\"verdict\":\"on\",\"source\":\"release\",\"file\":null}"
         ),
         "{out}"
     );
@@ -1369,13 +1377,13 @@ fn eval_verdict_release_prints_the_table_of_the_release() {
     let tdd = lines[5];
     assert!(
         tdd.starts_with(
-            "tdd on (rule 1): with 6/10 0.60, without 0/10 0.00, cost per correct 1.962469"
+            "tdd on (rule 1): with 11/15 0.73, without 0/15 0.00, cost per correct 1.402285"
         ),
         "{tdd}"
     );
     assert!(
         tdd.contains(
-            "difference 0.60 [0.20, 1.00], cost ratio -, batch 20261117T220322Z-tdd, claude 2.1.326"
+            "difference 0.73 [0.47, 0.93], cost ratio -, batch 20261118T181423Z-tdd, claude 2.1.327"
         ),
         "{tdd}"
     );
@@ -1394,7 +1402,7 @@ fn eval_verdict_release_prints_the_table_of_the_release() {
         "{json}"
     );
     assert!(
-        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261117T220322Z-tdd\",\"claude_code\":\"2.1.326\",\"models\":[\"claude-fable-5-2\",\"claude-opus-5-5\"],\"with\":{\"runs\":10,\"passes\":6,"),
+        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261118T181423Z-tdd\",\"claude_code\":\"2.1.327\",\"models\":[\"claude-fable-5-2\",\"claude-opus-5-5\"],\"with\":{\"runs\":15,\"passes\":11,"),
         "{json}"
     );
     assert!(json.contains("\"cost_ratio\":null"), "{json}");
@@ -1462,7 +1470,7 @@ fn eval_verdict_reads_the_newest_file_that_holds_each_name() {
         get("debug").2,
         "project evals/results/skills-20261121T100000Z.json"
     );
-    assert_eq!(get("brainstorm").1, "inconclusive");
+    assert_eq!(get("brainstorm").1, "on");
     assert_eq!(get("brainstorm").2, "release");
     // A name that the release holds, and no result file of the project holds.
     assert_eq!(get("verify").1, "inconclusive");
@@ -1481,7 +1489,7 @@ fn eval_verdict_works_with_no_evals_table_and_gives_3_for_a_bad_configuration() 
     r.commit("start");
     let (code, out, err) = r.run(&["eval", "verdict"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("brainstorm inconclusive release\n"), "{out}");
+    assert!(out.contains("brainstorm on release\n"), "{out}");
     assert!(out.contains("tdd on release\n"), "{out}");
     r.write("spec-dna.toml", "this is = not [ toml\n");
     let (code, _, _) = r.run(&["eval", "verdict"]);
