@@ -36,7 +36,7 @@ status: approved
 - [x] t6: Write the 4 harness rules of the second project: the red commit, the scratchpad of a subagent, the place of browser files and the review task of the owner (`init-engineer`). Files: `src/harness.rs`, `src/harness_text.rs`, `docs/guides/change.md`. Verify: `cargo test --test harness_skills --test harness_roles` passes. Hours: 3.
 - [x] t7: Run each target that t4 to t6 touch, plus `finish`, `brainstorm` and `execute`, with 15 runs for each arm, commit the records and rebuild the table of the release (`test-engineer`). Files: `src/verdict.rs`, `docs/evals.md`, `CHANGELOG.md`. Verify: `cargo test --lib verdict` passes, so the records and the table agree. Hours: 8.
 - [x] t8: Write the report in Russian on one page, and the archive of `origin/master` (the main session). Files: none. Verify: the file `spec-dna-0.7.1-A.md` is on the Desktop. Hours: 1.
-- [ ] t9: Review by the owner of the whole part. Files: none. Verify: the owner approves the pull requests of the part. Hours: 1.
+- [x] t9: Review by the owner of the whole part. Files: none. Verify: the owner approves the pull requests of the part. Hours: 1.
 
 ## Risks
 
