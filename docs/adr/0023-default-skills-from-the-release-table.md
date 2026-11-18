@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0023. The default skills come from the table of the release
@@ -34,7 +34,7 @@ Evidence:
 Option 3.
 
 - One function gives the default of a skill from 3 facts: the skill is one of the 7 of D2, its verdict, and the constant `DEFAULT_ON_NEEDS_VERDICT_ON` in `src/verdict.rs`. With `true`, a skill is on only with the verdict `on`. With `false`, a skill of D2 is on unless its verdict is `off`, and another skill is on only with `on` (D33). The verdict comes from the table of the release.
-- The constant is `true` until the owner decides after the full run. It is the latest word of the owner. A run that does not end then leaves no unproven skill on, and a skill that is off adds no byte to a request. The change to `false` is one line.
+- The constant is `false` in 0.7.0. The owner set it on 2026-11-18, after the full run. The build had shipped `true`, which came from one sentence of the prompt of the build that contradicted D33 as the owner approved it. D33 stays the rule: a skill of D2 is on unless its verdict is `off`, and another skill needs the verdict `on`. The change was one line.
 - `init` at the level `lean`: `lite` proposes the skills of `brainstorm`, `write-plan` and `finish` that are on by default. `standard` and `strict` propose each skill that is on by default, also a skill outside D2 with the verdict `on`. The level `full` proposes the 11 skills, as before.
 - `upgrade` renames a name of 0.6 to the names of 0.7.0 that are on by default. The report names each name that it leaves out, and the fix. A name that stays valid, such as `review`, stays.
 - `skill list` prints this default in its column and in the field `default`.
@@ -55,8 +55,8 @@ Option 3.
 
 - Good: one constant and one table give each default. A test with a fake table proves each case.
 - Good: a release with few verdicts `on` adds few bytes to a request.
-- Bad: with `true` and the table of the pilot, `init` proposes only `tdd` for `standard` and `strict`, and no skill for `lite`. `next` still names the skill of each step, and `spec-dna skill show` prints its text.
-- Bad: with `true`, an upgraded project can lose a renamed skill. The report names it.
+- Bad: with `true`, `init` would propose only the skills with the verdict `on`, and `lite` would get none. `next` still names the skill of each step, and `spec-dna skill show` prints its text.
+- Bad: with `true`, an upgraded project could lose a renamed skill. The report names each name that it leaves out.
 - Bad: the default of `skill list` can change with each release.
 - Neutral: the profile still sets the other keys of the workflow.
 
@@ -70,3 +70,7 @@ ADR 0016 and ADR 0017 are accepted and locked, so this ADR does not edit them. T
 - ADR 0017, "Upgrade", and D41: a renamed name of 0.6 keeps only the new names that are on by default.
 
 ## Amendments
+
+### 2026-11-18
+
+The owner set `DEFAULT_ON_NEEDS_VERDICT_ON` to `false` for 0.7.0. The rule "a skill is on by default only with the verdict `on`" (option 2, and the sentence of the owner review in the Context) came from one sentence of the build prompt that contradicted D33. D33 is the rule of 0.7.0, so a skill of D2 is on unless its verdict is `off`. Read the Consequences with `false`: `lite` gets `brainstorm`, `write-plan` and `finish`, and `standard` and `strict` get the 8 skills that are on. Because `tdd` has the verdict `on`, it is on although ADR 0017 and the design name it among the 4 skills that are off.

@@ -298,71 +298,19 @@ pub struct Row {
 /// `eval verdict` prints it as `unmeasured`.
 pub const RELEASE: &[Row] = &[
     Row {
-        name: "execute",
-        batch: "20261117T082858Z-execute",
-        claude_code: Some("2.1.326"),
-        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
-        with: Arm {
-            runs: 20,
-            passes: 16,
-            cost: 24.34259,
-        },
-        without: Arm {
-            runs: 20,
-            passes: 15,
-            cost: 26.609628,
-        },
-        difference: Interval {
-            value: 0.05,
-            low: -0.25,
-            high: 0.3,
-        },
-        cost_ratio: Some(Interval {
-            value: 0.857629,
-            low: 0.580575,
-            high: 1.177308,
-        }),
-        verdict: Verdict::Inconclusive,
-        rule: None,
-    },
-    Row {
-        name: "tdd",
-        batch: "20261117T082902Z-tdd",
+        name: "brainstorm",
+        batch: "20261117T174836Z-brainstorm",
         claude_code: Some("2.1.326"),
         models: &["claude-fable-5-2", "claude-opus-5-5"],
         with: Arm {
-            runs: 20,
-            passes: 10,
-            cost: 19.937457,
+            runs: 15,
+            passes: 15,
+            cost: 12.135635,
         },
         without: Arm {
-            runs: 20,
-            passes: 1,
-            cost: 19.680766,
-        },
-        difference: Interval {
-            value: 0.45,
-            low: 0.15,
-            high: 0.75,
-        },
-        cost_ratio: None,
-        verdict: Verdict::On,
-        rule: Some(1),
-    },
-    Row {
-        name: "verify",
-        batch: "20261117T082906Z-verify",
-        claude_code: Some("2.1.326"),
-        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
-        with: Arm {
-            runs: 20,
-            passes: 20,
-            cost: 16.238337,
-        },
-        without: Arm {
-            runs: 20,
-            passes: 20,
-            cost: 14.753787,
+            runs: 15,
+            passes: 15,
+            cost: 13.505256,
         },
         difference: Interval {
             value: 0.0,
@@ -370,9 +318,217 @@ pub const RELEASE: &[Row] = &[
             high: 0.0,
         },
         cost_ratio: Some(Interval {
-            value: 1.100622,
-            low: 0.92935,
-            high: 1.314506,
+            value: 0.898586,
+            low: 0.778244,
+            high: 1.023257,
+        }),
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "specify",
+        batch: "20261118T095355Z-specify",
+        claude_code: Some("2.1.327"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 15,
+            passes: 15,
+            cost: 21.051133,
+        },
+        without: Arm {
+            runs: 15,
+            passes: 11,
+            cost: 22.66584,
+        },
+        difference: Interval {
+            value: 0.266667,
+            low: 0.0,
+            high: 0.6,
+        },
+        cost_ratio: None,
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "clarify",
+        batch: "20261117T184410Z-clarify",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5"],
+        with: Arm {
+            runs: 15,
+            passes: 15,
+            cost: 10.157595,
+        },
+        without: Arm {
+            runs: 15,
+            passes: 12,
+            cost: 12.838715,
+        },
+        difference: Interval {
+            value: 0.2,
+            low: 0.0,
+            high: 0.466667,
+        },
+        cost_ratio: Some(Interval {
+            value: 0.632935,
+            low: 0.413814,
+            high: 0.850657,
+        }),
+        verdict: Verdict::On,
+        rule: Some(2),
+    },
+    Row {
+        name: "write-plan",
+        batch: "20261117T193329Z-write-plan",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5"],
+        with: Arm {
+            runs: 15,
+            passes: 15,
+            cost: 24.735271,
+        },
+        without: Arm {
+            runs: 15,
+            passes: 8,
+            cost: 22.293026,
+        },
+        difference: Interval {
+            value: 0.466667,
+            low: 0.133333,
+            high: 0.8,
+        },
+        cost_ratio: None,
+        verdict: Verdict::On,
+        rule: Some(1),
+    },
+    Row {
+        name: "execute",
+        batch: "20261117T220322Z-execute",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5"],
+        with: Arm {
+            runs: 15,
+            passes: 15,
+            cost: 21.168871,
+        },
+        without: Arm {
+            runs: 15,
+            passes: 15,
+            cost: 21.930328,
+        },
+        difference: Interval {
+            value: 0.0,
+            low: 0.0,
+            high: 0.0,
+        },
+        cost_ratio: Some(Interval {
+            value: 0.965278,
+            low: 0.874994,
+            high: 1.047321,
+        }),
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "tdd",
+        batch: "20261117T220322Z-tdd",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5"],
+        with: Arm {
+            runs: 10,
+            passes: 6,
+            cost: 11.774814,
+        },
+        without: Arm {
+            runs: 10,
+            passes: 0,
+            cost: 10.619581,
+        },
+        difference: Interval {
+            value: 0.6,
+            low: 0.2,
+            high: 1.0,
+        },
+        cost_ratio: None,
+        verdict: Verdict::On,
+        rule: Some(1),
+    },
+    Row {
+        name: "review",
+        batch: "20261117T174836Z-review",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 15,
+            passes: 12,
+            cost: 23.954483,
+        },
+        without: Arm {
+            runs: 15,
+            passes: 10,
+            cost: 26.122201,
+        },
+        difference: Interval {
+            value: 0.133333,
+            low: 0.0,
+            high: 0.333333,
+        },
+        cost_ratio: Some(Interval {
+            value: 0.76418,
+            low: 0.495223,
+            high: 1.003473,
+        }),
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "verify",
+        batch: "20261117T225641Z-verify",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
+        with: Arm {
+            runs: 10,
+            passes: 4,
+            cost: 12.577974,
+        },
+        without: Arm {
+            runs: 10,
+            passes: 7,
+            cost: 10.287364,
+        },
+        difference: Interval {
+            value: -0.3,
+            low: -0.6,
+            high: 0.0,
+        },
+        cost_ratio: None,
+        verdict: Verdict::Inconclusive,
+        rule: None,
+    },
+    Row {
+        name: "finish",
+        batch: "20261117T193546Z-finish",
+        claude_code: Some("2.1.326"),
+        models: &["claude-fable-5-2", "claude-opus-5-5"],
+        with: Arm {
+            runs: 15,
+            passes: 12,
+            cost: 11.435596,
+        },
+        without: Arm {
+            runs: 15,
+            passes: 15,
+            cost: 15.209432,
+        },
+        difference: Interval {
+            value: -0.2,
+            low: -0.4,
+            high: 0.0,
+        },
+        cost_ratio: Some(Interval {
+            value: 0.939844,
+            low: 0.661767,
+            high: 1.348343,
         }),
         verdict: Verdict::Inconclusive,
         rule: None,
@@ -402,28 +558,57 @@ pub const RELEASE: &[Row] = &[
         rule: None,
     },
     Row {
-        name: "agents-line",
-        batch: "20261117T082914Z-agents-line",
+        name: "post-mortem",
+        batch: "20261117T202822Z-post-mortem",
         claude_code: Some("2.1.326"),
         models: &["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"],
         with: Arm {
-            runs: 20,
-            passes: 13,
-            cost: 21.098643,
+            runs: 15,
+            passes: 7,
+            cost: 22.230566,
         },
         without: Arm {
-            runs: 20,
-            passes: 13,
-            cost: 22.61437,
+            runs: 15,
+            passes: 0,
+            cost: 23.483593,
         },
         difference: Interval {
-            value: 0.0,
-            low: -0.45,
-            high: 0.4,
+            value: 0.466667,
+            low: 0.2,
+            high: 0.733333,
         },
         cost_ratio: None,
-        verdict: Verdict::Inconclusive,
-        rule: None,
+        verdict: Verdict::On,
+        rule: Some(1),
+    },
+    Row {
+        name: "agents-line",
+        batch: "20261117T235814Z-agents-line",
+        claude_code: Some("2.1.327"),
+        models: &[
+            "claude-fable-5-2",
+            "claude-haiku-5-5",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+        ],
+        with: Arm {
+            runs: 10,
+            passes: 10,
+            cost: 11.84491,
+        },
+        without: Arm {
+            runs: 10,
+            passes: 6,
+            cost: 11.854138,
+        },
+        difference: Interval {
+            value: 0.4,
+            low: 0.1,
+            high: 0.7,
+        },
+        cost_ratio: None,
+        verdict: Verdict::On,
+        rule: Some(1),
     },
 ];
 
@@ -434,9 +619,9 @@ pub fn release(name: &str) -> Option<Verdict> {
 
 /// ADR 0023. `true`: a skill is on by default only with the verdict `on`.
 /// `false`: D33 (a skill of D2 is on unless `off`; another skill only with
-/// `on`). The owner sets the value after the full eval run. A test names no
-/// default skill, so this line is the one edit of the change.
-pub const DEFAULT_ON_NEEDS_VERDICT_ON: bool = true;
+/// `on`). The owner set `false` for 0.7.0 on 2026-11-18, after the full eval
+/// run. A test names no default skill, so this line is the one edit.
+pub const DEFAULT_ON_NEEDS_VERDICT_ON: bool = false;
 
 /// The rule of ADR 0023. It reads no file and no table.
 pub fn on_by_default(in_d2: bool, verdict: Option<Verdict>, needs_on: bool) -> bool {

@@ -24,7 +24,7 @@ Each [release](https://github.com/AlexGavrilov939/spec-dna/releases) has these a
 On macOS and Linux, use these commands. They download the binary of your target, compare its sum with `SHA256SUMS`, and install it to `~/.local/bin`. They make the folder if it does not exist. Make sure that `~/.local/bin` is on your `PATH`:
 
 ```sh
-v=0.6.1 t=aarch64-apple-darwin
+v=0.7.0 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS     # Linux: sha256sum -c --ignore-missing SHA256SUMS
@@ -37,7 +37,7 @@ Apple does not notarize the macOS binaries. `curl` does not set the quarantine a
 On Windows, use these commands in PowerShell:
 
 ```powershell
-$v = "0.6.1"; $t = "x86_64-pc-windows-gnu"
+$v = "0.7.0"; $t = "x86_64-pc-windows-gnu"
 $base = "https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v"
 Invoke-WebRequest "$base/spec-dna-$v-$t.exe" -OutFile spec-dna.exe
 Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
@@ -58,14 +58,14 @@ gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. For v0.4.2 and later, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
 
 ```sh
-cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.6.1
+cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.7.0
 ```
 
 A team can also build from a local or a private clone. Give its git URL to `--git`. A path without `file://` does not work.
 
 ```sh
-cargo install --locked --git file:///srv/git/spec-dna --tag v0.6.1            # a local clone
-cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.6.1  # a private host
+cargo install --locked --git file:///srv/git/spec-dna --tag v0.7.0            # a local clone
+cargo install --locked --git ssh://git@git.example.org/tools/spec-dna.git --tag v0.7.0  # a private host
 ```
 
 Put the same URL into `spec-dna.toml` as `install-source = "<url>"`. Then the message of a version mismatch shows your source. The CI job below also builds from it.
@@ -267,6 +267,8 @@ A project with no table `[spec-dna-sha256]` needs no `--pin-file`. With the flag
 If the pin and the binary have different versions, `check` and `init` stop with exit code 3. The message gives the steps to install the pinned version. It also gives the steps to move the project to the version of the binary. To return to the old version, install it and revert the upgrade commit.
 
 To upgrade a project of 0.5 to 0.6, use `spec-dna upgrade`. It moves the pin, the types, the statuses and the harness names. The [upgrade guide](guides/upgrade-0.5.md) gives the steps.
+
+To upgrade a project of 0.6 to 0.7, use `spec-dna upgrade`. The [upgrade guide for 0.6](guides/upgrade-0.6.md) gives the steps and the undo.
 
 To add the agent harness to a project of 0.4 or older, run `spec-dna init --reconfigure`. Choose a level. An upgrade alone does not add it.
 

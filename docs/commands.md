@@ -399,8 +399,8 @@ spec-dna skill show <name> [--json]
 `skill list` prints one line for each of the 11 skills, in the order of the table of the pack. A line has 5 columns: the name, the kind (`stage` or `event`), the stage (`-` for an event skill), the state in the project and the default.
 
 ```text
-brainstorm  stage plan   on  on
-specify     stage design on  on
+brainstorm  stage plan   on  off
+clarify     stage design on  on
 execute     stage build  off off
 debug       event -      off off
 ```
@@ -942,7 +942,7 @@ A deny is `permissionDecision: "deny"` with a reason. The reason of rule 3 names
 spec-dna upgrade [--dry-run] [--layout [--areas <file>]] [--pin-file <file>]
 ```
 
-`upgrade` moves a project that pins spec-dna 0.4.0 or later to the version of the binary that you run. It is also the command that moves the pin. It has no `--to` option, because the binary embeds the standard of its own version. A project with an older pin first moves to 0.4.2 and then runs `upgrade`. [The upgrade guide](guides/upgrade-0.5.md) gives the procedure.
+`upgrade` moves a project that pins spec-dna 0.4.0 or later to the version of the binary that you run. It is also the command that moves the pin. It has no `--to` option, because the binary embeds the standard of its own version. A project with an older pin first moves to 0.4.2 and then runs `upgrade`. [The upgrade guide](guides/upgrade-0.5.md) gives the procedure for 0.5, and [the guide for 0.6](guides/upgrade-0.6.md) the procedure for 0.6.
 
 | Option | Meaning |
 | --- | --- |

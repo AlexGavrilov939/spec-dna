@@ -1288,7 +1288,23 @@ fn verdicts(out: &str) -> Vec<(String, String, String)> {
 }
 
 /// The names that the table of the release holds a row for.
-const RELEASED: [&str; 5] = ["execute", "tdd", "verify", "debug", "agents-line"];
+const RELEASED: [&str; 12] = [
+    "brainstorm",
+    "specify",
+    "clarify",
+    "write-plan",
+    "execute",
+    "tdd",
+    "review",
+    "verify",
+    "finish",
+    "debug",
+    "post-mortem",
+    "agents-line",
+];
+
+/// The names with the verdict `on` in the table of the release.
+const RELEASED_ON: [&str; 5] = ["clarify", "write-plan", "tdd", "post-mortem", "agents-line"];
 
 #[test]
 fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_others() {
@@ -1315,13 +1331,10 @@ fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_ot
         ]
     );
     for (name, verdict, source) in rows {
-        if RELEASED.contains(&name.as_str()) {
-            assert_eq!(source, "release", "{name}");
-            assert_eq!(verdict, if name == "tdd" { "on" } else { "inconclusive" });
-        } else {
-            assert_eq!(verdict, "unmeasured", "{name}");
-            assert_eq!(source, "-", "{name}");
-        }
+        assert!(RELEASED.contains(&name.as_str()), "{name}");
+        assert_eq!(source, "release", "{name}");
+        let on = RELEASED_ON.contains(&name.as_str());
+        assert_eq!(verdict, if on { "on" } else { "inconclusive" }, "{name}");
     }
     assert!(fx.calls().is_empty(), "the command starts no agent");
     let (code, out, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
@@ -1332,7 +1345,7 @@ fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_ot
     );
     assert!(
         out.contains(
-            "{\"name\":\"brainstorm\",\"verdict\":\"unmeasured\",\"source\":null,\"file\":null}"
+            "{\"name\":\"brainstorm\",\"verdict\":\"inconclusive\",\"source\":\"release\",\"file\":null}"
         ),
         "{out}"
     );
@@ -1344,40 +1357,43 @@ fn eval_verdict_release_prints_the_table_of_the_release() {
     let (code, out, err) = fx.raw(&["eval", "verdict", "--release"], &[]);
     assert_eq!(code, 0, "{out}{err}");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 5, "{out}");
+    assert_eq!(lines.len(), 12, "{out}");
     let names: Vec<&str> = lines.iter().map(|l| l.split(' ').next().unwrap()).collect();
     assert_eq!(names, RELEASED);
-    // `tdd` is on by rule 1, and the 4 other names are inconclusive.
-    let tdd = lines[1];
+    // `tdd` is on by rule 1, and the names with no pass are inconclusive.
+    let tdd = lines[5];
     assert!(
         tdd.starts_with(
-            "tdd on (rule 1): with 10/20 0.50, without 1/20 0.05, cost per correct 1.99"
+            "tdd on (rule 1): with 6/10 0.60, without 0/10 0.00, cost per correct 1.962469"
         ),
         "{tdd}"
     );
     assert!(
         tdd.contains(
-            "difference 0.45 [0.15, 0.75], cost ratio -, batch 20261117T082902Z-tdd, claude 2.1.326"
+            "difference 0.60 [0.20, 1.00], cost ratio -, batch 20261117T220322Z-tdd, claude 2.1.326"
         ),
         "{tdd}"
     );
-    for l in [lines[0], lines[2], lines[3], lines[4]] {
-        assert!(l.split(' ').nth(1) == Some("inconclusive:"), "{l}");
+    for l in &lines {
+        let name = l.split(' ').next().unwrap();
+        if !RELEASED_ON.contains(&name) {
+            assert!(l.split(' ').nth(1) == Some("inconclusive:"), "{l}");
+        }
     }
     assert!(fx.calls().is_empty(), "the command starts no agent");
 
     let (code, json, err) = fx.raw(&["eval", "verdict", "--release", "--json"], &[]);
     assert_eq!(code, 0, "{json}{err}");
     assert!(
-        json.starts_with("{\"release\":[{\"name\":\"execute\","),
+        json.starts_with("{\"release\":[{\"name\":\"brainstorm\","),
         "{json}"
     );
     assert!(
-        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261117T082902Z-tdd\",\"claude_code\":\"2.1.326\",\"models\":[\"claude-fable-5-2\",\"claude-opus-5-5\"],\"with\":{\"runs\":20,\"passes\":10,"),
+        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"rule\":1,\"batch\":\"20261117T220322Z-tdd\",\"claude_code\":\"2.1.326\",\"models\":[\"claude-fable-5-2\",\"claude-opus-5-5\"],\"with\":{\"runs\":10,\"passes\":6,"),
         "{json}"
     );
     assert!(json.contains("\"cost_ratio\":null"), "{json}");
-    assert_eq!(json.matches("\"name\":").count(), 5, "{json}");
+    assert_eq!(json.matches("\"name\":").count(), 12, "{json}");
     // The table needs no project: it reads no result file of the project.
     fx.repo.write(
         "evals/results/skills-20261120T100000Z.json",
@@ -1441,7 +1457,8 @@ fn eval_verdict_reads_the_newest_file_that_holds_each_name() {
         get("debug").2,
         "project evals/results/skills-20261121T100000Z.json"
     );
-    assert_eq!(get("brainstorm").1, "unmeasured");
+    assert_eq!(get("brainstorm").1, "inconclusive");
+    assert_eq!(get("brainstorm").2, "release");
     // A name that the release holds, and no result file of the project holds.
     assert_eq!(get("verify").1, "inconclusive");
     assert_eq!(get("verify").2, "release");
@@ -1459,7 +1476,7 @@ fn eval_verdict_works_with_no_evals_table_and_gives_3_for_a_bad_configuration() 
     r.commit("start");
     let (code, out, err) = r.run(&["eval", "verdict"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("brainstorm unmeasured -\n"), "{out}");
+    assert!(out.contains("brainstorm inconclusive release\n"), "{out}");
     assert!(out.contains("tdd on release\n"), "{out}");
     r.write("spec-dna.toml", "this is = not [ toml\n");
     let (code, _, _) = r.run(&["eval", "verdict"]);
