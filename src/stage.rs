@@ -528,17 +528,16 @@ impl<'a> Ctx<'a> {
             done.push(item(true, Step::Specify, "the spec is approved"));
         }
         // A routine change with an approved plan that lists no files edits no
-        // file. The build step is then done when each task is done, with no
-        // test of the diff. A higher-risk change has a delta, so it keeps the
-        // test.
+        // file. The build step then has no test of the diff. A higher-risk
+        // change has a delta, so it keeps the test. For each plan, the build
+        // step is done only when no task of `Order` is open (0.7.1).
         let no_files = !higher && plan == "approved" && ch.no_files(head);
         let changed = self.files_changed(ch);
-        let build_done = if no_files {
+        let all_tasks_closed = {
             let t = tasks(ch, head);
             t.done + t.skipped == t.total
-        } else {
-            changed == Some(true)
         };
+        let build_done = all_tasks_closed && (no_files || changed == Some(true));
         if plan != "approved" || !build_done {
             let mut items = done;
             let mut next_task = None;
@@ -593,7 +592,9 @@ impl<'a> Ctx<'a> {
                         format!("set `status: approved` in {dir}/plan.md{alone}"),
                     ));
                 }
-            } else if !no_files {
+            } else if !no_files && !(changed == Some(true) && !all_tasks_closed) {
+                // A file of `Files` differs and a task is open: the open task
+                // is the last line, so this line would be false.
                 let files = ch.files(head);
                 items.push(item(
                     false,

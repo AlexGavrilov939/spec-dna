@@ -1322,7 +1322,7 @@ fn finish_adds_the_hours_of_the_tasks() {
     let order = format!(
         "{}\n{}",
         task("t1", true, "Hours: 1.5."),
-        task("t2", false, "Hours: 2.")
+        task("t2", true, "Hours: 2.")
     );
     let r = with_tasks(&order);
     // A dry run prints the line, and it writes nothing.
@@ -1368,7 +1368,7 @@ fn finish_adds_the_hours_of_the_tasks() {
     // The labels have a free order, and a duplicate id counts once.
     let order = format!(
         "- [x] t1: Do it. Hours: 2. Files: `src/dose.py`. Verify: `pytest`.\n{}",
-        task("t1", false, "Hours: 5.")
+        task("t1", true, "Hours: 5.")
     );
     let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
     assert!(out.lines().any(|l| l == "Hours: 2"), "{out}");
@@ -1380,7 +1380,7 @@ fn a_range_of_hours_gives_a_range_total() {
         "{}\n{}\n{}",
         task("t1", true, "Hours: 1-2."),
         task("t2", true, "Hours: 1.5."),
-        task("t3", false, "Hours: 0 - 0.5h.")
+        task("t3", true, "Hours: 0 - 0.5h.")
     );
     let r = with_tasks(&order);
     let (code, out, err) = fin(&r, &["--dry-run"]);
@@ -1439,7 +1439,7 @@ fn a_task_with_no_hours_gives_a_note_and_the_total_of_the_others() {
         task("t1", true, "Hours: 2."),
         task("t2", true, ""),
         task("t3", true, "Hours: 1."),
-        task("t4", false, "")
+        task("t4", true, "")
     );
     let r = with_tasks(&order);
     let (code, out, err) = fin(&r, &["--dry-run"]);
@@ -1544,4 +1544,71 @@ fn finish_json_gives_hours_as_low_and_high() {
             .ends_with("\"hours\":{\"low\":1.25,\"high\":2.25}}"),
         "{json}"
     );
+}
+
+// Open tasks (0.7.1, item 1)
+
+const PLAN_OPEN: &str = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n- `tests/test_valves.py`\n\n## Order\n\n- [x] t1: Edit the code.\n- [ ] t2: Test the code.\n- [ ] t3: Write the docs.\n- [ ] t4: Done by hand. Skip: not needed.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n";
+
+#[test]
+fn an_open_task_stops_finish_at_step_0_and_lists_the_open_tasks() {
+    for dry in [true, false] {
+        let r = Fx {
+            delta: &[CHANGE_CLOSE, ADD_FLUSH],
+            ..Fx::default()
+        }
+        .start();
+        r.write(PLAN, PLAN_OPEN);
+        r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+        r.commit("work");
+        let before = tree(&r);
+        let args: &[&str] = if dry { &["--dry-run"] } else { &[] };
+        let (code, out, err) = fin(&r, args);
+        assert_eq!(code, 1, "{out}{err}");
+        assert!(err.contains("stopped at step 0"), "{err}");
+        assert!(err.contains("2 open task(s)"), "{err}");
+        assert!(err.contains("t2: Test the code"), "{err}");
+        assert!(err.contains("t3: Write the docs"), "{err}");
+        assert!(!err.contains("t1"), "a done task is listed: {err}");
+        assert!(!err.contains("t4"), "a skipped task is listed: {err}");
+        assert_eq!(tree(&r), before);
+        let mut json_args = vec!["--json"];
+        json_args.extend(args);
+        let (code, out, _) = fin(&r, &json_args);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("\"step\":0"), "{out}");
+        assert!(out.contains("t3: Write the docs"), "{out}");
+    }
+    // The tasks are closed: `finish` runs.
+    let r = Fx {
+        delta: &[CHANGE_CLOSE, ADD_FLUSH],
+        ..Fx::default()
+    }
+    .start();
+    r.write(
+        PLAN,
+        &PLAN_OPEN.replace("- [ ] t2", "- [x] t2").replace(
+            "- [ ] t3: Write the docs.",
+            "- [ ] t3: Write the docs. Skip: no docs.",
+        ),
+    );
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    r.commit("work");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn a_closed_change_with_an_open_task_is_deleted_by_finish() {
+    let r = Fx {
+        status: "closed",
+        delta: &[CHANGE_CLOSE],
+        ..Fx::default()
+    }
+    .start();
+    r.write(PLAN, PLAN_OPEN);
+    r.commit("work");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(FOLDER).exists());
 }

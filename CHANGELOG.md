@@ -2,6 +2,14 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## Unreleased
+
+Changes for 0.7.1.
+
+### Fixed
+
+- An open task now gates each change. Before, only a plan that lists no files kept the stage `build` while a task of `Order` was open. With a `covers:` tag for each delta requirement and 0 of 27 tasks done, `next` gave the stage `deploy` and `finish --dry-run` passed. Now the stage stays `build` for each plan while a task is open (not `[x]` and with no reason in `Skip:`), and `next` names it. `finish` stops at step 0 and lists the open tasks. A change with the intent status `closed` is not checked. The skills `execute` and `finish`, [docs/commands.md](docs/commands.md) and the change guide say the same.
+
 ## 0.7.0 - 2026-11-18
 
 0.7.0 adds the workflow pack of 11 skills with evals, the approval of a person in the branch, the checks of a plan and its hours, and the import from Spec Kit and OpenSpec. A project of 0.6 moves with `spec-dna upgrade`.

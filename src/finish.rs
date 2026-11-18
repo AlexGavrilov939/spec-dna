@@ -188,6 +188,32 @@ fn stop<T>(step: u8, reason: impl Into<String>, diags: Vec<Diag>) -> Result<T, F
     }))
 }
 
+/// The most open tasks that a stop names with their text.
+const OPEN_TASKS_SHOWN: usize = 10;
+
+/// The reason of the stop for open tasks: the count, then the id and the text
+/// of each open task (at most `OPEN_TASKS_SHOWN`, the text cut at 60
+/// characters).
+fn open_tasks_reason(open: &[change::PlanTask]) -> String {
+    let shown: Vec<String> = open
+        .iter()
+        .take(OPEN_TASKS_SHOWN)
+        .map(|t| {
+            let text: String = t.text.chars().take(60).collect();
+            format!("{}: {}", t.id, text.trim_end())
+        })
+        .collect();
+    let more = match open.len().saturating_sub(OPEN_TASKS_SHOWN) {
+        0 => String::new(),
+        n => format!(" and {n} more"),
+    };
+    format!(
+        "{} open task(s) in `Order` of `plan.md` ({}{more}); do each task, or close it with a reason in `Skip:`",
+        open.len(),
+        shown.join("; ")
+    )
+}
+
 fn as_error(mut d: Diag) -> Diag {
     d.severity = Severity::Error;
     d
@@ -214,6 +240,21 @@ fn in_folder(folder: &str, path: &str) -> bool {
 pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     let head = cx.head;
     let changes = change::collect(head);
+
+    // Step 0: no task of the plan is open. A closed change is abandoned, so
+    // its tasks do not count.
+    if let Some(ch) = changes.iter().find(|c| c.dir == cx.folder)
+        && ch.intent_status() != "closed"
+    {
+        let open: Vec<change::PlanTask> = ch
+            .tasks(head)
+            .into_iter()
+            .filter(|t| !t.closed() && !t.duplicate)
+            .collect();
+        if !open.is_empty() {
+            return stop(0, open_tasks_reason(&open), Vec::new());
+        }
+    }
 
     // Step 0: no document outside the folder links into it.
     let links = inbound(cx);

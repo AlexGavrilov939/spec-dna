@@ -71,7 +71,7 @@ spec-dna new plan sensor-timeout
 `plan.md` has 4 sections:
 
 - `Files`: each path or glob that the change edits, as a code span or a plain path.
-- `Order`: a task list. Write each task on one line with an id, for example `- [ ] t1: Close the valve on a timeout. Files: src/valves.rs. Verify: the test passes. Hours: 1-2.` A line with no id is not a task. `Hours:` is optional: write a number or a range. `next` names the next open task.
+- `Order`: a task list. Write each task on one line with an id, for example `- [ ] t1: Close the valve on a timeout. Files: src/valves.rs. Verify: the test passes. Hours: 1-2.` A line with no id is not a task. `Hours:` is optional: write a number or a range. `next` names the next open task. The stage stays `build` while a task is open, and `finish` stops at step 0 and lists the open tasks. A task is closed when its box is `- [x]`, or when it has a reason in `Skip:`.
 - `Risks`: what can fail, and what reduces the risk.
 - `Proof`: the tests, with their `covers:` ids, and the commands that show the result.
 
@@ -176,7 +176,7 @@ Some work edits no file. An example is a research task: the result is a document
 - None: this change is research.
 ```
 
-The plan then lists no file, and `next` and `status` do not ask for paths. The stage `build` ends when each task of `Order` is done, or when `Order` has no task. A diff against the base is not needed. Then the steps of test, verify, review and finish follow. The last line of `next` tells you to run `spec-dna finish <slug>`.
+The plan then lists no file, and `next` and `status` do not ask for paths. The stage `build` ends when each task of `Order` is closed, or when `Order` has no task. A diff against the base is not needed. Then the steps of test, verify, review and finish follow. The last line of `next` tells you to run `spec-dna finish <slug>`.
 
 This rule is for a routine change only. A higher-risk change has a delta, so its plan must list the files of the work. If a task of `Order` lists a path with `Files:`, the plan lists files, and the rule does not apply ([Files and paths](../types.md#files-and-paths)).
 

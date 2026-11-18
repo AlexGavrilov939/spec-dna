@@ -357,7 +357,7 @@ fn the_note_about_items_that_are_not_paths_needs_a_plan_with_no_path() {
 /// The `Files` of the task lines of `Order` are in the scope.
 #[test]
 fn the_files_of_the_task_lines_are_in_scope_after_finish() {
-    let plan = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- None.\n\n## Order\n\n- [ ] t1: Edit the code. Files: src/dose.py, tests/test_valves.py. Verify: run the tests.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n";
+    let plan = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- None.\n\n## Order\n\n- [x] t1: Edit the code. Files: src/dose.py, tests/test_valves.py. Verify: run the tests.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n";
     for routine in [false, true] {
         let r = finished_with(plan, routine, &[]);
         let (_, out, err) = r.run(&["check", "--base", "main"]);
