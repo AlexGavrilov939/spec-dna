@@ -22,7 +22,7 @@ status: approved
 - `docs/research/matrix.md` The versions of the 3 tools on the date of the release.
 - `docs/design/0.7.0.md` The deviations of the release in section 15.
 - `docs/adr/0018-*.md`, `docs/adr/0019-*.md`, `docs/adr/0020-*.md`, `docs/adr/0021-*.md`, `docs/adr/0022-*.md`, `docs/adr/0023-*.md` The status `accepted` of the 6 ADRs of 0.7.0, by the word of the owner, and the record of the owner decision in ADR 0023.
-- `docs/types.md`, `docs/evals.md`, `bench/tool/README.md` The pages that name a default skill or the rule of the benchmark, only if their text is now wrong.
+- `docs/types.md`, `docs/evals.md`, `docs/init.md`, `bench/tool/README.md` The pages that name a default skill or the rule of the benchmark, only if their text is now wrong.
 
 ## Order
 

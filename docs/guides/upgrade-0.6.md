@@ -61,7 +61,7 @@ proof: ok (<n> ids, <n> requirements, <n> sections, <n> types)
 report:
   edits of spec-dna.toml beyond the pin (<n>):
     `skills` of `[harness]` got the names of 0.7.0: `<old>` is now `<new>`, `<old>` ended
-    `skills`: `<old>` ended, and `<new>` is off by default (no verdict `on`); add "<new>" to `skills` of [harness] to turn it on
+    `skills`: `<old>` ended, and `<new>` is off by default in 0.7.0 (no verdict `on`); add "<new>" to `skills` of [harness] to turn it on
   errors of `check --all` on the new tree: none
 ```
 
