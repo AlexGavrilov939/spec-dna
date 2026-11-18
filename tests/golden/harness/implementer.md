@@ -16,4 +16,6 @@ You make the one change that the brief describes. Stay inside the files and the 
 
 Report: the files that you changed, the commands that you ran with their result, and the open issues. Do not commit.
 
-<!-- spec-dna harness v{VERSION} h:e1e095bf7a999f53 -->
+Scratch folder: These rules cover temporary files only. They never limit an edit of the repository that your task needs. A temporary file is the one write that a read-only role may make, and only in the folder below. Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the files that you put in the scratchpad, and the subfolder that you made. Never delete or change another file of the scratchpad. Never delete the scratchpad folder itself.
+
+<!-- spec-dna harness v{VERSION} h:d11194bbe087598d -->

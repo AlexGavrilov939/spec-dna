@@ -103,6 +103,7 @@ Commands:
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
 6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
+7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it. The owner reviews the pull request with the code. After this review, a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request. `finish` stops while a task is open.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
@@ -115,7 +116,7 @@ const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is 
 Commands:
 
 1. Work in your own git worktree or branch. Run `spec-dna next <slug>`.
-2. Take the first open task. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
+2. Take the first open task. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
 3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
 4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
 
@@ -131,7 +132,8 @@ Commands:
 
 1. Write a test for the requirement. Write `covers: <doc-id>#<key>` in the test.
 2. Run the test before you write the code. Read its output. It must fail, for the reason that the requirement gives.
-3. Write the smallest code that makes the test pass. Run the test again, then the other tests.
+3. Commit the test alone, before the code, with the subject `test: <what the test checks> (red)`. If a hook of the project runs the tests, it rejects this commit. Skip only that hook, for this commit only. Use the skip option of the hook runner. If it has none for one hook, use `git commit --no-verify`, and run the lint and format hooks manually first. Name the skip in the body of the commit.
+4. Write the smallest code that makes the test pass. Run the test again, then the other tests. Make the green commit with all hooks on. Never skip a hook for it.
 
 Artifact: A test with a `covers:` tag, run red before the code.
 
@@ -587,6 +589,60 @@ mod tests {
             "6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.\n"
         ));
         assert!(!b.contains("## Hours") && !b.contains("number of hours"));
+    }
+
+    #[test]
+    fn write_plan_ends_the_plan_with_a_review_task_for_the_owner() {
+        let c = part(Skill::WritePlan, "Commands:");
+        assert!(
+            c.contains("`- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.`"),
+            "{c}"
+        );
+        // The person ticks the task in a commit before `finish` runs, because
+        // `finish` stops while a task is open.
+        assert!(
+            c.contains("a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs"),
+            "{c}"
+        );
+        assert!(c.contains("`finish` stops while a task is open."), "{c}");
+    }
+
+    #[test]
+    fn only_the_owner_ends_the_review_task_in_each_text() {
+        // `next` names this task for `execute`, so both skills carry the rule.
+        let w = part(Skill::WritePlan, "Commands:");
+        assert!(
+            w.contains("Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it."),
+            "{w}"
+        );
+        let e = part(Skill::Execute, "Commands:");
+        assert!(
+            e.contains("Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it."),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn tdd_gives_one_way_for_the_red_commit() {
+        let c = part(Skill::Tdd, "Commands:");
+        assert!(
+            c.contains("the subject `test: <what the test checks> (red)`"),
+            "{c}"
+        );
+        assert!(
+            c.contains("Skip only that hook, for this commit only."),
+            "{c}"
+        );
+        assert!(c.contains("`git commit --no-verify`"), "{c}");
+        assert!(c.contains("run the lint and format hooks manually"), "{c}");
+        assert!(
+            c.contains("Name the skip in the body of the commit."),
+            "{c}"
+        );
+        assert!(
+            c.contains("green commit with all hooks on. Never skip a hook for it."),
+            "{c}"
+        );
     }
 
     #[test]

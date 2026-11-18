@@ -248,6 +248,26 @@ fn files_none_is_a_complete_label() {
     );
 }
 
+/// The task of the review by the owner, as the skill `write-plan` gives it,
+/// has the labels that SD923 needs, so the plan passes after its approval.
+#[test]
+fn the_review_task_of_the_write_plan_skill_is_complete() {
+    let (code, out, err) = Repo::new().run(&["skill", "show", "write-plan"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let example = out
+        .split('`')
+        .find(|s| s.contains("Review by the owner"))
+        .unwrap_or_else(|| panic!("no review task in the skill\n{out}"));
+    let task = example.replace("tN", "t2").replace("<n>", "1");
+    assert!(
+        task.starts_with("- [ ] t2: Review by the owner. "),
+        "{task}"
+    );
+    assert!(task.contains("Files: none."), "{task}");
+    let order = format!("- [ ] t1: Read it. Files: none. Verify: `cargo test`.\n{task}");
+    never("SD923", "", &order);
+}
+
 #[test]
 fn a_glob_or_a_folder_in_files_gives_sd923() {
     let cases = [

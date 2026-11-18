@@ -977,7 +977,7 @@ Answer in 200 words or fewer:
         tools: &["Read", "Bash"],
         omit_claude_md: false,
         description: "Verifies finished work independently. It runs the tests, examines the diff, probes edge cases and lists each defect. It fixes nothing. Use it before you report that a task is complete.",
-        body: r"You verify work that another agent reports as complete. Do not fix anything; report only. Do not change files or git state. Put temporary files in a temporary directory, and remove them at the end.
+        body: r"You verify work that another agent reports as complete. Do not fix anything; report only. Do not change files or git state. Keep each temporary file in your own scratch folder (see the last paragraph).
 
 1. Find the change: `git status`, `git diff`, and the files in the brief.
 2. Run the tests and checks that cover the change. Use the commands of the project instruction files.
@@ -1111,6 +1111,11 @@ fn line_of(text: &str, pos: usize) -> u32 {
     text[..pos].matches('\n').count() as u32 + 1
 }
 
+/// The paragraph that `render_agent` adds to the body of each agent file. It
+/// keeps the temporary files of a subagent apart from the scratchpad of its
+/// parent session and from the repository.
+const SCRATCH_RULES: &str = "Scratch folder: These rules cover temporary files only. They never limit an edit of the repository that your task needs. A temporary file is the one write that a read-only role may make, and only in the folder below. Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the files that you put in the scratchpad, and the subfolder that you made. Never delete or change another file of the scratchpad. Never delete the scratchpad folder itself.";
+
 fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) -> String {
     let mut s = format!(
         "---\nname: {}\ndescription: {}\nmodel: {}\n",
@@ -1131,7 +1136,7 @@ fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) 
     if def.omit_claude_md {
         s += "omitClaudeMd: true\n";
     }
-    s += &format!("---\n\n{}\n", def.body);
+    s += &format!("---\n\n{}\n\n{SCRATCH_RULES}\n", def.body);
     format!("{s}\n{}\n", marker_text(&s))
 }
 

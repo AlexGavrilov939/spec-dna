@@ -1627,3 +1627,44 @@ fn the_stop_for_open_tasks_names_the_id_of_each_open_task() {
     assert!(err.contains("t10: Task number 10"), "{err}");
     assert!(err.contains("also open: t11, t12, t13, t14"), "{err}");
 }
+
+/// The order of the guide: the code is in the branch with the task `Review by
+/// the owner` open. After the review, a commit ticks the task. Then `finish`
+/// runs, and its commit passes `check`.
+#[test]
+fn finish_runs_after_a_commit_that_ticks_the_review_task_of_the_owner() {
+    let r = Fx {
+        delta: &[CHANGE_CLOSE, ADD_FLUSH],
+        ..Fx::default()
+    }
+    .start();
+    let review = "- [ ] t2: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.";
+    let plan = PLAN_OPEN
+        .replace("- [ ] t2: Test the code.", review)
+        .replace("- [ ] t3: Write the docs.\n", "")
+        .replace("- [ ] t4: Done by hand. Skip: not needed.\n", "");
+    r.write(PLAN, &plan);
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    r.commit("work");
+    // Before the review, `finish` stops at step 0 and names the task.
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("t2: Review by the owner"), "{err}");
+    // The review: a commit ticks the task, with its real hours.
+    r.write(
+        PLAN,
+        &plan.replace(
+            "- [ ] t2: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.",
+            "- [x] t2: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 2.",
+        ),
+    );
+    r.commit("review");
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("Hours: 2"), "{out}");
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_eq!(code, 0, "{out}");
+}

@@ -10,8 +10,10 @@
 //!   scenario with no `solve.sh` leaves the fixture as it is.
 //!
 //! The scenario `untouched` proves that the checks fail on the fixture. The
-//! scenario `reference` proves that the checks can pass. Each other scenario
-//! is a wrong solution that a named check must refuse. The test runs the real
+//! scenario `reference` proves that the checks can pass. A scenario with
+//! `all-pass` is another form that the checks accept, for example the red
+//! commit of `tdd-1` with the subject `test: <text> (red)` and a commit body.
+//! Each other scenario is a wrong solution that a named check must refuse. The test runs the real
 //! runner `eval run`, so the checks get the environment that they get in a
 //! real run. No test starts an agent.
 #![cfg(unix)]

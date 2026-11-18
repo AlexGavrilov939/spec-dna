@@ -12,6 +12,14 @@ Changes for 0.7.1.
 - The 200 records of the pilot of 0.7.0 have token counts. They had `"tokens": null`, because the result files of the pilot had none. The transcripts of the pilot runs hold the `modelUsage` of each run, so the counts come from them, matched by cost inside the transcripts of the same batch. The same match reproduces the counts of the 330 records of the later batches. The verdicts and the table of the release do not change.
 - SD606 no longer warns on a document that names the layer folder of the changes (`docs/intent/`) after `finish` deleted the last change folder. Git has no empty folder, so the layer folder left the tree with its last change, and the warning was false: the layer exists, and the next change goes into it. A folder that held another file, the change folder itself and a folder that is no layer folder still give SD606.
 
+### Added
+
+- The skill `tdd` gives one way to commit the red test when a hook of the project runs the tests: the subject `test: <what the test checks> (red)`, and a skip of only that hook, named in the body of the commit. The commit with the code runs all hooks. The skill `write-plan` ends a plan with a task for the review by the owner (`Files: none`). A person ticks it after the review and before `spec-dna finish` runs. [docs/guides/change.md](docs/guides/change.md) says the same.
+
+### Changed
+
+- Each generated agent file ends with one paragraph about the scratch folder. A subagent makes its own subfolder in the scratchpad of the session, puts there each temporary file and each file of a browser tool, and deletes only the files that it put there and its subfolder. It never deletes or changes another file of the scratchpad, and it never deletes the scratchpad folder. It never writes these files into the repository. The rules never limit an edit of the repository that the task needs. The text of `verifier` no longer tells it to remove a shared temporary directory. `init` does not change `.gitignore`.
+
 ## 0.7.0 - 2026-11-18
 
 0.7.0 adds the workflow pack of 11 skills with evals, the approval of a person in the branch, the checks of a plan and its hours, and the import from Spec Kit and OpenSpec. A project of 0.6 moves with `spec-dna upgrade`.
