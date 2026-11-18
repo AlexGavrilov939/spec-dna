@@ -7,8 +7,11 @@
 //! reads a file or a code of `spec-dna check`. A check that runs `spec-dna
 //! check` does it in a copy that commits the tree, because the checks of a
 //! diff read the commits. A check of the status of a stage skill also runs
-//! the copy with the status `approved`, so SD919, SD920, SD922, SD923 and
-//! SD924 can run on a draft that the agent leaves. No check uses a model.
+//! the copy with the status `approved`, so the codes of the floor of the stage
+//! can run on a draft that the agent leaves: SD914 and SD920 for `specify`,
+//! SD919 and SD922 for `clarify`, and SD913, SD923 and SD924 for `write-plan`.
+//! `specify` writes open concerns and open questions (SD919, SD922), and
+//! `clarify` closes them. No check uses a model.
 
 use crate::eval_pack::PackEval;
 use crate::eval_pack_fixtures_rest as fx;
@@ -253,7 +256,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "at-approval-clean",
-                r##"[ -f docs/intent/threshold-10/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/threshold-10/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/threshold-10/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|919|920|922)[^0-9]'"##,
+                r##"[ -f docs/intent/threshold-10/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/threshold-10/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/threshold-10/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|920)[^0-9]'"##,
             ),
             (
                 "interfaces-written",
@@ -293,7 +296,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "at-approval-clean",
-                r##"[ -f docs/intent/order-retention/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/order-retention/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/order-retention/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|919|920|922)[^0-9]'"##,
+                r##"[ -f docs/intent/order-retention/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/order-retention/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/order-retention/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|920)[^0-9]'"##,
             ),
             (
                 "interfaces-written",
@@ -330,7 +333,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "at-approval-clean",
-                r##"[ -f docs/intent/items-csv/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/items-csv/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/items-csv/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|919|920|922)[^0-9]'"##,
+                r##"[ -f docs/intent/items-csv/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/items-csv/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/items-csv/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|920)[^0-9]'"##,
             ),
             (
                 "interfaces-written",
@@ -371,7 +374,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "at-approval-clean",
-                r##"[ -f docs/intent/audit-file/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/audit-file/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/audit-file/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|919|920|922)[^0-9]'"##,
+                r##"[ -f docs/intent/audit-file/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/audit-file/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/audit-file/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|920)[^0-9]'"##,
             ),
             (
                 "interfaces-written",
@@ -391,11 +394,11 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "no-unaccepted-decision",
-                r###"! awk '$0=="## Decisions"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -q 'sqlite-later'"###,
+                r###"! awk '$0=="## Decisions"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Fq '[[decisions/sqlite-later'"###,
             ),
             (
                 "delta-line",
-                r###"awk '$0=="## Delta"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Eq '^- ADD requirements/inventory#[a-z0-9-]+: .*audit\.log'"###,
+                r###"awk '$0=="## Delta"{f=1;next} /^## /{f=0} f' docs/intent/audit-file/spec.md | grep -Eq '^- (ADD requirements/inventory#[a-z0-9-]+|CHANGE requirements/inventory#[a-z0-9-]+@[0-9a-f]{16}): .*audit\.log'"###,
             ),
         ],
         files: fx::SPECIFY_4_FILES,
@@ -419,7 +422,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
             ),
             (
                 "at-approval-clean",
-                r##"[ -f docs/intent/retention-and-report/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/retention-and-report/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/retention-and-report/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|919|920|922)[^0-9]'"##,
+                r##"[ -f docs/intent/retention-and-report/spec.md ] && t=$(mktemp -d) && cp -R . "$t" && o=$(cd "$t" && sed 's/^status: draft$/status: approved/' docs/intent/retention-and-report/spec.md > "$t/x.tmp" && mv "$t/x.tmp" docs/intent/retention-and-report/spec.md && { git add -A && git -c user.name=spec-dna -c user.email=eval@spec-dna.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m x >/dev/null 2>&1; spec-dna check --base "$SPEC_DNA_EVAL_BASE" 2>&1; }); rm -rf "$t"; printf '%s\n' "$o" | grep -q '^spec-dna check:' && ! printf '%s\n' "$o" | grep -Eq 'SD(914|920)[^0-9]'"##,
             ),
             (
                 "interfaces-written",
