@@ -24,6 +24,24 @@ Changes for 0.7.1.
 - Each generated agent file ends with one paragraph about the scratch folder. A subagent makes its own subfolder in the scratchpad of the session, puts there each temporary file and each file of a browser tool, and deletes only the files that it put there and its subfolder. It never deletes or changes another file of the scratchpad, and it never deletes the scratchpad folder. It never writes these files into the repository. The rules never limit an edit of the repository that the task needs. The text of `verifier` no longer tells it to remove a shared temporary directory. `init` does not change `.gitignore`.
 - The evals of `brainstorm` and `execute` are harder. Both arms passed each run of `brainstorm-1` to `brainstorm-5` (15 of 15 against 15 of 15) and of `execute-1` to `execute-5` (15 of 15 against 15 of 15) in the full run of 0.7.0, so an eval could not show what the skill adds. `brainstorm-6` to `brainstorm-10` and `execute-6` to `execute-10` replace them, as `verify-6` to `verify-10` replaced the evals of `verify`. A task of a new eval names no rule of its skill, and each eval has one trap and a shell check that finds it ([docs/evals.md](docs/evals.md#the-traps-of-the-harder-evals)). The pair `agents-line` runs `execute-10` in place of `execute-1`. The records of 0.7.0 keep the old ids.
 
+### Verdicts of the skills, rerun for 0.7.1
+
+The evals that this part changed ran again with 15 runs for each arm (3 runs of each of 5 evals), with `claude` 2.1.327. The table shows the old and the new result. The table of the release (`spec-dna eval verdict --release`) holds the new rows. The default skills do not change, because they do not depend on the verdict (D33).
+
+| Skill | 0.7.0, with / without | 0.7.1, with / without | Difference (90% interval) | Cost per correct, with / without (USD) | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| `finish` | 12/15, 15/15 | 15/15, 15/15 | 0.00 (0.00 to 0.00) | 0.80 / 0.99 | on (rule 2) |
+| `verify` | 4/10, 7/10 | 15/15, 14/15 | +0.07 (0.00 to +0.20) | 1.93 / 1.77 | inconclusive |
+| `brainstorm` | 15/15, 15/15 | 13/15, 11/15 | +0.13 (0.00 to +0.33) | 0.90 / 1.41 | on (rule 2) |
+| `execute` | 15/15, 15/15 | 15/15, 15/15 | 0.00 (0.00 to 0.00) | 1.39 / 1.33 | inconclusive |
+| `tdd` | 6/10, 0/10 | 11/15, 0/15 | +0.73 (+0.47 to +0.93) | 1.40 / - | on (rule 1) |
+| `agents-line` | not in the table | 15/15, 6/15 | +0.60 (+0.20 to +1.00) | 1.14 / 3.22 | on (rule 1) |
+
+- `finish` and `verify` no longer score below no skill. The effect of the new text of `finish` is not proved: 3 runs failed in 0.7.0, none fails now, and the difference to no skill is 0.
+- `execute` stays at the ceiling in both arms, as the evals of `execute-6` to `execute-10` were meant to prevent. These evals do not show what the skill adds.
+- `brainstorm` is `on` by rule 2 (the cost), with a pass-rate difference of +0.13 that includes 0.
+- The first run of `verify` stopped each run with the skill at the cap of 20 turns, so the evals have 40 turns now. That run is not in the table.
+
 ## 0.7.0 - 2026-11-18
 
 0.7.0 adds the workflow pack of 11 skills with evals, the approval of a person in the branch, the checks of a plan and its hours, and the import from Spec Kit and OpenSpec. A project of 0.6 moves with `spec-dna upgrade`.
