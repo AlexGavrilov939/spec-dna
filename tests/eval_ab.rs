@@ -152,7 +152,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%
 const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
 
 /// The groups of the evals of the pair `agents-line`: `tdd-1`, `debug-1` and
-/// `execute-1`, and the 2 evals that name the group.
+/// `execute-10`, and the 2 evals that name the group.
 const DISCIPLINED: [&str; 4] = ["tdd", "debug", "execute", "agents-line"];
 
 fn pack_eval(id: &str, skill: &str, runs: u32) -> String {
@@ -182,9 +182,14 @@ impl Fx {
         assert_eq!(code, 0, "{out}{err}");
         repo.write("evals/check.sh", CHECK_SH);
         for skill in packed {
-            // The group `agents-line` has 2 evals of its own.
-            let last = if *skill == "agents-line" { 2 } else { 5 };
-            for n in 1..=last {
+            // The group `agents-line` has 2 evals of its own. The ids of
+            // `execute` are 6 to 10, as in the pack (the pair uses `execute-10`).
+            let (first, last) = match *skill {
+                "agents-line" => (1, 2),
+                "execute" => (6, 10),
+                _ => (1, 5),
+            };
+            for n in first..=last {
                 let id = format!("{skill}-{n}");
                 repo.write(
                     &format!("evals/pack/{id}.json"),
@@ -827,7 +832,7 @@ fn the_target_agents_line_runs_5_evals_with_no_skill_folder_in_each_arm() {
     for id in [
         "tdd-1",
         "debug-1",
-        "execute-1",
+        "execute-10",
         "agents-line-1",
         "agents-line-2",
     ] {

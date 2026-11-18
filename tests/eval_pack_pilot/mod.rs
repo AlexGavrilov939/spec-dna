@@ -1,11 +1,14 @@
 //! Proofs of the evals of the pack that have a reference solution: the pilot
-//! evals (`execute`, `tdd` and `debug`), the harder evals of `verify` and the 2
-//! evals of `agents-line`. For each eval, `tests/fixtures/eval-solutions/<id>/` has one
+//! evals of `tdd` and `debug`, the harder evals of `execute` and `verify`, and
+//! the 2 evals of `agents-line`. For each eval, `tests/fixtures/eval-solutions/<id>/` has one
 //! folder for each scenario:
 //!
 //! - `expect` says what the checks must give. `all-pass`: each check passes.
-//!   `fail: <name>...`: each named check fails. A line `pass: <name>...` can
-//!   follow: each named check passes. A line that starts with `#` is a comment.
+//!   `fail: <name>...`: each named check fails. `only-fail: <name>...`: the
+//!   named checks fail and each other check passes, so a wrong solution is
+//!   refused for the one reason that its name gives. A line `pass: <name>...`
+//!   can follow: each named check passes. A line that starts with `#` is a
+//!   comment.
 //! - `solve.sh` is the work that the stub `claude` does in the temporary copy.
 //!   It reads `$SOL` (its own folder) and `$REF` (the folder `reference`). A
 //!   scenario with no `solve.sh` leaves the fixture as it is.
@@ -203,9 +206,13 @@ fn prove_n(skill: &str, n: usize) {
                 );
             } else {
                 let mut lines = expect.lines();
-                let wanted = lines
+                let first = lines
                     .next()
-                    .and_then(|l| l.strip_prefix("fail:"))
+                    .unwrap_or_else(|| panic!("{id}/{name}: bad expect"));
+                let exact = first.starts_with("only-fail:");
+                let wanted = first
+                    .strip_prefix("only-fail:")
+                    .or_else(|| first.strip_prefix("fail:"))
                     .unwrap_or_else(|| panic!("{id}/{name}: bad expect"));
                 if let Some(kept) = lines.next() {
                     let kept = kept
@@ -219,6 +226,17 @@ fn prove_n(skill: &str, n: usize) {
                             "{id}/{name}: the check {want} fails: {checks:?}"
                         );
                     }
+                }
+                if exact {
+                    let mut failed: Vec<&str> = checks
+                        .iter()
+                        .filter(|c| !c.1)
+                        .map(|c| c.0.as_str())
+                        .collect();
+                    let mut want: Vec<&str> = wanted.split_whitespace().collect();
+                    failed.sort_unstable();
+                    want.sort_unstable();
+                    assert_eq!(failed, want, "{id}/{name}: the failed checks differ");
                 }
                 for want in wanted.split_whitespace() {
                     let got = checks.iter().find(|c| c.0 == want);
@@ -409,6 +427,50 @@ fn the_pilot_evals_keep_the_limits_of_the_design_and_name_no_skill_in_the_task()
                 assert!(!text.contains("spec-dna"), "{id}/{file}");
             }
             assert!(dir.join("test.sh").exists(), "{id}: no test.sh");
+        }
+    }
+}
+
+#[test]
+fn the_task_of_an_execute_eval_names_no_rule_of_its_skill() {
+    // The skill must add the work. If the task gave the isolation, the scope of
+    // `Files`, the review passes or the order of the `Verify:` and the tick, the
+    // arm `without` could do it as well. A task states what a person asks: the
+    // next task of the plan, the commit and the tick of the box. Only the task
+    // that needs a stop (`execute-6`) has a file for a question.
+    let lab = Lab::new();
+    const RULES: [&str; 13] = [
+        "subagent",
+        "fresh",
+        "compliance",
+        "quality",
+        "worktree",
+        "branch",
+        "isolat",
+        "scope",
+        "files:",
+        "only the files",
+        "review",
+        "pass 1",
+        "first open",
+    ];
+    for id in lab.ids("execute") {
+        let text = fs::read_to_string(lab.repo.dir.join(format!("evals/pack/{id}.json"))).unwrap();
+        let task = text
+            .split("\"task\": \"")
+            .nth(1)
+            .and_then(|t| t.split("\",\n").next())
+            .unwrap_or_else(|| panic!("{id}: no task"))
+            .to_lowercase();
+        for rule in RULES {
+            assert!(!task.contains(rule), "{id}: the task says `{rule}`");
+        }
+        assert!(task.contains("next open task"), "{id}");
+        assert_eq!(task.contains("status.md"), id == "execute-6", "{id}");
+        // The ids of the plain tasks ask for the tick in the commit, as the
+        // task of the old `execute-1` did.
+        if ["execute-7", "execute-9", "execute-10"].contains(&id.as_str()) {
+            assert!(task.contains("tick of its box"), "{id}: {task}");
         }
     }
 }

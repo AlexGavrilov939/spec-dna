@@ -193,7 +193,7 @@ A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats 
 
 ### The pack
 
-`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of the 11 skills and 2 evals of the pair `agents-line`, 57 in total. Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, or `agents-line`. The ids of `verify` are `verify-6` to `verify-10`: both arms of the pilot passed each run of the first 5 evals of `verify`, so they could not show a gain, and the 5 new evals replace them. Each eval runs 4 times (`"runs": 4`). The files are these:
+`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of the 11 skills and 2 evals of the pair `agents-line`, 57 in total. Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, or `agents-line`. The ids of `verify`, `brainstorm` and `execute` are `<skill>-6` to `<skill>-10`: both arms passed each run of the first 5 evals of each of these skills, so they could not show a gain, and 5 new evals replace them. A task of a new eval does not name a rule of its skill. Each new eval has one trap that an agent with no skill text falls into, and a shell check that finds it. [The traps](#the-traps-of-the-harder-evals) lists them. Each eval runs 4 times (`"runs": 4`). The files are these:
 
 | File | Content |
 | --- | --- |
@@ -203,6 +203,34 @@ A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats 
 The command writes each file once. If a file exists, the command keeps it, and the output names it (`kept <path>`). Thus a project can edit its copy of an eval. The command needs `[evals]`. Without it, the exit code is 3. A write error gives exit code 4. With `--json`, it prints `{"written":[...],"kept":[...]}`.
 
 A check of the pack is a shell command. A check that runs `spec-dna check` reads the codes that it needs, such as `SD919`, and never the exit code alone. The 2 arms differ in the generated files, so the exit code of `check` can differ with the arm (for example SD501). The `tdd` evals read the git history of the copy, so a test commit must come before the code commit.
+
+### The traps of the harder evals
+
+The reference solution of each eval passes, and a wrong solution that falls into the trap fails one named check. A check never calls a model. Each trap rests on one sentence of the skill text, and no task states that sentence.
+
+| Eval | The trap, and the sentence of the skill | The check that finds it, and what it measures |
+| --- | --- | --- |
+| `brainstorm-6` | The request is a design proposal, and the default template has other headings (`--template rfc` for a design proposal) | `rfc-sections`: the 5 headings of the `rfc` template. `words-kept` accepts `5 minutes`, `5-minute` and `5 min`, and not `15 minutes` |
+| `brainstorm-7` | A product requirement has a success measure, and the request gives no target (`--template prd`; ask the person for each fact that the request does not give) | `no-invented-numbers`: no number but `3` in Goals and Success measures, after the headings, the numbering of a list and ids such as `G1` or `(1)` are removed. `gap-recorded`: the intent has a question, or says that the target is not given. A number that the project gives, in another section, is no fault |
+| `brainstorm-8` | The risk of the change is unclear, and the task asks for the intent only (if you are not sure, use `higher-risk`), and the template writes `class: routine` | `class-higher-risk`: the intent has `class: higher-risk` |
+| `brainstorm-9` | The request is plain, and the new file must be tracked (stage the new files with `git add`, because `--base` reads tracked files only) | `staged`: the intent is tracked by git (staged or committed) |
+| `brainstorm-10` | The request lacks a fact (the address, the date), and the task gives a file for questions (ask the person for each fact that the request does not give) | `no-invented-facts`: no `@`, no date with a month or in the form `2026-03`. A word such as `separate` or `decimal` next to a number is no date. `question-asked`: `QUESTIONS.md` has a question |
+| `execute-6` | The task needs a file that `Files` does not list (stop and ask the person; the subagent changes only the files of the task) | `scope-kept`: no file outside `Files`. `tick-true`: a ticked box has a passing `Verify:`. `reason-named`: if the agent stopped, `STATUS.md` names `store` or `storage` and says that it cannot, or that the file is outside the plan |
+| `execute-7` | A rule of `docs/rules/` applies to `src/price.py`, and the task does not name it (`spec-dna context <file>`; pass 1 compares the diff with the rules) | `rule-kept`: an integer, a half cent up, for 4 prices (the price of 1015 at 10 percent catches `price - round(...)`) |
+| `execute-8` | The `Verify:` of the task needs a tool that is not there (run `Verify:` before the tick) | `box-open`: the box is open, and `payload` can be imported and called in the tip |
+| `execute-9` | The work needs its own branch (work in a worktree or a branch), and a second open task must stay open (take the first open task) | `isolated`: `main` keeps the base. `one-task`: the box and the files of the next task are as they were |
+| `execute-10` | None. A plain edit of a task with a commit and the tick of its box, for the pair `agents-line` (its `Verify:` is a test command, as in the old `execute-1`) | `verify-true`: a ticked box has a passing `Verify:`. `box-ticked`: the commit has the tick, as the task says. `suite-green` |
+
+`execute-7`, `execute-9` and `execute-10` ask in the task for the tick of the box in the commit, as the old `execute-1` did, so `box-ticked` measures the work and not a guess. `execute-6` and `execute-8` ask for the tick only when the task is done. The checks of `execute` read the tip of the work (the branch with the most commits after the base), because the work can be in a branch or in a worktree. They read the plan in the tip, so a box counts when the commit has it.
+
+#### The limits of the harder evals
+
+- The proofs use a stub agent (`execute`, `agents-line`) or a copy of the fixture (`brainstorm`). They show that a check can pass and can fail. They do not show that the 2 arms differ. Only a run with `eval run --ab` shows that.
+- A check reads the tip of the work: the branch with the most commits after the base, or the `HEAD` of a worktree (also a detached one). A commit that no branch and no worktree holds, such as the commit of a worktree that the agent removed, is not seen.
+- A check that reads words (`gap-recorded`, `reason-named`, `question-asked`) takes a short list of phrases. A good report with other words can fail it.
+- `brainstorm-9` measures a step of the skill (staging the file), not the quality of the intent. No eval of `brainstorm` or `execute` sets or reads an approval, so a hook `protect-approvals` does not change them.
+- Expect a pass rate near the ceiling in both arms, so no gain: `execute-10` (plain by design), `brainstorm-6` (`spec-dna new --help` names the `rfc` template), `brainstorm-10` (a model seldom invents an address when it has a file for questions), `brainstorm-8` (the old class evals were at the ceiling in the arm `without`), and `execute-8` (an agent that sees the missing tool seldom ticks the box).
+- Expect a gap, if any, in `brainstorm-7`, `brainstorm-9`, `execute-6`, `execute-7` and `execute-9`. This is a guess until a paid run.
 
 ### Run the arms
 
@@ -214,7 +242,7 @@ spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>
 
 - a skill, such as `tdd`, to run the 5 evals of that skill;
 - `all`, to run each skill that the pack has (the 11 skills of a full pack, 440 runs). It does not include `agents-line`;
-- `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs `tdd-1`, `debug-1` and `execute-1`, and the 2 evals `agents-line-1` and `agents-line-2` (they have the key `skill` with the value `agents-line`). `agents-line-1` is a long task that moves a document, and the line tells the agent to run `spec-dna check` before a commit. `agents-line-2` has a plan that is a draft, and the line says that an agent writes an approval only when the owner says so.
+- `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs `tdd-1`, `debug-1` and `execute-10` (a plain edit of a task of a plan, with a commit; the pair used `execute-1` until 0.7.0, and uses `execute-10` since 0.7.1), and the 2 evals `agents-line-1` and `agents-line-2` (they have the key `skill` with the value `agents-line`). `agents-line-1` is a long task that moves a document, and the line tells the agent to run `spec-dna check` before a commit. `agents-line-2` has a plan that is a draft, and the line says that an agent writes an approval only when the owner says so.
 
 `--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval. An eval of `execute`, and `tdd-1` and `debug-1`, have `max-turns` 40 (the confirmation run of `tdd` uses `tdd-1` with this higher cap too, because the cap is one value of the eval and the pair `agents-line` shares `tdd-1` with `tdd`): the pilot showed that the line of `AGENTS.md` costs 3 to 7 turns that only run `spec-dna`, and a cap of 25 turns stopped correct work.
 

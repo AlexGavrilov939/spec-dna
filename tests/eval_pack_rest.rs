@@ -1,6 +1,8 @@
 //! Tests of the 35 evals of `brainstorm`, `specify`, `clarify`, `write-plan`,
 //! `review`, `finish` and `post-mortem` (ADR 0016, 0.7.0 slice 5, tasks t14 to
-//! t17). No test starts an agent. For each eval, the test writes the pack with
+//! t17). The ids of `brainstorm` are 6 to 10: the first 5 evals of `brainstorm`
+//! were passed by both arms in the full run of 0.7.0, so 5 harder evals replace
+//! them. No test starts an agent. For each eval, the test writes the pack with
 //! `eval pack`, makes the temporary copy as the runner does (a copy of the
 //! fixture, one commit, the branch of the eval), and runs the checks of the
 //! eval file in it. Then it proves 3 things:
@@ -10,7 +12,9 @@
 //!   each check, so the checks can pass. An eval can have more reference
 //!   solutions (`good-<name>`) for the forms that a check accepts.
 //! - Each wrong solution (`wrong-<name>`) fails the checks that its file
-//!   `wrong-<name>.fails` names. A wrong solution is the trap that a check
+//!   `wrong-<name>.fails` names. If the file starts with `only:`, the named
+//!   checks fail and each other check passes, so the solution is refused for
+//!   one reason. A wrong solution is the trap that a check
 //!   guards: a placeholder left, a status set to `approved`, a wrong review
 //!   comment applied, a hash that is not the hash of the requirement.
 //!
@@ -376,15 +380,30 @@ fn apply(copy: &Copy, id: &str, variant: &str) {
     }
 }
 
-fn expected_failures(id: &str, variant: &str) -> Vec<String> {
+/// The names in the `.fails` file of a wrong solution, and whether the file
+/// starts with `only:` (no other check may fail).
+fn expected_failures(id: &str, variant: &str) -> (Vec<String>, bool) {
     let file = Path::new(SOLUTIONS)
         .join(id)
         .join(format!("{variant}.fails"));
-    fs::read_to_string(&file)
-        .unwrap_or_else(|e| panic!("{id} {variant}: no .fails file: {e}"))
-        .split_whitespace()
-        .map(str::to_string)
-        .collect()
+    let text =
+        fs::read_to_string(&file).unwrap_or_else(|e| panic!("{id} {variant}: no .fails file: {e}"));
+    let (only, rest) = match text.trim_start().strip_prefix("only:") {
+        Some(rest) => (true, rest.to_string()),
+        None => (false, text),
+    };
+    (rest.split_whitespace().map(str::to_string).collect(), only)
+}
+
+/// The ids of the evals of `skill`: `brainstorm` has the ids 6 to 10, and the
+/// other skills of this file have the ids 1 to 5.
+fn ids_of(skill: &str) -> Vec<String> {
+    let (from, to) = if skill == "brainstorm" {
+        (6, 10)
+    } else {
+        (1, 5)
+    };
+    (from..=to).map(|n| format!("{skill}-{n}")).collect()
 }
 
 fn report(results: &[(String, bool, String)]) -> String {
@@ -408,8 +427,7 @@ fn report(results: &[(String, bool, String)]) -> String {
 /// Proves the 3 things of the module doc for the 5 evals of one skill.
 fn prove_skill(skill: &str) {
     let pack = Pack::new();
-    for n in 1..=5 {
-        let id = format!("{skill}-{n}");
+    for id in ids_of(skill) {
         let eval = pack.eval(&id);
         let names: Vec<String> = match eval.get("checks") {
             Some(J::Arr(c)) => c
@@ -454,8 +472,29 @@ fn prove_skill(skill: &str) {
                     report(&results)
                 );
             } else {
-                let fails = expected_failures(&id, &v);
+                let (fails, only) = expected_failures(&id, &v);
                 assert!(!fails.is_empty(), "{id} {v}: no check named");
+                if std::env::var_os("PILOT_VERBOSE").is_some() {
+                    let line: Vec<String> =
+                        results.iter().map(|r| format!("{}={}", r.0, r.1)).collect();
+                    eprintln!("{id}/{v}: {}", line.join(" "));
+                }
+                if only {
+                    let mut failed: Vec<&str> = results
+                        .iter()
+                        .filter(|r| !r.1)
+                        .map(|r| r.0.as_str())
+                        .collect();
+                    let mut want: Vec<&str> = fails.iter().map(String::as_str).collect();
+                    failed.sort_unstable();
+                    want.sort_unstable();
+                    assert_eq!(
+                        failed,
+                        want,
+                        "{id} {v}: the failed checks differ\n{}",
+                        report(&results)
+                    );
+                }
                 for name in &fails {
                     assert!(names.contains(name), "{id} {v}: no check `{name}`");
                     let r = results.iter().find(|r| &r.0 == name).unwrap();
@@ -511,8 +550,7 @@ fn the_5_evals_of_post_mortem_fail_the_fixture_and_pass_the_reference() {
 fn each_eval_has_the_budget_the_tools_and_the_runs_of_the_design() {
     let pack = Pack::new();
     for skill in SKILLS {
-        for n in 1..=5 {
-            let id = format!("{skill}-{n}");
+        for id in ids_of(skill) {
             let e = pack.eval(&id);
             let J::Num(turns) = e.get("max-turns").expect("max-turns") else {
                 panic!("{id}: max-turns")
@@ -548,11 +586,36 @@ fn each_eval_has_the_budget_the_tools_and_the_runs_of_the_design() {
 }
 
 #[test]
+fn the_task_of_a_brainstorm_eval_names_no_skill_and_no_rule_of_its_skill() {
+    // The skill must add the work. If the task gave the template name, the
+    // class rule or the rule to ask, the arm `without` could do it as well.
+    let pack = Pack::new();
+    for id in ids_of("brainstorm") {
+        let task = pack.eval(&id).get("task").unwrap().str().to_lowercase();
+        for name in SKILLS
+            .iter()
+            .chain(["execute", "tdd", "verify", "debug", "skill", "spec-dna"].iter())
+        {
+            assert!(!task.contains(name), "{id}: the task names `{name}`");
+        }
+        for rule in [
+            "--template",
+            "prd",
+            "rfc",
+            "class",
+            "higher-risk",
+            "routine",
+        ] {
+            assert!(!task.contains(rule), "{id}: the task says `{rule}`");
+        }
+    }
+}
+
+#[test]
 fn each_fixture_is_a_small_spec_dna_project_with_an_agents_file_that_names_no_skill() {
     let pack = Pack::new();
     for skill in SKILLS {
-        for n in 1..=5 {
-            let id = format!("{skill}-{n}");
+        for id in ids_of(skill) {
             let dir = pack.fixture(&id);
             let toml = fs::read_to_string(dir.join("spec-dna.toml")).unwrap();
             assert!(toml.contains("profile = \"standard\""), "{id}");

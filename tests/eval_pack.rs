@@ -266,9 +266,14 @@ fn the_fixture_names_no_consumer_project_and_pins_the_version_of_the_binary() {
 
 // The tests that need the 57 evals of the pack.
 
-/// The ids of each skill: `verify` has the ids 6 to 10, the others 1 to 5.
+/// The ids of each skill: `verify`, `brainstorm` and `execute` have the ids 6
+/// to 10, the others 1 to 5.
 fn ids_of(skill: &str) -> Vec<String> {
-    let (from, to) = if skill == "verify" { (6, 10) } else { (1, 5) };
+    let (from, to) = if ["verify", "brainstorm", "execute"].contains(&skill) {
+        (6, 10)
+    } else {
+        (1, 5)
+    };
     (from..=to).map(|n| format!("{skill}-{n}")).collect()
 }
 
@@ -289,9 +294,12 @@ fn the_pack_has_5_evals_for_each_skill_and_2_of_agents_line() {
         assert!(text.contains("\"skill\": \"agents-line\""), "{id}");
         assert!(names.contains(&format!("{id}.json")), "{id}");
     }
-    // The ids of the pilot of `verify` are gone: a record names its eval.
-    for n in 1..=5 {
-        assert!(!names.contains(&format!("verify-{n}.json")), "verify-{n}");
+    // The ids of the pilot evals of `verify`, `brainstorm` and `execute` are
+    // gone: a record names its eval, and a new eval has a new id.
+    for skill in ["verify", "brainstorm", "execute"] {
+        for n in 1..=5 {
+            assert!(!names.contains(&format!("{skill}-{n}.json")), "{skill}-{n}");
+        }
     }
     // Ids are unique and have the form `<group>-<n>` with n from 1.
     for name in &names {
@@ -320,7 +328,7 @@ fn the_pack_has_5_evals_for_each_skill_and_2_of_agents_line() {
 }
 
 #[test]
-fn the_agents_line_set_is_tdd_1_debug_1_execute_1_and_2_own_evals() {
+fn the_agents_line_set_is_tdd_1_debug_1_execute_10_and_2_own_evals() {
     let r = project("[evals]\n");
     pack(&r);
     let (code, out, err) = r.run(&[
@@ -344,7 +352,7 @@ fn the_agents_line_set_is_tdd_1_debug_1_execute_1_and_2_own_evals() {
         [
             "tdd-1",
             "debug-1",
-            "execute-1",
+            "execute-10",
             "agents-line-1",
             "agents-line-2"
         ],
@@ -419,10 +427,10 @@ fn the_covers_tags_of_the_pack_fixtures_give_no_sd105() {
     assert!(!out.contains("SD105"), "{out}");
 }
 
-// The turn cap of the evals that the proof of `execute-1` measured (session 26).
-// In the pilot, 4 of 4 runs of `execute-1` with the line of `AGENTS.md` stopped
-// at the cap of 25 turns with correct work: the line costs 3 to 7 turns that
-// only run `spec-dna`. So an eval of `execute`, and the evals `tdd-1` and
+// The turn cap of the evals that the proof of the old eval `execute-1` measured
+// (session 26). In the pilot, 4 of 4 runs of it with the line of `AGENTS.md`
+// stopped at the cap of 25 turns with correct work: the line costs 3 to 7 turns
+// that only run `spec-dna`. So an eval of `execute`, and the evals `tdd-1` and
 // `debug-1` of the pair `agents-line`, have a cap of at least 40 turns.
 
 /// The number after `"<key>": ` in the text of an eval file.
@@ -441,11 +449,11 @@ fn no_eval_of_execute_has_a_turn_cap_under_40_and_the_evals_of_agents_line_keep_
     let (code, out, err) = pack(&r);
     assert_eq!(code, 0, "{out}{err}");
     for id in [
-        "execute-1",
-        "execute-2",
-        "execute-3",
-        "execute-4",
-        "execute-5",
+        "execute-6",
+        "execute-7",
+        "execute-8",
+        "execute-9",
+        "execute-10",
         "tdd-1",
         "debug-1",
     ] {
@@ -458,29 +466,31 @@ fn no_eval_of_execute_has_a_turn_cap_under_40_and_the_evals_of_agents_line_keep_
 }
 
 #[test]
-fn the_fixture_of_execute_1_has_a_requirement_that_a_covers_tag_can_name() {
+fn the_fixture_of_execute_10_has_a_requirement_that_a_covers_tag_can_name() {
+    // `execute-10` is the plain edit of the pair `agents-line`, and an agent
+    // with the line can tag a test with `covers:`.
     let r = project("[evals]\n");
     pack(&r);
-    let fixture = "evals/pack/fixtures/execute-1";
-    let counts = r.read(&format!("{fixture}/docs/counts.md"));
-    assert!(counts.contains("- **count-words**:"), "{counts}");
+    let fixture = "evals/pack/fixtures/execute-10";
+    let counts = r.read(&format!("{fixture}/docs/requirements/wrap.md"));
+    assert!(counts.contains("- **wrap-lines**:"), "{counts}");
     // A project with this document and a test that names the requirement
     // gives no SD105.
     let p = Repo::with_config(
         "\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
     );
-    p.write("docs/counts.md", &counts);
+    p.write("docs/requirements/wrap.md", &counts);
     p.write(
-        "tests/test_words.py",
-        "# covers: counts#count-words\nimport unittest\n",
+        "tests/test_wrap.py",
+        "# covers: requirements/wrap#wrap-lines\nimport unittest\n",
     );
     p.commit("start");
     let (_, out, err) = p.run(&["check", "--all"]);
     assert!(!out.contains("SD105"), "{out}{err}");
     // The old tag names a section, and it is no requirement.
     p.write(
-        "tests/test_words.py",
-        "# covers: counts#counts\nimport unittest\n",
+        "tests/test_wrap.py",
+        "# covers: requirements/wrap#wrap\nimport unittest\n",
     );
     let (_, out, _) = p.run(&["check", "--all"]);
     assert!(out.contains("SD105"), "{out}");
