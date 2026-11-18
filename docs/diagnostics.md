@@ -132,7 +132,7 @@ Each other path that differs from the base counts. Examples are documents, code,
 | SD603 | cross-repo-unpinned | warning | spec-dna cannot check a `<repo>:<id>` reference without a pinned index. |
 | SD604 | depends-on-deprecated | warning | `depends-on` names a deprecated document. |
 | SD605 | amendment-outcome | warning | New amendment text states a requirement, a BCP 14 keyword or a status word. |
-| SD606 | cited-path-removed | warning | A document cites a file or a directory that the change removed or renamed. The message names the new path of a file with the same content. A link gives SD102 instead. |
+| SD606 | cited-path-removed | warning | A document cites a file or a directory that the change removed or renamed. The message names the new path of a file with the same content. A link gives SD102 instead. A layer folder of changes (`docs/intent`) that held only change folders (with their files at any depth) is not reported: git has no empty folder, so `finish` removes it with the last change, and the next change goes into it again. |
 | SD607 | cited-symbol-removed | warning | A document cites an identifier in an inline code span. The change removed the identifier from a file, and no other file that is not Markdown has it. If the file has exactly one new identifier, the message names it as a possible new name. |
 | SD608 | requirement-unverified | warning | A requirement of an active `requirements`, `interface` or `rule` document has no evidence: no `verified-by` and no full `covers:` tag. A tag `covers: partial <doc-id>#<key>` is not evidence: the message names the first such tag, and the requirement still gives SD608. |
 | SD609 | incident-unlinked | warning | An incident links no requirement, rule, decision or procedure. |
