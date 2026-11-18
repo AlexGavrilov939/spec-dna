@@ -34,7 +34,7 @@ Evidence:
 Option 3.
 
 - One function gives the default of a skill from 3 facts: the skill is one of the 7 of D2, its verdict, and the constant `DEFAULT_ON_NEEDS_VERDICT_ON` in `src/verdict.rs`. With `true`, a skill is on only with the verdict `on`. With `false`, a skill of D2 is on unless its verdict is `off`, and another skill is on only with `on` (D33). The verdict comes from the table of the release.
-- The constant is `true` until the owner decides after the full run. It is the latest word of the owner. A run that does not end then leaves no unproven skill on, and a skill that is off adds no byte to a request. The change to `false` is one line.
+- The constant is `false` in 0.7.0. The owner set it on 2026-11-18, after the full run. The build had shipped `true`, which came from one sentence of the prompt of the build that contradicted D33 as the owner approved it. D33 stays the rule: a skill of D2 is on unless its verdict is `off`, and another skill needs the verdict `on`. The change was one line.
 - `init` at the level `lean`: `lite` proposes the skills of `brainstorm`, `write-plan` and `finish` that are on by default. `standard` and `strict` propose each skill that is on by default, also a skill outside D2 with the verdict `on`. The level `full` proposes the 11 skills, as before.
 - `upgrade` renames a name of 0.6 to the names of 0.7.0 that are on by default. The report names each name that it leaves out, and the fix. A name that stays valid, such as `review`, stays.
 - `skill list` prints this default in its column and in the field `default`.
@@ -55,8 +55,8 @@ Option 3.
 
 - Good: one constant and one table give each default. A test with a fake table proves each case.
 - Good: a release with few verdicts `on` adds few bytes to a request.
-- Bad: with `true` and the table of the pilot, `init` proposes only `tdd` for `standard` and `strict`, and no skill for `lite`. `next` still names the skill of each step, and `spec-dna skill show` prints its text.
-- Bad: with `true`, an upgraded project can lose a renamed skill. The report names it.
+- Bad: with `true`, `init` would propose only the skills with the verdict `on`, and `lite` would get none. `next` still names the skill of each step, and `spec-dna skill show` prints its text.
+- Bad: with `true`, an upgraded project could lose a renamed skill. The report names each name that it leaves out.
 - Bad: the default of `skill list` can change with each release.
 - Neutral: the profile still sets the other keys of the workflow.
 

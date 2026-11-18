@@ -619,9 +619,9 @@ pub fn release(name: &str) -> Option<Verdict> {
 
 /// ADR 0023. `true`: a skill is on by default only with the verdict `on`.
 /// `false`: D33 (a skill of D2 is on unless `off`; another skill only with
-/// `on`). The owner sets the value after the full eval run. A test names no
-/// default skill, so this line is the one edit of the change.
-pub const DEFAULT_ON_NEEDS_VERDICT_ON: bool = true;
+/// `on`). The owner set `false` for 0.7.0 on 2026-11-18, after the full eval
+/// run. A test names no default skill, so this line is the one edit.
+pub const DEFAULT_ON_NEEDS_VERDICT_ON: bool = false;
 
 /// The rule of ADR 0023. It reads no file and no table.
 pub fn on_by_default(in_d2: bool, verdict: Option<Verdict>, needs_on: bool) -> bool {
