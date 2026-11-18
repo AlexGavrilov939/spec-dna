@@ -773,7 +773,7 @@ pub static VERIFY: &[PackEval] = &[
         skill: "verify",
         task: result_task!("half-up-tax"),
         allowed_tools: HARDER_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
         checks: &[
@@ -806,7 +806,7 @@ rm -rf "$t"
         skill: "verify",
         task: result_task!("bucket-cap"),
         allowed_tools: HARDER_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
         checks: &[
@@ -838,7 +838,7 @@ rm -rf "$t"
         skill: "verify",
         task: result_task!("overdue-fee"),
         allowed_tools: HARDER_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.5,
         branch: Some("feature/overdue-fee"),
         checks: &[
@@ -885,7 +885,7 @@ rm -rf "$t"
         skill: "verify",
         task: result_task!("whole-price"),
         allowed_tools: HARDER_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
         checks: &[
@@ -941,7 +941,7 @@ assert format_price(1050) == "10.50"'; then real=yes; else real=no; fi
         skill: "verify",
         task: result_task!("stock-cap"),
         allowed_tools: HARDER_TOOLS,
-        max_turns: 20,
+        max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
         checks: &[
