@@ -357,7 +357,7 @@ A release keeps the result of its runs as records in `bench/results/evals/`. A r
 | `models` | 1 to 8 sorted names of models. A name has 1 to 64 characters from `A-Z a-z 0-9 . _ : - [ ] /`, with no `..` and no `/` at the start, such as `claude-fable-5-2[1m]` |
 | `claude_code` | The version of Claude Code, or `null` |
 
-A record has no path, no text, no check name and no time. The pair is `eval` and `run`. The records of the 200 runs of the pilot have `"tokens": null`, and each of them names the models of its result file, because the runner of the pilot kept one list of models for each file. The runner of this release keeps the tokens and the models of each run.
+A record has no path, no text, no check name and no time. The pair is `eval` and `run`. The result files of the pilot (0.7.0) had no token counts, because the runner of the pilot kept one list of models for each file and no `tokens`. In 0.7.1 the records of the 200 runs of the pilot got their `tokens` from the transcripts of the pilot runs: the entry `cost-state` of a transcript holds the `modelUsage` and the total cost of the run, so the sums are those that the runner of this release writes (`in`, `out`, `cache_read`, `cache_write`). Each record matches one transcript of its own batch by its cost, and the same match gives the same counts for the 330 records of the later batches that have tokens. The models of a pilot record stay the list of its result file. A record can still have `"tokens": null` (a result file with no `modelUsage`), and `eval records` and the verdict read the field with a check for `null`.
 
 ```text
 spec-dna eval records <result file>

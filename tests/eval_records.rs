@@ -324,3 +324,33 @@ fn a_file_over_16_mib_stops_the_import_before_it_is_read() {
     assert!(out.is_empty());
     assert!(err.contains("16 MiB"), "{err}");
 }
+
+/// The committed records of the pilot (0.7.1, issue 70): each record of the 200
+/// runs of the pilot has the 4 token counts. A record of another batch has
+/// them or `null`.
+#[test]
+fn the_committed_pilot_records_have_token_counts() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bench/results/evals");
+    let mut pilot = 0;
+    for e in fs::read_dir(dir).unwrap() {
+        let path = e.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.ends_with(".jsonl") {
+            continue;
+        }
+        let is_pilot = name.starts_with("20261117T0828") || name.starts_with("20261117T0829");
+        for line in fs::read_to_string(&path).unwrap().lines() {
+            let rest = line.split("\"tokens\":").nth(1).expect(&name);
+            if rest.starts_with("null") {
+                assert!(!is_pilot, "{name} has a record with null tokens");
+                continue;
+            }
+            assert!(
+                rest.starts_with("{\"in\":"),
+                "{name}: the tokens of a record are null or an object"
+            );
+            pilot += usize::from(is_pilot);
+        }
+    }
+    assert_eq!(pilot, 200, "the 5 files of the pilot hold 200 records");
+}

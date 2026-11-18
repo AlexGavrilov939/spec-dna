@@ -9,6 +9,7 @@ Changes for 0.7.1.
 ### Fixed
 
 - An open task now gates each change. Before, only a plan that lists no files kept the stage `build` while a task of `Order` was open. With a `covers:` tag for each delta requirement and 0 of 27 tasks done, `next` gave the stage `deploy` and `finish --dry-run` passed. Now the stage stays `build` for each plan while a task is open (not `[x]` and with no reason in `Skip:`), and `next` names it. `finish` stops at step 0 and lists the open tasks. A change with the intent status `closed` is not checked. The skills `execute` and `finish`, [docs/commands.md](docs/commands.md) and the change guide say the same.
+- The 200 records of the pilot of 0.7.0 have token counts. They had `"tokens": null`, because the result files of the pilot had none. The transcripts of the pilot runs hold the `modelUsage` of each run, so the counts come from them, matched by cost inside the transcripts of the same batch. The same match reproduces the counts of the 330 records of the later batches. The verdicts and the table of the release do not change.
 
 ## 0.7.0 - 2026-11-18
 
