@@ -7,6 +7,9 @@ status: approved
 
 - `bench/results/evals/*.jsonl` The records of the full run. The run gives the names.
 - `src/verdict.rs` The table of the release and the constant of ADR 0023.
+- `tests/cli.rs` The test of the verdict list, with no value of the table.
+- `tests/eval_ab.rs` The tests of `eval verdict`, with the values of the table.
+- `tests/upgrade_cli.rs` The test of a skills list that the upgrade cannot edit.
 - `Cargo.toml`, `Cargo.lock`, `spec-dna.toml` The version and the pin, in one commit.
 - `src/init.rs`, `tests/golden/evals/agent-evals.yml`, `docs/quickstart.md` The checkout SHA that `init` writes, only if it differs from CI.
 - `CHANGELOG.md` The section 0.7.0.
