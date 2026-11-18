@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Fixes of 0.7.1, part B: plan
 
