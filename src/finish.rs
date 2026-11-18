@@ -191,9 +191,10 @@ fn stop<T>(step: u8, reason: impl Into<String>, diags: Vec<Diag>) -> Result<T, F
 /// The most open tasks that a stop names with their text.
 const OPEN_TASKS_SHOWN: usize = 10;
 
-/// The reason of the stop for open tasks: the count, then the id and the text
-/// of each open task (at most `OPEN_TASKS_SHOWN`, the text cut at 60
-/// characters).
+/// The reason of the stop for open tasks: the count, the id and the text of
+/// the first open tasks (at most `OPEN_TASKS_SHOWN`, the text cut at 60
+/// characters), and then the ids of the others, so that no open task is left
+/// out.
 fn open_tasks_reason(open: &[change::PlanTask]) -> String {
     let shown: Vec<String> = open
         .iter()
@@ -203,9 +204,15 @@ fn open_tasks_reason(open: &[change::PlanTask]) -> String {
             format!("{}: {}", t.id, text.trim_end())
         })
         .collect();
-    let more = match open.len().saturating_sub(OPEN_TASKS_SHOWN) {
-        0 => String::new(),
-        n => format!(" and {n} more"),
+    let rest: Vec<&str> = open
+        .iter()
+        .skip(OPEN_TASKS_SHOWN)
+        .map(|t| t.id.as_str())
+        .collect();
+    let more = if rest.is_empty() {
+        String::new()
+    } else {
+        format!("; also open: {}", rest.join(", "))
     };
     format!(
         "{} open task(s) in `Order` of `plan.md` ({}{more}); do each task, or close it with a reason in `Skip:`",

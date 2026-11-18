@@ -1612,3 +1612,18 @@ fn a_closed_change_with_an_open_task_is_deleted_by_finish() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(!r.dir.join(FOLDER).exists());
 }
+
+#[test]
+fn the_stop_for_open_tasks_names_the_id_of_each_open_task() {
+    let r = Fx::default().start();
+    let tasks: Vec<String> = (1..=14)
+        .map(|n| format!("- [ ] t{n}: Task number {n}."))
+        .collect();
+    r.write(PLAN, &PLAN_OPEN.replace("- [x] t1: Edit the code.\n- [ ] t2: Test the code.\n- [ ] t3: Write the docs.\n- [ ] t4: Done by hand. Skip: not needed.", &tasks.join("\n")));
+    r.commit("work");
+    let (code, _, err) = fin(&r, &[]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("14 open task(s)"), "{err}");
+    assert!(err.contains("t10: Task number 10"), "{err}");
+    assert!(err.contains("also open: t11, t12, t13, t14"), "{err}");
+}
