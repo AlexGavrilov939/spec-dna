@@ -127,21 +127,21 @@ The workflow pack has 11 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage
 
 | Skill | Kind and stage | Use | Artifact | Floor | Default |
 | --- | --- | --- | --- | --- | --- |
-| `brainstorm` | Stage `plan` | A request starts a change | `intent.md` with its class | SD306 | On |
-| `specify` | Stage `design` | The intent is `accepted`, and the class is `higher-risk` | `spec.md` with the delta | SD914, SD920 | On |
+| `brainstorm` | Stage `plan` | A request starts a change | `intent.md` with its class | SD306 | Off |
+| `specify` | Stage `design` | The intent is `accepted`, and the class is `higher-risk` | `spec.md` with the delta | SD914, SD920 | Off |
 | `clarify` | Stage `design` | `spec.md` has an open concern or question | The sections `Concerns` and `Open questions`, answered | SD919, SD922, SD925 | On |
 | `write-plan` | Stage `build` | Before the code | `plan.md` with `Files` and small tasks | SD913, SD923, SD924 | On |
 | `execute` | Stage `build` | The plan is `approved`, and a task is open | The code, the tests and the checked task | SD913, the hook `protect-tests` | Off |
-| `tdd` | Stage `test` | A requirement has no evidence | A test with a `covers:` tag, red before the code | SD608, SD916 | Off |
-| `review` | Stage `deploy` | Before a merge | The review of the diff, and the answer to review comments | None | On |
+| `tdd` | Stage `test` | A requirement has no evidence | A test with a `covers:` tag, red before the code | SD608, SD916 | On |
+| `review` | Stage `deploy` | Before a merge | The review of the diff, and the answer to review comments | None | Off |
 | `verify` | Stage `deploy` | Before the word "done" | The output of the `Proof` commands and of `check` | `finish` stops on SD915 and SD916 | Off |
-| `finish` | Stage `closed` | The change is ready to apply | The result of `spec-dna finish` | `finish` | On |
+| `finish` | Stage `closed` | The change is ready to apply | The result of `spec-dna finish` | `finish` | Off |
 | `debug` | Event | A test or a command fails, and the cause is not known | A reproduction, a regression test and one fix | None | Off |
 | `post-mortem` | Event | An `incident` has an open follow-up | A new `intent.md` with `from:`, and an eval | SD918 | On |
 
 The floor is a check that fails when the artifact is wrong. It does not check what the skill adds, such as the order of a test and its code. Where the floor is `None`, the text of the skill is the only control.
 
-- The 7 skills of the design (D2) are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. The 4 other skills have no check of what they add. They are on by default only with the verdict `on` ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). `init` writes a skill only when `skills` lists it, and the level `full` proposes the 11.
+- The Default column is the default of 0.7.0, from the table of the release. The 7 skills of the design (D2) are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. The 4 other skills have no check of what they add. In 0.7.0, each skill is on by default only with the verdict `on` ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). `init` writes a skill only when `skills` lists it, and the level `full` proposes the 11.
 - Each body has 5 parts in this order: when to use the skill, the commands, the artifact, the check, and the action when the check fails.
 - The text of a skill is static. It holds no value of the configuration, so the file is the same in each project. The binary holds the text, so the pin fixes it.
 - A skill never sets `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat, and that commit changes only the `status` line. The line of `AGENTS.md` has the same words. [The change guide](guides/change.md#choose-the-class) gives who approves each document.

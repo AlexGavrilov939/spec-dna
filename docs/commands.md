@@ -399,8 +399,8 @@ spec-dna skill show <name> [--json]
 `skill list` prints one line for each of the 11 skills, in the order of the table of the pack. A line has 5 columns: the name, the kind (`stage` or `event`), the stage (`-` for an event skill), the state in the project and the default.
 
 ```text
-brainstorm  stage plan   on  on
-specify     stage design on  on
+brainstorm  stage plan   on  off
+clarify     stage design on  on
 execute     stage build  off off
 debug       event -      off off
 ```

@@ -18,7 +18,9 @@ status: approved
 - `docs/guides/upgrade-0.5.md`, `docs/README.md` The links to the new guide.
 - `README.md`, `docs/config.md` The version, and the text of the README on the import and the profiles.
 - `docs/commands.md` The link to the guide of the upgrade from 0.6.
+- `docs/harness.md` The default of each skill in the table of the pack.
 - `docs/research/matrix.md` The versions of the 3 tools on the date of the release.
+- `docs/design/0.7.0.md` The deviations of the release in section 15.
 
 ## Order
 
