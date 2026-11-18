@@ -21,6 +21,7 @@ Changes for 0.7.1.
 ### Changed
 
 - Each generated agent file ends with one paragraph about the scratch folder. A subagent makes its own subfolder in the scratchpad of the session, puts there each temporary file and each file of a browser tool, and deletes only the files that it put there and its subfolder. It never deletes or changes another file of the scratchpad, and it never deletes the scratchpad folder. It never writes these files into the repository. The rules never limit an edit of the repository that the task needs. The text of `verifier` no longer tells it to remove a shared temporary directory. `init` does not change `.gitignore`.
+- The evals of `brainstorm` and `execute` are harder. Both arms passed each run of `brainstorm-1` to `brainstorm-5` (15 of 15 against 15 of 15) and of `execute-1` to `execute-5` (15 of 15 against 15 of 15) in the full run of 0.7.0, so an eval could not show what the skill adds. `brainstorm-6` to `brainstorm-10` and `execute-6` to `execute-10` replace them, as `verify-6` to `verify-10` replaced the evals of `verify`. A task of a new eval names no rule of its skill, and each eval has one trap and a shell check that finds it ([docs/evals.md](docs/evals.md#the-traps-of-the-harder-evals)). The pair `agents-line` runs `execute-10` in place of `execute-1`. The records of 0.7.0 keep the old ids.
 
 ## 0.7.0 - 2026-11-18
 

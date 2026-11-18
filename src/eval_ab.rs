@@ -36,12 +36,13 @@ use std::path::Path;
 pub const PACK: &str = "pack";
 /// The command that the arm `without` denies.
 const DENIED: &str = "Bash(spec-dna skill:*)";
-/// The evals of the pair `agents-line`: the first eval of `tdd`, `debug` and
-/// `execute`, and 2 evals that name the group (`skill = "agents-line"`).
+/// The evals of the pair `agents-line`: the first eval of `tdd` and `debug`,
+/// the last eval of `execute` (a plain edit with a commit), and 2 evals that
+/// name the group (`skill = "agents-line"`).
 pub const AGENTS_LINE_EVALS: [&str; 5] = [
     "tdd-1",
     "debug-1",
-    "execute-1",
+    "execute-10",
     "agents-line-1",
     "agents-line-2",
 ];

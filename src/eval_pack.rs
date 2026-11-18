@@ -8,18 +8,22 @@
 //!
 //! # How to add an eval
 //!
-//! An eval is one `PackEval` in the list of its group (`EXECUTE_TDD`,
+//! An eval is one `PackEval` in the list of its group (`EXECUTE`, `TDD`,
 //! `VERIFY`, `DEBUG`, `BRAINSTORM_SPECIFY`, `CLARIFY_WRITE_PLAN`,
 //! `REVIEW_FINISH` or `POST_MORTEM`). The module needs no other change. The
-//! 15 evals of `execute`, `tdd` and `debug` are in the sibling file
-//! `eval_pack_pilot.rs`, and the 5 of `verify` and the 2 of `agents-line` are
-//! in `eval_pack_harder.rs`, with their fixtures. Each of them has a reference
-//! solution and wrong solutions in `tests/fixtures/eval-solutions/<id>/`, and
-//! `tests/eval_pack_pilot/mod.rs` runs them with a stub `claude`.
+//! 10 evals of `tdd` and `debug` are in the sibling file `eval_pack_pilot.rs`,
+//! the 5 of `execute` are in `eval_pack_execute.rs`, and the 5 of `verify` and
+//! the 2 of `agents-line` are in `eval_pack_harder.rs`, with their fixtures.
+//! Each of them has a reference solution and wrong solutions in
+//! `tests/fixtures/eval-solutions/<id>/`, and `tests/eval_pack_pilot/mod.rs`
+//! runs them with a stub `claude`. The evals of `brainstorm` are in
+//! `eval_pack_rest.rs`. Their solutions are in the same folder, and
+//! `tests/eval_pack_rest.rs` runs them.
 //!
-//! - `id` is `<group>-<n>`, with n from 1. The ids of `verify` are 6 to 10.
-//!   The pair `agents-line` uses `tdd-1`, `debug-1`, `execute-1`,
-//!   `agents-line-1` and `agents-line-2`.
+//! - `id` is `<group>-<n>`, with n from 1. The ids of `brainstorm` and of
+//!   `execute` are 6 to 10, and the ids of `verify` are 6 to 10. The pair
+//!   `agents-line` uses `tdd-1`, `debug-1`, `execute-10`, `agents-line-1` and
+//!   `agents-line-2`.
 //! - `files` are the files of the fixture: the path in the project and the
 //!   text. The text `{{VERSION}}` becomes the version of the binary, so a
 //!   fixture pins the version that wrote it. The runner also writes the
@@ -71,19 +75,23 @@ const CODE_TOOLS: &[&str] = &[
 /// A fixture file: the pin of the version, and one root of documents.
 const SPEC_DNA_TOML: &str = "spec-dna = \"{{VERSION}}\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n";
 
-/// Group of t12 and t13: `execute`, `tdd` and `debug`, and the pilot evals of
-/// `verify`. The 20 evals of the pilot and their fixtures are in
-/// `eval_pack_pilot.rs`.
+/// The pilot evals of `tdd` and `debug`, with their fixtures.
 #[path = "eval_pack_pilot.rs"]
 mod pilot;
+
+/// The harder evals of `execute` (`execute-6` to `execute-10`).
+#[path = "eval_pack_execute.rs"]
+mod execute;
 
 /// The harder evals of `verify` (`verify-6` to `verify-10`), and the 2 evals
 /// of the pair `agents-line`, in `eval_pack_harder.rs`.
 #[path = "eval_pack_harder.rs"]
 mod harder;
 
-/// Group of t12: `execute` and `tdd`.
-static EXECUTE_TDD: &[PackEval] = pilot::EXECUTE_TDD;
+/// Group of `execute`: `execute-6` to `execute-10`.
+static EXECUTE: &[PackEval] = execute::EXECUTE;
+/// Group of `tdd`.
+static TDD: &[PackEval] = pilot::TDD;
 /// Group of `verify`: `verify-6` to `verify-10`.
 static VERIFY: &[PackEval] = harder::VERIFY;
 /// Group of `debug`.
@@ -102,7 +110,8 @@ static POST_MORTEM: &[PackEval] = crate::eval_pack_rest::POST_MORTEM;
 /// Each eval of the pack, in the order of the groups.
 pub fn all() -> Vec<&'static PackEval> {
     [
-        EXECUTE_TDD,
+        EXECUTE,
+        TDD,
         VERIFY,
         DEBUG,
         BRAINSTORM_SPECIFY,
@@ -241,8 +250,9 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), n, "an id is twice in the pack");
-        let groups: [(&[PackEval], &[&str]); 8] = [
-            (EXECUTE_TDD, &["execute", "tdd"]),
+        let groups: [(&[PackEval], &[&str]); 9] = [
+            (EXECUTE, &["execute"]),
+            (TDD, &["tdd"]),
             (VERIFY, &["verify"]),
             (DEBUG, &["debug"]),
             (AGENTS_LINE_OWN, &["agents-line"]),
@@ -300,15 +310,16 @@ mod tests {
             .map(|e| e.id)
             .collect();
         assert_eq!(own, ["agents-line-1", "agents-line-2"]);
-        // The pilot evals of `verify` are gone: both arms passed each run.
-        let verify: Vec<&str> = evals
-            .iter()
-            .filter(|e| e.skill == "verify")
-            .map(|e| e.id)
-            .collect();
-        assert_eq!(
-            verify,
-            ["verify-6", "verify-7", "verify-8", "verify-9", "verify-10"]
-        );
+        // The pilot evals of `verify`, `brainstorm` and `execute` are gone: both
+        // arms passed each run of them.
+        for skill in ["verify", "brainstorm", "execute"] {
+            let ids: Vec<&str> = evals
+                .iter()
+                .filter(|e| e.skill == skill)
+                .map(|e| e.id)
+                .collect();
+            let want: Vec<String> = (6..=10).map(|n| format!("{skill}-{n}")).collect();
+            assert_eq!(ids, want, "{skill}");
+        }
     }
 }
