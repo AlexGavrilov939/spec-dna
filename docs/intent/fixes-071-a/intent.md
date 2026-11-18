@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # Fixes of 0.7.1, part A: the open-task gate, the skill evals and the harness rules
