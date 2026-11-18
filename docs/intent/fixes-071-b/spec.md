@@ -19,11 +19,11 @@ None. This change adds, changes or removes no requirement. It changes the scope 
 
 ## Concerns
 
-- [ ] The rule of B1 needs the slug. A real task that names `spec-dna finish <slug>` closes with `finish`. The skill tells agents to write no such task.
-- [ ] B3 lets a pin move share a pull request with other work. The pin stays exact, and a binary of an older version stops with exit code 3.
-- [ ] B5 reads git history. A shallow clone finds no commit, and SD923 reports each task there.
-- [ ] The text of `write-plan`, `specify`, `execute` and `finish` changes, so the verdicts of the release table for them describe the older text. Only `write-plan` has a new run.
-- [ ] The line `Hours: <estimate>, actual <n>` is unreadable for `log` of 0.7.0.
+- [x] The rule of B1 needs the slug. A real task that names `spec-dna finish <slug>` closes with `finish`. Resolved: the skill `write-plan` tells agents to write no such task, and a task with no slug stops at step 0 with a hint.
+- [x] B3 lets a pin move share a pull request with other work. Resolved: the pin stays exact (ADR 0003), and a binary of an older version stops with exit code 3.
+- [x] B5 reads git history. A shallow clone finds no commit, and SD923 reports each task there. Resolved: this is the result of 0.7.0, and the docs say it.
+- [x] The text of `write-plan`, `specify`, `execute` and `finish` changes, so the verdicts of the release table for them describe the older text. Resolved: only `write-plan` has a new run, and the notes of the release name the other 3 skills.
+- [x] The line `Hours: <estimate>, actual <n>` is unreadable for `log` of 0.7.0. Resolved: the CHANGELOG gives the upgrade note, and `log` of 0.7.1 reads both forms.
 
 ## Open questions
 
