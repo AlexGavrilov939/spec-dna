@@ -101,6 +101,8 @@ SD503 reads paths only, with one exception: in a tree binary, it reads the text 
 
 `check` does not examine a new `spec-dna.toml` (an adoption). SD503 does not apply if the base pins a version before 0.6.0. Thus one pull request can hold the configuration and the documents of an upgrade. A base from 0.6.0 keeps SD503, also for a change of the pin, except in a tree binary.
 
+With `--base`, SD503 uses the same base as the change checks, so it does not count a merged pull request that edited `spec-dna.toml` ([commands.md](commands.md#check)).
+
 A tree binary is a binary that the checkout of spec-dna itself builds. The binary is a tree binary when both facts are true:
 
 - The file `Cargo.toml` at the top level of the git repository that holds `spec-dna.toml` has `name = "spec-dna"` in `[package]`.
@@ -198,8 +200,8 @@ These codes are new in 0.6.0, except SD923 to SD926, which are new in 0.7.0. The
 | SD920 | decision-needed-unaccepted | error | A decision that `Decisions` of an `approved` spec names does not exist. Also, when `finish` runs or the diff deletes the intent folder, a decision that `Decisions` names is absent or is not `accepted`. |
 | SD921 | truth-changed-without-change | warning | A requirement of a `rule`, `requirements` or `interface` document of a `forever` layer changed, was added or was removed, and no file under the folder of the `intent` layer changed. It runs on the lifecycle base, and only with a `[change] policy` other than `none`. A plan that covers the document gives an exemption. Off in `lite`, an error in `strict`. |
 | SD922 | question-open | error | A spec with the status `approved` has an open question (`- [ ]` in `Open questions`). |
-| SD923 | task-incomplete | warning | A task of an `approved` plan has no `Files:` or no `Verify:`, its `Files:` has a glob or a folder, or its `Skip:` has no reason. A glob has `*` or `?`. A `draft` plan is not checked. Off in `lite`, an error in `strict`. |
-| SD924 | task-too-large | warning | A task of an `approved` plan lists more paths in `Files:` than `[change] max-task-files` (default 3). Off in `lite`, an error in `strict`. |
+| SD923 | task-incomplete | warning | A task of an `approved` plan has no `Files:` or no `Verify:`, its `Files:` has a glob or a folder, or its `Skip:` has no reason. A glob has `*` or `?`. A `draft` plan is not checked. A plan that a commit added when `spec-dna.toml` pinned a version before 0.7.0 is skipped. Off in `lite`, an error in `strict`. |
+| SD924 | task-too-large | warning | A task of an `approved` plan lists more paths in `Files:` than `[change] max-task-files` (default 3). A plan that a commit added when `spec-dna.toml` pinned a version before 0.7.0 is skipped. Off in `lite`, an error in `strict`. |
 | SD925 | checkbox-missing | warning | An item of `Concerns` or `Open questions` of a spec has no task box, so SD919 and SD922 cannot see if it is open. A spec of each status gives it, except the spec of a `closed` change. Off in `lite`, an error in `strict`. |
 | SD926 | approver-agent | warning | An item of `[change] approvers` is the address of an agent or a bot, so a commit of this author can come from an agent and it proves no approval of a person. The addresses are `noreply@anthropic.com` and each address that ends with `[bot]@users.noreply.github.com`. The diagnostic is on the line of the key `approvers` in `spec-dna.toml`, and the target is the item. One diagnostic for each item, with `approval = "branch"` and with `"base"`. A warning in each profile. A project that wants an agent identity as an approver sets `[rules] SD926 = "off"`. |
 
@@ -220,7 +222,8 @@ These codes are new in 0.6.0, except SD923 to SD926, which are new in 0.7.0. The
 
 The checks of the change codes read these trees:
 
-- SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925 read one tree. They need no base and no history.
+- SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922 and SD925 read one tree. They need no base and no history.
+- SD923 and SD924 read one tree. They need no base. For a plan with a finding, they also read the history of that plan: the commit that added it, and the pin of `spec-dna.toml` in that commit ([SD923](#checks-of-the-change-lifecycle)).
 - SD926 reads `spec-dna.toml` only. It needs no base and no history. The hidden address of a person, such as `1234+name@users.noreply.github.com`, is not on the list. The target is the item as the file writes it, and the compare of the address ignores case. SD926 is not a state code. It is new when the configuration of the base does not list the address. Against a base that lists it already, `check` shows it only with `--all`.
 - These codes compare the head with the lifecycle base. They do not run if git cannot name this base:
   - SD905 (the part for a change with no delta);
@@ -229,7 +232,7 @@ The checks of the change codes read these trees:
   - SD921.
 - SD911 reads the base and the history.
 
-The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. With `[change] approval = "base"`, it reads each approval from the base tree only, so an approval in the same pull request does not count. With `"branch"`, SD910 also reads the commits of `base..HEAD` (see SD910 below).
+The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`. The later merge base with `origin/HEAD` replaces an older `--base` ([commands.md](commands.md#check)), so the walk of SD910 does not read merged pull requests. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. With `[change] approval = "base"`, it reads each approval from the base tree only, so an approval in the same pull request does not count. With `"branch"`, SD910 also reads the commits of `base..HEAD` (see SD910 below).
 
 The changes of a diff are these:
 
@@ -349,6 +352,7 @@ A change whose intent has the status `closed` does not proceed, so its spec give
     - `Verify:` has a command in a code span, or the check in words.
   - A third label is a problem if it is empty: `Skip:` needs a reason (`Skip: the store keeps the old alert.`). A task with an empty `Skip:` is not skipped. A skipped task still needs `Files:` and `Verify:`, because the plan was approved with them. `Hours:` is not checked here: `finish` reports an invalid value.
   - One diagnostic names each problem of the task, and the fix of each. Its target is the id of the task. An empty `Skip:` gives the problem ``its `Skip:` has no reason`` and the fix ``write the reason after `Skip:` ``.
+  - A plan of 0.6 can have the labels already, but the text does not show the version, so the history does. For an `approved` plan with a finding of SD923 or SD924, `check` reads the newest commit that added the plan (`git log -1 --diff-filter=A --no-renames`) and the pin of `spec-dna.toml` in that commit. A pin before 0.7.0 skips both codes for the plan. A plan that is not committed, a clone that is shallow and a commit with no pin give the current form. When a skipped diagnostic would show (it is new, or `--all` is set), `check` prints one note on stderr: the plan, the pin, and the number of tasks with a finding. The note is not in `--json`. To check the plan, give each task exact paths in `Files:` and one `Verify:`.
 - SD924. The check reads the same tasks as SD923. It counts the distinct paths of the label `Files:` of a task, and it gives one diagnostic if the count is above `[change] max-task-files`. The target is the id of the task. A task of 3 paths or less and one `Verify:` is the size that a person can review.
 - SD925. The check reads the items of `Concerns` and `Open questions` of each spec, in each status. An item with no task box gives one diagnostic. The target is the text of the item (80 characters at most). A section with one item whose first word is `none`, followed by `:`, `.` or the end of the text gives none. The message of `Open questions` names SD922, and the message of `Concerns` names SD919. The spec template writes a box.
 - SD920. Each `[[id]]` of `Decisions` in an `approved` spec must name a document. A fragment and a label are not part of the id. If the diff deletes the folder of the change, or `finish` runs, each such decision must also have the status `accepted`. The check reads the spec from the base tree, and the decision from the head tree.

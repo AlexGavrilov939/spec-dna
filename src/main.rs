@@ -167,7 +167,10 @@ tree. Untracked and unstaged files do not count. The hook that `init`
 writes uses it. With a [change] policy, the change checks (SD905, SD910,
 SD913, SD917, SD921) compare with the merge base of --base (default:
 origin/HEAD, then [change] base) and HEAD, and they print a note if there
-is none. --json
+is none. If --base is older than the merge base of HEAD and origin/HEAD,
+the change checks and SD503 use that newer merge base, with a note.
+SD923 and SD924 skip a plan that was added when the pin was before 0.7.0,
+with a note. --json
 lists all diagnostics.",
     ),
     (
@@ -1296,6 +1299,20 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         change_base = Some(tip);
         tip_base = true;
     }
+    // An older `--base` and a later merge base with `origin/HEAD` (design
+    // 0.7.1, B10): the change checks and SD503 start at the later one. The
+    // change checks of a project with the policy `none` do not run, but SD503
+    // does.
+    let raised = a.base.is_some() && change_base.is_some() && change_base != base_commit;
+    let sd503_base: Option<String> = if raised {
+        change_base.clone()
+    } else if a.base.is_some() && cfg.change_policy == config::ChangePolicy::None {
+        base_commit
+            .as_deref()
+            .and_then(|c| lifecycle::newer_merge_base(&repo.git, c))
+    } else {
+        None
+    };
     let mut life_note: Option<String> = None;
     if let Some(c) = &change_base {
         let pin = if Some(c) == base_commit.as_ref() {
@@ -1320,6 +1337,13 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             change_base = None;
         }
     }
+    let raised_note = match (&change_base, &a.base) {
+        (Some(c), Some(rev)) if raised => Some(format!(
+            "`--base {rev}` is older than the merge base of HEAD and origin/HEAD ({}), so the change checks use that merge base: the commits between them are merged pull requests, and a squash merge keeps no approval commit",
+            &c[..c.len().min(12)]
+        )),
+        _ => None,
+    };
     repo::trace("resolve base", &mut t);
     // List the working tree and the base tree in parallel.
     let roots = repo::root_paths(&cfg);
@@ -1603,7 +1627,12 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // documents of one upgrade, so SD503 does not apply (D156).
     if let Some(c) = &base_commit
         && !plan_base
-        && let Some(d) = config_not_alone(repo, &cfg, c, untracked)?
+        && let Some(d) = config_not_alone(
+            repo,
+            &cfg,
+            sd503_base.as_deref().unwrap_or(c.as_str()),
+            untracked,
+        )?
     {
         outcome.head.push(d);
         outcome.new.push(true);
@@ -1615,6 +1644,11 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             *new = false;
         }
     }
+    // SD923 and SD924 skip a plan that was added under a pin before 0.7.0
+    // (design 0.7.1, B5). It runs before the counts.
+    let early_notes =
+        lifecycle::skip_early_plans(&repo.git, &mut outcome.head, &mut outcome.new, a.all)
+            .map_err(Fatal::Io)?;
 
     let count = |sev: Severity, only_new: bool| {
         outcome
@@ -1769,6 +1803,12 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
     }
     if let Some(n) = &life_note {
+        eprintln!("note: {n}");
+    }
+    if let Some(n) = &raised_note {
+        eprintln!("note: {n}");
+    }
+    for n in &early_notes {
         eprintln!("note: {n}");
     }
     Ok(if failed { 1 } else { 0 })

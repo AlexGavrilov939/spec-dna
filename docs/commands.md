@@ -168,9 +168,16 @@ These rules apply to the lifecycle base:
 
   The note names the base: the value of `--base`, `HEAD`, or the first 12 characters of the merge base. With the policy `none`, `check` prints no note.
 - A shallow clone can fail to find the merge base. Then `change_base` is `null`.
+- With `--base` and an `origin/HEAD`, `check` also reads the merge base of `origin/HEAD` and `HEAD`. If the merge base of `--base` and `HEAD` is an older ancestor of it, the change checks and SD503 use the newer merge base, and `change_base` is that commit. With the policy `none`, only SD503 uses the newer merge base, and no note prints. The text output prints this note on stderr:
+
+  ```text
+  note: `--base v0.7.0` is older than the merge base of HEAD and origin/HEAD (<12 characters>), so the change checks use that merge base: the commits between them are merged pull requests, and a squash merge keeps no approval commit
+  ```
+
+  The commits between the 2 bases are merged pull requests. A squash merge keeps no approval commit, so an older base gave SD910 (reason 4) for work that was approved. The document checks and the choice of the new diagnostics keep `--base`. `next`, `status` and `finish` follow the same rule, with no note. Only `origin/HEAD` starts this rule, not `[change] base`. A repository with no `origin/HEAD` keeps the older base.
 - For a stacked pull request, pass the branch below it as `--base`. SD910 trusts `--base`.
 
-The checks of one tree are SD905 (the delta part), SD912, SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925. They need no base. SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
+The checks of one tree are SD905 (the delta part), SD912, SD914, SD919, SD920 (the absent decision), SD922, SD923, SD924 and SD925. They need no base. SD923 and SD924 skip an `approved` plan that a commit added when `spec-dna.toml` pinned a version before 0.7.0, with a note on stderr ([SD923](diagnostics.md#checks-of-the-change-lifecycle)). SD914 is an error only for a spec that the diff touches against the lifecycle base. Without that base, it is a warning.
 
 A change can remove or rename a path or an identifier that a document cites. Then `check` gives a warning that names the document (SD606, SD607). In an accepted decision, an amendment section that cites the new path or identifier clears these warnings.
 

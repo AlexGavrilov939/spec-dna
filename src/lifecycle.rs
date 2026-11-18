@@ -7,7 +7,11 @@
 //!
 //! The lifecycle base is the merge base of `--base` (or of `origin/HEAD`, or of
 //! the local branch of `[change] base`) with `HEAD`. It is never the tip of `--base`: a branch that started from an old
-//! commit is not behind the default branch because of that.
+//! commit is not behind the default branch because of that. An older `--base`
+//! is replaced by the later merge base with `origin/HEAD` (`newer_merge_base`).
+//!
+//! SD923 and SD924 skip a plan that a commit added under a pin before 0.7.0
+//! (`skip_early_plans`).
 //!
 //! SD910 reads the approvals from the base tree. With `[change] approval =
 //! "branch"`, it also reads the approval commits of `base..HEAD`
@@ -148,7 +152,113 @@ pub fn merge_base_of(
     let (Some(tip), Some(head)) = (tip, git.commit("HEAD")) else {
         return Ok(None);
     };
-    Ok(git.merge_base(&tip, &head))
+    let found = git.merge_base(&tip, &head);
+    // An older `--base` (design 0.7.1, B10): a later merge base with
+    // `origin/HEAD` is the base of the change checks.
+    if base.is_some()
+        && let Some(newer) = found.as_deref().and_then(|m| newer_merge_base(git, m))
+    {
+        return Ok(Some(newer));
+    }
+    Ok(found)
+}
+
+/// The merge base of `refs/remotes/origin/HEAD` and `HEAD`, if it is a strict
+/// descendant of `older` (the merge base of `--base` and `HEAD`). The commits
+/// between them are merged pull requests, and a squash merge keeps no approval
+/// commit, so the change checks start at this commit (design 0.7.1, B10). The
+/// function reads no policy, so SD503 uses it too. Only `origin/HEAD` starts
+/// the rule, not `[change] base`: the branch of a repository with no remote
+/// has `HEAD` as its merge base, and that would turn the checks off. It costs
+/// 2 `merge-base` calls and one ancestor test.
+pub fn newer_merge_base(git: &Git, older: &str) -> Option<String> {
+    let tip = git.remote_head()?;
+    let head = git.commit("HEAD")?;
+    let newer = git.merge_base(&tip, &head)?;
+    (newer != older && git.is_ancestor(older, &newer)).then_some(newer)
+}
+
+/// SD923 and SD924 skip an `approved` plan that a commit added when
+/// `spec-dna.toml` pinned a version before 0.7.0 (design 0.7.1, B5). The
+/// templates of 0.6 already had `Files:` and `Verify:`, so only the history
+/// tells the version. `head` and `new` are the parallel lists of `check`: the
+/// function removes the diagnostics of such a plan from both. The lookup runs
+/// for the plans that have a diagnostic of the 2 codes: one `git log` and one
+/// read of `spec-dna.toml` for each. No commit that added the plan (a plan
+/// that is not committed, or a shallow clone), or no pin in that commit, is
+/// the current form.
+///
+/// It returns one note for each such plan whose dropped diagnostic would show:
+/// it is new, or `all` is true. The note is not a diagnostic.
+pub fn skip_early_plans(
+    git: &Git,
+    head: &mut Vec<Diag>,
+    new: &mut Vec<bool>,
+    all: bool,
+) -> Result<Vec<String>, String> {
+    let mut paths: Vec<&str> = head
+        .iter()
+        .filter(|d| matches!(d.code, Code::TaskIncomplete | Code::TaskTooLarge))
+        .map(|d| d.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    if paths.is_empty() || git.commit("HEAD").is_none() {
+        return Ok(Vec::new());
+    }
+    let first_current = config::Version(0, 7, 0);
+    let mut early: Vec<(String, String)> = Vec::new();
+    for path in paths {
+        let Some(commit) = git.added_by(path)? else {
+            continue;
+        };
+        let text = git
+            .read_at(&[(commit, config::FILE_NAME.to_string())])?
+            .into_iter()
+            .next()
+            .flatten();
+        let pin = text.and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b)));
+        if let Some(pin) = pin
+            && config::Version::parse(&pin).is_some_and(|v| v < first_current)
+        {
+            early.push((path.to_string(), pin));
+        }
+    }
+    let mut notes = Vec::new();
+    for (path, pin) in &early {
+        let hit = |d: &Diag| {
+            matches!(d.code, Code::TaskIncomplete | Code::TaskTooLarge) && d.path == *path
+        };
+        let mut tasks: Vec<&str> = head
+            .iter()
+            .filter(|d| hit(d))
+            .map(|d| d.target.as_str())
+            .collect();
+        tasks.sort_unstable();
+        tasks.dedup();
+        let shows = head
+            .iter()
+            .zip(new.iter())
+            .any(|(d, n)| hit(d) && (all || *n));
+        if shows {
+            notes.push(format!(
+                "`{path}` was added when spec-dna.toml pinned {pin}, before 0.7.0, so SD923 and SD924 skip its {} task(s) with a finding; to check them, give each task exact paths in `Files:` and one `Verify:`",
+                tasks.len()
+            ));
+        }
+    }
+    let keep: Vec<bool> = head
+        .iter()
+        .map(|d| {
+            !(matches!(d.code, Code::TaskIncomplete | Code::TaskTooLarge)
+                && early.iter().any(|(p, _)| *p == d.path))
+        })
+        .collect();
+    let mut at = keep.iter();
+    head.retain(|_| *at.next().unwrap_or(&true));
+    let mut at = keep.iter();
+    new.retain(|_| *at.next().unwrap_or(&true));
+    Ok(notes)
 }
 
 /// The files that a change touches: the diff of the head against the base.
@@ -782,7 +892,9 @@ pub(crate) fn interface_id(item: &ListItem) -> Option<&str> {
 /// (SD923). A `Skip:` with no reason is a problem too (design 0.7.0, D40). It lists at most `max-task-files` paths (SD924). A draft plan is
 /// not checked. A task whose id an earlier task has is not checked: the first
 /// task with an id counts. One diagnostic of SD923 names every problem of the
-/// task. The target of both codes is the id of the task.
+/// task. The target of both codes is the id of the task. The function reads
+/// one tree. `skip_early_plans` drops the diagnostics of a plan of 0.6 later,
+/// with the history.
 fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
     let Some(plan) = &ch.plan else { return };
     if plan.status != "approved" {
