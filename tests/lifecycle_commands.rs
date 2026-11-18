@@ -310,8 +310,17 @@ fn the_stage_build_has_3_sub_cases() {
     // A change of a file outside `Files` does not move the stage.
     stage(&r, &[("tests/test_other.py", "# changed\n")]);
     assert_eq!(stage_of(&r), "build");
-    // A change of a file of `Files` does.
+    // A change of a file of `Files` does not, while a task is open.
     stage(&r, &[("src/dose.py", "x = 2\n")]);
+    assert_eq!(stage_of(&r), "build");
+    // A change of a file of `Files` and no open task does.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan("approved", &["src/dose.py"], "- [x] t1: Edit the code."),
+        )],
+    );
     assert_eq!(stage_of(&r), "deploy");
 }
 
@@ -366,6 +375,15 @@ fn an_add_line_without_evidence_is_in_the_stage_test_until_a_tag_names_it() {
     );
     assert_eq!(stage_of(&r), "build");
     stage(&r, &[("src/dose.py", "x = 2\n")]);
+    // The file differs, but the task is open.
+    assert_stage(&r, "build");
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan("approved", &["src/dose.py"], "- [x] t1: Edit the code."),
+        )],
+    );
     let text = next_text(&r);
     assert_stage(&r, "test");
     assert!(text.contains("stage test"), "{text}");
@@ -399,7 +417,7 @@ fn next_and_status_name_a_partial_tag_at_the_stage_test() {
             (SPEC, &spec("approved", ADD_FLUSH)),
             (
                 PLAN,
-                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+                &plan("approved", &["src/dose.py"], "- [x] t1: Edit the code."),
             ),
             ("src/dose.py", "x = 2\n"),
             (
@@ -422,10 +440,7 @@ fn next_and_status_name_a_partial_tag_at_the_stage_test() {
     // `status` shows the count in a token, also with a target of no tag.
     let (code, out, err) = r.run(&["status"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(
-        out.contains(" tasks 0/1 next-task t1 partial 1 areas"),
-        "{out}"
-    );
+    assert!(out.contains(" tasks 1/1 partial 1 areas"), "{out}");
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(out.contains("\"partial\":1"), "{out}");
     // A full tag next to it is evidence.
@@ -455,7 +470,7 @@ fn a_routine_requirement_with_a_new_hash_and_no_evidence_is_in_the_stage_test() 
                 &plan(
                     "approved",
                     &["src/dose.py", CLOSING],
-                    "- [ ] t1: Edit the code.",
+                    "- [x] t1: Edit the code.",
                 ),
             ),
         ],
@@ -1102,7 +1117,7 @@ fn the_skills_of_all_the_stages_are_exactly_the_list_of_the_9_names() {
         &r,
         &[(
             PLAN,
-            &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            &plan("approved", &["src/dose.py"], "- [x] t1: Edit the code."),
         )],
     );
     take(&next_json(&r));
@@ -1162,7 +1177,7 @@ fn the_output_has_at_most_12_lines_and_the_last_line_is_an_edit() {
                 &plan(
                     "approved",
                     &["src/dose.py", CLOSING],
-                    "- [ ] t1: Edit the code.",
+                    "- [x] t1: Edit the code.",
                 ),
             ),
             ("src/dose.py", "x = 2\n"),
@@ -1345,7 +1360,7 @@ fn without_a_base_the_commands_print_a_note_and_the_stage_stops_at_build() {
             (INTENT, &intent("accepted", "routine", "")),
             (
                 PLAN,
-                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+                &plan("approved", &["src/dose.py"], "- [x] t1: Edit the code."),
             ),
             ("src/dose.py", "x = 2\n"),
         ],
@@ -1702,4 +1717,116 @@ fn a_higher_risk_plan_with_a_paragraph_under_files_gives_the_line_of_d28() {
         format!("[ ] {D28_LINE} [skill: execute]"),
         "{text}"
     );
+}
+
+// An open task gates the stage `build` of each plan, not only of a plan that
+// lists no files (0.7.1, item 1).
+
+#[test]
+fn an_open_task_keeps_a_plan_with_files_in_the_stage_build() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan(
+                    "approved",
+                    &["src/dose.py"],
+                    "- [ ] t1: Edit the code.\n- [ ] t2: Test the code.",
+                ),
+            ),
+            ("src/dose.py", "x = 2\n"),
+        ],
+    );
+    // The file differs from the base, but 2 tasks are open.
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(text.contains("tasks of `Order`: 0 of 2 done"), "{text}");
+    assert!(text.contains("t1"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert!(
+        last.contains("t1") && last.ends_with("[skill: execute]"),
+        "{last}"
+    );
+    assert!(!text.contains("none differs from the base"), "{text}");
+    assert!(
+        field(&next_json(&r), "next").contains("t1"),
+        "{}",
+        next_json(&r)
+    );
+    // A done task and a skipped task close the list: the stage moves on.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [x] t1: Edit the code.\n- [ ] t2: Test the code. Skip: the code has a test.",
+            ),
+        )],
+    );
+    assert_stage(&r, "deploy");
+}
+
+#[test]
+fn an_open_task_keeps_a_higher_risk_change_with_a_tag_in_the_stage_build() {
+    // The case of the owner: each delta requirement has a `covers:` tag, no
+    // task is done, and the stage was `deploy`.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan(
+                    "approved",
+                    &["src/dose.py"],
+                    "- [ ] t1: Edit the code.\n- [ ] t2: Test the code.",
+                ),
+            ),
+            ("src/dose.py", "x = 2\n"),
+            (
+                "tests/test_valves.py",
+                "# covers: requirements/valves/closing#flush\n",
+            ),
+        ],
+    );
+    assert_stage(&r, "build");
+    let text = next_text(&r);
+    assert!(text.contains("tasks of `Order`: 0 of 2 done"), "{text}");
+    let last = items(&text).last().copied().unwrap();
+    assert!(last.contains("t1"), "{last}");
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [x] t1: Edit the code.\n- [x] t2: Test the code.",
+            ),
+        )],
+    );
+    assert_stage(&r, "deploy");
+}
+
+#[test]
+fn an_open_task_keeps_a_plan_that_lists_no_files_in_the_stage_build() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (
+                PLAN,
+                &plan_with_item("approved", "- None.", "- [x] t1: Read.\n- [ ] t2: Write."),
+            ),
+        ],
+    );
+    assert_stage(&r, "build");
 }

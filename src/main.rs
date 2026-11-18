@@ -251,7 +251,8 @@ reports a stale index (SD610).",
         "Finishes the change <slug>: it applies the delta of its spec to the
 requirements, checks the evidence of each requirement that it adds or
 changes, and deletes the folder of the change. It stops at the first failed
-step, and then it changes nothing. A stop is a reference to the folder from
+step, and then it changes nothing. A stop is an open task of the plan (not
+[x] and with no reason in Skip:; the stop lists them), a reference to the folder from
 another document, a status that is not accepted (intent) or approved (plan,
 spec), an open concern or question, a decision that is not accepted, a delta
 line that does not match the tree (SD914), a delta that differs from the
@@ -293,9 +294,10 @@ comes from the files of the folder, their statuses, the diff against the
 base and the evidence of the requirements: plan, design, build, test,
 deploy or closed. Each line says done ([x]) or open ([ ]). The last line
 gives the edit or the command that ends the stage. In the build stage, it
-names the next open task of the plan. A routine change whose plan has one
-Files item that starts with none needs no changed file: the build stage ends
-when each task is done. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
+names the next open task of the plan. The build stage stays while a task is
+open (not [x] and with no reason in Skip:). A routine change whose plan has
+one Files item that starts with none needs no changed file: the build stage
+ends when each task is closed. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
 verify or finish. The names are fixed, and `spec-dna skill show <name>`
 prints the text of a skill. The output has at most 12 lines. The base is the merge base of --base (default:
 origin/HEAD, then [change] base) and HEAD. Without a base, the stage stops at

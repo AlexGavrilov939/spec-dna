@@ -121,7 +121,7 @@ Commands:
 
 Artifact: The code, the tests and the checked task.
 
-Check: The `Verify:` of the task passes. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`. The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
+Check: The `Verify:` of the task passes. `spec-dna next <slug>` names the next open task, and the stage stays `build` until each task is `- [x]` or has a reason in `Skip:`. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`. The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
 
 If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person to change the plan.";
 
@@ -180,7 +180,7 @@ Artifact: The result of `spec-dna finish`: the delta applied, and the folder of 
 
 Check: `spec-dna finish <slug>` ends with exit code 0, and `spec-dna check --base origin/HEAD` gives no error. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
-If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. If a status stops it, ask the approver. SD910 reason 7 means that the branch added the artifacts and finished the change. Put `finish` in a new pull request. Do not delete the folder by hand.";
+If the check fails: `finish` names the step that stopped it, and it changes nothing. Fix that step, then run `spec-dna finish <slug>` again. A stop at step 0 lists each open task of `plan.md`: do the task, or write a reason in `Skip:`. If a status stops it, ask the approver. SD910 reason 7 means that the branch added the artifacts and finished the change. Put `finish` in a new pull request. Do not delete the folder by hand.";
 
 const DEBUG_PARTS: &str = r"When to use: A test or a command fails, and you do not know the cause.
 
