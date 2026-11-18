@@ -316,6 +316,41 @@ fn the_stage_build_has_3_sub_cases() {
 }
 
 #[test]
+fn tasks_under_a_heading_inside_order_are_tasks_of_the_plan() {
+    // A plan with `Files: none` is done when each task is done. A heading
+    // groups tasks, and is not a task: the tasks under it count.
+    let order =
+        "### Part one\n\n- [ ] t1: Read the code.\n\n### Part two\n\n- [ ] t2: Read the tests.";
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan_with_item("approved", "- None.", order)),
+        ],
+    );
+    // Every task is open, so the stage stays at build.
+    let text = next_text(&r);
+    assert_stage(&r, "build");
+    assert!(
+        text.contains("tasks of `Order`: 0 of 2 done"),
+        "the tasks of the headings are counted: {text}"
+    );
+    let json = next_json(&r);
+    assert!(json.contains("\"next_task\":{\"id\":\"t1\""), "{json}");
+    // The first task is done: the next task is the one under the next heading.
+    let done = order.replace("- [ ] t1", "- [x] t1");
+    stage(&r, &[(PLAN, &plan_with_item("approved", "- None.", &done))]);
+    assert_stage(&r, "build");
+    let json = next_json(&r);
+    assert!(json.contains("\"next_task\":{\"id\":\"t2\""), "{json}");
+    // Both tasks are done: the stage moves on.
+    let done = done.replace("- [ ] t2", "- [x] t2");
+    stage(&r, &[(PLAN, &plan_with_item("approved", "- None.", &done))]);
+    assert_stage(&r, "deploy");
+}
+
+#[test]
 fn an_add_line_without_evidence_is_in_the_stage_test_until_a_tag_names_it() {
     let r = start();
     stage(

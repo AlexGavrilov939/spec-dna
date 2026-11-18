@@ -239,13 +239,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         });
         w.u8(i.nested as u8);
         w.str(&i.text);
-        match &i.code {
-            None => w.u8(0),
-            Some(c) => {
-                w.u8(1);
-                w.str(c);
-            }
-        }
+        w.strs(&i.codes);
         w.u32(i.line);
         w.u32(i.range.start);
         w.u32(i.range.end);
@@ -365,15 +359,12 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
         };
         let nested = r.u8()? == 1;
         let text = r.str()?;
-        let code = match r.u8()? {
-            0 => None,
-            _ => Some(r.str()?),
-        };
+        let codes = r.strs()?;
         d.items.push(ListItem {
             section,
             task,
             text,
-            code,
+            codes,
             nested,
             line: r.u32()?,
             range: r.u32()?..r.u32()?,
@@ -408,7 +399,7 @@ mod tests {
         assert_eq!(items.len(), 4);
         assert_eq!(items[1].task, Some(false));
         assert!(items[1].nested);
-        assert_eq!(items[3].code.as_deref(), Some("src/a.rs"));
+        assert_eq!(items[3].codes, ["src/a.rs", "b"]);
         assert!(
             m["abc"]
                 .reqs

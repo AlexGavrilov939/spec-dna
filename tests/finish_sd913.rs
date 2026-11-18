@@ -126,6 +126,25 @@ fn json_output_has_no_sd913_for_the_files_of_the_deleted_plan() {
     assert_eq!(code, 0, "{out}{err}");
 }
 
+/// A plan whose first `Files` item has 2 code spans: each span is a path.
+const PLAN_TWO_SPANS: &str = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`, `tests/test_valves.py`: the dose code and its test.\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n";
+
+#[test]
+fn each_code_span_of_a_files_item_covers_the_implementation() {
+    for routine in [false, true] {
+        let r = finished_with(PLAN_TWO_SPANS, routine, &[]);
+        let (code, out, err) = r.run(&["check", "--base", "main"]);
+        assert!(sd913(&out).is_empty(), "routine={routine}: {out}{err}");
+        assert_eq!(code, 0, "routine={routine}: {out}{err}");
+    }
+    // A file that no span names is still outside.
+    let r = finished_with(PLAN_TWO_SPANS, false, &[("src/other.py", "y = 2\n")]);
+    let (_, out, err) = r.run(&["check", "--base", "main"]);
+    let found = sd913(&out);
+    assert_eq!(found.len(), 1, "{out}{err}");
+    assert!(found[0].starts_with("src/other.py:"), "{out}");
+}
+
 #[test]
 fn plain_paths_in_files_cover_the_implementation_after_finish() {
     for routine in [false, true] {
