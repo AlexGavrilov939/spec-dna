@@ -37,6 +37,16 @@ gh workflow run bench.yml -f ref=<branch> -f size=medium -f runs=15
 
 The `size` is `small`, `medium` or `large`. A shared runner has other load and other hardware. Its numbers differ from the host table below. Do not compare them with that table.
 
+### Paired benchmark (release rule of 0.7.0)
+
+A shared runner drifts. Two runs of two refs on two runners do not compare. With the input `base_ref`, the job builds the base too and runs `pair.py`: both binaries run in turns on the same runner, on one corpus. The corpus comes from `gen.py` of the head. Each binary has its own copy of the corpus and its own version pin. Pair i runs the base once and the head once, and the order flips from pair to pair. The modes are `full` (`check --all --no-cache`) and `warm` (`check --all` with the index).
+
+The rule of the release is the median of the paired ratios head / base of the mode `full`: it must be 1.10 or less (design 0.7.0, section 15). The step fails if it is over the limit. The absolute limits of the head (warm, incremental and context) come from the normal run of the same job.
+
+```sh
+gh workflow run bench.yml -f ref=<head sha> -f base_ref=v0.6.1 -f size=medium -f pairs=100
+```
+
 ## Results (measured 2026-11-07)
 
 Host: Apple M4 Max, 16 cores, macOS 26.6.1, APFS SSD. Other work used the host at the same time (1-minute load average 6 to 12 during the runs). Binaries: spec-dna 0.1.0 (release, LTO, stripped), and git 2.50.1 (Apple Git-155) called as `git` from `PATH`. Each cell shows the median of 15 runs in milliseconds, with the minimum in parentheses. Treat results that differ by less than about 20% as equal.
