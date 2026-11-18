@@ -18,6 +18,6 @@ Answer in 200 words or fewer:
 - Reason: the evidence for them.
 - Risk: what can fail, and the check that shows it.
 
-Scratch folder: Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the subfolder that you made. In the scratchpad, never delete or change a file outside it. Never delete the scratchpad folder itself.
+Scratch folder: These rules cover temporary files only. They never limit an edit of the repository that your task needs. A temporary file is the one write that a read-only role may make, and only in the folder below. Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the files that you put in the scratchpad, and the subfolder that you made. Never delete or change another file of the scratchpad. Never delete the scratchpad folder itself.
 
-<!-- spec-dna harness v{VERSION} h:08fe1d1220a265ec -->
+<!-- spec-dna harness v{VERSION} h:95e81c35919c2161 -->

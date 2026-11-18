@@ -103,7 +103,7 @@ Commands:
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
 6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
-7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` The owner reviews the pull request of the change, the one that gets the result of `spec-dna finish`. After this review, and before `spec-dna finish <slug>` runs, a person ticks the task `- [x]` and writes its real hours. `finish` stops while a task is open.
+7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it. The owner reviews the pull request with the code. After this review, a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request. `finish` stops while a task is open.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
@@ -116,7 +116,7 @@ const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is 
 Commands:
 
 1. Work in your own git worktree or branch. Run `spec-dna next <slug>`.
-2. Take the first open task. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
+2. Take the first open task. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
 3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
 4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
 
@@ -598,10 +598,28 @@ mod tests {
             c.contains("`- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.`"),
             "{c}"
         );
-        // The person ticks the task before `finish` runs, because `finish`
-        // stops while a task is open.
-        assert!(c.contains("before `spec-dna finish <slug>` runs"), "{c}");
+        // The person ticks the task in a commit before `finish` runs, because
+        // `finish` stops while a task is open.
+        assert!(
+            c.contains("a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs"),
+            "{c}"
+        );
         assert!(c.contains("`finish` stops while a task is open."), "{c}");
+    }
+
+    #[test]
+    fn only_the_owner_ends_the_review_task_in_each_text() {
+        // `next` names this task for `execute`, so both skills carry the rule.
+        let w = part(Skill::WritePlan, "Commands:");
+        assert!(
+            w.contains("Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it."),
+            "{w}"
+        );
+        let e = part(Skill::Execute, "Commands:");
+        assert!(
+            e.contains("Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it."),
+            "{e}"
+        );
     }
 
     #[test]

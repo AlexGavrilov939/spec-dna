@@ -13,7 +13,7 @@ Commands:
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
 6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
-7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` The owner reviews the pull request of the change, the one that gets the result of `spec-dna finish`. After this review, and before `spec-dna finish <slug>` runs, a person ticks the task `- [x]` and writes its real hours. `finish` stops while a task is open.
+7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it. The owner reviews the pull request with the code. After this review, a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request. `finish` stops while a task is open.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
@@ -23,4 +23,4 @@ If the check fails: Split a task that lists more than `max-task-files` paths. Gi
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:4d30416caf225b00 -->
+<!-- spec-dna harness v{VERSION} h:cebdd282015b78a8 -->

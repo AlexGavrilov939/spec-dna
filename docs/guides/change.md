@@ -104,13 +104,7 @@ The evals of `tdd` read the order of the commits, not their subjects. A test com
 
 The code can come in more than one pull request. Run `finish` in the last pull request. The pull request of `finish` deletes the folder, so the checks read the spec and the plan from the base tree. Correct `Files` or the delta in an earlier pull request.
 
-Before you open the pull request, run:
-
-```sh
-spec-dna check
-spec-dna finish sensor-timeout --dry-run
-spec-dna finish sensor-timeout
-```
+Before you open the pull request, run `spec-dna check`. Do not run `finish` yet: it stops while the task `Review by the owner` is open (see below).
 
 `finish` checks the approvals, the concerns, the open questions, the decisions and the hashes of the delta. Then it applies the delta to `requirements/valves/closing`. It checks the evidence of each new or changed requirement (SD916). It deletes the folder of the change.
 
@@ -118,7 +112,15 @@ spec-dna finish sensor-timeout
 
 `finish` adds the `Hours:` labels of the tasks that are not skipped, and prints the line `Hours: <total>`. The total is a number, or a range `<low>-<high>` if a task has a range. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
 
-The review by the owner takes time too. End the plan with a task for it: `- [ ] t9: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.` The task has `Files: none` and a `Verify:`, so SD923 accepts it. The owner reviews the pull request of the change, the one that gets the result of `finish`. After this review, and before you run `spec-dna finish <slug>`, a person ticks the task (`- [x]`) and writes its real `Hours:`. Since 0.7.1, `finish` stops while a task is open.
+The review by the owner takes time too. End the plan with a task for it: `- [ ] t9: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.` The task has `Files: none` and a `Verify:`, so SD923 accepts it. Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it. Since 0.7.1, `finish` stops while a task is open, so the last steps of the change have this order:
+
+1. Open the pull request with the code. The task `Review by the owner` is open.
+2. The owner reviews the pull request.
+3. A person ticks the task (`- [x]`), writes its real `Hours:`, and commits.
+4. Run `spec-dna finish sensor-timeout --dry-run`, then `spec-dna finish sensor-timeout`. Commit the result in the same pull request.
+5. The owner approves the merge.
+
+The result of `finish` is the last commit of the pull request, so the owner can read it before step 5. A project that wants the owner to review the result of `finish` first can run `finish` after the review, in a last commit of the same pull request.
 
 ### A delta that depends on a spike
 

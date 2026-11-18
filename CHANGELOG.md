@@ -18,7 +18,7 @@ Changes for 0.7.1.
 
 ### Changed
 
-- Each generated agent file ends with one paragraph about the scratch folder. A subagent makes its own subfolder in the scratchpad of the session, puts there each temporary file and each file of a browser tool, and deletes only that subfolder. In the scratchpad, it never deletes or changes a file outside its subfolder, and it never deletes the scratchpad folder. It never writes these files into the repository. The text of `verifier` no longer tells it to remove a shared temporary directory. `init` does not change `.gitignore`.
+- Each generated agent file ends with one paragraph about the scratch folder. A subagent makes its own subfolder in the scratchpad of the session, puts there each temporary file and each file of a browser tool, and deletes only the files that it put there and its subfolder. It never deletes or changes another file of the scratchpad, and it never deletes the scratchpad folder. It never writes these files into the repository. The rules never limit an edit of the repository that the task needs. The text of `verifier` no longer tells it to remove a shared temporary directory. `init` does not change `.gitignore`.
 
 ## 0.7.0 - 2026-11-18
 
