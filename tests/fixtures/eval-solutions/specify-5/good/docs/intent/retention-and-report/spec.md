@@ -18,8 +18,8 @@ status: draft
 
 ## Concerns
 
-- none
+- [ ] The report may list many items after the change.
 
 ## Open questions
 
-- none
+- [ ] Does a clerk need a way to see the old rule?

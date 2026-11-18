@@ -7,7 +7,8 @@
 //!
 //! - The copy as it is fails the eval, so the checks measure work.
 //! - The reference solution (`tests/fixtures/eval-solutions/<id>/good`) passes
-//!   each check, so the checks can pass.
+//!   each check, so the checks can pass. An eval can have more reference
+//!   solutions (`good-<name>`) for the forms that a check accepts.
 //! - Each wrong solution (`wrong-<name>`) fails the checks that its file
 //!   `wrong-<name>.fails` names. A wrong solution is the trap that a check
 //!   guards: a placeholder left, a status set to `approved`, a wrong review
@@ -446,7 +447,7 @@ fn prove_skill(skill: &str) {
             let copy = Copy::new(&pack, &id, &eval);
             apply(&copy, &id, &v);
             let results = run_checks(&pack, &copy, &eval);
-            if v == "good" {
+            if v == "good" || v.starts_with("good-") {
                 assert!(
                     results.iter().all(|r| r.1),
                     "{id}: the reference solution fails a check\n{}",

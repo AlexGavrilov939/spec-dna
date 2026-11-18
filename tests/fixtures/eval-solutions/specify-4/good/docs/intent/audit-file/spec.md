@@ -5,7 +5,7 @@ status: draft
 
 ## Delta
 
-- ADD requirements/inventory#audit-file: The shelf service SHALL write the audit lines to the file `audit.log` of the data folder.
+- CHANGE requirements/inventory#audit-log@4d6b9ea015d11715: When a clerk changes a count, the shelf service SHALL write one audit line with the clerk, the item, the old count and the new count to the file `audit.log` of the data folder.
 
 ## Interfaces
 
@@ -14,11 +14,12 @@ status: draft
 ## Decisions
 
 - [[decisions/flat-file-storage]]
+- The decision `sqlite-later` does not apply, because the project has not accepted it.
 
 ## Concerns
 
-- none
+- [ ] The file `audit.log` can grow without a limit.
 
 ## Open questions
 
-- none
+- [ ] Does a clerk need a way to read the file `audit.log`?

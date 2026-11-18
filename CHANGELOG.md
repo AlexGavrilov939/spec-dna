@@ -57,6 +57,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 - A `Files` item with more than one code span gives each span as a path. Before, it gave only the first span, so a file that a later span names got a false SD913. A span that holds a template placeholder is still no path.
 - The tasks under a heading of a lower level inside `## Order` (`### Part two` under `## Order`) are tasks of the plan. Before, the heading ended the section, so `next`, `status` and `finish` did not see these tasks: a plan with `Files: none` moved to the next stage with every task open, and SD923 and SD924 skipped them. A heading groups tasks and is not a task, and the section goes on after a subsection with another name (`### Open questions`) until a heading of the level of `Order`. After the upgrade, such a plan can show open tasks, and SD923 or SD924 can report them. The version of the parser moves to 16, so the index of an old project is rebuilt once ([docs/types.md](docs/types.md#sections-that-carry-list-items)).
+- The check `at-approval-clean` of the 5 evals of `specify` no longer fails on an open concern or an open question (SD919, SD922): `specify` writes them, and `clarify` closes them. The checks `delta-line` and `no-unaccepted-decision` of `specify-4` accept a `CHANGE` of the requirement `audit-log` and a mention of the decision `sqlite-later` that is not a link to it.
 
 ### Changed
 
