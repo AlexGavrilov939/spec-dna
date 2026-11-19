@@ -747,7 +747,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
             ),
             (
                 "task-paths-in-files",
-                r###"f=docs/intent/bin-labels/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
+                r###"f=docs/intent/bin-labels/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z][a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
             ),
             (
                 "still-draft",
@@ -792,7 +792,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
             ),
             (
                 "task-paths-in-files",
-                r###"f=docs/intent/export-csv/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
+                r###"f=docs/intent/export-csv/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z][a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
             ),
             (
                 "still-draft",
@@ -844,7 +844,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
             ),
             (
                 "task-paths-in-files",
-                r###"f=docs/intent/importers-update/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
+                r###"f=docs/intent/importers-update/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z][a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
             ),
             (
                 "still-draft",
@@ -892,7 +892,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
             ),
             (
                 "task-paths-in-files",
-                r###"f=docs/intent/reorder-note/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
+                r###"f=docs/intent/reorder-note/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z][a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
             ),
             (
                 "still-draft",
@@ -940,7 +940,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
             ),
             (
                 "task-paths-in-files",
-                r###"f=docs/intent/audit-split/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
+                r###"f=docs/intent/audit-split/plan.md; [ -f $f ] && for p in $(awk '$0=="## Order"{f=1;next} /^## /{f=0} f' $f | sed -n 's/.*Files: \(.*\) Verify:.*/\1/p' | grep -o '[A-Za-z0-9_./-]*[A-Za-z0-9_]\.[a-z][a-z]*'); do awk '$0=="## Files"{f=1;next} /^## /{f=0} f' $f | grep -qF "$p" || exit 1; done"###,
             ),
             (
                 "still-draft",
