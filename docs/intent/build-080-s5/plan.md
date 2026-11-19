@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Build of 0.8.0, slice S5: plan
 
