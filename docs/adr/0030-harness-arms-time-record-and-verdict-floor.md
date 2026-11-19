@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0030. Eval runner: harness arms, the time of a run and the floor of a verdict

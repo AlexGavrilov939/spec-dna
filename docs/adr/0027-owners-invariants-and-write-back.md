@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0027. Owners by path, invariants and the write-back of deviations
