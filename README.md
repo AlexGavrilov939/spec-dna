@@ -42,14 +42,14 @@ Before an edit, an agent runs `spec-dna context <file>`. It gets the rules and t
 Install the binary. On macOS with Apple silicon:
 
 ```sh
-v=0.7.0 t=aarch64-apple-darwin
+v=0.7.1 t=aarch64-apple-darwin
 base=https://github.com/AlexGavrilov939/spec-dna/releases/download/v$v
 curl -fsSLO "$base/spec-dna-$v-$t" -fsSLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS   # Linux: sha256sum -c --ignore-missing SHA256SUMS
 mkdir -p ~/.local/bin && install -m 755 "spec-dna-$v-$t" ~/.local/bin/spec-dna
 ```
 
-Other targets: `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`. For Windows, see [Install](docs/quickstart.md#install). With Rust: `cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.7.0`.
+Other targets: `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`. For Windows, see [Install](docs/quickstart.md#install). With Rust: `cargo install --locked --git https://github.com/AlexGavrilov939/spec-dna --tag v0.7.1`.
 
 Run the first example in a temporary folder. It needs bash, perl and git 2.32 or later:
 
