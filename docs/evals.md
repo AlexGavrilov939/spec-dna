@@ -202,7 +202,7 @@ A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats 
 
 The command writes each file once. If a file exists, the command keeps it, and the output names it (`kept <path>`). Thus a project can edit its copy of an eval. The command needs `[evals]`. Without it, the exit code is 3. A write error gives exit code 4. With `--json`, it prints `{"written":[...],"kept":[...]}`.
 
-A check of the pack is a shell command. A check that runs `spec-dna check` reads the codes that it needs, such as `SD919`, and never the exit code alone. The 2 arms differ in the generated files, so the exit code of `check` can differ with the arm (for example SD501). The `tdd` evals read the git history of the copy, so a test commit must come before the code commit.
+A check of the pack is a shell command. A check that runs `spec-dna check` reads the codes that it needs, such as `SD919`, and never the exit code alone. The 2 arms differ in the generated files, so the exit code of `check` can differ with the arm (for example SD501). The `tdd` evals read the git history of the copy, so a test commit must come before the code commit. The `write-plan` evals read a path in the `Files:` of a task as a word with an extension (a dot and a letter after it), so `Files: none.` names no path.
 
 ### The traps of the harder evals
 

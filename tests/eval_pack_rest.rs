@@ -529,6 +529,112 @@ fn the_5_evals_of_write_plan_fail_the_fixture_and_pass_the_reference() {
     prove_skill("write-plan");
 }
 
+/// The review task of item 7 of the skill `write-plan`, as the shipped skill
+/// writes it (the golden file of the skill), with the id `t9` and 1 hour.
+fn review_task_of_the_skill() -> String {
+    let text = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/harness/skills/spec-dna-write-plan.md"
+    ))
+    .expect("the golden skill");
+    let from = text.find("- [ ] tN: Review by the owner.").expect("item 7");
+    let line = &text[from..from + text[from..].find("`").expect("end of the code span")];
+    assert!(line.contains("Files: none."), "{line}");
+    line.replace("tN", "t9").replace("<n>", "1")
+}
+
+/// The copy with the reference solution of `id`, and `extra` as a last task of
+/// `Order` (a line of the skill text, or a line of the test).
+fn good_plan_with_task(pack: &Pack, id: &str, extra: &str) -> (Copy, J) {
+    let eval = pack.eval(id);
+    let copy = Copy::new(pack, id, &eval);
+    apply(&copy, id, "good");
+    let slug = id_slug(id);
+    let file = copy.dir.join(format!("docs/intent/{slug}/plan.md"));
+    let plan = fs::read_to_string(&file).unwrap();
+    assert!(plan.contains("\n## Risks"), "{id}: no Risks");
+    let plan = plan.replacen("\n## Risks", &format!("{extra}\n\n## Risks"), 1);
+    // `Order` has a blank line before `Risks`: keep one task list.
+    let plan = plan.replacen(&format!("\n\n{extra}"), &format!("\n{extra}"), 1);
+    fs::write(&file, plan).unwrap();
+    (copy, eval)
+}
+
+fn id_slug(id: &str) -> &'static str {
+    match id {
+        "write-plan-1" => "bin-labels",
+        "write-plan-2" => "export-csv",
+        "write-plan-3" => "importers-update",
+        "write-plan-4" => "reorder-note",
+        "write-plan-5" => "audit-split",
+        other => panic!("no slug for {other}"),
+    }
+}
+
+fn check_passes(pack: &Pack, copy: &Copy, eval: &J, name: &str) -> (bool, String) {
+    let J::Arr(checks) = eval.get("checks").expect("checks") else {
+        panic!("checks is no array");
+    };
+    let c = checks
+        .iter()
+        .find(|c| c.get("name").unwrap().str() == name)
+        .unwrap_or_else(|| panic!("no check `{name}`"));
+    let script = format!(
+        ". \"$SPEC_DNA_CHECK_SH\" || exit 99\n{}",
+        c.get("run").unwrap().str()
+    );
+    copy.sh(&script, Some(&pack.check_sh()))
+}
+
+#[test]
+fn a_plan_with_the_review_task_of_the_skill_passes_the_task_checks_of_each_write_plan_eval() {
+    // `Files: none.` is valid (SD923 accepts it). The token `none.` is no path.
+    let pack = Pack::new();
+    let task = review_task_of_the_skill();
+    for id in ids_of("write-plan") {
+        let (copy, eval) = good_plan_with_task(&pack, &id, &task);
+        for name in ["task-form", "task-paths-in-files", "tasks-small"] {
+            let (ok, text) = check_passes(&pack, &copy, &eval, name);
+            assert!(ok, "{id}: `{name}` fails on the task of the skill: {text}");
+        }
+    }
+}
+
+#[test]
+fn the_check_of_the_task_paths_reads_a_path_before_a_full_stop_and_no_word_before_it() {
+    let pack = Pack::new();
+    for id in ids_of("write-plan") {
+        // A path with a full stop after it (no code span) is the path.
+        let listed = "- [ ] t9: Edit. Files: `src/stock.sh`. Verify: `sh tests/test_stock.sh`.";
+        let (copy, eval) = good_plan_with_task(&pack, &id, listed);
+        // The path of the fixture of the eval may differ: use a path of Files.
+        let plan_file = format!("docs/intent/{}/plan.md", id_slug(&id));
+        let plan = fs::read_to_string(copy.dir.join(&plan_file)).unwrap();
+        let path = plan
+            .lines()
+            .skip_while(|l| *l != "## Files")
+            .find_map(|l| l.strip_prefix("- `").and_then(|r| r.split('`').next()))
+            .expect("a path in Files")
+            .to_string();
+        let bare = format!("- [ ] t9: Edit. Files: {path}. Verify: `true`.");
+        let plan = plan.replace(listed, &bare);
+        fs::write(copy.dir.join(&plan_file), plan).unwrap();
+        let (ok, text) = check_passes(&pack, &copy, &eval, "task-paths-in-files");
+        assert!(ok, "{id}: a listed path with a full stop fails: {text}");
+
+        // A path that `Files` does not list still fails, with or without a stop.
+        for task in [
+            "- [ ] t9: Edit. Files: `src/zzz_unlisted.sh`. Verify: `true`.",
+            "- [ ] t9: Edit. Files: src/zzz_unlisted.sh. Verify: `true`.",
+            "- [ ] t9: Edit. Files: none, src/zzz_unlisted.sh. Verify: `true`.",
+        ] {
+            let (copy, eval) = good_plan_with_task(&pack, &id, task);
+            let (ok, text) = check_passes(&pack, &copy, &eval, "task-paths-in-files");
+            assert!(!ok, "{id}: an unlisted path passes for `{task}`: {text}");
+        }
+    }
+}
+
 #[test]
 fn the_5_evals_of_review_fail_the_fixture_and_pass_the_reference() {
     prove_skill("review");
