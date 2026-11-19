@@ -131,6 +131,10 @@ case "$mode" in
     break)
         rm -f "$STUB_BREAK_FILE"
         ;;
+    check)
+        spec-dna check --all > "$STUB_DIR/check-$n" 2>&1
+        echo 'status: done' > notes.txt
+        ;;
     commit)
         echo 'status: done' > notes.txt
         git add -A
@@ -551,6 +555,50 @@ fn a_result_with_no_model_usage_has_null_tokens() {
 }
 
 #[test]
+fn the_copy_has_the_line_of_this_binary_and_no_sd501_or_sd502_in_each_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The line of the project is the line of another version, with a valid
+    // marker: the hash covers the text of the line, not its version.
+    let mark = format!("<!-- spec-dna v{VERSION} h:");
+    for file in ["AGENTS.md", "CLAUDE.md"] {
+        let text = fx.repo.read(file);
+        assert!(text.contains(&mark), "{file}: {text}");
+        fx.repo
+            .write(file, &text.replace(&mark, "<!-- spec-dna v0.6.1 h:"));
+    }
+    fx.repo.commit("a line of another version");
+    // The fixtures have a configuration with a harness, as a project has.
+    let config = fx.repo.read("spec-dna.toml");
+    for n in 1..=5 {
+        fx.repo.write(
+            &format!("evals/pack/fixtures/tdd-{n}/spec-dna.toml"),
+            &config,
+        );
+    }
+    fx.repo.commit("fixtures with a configuration");
+    fx.modes(&["check"; 40]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let calls = fx.calls().len();
+    assert_eq!(calls, 10, "5 evals, 2 arms");
+    for n in 1..=calls {
+        // The copy has the line of this binary.
+        for file in ["AGENTS.md", "CLAUDE.md"] {
+            let text = fx.text(n - 1, file);
+            assert!(text.contains(&mark), "call {n} {file}: {text}");
+            assert!(!text.contains("v0.6.1"), "call {n} {file}: {text}");
+        }
+        // `check --all` in the copy gives no SD501 and no SD502, in each arm.
+        let report = fs::read_to_string(fx.path(&format!("check-{n}"))).unwrap_or_default();
+        assert!(!report.is_empty(), "call {n}: no report");
+        assert!(
+            !report.contains("SD501") && !report.contains("SD502"),
+            "call {n}: {report}"
+        );
+    }
+}
+
+#[test]
 fn each_side_lists_its_check_names_and_results() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     // The arm `with` of `tdd-1` fails its check: it has the skill folder.
@@ -817,7 +865,11 @@ fn the_pairs_alternate_the_first_arm_and_the_copy_has_the_pin_of_the_binary() {
         .filter_map(|l| l.strip_prefix("TOML "))
         .collect::<Vec<_>>()
         .join("\n");
-    assert_eq!(toml, format!("spec-dna = \"{VERSION}\""));
+    // SD501 and SD502 are off in the copy, under a new table `[rules]`.
+    assert_eq!(
+        toml,
+        format!("spec-dna = \"{VERSION}\"\n\n[rules]\nSD501 = \"off\"\nSD502 = \"off\"")
+    );
 }
 
 #[test]

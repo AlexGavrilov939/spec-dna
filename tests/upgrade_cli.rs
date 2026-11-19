@@ -223,6 +223,120 @@ fn the_message_of_a_dirty_tree_names_5_paths_and_the_count() {
 }
 
 #[test]
+fn the_message_of_a_dirty_tree_tells_how_to_stash_the_work() {
+    let repo = Repo::from_fixture("v05", &[]);
+    repo.write("docs/new.md", "# New\n");
+    let (code, _, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("stash the changes with `git stash -u`, run `spec-dna upgrade`, commit its paths, then run `git stash pop`. upgrade changes nothing"),
+        "{err}"
+    );
+    assert!(!err.contains("commit or stash"), "{err}");
+}
+
+const NEXT_PIN_ONLY: &str = "next: commit the paths above in one commit of their own. Only the pin of spec-dna.toml changes, so the pull request can also hold other work (SD503 does not count a pin that moves to a later version).";
+const NEXT_OTHER: &str = "next: commit the paths above in one commit, in a pull request of its own: spec-dna.toml has edits beyond the pin (SD503).";
+
+/// The line after `to commit:` in the text of `upgrade`.
+fn line_after_to_commit(out: &str) -> String {
+    let mut lines = out.lines().skip_while(|l| !l.starts_with("to commit: "));
+    lines.next().expect("a `to commit:` line");
+    lines.next().unwrap_or_default().to_string()
+}
+
+/// A project of 0.6.1 (the fixture `v061`) with this `skills` line.
+fn project_0_6_1(skills: &str) -> Repo {
+    let repo = Repo::from_fixture("v061", &[]);
+    let text = repo.read("spec-dna.toml");
+    let old = "skills = [\"intent\", \"spec\", \"plan\", \"review\"]";
+    assert!(text.contains(old), "{text}");
+    repo.write(
+        "spec-dna.toml",
+        &text.replace(old, &format!("skills = {skills}")),
+    );
+    if !status(&repo).is_empty() {
+        repo.commit("variant");
+    }
+    repo
+}
+
+const TYPOS_NOTE: &str = "note: the pre-commit hook `typos` can rewrite the 16-digit hashes of the spec-dna markers (`h:<hash>`), and a marker with a changed hash gives SD501. Add this line under `[default]` in _typos.toml: extend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\\b'] (docs/init.md#spell-checkers)";
+
+const TYPOS_HOOK: &str =
+    "repos:\n  - repo: https://example.org/typos\n    rev: v1\n    hooks:\n      - id: typos\n";
+
+#[test]
+fn upgrade_notes_a_typos_hook_and_a_guard_or_another_checker_silences_it() {
+    let hook = |extra: &[(&str, &str)], pre_commit: &str| {
+        let repo = project_0_6_1("[]");
+        repo.write(".pre-commit-config.yaml", pre_commit);
+        for (p, t) in extra {
+            repo.write(p, t);
+        }
+        repo.commit("hook");
+        let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+        assert_eq!(code, 0, "{out}{err}");
+        out
+    };
+    let out = hook(&[], TYPOS_HOOK);
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+    let guard = "[default]\nextend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\\b']\n";
+    let out = hook(&[("_typos.toml", guard)], TYPOS_HOOK);
+    assert!(!out.contains("`typos`"), "{out}");
+    let out = hook(
+        &[],
+        "repos:\n  - repo: x\n    hooks:\n      - id: codespell\n",
+    );
+    assert!(!out.contains("`typos`"), "{out}");
+}
+
+#[test]
+fn upgrade_notes_a_typos_hook_also_when_there_is_nothing_to_change() {
+    let repo = project_0_6_1("[]");
+    repo.write(".pre-commit-config.yaml", TYPOS_HOOK);
+    repo.commit("hook");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    repo.commit("upgrade");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("spec-dna upgrade: nothing to change\n"),
+        "{out}"
+    );
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+}
+
+#[test]
+fn the_next_line_says_that_a_pin_only_edit_can_ride_with_other_work() {
+    // An empty list stays empty, so only the pin changes.
+    let repo = project_0_6_1("[]");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(line_after_to_commit(&out), NEXT_PIN_ONLY, "{out}");
+}
+
+#[test]
+fn the_next_line_names_the_pull_request_of_its_own_for_other_edits() {
+    // The names of 0.6 and the new skills are edits beyond the pin.
+    for skills in [
+        "[\"intent\", \"spec\", \"plan\", \"review\"]",
+        "[\"review\"]",
+    ] {
+        let repo = project_0_6_1(skills);
+        let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+        assert_eq!(code, 0, "{skills}: {out}{err}");
+        assert_eq!(line_after_to_commit(&out), NEXT_OTHER, "{skills}: {out}");
+    }
+    // A 0.5 file is rewritten, so it has edits beyond the pin too.
+    let repo = Repo::from_fixture("v05", &[]);
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(line_after_to_commit(&out), NEXT_OTHER, "{out}");
+}
+
+#[test]
 fn an_ignored_untracked_file_is_not_a_dirty_tree() {
     let repo = Repo::from_fixture("v05", &[]);
     repo.write(".gitignore", "scratch/\n");
@@ -717,6 +831,47 @@ fn json_has_the_fields_of_d152() {
     assert!(out.contains("\"dry_run\":false"), "{out}");
 }
 
+/// The paths of `no_status` in the report of `upgrade --dry-run --json`.
+fn no_status_of(repo: &Repo) -> Vec<String> {
+    let (code, out, err) = upgrade(repo, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let at = out.find("\"no_status\":[").unwrap() + "\"no_status\":[".len();
+    out[at..out[at..].find(']').map(|e| at + e).unwrap()]
+        .split(',')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.trim_matches('"').to_string())
+        .collect()
+}
+
+#[test]
+fn no_status_lists_a_decision_with_no_status_in_the_front_matter() {
+    let repo = Repo::from_fixture("v05", &["harness-full"]);
+    // `4-drain-timing.md` has `status: proposed` in its front matter and no
+    // `Status` section. spec-dna reads the front matter, so it is not listed.
+    let text = repo.read("docs/decisions/4-drain-timing.md");
+    assert!(text.starts_with("---\nstatus: proposed\n---\n"), "{text}");
+    assert!(!text.contains("## Status"), "{text}");
+    assert_eq!(no_status_of(&repo), Vec::<String>::new());
+    // A decision with no `status` in its front matter is listed, also when it
+    // has a `Status` section.
+    let body = text.replacen("---\nstatus: proposed\n---\n", "", 1);
+    repo.write(
+        "docs/decisions/4-drain-timing.md",
+        &format!("{body}\n## Status\n\nProposed.\n"),
+    );
+    repo.commit("no status");
+    assert_eq!(
+        no_status_of(&repo),
+        ["docs/decisions/4-drain-timing.md".to_string()]
+    );
+    // The text of the report names the field.
+    let (_, out, _) = upgrade(&repo, &["--dry-run"]);
+    assert!(
+        out.contains("decisions with no `status` in the front matter (spec-dna does not read a `Status` section) (1):"),
+        "{out}"
+    );
+}
+
 #[test]
 fn the_report_gives_the_items_of_the_plan() {
     let repo = Repo::from_fixture("v05", &["harness-full"]);
@@ -727,9 +882,9 @@ fn the_report_gives_the_items_of_the_plan() {
     let at = out.find("\"proposals\":[").unwrap();
     let proposals = &out[at..out[at..].find(']').map(|e| at + e).unwrap()];
     assert!(proposals.contains("docs/changes/tune-pump.md"), "{out}");
-    // The decision with no Status section.
-    assert!(out.contains("\"no_status\":[\""), "{out}");
-    assert!(out.contains("4-drain-timing.md"), "{out}");
+    // `4-drain-timing.md` has no `Status` section, but its front matter has a
+    // `status`, so it is not in the list of decisions with no status.
+    assert!(out.contains("\"no_status\":[]"), "{out}");
     // The locked decision that cites a migrated change.
     let at = out.find("\"locked_cites\":[").unwrap();
     let cites = &out[at..out[at..].find("],").map(|e| at + e).unwrap()];

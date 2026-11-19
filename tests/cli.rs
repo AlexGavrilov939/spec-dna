@@ -4564,6 +4564,73 @@ fn git_status(r: &Repo, args: &[&str]) -> bool {
         .success()
 }
 
+const TYPOS_NOTE: &str = "note: the pre-commit hook `typos` can rewrite the 16-digit hashes of the spec-dna markers (`h:<hash>`), and a marker with a changed hash gives SD501. Add this line under `[default]` in _typos.toml: extend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\\b'] (docs/init.md#spell-checkers)";
+
+const TYPOS_HOOK: &str =
+    "repos:\n  - repo: https://example.org/typos\n    rev: v1\n    hooks:\n      - id: typos\n";
+
+#[test]
+fn init_notes_a_typos_hook_that_can_rewrite_the_hashes() {
+    let r = Repo::empty();
+    r.write(".pre-commit-config.yaml", TYPOS_HOOK);
+    r.commit("start");
+    // Each mode prints the note once: a preview, a write and `--reconfigure`.
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+    r.commit("init");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+    // A project that has a `spec-dna.toml` and no `--reconfigure` updates the
+    // adapters only, and it prints the note too.
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(TYPOS_NOTE).count(), 1, "{out}");
+}
+
+#[test]
+fn init_gives_no_typos_note_for_a_guard_or_another_checker() {
+    for (name, files) in [
+        (
+            "the pattern in _typos.toml",
+            vec![
+                (".pre-commit-config.yaml", TYPOS_HOOK),
+                (
+                    "_typos.toml",
+                    "[default]\nextend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\\b']\n",
+                ),
+            ],
+        ),
+        (
+            "codespell",
+            vec![(
+                ".pre-commit-config.yaml",
+                "repos:\n  - repo: https://example.org/codespell\n    rev: v1\n    hooks:\n      - id: codespell\n",
+            )],
+        ),
+        (
+            "a typos file with no hook",
+            vec![("_typos.toml", "[default]\n")],
+        ),
+    ] {
+        let r = Repo::empty();
+        for (path, text) in files {
+            r.write(path, text);
+        }
+        r.commit("start");
+        let (code, out, err) = r.run(&["init", "--dry-run"]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(!out.contains("`typos`"), "{name}: {out}");
+    }
+}
+
 #[test]
 fn init_upgrades_the_hook_that_0_4_1_wrote() {
     let r = Repo::empty();

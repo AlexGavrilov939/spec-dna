@@ -1534,6 +1534,127 @@ fn fm_str(p: &ParsedDoc, key: &str) -> Option<String> {
     }
 }
 
+/// The files of a project that can hold the setting of the spell checker
+/// `typos`, and the pre-commit file that can run it.
+pub const TYPOS_FILES: [&str; 5] = [
+    ".pre-commit-config.yaml",
+    "_typos.toml",
+    "typos.toml",
+    ".typos.toml",
+    "pyproject.toml",
+];
+
+/// The pattern that keeps `typos` away from the 16-digit hashes of the
+/// markers of spec-dna (docs/init.md, "Spell checkers"). A file that holds it
+/// is a file of a project that has set `typos` already.
+const TYPOS_GUARD: &str = "[0-9a-f]{16}";
+
+/// True if a `.pre-commit-config.yaml` text runs the hook `typos`. A line scan
+/// reads each line, with no YAML parser: a line that is `id: <name>` or
+/// `entry: <command>`, after its indent, a leading dash with its space and a
+/// comment (a `#` after a space) are removed. The name, or the first word of
+/// the command, is `typos` or starts with `typos-`.
+pub fn typos_hook(pre_commit: &str) -> bool {
+    pre_commit.lines().any(|line| {
+        let mut text = line;
+        if let Some(at) = text
+            .find(" #")
+            .or_else(|| text.trim_start().starts_with('#').then_some(0))
+        {
+            text = &text[..at];
+        }
+        let mut text = text.trim();
+        while let Some(rest) = text.strip_prefix("- ") {
+            text = rest.trim_start();
+        }
+        let Some(value) = text
+            .strip_prefix("id:")
+            .or_else(|| text.strip_prefix("entry:"))
+        else {
+            return false;
+        };
+        let word = value
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_matches(['"', '\'']);
+        word == "typos" || word.starts_with("typos-")
+    })
+}
+
+/// True if the project runs the hook `typos` and has no setting for the hashes
+/// of the markers. `read` gives the text of a file of the project, or `None`.
+pub fn typos_unguarded(read: &dyn Fn(&str) -> Option<String>) -> bool {
+    read(TYPOS_FILES[0]).is_some_and(|t| typos_hook(&t))
+        && !TYPOS_FILES
+            .iter()
+            .any(|f| read(f).is_some_and(|t| t.contains(TYPOS_GUARD)))
+}
+
+#[cfg(test)]
+mod typos_tests {
+    use super::*;
+
+    #[test]
+    fn the_hook_is_a_line_id_or_entry() {
+        for yes in [
+            "repos:\n  - repo: https://example.test/typos\n    hooks:\n      - id: typos\n",
+            "      - id: typos-src  # the second\n",
+            "    - id: \"typos\"\n",
+            "    entry: typos --write-changes\n",
+            "- id: typos\n",
+            "id: typos\r\n",
+        ] {
+            assert!(typos_hook(yes), "{yes}");
+        }
+        for no in [
+            "      - id: codespell\n",
+            "  - repo: https://example.test/crate-ci/typos\n",
+            "      # - id: typos\n",
+            "      - id: typosaurus\n",
+            "    entry: codespell typos\n",
+            "    name: typos\n",
+            "",
+        ] {
+            assert!(!typos_hook(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn a_pattern_in_a_file_of_the_list_guards_the_hashes() {
+        let hook = "- id: typos\n";
+        let files = |pairs: &[(&str, &str)]| {
+            let m: HashMap<String, String> = pairs
+                .iter()
+                .map(|(p, t)| (p.to_string(), t.to_string()))
+                .collect();
+            move |p: &str| m.get(p).cloned()
+        };
+        assert!(typos_unguarded(&files(&[(
+            ".pre-commit-config.yaml",
+            hook
+        )])));
+        let guard = "[default]\nextend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\\b']\n";
+        for name in ["_typos.toml", "typos.toml", ".typos.toml", "pyproject.toml"] {
+            assert!(
+                !typos_unguarded(&files(&[(".pre-commit-config.yaml", hook), (name, guard)])),
+                "{name}"
+            );
+        }
+        let in_hook = format!("{hook}  args: ['--exclude', '[0-9a-f]{{16}}']\n");
+        assert!(!typos_unguarded(&files(&[(
+            ".pre-commit-config.yaml",
+            &in_hook
+        )])));
+        // No hook, no note.
+        assert!(!typos_unguarded(&files(&[("_typos.toml", "")])));
+        assert!(!typos_unguarded(&files(&[(
+            ".pre-commit-config.yaml",
+            "- id: codespell\n"
+        )])));
+    }
+}
+
 /// Counts the documents over the hard budget, with the budgets multiplied by
 /// `factor`.
 pub fn over_budget(facts: &Facts, factor: f64) -> usize {

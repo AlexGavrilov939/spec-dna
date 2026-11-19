@@ -85,17 +85,39 @@ fn default_skills() -> Vec<String> {
         .collect()
 }
 
-/// The names of `skills` that a rename of 0.6 gives in this build: each new
-/// name that is on by default, then `review` (the list of 0.6.1 has it).
-fn renamed_skills() -> Vec<String> {
+/// The skills that 0.7.0 adds, in the order of D2.
+const ADDED_NAMES: [&str; 6] = ["execute", "tdd", "verify", "finish", "debug", "post-mortem"];
+
+/// The names of `skills` that an upgrade of 0.6 gives in this build: each new
+/// name of the rename that is on by default, `review` (the list of 0.6.1 has
+/// it), and each skill that is new in 0.7.0, is on by default and is proposed
+/// for the profile (`lite` proposes `finish` only), in the order of D2.
+fn renamed_skills(profile: &str) -> Vec<String> {
     let on = default_skills();
-    let mut out: Vec<String> = NEW_NAMES
-        .iter()
-        .filter(|n| on.iter().any(|d| d == *n))
-        .map(|n| n.to_string())
-        .collect();
-    out.push("review".to_string());
-    out
+    let is_on = |n: &str| on.iter().any(|d| d == n);
+    let mut names: Vec<&str> = NEW_NAMES.into_iter().filter(|n| is_on(n)).collect();
+    names.push("review");
+    names.extend(
+        ADDED_NAMES
+            .into_iter()
+            .filter(|n| is_on(n))
+            .filter(|n| profile != "lite" || *n == "finish"),
+    );
+    let order = [
+        "brainstorm",
+        "specify",
+        "clarify",
+        "write-plan",
+        "execute",
+        "tdd",
+        "review",
+        "verify",
+        "finish",
+        "debug",
+        "post-mortem",
+    ];
+    names.sort_by_key(|n| order.iter().position(|o| o == n).unwrap());
+    names.iter().map(|n| n.to_string()).collect()
 }
 
 fn skill_file(name: &str) -> String {
@@ -250,14 +272,20 @@ fn upgrade_writes_the_new_skills_and_changes_no_other_key() {
             "{}",
             case.name
         );
-        // The list is the rename by the default of this build.
-        assert_eq!(skills_of(&repo), renamed_skills(), "{}", case.name);
+        // The list is the rename and the new skills of the profile, by the
+        // default of this build.
+        assert_eq!(
+            skills_of(&repo),
+            renamed_skills(case.profile),
+            "{}",
+            case.name
+        );
         // No preset: no other key changed.
         assert_eq!(without_skills_and_pin(&repo), before, "{}", case.name);
         // The paths: the 3 old skills go, each new name with the default on
         // comes, and the other generated files change.
         let kinds = changed(&repo);
-        let new: BTreeSet<String> = renamed_skills()
+        let new: BTreeSet<String> = renamed_skills(case.profile)
             .iter()
             .filter(|n| *n != "review")
             .map(|n| skill_file(n))
