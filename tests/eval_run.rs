@@ -23,6 +23,10 @@ eval "$STUB_EDIT"
 find . \( -type f -o -type l \) -not -path './.git/*' | sort > "$STUB_FILES"
 if [ "$STUB_SHAPE" = array ]; then
     printf '[{"type":"system","subtype":"init"},{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"result":"STUB-OUTPUT-TEXT"}]\n' "$STUB_COST"
+elif [ "$STUB_SHAPE" = turns ]; then
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":7,"modelUsage":{"claude-b":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40},"claude-a":{"inputTokens":1,"outputTokens":2}},"result":"STUB-OUTPUT-TEXT"}\n' "$STUB_COST"
+elif [ "$STUB_SHAPE" = badturns ]; then
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":-3,"result":"x"}\n' "$STUB_COST"
 elif [ "$STUB_SHAPE" = garbage ]; then
     printf 'not json STUB-OUTPUT-TEXT\n'
 elif [ -n "$STUB_COST" ]; then
@@ -54,6 +58,7 @@ struct Ev {
     runs: u32,
     pass_at: Option<u32>,
     branch: Option<&'static str>,
+    change: Option<&'static str>,
     checks: Vec<(&'static str, &'static str)>,
 }
 
@@ -67,6 +72,7 @@ fn ev(id: &'static str) -> Ev {
         runs: 1,
         pass_at: None,
         branch: None,
+        change: None,
         checks: vec![("notes-done", "file_has notes.txt 'status: done'")],
     }
 }
@@ -82,6 +88,9 @@ impl Ev {
         }
         if let Some(b) = self.branch {
             s.push_str(&format!(",\"branch\":\"{b}\""));
+        }
+        if let Some(c) = self.change {
+            s.push_str(&format!(",\"change\":\"{c}\""));
         }
         let checks: Vec<String> = self
             .checks
@@ -636,6 +645,199 @@ fn the_branch_of_the_eval_is_the_branch_of_the_copy() {
         assert_eq!(code, 0, "{branch:?}: {out}{err}");
         assert_eq!(read(&fx.path("files.branch")).trim(), want, "{branch:?}");
     }
+}
+
+/// The number after `"key":` in a compact JSON text, for the first place of
+/// the key.
+fn number_after(json: &str, key: &str) -> f64 {
+    let at = json
+        .find(&format!("\"{key}\":"))
+        .unwrap_or_else(|| panic!("no key {key} in {json}"));
+    let rest = &json[at + key.len() + 3..];
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    rest[..end].parse().unwrap_or(f64::NAN)
+}
+
+// D58: the time, the turns, the tokens and the models of each run.
+
+#[test]
+fn a_plain_result_has_the_tokens_the_models_the_turns_and_the_seconds_of_each_run() {
+    let fx = Fx::with(&[ev("example")]);
+    // The edit takes a moment, so the seconds are above 0 at 1 decimal.
+    let edit = format!("sleep 0.3; {DONE}");
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[("STUB_SHAPE", "turns"), ("STUB_EDIT", &edit)],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"turns\":7"), "{out}");
+    assert!(
+        out.contains("\"tokens\":{\"in\":11,\"out\":22,\"cache_read\":30,\"cache_write\":40}"),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"models\":[\"claude-a\",\"claude-b\"]"),
+        "{out}"
+    );
+    let seconds = number_after(&out, "seconds");
+    assert!((0.2..60.0).contains(&seconds), "{seconds} in {out}");
+    // The seconds have 1 decimal.
+    assert_eq!((seconds * 10.0).round() / 10.0, seconds, "{seconds}");
+    // The keys are added after the old keys of a result: nothing moves.
+    assert!(
+        out.contains("\"checks\":[{\"name\":\"notes-done\",\"passed\":true}],\"tokens\""),
+        "{out}"
+    );
+    fx.assert_clean();
+}
+
+#[test]
+fn a_run_with_no_usage_has_null_turns_tokens_and_no_models() {
+    let fx = Fx::with(&[ev("example")]);
+    for shape in ["", "badturns", "garbage"] {
+        let (code, out, err) = fx.run_env(&["--json"], &[("STUB_SHAPE", shape)]);
+        assert_eq!(code, 0, "{shape}: {out}{err}");
+        assert!(out.contains("\"turns\":null"), "{shape}: {out}");
+        assert!(out.contains("\"tokens\":null"), "{shape}: {out}");
+        assert!(out.contains("\"models\":[]"), "{shape}: {out}");
+        assert!(out.contains("\"seconds\":"), "{shape}: {out}");
+    }
+}
+
+// D60: the key `change`.
+
+/// A project with a fixture and a change folder under `evals/`.
+fn with_change(e: Ev) -> Fx {
+    let fx = Fx::with(&[e]);
+    fx.repo.write("evals/changes/example/added.txt", "new\n");
+    fx.repo
+        .write("evals/changes/example/notes.txt", "status: changed\n");
+    fx.repo.commit("change");
+    fx
+}
+
+#[test]
+fn the_files_of_the_change_are_a_commit_on_the_branch_and_a_diff_against_main() {
+    let mut e = ev("example");
+    e.branch = Some("feature/discount");
+    e.change = Some("evals/changes/example");
+    e.checks = vec![
+        ("sees-added", "file_has diff.txt added.txt"),
+        ("sees-notes", "file_has diff.txt notes.txt"),
+        ("two-commits", "[ \"$(git rev-list --count HEAD)\" = 2 ]"),
+        (
+            "clean-tree",
+            "[ -z \"$(git status --porcelain | grep -v diff.txt)\" ]",
+        ),
+        // The base is the commit after the change: the change itself is no
+        // diff against it (a check like `tests_unchanged` stays green).
+        (
+            "base-is-head",
+            "[ \"$(git rev-parse HEAD)\" = \"$SPEC_DNA_EVAL_BASE\" ]",
+        ),
+        (
+            "base-is-not-main",
+            "[ \"$(git rev-parse main)\" != \"$SPEC_DNA_EVAL_BASE\" ]",
+        ),
+        (
+            "change-is-no-diff-against-base",
+            "git diff --quiet \"$SPEC_DNA_EVAL_BASE\" -- notes.txt added.txt",
+        ),
+    ];
+    let fx = with_change(e);
+    let edit = "git diff --name-only main > diff.txt; git log -1 --format='%s|%an|%ae|%G?' > \"$STUB_FILES.change\"; git symbolic-ref --short HEAD > \"$STUB_FILES.branch\"; cat notes.txt > \"$STUB_FILES.notes\"";
+    let (code, out, err) = fx.run_env(&["--min-pass-rate", "0"], &[("STUB_EDIT", edit)]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("example: 1 of 1 runs passed"), "{out}");
+    assert_eq!(read(&fx.path("files.branch")).trim(), "feature/discount");
+    // The commit has the neutral identity, no signature and the fixed subject.
+    let log = read(&fx.path("files.change"));
+    assert_eq!(
+        log.trim_end(),
+        "spec-dna eval change|spec-dna|eval@spec-dna.invalid|N",
+        "the identity of the base commit, and no signature"
+    );
+    // The change files overwrite the files of the fixture.
+    assert_eq!(read(&fx.path("files.notes")), "status: changed\n");
+    fx.assert_clean();
+}
+
+#[test]
+fn an_eval_without_a_change_has_one_commit_and_no_change_files() {
+    let mut e = ev("example");
+    e.branch = Some("feature/discount");
+    e.checks = vec![("one-commit", "[ \"$(git rev-list --count HEAD)\" = 1 ]")];
+    let fx = Fx::with(&[e]);
+    let (code, out, err) = fx.run(&["--min-pass-rate", "0"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("example: 1 of 1 runs passed"), "{out}");
+}
+
+#[test]
+fn a_change_without_a_branch_gives_sd506_and_exit_code_3_and_no_process() {
+    for branch in [None, Some("main")] {
+        let mut e = ev("example");
+        e.change = Some("evals/changes/example");
+        e.branch = branch;
+        let fx = with_change(e);
+        let (code, out, err) = fx.run(&[]);
+        assert_eq!(code, 3, "{branch:?}: {out}{err}");
+        assert!(
+            err.contains("evals/example.json") && err.contains("`change` needs a `branch`"),
+            "{err}"
+        );
+        assert!(!fx.path("log").exists(), "the stub ran");
+        let (_, out, err) = fx.repo.run(&["check", "--all"]);
+        assert!(
+            out.contains(
+                "evals/example.json:1: error SD506 evals-invalid: `change` needs a `branch`"
+            ),
+            "{branch:?}: {out}{err}"
+        );
+    }
+}
+
+#[test]
+fn the_change_folder_follows_the_rules_of_the_fixture_folder() {
+    // (value, part of the message)
+    for (change, message) in [
+        (
+            "other/changes/example",
+            "`change` must be a folder under `evals/`",
+        ),
+        (
+            "evals/changes/missing",
+            "`change` has no file under `evals/changes/missing`",
+        ),
+        (
+            "evals/changes/../changes/example",
+            "`change` must use `/` separators",
+        ),
+        (
+            "evals/results/example",
+            "`change` must not be under `evals/results/`",
+        ),
+    ] {
+        let mut e = ev("example");
+        e.branch = Some("feature/x");
+        e.change = Some(change);
+        let fx = with_change(e);
+        let (code, out, err) = fx.run(&[]);
+        assert_eq!(code, 3, "{change}: {out}{err}");
+        assert!(err.contains(message), "{change}: {err}");
+    }
+    // A change that is not a string.
+    let fx = Fx::with(&[ev("example")]);
+    fx.repo.write(
+        "evals/example.json",
+        &ev("example")
+            .json()
+            .replace("\"checks\"", "\"branch\":\"b\",\"change\":3,\"checks\""),
+    );
+    fx.repo.commit("bad");
+    let (code, out, err) = fx.run(&[]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("`change` must be a string"), "{err}");
 }
 
 #[test]

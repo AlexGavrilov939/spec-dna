@@ -93,3 +93,5 @@ ADR 0008, ADR 0016 and ADR 0021 are accepted and locked, so this ADR does not ed
 - ADR 0021, "Decision Outcome": a record has 12 keys. The 3 new keys follow the 9 keys in the order `harness`, `turns`, `seconds`. "No time" means no clock time and no date. `arm` can be the name of a harness arm.
 
 ## Amendments
+
+The row of 1 pair in the table of the lab estimates is wrong, and so is the figure of 29% in the first gap. The control rate `b` is uniform from 0.2 to 0.8, and one pair is `on` only when the arm with the skill passes and the other fails. Thus the share is E[b(1 - b)] = 0.22 with no true gain, and E[(b + 0.2)(1 - b)] = 0.32 with a true gain of 0.20. The first lab run gave 0.29 and 0.44, which this model cannot give. Read these 2 values for the row `1 x 1`; the floor of 15 pairs stays, as the other rows do not change.

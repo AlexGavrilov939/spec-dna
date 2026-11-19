@@ -26,7 +26,8 @@ echo "$n" > "$STUB_DIR/n"
     echo "WHICH $(command -v spec-dna)"
     for a in "$@"; do echo "ARG $a"; done
     find .claude -type f 2>/dev/null | sort | sed 's/^/FILE /'
-    for f in AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md; do
+    [ -f eval-id.txt ] && echo "EVAL $(cat eval-id.txt)"
+    for f in AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md .claude/settings.json; do
         [ -f "$f" ] && sed "s|^|TEXT $f: |" "$f"
     done
     [ -f spec-dna.toml ] && sed 's/^/TOML /' spec-dna.toml
@@ -150,7 +151,7 @@ case "$STUB_PASS" in
     *) pass=1 ;;
 esac
 [ "$pass" = 1 ] && echo 'status: done' > notes.txt
-printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"modelUsage":{"claude-test-1":{}},"permission_denials":[],"result":"ok"}\n' "${STUB_COST:-0.1}"
+printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":4,"modelUsage":{"claude-test-1":{}},"permission_denials":[],"result":"ok"}\n' "${STUB_COST:-0.1}"
 "#;
 
 const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
@@ -500,6 +501,23 @@ fn a_kill_after_the_first_arm_keeps_the_paid_arm_in_the_result_file() {
 // The tokens, the models and the checks of each side (eval-records, R1 and R4).
 
 /// The text of the first pair of the result: `tdd-1`, run 1.
+/// The JSON text without the `"turns"` and `"seconds"` of each side: the
+/// seconds differ from run to run.
+fn no_time(json: &str) -> String {
+    let mut out = String::new();
+    let mut rest = json;
+    while let Some(at) = rest.find(",\"turns\":") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let sec = tail.find(",\"seconds\":").expect("seconds follow turns");
+        let after = &tail[sec + ",\"seconds\":".len()..];
+        let end = after.find([',', '}']).unwrap_or(after.len());
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn first_pair(json: &str) -> &str {
     let at = json
         .find("\"eval\":\"tdd-1\",\"run\":1")
@@ -607,7 +625,7 @@ fn each_side_lists_its_check_names_and_results() {
         &[("STUB_PASS", "noskill"), ("STUB_SKILL", "tdd")],
     );
     assert_eq!(code, 0, "{out}{err}");
-    let pair = first_pair(&out);
+    let pair = no_time(first_pair(&out));
     let with = &pair[..pair.find("\"without\"").unwrap()];
     assert!(
         with.ends_with("\"checks\":[{\"name\":\"notes-done\",\"passed\":false}]},"),
@@ -972,7 +990,7 @@ fn the_result_has_the_arms_the_pairs_the_interval_and_the_verdict() {
         "\"verdict\":\"on\"",
         "\"rule\":1",
         "\"cost_ratio\":null",
-        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}]},\"without\":{\"claude_exit\":0,",
+        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}],\"turns\":4,\"seconds\":",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -1022,19 +1040,20 @@ fn the_verdict_is_off_when_the_skill_makes_it_worse_and_inconclusive_when_nothin
 
 #[test]
 fn out_replaces_the_folder_of_the_result_and_the_text_output_names_the_verdict() {
-    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // 3 runs of 5 evals are 15 pairs: the floor of the verdict holds.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 3);
     let (code, out, err) = fx.run_env(
         &["tdd", "--max-total-usd", "100", "--out", "evals/out"],
         &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
     );
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.starts_with("eval run --ab tdd: 5 evals, 10 runs, estimate 10.00 USD"),
+        out.starts_with("eval run --ab tdd: 5 evals, 30 runs, estimate 30.00 USD"),
         "{out}"
     );
-    assert!(out.contains("tdd: with 5 of 5 runs passed"), "{out}");
+    assert!(out.contains("tdd: with 15 of 15 runs passed"), "{out}");
     assert!(out.contains("verdict on"), "{out}");
-    assert!(out.contains("spend 1.00 USD"), "{out}");
+    assert!(out.contains("spend 3.00 USD"), "{out}");
     assert!(
         err.contains("eval run: the result is in evals/out/skills-"),
         "{err}"
@@ -1269,6 +1288,7 @@ fn the_agent_and_the_checks_commit_with_a_neutral_identity_and_no_signature() {
         assert!(who.contains("<eval@example.invalid>"), "{who}");
         assert!(!who.contains("real@example.org"), "{who}");
     }
+    let out = no_time(&out);
     assert!(
         out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"agent-identity\",\"passed\":true},{\"name\":\"check-commits\",\"passed\":true},{\"name\":\"notes-done\",\"passed\":true}]},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,"),
         "{out}"
@@ -1404,12 +1424,12 @@ fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_ot
     let (code, out, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"release\",\"file\":null}"),
+        out.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"release\",\"file\":null,\"below_floor\":false}"),
         "{out}"
     );
     assert!(
         out.contains(
-            "{\"name\":\"brainstorm\",\"verdict\":\"on\",\"source\":\"release\",\"file\":null}"
+            "{\"name\":\"brainstorm\",\"verdict\":\"on\",\"source\":\"release\",\"file\":null,\"below_floor\":false}"
         ),
         "{out}"
     );
@@ -1528,7 +1548,7 @@ fn eval_verdict_reads_the_newest_file_that_holds_each_name() {
     assert_eq!(get("verify").2, "release");
     let (_, json, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
     assert!(
-        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"project\",\"file\":\"evals/results/skills-20261120T100000Z.json\"}"),
+        json.contains("{\"name\":\"tdd\",\"verdict\":\"on\",\"source\":\"project\",\"file\":\"evals/results/skills-20261120T100000Z.json\",\"below_floor\":false}"),
         "{json}"
     );
 }
@@ -1765,8 +1785,8 @@ fn the_result_is_written_after_each_pair() {
 }
 
 /// The part of a result from `"skills":` on, which has no time and no spend.
-fn skills_of(json: &str) -> &str {
-    &json[json.find("\"skills\":").expect("skills")..]
+fn skills_of(json: &str) -> String {
+    no_time(&json[json.find("\"skills\":").expect("skills")..])
 }
 
 #[test]
@@ -1970,6 +1990,7 @@ fn the_arms_allow_the_tool_skill_and_the_result_counts_the_permission_denials() 
         let at = args.iter().position(|a| a == "--allowedTools").unwrap();
         assert_eq!(args[at + 1], "Read,Edit,Skill", "call {n}");
     }
+    let out = no_time(&out);
     assert!(
         out.contains("\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":2,\"passed\":true,\"tokens\":null,\"models\":[],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}]},\"without\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,"),
         "{out}"
@@ -2010,4 +2031,1005 @@ fn isolate_is_the_default_of_ab_and_no_isolate_switches_it_off() {
     // `--no-isolate` is an option of `--ab` only.
     let (code, _, err) = fx.raw(&["eval", "run", "--no-isolate"], &[]);
     assert_eq!(code, 2, "{err}");
+}
+
+// D57: the harness arms (`--arms`, `--harness`).
+
+/// The id of the plain evals of the arm tests, in the order of their ids.
+const TEAM: [&str; 2] = ["team-01", "team-02"];
+
+impl Fx {
+    /// Adds the plain evals `ids` to `evals/`, each with its own fixture. The
+    /// fixture names its eval id, so the stub can tell which eval it runs.
+    /// The host also gets a file of `.claude/` and a rule in `AGENTS.md` that
+    /// no arm may copy.
+    fn add_plain(&self, ids: &[&str]) {
+        for id in ids {
+            self.repo.write(
+                &format!("evals/{id}.json"),
+                &format!(
+                    "{{\"id\":\"{id}\",\"task\":\"Change draft to done.\",\"fixture\":\"evals/fixtures/{id}\",\"allowed-tools\":[\"Read\",\"Edit\"],\"max-turns\":5,\"max-budget-usd\":1,\"runs\":1,\"checks\":[{{\"name\":\"notes-done\",\"run\":\"file_has notes.txt 'status: done'\"}}]}}\n"
+                ),
+            );
+            let fixture = format!("evals/fixtures/{id}");
+            self.repo
+                .write(&format!("{fixture}/notes.txt"), "status: draft\n");
+            self.repo
+                .write(&format!("{fixture}/eval-id.txt"), &format!("{id}\n"));
+            // A fixture with a root, so `spec-dna check` loads its configuration.
+            self.repo.write(
+                &format!("{fixture}/spec-dna.toml"),
+                "spec-dna = \"0.0.1\"\n\n[[roots]]\npath = \"docs\"\n",
+            );
+            self.repo
+                .write(&format!("{fixture}/docs/a.md"), "# A\n\nText.\n");
+        }
+        self.repo.write(".claude/host-only.md", "host only\n");
+        let agents = fs::read_to_string(self.repo.dir.join("AGENTS.md")).unwrap_or_default();
+        self.repo
+            .write("AGENTS.md", &format!("{agents}\nHOST-ONLY-RULE\n"));
+        self.repo.commit("plain evals");
+    }
+
+    /// `eval run --arms <list> <args>`.
+    fn arms(&self, list: &str, args: &[&str], extra: &[(&str, &str)]) -> (i32, String, String) {
+        let mut full = vec!["eval", "run", "--arms", list];
+        full.extend_from_slice(args);
+        self.raw(&full, extra)
+    }
+
+    /// The harness arm that call `n` ran in, read from the `[harness]` table
+    /// that the runner wrote into the copy.
+    fn arm_of(&self, n: usize) -> String {
+        let toml: Vec<String> = self.calls()[n]
+            .iter()
+            .filter_map(|l| l.strip_prefix("TOML ").map(str::to_string))
+            .collect();
+        if toml.iter().any(|l| l == "level = \"none\"") {
+            "none".to_string()
+        } else if toml
+            .iter()
+            .any(|l| l.starts_with("advisor = ") && l.contains("claude-code = \"none\""))
+        {
+            "lean-no-advisor".to_string()
+        } else if toml.iter().any(|l| l == "level = \"lean\"") {
+            "lean".to_string()
+        } else if toml.iter().any(|l| l == "level = \"full\"") {
+            "full".to_string()
+        } else {
+            "project".to_string()
+        }
+    }
+
+    fn eval_of(&self, n: usize) -> String {
+        self.calls()[n]
+            .iter()
+            .find_map(|l| l.strip_prefix("EVAL ").map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    /// The (eval, arm) of each call, in the order of the calls.
+    fn order(&self) -> Vec<(String, String)> {
+        (0..self.calls().len())
+            .map(|n| (self.eval_of(n), self.arm_of(n)))
+            .collect()
+    }
+
+    /// The call that ran in the arm `arm`, for the first eval of the run.
+    fn call_of(&self, arm: &str) -> usize {
+        (0..self.calls().len())
+            .find(|n| self.arm_of(*n) == arm)
+            .unwrap_or_else(|| panic!("no call in the arm {arm}"))
+    }
+}
+
+fn pair(a: &str, b: &str) -> (String, String) {
+    (a.to_string(), b.to_string())
+}
+
+#[test]
+fn the_arm_none_has_no_claude_folder_and_only_the_adapter_line() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let n = fx.call_of("none");
+    let call = fx.calls()[n].clone();
+    let files: Vec<&String> = call.iter().filter(|l| l.starts_with("FILE ")).collect();
+    assert!(files.is_empty(), "the arm none has no .claude: {files:?}");
+    // The arm gets the adapter line of this binary, and nothing of the host.
+    for rel in ["AGENTS.md", "CLAUDE.md"] {
+        let text = fx.text(n, rel);
+        assert!(
+            text.contains(&format!("<!-- spec-dna v{VERSION} h:")),
+            "{rel}: {text}"
+        );
+        assert!(!text.contains("HOST-ONLY-RULE"), "{rel}: {text}");
+    }
+    assert!(!fx.text(n, "CLAUDE.md").contains("advisor"));
+    // The table `[harness]` is in the copy, and the pin is the version of the binary.
+    let toml: Vec<String> = fx.calls()[n]
+        .iter()
+        .filter_map(|l| l.strip_prefix("TOML ").map(str::to_string))
+        .collect();
+    assert!(
+        toml.contains(&format!("spec-dna = \"{VERSION}\"")),
+        "{toml:?}"
+    );
+    assert!(toml.contains(&"[harness]".to_string()), "{toml:?}");
+    fx.assert_clean();
+}
+
+#[test]
+fn lean_no_advisor_has_no_advisor_model_and_no_fallback_agent_and_lean_has_both() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms(
+        "none,lean-no-advisor,lean",
+        &["--max-total-usd", "100"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let (b, c) = (fx.call_of("lean-no-advisor"), fx.call_of("lean"));
+    assert!(fx.has_file(b, ".claude/settings.json"));
+    assert!(!fx.text(b, ".claude/settings.json").contains("advisorModel"));
+    assert!(!fx.has_file(b, ".claude/agents/fallback-advisor.md"));
+    assert!(
+        !fx.text(b, "CLAUDE.md").contains("advisor"),
+        "{}",
+        fx.text(b, "CLAUDE.md")
+    );
+    assert!(fx.text(c, ".claude/settings.json").contains("advisorModel"));
+    assert!(fx.has_file(c, ".claude/agents/fallback-advisor.md"));
+    assert!(fx.text(c, "CLAUDE.md").contains("advisor"));
+    // The arms differ only in the advisor: the other roles are the same.
+    for file in [".claude/agents/verifier.md", ".claude/agents/Explore.md"] {
+        assert!(fx.has_file(b, file) && fx.has_file(c, file), "{file}");
+    }
+    assert!(fx.has_file(b, ".claude/agents/model-team.md"));
+    assert!(
+        fx.calls()[b]
+            .iter()
+            .all(|l| !l.starts_with("FILE .claude/skills/"))
+    );
+    assert!(
+        fx.calls()[c]
+            .iter()
+            .all(|l| !l.starts_with("FILE .claude/skills/"))
+    );
+}
+
+#[test]
+fn no_file_of_the_host_harness_is_in_any_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms(
+        "none,lean-no-advisor,lean",
+        &["--max-total-usd", "100"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 3);
+    for n in 0..3 {
+        for file in [".claude/host-only.md", ".claude/skills/spec-dna/SKILL.md"] {
+            assert!(!fx.has_file(n, file), "call {n} has {file}");
+        }
+        assert!(!fx.text(n, "AGENTS.md").contains("HOST-ONLY-RULE"));
+    }
+}
+
+#[test]
+fn each_arm_runs_with_the_main_model_and_the_effort_of_lean_and_isolated() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    for n in 0..2 {
+        let args = fx.args(n);
+        let at = args.iter().position(|a| a == "--model").expect("--model");
+        assert_eq!(
+            &args[at..at + 4],
+            ["--model", "opus", "--effort", "xhigh"],
+            "{args:?}"
+        );
+        let at = args.iter().position(|a| a == "--setting-sources").unwrap();
+        assert_eq!(
+            &args[at..at + 3],
+            ["--setting-sources", "project", "--strict-mcp-config"]
+        );
+    }
+    // A plain `--ab` keeps the command line of 0.7.1: no model, no effort.
+    let (code, out, err) = fx.run(&["tdd", "--runs", "1", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let args = fx.args(fx.calls().len() - 1);
+    assert!(!args.contains(&"--model".to_string()), "{args:?}");
+    assert!(!args.contains(&"--effort".to_string()), "{args:?}");
+    // The arm `project` of `--arms` gets the same main model, the same effort,
+    // the pin and the adapter line of the binary as each other arm (D57), so
+    // the main model never differs between the arms.
+    let before = fx.calls().len();
+    let (code, out, err) = fx.arms("project,none", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let project = (before..fx.calls().len())
+        .find(|n| fx.arm_of(*n) == "project")
+        .unwrap();
+    let args = fx.args(project);
+    let at = args.iter().position(|a| a == "--model").expect("--model");
+    assert_eq!(
+        &args[at..at + 4],
+        ["--model", "opus", "--effort", "xhigh"],
+        "{args:?}"
+    );
+    assert!(
+        fx.has_file(project, ".claude/host-only.md"),
+        "the arm project is the host"
+    );
+    let toml: Vec<String> = fx.calls()[project]
+        .iter()
+        .filter_map(|l| l.strip_prefix("TOML ").map(str::to_string))
+        .collect();
+    assert!(
+        toml.contains(&format!("spec-dna = \"{VERSION}\"")),
+        "the pin: {toml:?}"
+    );
+    assert!(toml.contains(&"SD502 = \"off\"".to_string()), "{toml:?}");
+}
+
+#[test]
+fn the_arm_project_gets_the_adapter_line_of_the_binary_and_the_model_flags_of_harness_project() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    // The host has the adapter line of another version.
+    let host = fs::read_to_string(fx.repo.dir.join("AGENTS.md")).unwrap();
+    let old = host.replace(
+        &format!("<!-- spec-dna v{VERSION} "),
+        "<!-- spec-dna v0.0.1 ",
+    );
+    assert_ne!(old, host, "the host has the adapter line");
+    fx.repo.write("AGENTS.md", &old);
+    fx.repo.commit("old line");
+    let (code, out, err) = fx.arms("project,none", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let project = fx.call_of("project");
+    let text = fx.text(project, "AGENTS.md");
+    assert!(
+        text.contains(&format!("<!-- spec-dna v{VERSION} h:")),
+        "{text}"
+    );
+    assert!(!text.contains("v0.0.1"), "{text}");
+    // `--harness project` of a plain run is a named arm too: it gets the
+    // flags. A plain run with no `--harness` keeps the command line of 0.7.1.
+    let before = fx.calls().len();
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "run",
+            "--harness",
+            "project",
+            "--max-total-usd",
+            "100",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let args = fx.args(before);
+    assert!(
+        args.windows(4)
+            .any(|w| w == ["--model", "opus", "--effort", "xhigh"]),
+        "{args:?}"
+    );
+    let (code, out, err) = fx.raw(&["eval", "run", "--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let args = fx.args(before + 1);
+    assert!(!args.contains(&"--model".to_string()), "{args:?}");
+}
+
+#[test]
+fn the_order_of_the_arms_rotates_by_the_eval_and_the_wave() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let (code, out, err) = fx.arms("none,lean", &["--runs", "2", "--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Wave 1 runs both evals, and then wave 2. The arms rotate left by
+    // (eval index + wave) mod 2.
+    assert_eq!(
+        fx.order(),
+        vec![
+            pair("team-01", "lean"),
+            pair("team-01", "none"),
+            pair("team-02", "none"),
+            pair("team-02", "lean"),
+            pair("team-01", "none"),
+            pair("team-01", "lean"),
+            pair("team-02", "lean"),
+            pair("team-02", "none"),
+        ]
+    );
+    fx.assert_clean();
+}
+
+#[test]
+fn three_arms_rotate_through_the_3_orders() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms(
+        "none,lean-no-advisor,lean",
+        &["--runs", "3", "--max-total-usd", "100"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let arms: Vec<String> = fx.order().into_iter().map(|p| p.1).collect();
+    assert_eq!(
+        arms,
+        [
+            "lean-no-advisor",
+            "lean",
+            "none", // wave 1: rotate by 1
+            "lean",
+            "none",
+            "lean-no-advisor", // wave 2: rotate by 2
+            "none",
+            "lean-no-advisor",
+            "lean", // wave 3: rotate by 0
+        ]
+    );
+}
+
+#[test]
+fn a_stop_by_the_cap_after_1_and_a_half_waves_keeps_the_first_wave_only_in_the_analysis() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // A wave is 2 evals x 2 arms = 4 runs of 1 USD. The cap of 6.5 USD stops
+    // before the 7th run: wave 1 is complete, and wave 2 has 2 runs.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--runs", "2", "--max-total-usd", "6.5", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 6);
+    assert!(out.contains("\"stopped\":\"max-total-usd\""), "{out}");
+    assert!(out.contains("\"waves\":1"), "{out}");
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert!(
+        names[0].starts_with("arms-") && names[0].ends_with("Z.json"),
+        "{names:?}"
+    );
+    // The file keeps the 6 runs, and the analysis uses 2 pairs of wave 1.
+    let file = format!("evals/results/{}", names[0]);
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &file, "--json"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    for part in [
+        "\"treatment\":\"lean\"",
+        "\"control\":\"none\"",
+        "\"waves\":1,\"planned_waves\":2",
+        "\"evals\":2,\"pairs\":2",
+        "\"verdict\":\"inconclusive\"",
+        "\"below_floor\":true",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    let (code, out, _) = fx.raw(&["eval", "verdict", "--compare", "lean,none", &file], &[]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("below the floor (2 pairs of 2 evals; the floor is 15 pairs of 5 evals)"),
+        "{out}"
+    );
+    assert!(out.contains("waves: 1 complete of 2 planned"), "{out}");
+    // `--resume` finishes wave 2.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--resume", &file, "--max-total-usd", "100", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 8, "only the 2 runs that were left");
+    assert!(out.contains("\"waves\":2"), "{out}");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+    assert_eq!(fx.results().len(), 1, "--resume writes the same file");
+}
+
+#[test]
+fn the_result_of_arms_has_one_side_for_each_arm_with_the_turns_and_the_seconds() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    for part in [
+        &format!("\"spec_dna\":\"{VERSION}\""),
+        "\"claude_code\":\"2.1.325\"",
+        "\"arms\":[\"none\",\"lean\"]",
+        "\"excluded\":{\"none\":0,\"lean\":0}",
+        "\"waves\":1",
+        "\"evals\":[{\"id\":\"team-01\",\"runs\":1,\"max_budget_usd\":1,\"results\":[{\"run\":1,\"arms\":{\"none\":{\"claude_exit\":0,",
+        "\"turns\":4,\"seconds\":",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    assert!(!out.contains("Change draft"), "no task text");
+    assert!(
+        !out.contains("\"verdict\""),
+        "a result of arms has no verdict item"
+    );
+    // An arms file is no input of the verdict of a skill.
+    assert!(fx.results()[0].starts_with("arms-"));
+    let (code, out, _) = fx.raw(&["eval", "verdict"], &[]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn the_usage_errors_of_arms_and_harness_start_no_process() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let cases: [(&[&str], &str); 11] = [
+        (&["--arms", "none,nonsense"], "no harness arm"),
+        (&["--arms", "none"], "2 or 3 arms"),
+        (&["--arms", "none,lean,full,project"], "2 or 3 arms"),
+        (&["--arms", "none,none"], "twice"),
+        (&["--arms", "none,lean", "--ab"], "exclude each other"),
+        (&["--arms", "none,lean", "--no-isolate"], "--no-isolate"),
+        (&["--harness", "lean", "--no-isolate"], "--no-isolate"),
+        (&["--harness", "nonsense"], "no harness arm"),
+        (
+            &["--arms", "none,lean", "--harness", "lean"],
+            "exclude each other",
+        ),
+        (
+            &["--arms", "none,lean", "--min-pass-rate", "0.5"],
+            "--min-pass-rate",
+        ),
+        (
+            &["--ab", "tdd", "--harness", "lean", "--no-isolate"],
+            "--no-isolate",
+        ),
+    ];
+    for (args, message) in cases {
+        let mut full = vec!["eval", "run"];
+        full.extend_from_slice(args);
+        let (code, _, err) = fx.raw(&full, &[]);
+        assert_eq!(code, 2, "{args:?}: {err}");
+        assert!(err.contains(message), "{args:?}: {err}");
+    }
+    assert!(fx.calls().is_empty(), "no process may start");
+    // The options belong to `eval run`.
+    for args in [
+        vec!["check", "--arms", "none,lean"],
+        vec!["eval", "verdict", "--arms", "none,lean"],
+        vec!["eval", "pack", "--harness", "lean"],
+        vec!["eval", "run", "--compare", "a,b"],
+        vec!["check", "--compare", "a,b"],
+    ] {
+        let (code, _, err) = fx.raw(&args, &[]);
+        assert_eq!(code, 2, "{args:?}: {err}");
+    }
+    // A usage error comes before the check of the pin.
+    fx.repo.write(
+        "spec-dna.toml",
+        &fs::read_to_string(fx.repo.dir.join("spec-dna.toml"))
+            .unwrap()
+            .replace(VERSION, "0.0.1"),
+    );
+    let (code, _, err) = fx.arms("none,nonsense", &[], &[]);
+    assert_eq!(code, 2, "{err}");
+    let (code, _, err) = fx.arms("none,lean", &[], &[]);
+    assert_eq!(code, 3, "the pin: {err}");
+}
+
+#[test]
+fn a_dry_run_of_arms_prints_the_estimate_and_starts_nothing() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let (code, out, err) = fx.arms(
+        "none,lean-no-advisor,lean",
+        &["--runs", "5", "--dry-run", "--max-total-usd", "100"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("eval run --arms none,lean-no-advisor,lean (dry run): 2 evals, 3 arms, 30 runs, estimate 30.00 USD, cap 100.00 USD\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("team-01: 5 runs, max-budget-usd 1.00, estimate 15.00 USD"),
+        "{out}"
+    );
+    let (code, out, _) = fx.arms("none,lean", &["--dry-run", "--json"], &[]);
+    assert_eq!(code, 0);
+    assert!(out.contains("\"arms\":[\"none\",\"lean\"]"), "{out}");
+    assert!(fx.calls().is_empty());
+    assert!(fx.results().is_empty());
+    // An id that is not an eval is a usage error.
+    let (code, _, err) = fx.arms("none,lean", &["nonsense", "--dry-run"], &[]);
+    assert_eq!(code, 2, "{err}");
+    // Ids select the evals.
+    let (code, out, _) = fx.arms("none,lean", &["team-02", "--dry-run"], &[]);
+    assert_eq!(code, 0);
+    assert!(out.contains("1 evals, 2 arms, 2 runs"), "{out}");
+}
+
+#[test]
+fn resume_of_arms_refuses_other_arms_and_a_file_of_ab() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    for list in ["none,lean-no-advisor", "lean,none", "none,lean,full"] {
+        let (code, _, err) = fx.arms(list, &["--resume", &file], &[]);
+        assert_eq!(code, 2, "{list}: {err}");
+        assert!(
+            err.contains("the same arms in the same order"),
+            "{list}: {err}"
+        );
+    }
+    // `--resume` is for `--ab` and `--arms` only.
+    let (code, _, err) = fx.raw(&["eval", "run", "--resume", &file], &[]);
+    assert_eq!(code, 2, "{err}");
+    // `--ab --resume` of a file with another harness.
+    let (code, out, err) = fx.run(&["tdd", "--runs", "1", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let ab = fx
+        .results()
+        .into_iter()
+        .find(|n| n.starts_with("skills-"))
+        .unwrap();
+    let ab = format!("evals/results/{ab}");
+    let (code, _, err) = fx.run(&["tdd", "--resume", &ab, "--harness", "lean"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("the file has the harness `project`"), "{err}");
+    // A file of 0.7.1 has no key `harness`: it is the arm `project`.
+    let text = fs::read_to_string(fx.repo.dir.join(&ab)).unwrap();
+    assert!(text.contains("\"harness\": \"project\""), "{text}");
+    fs::write(
+        fx.repo.dir.join(&ab),
+        text.replace("  \"harness\": \"project\",\n", ""),
+    )
+    .unwrap();
+    let (code, out, err) = fx.run(&["tdd", "--resume", &ab, "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn resume_of_arms_takes_the_eval_ids_of_its_file_and_runs_only_the_missing_sides() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // 1 eval, 2 runs, and a cap that stops before the 4th side.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["team-02", "--runs", "2", "--max-total-usd", "3.5", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 3);
+    let file = format!("evals/results/{}", fx.results()[0]);
+    // No id: the evals of the file, not all evals of the project.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--resume", &file, "--max-total-usd", "100", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4, "only the 1 side that was left");
+    assert_eq!(fx.eval_of(3), "team-02");
+    assert!(out.contains("\"spend_usd\":4"), "{out}");
+    assert!(!out.contains("team-01"), "{out}");
+    assert_eq!(fx.results().len(), 1);
+}
+
+#[test]
+fn resume_of_arms_with_fewer_ids_keeps_the_results_and_the_spend_of_the_other_evals() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // Wave 1 runs (4 sides, 4 USD), and the cap stops before wave 2.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--runs", "2", "--max-total-usd", "4.5", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4);
+    let file = format!("evals/results/{}", fx.results()[0]);
+    // An eval of the project that the file does not have is a usage error,
+    // and no side runs.
+    fx.add_plain(&["team-03"]);
+    let (code, _, err) = fx.arms("none,lean", &["team-03", "--resume", &file], &[]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("team-03") && err.contains(&file), "{err}");
+    assert_eq!(fx.calls().len(), 4);
+    // The file has `team-01` and `team-02`, so `team-02` alone is allowed. It
+    // runs the 2 sides of its run 2, and it does not run `team-01`.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &[
+            "team-02",
+            "--resume",
+            &file,
+            "--max-total-usd",
+            "100",
+            "--json",
+        ],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 6, "2 calls, not 4");
+    assert_eq!(
+        (fx.eval_of(4), fx.eval_of(5)),
+        ("team-02".into(), "team-02".into())
+    );
+    // The spend of the file stays in the total, and `team-01` keeps its
+    // wave-1 sides and its plan of 2 runs.
+    assert!(out.contains("\"spend_usd\":6"), "{out}");
+    for part in [
+        "{\"id\":\"team-01\",\"runs\":2,",
+        "{\"id\":\"team-02\",\"runs\":2,",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    let text = fs::read_to_string(fx.repo.dir.join(&file)).unwrap();
+    assert_eq!(text.matches("\"claude_exit\"").count(), 6, "{text}");
+    // `team-01` has run 1 only, so wave 2 is not complete.
+    assert!(out.contains("\"waves\":1"), "{out}");
+}
+
+#[test]
+fn the_stop_message_of_arms_prints_the_command_that_goes_on() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["ok", "sighup"]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 129, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    assert!(
+        err.contains(&format!(
+            "Go on with spec-dna eval run --arms none,lean --resume {file}\n"
+        )),
+        "{err}"
+    );
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["429"; 20]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 3, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    assert!(
+        err.contains(&format!(
+            "again later with spec-dna eval run --arms none,lean --resume {file}\n"
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn compare_gives_usage_errors_for_the_arms_and_exit_code_3_for_other_files() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    for (pair, message) in [
+        ("lean", "not 2 arm names"),
+        ("lean,none,full", "not 2 arm names"),
+        ("lean,", "not 2 arm names"),
+        ("lean,lean", "named twice"),
+        (
+            "lean,full",
+            "the file has no arm `full`; its arms are none, lean",
+        ),
+    ] {
+        let (code, _, err) = fx.raw(&["eval", "verdict", "--compare", pair, &file], &[]);
+        assert_eq!(code, 2, "{pair}: {err}");
+        assert!(err.contains(message), "{pair}: {err}");
+    }
+    // The same name twice is a usage error before the file is read.
+    let (code, _, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,lean",
+            "evals/missing.json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("named twice"), "{err}");
+    // No file, 2 files, and `--release`.
+    for args in [
+        vec!["eval", "verdict", "--compare", "lean,none"],
+        vec!["eval", "verdict", "--compare", "lean,none", &file, &file],
+        vec![
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &file,
+            "--release",
+        ],
+    ] {
+        let (code, _, err) = fx.raw(&args, &[]);
+        assert_eq!(code, 2, "{args:?}: {err}");
+    }
+    // A result of `--ab`, a file that is not JSON, and a missing file.
+    let (code, out, err) = fx.run(&["tdd", "--runs", "1", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let ab = fx
+        .results()
+        .into_iter()
+        .find(|n| n.starts_with("skills-"))
+        .unwrap();
+    fs::write(fx.repo.dir.join("evals/results/not-json.json"), "nope").unwrap();
+    for other in [
+        format!("evals/results/{ab}"),
+        "evals/results/not-json.json".to_string(),
+        "evals/results/missing.json".to_string(),
+    ] {
+        let (code, _, err) = fx.raw(&["eval", "verdict", "--compare", "lean,none", &other], &[]);
+        assert_eq!(code, 3, "{other}: {err}");
+    }
+    // The text of a complete run with the floor.
+    let (code, out, err) = fx.raw(&["eval", "verdict", "--compare", "none,lean", &file], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("none against lean: none 1 of 1 runs passed, lean 1 of 1,"),
+        "{out}"
+    );
+    assert!(
+        out.contains("verdict inconclusive, below the floor (1 pairs of 1 evals;"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_plain_run_with_harness_gets_the_arm_the_model_flags_and_the_name_in_its_result() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "run",
+            "--harness",
+            "lean-no-advisor",
+            "--max-total-usd",
+            "100",
+            "--json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"harness\":\"lean-no-advisor\""), "{out}");
+    assert_eq!(fx.arm_of(0), "lean-no-advisor");
+    assert!(!fx.text(0, ".claude/settings.json").contains("advisorModel"));
+    assert!(!fx.has_file(0, ".claude/host-only.md"));
+    let args = fx.args(0);
+    assert!(
+        args.windows(4)
+            .any(|w| w == ["--model", "opus", "--effort", "xhigh"]),
+        "{args:?}"
+    );
+    assert!(
+        args.contains(&"--setting-sources".to_string()),
+        "isolated: {args:?}"
+    );
+    // `--harness project` keeps the files of the host, and it isolates. It is a
+    // named arm, so it gets the model flags of the other arms.
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "run",
+            "--harness",
+            "project",
+            "--max-total-usd",
+            "100",
+            "--json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"harness\":\"project\""), "{out}");
+    let args = fx.args(1);
+    assert!(
+        args.contains(&"--setting-sources".to_string()),
+        "isolated: {args:?}"
+    );
+    assert!(
+        args.windows(4)
+            .any(|w| w == ["--model", "opus", "--effort", "xhigh"]),
+        "{args:?}"
+    );
+    assert!(fx.has_file(1, ".claude/host-only.md"));
+    // Without `--harness`, a plain run is the arm `project`.
+    let (code, out, err) = fx.raw(&["eval", "run", "--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"harness\":\"project\""), "{out}");
+    assert!(!fx.args(2).contains(&"--model".to_string()));
+    assert!(fx.has_file(2, ".claude/host-only.md"));
+}
+
+#[test]
+fn ab_with_harness_gives_the_team_and_the_default_skills_to_each_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--harness",
+        "lean",
+        "--runs",
+        "1",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"harness\":\"lean\""), "{out}");
+    // Pairs run `with` first for run 1: calls 0 and 1 are one pair.
+    let (with, without) = (0, 1);
+    for n in [with, without] {
+        assert_eq!(fx.arm_of(n), "lean");
+        assert!(
+            fx.has_file(n, ".claude/agents/fallback-advisor.md"),
+            "the team of the arm"
+        );
+        assert!(
+            !fx.has_file(n, ".claude/skills/spec-dna/SKILL.md"),
+            "no file of the host"
+        );
+        assert!(
+            fx.has_file(n, &skill_path("write-plan")),
+            "a default skill: {:?}",
+            fx.calls()[n]
+        );
+        let args = fx.args(n);
+        assert!(
+            args.windows(4)
+                .any(|w| w == ["--model", "opus", "--effort", "xhigh"])
+        );
+    }
+    // The edit of `--ab` adds the skill to `with` and removes it from `without`.
+    assert!(fx.has_file(with, &skill_path("tdd")));
+    assert!(!fx.has_file(without, &skill_path("tdd")));
+    let toml = |n: usize| -> String {
+        fx.calls()[n]
+            .iter()
+            .filter_map(|l| l.strip_prefix("TOML "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(toml(with).contains("\"tdd\""), "{}", toml(with));
+    assert!(!toml(without).contains("\"tdd\""), "{}", toml(without));
+    fx.assert_clean();
+}
+
+#[test]
+fn a_result_of_ab_has_the_harness_the_turns_the_seconds_and_the_floor() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    // 5 pairs: the arms differ, but the sample is below the floor.
+    assert!(out.contains("\"harness\":\"project\",\"runs\""), "{out}");
+    assert!(
+        out.contains("\"verdict\":\"inconclusive\",\"rule\":null,\"below_floor\":true,\"pairs\":["),
+        "{out}"
+    );
+    assert!(out.contains("\"turns\":4,\"seconds\":"), "{out}");
+    let (code, out, _) = fx.run_env(
+        &["tdd", "--max-total-usd", "100"],
+        &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("verdict inconclusive, below the floor (5 pairs of 5 evals; the floor is 15 pairs of 5 evals)"),
+        "{out}"
+    );
+    // `eval verdict` reads the file as `inconclusive`, with the floor.
+    let (code, out, _) = fx.raw(&["eval", "verdict", "--json"], &[]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("{\"name\":\"tdd\",\"verdict\":\"inconclusive\",\"source\":\"project\""),
+        "{out}"
+    );
+    assert!(out.contains("\"below_floor\":true"), "{out}");
+    // 3 runs of 5 evals are 15 pairs: the floor holds, and the verdict is `on`.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 3);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"verdict\":\"on\",\"rule\":1,\"below_floor\":false"),
+        "{out}"
+    );
+}
+
+/// The codes `SDnnn` that a report of `check` names, sorted and once.
+fn codes(report: &str) -> Vec<String> {
+    let mut found: Vec<String> = report
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| {
+            w.len() == 5 && w.starts_with("SD") && w[2..].bytes().all(|b| b.is_ascii_digit())
+        })
+        .map(str::to_string)
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[test]
+fn the_copy_of_each_built_in_arm_loads_its_configuration_and_passes_check() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["check"; 8]);
+    for (list, calls) in [("none,lean-no-advisor,lean", 3), ("full,lean", 2)] {
+        let before = fx.calls().len();
+        let (code, out, err) = fx.arms(list, &["--max-total-usd", "100"], &[]);
+        assert_eq!(code, 0, "{list}: {out}{err}");
+        assert_eq!(fx.calls().len(), before + calls);
+        for n in before + 1..=before + calls {
+            let report = fs::read_to_string(fx.path(&format!("check-{n}"))).unwrap_or_default();
+            assert!(!report.is_empty(), "{list} call {n}: no report");
+            // The configuration loads, and no code of the harness appears.
+            assert!(
+                !report.starts_with("spec-dna: "),
+                "{list} call {n}: {report}"
+            );
+            assert!(
+                codes(&report).iter().all(|c| !c.starts_with("SD50")),
+                "{list} call {n} ({}): {report}",
+                fx.arm_of(n - 1)
+            );
+        }
+    }
+}
+
+#[test]
+fn ab_with_harness_gives_check_the_same_codes_in_with_and_without() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    for n in 1..=5 {
+        let fixture = format!("evals/pack/fixtures/tdd-{n}");
+        fx.repo.write(
+            &format!("{fixture}/spec-dna.toml"),
+            "spec-dna = \"0.0.1\"\n\n[[roots]]\npath = \"docs\"\n",
+        );
+        fx.repo
+            .write(&format!("{fixture}/docs/a.md"), "# A\n\nText.\n");
+    }
+    fx.repo.commit("fixtures with a root");
+    fx.modes(&["check"; 10]);
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--harness",
+        "lean",
+        "--runs",
+        "1",
+        "--max-total-usd",
+        "100",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10);
+    // Calls 1 and 2 are the arms of the first pair, and so on.
+    for pair in 0..5 {
+        let (with, without) = (2 * pair + 1, 2 * pair + 2);
+        let report =
+            |n: usize| fs::read_to_string(fx.path(&format!("check-{n}"))).unwrap_or_default();
+        let (a, b) = (report(with), report(without));
+        assert!(!a.is_empty() && !b.is_empty(), "pair {pair}: no report");
+        assert!(!a.starts_with("spec-dna: "), "with: {a}");
+        assert!(!b.starts_with("spec-dna: "), "without: {b}");
+        assert!(
+            codes(&a).iter().all(|c| !c.starts_with("SD50")),
+            "with: {a}"
+        );
+        assert!(
+            codes(&b).iter().all(|c| !c.starts_with("SD50")),
+            "without: {b}"
+        );
+        assert_eq!(codes(&a), codes(&b), "pair {pair}: with {a} without {b}");
+    }
 }

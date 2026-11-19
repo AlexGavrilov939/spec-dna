@@ -6,15 +6,15 @@
 //! has 9 keys: `skill`, `eval`, `run`, `arm`, `pass`, `cost`, `tokens`,
 //! `models` and `claude_code`. It has no path, no text and no time.
 //!
-//! The writer is an allowlist. It builds each record from 9 values that it
-//! checks against their form, and it never copies an object of the input.
+//! The writer is an allowlist. It builds each record from 9 values (12 for a
+//! result of 0.8.0) that it checks against their form, and it never copies an object of the input.
 //! A value outside its form stops the import. A message names the key and
 //! never the value, because the value can be a secret. After the records are
 //! built, the command computes each item again from them (`verdict::analyze`)
 //! and compares the result with the item of the file. A mismatch stops the
 //! import, and nothing is printed.
 
-use crate::eval_run::r6;
+use crate::eval_run::{HarnessArm, r6};
 use crate::json::{self, Obj, Value};
 use crate::repo::Fatal;
 use crate::verdict::{self, Pair};
@@ -28,6 +28,10 @@ const MAX_MODELS: usize = 8;
 /// The largest result file that the command reads: 16 MiB. A result of the
 /// full run is about 100 KB.
 const MAX_FILE: u64 = 16 * 1024 * 1024;
+/// The most turns of one record.
+const MAX_TURNS: u64 = 1_000_000;
+/// The most seconds of one record.
+const MAX_SECONDS: f64 = 10_000_000.0;
 /// The tolerance of a cost sum: the records keep costs of 6 decimals.
 const COST_TOLERANCE: f64 = 1e-5 + 1e-9;
 /// The tolerance of the interval of the cost ratio.
@@ -98,12 +102,24 @@ struct Tokens {
     cache_write: u64,
 }
 
-/// One record: the 9 values.
+/// The 3 keys of 0.8.0 (ADR 0030).
+struct Extra {
+    /// The harness arm of the copy.
+    harness: String,
+    turns: Option<u32>,
+    seconds: Option<f64>,
+}
+
+/// One record: the 9 values, and the 3 values of 0.8.0 if the file has them.
 struct Record {
     skill: String,
     eval: String,
     run: u32,
     with: bool,
+    /// The name of the arm of a batch of `--arms`. `None` for `with` and
+    /// `without`.
+    arm: Option<String>,
+    extra: Option<Extra>,
     pass: bool,
     cost: Option<f64>,
     tokens: Option<Tokens>,
@@ -117,7 +133,12 @@ impl Record {
             .str("skill", &self.skill)
             .str("eval", &self.eval)
             .num("run", self.run)
-            .str("arm", if self.with { "with" } else { "without" })
+            .str(
+                "arm",
+                self.arm
+                    .as_deref()
+                    .unwrap_or(if self.with { "with" } else { "without" }),
+            )
             .bool("pass", self.pass);
         let obj = match self.cost {
             Some(c) => obj.num("cost", c),
@@ -135,9 +156,22 @@ impl Record {
             ),
             None => obj.raw("tokens", "null"),
         };
-        obj.strs("models", &self.models)
-            .opt_str("claude_code", self.claude_code.as_deref())
-            .end()
+        let obj = obj
+            .strs("models", &self.models)
+            .opt_str("claude_code", self.claude_code.as_deref());
+        let Some(x) = &self.extra else {
+            return obj.end();
+        };
+        let obj = obj.str("harness", &x.harness);
+        let obj = match x.turns {
+            Some(n) => obj.num("turns", n),
+            None => obj.raw("turns", "null"),
+        };
+        match x.seconds {
+            Some(n) => obj.num("seconds", n),
+            None => obj.raw("seconds", "null"),
+        }
+        .end()
     }
 }
 
@@ -161,6 +195,38 @@ fn count(v: &Value) -> Option<u64> {
     num(v)
         .filter(|n| *n >= 0.0 && n.fract() == 0.0 && *n < 9e15)
         .map(|n| n as u64)
+}
+
+/// The `turns` of a side: absent or `null` gives `None`, and a count gives
+/// the count.
+fn turns_of(v: &Value) -> Result<Option<u32>, Fatal> {
+    match v {
+        Value::Null => Ok(None),
+        v => count(v)
+            .filter(|n| *n <= MAX_TURNS)
+            .map(|n| Some(n as u32))
+            .ok_or_else(|| bad("turns", "null, or an integer from 0 to 1000000")),
+    }
+}
+
+/// The `seconds` of a side: absent or `null` gives `None`, and a duration of
+/// 0 to 10,000,000 seconds gives the number.
+fn seconds_of(v: &Value) -> Result<Option<f64>, Fatal> {
+    match v {
+        Value::Null => Ok(None),
+        v => num(v)
+            .filter(|n| (0.0..=MAX_SECONDS).contains(n))
+            .map(|n| Some(r6(n)))
+            .ok_or_else(|| bad("seconds", "null, or a number from 0 to 10000000")),
+    }
+}
+
+/// The harness arm of a result: a name of `HarnessArm`.
+fn harness_of(v: &Value) -> Result<String, Fatal> {
+    v.as_str()
+        .and_then(|s| HarnessArm::parse(s).ok())
+        .map(|a| a.name().to_string())
+        .ok_or_else(|| bad("harness", "the name of a harness arm"))
 }
 
 /// The names of a list of models, each checked, or `None` if the key is
@@ -218,6 +284,7 @@ fn build_item(
     item: &Value,
     file_models: &[String],
     claude_code: &Option<String>,
+    harness: &Option<String>,
 ) -> Result<Built, Fatal> {
     let pairs = item.get("pairs").as_arr();
     if pairs.is_empty() {
@@ -267,11 +334,21 @@ fn build_item(
             if models.is_empty() {
                 return Err(bad("models", "a list of 1 to 8 names"));
             }
+            let extra = match harness {
+                Some(h) => Some(Extra {
+                    harness: h.clone(),
+                    turns: turns_of(side.get("turns"))?,
+                    seconds: seconds_of(side.get("seconds"))?,
+                }),
+                None => None,
+            };
             records.push(Record {
                 skill: name.to_string(),
                 eval: eval.to_string(),
                 run,
                 with,
+                arm: None,
+                extra,
                 pass,
                 cost,
                 tokens: tokens_of(side.get("tokens"))?,
@@ -325,7 +402,18 @@ fn self_check(name: &str, item: &Value, built: &Built) -> Result<(), Fatal> {
         }
         by_eval.push(pairs);
     }
-    let a = verdict::analyze(&by_eval);
+    // A summary of 0.8.0 has `below_floor` and the floor of D59. A summary of
+    // 0.7.x has no such key, and its verdict follows the rules of D33 only.
+    let a = match item.get("below_floor") {
+        Value::Bool(b) => {
+            let a = verdict::analyze(&by_eval);
+            if *b != a.below_floor {
+                return Err(mismatch("below_floor"));
+            }
+            a
+        }
+        _ => verdict::analyze_unfloored(&by_eval),
+    };
     let close = |x: f64, y: f64, tol: f64| (x - y).abs() <= tol;
     for (key, arm) in [("with", a.with), ("without", a.without)] {
         let v = item.get(key);
@@ -380,17 +468,117 @@ fn self_check(name: &str, item: &Value, built: &Built) -> Result<(), Fatal> {
     Ok(())
 }
 
+/// The records of a result of `eval run --arms`: one record for each run of
+/// each arm, in the order of the file (the eval, the run, then the arms in
+/// the order of `arms`). A side that did not run (`null`) has no record. The
+/// result has no summary to compare, so the command only checks each value
+/// against its form.
+fn arms_records(value: &Value) -> Result<(Vec<String>, Vec<String>), Fatal> {
+    let form = "2 or 3 different names of harness arms";
+    let mut arms: Vec<String> = Vec::new();
+    for a in value.get("arms").as_arr() {
+        let name = harness_of(a).map_err(|_| bad("arms", form))?;
+        if arms.contains(&name) {
+            return Err(bad("arms", form));
+        }
+        arms.push(name);
+    }
+    if !(2..=3).contains(&arms.len()) {
+        return Err(bad("arms", form));
+    }
+    let claude_code = match value.get("claude_code") {
+        Value::Null => None,
+        v => Some(
+            v.as_str()
+                .filter(|s| valid_claude_code(s))
+                .ok_or_else(|| bad("claude_code", "1 to 32 characters from A-Z a-z 0-9 . + -"))?
+                .to_string(),
+        ),
+    };
+    let file_models = models_of(value.get("models"))?.unwrap_or_default();
+    let mut lines = Vec::new();
+    let mut seen: BTreeSet<(String, u32)> = BTreeSet::new();
+    for item in value.get("evals").as_arr() {
+        let eval = item
+            .get("id")
+            .as_str()
+            .filter(|s| valid_eval_id(s))
+            .ok_or_else(|| bad("id", "1 to 40 characters, a-z first, then a-z 0-9 -"))?;
+        for r in item.get("results").as_arr() {
+            let run = num(r.get("run"))
+                .filter(|n| n.fract() == 0.0 && (1.0..=MAX_RUN).contains(n))
+                .ok_or_else(|| bad("run", "an integer from 1 to 100"))?
+                as u32;
+            if !seen.insert((eval.to_string(), run)) {
+                return Err(bad("results", "each eval and run once"));
+            }
+            for arm in &arms {
+                let side = r.get("arms").get(arm);
+                if !matches!(side, Value::Obj(_)) {
+                    continue;
+                }
+                let pass = match side.get("passed") {
+                    Value::Bool(b) => *b,
+                    _ => return Err(bad("passed", "true or false")),
+                };
+                let cost = match side.get("cost_usd") {
+                    Value::Null => None,
+                    v => Some(r6(num(v).filter(|c| *c >= 0.0).ok_or_else(|| {
+                        bad("cost_usd", "a number of 0 or more, or null")
+                    })?)),
+                };
+                let models = match models_of(side.get("models"))? {
+                    Some(m) if !m.is_empty() => m,
+                    _ => file_models.clone(),
+                };
+                if models.is_empty() {
+                    return Err(bad("models", "a list of 1 to 8 names"));
+                }
+                lines.push(
+                    Record {
+                        skill: "harness".to_string(),
+                        eval: eval.to_string(),
+                        run,
+                        with: false,
+                        arm: Some(arm.clone()),
+                        extra: Some(Extra {
+                            harness: arm.clone(),
+                            turns: turns_of(side.get("turns"))?,
+                            seconds: seconds_of(side.get("seconds"))?,
+                        }),
+                        pass,
+                        cost,
+                        tokens: tokens_of(side.get("tokens"))?,
+                        models,
+                        claude_code: claude_code.clone(),
+                    }
+                    .line(),
+                );
+            }
+        }
+    }
+    if lines.is_empty() {
+        return Err(Fatal::Config(
+            "eval records: the result of `eval run --arms` has no run".into(),
+        ));
+    }
+    Ok((lines, vec!["harness".to_string()]))
+}
+
 /// Reads the result file, and returns the lines of the records and the names
 /// of the items.
 pub fn records(bytes: &[u8]) -> Result<(Vec<String>, Vec<String>), Fatal> {
     let not_result = || {
         Fatal::Config(
-            "eval records: the file is no result of `eval run --ab` (not JSON, or no list `skills`)"
+            "eval records: the file is no result of `eval run --ab` or `eval run --arms` (not JSON, or no list `skills` and no list `arms`)"
                 .into(),
         )
     };
     let text = std::str::from_utf8(bytes).map_err(|_| not_result())?;
     let value = json::parse(text).map_err(|_| not_result())?;
+    if matches!(value.get("arms"), Value::Arr(_)) {
+        return arms_records(&value);
+    }
     let Value::Arr(items) = value.get("skills") else {
         return Err(not_result());
     };
@@ -407,6 +595,12 @@ pub fn records(bytes: &[u8]) -> Result<(Vec<String>, Vec<String>), Fatal> {
         ),
     };
     let file_models = models_of(value.get("models"))?.unwrap_or_default();
+    // A result of 0.8.0 names the harness of its copies. A result of 0.7.x
+    // has no such key, and its records keep the 9 keys.
+    let harness = match value.get("harness") {
+        Value::Null => None,
+        v => Some(harness_of(v)?),
+    };
     let known = verdict::names();
     let mut lines = Vec::new();
     let mut names: Vec<String> = Vec::new();
@@ -429,7 +623,7 @@ pub fn records(bytes: &[u8]) -> Result<(Vec<String>, Vec<String>), Fatal> {
                 "eval records: the run of `{name}` is not complete; finish it with --resume"
             )));
         }
-        let built = build_item(name, item, &file_models, &claude_code)?;
+        let built = build_item(name, item, &file_models, &claude_code, &harness)?;
         self_check(name, item, &built)?;
         lines.extend(built.records.iter().map(Record::line));
         names.push(name.to_string());

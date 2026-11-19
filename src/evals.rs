@@ -22,11 +22,12 @@ pub const RESULTS: &str = "results";
 pub const CHECK_FILE: &str = "check.sh";
 
 /// The keys of an eval file, in the order of the validator.
-const KEYS: [&str; 11] = [
+const KEYS: [&str; 12] = [
     "id",
     "task",
     "fixture",
     "branch",
+    "change",
     "allowed-tools",
     "max-turns",
     "max-budget-usd",
@@ -51,6 +52,9 @@ pub struct Eval {
     /// The folder of the fixture, from the repository root.
     pub fixture: String,
     pub branch: Option<String>,
+    /// The folder of the change, from the repository root (D60). The runner
+    /// copies its files over the copy, and commits them on `branch`.
+    pub change: Option<String>,
     pub allowed_tools: Vec<String>,
     pub max_turns: u32,
     pub max_budget_usd: f64,
@@ -191,7 +195,7 @@ pub fn parse_eval(
         Some(Value::Str(s)) => s.clone(),
         Some(_) => return err("fixture", "`fixture` must be a string"),
     };
-    check_fixture(&fixture, evals, has_file_under)?;
+    check_folder("fixture", &fixture, evals, has_file_under)?;
 
     let branch = match field(fields, "branch") {
         None => None,
@@ -203,6 +207,24 @@ pub fn parse_eval(
             );
         }
         Some(_) => return err("branch", "`branch` must be a string"),
+    };
+
+    let change = match field(fields, "change") {
+        None => None,
+        Some(Value::Str(s)) => {
+            check_folder("change", s, evals, has_file_under)?;
+            match branch.as_deref() {
+                None | Some("main") => {
+                    return err(
+                        "change",
+                        "`change` needs a `branch` that is not `main`: the runner commits the files of the change on that branch",
+                    );
+                }
+                Some(_) => {}
+            }
+            Some(s.clone())
+        }
+        Some(_) => return err("change", "`change` must be a string"),
     };
 
     let allowed_tools = match field(fields, "allowed-tools") {
@@ -316,6 +338,7 @@ pub fn parse_eval(
         task,
         fixture,
         branch,
+        change,
         allowed_tools,
         max_turns,
         max_budget_usd,
@@ -326,40 +349,39 @@ pub fn parse_eval(
     })
 }
 
-fn check_fixture(
-    fixture: &str,
+/// Checks the folder of `fixture` or of `change`: a folder under `[evals] dir`
+/// with at least one file, and not under the folder of the results.
+fn check_folder(
+    key: &str,
+    folder: &str,
     evals: &Evals,
     has_file_under: &dyn Fn(&str) -> bool,
 ) -> Result<(), EvalError> {
     let under = format!("{}/", evals.dir);
-    let Some(rest) = fixture.strip_prefix(&under).filter(|r| !r.is_empty()) else {
-        return err(
-            "fixture",
-            format!("`fixture` must be a folder under `{under}`"),
-        );
+    let Some(rest) = folder.strip_prefix(&under).filter(|r| !r.is_empty()) else {
+        return err(key, format!("`{key}` must be a folder under `{under}`"));
     };
-    if fixture.contains('\\')
-        || fixture.chars().any(char::is_control)
-        || fixture
+    if folder.contains('\\')
+        || folder.chars().any(char::is_control)
+        || folder
             .split('/')
             .any(|s| s.is_empty() || s == "." || s == "..")
     {
         return err(
-            "fixture",
-            "`fixture` must use `/` separators, with no `\\`, no empty segment and no `.` or `..` segment",
+            key,
+            format!(
+                "`{key}` must use `/` separators, with no `\\`, no empty segment and no `.` or `..` segment"
+            ),
         );
     }
     if rest == RESULTS || rest.starts_with(&format!("{RESULTS}/")) {
         return err(
-            "fixture",
-            format!("`fixture` must not be under `{under}{RESULTS}/`"),
+            key,
+            format!("`{key}` must not be under `{under}{RESULTS}/`"),
         );
     }
-    if !has_file_under(fixture) {
-        return err(
-            "fixture",
-            format!("`fixture` has no file under `{fixture}`"),
-        );
+    if !has_file_under(folder) {
+        return err(key, format!("`{key}` has no file under `{folder}`"));
     }
     Ok(())
 }
