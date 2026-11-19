@@ -74,3 +74,7 @@ ADR 0016 and ADR 0017 are accepted and locked, so this ADR does not edit them. T
 ### 2026-11-18
 
 The owner set `DEFAULT_ON_NEEDS_VERDICT_ON` to `false` for 0.7.0. The rule "a skill is on by default only with the verdict `on`" (option 2, and the sentence of the owner review in the Context) came from one sentence of the build prompt that contradicted D33. D33 is the rule of 0.7.0, so a skill of D2 is on unless its verdict is `off`. Read the Consequences with `false`: `lite` gets `brainstorm`, `write-plan` and `finish`, and `standard` and `strict` get the 8 skills that are on. Because `tdd` has the verdict `on`, it is on although ADR 0017 and the design name it among the 4 skills that are off.
+
+### 2026-11-19
+
+An upgrade from a pin before 0.7.0 adds to a list `skills` that is not empty each skill that is new in 0.7.0 (`tdd`, `execute`, `verify`, `finish`, `debug`, `post-mortem`) and that `init` proposes for the profile and the level of the project. The project had no way to choose these skills, so the addition changes no choice of the project. A name of the list keeps its place, and an empty list stays empty. The report names each skill that it adds. For these skills only, this replaces the option "the preset of a profile in `upgrade`" that this ADR did not choose.

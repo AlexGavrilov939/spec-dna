@@ -2637,7 +2637,7 @@ fn skill_listing_bytes(skills: &[Skill]) -> usize {
 /// `finish` that are on by default. `standard` and `strict` propose each skill
 /// that is on by default, also a skill outside D2 with the verdict `on`. The
 /// result has the order of D2.
-fn profile_skills(profile: Profile, level: Level, on: &dyn Fn(Skill) -> bool) -> Vec<Skill> {
+pub fn profile_skills(profile: Profile, level: Level, on: &dyn Fn(Skill) -> bool) -> Vec<Skill> {
     if level == Level::Full {
         return Skill::ALL.to_vec();
     }
@@ -2649,6 +2649,18 @@ fn profile_skills(profile: Profile, level: Level, on: &dyn Fn(Skill) -> bool) ->
                 || matches!(s, Skill::Brainstorm | Skill::WritePlan | Skill::Finish)
         })
         .collect()
+}
+
+/// The note for a project whose pre-commit hook `typos` can rewrite the hashes
+/// of the markers (docs/init.md, "Spell checkers"). The hash is a word to
+/// `typos`, which writes its fixes by default.
+const TYPOS_NOTE: &str = "the pre-commit hook `typos` can rewrite the 16-digit hashes of the spec-dna markers (`h:<hash>`), and a marker with a changed hash gives SD501. Add this line under `[default]` in _typos.toml: extend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\\b'] (docs/init.md#spell-checkers)";
+
+/// The note `TYPOS_NOTE`, if the project runs the hook `typos` and has no
+/// setting for the hashes. `read` gives the text of a file of the project.
+/// `init` and `upgrade` both call it.
+pub fn typos_note(read: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    detect::typos_unguarded(read).then(|| TYPOS_NOTE.to_string())
 }
 
 /// The note for a project that also has the plugin Superpowers (D5). A spec-dna
@@ -3773,6 +3785,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     plan.notes.extend(skeleton_notes);
     let pack_exists = repo.root.join(&plan.evals_table.dir).join("pack").exists();
     profile_notes(&mut plan, pack_exists);
+    plan.notes.extend(typos_note(&disk(repo)));
 
     let preview = o.dry_run || interactive || !write;
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
@@ -4503,6 +4516,9 @@ fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
         if let Some(h) = &hrun {
             print_harness(h, false);
         }
+        if let Some(n) = typos_note(&disk(repo)) {
+            println!("note: {n}");
+        }
         println!("dry run: nothing written");
         return Ok(0);
     }
@@ -4528,6 +4544,9 @@ fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
         report(&written, &chosen, &changes);
         report_harness(hrun.as_ref(), &written);
         report_commit(&written);
+        if let Some(n) = typos_note(&disk(repo)) {
+            println!("note: {n}");
+        }
     }
     Ok(0)
 }

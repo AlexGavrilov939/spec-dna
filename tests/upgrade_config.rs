@@ -79,3 +79,155 @@ fn the_new_configuration_keeps_the_roots_of_the_old_one() {
         );
     }
 }
+
+// --- the skills that are new in 0.7.0 (ADR 0023, amendment of 2026-11-19) ---
+
+/// The skills that 0.7.0 adds, in the order of D2.
+const ADDED: [&str; 6] = ["execute", "tdd", "verify", "finish", "debug", "post-mortem"];
+
+/// The skills that are on by default in this build, from `skill list --json`.
+fn default_skills() -> Vec<String> {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["skill", "list", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    out.split("{\"name\":\"")
+        .skip(1)
+        .filter(|item| item.contains("\"default\":\"on\""))
+        .map(|item| item.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+/// A project of 0.6.1 whose `skills` line is `skills`.
+fn project_0_6_1(profile: &str, skills: &str) -> Repo {
+    let repo = Repo::from_fixture("v061", &[]);
+    let text = repo.read("spec-dna.toml");
+    assert!(text.contains("spec-dna = \"0.6.1\""), "{text}");
+    let text = text
+        .replace(
+            "skills = [\"intent\", \"spec\", \"plan\", \"review\"]",
+            &format!("skills = {skills}"),
+        )
+        .replace(
+            "profile = \"standard\"",
+            &format!("profile = \"{profile}\""),
+        );
+    repo.write("spec-dna.toml", &text);
+    repo.commit("variant");
+    repo
+}
+
+fn skills_of(repo: &Repo) -> Vec<String> {
+    let t: toml::Table = repo.read("spec-dna.toml").parse().unwrap();
+    t["harness"]["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn upgrade_adds_the_skills_that_are_new_in_0_7_0_for_the_profile() {
+    let on = default_skills();
+    for (profile, only_finish) in [("standard", false), ("lite", true)] {
+        let repo = project_0_6_1(profile, "[\"review\"]");
+        let (code, out, err) = repo.run(&["upgrade"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        // `review` keeps its place, and the new names follow in the order of D2.
+        let added: Vec<String> = ADDED
+            .iter()
+            .filter(|n| on.iter().any(|d| d == *n))
+            .filter(|n| !only_finish || **n == "finish")
+            .map(|n| n.to_string())
+            .collect();
+        let mut want = vec!["review".to_string()];
+        want.extend(added.clone());
+        assert_eq!(skills_of(&repo), want, "{profile}: {out}");
+        if !added.is_empty() {
+            assert!(
+                out.contains(", new in 0.7.0 and on by default for the profile `")
+                    && out.contains("remove a name to turn its skill off"),
+                "{profile}: {out}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_empty_list_of_skills_stays_empty_and_a_list_of_many_lines_does_not_stop_upgrade() {
+    let repo = project_0_6_1("standard", "[]");
+    let (code, out, err) = repo.run(&["upgrade"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(skills_of(&repo), Vec::<String>::new(), "{out}");
+    // A list of many lines with no old name: the upgrade goes on, and a
+    // warning names the skills to add by hand.
+    let repo = project_0_6_1("standard", "[\n  \"review\",  # mine\n]");
+    let (code, out, err) = repo.run(&["upgrade"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(skills_of(&repo), ["review"], "{out}");
+    if default_skills().iter().any(|n| n == "finish") {
+        assert!(
+            out.contains(
+                "warning: `skills` of `[harness]` is a list of many lines, so upgrade did not add "
+            ),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn a_second_upgrade_after_the_commit_adds_no_skill() {
+    let repo = project_0_6_1("standard", "[\"review\"]");
+    let (code, out, err) = repo.run(&["upgrade"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let first = skills_of(&repo);
+    repo.commit("upgrade");
+    let (code, out, err) = repo.run(&["upgrade"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out, "spec-dna upgrade: nothing to change\n");
+    assert_eq!(skills_of(&repo), first);
+}
+
+#[test]
+fn a_list_of_many_lines_with_a_name_of_0_6_takes_the_rename_and_gives_a_warning() {
+    // The rename keeps the length of the list, so the splice works, as in
+    // 0.7.0. The new skills do not fit, so a warning names them and the
+    // upgrade does not stop.
+    let repo = project_0_6_1("standard", "[\n  \"intent\",  # mine\n  \"review\",\n]");
+    let (code, out, err) = repo.run(&["upgrade", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let on = default_skills();
+    assert!(
+        out.contains(
+            "warning: `skills` of `[harness]` is a list of many lines, so upgrade did not add `"
+        ),
+        "{out}"
+    );
+    assert!(on.iter().any(|n| n == "finish"));
+    let (code, out, err) = repo.run(&["upgrade"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let want: Vec<String> = if on.iter().any(|n| n == "brainstorm") {
+        vec!["brainstorm".to_string(), "review".to_string()]
+    } else {
+        vec!["review".to_string()]
+    };
+    assert_eq!(skills_of(&repo), want, "{out}");
+    assert!(repo.read("spec-dna.toml").contains("# mine"));
+}
+
+#[test]
+fn the_change_policy_none_adds_no_skill_at_the_upgrade() {
+    let repo = Repo::from_fixture("v061", &[]);
+    let text = repo.read("spec-dna.toml");
+    assert!(text.contains("policy = \"three-class\""), "{text}");
+    let new = text.replacen("policy = \"three-class\"", "policy = \"none\"", 1);
+    repo.write("spec-dna.toml", &new);
+    repo.commit("policy none");
+    let (code, out, err) = repo.run(&["upgrade"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The rename of 0.7.0 stays: no new skill joins the list.
+    let list = skills_of(&repo);
+    for n in ["tdd", "execute", "verify", "finish", "debug", "post-mortem"] {
+        assert!(!list.iter().any(|l| l == n), "{n} in {list:?}");
+    }
+}

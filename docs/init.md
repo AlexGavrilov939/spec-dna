@@ -254,6 +254,25 @@ If `.claude/settings.json` of the project has `enabledPlugins` with a plugin who
 - An answer sets a role to a model, and a file that `init` did not generate has the agent name of that role. Set the role to `none`, or rename the agent.
 - `.claude/settings.json` is not valid JSON.
 
+## Spell checkers
+
+A spell checker can rewrite the hashes that spec-dna writes in text. The hash is a word to the checker. A marker with a changed hash gives SD501. The hashes have these forms:
+
+- `h:<16 hex digits>` in each marker: `<!-- spec-dna v… h:… -->`, `<!-- spec-dna:begin … h:… -->` and `<!-- spec-dna harness … h:… -->`;
+- `@<16 hex digits>` in a `CHANGE` or `REMOVE` delta line;
+- 64 hex digits in `[spec-dna-sha256]`.
+
+A test of `typos` 1.52.0 found only the hashes of the markers. Its pre-commit hook writes its fixes by default. The pattern below also covers the delta form. `codespell` and `cspell` found nothing in these forms. Add this line under `[default]` in `_typos.toml`, `typos.toml` or `.typos.toml`:
+
+```toml
+[default]
+extend-ignore-re = ['(?:h:|@)[0-9a-f]{16}\b']
+```
+
+With another tool, exclude the regular expression `(?:h:|@)[0-9a-f]{16}\b`.
+
+`init` and `upgrade` print the line `note:` for a project that runs the hook `typos` and has no such setting. The detection reads the text of the files with no YAML parser. A line of `.pre-commit-config.yaml` is the hook when, with its indent, a leading dash and a trailing comment removed, it is `id: <name>` or `entry: <command>`, and the name, or the first word of the command, is `typos` or starts with `typos-`. No note is printed if `.pre-commit-config.yaml`, `_typos.toml`, `typos.toml`, `.typos.toml` or `pyproject.toml` holds the text `[0-9a-f]{16}`. `init` prints the note in each mode (a preview, a write and `--reconfigure`), and `upgrade` prints it after the `next:` line.
+
 ## Answers file
 
 An answers file is TOML. Each key is optional. An absent key keeps its default.

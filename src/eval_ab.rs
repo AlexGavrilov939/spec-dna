@@ -17,6 +17,7 @@
 
 use crate::adapters::{self, VERSION};
 use crate::config::{Config, Evals};
+use crate::config_text::{insert_keys, k, set_value};
 use crate::eval_run::{
     Ctx, EPS, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts, claude_version,
     copy_list, first_wait, harness_list, interrupt_signal, load_evals_in, make_out_dir,
@@ -919,9 +920,13 @@ fn select(
 
 /// Changes the copy for an arm, after the files are copied. The pin line of
 /// `spec-dna.toml` of the fixture gets the version of the binary, so a
-/// fixture never gives exit code 3 for a version.
+/// fixture never gives exit code 3 for a version. SD501 and SD502 are off in
+/// the copy: the arm `without` edits the adapter files by design, and the
+/// adapter skill of the project lists the layer types of the project, not of
+/// the fixture. Both arms get the same edit.
 fn prepare(dir: &Path, kind: Kind, arm: Arm) -> Result<(), Fatal> {
     pin_version(dir)?;
+    adapter_rules_off(dir)?;
     let io = |what: &str, e: std::io::Error| {
         Fatal::Io(format!("cannot change `{what}` in the copy: {e}"))
     };
@@ -1006,6 +1011,77 @@ fn pin_version(dir: &Path) -> Result<(), Fatal> {
             .collect();
         lines.concat()
     })
+}
+
+/// The rules that the copy turns off: the codes of the adapter files.
+const RULES_OFF: [&str; 2] = ["SD501", "SD502"];
+
+/// Sets `SD501 = "off"` and `SD502 = "off"` under `[rules]` of `spec-dna.toml`
+/// in the copy, if the copy has the file. A table `[rules]` that exists keeps
+/// its other keys.
+fn adapter_rules_off(dir: &Path) -> Result<(), Fatal> {
+    let path = dir.join("spec-dna.toml");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    // A file that the edit cannot change (a text that does not parse, or the
+    // dotted keys `rules.x = ...`) stays as it is. The run goes on, as it did
+    // before this edit, and `check` in the copy can report SD501 or SD502.
+    let Ok(new) = rules_off(&text) else {
+        return Ok(());
+    };
+    if new != text {
+        fs::write(&path, new)
+            .map_err(|e| Fatal::Io(format!("cannot change `spec-dna.toml` in the copy: {e}")))?;
+    }
+    Ok(())
+}
+
+/// The text of `spec-dna.toml` with the codes of `RULES_OFF` set to `off`
+/// under `[rules]`.
+fn rules_off(text: &str) -> Result<String, Fatal> {
+    let bad = |e: String| Fatal::Config(format!("spec-dna.toml of the copy: {e}"));
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| bad(e.to_string()))?;
+    let off = toml::Value::String("off".to_string());
+    let Some(rules) = table.get("rules") else {
+        let mut out = text.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("\n[rules]\n");
+        for code in RULES_OFF {
+            out.push_str(&format!("{code} = \"off\"\n"));
+        }
+        return Ok(out);
+    };
+    let toml::Value::Table(rules) = rules else {
+        return Err(bad("`rules` is not a table".to_string()));
+    };
+    let mut out = text.to_string();
+    let mut missing: Vec<(&str, toml::Value)> = Vec::new();
+    for code in RULES_OFF {
+        match rules.get(code) {
+            Some(v) if *v == off => {}
+            Some(_) => out = set_value(&out, &[k("rules"), k(code)], &off)?,
+            None => missing.push((code, off.clone())),
+        }
+    }
+    if !missing.is_empty() {
+        out = match insert_keys(&out, &[k("rules")], &missing) {
+            Ok(t) => t,
+            // An inline table `rules = { ... }`: write it whole.
+            Err(_) => {
+                let mut all = rules.clone();
+                for (code, v) in missing {
+                    all.insert(code.to_string(), v);
+                }
+                set_value(&out, &[k("rules")], &toml::Value::Table(all))?
+            }
+        };
+    }
+    Ok(out)
 }
 
 /// The file of a skill in the arm `with`: the front matter and the text of
@@ -1321,5 +1397,70 @@ fn dry_run(
             p.eval.max_budget_usd,
             f64::from(p.runs) * 2.0 * p.eval.max_budget_usd
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rules_of(text: &str) -> toml::Table {
+        let t: toml::Table = text.parse().unwrap();
+        t["rules"].as_table().unwrap().clone()
+    }
+
+    #[test]
+    fn a_file_with_no_rules_gets_the_table() {
+        for text in ["spec-dna = \"0.7.0\"\n", "spec-dna = \"0.7.0\"", ""] {
+            let new = rules_off(text).unwrap();
+            let rules = rules_of(&new);
+            assert_eq!(rules["SD501"].as_str(), Some("off"), "{new}");
+            assert_eq!(rules["SD502"].as_str(), Some("off"), "{new}");
+        }
+        // The table goes after the other tables, so no key of them moves.
+        let text = "spec-dna = \"0.7.0\"\n\n[[roots]]\npath = \"docs\"\n";
+        let new = rules_off(text).unwrap();
+        assert!(new.starts_with(text), "{new}");
+        let all: toml::Table = new.parse().unwrap();
+        assert_eq!(all["roots"][0]["path"].as_str(), Some("docs"));
+    }
+
+    #[test]
+    fn a_table_of_rules_keeps_its_keys() {
+        let text = "spec-dna = \"0.7.0\"\n\n[rules]\nlint = \"warning\"  # mine\nSD502 = \"error\"\n\n[[roots]]\npath = \"docs\"\n";
+        let new = rules_off(text).unwrap();
+        let rules = rules_of(&new);
+        assert_eq!(rules["lint"].as_str(), Some("warning"), "{new}");
+        assert_eq!(rules["SD501"].as_str(), Some("off"), "{new}");
+        assert_eq!(rules["SD502"].as_str(), Some("off"), "{new}");
+        assert!(new.contains("lint = \"warning\"  # mine"), "{new}");
+        // A second call changes nothing.
+        assert_eq!(rules_off(&new).unwrap(), new);
+    }
+
+    #[test]
+    fn a_file_that_the_edit_cannot_change_gives_an_error_and_the_copy_keeps_it() {
+        // Dotted keys, and a text that does not parse.
+        assert!(rules_off("spec-dna = \"0.7.0\"\nrules.lint = \"off\"\n").is_err());
+        assert!(rules_off("this is not toml").is_err());
+        let dir = std::env::temp_dir().join(format!("spec-dna-rules-off-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let text = "spec-dna = \"0.7.0\"\nrules.lint = \"off\"\n";
+        fs::write(dir.join("spec-dna.toml"), text).unwrap();
+        adapter_rules_off(&dir).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("spec-dna.toml")).unwrap(), text);
+        // A folder with no file is not an error.
+        fs::remove_file(dir.join("spec-dna.toml")).unwrap();
+        adapter_rules_off(&dir).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_inline_table_of_rules_keeps_its_keys() {
+        let new = rules_off("spec-dna = \"0.7.0\"\nrules = { lint = \"off\" }\n").unwrap();
+        let rules = rules_of(&new);
+        assert_eq!(rules["lint"].as_str(), Some("off"), "{new}");
+        assert_eq!(rules["SD501"].as_str(), Some("off"), "{new}");
+        assert_eq!(rules["SD502"].as_str(), Some("off"), "{new}");
     }
 }

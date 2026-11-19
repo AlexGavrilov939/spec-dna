@@ -869,9 +869,11 @@ pub(crate) fn one_attempt(
 
 /// Copies the harness files. The files `AGENTS.md` and `CLAUDE.md` of the
 /// fixture keep their text: the copy adds the generated lines of the project
-/// (the line of the adapter and the line of the harness) after it. A fixture
-/// with no such file gets only these lines, and a project with no such line
-/// leaves the fixture file as it is.
+/// (the line of the adapter and the line of the harness) after it. The line
+/// of the adapter is the line of this binary, because the pin of the copy is
+/// the version of this binary: a line of another version or build gives SD502
+/// in the copy. A fixture with no such file gets only these lines, and a
+/// project with no such line leaves the fixture file as it is.
 fn copy_harness_merged(dir: &Path, files: &[(PathBuf, String)]) -> Result<(), Fatal> {
     for (src, rel) in files {
         if rel != "AGENTS.md" && rel != "CLAUDE.md" {
@@ -892,7 +894,13 @@ fn copy_harness_merged(dir: &Path, files: &[(PathBuf, String)]) -> Result<(), Fa
             text.push('\n');
         }
         for l in &lines {
-            text.push_str(l);
+            // The harness line has the marker `spec-dna harness v`.
+            let own = if l.contains("<!-- spec-dna v") {
+                crate::adapters::line()
+            } else {
+                l.clone()
+            };
+            text.push_str(&own);
             text.push('\n');
         }
         fs::write(&dst, text).map_err(|e| Fatal::Io(format!("cannot copy `{rel}`: {e}")))?;

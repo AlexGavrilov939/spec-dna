@@ -549,7 +549,7 @@ pub fn plan(tree: &Tree, opts: &PlanOpts) -> Result<Plan, Fatal> {
         removes,
         from_old,
         edits: [rename.edits, repairs.edits].concat(),
-        by_hand: [rename.by_hand, repairs.by_hand].concat(),
+        by_hand: [rename.by_hand, rename.warnings, repairs.by_hand].concat(),
     })
 }
 
@@ -583,7 +583,7 @@ pub struct Report {
     /// Each `done` or `rejected` change that no document references, as a
     /// proposal to delete: its path in the new tree.
     pub proposals: Vec<String>,
-    /// Each decision with no `Status` section: its path.
+    /// Each decision with no `status` in its front matter: its path.
     pub no_status: Vec<String>,
     /// Each locked decision that cites a migrated change: the path of the
     /// decision, and the path of the change in the new tree.
@@ -596,6 +596,8 @@ pub struct Report {
     pub errors: Vec<(String, usize)>,
     /// `--pin-file` added the table `[spec-dna-sha256]` (O4).
     pub sums_added: bool,
+    /// The notes of the text output: what the person can do beside the files.
+    pub notes: Vec<String>,
     /// The links of a file that is no document to a moved file or folder. The
     /// plan does not rewrite them (D207).
     pub outside_links: Vec<(String, String)>,
@@ -794,11 +796,16 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
         .docs
         .iter()
         .filter(|d| d.ty == DocType::Decision && !d.type_failed && d.moved_to.is_none())
+        // spec-dna reads the field `status` of the front matter, not a section
+        // `Status`. A field with an empty value counts as missing.
         .filter(|d| {
             !d.parsed
-                .chunks
-                .iter()
-                .any(|ch| ch.heading.trim().eq_ignore_ascii_case("status"))
+                .front_matter
+                .as_ref()
+                .and_then(|f| f.get("status"))
+                .is_some_and(
+                    |(v, _)| !matches!(v, crate::frontmatter::Value::Str(s) if s.trim().is_empty()),
+                )
         })
         .map(|d| d.path.clone())
         .collect();
@@ -879,6 +886,15 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
             .collect(),
         edits: plan.edits.clone(),
         from_old: plan.from_old,
+        notes: init::typos_note(&|p| {
+            if in_tree(tree, p) {
+                tree_text(tree, p).ok()
+            } else {
+                None
+            }
+        })
+        .into_iter()
+        .collect(),
     })
 }
 
@@ -956,7 +972,7 @@ fn unclean_message(paths: &[String]) -> String {
         String::new()
     };
     format!(
-        "the working tree is not clean ({} path{}: {}{more}); commit or stash the changes, then run `spec-dna upgrade` again. upgrade changes nothing",
+        "the working tree is not clean ({} path{}: {}{more}); stash the changes with `git stash -u`, run `spec-dna upgrade`, commit its paths, then run `git stash pop`. upgrade changes nothing",
         paths.len(),
         if paths.len() == 1 { "" } else { "s" },
         shown.join(", ")
@@ -1207,7 +1223,7 @@ fn report_text(r: &Report) -> String {
     );
     list(
         &mut out,
-        "decisions with no `Status` section",
+        "decisions with no `status` in the front matter (spec-dna does not read a `Status` section)",
         r.no_status.clone(),
     );
     list(
@@ -1311,6 +1327,13 @@ fn output_text(plan: &Plan, files: &[Entry], proof: &Proof, report: &Report, dry
         .map(|p| shell_word(&format!(":/{p}")))
         .collect();
     out.push_str(&format!("to commit: git add -A -- {}\n", paths.join(" ")));
+    if let Some(next) = next_line(plan, report) {
+        out.push_str(next);
+        out.push('\n');
+    }
+    for n in &report.notes {
+        out.push_str(&format!("note: {n}\n"));
+    }
     out.push_str(&if dry {
         "spec-dna upgrade: dry run; nothing written\n".to_string()
     } else {
@@ -1321,6 +1344,26 @@ fn output_text(plan: &Plan, files: &[Entry], proof: &Proof, report: &Report, dry
         )
     });
     out
+}
+
+/// The line `next:` after `to commit:`. SD503 does not count `spec-dna.toml`
+/// when only its pin and its table `[spec-dna-sha256]` change to a later
+/// version (ADR 0019), so the pull request can also hold other work. A 0.4 or
+/// 0.5 file is rewritten, and a 0.6 file can have edits of the plan, so the
+/// commit goes in a pull request of its own. A plan that leaves
+/// `spec-dna.toml` as it is has no line.
+fn next_line(plan: &Plan, report: &Report) -> Option<&'static str> {
+    plan.config.as_ref()?;
+    let later = matches!(
+        (config::Version::parse(&plan.from), config::Version::parse(&plan.to)),
+        (Some(from), Some(to)) if from < to
+    );
+    let pin_only = later && !plan.from_old && report.edits.is_empty();
+    Some(if pin_only {
+        "next: commit the paths above in one commit of their own. Only the pin of spec-dna.toml changes, so the pull request can also hold other work (SD503 does not count a pin that moves to a later version)."
+    } else {
+        "next: commit the paths above in one commit, in a pull request of its own: spec-dna.toml has edits beyond the pin (SD503)."
+    })
 }
 
 const RESTORE: &str = "to restore the tree, run `git reset --hard` and `git clean -fd`";
@@ -1475,6 +1518,9 @@ pub fn run(repo: &Repo, o: &RunOpts) -> Result<u8, Fatal> {
             println!("spec-dna upgrade: nothing to change");
             for w in &plan.by_hand {
                 println!("  warning: {w}");
+            }
+            for n in &report.notes {
+                println!("note: {n}");
             }
         } else {
             print!("{}", output_text(&plan, &files, &proof, &report, o.dry_run));
