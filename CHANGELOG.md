@@ -32,6 +32,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - An upgrade can share its pull request with other work. SD503 does not count `spec-dna.toml` when it differs from the base only in the pin line and in `[spec-dna-sha256]`, and the base pins an earlier version. SD913 does not report the files that `init` and `upgrade` write. The pin stays exact: a pin that differs from the version of the binary still stops `check` with exit code 3. Before, such a pull request gave SD503 and one SD913 warning for each written path. [docs/diagnostics.md](docs/diagnostics.md#files-that-sd503-counts) gives the rule.
 - The report of `upgrade` lists a decision with no `status` in its front matter. It listed each decision with no heading `Status`, also when the front matter had `status:`, and spec-dna reads no `Status` section.
 - The copy of a project that `eval run --ab` makes has the adapter line of the binary, and `SD501` and `SD502` are `off` in the `[rules]` of the copy, in both arms. Before, a line of another version or build gave SD502 in the copy.
+- The check `task-paths-in-files` of the evals `write-plan-1` to `write-plan-5` no longer reads the word `none.` of a task `Files: none.` as a path. Its pattern allowed an empty extension, so a correct plan with the review task of the skill failed the check, and `spec-dna check` accepted the same plan. The pattern needs an extension now, and it no longer ends on a full stop. A project that has an old pack keeps the old check until `spec-dna eval pack` writes the pack again (it keeps a file that exists).
 
 ### Added
 
@@ -51,7 +52,7 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ### Verdicts of the skills, rerun for 0.7.1
 
-The evals that this part changed ran again with 15 runs for each arm (3 runs of each of 5 evals), with `claude` 2.1.327. The table shows the old and the new result. The table of the release (`spec-dna eval verdict --release`) holds the new rows. The default skills do not change: `brainstorm` and `finish` are on unless a project sets them `off`, `tdd` was `on` already, and `execute` and `verify` are not `on` (D33).
+The evals that this part changed ran again with 15 runs for each arm (3 runs of each of 5 evals), with `claude` 2.1.327 (`write-plan` with 2.1.328). The table shows the old and the new result. The table of the release (`spec-dna eval verdict --release`) holds the new rows. The default skills do not change: `brainstorm` and `finish` are on unless a project sets them `off`, `tdd` was `on` already, and `execute` and `verify` are not `on` (D33).
 
 | Skill | 0.7.0, with / without | 0.7.1, with / without | Difference (90% interval) | Cost per correct, with / without (USD) | Verdict |
 | --- | --- | --- | --- | --- | --- |
@@ -61,13 +62,16 @@ The evals that this part changed ran again with 15 runs for each arm (3 runs of 
 | `execute` | 15/15, 15/15 | 15/15, 15/15 | 0.00 (0.00 to 0.00) | 1.39 / 1.33 | inconclusive |
 | `tdd` | 6/10, 0/10 | 11/15, 0/15 | +0.73 (+0.47 to +0.93) | 1.40 / - | on (rule 1) |
 | `agents-line` | 10/10, 6/10 | 15/15, 6/15 | +0.60 (+0.20 to +1.00) | 1.14 / 3.22 | on (rule 1) |
-<!-- write-plan row: added by the main session -->
+| `write-plan` | 15/15, 8/15 | 13/15, 10/15 | +0.20 (-0.20 to +0.60) | 1.88 / 2.40 | inconclusive |
 
 - The row of `agents-line` of 0.7.0 used `execute-1`, and the pair uses `execute-10` now, so the 2 rows do not compare one to one.
 - `finish` and `verify` no longer score below no skill. The effect of the new text of `finish` is not proved: 3 runs failed in 0.7.0, none fails now, and the difference to no skill is 0.
 - `execute` stays at the ceiling in both arms, as the evals of `execute-6` to `execute-10` were meant to prevent. These evals do not show what the skill adds.
 - `brainstorm` is `on` by rule 2 (the cost), with a pass-rate difference of +0.13 that includes 0.
 - The first run of `verify` stopped each run with the skill at the cap of 20 turns, so the evals have 40 turns now. That run is not in the table.
+- `write-plan` was `on` (rule 1) in 0.7.0, with 15 of 15 against 8 of 15. It is `inconclusive` now: 13 of 15 against 10 of 15, and the interval of the difference includes 0. Both runs that failed with the skill stopped at the cap of 2 USD for a run, and each passed all its checks. The cost for a run did not grow (1.63 USD with the skill, 1.60 USD without it). The new text of the skill (the review task, `Actual:` and the step back to `draft`) is in this run, and `claude` was 2.1.328.
+- A first run of the same evals gave 9 of 15 against 6 of 15. The check `task-paths-in-files` read the word `none.` of the valid task `Files: none.` as a path, and so 4 of the 6 failures with the skill came from the check, not from the skill (see "Fixed"). The records of that first run stay in `bench/results/evals/20261119T082310Z-write-plan.jsonl`. The table reads the newer batch.
+- The table of the release has the new row for `write-plan`. The default skills do not change, because the constant `DEFAULT_ON_NEEDS_VERDICT_ON` is `false`.
 
 ## 0.7.0 - 2026-11-18
 
