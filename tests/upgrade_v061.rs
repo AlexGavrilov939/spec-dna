@@ -37,17 +37,17 @@ const CASES: &[Case] = &[
     Case {
         name: "standard",
         profile: "standard",
-        pin: VERSION,
+        pin: FIXTURE_PIN,
     },
     Case {
         name: "lite",
         profile: "lite",
-        pin: VERSION,
+        pin: FIXTURE_PIN,
     },
     Case {
         name: "strict",
         profile: "strict",
-        pin: VERSION,
+        pin: FIXTURE_PIN,
     },
     // The pin moves while `Cargo.toml` has the version of the binary.
     Case {
@@ -124,6 +124,9 @@ fn skill_file(name: &str) -> String {
     format!(".claude/skills/spec-dna-{name}/SKILL.md")
 }
 
+/// The pin of the fixture, as the binary 0.6.1 wrote it.
+const FIXTURE_PIN: &str = "0.6.1";
+
 /// The fixture on `main`, with the profile and the pin of the case.
 fn project(case: &Case) -> Repo {
     let repo = Repo::from_fixture("v061", &[]);
@@ -134,10 +137,14 @@ fn project(case: &Case) -> Repo {
             &format!("profile = \"{}\"", case.profile),
         )
         .replacen(
-            &format!("spec-dna = \"{VERSION}\""),
+            &format!("spec-dna = \"{FIXTURE_PIN}\""),
             &format!("spec-dna = \"{}\"", case.pin),
             1,
         );
+    assert!(
+        toml.contains(&format!("spec-dna = \"{}\"", case.pin)),
+        "the pin of the case is in the file"
+    );
     repo.write("spec-dna.toml", &toml);
     // The case `standard` changes nothing.
     if !repo.git_out(&["status", "--porcelain"]).is_empty() {
