@@ -891,7 +891,7 @@ fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(
-            "\"tasks\":{\"done\":1,\"skipped\":0,\"total\":3,\"next_task\":{\"id\":\"t2\""
+            "\"tasks\":{\"done\":1,\"skipped\":0,\"finish\":0,\"total\":3,\"next_task\":{\"id\":\"t2\""
         ),
         "{out}"
     );
@@ -907,7 +907,9 @@ fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
     );
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
-        out.contains("\"tasks\":{\"done\":0,\"skipped\":0,\"total\":0,\"next_task\":null}"),
+        out.contains(
+            "\"tasks\":{\"done\":0,\"skipped\":0,\"finish\":0,\"total\":0,\"next_task\":null}"
+        ),
         "{out}"
     );
     // The task of a done plan is not the next task: a duplicate id does not
@@ -925,7 +927,9 @@ fn the_progress_of_the_tasks_and_the_next_open_task_are_data() {
     );
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
-        out.contains("\"tasks\":{\"done\":2,\"skipped\":0,\"total\":2,\"next_task\":null}"),
+        out.contains(
+            "\"tasks\":{\"done\":2,\"skipped\":0,\"finish\":0,\"total\":2,\"next_task\":null}"
+        ),
         "{out}"
     );
 }
@@ -957,7 +961,7 @@ fn a_skipped_task_is_closed_for_next_and_status() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(
-            "\"tasks\":{\"done\":1,\"skipped\":1,\"total\":3,\"next_task\":{\"id\":\"t3\""
+            "\"tasks\":{\"done\":1,\"skipped\":1,\"finish\":0,\"total\":3,\"next_task\":{\"id\":\"t3\""
         ),
         "{out}"
     );
@@ -968,7 +972,9 @@ fn a_skipped_task_is_closed_for_next_and_status() {
     stage(&r, &[(PLAN, &plan("approved", &["src/dose.py"], &order))]);
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
-        out.contains("\"tasks\":{\"done\":2,\"skipped\":1,\"total\":3,\"next_task\":null}"),
+        out.contains(
+            "\"tasks\":{\"done\":2,\"skipped\":1,\"finish\":0,\"total\":3,\"next_task\":null}"
+        ),
         "{out}"
     );
     let (_, text, _) = r.run(&["status"]);
@@ -1032,6 +1038,102 @@ fn the_counts_name_the_skipped_tasks() {
     assert_stage(&r, "build");
 }
 
+// A task that closes with `finish` (0.7.1, B1)
+
+const FINISH_TASKS: &str = "- [x] t1: Read the code. Files: none. Verify: read it.\n- [ ] t2: Run `spec-dna finish dose` and commit the result. Files: none. Verify: `spec-dna check`.";
+
+#[test]
+fn a_task_that_names_finish_with_the_slug_does_not_keep_the_stage_build() {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan_with_item("approved", "None.", FINISH_TASKS)),
+        ],
+    );
+    assert_stage(&r, "deploy");
+    let text = next_text(&r);
+    let last = items(&text).last().copied().unwrap();
+    assert!(last.contains("`spec-dna finish dose`"), "{last}");
+    assert!(last.ends_with("[skill: finish]"), "{last}");
+    assert!(!text.contains("task t2"), "{text}");
+    assert!(field(&next_json(&r), "next").contains("spec-dna finish dose"));
+    assert!(
+        next_json(&r).contains("\"next_task\":null"),
+        "{}",
+        next_json(&r)
+    );
+}
+
+#[test]
+fn the_counts_name_the_tasks_for_finish() {
+    // The plan lists a file that the work changed, and `finish` is the last
+    // open task: `next` and `status` count it apart from the done tasks.
+    let r = start();
+    let two = format!(
+        "{FINISH_TASKS}\n- [ ] t3: Run `spec-dna finish other`.\n- [ ] t4: Skipped. Skip: not needed."
+    );
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], &two)),
+        ],
+    );
+    let text = next_text(&r);
+    assert!(
+        text.contains(
+            "tasks of `Order`: 1 of 4 done, 1 not needed, 1 for `finish` [skill: execute]"
+        ),
+        "{text}"
+    );
+    // A task for another slug is a task of real work: it stays the next task.
+    assert!(
+        next_json(&r).contains("\"next_task\":{\"id\":\"t3\""),
+        "{}",
+        next_json(&r)
+    );
+    let (code, out, err) = r.run(&["status", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"tasks\":{\"done\":1,\"skipped\":1,\"finish\":1,\"total\":4,\"next_task\":{\"id\":\"t3\""),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["status"]);
+    assert!(
+        text.contains("tasks 1/4 skipped 1 finish 1 next-task t3"),
+        "{text}"
+    );
+    // With no task for `finish`, the line has no tail.
+    stage(&r, &[(PLAN, &plan("approved", &["src/dose.py"], TASKS))]);
+    let text = next_text(&r);
+    assert!(!text.contains("for `finish`"), "{text}");
+    let (_, text, _) = r.run(&["status"]);
+    assert!(
+        !text.contains("finish 0") && !text.contains(" finish "),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_task_for_finish_that_is_done_or_skipped_counts_as_done_or_skipped() {
+    let r = start();
+    let order = "- [x] t1: Run `spec-dna finish dose`.\n- [ ] t2: Run `spec-dna finish dose`. Skip: done by hand.";
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], order)),
+        ],
+    );
+    let (_, out, _) = r.run(&["status", "--json"]);
+    assert!(
+        out.contains("\"tasks\":{\"done\":1,\"skipped\":1,\"finish\":0,\"total\":2,"),
+        "{out}"
+    );
+}
+
 #[test]
 fn a_skip_with_no_reason_does_not_close_the_task() {
     let r = start();
@@ -1058,7 +1160,7 @@ fn a_skip_with_no_reason_does_not_close_the_task() {
     );
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
-        out.contains("\"tasks\":{\"done\":0,\"skipped\":0,\"total\":2,"),
+        out.contains("\"tasks\":{\"done\":0,\"skipped\":0,\"finish\":0,\"total\":2,"),
         "{out}"
     );
     // An empty `Skip:` and a box `- [x]` is a done task.
@@ -1076,7 +1178,7 @@ fn a_skip_with_no_reason_does_not_close_the_task() {
     let (_, out, _) = r.run(&["status", "--json"]);
     assert!(
         out.contains(
-            "\"tasks\":{\"done\":1,\"skipped\":0,\"total\":2,\"next_task\":{\"id\":\"t2\""
+            "\"tasks\":{\"done\":1,\"skipped\":0,\"finish\":0,\"total\":2,\"next_task\":{\"id\":\"t2\""
         ),
         "{out}"
     );
@@ -1257,7 +1359,7 @@ fn the_json_of_status_has_the_fields_in_order() {
             "\"next\":\"set `status: approved` in docs/intent/dose/plan.md\"",
             "\"stale\":false",
             "\"areas\":[\"valves\"]",
-            "\"tasks\":{\"done\":0,\"skipped\":0,\"total\":1,\"next_task\":{\"id\":\"t1\"",
+            "\"tasks\":{\"done\":0,\"skipped\":0,\"finish\":0,\"total\":1,\"next_task\":{\"id\":\"t1\"",
             "\"follow_ups\":[]}",
         ],
     );

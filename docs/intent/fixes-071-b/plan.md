@@ -40,6 +40,8 @@ status: approved
 - `docs/evals.md` The eval copy and the run of `write-plan`.
 - `docs/types.md` The label `Actual:`.
 - `docs/quickstart.md` The version.
+- `docs/harness.md` The review task of the owner is optional.
+- `examples/one-change/README.md` The output of `log` has the pair `actual`.
 - `docs/guides/change.md` The rules of B1, B6 and B7 and the path outside `Files`.
 - `docs/guides/upgrade-0.6.md` The upgrade in one commit.
 - `CHANGELOG.md` The section of 0.7.1.

@@ -9,7 +9,7 @@ Commands:
 
 1. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop.
 2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
-3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message. Keep it in the squash message.
+3. Commit the result. If `spec-dna finish` prints a line `Hours:`, put it into the commit message. Keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
@@ -19,4 +19,4 @@ If the check fails: A command that the tool denies is no stop of `finish`: run t
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:4bfe31a300faf9ee -->
+<!-- spec-dna harness v{VERSION} h:476bd31e13fa704a -->

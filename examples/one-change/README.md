@@ -97,7 +97,7 @@ The reviewer sees the code and the new requirement in one diff. The proposal doe
 
 ```console
 $ spec-dna log
-2026-11-16 finished sensor-timeout higher-risk add 1 change 0 remove 0 hours - 9e72abc626e6 Sensor timeout
+2026-11-16 finished sensor-timeout higher-risk add 1 change 0 remove 0 hours - actual - 9e72abc626e6 Sensor timeout
 ```
 
 A `routine` change has no spec and no delta: it edits the requirements together with the code. [The change guide](../../docs/guides/change.md) gives each class and each step.

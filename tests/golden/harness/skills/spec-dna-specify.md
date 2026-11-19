@@ -13,6 +13,7 @@ Commands:
 4. Under `Interfaces`, write `- none` or one paragraph if no interface changes. Else write one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
 5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
 6. Write each item of `Concerns` and `Open questions` with a box: `- [ ]` is open. If none applies, write one item `- none`.
+7. To change the spec after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on.
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
@@ -22,4 +23,4 @@ If the check fails: Fix each item that the message names. For a new hash, run `s
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:b6fa08196d9b7a03 -->
+<!-- spec-dna harness v{VERSION} h:90870a4f3690cc39 -->

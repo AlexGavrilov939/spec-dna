@@ -255,7 +255,8 @@ reports a stale index (SD610).",
 requirements, checks the evidence of each requirement that it adds or
 changes, and deletes the folder of the change. It stops at the first failed
 step, and then it changes nothing. A stop is an open task of the plan (not
-[x] and with no reason in Skip:; the stop lists them), a reference to the folder from
+[x] and with no reason in Skip:; the stop lists them; a task whose text names
+`spec-dna finish <slug>` with its own slug is closed by `finish`), a reference to the folder from
 another document, a status that is not accepted (intent) or approved (plan,
 spec), an open concern or question, a decision that is not accepted, a delta
 line that does not match the tree (SD914), a delta that differs from the
@@ -267,9 +268,10 @@ folder must be tracked and clean. --dry-run prints the diff of each file and
 `remove <path>` for each deleted file, and writes nothing. Without it, the
 command writes the files, deletes the folder, and stages the paths with
 `git add`. It makes no commit. It adds the label `Hours:` of each task of the
-plan that is not skipped, and prints the line `Hours: <total>` (a number, or a
-range `<low>-<high>`): put the line in the commit message, and keep it in the
-squash message. It is the only command that
+plan that is not skipped, and the label `Actual:` of each task of the plan.
+It prints the line `Hours: <total>` (a number, or a range `<low>-<high>`),
+with `, actual <n>` if a task has `Actual:`: put the line in the commit
+message, and keep it in the squash message. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
     ),
@@ -298,7 +300,9 @@ base and the evidence of the requirements: plan, design, build, test,
 deploy or closed. Each line says done ([x]) or open ([ ]). The last line
 gives the edit or the command that ends the stage. In the build stage, it
 names the next open task of the plan. The build stage stays while a task is
-open (not [x] and with no reason in Skip:). A routine change whose plan has
+open (not [x] and with no reason in Skip:). A task whose text names
+`spec-dna finish <slug>` with the slug of the change is not open: `finish`
+closes it. A routine change whose plan has
 one Files item that starts with none needs no changed file: the build stage
 ends when each task is closed. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
 verify or finish. The names are fixed, and `spec-dna skill show <name>`
@@ -330,8 +334,9 @@ history of git. It reads each commit that deleted an intent.md. The status of
 the intent in the parent of that commit gives the result: accepted is
 finished, and any other status is closed. For each change it prints the date,
 the result, the slug, the class, the counts of the delta lines (add, change,
-remove) of its spec, the hours, the commit and the title. The hours are the
-last line `Hours: <number>` or `Hours: <a>-<b>` of the commit message that
+remove) of its spec, the hours, the actual hours (`actual <n>`, or `actual -`),
+the commit and the title. The hours are the
+last line `Hours: <number>`, `Hours: <a>-<b>` or `Hours: actual <n>`, with `, actual <n>` after the number or the range, of the commit message that
 deleted the intent (a dash if there is none). A change that one pull request
 held with its approval and its code, and that a squash merge brought to the
 default branch, has no entry. A move of intent.md out of the intent folder
@@ -3656,6 +3661,7 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
                 .raw("diagnostics", "[]")
                 .raw("files", &json::array(writes.chain(removes)))
                 .raw("hours", &plan.hours.json())
+                .raw("actual", &plan.hours.actual_json())
                 .end()
         );
         return;
@@ -3692,6 +3698,24 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
             "note: the task `{id}` has the value \"{value}\" in `Hours:`, which is no number of hours and no range; no total"
         );
     }
+    for (id, value) in &plan.hours.actual_invalid {
+        println!(
+            "note: the task `{id}` has the value \"{value}\" in `Actual:`, which is no number of hours; no actual total"
+        );
+    }
+    match plan.hours.actual_missing.as_slice() {
+        [] => {}
+        [id] => {
+            println!("note: the done task `{id}` has no `Actual:`; the actual total leaves it out")
+        }
+        ids => {
+            let list: Vec<String> = ids.iter().map(|i| format!("`{i}`")).collect();
+            println!(
+                "note: the done tasks {} have no `Actual:`; the actual total leaves them out",
+                list.join(", ")
+            );
+        }
+    }
     match plan.hours.missing.as_slice() {
         [] => {}
         [id] => println!("note: the task `{id}` has no `Hours:`; the total leaves it out"),
@@ -3703,8 +3727,8 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
             );
         }
     }
-    if let Some(total) = plan.hours.text() {
-        println!("Hours: {total}");
+    if let Some(line) = plan.hours.line() {
+        println!("{line}");
         println!(
             "add this line to the commit message of the change; keep it in the squash message"
         );

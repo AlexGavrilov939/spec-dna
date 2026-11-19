@@ -275,6 +275,68 @@ fn the_skill_files_match_the_golden_files() {
     );
 }
 
+/// The text of the skill `name`, as `spec-dna skill show` prints it.
+fn shown(name: &str) -> String {
+    let (code, out, err) = Repo::new().run(&["skill", "show", name]);
+    assert_eq!(code, 0, "{out}{err}");
+    out
+}
+
+/// The sentence of 0.7.1, B6: the documented way for a step back to `draft`.
+fn step_back_sentence(artifact: &str) -> String {
+    format!(
+        "To change the {artifact} after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on."
+    )
+}
+
+#[test]
+fn specify_and_write_plan_give_the_way_of_the_step_back_to_draft() {
+    let s = shown("specify");
+    assert!(
+        s.contains(&format!("\n7. {}", step_back_sentence("spec"))),
+        "{s}"
+    );
+    let w = shown("write-plan");
+    assert!(
+        w.contains(&format!("\n8. {}", step_back_sentence("plan"))),
+        "{w}"
+    );
+}
+
+#[test]
+fn write_plan_separates_the_estimate_the_actual_hours_and_the_task_for_finish() {
+    let w = shown("write-plan");
+    assert!(
+        w.contains("6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`: the estimate. When the task is done, add `Actual: <n>`: the real hours. `spec-dna finish` adds them and prints the line `Hours:`. For a spike, write one task for each branch."),
+        "{w}"
+    );
+    assert!(
+        w.contains("7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: <n>.` Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it. After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request."),
+        "{w}"
+    );
+    assert!(!w.contains("`finish` stops while a task is open."), "{w}");
+}
+
+#[test]
+fn execute_asks_the_person_and_then_adds_the_path_to_files() {
+    let e = shown("execute");
+    assert!(
+        e.contains("If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit; a plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8)."),
+        "{e}"
+    );
+    assert!(!e.contains("ask the person to change the plan"), "{e}");
+}
+
+#[test]
+fn finish_names_the_line_hours_without_its_form() {
+    let f = shown("finish");
+    assert!(
+        f.contains("3. Commit the result. If `spec-dna finish` prints a line `Hours:`, put it into the commit message. Keep it in the squash message."),
+        "{f}"
+    );
+    assert!(!f.contains("Hours: <total>"), "{f}");
+}
+
 #[test]
 fn the_front_matter_and_the_sizes_follow_the_budgets_of_d6() {
     let r = written();

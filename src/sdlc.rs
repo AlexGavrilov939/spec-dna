@@ -330,43 +330,93 @@ impl HoursRange {
     }
 }
 
-/// The last line of a commit message that is `Hours: <number>` or
-/// `Hours: <a>-<b>`. The line can be in any paragraph, because a host can write
-/// the messages of a squash as a list. A line with other text after the value
-/// is not such a line. A number has up to 7 digits, and up to 2 decimals after
-/// a `.`. A longer number would lose digits or read as `inf` in JSON, so the
-/// line gives no value. A range has spaces or tabs around its `-` or none, and
-/// `a <= b`.
-fn hours_line(message: &str) -> Option<HoursRange> {
-    fn number(t: &str) -> Option<f64> {
-        let (whole, frac) = match t.split_once('.') {
-            Some((w, f)) => (w, Some(f)),
-            None => (t, None),
-        };
-        let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
-        (digits(whole) && whole.len() <= 7 && frac.is_none_or(|f| digits(f) && f.len() <= 2))
-            .then(|| t.parse().ok())
-            .flatten()
-    }
+/// The values of the last `Hours:` line of a commit message: the estimate and
+/// the actual hours (design 0.7.1, B7).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HoursLine {
+    /// The estimate: a number or a range. `None` for the line `Hours: actual
+    /// <n>`.
+    hours: Option<HoursRange>,
+    /// The actual hours: a number.
+    actual: Option<f64>,
+}
+
+/// One number of a line `Hours:`: up to 7 digits, and up to 2 decimals after a
+/// `.`. A longer number would lose digits or read as `inf` in JSON, so the
+/// line gives no value.
+fn line_number(t: &str) -> Option<f64> {
+    let (whole, frac) = match t.split_once('.') {
+        Some((w, f)) => (w, Some(f)),
+        None => (t, None),
+    };
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    (digits(whole) && whole.len() <= 7 && frac.is_none_or(|f| digits(f) && f.len() <= 2))
+        .then(|| t.parse().ok())
+        .flatten()
+}
+
+/// The estimate of a line `Hours:`: a number, or a range with spaces or tabs
+/// around its `-` or none, and `a <= b`.
+fn estimate_of(value: &str) -> Option<HoursRange> {
+    let (low, high) = match value.split_once('-') {
+        None => {
+            let n = line_number(value)?;
+            (n, n)
+        }
+        Some((a, b)) => (
+            line_number(a.trim_matches([' ', '\t']))?,
+            line_number(b.trim_matches([' ', '\t']))?,
+        ),
+    };
+    (low <= high).then_some(HoursRange { low, high })
+}
+
+/// The last line of a commit message that is `Hours: <estimate>`,
+/// `Hours: <estimate>, actual <n>` or `Hours: actual <n>`. The estimate is a
+/// number or a range `<a>-<b>`. Spaces or tabs are around the `,`, or none.
+/// The line can be in any paragraph, because a host can write the messages of a
+/// squash as a list. A line with other text after the value is not such a
+/// line.
+fn hours_line(message: &str) -> Option<HoursLine> {
     message.lines().rev().find_map(|line| {
         let value = line.strip_prefix("Hours:")?.trim_matches([' ', '\t']);
-        let (low, high) = match value.split_once('-') {
-            None => {
-                let n = number(value)?;
-                (n, n)
+        let (estimate, actual) = match value.split_once(',') {
+            None => (value, None),
+            Some((e, a)) => {
+                let a = a.trim_matches([' ', '\t']).strip_prefix("actual")?;
+                // A space or a tab separates the word and the number.
+                a.starts_with([' ', '\t']).then_some(())?;
+                (
+                    e.trim_matches([' ', '\t']),
+                    Some(a.trim_matches([' ', '\t'])),
+                )
             }
-            Some((a, b)) => (
-                number(a.trim_matches([' ', '\t']))?,
-                number(b.trim_matches([' ', '\t']))?,
-            ),
         };
-        (low <= high).then_some(HoursRange { low, high })
+        let actual = match actual {
+            Some(a) => Some(line_number(a)?),
+            None => None,
+        };
+        if actual.is_none()
+            && let Some(a) = estimate.strip_prefix("actual")
+            && a.starts_with([' ', '\t'])
+        {
+            // `Hours: actual <n>`
+            let n = line_number(a.trim_matches([' ', '\t']))?;
+            return Some(HoursLine {
+                hours: None,
+                actual: Some(n),
+            });
+        }
+        Some(HoursLine {
+            hours: Some(estimate_of(estimate)?),
+            actual,
+        })
     })
 }
 
 /// The hours of the commits, by commit: the value of the last `Hours:` line of
 /// the message. A commit with no such line is not in the map.
-fn hours_of(git: &Git, commits: &[String]) -> Result<HashMap<String, HoursRange>, Fatal> {
+fn hours_of(git: &Git, commits: &[String]) -> Result<HashMap<String, HoursLine>, Fatal> {
     let messages = git.commit_messages(commits).map_err(Fatal::Io)?;
     Ok(commits
         .iter()
@@ -384,6 +434,8 @@ struct Entry {
     time: i64,
     /// The hours of the line `Hours:` of the commit message.
     hours: Option<HoursRange>,
+    /// The actual hours of the same line.
+    actual: Option<f64>,
 }
 
 /// `spec-dna log [--since <rev>]`: the finished and the closed changes.
@@ -436,7 +488,8 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
                 facts,
                 commit: e.commit.clone(),
                 time: e.time,
-                hours: hours.get(&e.commit).copied(),
+                hours: hours.get(&e.commit).and_then(|h| h.hours),
+                actual: hours.get(&e.commit).and_then(|h| h.actual),
             }
         })
         .collect();
@@ -454,6 +507,10 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
                 .str("result", e.outcome.name())
                 .raw("delta", &delta)
                 .raw("hours", &e.hours.map_or("null".to_string(), |h| h.json()))
+                .raw(
+                    "actual",
+                    &e.actual.map_or("null".to_string(), |a| a.to_string()),
+                )
                 .str("commit", &e.commit)
                 .str("date", &utc_date(e.time))
                 .end()
@@ -472,7 +529,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
     }
     for e in &entries {
         println!(
-            "{} {} {} {} add {} change {} remove {} hours {} {} {}",
+            "{} {} {} {} add {} change {} remove {} hours {} actual {} {} {}",
             utc_date(e.time),
             e.outcome.name(),
             e.facts.slug,
@@ -481,6 +538,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
             e.facts.delta[1],
             e.facts.delta[2],
             e.hours.map_or("-".to_string(), |h| h.text()),
+            e.actual.map_or("-".to_string(), |a| a.to_string()),
             short(&e.commit),
             e.facts.title
         );
@@ -893,7 +951,7 @@ pub fn stats(
             .end
             .as_ref()
             .and_then(|e| hours.get(&e.commit))
-            .copied();
+            .and_then(|h| h.hours);
         measured.push(Measured {
             life,
             facts,
@@ -1632,7 +1690,9 @@ mod tests {
             ("", None),
         ] {
             assert_eq!(
-                hours_line(message).map(|h| (h.low, h.high)),
+                hours_line(message)
+                    .and_then(|h| h.hours)
+                    .map(|h| (h.low, h.high)),
                 want.map(|n| (n, n)),
                 "{message:?}"
             );
@@ -1658,14 +1718,58 @@ mod tests {
             ("Hours: 5-12345678", None),
         ] {
             assert_eq!(
-                hours_line(message).map(|h| (h.low, h.high)),
+                hours_line(message)
+                    .and_then(|h| h.hours)
+                    .map(|h| (h.low, h.high)),
                 want,
                 "{message:?}"
             );
         }
-        let r = hours_line("Hours: 5-9").unwrap();
+        let r = hours_line("Hours: 5-9").unwrap().hours.unwrap();
         assert_eq!((r.text(), r.midpoint()), ("5-9".to_string(), 7.0));
         assert_eq!(r.json(), "{\"low\":5,\"high\":9}");
-        assert_eq!(hours_line("Hours: 3-3").unwrap().text(), "3");
+        assert_eq!(hours_line("Hours: 3-3").unwrap().hours.unwrap().text(), "3");
+    }
+
+    #[test]
+    fn the_hours_line_can_have_the_actual_hours() {
+        // The pair: (low, high) of the estimate and the actual hours.
+        type Pair = (Option<(f64, f64)>, Option<f64>);
+        for (message, want) in [
+            (
+                "Hours: 2-3, actual 3.5",
+                Some((Some((2.0, 3.0)), Some(3.5))),
+            ),
+            ("Hours: 4,actual 5", Some((Some((4.0, 4.0)), Some(5.0)))),
+            (
+                "Hours: 4 \t,\t actual \t 5",
+                Some((Some((4.0, 4.0)), Some(5.0))),
+            ),
+            ("Hours: actual 3", Some((None, Some(3.0)))),
+            ("Hours: 4", Some((Some((4.0, 4.0)), None))),
+            (
+                "Hours: 1\nHours: 2, actual 3\n",
+                Some((Some((2.0, 2.0)), Some(3.0))),
+            ),
+            (
+                "Hours: 1, actual 2\nHours: soon\n",
+                Some((Some((1.0, 1.0)), Some(2.0))),
+            ),
+            ("Hours: 1, actual 2-3", None),
+            ("Hours: 1, actual", None),
+            ("Hours: 1, actual3", None),
+            ("Hours: 1, actually 3", None),
+            ("Hours: 1, 3", None),
+            ("Hours: actual", None),
+            ("Hours: actual 3-4", None),
+            ("Hours: 1, actual 1.234", None),
+            ("Hours: 1, actual 3 total", None),
+            ("Hours: 3,5", None),
+        ] as [(&str, Option<Pair>); 17]
+        {
+            let got: Option<Pair> =
+                hours_line(message).map(|h| (h.hours.map(|r| (r.low, r.high)), h.actual));
+            assert_eq!(got, want, "{message:?}");
+        }
     }
 }

@@ -149,6 +149,9 @@ pub struct Tasks {
     /// The tasks with a reason in `Skip:`: they are not needed, and they are
     /// closed whatever their box.
     pub skipped: usize,
+    /// The open tasks whose text names `spec-dna finish <slug>`: `finish`
+    /// closes them (design 0.7.1, B1).
+    pub finish: usize,
     /// All tasks. A duplicate id does not count.
     pub total: usize,
     pub next: Option<PlanTask>,
@@ -164,6 +167,10 @@ pub fn tasks(ch: &Change, head: &Corpus) -> Tasks {
     Tasks {
         done: all.iter().filter(|t| t.is_done()).count(),
         skipped: all.iter().filter(|t| t.skipped()).count(),
+        finish: all
+            .iter()
+            .filter(|t| !t.closed() && t.closes_with_finish(&ch.slug))
+            .count(),
         total: all.len(),
         next: ch.next_open_task(head),
     }
@@ -535,7 +542,7 @@ impl<'a> Ctx<'a> {
         let changed = self.files_changed(ch);
         let all_tasks_closed = {
             let t = tasks(ch, head);
-            t.done + t.skipped == t.total
+            t.done + t.skipped + t.finish == t.total
         };
         let build_done = all_tasks_closed && (no_files || changed == Some(true));
         if plan != "approved" || !build_done {
@@ -574,10 +581,17 @@ impl<'a> Ctx<'a> {
                     0 => String::new(),
                     n => format!(", {n} not needed"),
                 };
+                let finish = match t.finish {
+                    0 => String::new(),
+                    n => format!(", {n} for `finish`"),
+                };
                 items.push(item(
-                    t.done + t.skipped == t.total,
+                    t.done + t.skipped + t.finish == t.total,
                     Step::Execute,
-                    format!("tasks of `Order`: {} of {} done{skipped}", t.done, t.total),
+                    format!(
+                        "tasks of `Order`: {} of {} done{skipped}{finish}",
+                        t.done, t.total
+                    ),
                 ));
             }
             if let Some(task) = &t.next {
@@ -1045,6 +1059,7 @@ pub fn status(
             let tasks = Obj::new()
                 .num("done", r.tasks.done)
                 .num("skipped", r.tasks.skipped)
+                .num("finish", r.tasks.finish)
                 .num("total", r.tasks.total)
                 .raw("next_task", &opt_task_json(r.tasks.next.as_ref()))
                 .end();
@@ -1134,6 +1149,9 @@ pub fn status(
             line.push_str(&format!(" tasks {}/{}", r.tasks.done, r.tasks.total));
             if r.tasks.skipped > 0 {
                 line.push_str(&format!(" skipped {}", r.tasks.skipped));
+            }
+            if r.tasks.finish > 0 {
+                line.push_str(&format!(" finish {}", r.tasks.finish));
             }
             if let Some(t) = &r.tasks.next {
                 line.push_str(&format!(" next-task {}", t.id));

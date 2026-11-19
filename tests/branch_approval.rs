@@ -1676,6 +1676,44 @@ fn a_plan_set_back_to_draft_in_the_working_tree_gives_reason_9() {
     );
 }
 
+/// The end of the message of reason 9 for the working tree (0.7.1, B6): the
+/// way of the commit of the step back.
+const STEP_BACK_WAY: &str = "; if this is the commit of the step back, a hook that runs `spec-dna check` rejects it: skip only that hook for this commit, name the skip in its body, and make the approval commit next";
+
+#[test]
+fn the_working_tree_step_back_names_the_way_of_the_commit_of_the_step_back() {
+    let r = start_branch();
+    ok_flow(&r);
+    r.write(PLAN, &plan("draft", &FILES));
+    let (code, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    assert_eq!(code, 1, "{out}");
+    let msg = &findings_of(&out)[0].1;
+    assert!(msg.ends_with(STEP_BACK_WAY), "{msg}");
+    // The text of before stays in front of the new end.
+    assert!(
+        msg.contains(
+            "approve it again with an approval commit before the work, or take the work out of the branch; if this is the commit"
+        ),
+        "{msg}"
+    );
+}
+
+#[test]
+fn a_commit_that_set_the_step_back_gets_no_hint_for_its_own_commit() {
+    // The commit exists, so the hook already ran for it.
+    let r = start_branch();
+    ok_flow(&r);
+    step_plan_back(&r);
+    let (_, out, found) = check(&r);
+    assert_eq!(found, want(&[(CODE, 9), (TEST, 9)]), "{out}");
+    let msg = &findings_of(&out)[0].1;
+    assert!(
+        !msg.contains("if this is the commit of the step back"),
+        "{msg}"
+    );
+}
+
 #[test]
 fn an_intent_set_back_to_draft_after_its_spec_gives_reason_9() {
     let r = start_branch();
