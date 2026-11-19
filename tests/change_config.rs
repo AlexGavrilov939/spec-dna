@@ -90,6 +90,27 @@ fn high_risk_paths_take_globs_from_the_root() {
 }
 
 #[test]
+fn shared_paths_take_globs_from_the_root() {
+    accepts(&table("shared-paths = []"));
+    accepts(&table(
+        "shared-paths = [\"docs/roadmap.md\", \"docs/questions.md\"]",
+    ));
+    for (bad, want) in [
+        ("[\"\"]", "is empty"),
+        ("[\"/etc/**\"]", "relative path"),
+        ("[\"../up/**\"]", "`.` or `..` segment"),
+        ("[\"a.md\", \"a.md\"]", "more than once"),
+        ("[3]", "must hold strings"),
+        ("\"docs\"", "must be an array of strings"),
+    ] {
+        rejects(
+            &table(&format!("shared-paths = {bad}")),
+            &["`change.shared-paths`", want],
+        );
+    }
+}
+
+#[test]
 fn high_risk_layers_name_layers_of_the_graph() {
     // The graph of a project with no `[layers]` table has `rules`.
     accepts(&table("high-risk-layers = [\"rules\"]"));

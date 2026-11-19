@@ -260,6 +260,12 @@ pub struct Plan {
     pub high_risk_layers: Option<Vec<String>>,
     /// `[change] high-risk-paths` of the current file.
     pub high_risk_paths: Vec<String>,
+    /// `[change] shared-paths` of the current file. `None` (a new project):
+    /// the top files of the roadmap and the questions, and `detected_shared`.
+    pub shared_paths: Option<Vec<String>>,
+    /// The Markdown files of the repository that a roadmap or a list of
+    /// questions suggests by their name (`Facts::shared`).
+    pub detected_shared: Vec<String>,
     /// `[change] max-fanout`.
     pub max_fanout: u32,
     /// `[change] max-task-files`. No question asks for it. `--reconfigure`
@@ -413,17 +419,58 @@ impl Plan {
             .collect()
     }
 
+    /// The paths of `[change] shared-paths`: the current value, or for a new
+    /// project the top file of each layer whose types have `roadmap` or
+    /// `questions` (the path that `spec-dna new` writes, in the first mixed
+    /// root) and the files that `Facts::shared` names. Sorted and unique.
+    fn shared_paths_written(&self) -> Vec<String> {
+        if let Some(v) = &self.shared_paths {
+            return v.clone();
+        }
+        let graph = self.layers();
+        let root = self
+            .rows
+            .iter()
+            .find(|r| r.ty.is_none())
+            .map_or(self.root.as_str(), |r| r.path.as_str())
+            .trim_matches('/');
+        let prefix = if root.is_empty() || root == "." {
+            String::new()
+        } else {
+            format!("{root}/")
+        };
+        let mut out: Vec<String> = Vec::new();
+        for layer in graph.layers() {
+            for ty in [DocType::Roadmap, DocType::Questions] {
+                let file = format!("{}.md", ty.name());
+                if layer.types.contains(&ty)
+                    && layer
+                        .files
+                        .iter()
+                        .any(|f| f.trim_start_matches("./") == file)
+                {
+                    out.push(format!("{prefix}{file}"));
+                }
+            }
+        }
+        out.extend(self.detected_shared.iter().cloned());
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The `[change]` table, or an empty string.
     fn change_section(&self) -> String {
         if !self.writes_change() {
             return String::new();
         }
         let mut out = format!(
-            "\n[change]  # the change process (docs/config.md)\npolicy = {}  # \"three-class\", \"two-class\" or \"none\"\ngate = {}  # \"block\", \"warn\" or \"off\"\nhigh-risk-layers = {}  # a delta in these layers makes a change higher-risk\nhigh-risk-paths = {}  # globs from the repository root\nmax-fanout = {}  # documents that one change can touch before SD905\napproval = {}  # \"base\" or \"branch\": where an approval can be\n",
+            "\n[change]  # the change process (docs/config.md)\npolicy = {}  # \"three-class\", \"two-class\" or \"none\"\ngate = {}  # \"block\", \"warn\" or \"off\"\nhigh-risk-layers = {}  # a delta in these layers makes a change higher-risk\nhigh-risk-paths = {}  # globs from the repository root\nshared-paths = {}  # documents that each change can edit (SD913)\nmax-fanout = {}  # documents that one change can touch before SD905\napproval = {}  # \"base\" or \"branch\": where an approval can be\n",
             toml_str(self.change_policy.name()),
             toml_str(self.change_gate.name()),
             toml_list(&self.high_risk_layers_written()),
             toml_list(&self.high_risk_paths),
+            toml_list(&self.shared_paths_written()),
             self.max_fanout,
             toml_str(self.approval.name())
         );
@@ -819,6 +866,8 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         change_table: true,
         high_risk_layers: None,
         high_risk_paths: Vec::new(),
+        shared_paths: None,
+        detected_shared: facts.shared.clone(),
         max_fanout: config::DEFAULT_MAX_FANOUT,
         max_task_files: None,
         change_base: None,
@@ -925,6 +974,7 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         && cfg.high_risk_layers != config::default_high_risk_layers(&cfg.layers))
     .then(|| cfg.high_risk_layers.clone());
     p.high_risk_paths = cfg.high_risk_paths.clone();
+    p.shared_paths = Some(cfg.shared_paths.clone());
     p.max_fanout = cfg.max_fanout;
     p.max_task_files = text
         .parse::<toml::Table>()
@@ -1609,6 +1659,25 @@ fn pre_commit_hook() -> String {
 /// with one of them is still a change of its own (SD503). `init` writes no
 /// file for lefthook.
 pub const HOOK_FILES: [&str; 2] = [".pre-commit-config.yaml", ".husky/pre-commit"];
+
+/// True if `path` is a file that `init` or `upgrade` writes with
+/// `spec-dna.toml`: an adapter, a harness file, a hook file, a starter file of
+/// the evals, or a file whose name starts with `spec-dna`. SD503 does not count
+/// it as other work, and SD913 does not report it (ADR 0019).
+pub fn is_tool_file(config: &Config, path: &str) -> bool {
+    adapters::PATHS.contains(&path)
+        || harness::is_output_path(path)
+        || HOOK_FILES.contains(&path)
+        || path
+            .rsplit('/')
+            .next()
+            .unwrap_or(path)
+            .starts_with("spec-dna")
+        || config
+            .evals
+            .as_ref()
+            .is_some_and(|e| evals::skeleton_paths(&e.dir).iter().any(|s| s == path))
+}
 
 /// The hook that 0.4.1 wrote runs `spec-dna check`, which reads the working
 /// tree. A commit can pass while the committed tree fails. The hook of this
@@ -4048,7 +4117,8 @@ fn resolved_answers(
             plan.change_policy.name().to_string(),
             before.change_policy.name().to_string(),
             if plan.writes_change() {
-                "[change] policy, high-risk-layers, high-risk-paths, max-fanout".to_string()
+                "[change] policy, high-risk-layers, high-risk-paths, shared-paths, max-fanout"
+                    .to_string()
             } else {
                 String::new()
             },

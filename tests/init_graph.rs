@@ -704,3 +704,88 @@ fn two_folders_that_differ_only_in_case_give_one_area_and_a_note() {
     let (code, out, err) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+// --- `[change] shared-paths` (0.7.1, B8) ---
+
+/// The line of `shared-paths` in `spec-dna.toml`, without its comment.
+fn shared_paths_line(r: &Repo) -> String {
+    let cfg = r.read("spec-dna.toml");
+    cfg.lines()
+        .find_map(|l| l.strip_prefix("shared-paths = "))
+        .map(|l| l.split("  #").next().unwrap().to_string())
+        .unwrap_or_else(|| panic!("no `shared-paths`:\n{cfg}"))
+}
+
+#[test]
+fn a_new_project_shares_the_top_files_of_the_roadmap_and_the_questions() {
+    for graph in ["small", "default"] {
+        let r = Repo::empty();
+        let (code, out, err) = r.init_with(&format!("graph = \"{graph}\"\n"), &[]);
+        assert_eq!(code, 0, "{graph}: {out}{err}");
+        assert_eq!(
+            shared_paths_line(&r),
+            "[\"docs/questions.md\", \"docs/roadmap.md\"]",
+            "{graph}"
+        );
+        // The result is a valid configuration, and the paths are the files
+        // that `new` writes.
+        let (code, out, err) = r.run(&["check"]);
+        assert_eq!(code, 0, "{graph}: {out}{err}");
+        for ty in ["roadmap", "questions"] {
+            let (code, out, err) = r.run(&["new", ty]);
+            assert_eq!(code, 0, "{graph} {ty}: {out}{err}");
+            assert!(out.starts_with(&format!("wrote docs/{ty}.md")), "{out}");
+        }
+    }
+}
+
+#[test]
+fn a_roadmap_file_of_the_repository_is_shared_too() {
+    let r = Repo::empty();
+    r.write("ROADMAP.md", "# Roadmap\n\nText.\n");
+    r.write("notes/Open-Questions.md", "# Open questions\n\nText.\n");
+    r.write("notes/roadmap-2.md", "# Other\n\nText.\n");
+    r.commit("docs");
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        shared_paths_line(&r),
+        "[\"ROADMAP.md\", \"docs/questions.md\", \"docs/roadmap.md\", \"notes/Open-Questions.md\"]"
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn reconfigure_keeps_shared_paths() {
+    let r = Repo::empty();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml").replace(
+        "[\"docs/questions.md\", \"docs/roadmap.md\"]",
+        "[\"docs/plans/**\"]",
+    );
+    r.write("spec-dna.toml", &cfg);
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(shared_paths_line(&r), "[\"docs/plans/**\"]");
+    // A second run changes nothing.
+    let before = r.read("spec-dna.toml");
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(before, r.read("spec-dna.toml"));
+}
+
+#[test]
+fn a_path_that_the_key_would_reject_is_not_shared() {
+    // A folder name with a backslash: `shared-paths` takes only `/`.
+    let r = Repo::empty();
+    r.write("odd\\dir/roadmap.md", "# Roadmap\n\nText.\n");
+    r.write("ROADMAP.md", "# Roadmap\n\nText.\n");
+    r.commit("docs");
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let line = shared_paths_line(&r);
+    assert!(line.contains("\"ROADMAP.md\""), "{line}");
+    assert!(!line.contains('\\'), "{line}");
+}

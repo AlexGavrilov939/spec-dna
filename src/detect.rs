@@ -276,6 +276,27 @@ fn first_status(ty: DocType) -> Option<String> {
     }
 }
 
+/// The Markdown files whose name, in lowercase and without `.md`, is
+/// `roadmap`, `questions` or `open-questions`. Vendored and generated
+/// directories and a path that the key `shared-paths` would reject are left
+/// out. The result is sorted.
+fn shared_docs(files: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = files
+        .iter()
+        .filter(|f| !skipped(f) && crate::config::is_valid_glob(f))
+        .filter(|f| {
+            let name = f.rsplit('/').next().unwrap_or(f).to_ascii_lowercase();
+            matches!(
+                name.strip_suffix(".md"),
+                Some("roadmap" | "questions" | "open-questions")
+            )
+        })
+        .cloned()
+        .collect();
+    out.sort();
+    out
+}
+
 /// The facts of a repository.
 #[derive(Debug, Default)]
 pub struct Facts {
@@ -310,6 +331,9 @@ pub struct Facts {
     /// The folders that `areas` leaves out because their name differs from
     /// a proposed name only in case: the proposed name and the other name.
     pub areas_dropped: Vec<(String, String)>,
+    /// The Markdown files that a roadmap or a list of questions suggests by
+    /// their name. `init` writes them in `[change] shared-paths`. Sorted.
+    pub shared: Vec<String>,
 }
 
 /// One Markdown file.
@@ -1307,6 +1331,7 @@ pub fn detect(
     facts.stack = stack;
     facts.apps = apps;
     (facts.areas, facts.areas_dropped) = areas_of(&facts.rows, &mds, &facts.apps);
+    facts.shared = shared_docs(files);
 
     // Tests.
     for g in DEFAULT_TEST_GLOBS {

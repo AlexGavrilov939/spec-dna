@@ -117,7 +117,9 @@ The numbers are the numbers of the question in the `--json` output.
 
 Question 2 writes the tables `[layers.<name>]` of the graph. The layers give the types of the project, so `init` writes no `types` key. Question 3 writes `areas = [...]`, if the answer has a name. `init` never proposes a group: add a `[groups]` table manually.
 
-Questions 4 and 5 write the table `[change]` with 5 keys (and the 2 keys of the approval, below): `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`) and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
+Questions 4 and 5 write the table `[change]` with 6 keys (and the 2 keys of the approval, below): `policy`, `gate`, `high-risk-layers`, `high-risk-paths` (`[]`), `shared-paths` and `max-fanout` (`8`). The default of `high-risk-layers` is `["interfaces", "rules"]`, without the layers that the chosen graph does not have. The `small` graph has no `interfaces` layer, so it gives `["rules"]`. A new project gets the table.
+
+`shared-paths` lists the documents that each change can edit, so SD913 does not report them. No question asks for it. For a new project, `init` writes the top file of each layer that has the type `roadmap` or `questions`, as `spec-dna new` writes it, and each Markdown file whose name is `roadmap`, `questions` or `open-questions`, in lowercase and without `.md`. The list is sorted and has no repeated path. The graphs `small` and `default` give `["docs/questions.md", "docs/roadmap.md"]`.
 
 The table also has the keys `approval` and `approvers` (see [Approval in the branch](config.md#approval-in-the-branch)). The second prompt of question 5 asks for them, as [The approvers](#the-approvers) says.
 
@@ -159,7 +161,7 @@ With `--reconfigure`, a file that has the key `approval` keeps `approval` and `a
 
 Run the approval of each document with `spec-dna approve <slug> <artifact>` in a terminal of your own ([commands.md](commands.md#approve)).
 
-A file that has no `[change]` table has the policy `none`. For it, the answer `none` writes no table, and another policy writes the table. With `--reconfigure`, the current values are the defaults. `init` keeps `high-risk-paths`, `max-fanout` and the layers of `high-risk-layers` that the graph has. If the file has a `[change]` table with no `gate`, the profile sets SD910. Question 5 then proposes the gate with the same severity: `warn` for `lite`, `block` for the other profiles.
+A file that has no `[change]` table has the policy `none`. For it, the answer `none` writes no table, and another policy writes the table. With `--reconfigure`, the current values are the defaults. `init` keeps `high-risk-paths`, `shared-paths`, `max-fanout` and the layers of `high-risk-layers` that the graph has. If the file has a `[change]` table with no `gate`, the profile sets SD910. Question 5 then proposes the gate with the same severity: `warn` for `lite`, `block` for the other profiles.
 
 A policy other than `none` needs the `intent` layer, because a change is the folder `intent/<slug>/`. The graphs `small` and `default` have it. If the layers of `custom` have no `intent` layer, the preview says so, and `init` writes the policy `none`.
 
@@ -310,7 +312,7 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 
 - `install-source`, `self-urls`, `types`, `[repos]`, `[lint]`, `[context]`, `[groups]` and `[templates]`
 - the table `[evals]`, as question 14 says: `skeleton` keeps it as it is
-- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths`, `max-fanout`, `max-task-files`, `approval`, `approvers` and `base`. `max-task-files` stays only if the file sets it. `base` is the local branch of the change checks. `init` never asks for it, and it stays as you set it. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
+- the keys of `[change]` that no question asks for: `high-risk-layers`, `high-risk-paths`, `shared-paths`, `max-fanout`, `max-task-files`, `approval`, `approvers` and `base`. `max-task-files` stays only if the file sets it. `base` is the local branch of the change checks. `init` never asks for it, and it stays as you set it. `high-risk-layers` stays only if it is not the default of the current graph. If it is that default, `init` writes the default of the new graph, so a file that changes from the small graph to the default graph gets `["interfaces", "rules"]`. In each case, `init` writes only the layers that the new graph has. A list that you set, such as `[]`, stays. The answers of questions 4 and 5 replace `policy` and `gate`
 - `language`: it is the default of question 7. The answer `en` removes the key
 - every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs

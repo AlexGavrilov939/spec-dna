@@ -52,3 +52,7 @@ ADR 0012 and ADR 0013 are accepted and locked, so this ADR does not edit them. T
 - ADR 0013, "The pin line and SD503": the compare reads `\r\n` as `\n`. "The tree binary": a `Cargo.toml` that is a symbolic link makes no tree binary.
 
 ## Amendments
+
+### 2026-11-19
+
+In each binary, SD503 does not count `spec-dna.toml` when its text differs from the base text only in the pin line and in the table `[spec-dna-sha256]`, and the base pins an earlier version. This is the edit of `spec-dna upgrade` for a release that needs no other edit of the configuration. A hook that runs `check` refuses each commit while the pin is older than the binary, so the upgrade is the first commit of a branch. With this rule, the same branch can also hold other work. An edit of another line counts as before. The pin stays exact (ADR 0003). SD913 does not report the files that SD503 does not count. The feedback of a second project gave the reason (design 0.7.1 part B, B3).
