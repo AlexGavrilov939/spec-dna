@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # 0.8.0 design
 
