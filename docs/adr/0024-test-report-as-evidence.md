@@ -66,14 +66,14 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 - An explicit name follows the ids: `case:<name>` or `case:"<name>"`. A binary of 0.7.1 ends the tag at that word, so it reads the same ids.
 - Else the tag binds to the first word or string literal of the first code block after the tag, when it names a case of the reports. The block ends before the first later line whose indent is not deeper than its first line, after a deeper line. It also ends before a line with less indent than the tag, at the next tag, or after 20 lines. Thus, in the usual layout, the tag of a test that did not run does not bind to the next test. A name matches when it equals the word, ends with it after a separator, or starts with it and `/`, after the removal of a final `[...]` or `(...)`.
 - A case with a file binds only a tag of that file. A case with no file binds only a tag of the test file whose dotted path ends with its `classname`, or with the part before the last `.` (the form of pytest). When no file has such a path, it binds a tag of any test file.
-- The limits: a test in a comment after the tag, one case name in 2 files with no `file` and no such `classname`, and a test on one line. `case:` removes each doubt.
+- The limits: an unrelated passing case that shares a word of the block, a test in a comment after the tag, one case name in 2 files with no `file` and no such `classname`, and a test on one line. `case:` removes each doubt.
 - A tag with no case is not bound. It proves nothing, and the message names the fix.
 
 ### The proof and its states
 
 - A requirement passed when at least one bound case passed and no bound case failed. A skipped case is no pass. A pass after a rerun is a fail.
 - The states, from best to worst: `reliable`, `passed-once`, `verified` (`verified-by`), `tagged`, `owed`, `none`.
-- `reliable`: each bound case that passed has at least `[evidence] reliable-runs` passes (default 3) in the stamped reports of the current tree, with no fail. The runner repeats the tests. `[evidence] reliable-for` (`none`, `higher-risk`, `all`) selects the changes that need it at `finish` (SD620). The level is a level of the test report, so SD620 runs only with `reports` set.
+- `reliable`: each bound case that passed has at least `[evidence] reliable-runs` passes (default 3) in the stamped reports of the current tree, with no fail. The runner repeats the tests. `[evidence] reliable-for` (`none`, `higher-risk`, `all`) selects the changes that need it at `finish` (SD620). The level needs the test reports on: a `reliable-for` other than `none` with an empty `reports` is exit code 3.
 - `verified-by` keeps its meaning, as a check by a person. The report does not apply to it.
 
 ### Where the report counts
@@ -91,7 +91,7 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 
 ### The profiles
 
-On 2026-11-19 the owner decided the profiles of 0.8.0. In `lite`, each new code of this ADR is off. In `standard` and `strict`, the test reports are on only by `[evidence] reports`, and the reliable level only by `[evidence] reliable-for`. In `strict`, `init` writes `reliable-for = "higher-risk"`, and the path of `reports` only for a runner that it detects. The proof debt has no key, because a marker on one requirement is the switch. In `standard` its codes are warnings, so a marker never stops a change there.
+On 2026-11-19 the owner decided the profiles of 0.8.0. In `lite`, each new code of this ADR is off. The codes are in the new rule groups `reports` (SD613 to SD617) and `proof` (SD618 to SD620), so a rule for the group `evidence` of 0.7.1 does not change them. In `standard` and `strict`, the test reports are on only by `[evidence] reports`, and the reliable level only by `[evidence] reliable-for`. `init` writes `reports = []` with a comment in both, and in `strict` it writes `reliable-for = "higher-risk"` as a comment. The proof debt has no key: the marker is an act of the author on one requirement, as `verified-by` is, not a switch of the project. In `standard` its codes are warnings, so a marker never stops a change there.
 
 ### Rejected
 

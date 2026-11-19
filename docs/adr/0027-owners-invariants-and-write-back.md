@@ -55,8 +55,8 @@ Option 1, option (a) and option (i). The design page gives the detail in [D5](..
 ### Owners by path
 
 - `[owners]` maps a glob from the root to a list of role names. A role is a name of lowercase letters, digits and `-`, at most 40 characters. A bad glob or another entry, such as a login or an e-mail, is exit code 3. The persons of `[owners]` moved to 0.8.1 with [ADR 0026](0026-approval-through-the-code-host.md).
-- Each glob that matches a touched path applies. The result is the union, so no order and no last match exist.
-- The touched paths of a change are the paths of its diff against the lifecycle base. When the diff holds more than one change, a path counts for a change whose `Files` covers it. The folder of the change and the archive do not count.
+- Each glob that matches a path of `paths` of the record applies. The result is the union, so no order and no last match exist.
+- `paths` is the set of code paths of the diff of the change that its `scope` matches ([ADR 0025](0025-independent-acceptance.md)). The brief names the roles of this set, and SD933 reads the same set. A glob that matches only Markdown needs no role.
 - Each role of a matched glob needs an acceptor with that role in the record (SD933). The builder runs `spec-dna accept <slug> --brief --role <name>` for that acceptor.
 - The table is the switch: with no table, no role is needed. The table needs the acceptance, so it has no effect in `lite`.
 
@@ -76,7 +76,9 @@ Option 1, option (a) and option (i). The design page gives the detail in [D5](..
 - `finish` prints each deviation, and `finish --json` gets the list `deviations`. A record with a deviation needs an acknowledgement: the merge with `base`, an approval commit of an approver with `branch`. The deviations are a part of the acceptance, so they need no key.
 - After `finish`, the deviations live in the archived record. In the pull request of `finish`, the checks read the plan of the base tree, so the record is their only carrier.
 
-### Upgrade
+### Codes and upgrade
+
+SD933 to SD940 are in the new rule group `acceptance` of ADR 0025, so no group rule of 0.7.1 changes them.
 
 `upgrade` adds no key. `Invariants` is read only with the key and in a spec, and `Deviations` only in a plan, that a commit added at a pin of 0.8.0 or later. A section of the same name in an older artifact keeps its meaning. No commit found gives the rule of 0.8.0.
 

@@ -71,7 +71,7 @@ rests-on:
 
 ### The codes
 
-All codes default to Warning. A new rule group `rollup` holds SD641 to SD645. The profile table sets these severities:
+All codes default to Warning. A new rule group `rollup` holds SD641 to SD645, and a new rule group `area-budget` holds SD705 to SD707. Thus no group rule of 0.7.1, such as `budgets`, changes them. The profile table sets these severities:
 
 | Code | Finding | lite | standard | strict |
 | --- | --- | --- | --- | --- |
@@ -104,7 +104,7 @@ A summary is not an artifact of a change, so no approval mode asks for a status.
 
 ### The budget of an area
 
-The size of an area is the body characters of its documents that are not inactive. A sub-area with a summary counts as its summary. `[budgets.area]` holds `soft` and `hard` in characters. With no table, no area budget. The rule against the base is the rule of SD702 to SD704. The fix is a split into sub-areas, each with a summary, or a shorter text.
+The size of an area is the body characters of its documents that are not inactive. A sub-area with a summary counts as its summary. `[budgets.area]` holds `soft` and `hard` in characters. The area budget is a mechanism of its own, not a part of the roll-up: the table is its key, and with no table it checks nothing. The rule against the base is the rule of SD702 to SD704. The fix is a split into sub-areas, each with a summary, or a shorter text.
 
 `init` writes the table: `standard` 60,000 and 120,000, `strict` 40,000 and 80,000. In `lite`, `init` writes no table and no layer `summaries`. 120,000 characters are about 30,000 tokens, an area that an agent can still read in one request.
 

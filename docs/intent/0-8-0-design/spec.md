@@ -11,7 +11,7 @@ None. This change adds, changes or removes no requirement. The documents that it
 
 None. This change adds no code. The design proposes these interfaces of `spec-dna`. Sections 9 and 11 of the design page give each one. The review mode (`approval = "review"`, `reviews`) and the persons of `[owners]` moved to 0.8.1: `docs/design/0.8.1-note.md` holds their text. Each interface is a change of its own in the build, with its own spec.
 
-Keys: `[evidence] reports`, `[evidence] tree-exclude`, `[evidence] reliable-runs`, `[evidence] reliable-for`, `[change] higher-risk-acceptors`, `[change] invariants`, `[owners]` (roles only), `[budgets.area]` (`soft`, `hard`), `[layers.summaries]`, the key `change` of an eval file, and the rule group `rollup` of `[rules]`.
+Keys: `[evidence] reports`, `[evidence] tree-exclude`, `[evidence] reliable-runs`, `[evidence] reliable-for`, `[change] higher-risk-acceptors`, `[change] invariants`, `[owners]` (roles only), `[budgets.area]` (`soft`, `hard`), `[layers.summaries]`, the key `change` of an eval file, and the rule groups `reports`, `proof`, `acceptance`, `rollup` and `area-budget` of `[rules]`.
 
 Commands: `evidence stamp`, `accept <slug>`, `refresh`, `new summary <area>`, and the artifact `acceptance` of `approve <slug>`.
 
@@ -27,7 +27,6 @@ Files and tools: a harness role and a skill, the hook `protect-approvals`, and t
 
 - [[adr/0024-test-report-as-evidence]]
 - [[adr/0025-independent-acceptance]]
-- [[adr/0026-approval-through-the-code-host]]
 - [[adr/0027-owners-invariants-and-write-back]]
 - [[adr/0028-roll-up-and-summaries]]
 - [[adr/0029-protocol-of-the-model-team-measurement]]

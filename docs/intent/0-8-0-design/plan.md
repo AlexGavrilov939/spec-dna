@@ -28,4 +28,4 @@ status: approved
 
 ## Proof
 
-`spec-dna check` reports no error. The owner does 2 steps after the review. First, the owner sets the statuses `accepted` and `approved`, and the ADRs to `accepted`. Then the owner runs `spec-dna finish 0-8-0-design` in a later pull request.
+`spec-dna check` reports no error. The owner does 2 steps after the review. First, the owner sets the statuses `accepted` and `approved`, and the ADRs 0024 to 0031 except 0026 to `accepted`. ADR 0026 stays `proposed`: it moved to 0.8.1. Then the owner runs `spec-dna finish 0-8-0-design` in a later pull request.
