@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # Build of 0.8.0, slice S5: invariants and deviations
