@@ -61,7 +61,7 @@ The pilot runs do not count in the verdict.
 
 1. The self-test of the oracle and the runner tests with a stub `claude`. No cost.
 2. The manipulation check: 3 tasks, 1 run, arms A, B and C, about 18 USD. The step passes when each run lists the main model of `lean`, no run of A or B lists the advisor model, and at least 2 of 3 C runs list that model. If the step fails, the work stops until a person fixes the arms, and this step runs again. Claude Code 2.1.328 lists `--model` and `--effort` in its help.
-3. The headroom: 12 candidates, 2 runs in arm B, about 45 USD. The batch keeps 10: first the tasks with 1 of 2 passes, then 0 of 2, then 2 of 2, each group in the order of the ids. A task with an error of `claude` in both runs is a broken fixture, and the batch drops it.
+3. The headroom: 12 candidates, 2 runs in arm B, about 45 USD. The batch keeps 10: first the tasks with 1 of 2 passes, then 0 of 2, then 2 of 2, each group in the order of the ids. A task with an error of `claude` in both runs is a broken fixture, and the batch drops it. If fewer than 10 candidates remain, the work stops before the main batch, and the owner decides: a fix of the broken fixtures, or fewer tasks under a floor that the owner states. No task drops in silence below the floor.
 
 The fallback uses the projected cost of the 3 arms. `M` is 400 USD minus the spend of the pilot minus 10 USD. One wave costs `W` = 10 x (`a` + `b` + `c`). `b` is the mean cost of a B run of step 3. `a` and `c` are `b` times the ratios of A and C to B in step 2.
 

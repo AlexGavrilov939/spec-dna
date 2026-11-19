@@ -79,7 +79,7 @@ All codes default to Warning. A new rule group `rollup` holds SD641 to SD645. Th
 | SD642 | An item of the frontier has no pin | warning | error | error |
 | SD643 | A pin has a bad form, is ambiguous, names an item of the same or a higher level, or sits in a type other than `summary`, `system` and `product` | warning | error | error |
 | SD644 | A summary whose path names no area folder | warning | error | error |
-| SD645 | Against the base, the set of pins (resolved targets and hashes) changed and the text did not | off | warning | warning |
+| SD645 | Against the base, the set of pins (resolved targets and hashes) changed and the text did not, and no change finished in the diff edited the text | off | warning | warning |
 | SD705 | An area over its soft budget | warning | warning | error |
 | SD706 | An area over its hard budget: new, under it in the base, or grown by more than `growth` | warning | error | error |
 | SD707 | An area over its hard budget in the base, grown by `growth` or less | warning | warning | error |
@@ -96,8 +96,8 @@ A summary is not an artifact of a change, so no approval mode asks for a status.
 
 ### `finish`, `next` and `mv`
 
-- The text of a requirement changes only when `finish` applies the delta, so no pin of an area summary is stale during the build. In the build, `next` prints a note that names the summaries that the delta makes due at `finish`. The agent edits the text of each one whose meaning changes. The level above pins that text, so that level is stale at once, and the agent updates that level in the build. The acceptor reads these edits.
-- `spec-dna finish <slug> [--holds <id>...]`. In step 5, after the evidence and before the archive of the record, one function re-pins each due summary whose text the change edited. The function also re-pins each summary that `--holds` names. That option is a claim that the text still holds, and the diff and SD645 show the claim. The function prints the other due summaries. It never stops, so it has no step number. The last check of step 5 does not count SD641 and SD642 of the printed documents.
+- The text of a requirement changes only when `finish` applies the delta, so no pin of an area summary is stale during the build. In the build, `next` prints a note that names the due roll-up documents: each summary, `system` or `product` document whose frontier holds a target of the delta. The agent edits the text of each one whose meaning changes. The level above pins that text, so that level is stale at once, and the agent updates that level in the build. The acceptor reads these edits.
+- `spec-dna finish <slug> [--holds <id>...]`. In step 5, after the evidence and before the archive of the record, one function re-pins each due roll-up document whose text the change edited. The compare uses the tree before the commit that added the plan, so an edit that merged in an earlier pull request of the change counts. The function also re-pins each due document that `--holds` names. That option is a claim that the text still holds, and the diff and SD645 show the claim. The function prints the other due documents. It never stops, so it has no step number. The last check of step 5 does not count SD641 and SD642 of the printed documents.
 - After `finish`, `check` reports each printed summary as stale (SD641) until an agent edits the summary and runs `refresh`, or runs `refresh --holds`. The fix costs one more commit, and in `review` mode one more review of the head.
 - SD913 does not report a roll-up document, as it does not report a path of `shared-paths`.
 - The preservation check of `mv` does not count SD641 and SD642. `mv` prints the summaries whose frontier changed. A move of an area folder also moves its summaries.

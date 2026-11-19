@@ -59,8 +59,8 @@ Option 2. The design page gives the detail in [D4](../design/0.8.0.md#d4-approva
   - 0: each approval is present.
   - 1: an approval is absent, and the output names the item and who can give it.
   - 2: usage, also no pull request number.
-  - 3: configuration, also no remote or no `gh`, as `eval run` treats an absent `claude`.
-  - 4: the call of the host failed (no login, an API or network error, an unknown pull request, or the head commit is not in the clone).
+  - 3: configuration, also no `@<login>` item in `approvers`, no remote, or no `gh`, as `eval run` treats an absent `claude`.
+  - 4: the call of the host failed (`gh` has no signed-in account, an API or network error, an unknown pull request, or the head commit is not in the clone).
 - Code 4 gets this meaning beside a git or file error. The command fails closed: an empty output of `gh` is never a pass.
 - On `merge_group`, it exits 0 with a note, because the queue takes only a pull request whose required checks passed.
 - A stub `gh` on `PATH` tests each exit code offline.

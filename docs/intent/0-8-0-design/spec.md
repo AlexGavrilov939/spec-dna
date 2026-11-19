@@ -9,7 +9,19 @@ None. This change adds, changes or removes no requirement. The documents that it
 
 ## Interfaces
 
-None. The design proposes changes to the interfaces of `spec-dna`. The keys are `[evidence] reports`, `[evidence] reliable-runs`, `[change] approval = "review"`, `[change] higher-risk-acceptors`, `[owners]` and `[budgets.area]`. The commands are `evidence`, `accept`, `reviews` and `refresh`. The options are `check --reports` and `eval run --arms`. The codes are SD613 to SD620, SD641 to SD645, SD705 to SD707 and SD927 to SD940. Each interface is a change of its own in the build. Each change has its own spec.
+None. This change adds no code. The design proposes these interfaces of `spec-dna`. Sections 9 and 11 of the design page give each one. Each interface is a change of its own in the build, with its own spec.
+
+Keys: `[evidence] reports`, `[evidence] tree-exclude`, `[evidence] reliable-runs`, `[evidence] reliable-for`, the value `review` of `[change] approval`, the form `@<login>` of `[change] approvers`, `[change] higher-risk-acceptors`, `[owners]`, `[budgets.area]` (`soft`, `hard`), `[layers.summaries]`, the key `change` of an eval file, and the rule group `rollup` of `[rules]`.
+
+Commands: `evidence stamp`, `accept <slug>`, `reviews`, `refresh`, `new summary <area>`, and the artifact `acceptance` of `approve <slug>`.
+
+Options: `check --reports`, `accept --role` and `--session`, `reviews --pr`, `finish --holds`, `refresh --holds`, `--all` and `--base`, `eval run --arms` and `--harness`, and `eval verdict --compare`.
+
+Codes: SD613 to SD620, SD641 to SD645, SD705 to SD707 and SD927 to SD940.
+
+Output: the note of `next` for the due roll-up documents, the fields `deviations` and `rollup` of `finish --json`, `proof` of `status --json` and `stats --json`, `person` of `next --json`, the value `accept` of the skill of `next --json`, the tier `summary` of `context`, and 3 keys of an eval record.
+
+Files and tools: a harness role and a skill, the hook `protect-approvals`, the workflow `spec-dna-reviews.yml`, and the script `scripts/verify-release.sh`.
 
 ## Decisions
 

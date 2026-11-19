@@ -47,28 +47,28 @@ Option 1 and option (a). The design page gives the detail in [D3](../design/0.8.
 
 ### When a record is needed
 
-- Each change that `finish` applies needs one record, if a commit added its plan at a pin of 0.8.0 or later. `finish` finds that commit with `git log -1 --diff-filter=A`, as B5 of [design 0.7.1 part B](../design/0.7.1-b.md#b5-a-plan-of-an-earlier-version-and-sd923). No commit (a plan that is not committed, or a shallow clone) gives the stricter result: a record is needed. In a shallow clone, SD927 names the cause, as reason 5 of SD910. `next` names the step `accept` only for a plan that needs a record.
+- Each change that `finish` applies needs one record, if a commit added its plan at a pin of 0.8.0 or later. `finish` finds that commit with `git log -1 --diff-filter=A <base>`, as B5 of [design 0.7.1 part B](../design/0.7.1-b.md#b5-a-plan-of-an-earlier-version-and-sd923). Only a commit that is an ancestor of the lifecycle base counts. A plan that `base..HEAD` added always needs a record, so a branch cannot set the pin back for one commit to skip it. No commit (a plan that is not committed, or a shallow clone) gives the stricter result: a record is needed. In a shallow clone, SD927 names the cause, as reason 5 of SD910. `next` names the step `accept` only for a plan that needs a record.
 - A closed change and a small fix need none.
 - A `routine` change needs 1 acceptor. A `higher-risk` change needs `[change] higher-risk-acceptors` (default 1). Each role of `[owners]` that matches a touched path needs an acceptor with that role ([ADR 0027](0027-owners-invariants-and-write-back.md)). One entry can count for both.
 
 ### The record
 
 - One TOML file. Before `finish` it is `acceptance.toml` in the folder of the change. `finish` moves it to `.spec-dna/accepted/<slug>.toml`, or `<slug>-2.toml` when a change with the same slug finished before.
-- The fields: `format`, `change`, `paths`, `tree`, `result` (`accepted` or `rejected`), `acknowledged-by`, and the tables `[[acceptor]]` (role, session, model, result), `[[proof]]`, `[[invariant]]`, `[[deviation]]`, `[[attempt]]` and `[[finding]]` (role, severity, path, line, text).
-- The rules: no unknown key, at most 16,384 bytes, no answer `pending`, at least one attempt for each acceptor, and a path for each finding. The top `result` is `accepted` only when each acceptor accepted, no `important` finding exists, no invariant is `violated` and no deviation is `rejected`.
+- The fields: `format`, `change`, `scope`, `paths`, `tree`, `result` (`accepted` or `rejected`), `acknowledged-by`, and the tables `[[acceptor]]` (role, session, model, result), `[[proof]]`, `[[invariant]]`, `[[deviation]]`, `[[attempt]]` and `[[finding]]` (acceptor number, severity, path, line, text). 2 acceptors can have the same role, so an attempt or a finding names the number of its acceptor.
+- The rules: no unknown key, at most 16,384 bytes, no answer `pending`, at least one attempt for each acceptor, and a path for each finding. `paths` is not empty when a task of the plan has `Files:` other than `none`. The top `result` is `accepted` only when each acceptor accepted, no `important` finding exists, no invariant is `violated` and no deviation is `rejected`.
 - `spec-dna accept <slug> [--role <name>]` writes the skeleton with the computed fields. A person can write the same file by hand, also with the harness level `none`. The gate reads the file, not the skill.
 
 ### The tree of the record
 
-- The record lists its paths: `paths` holds the code paths of [ADR 0024](0024-test-report-as-evidence.md) of the diff of the change against the lifecycle base, sorted. When one diff holds 2 changes, it keeps only the paths that `Files` of the plan matches. `tree` is the hash of these paths only.
-- The record is stale (SD929) when the hash differs, or when the diff of the change has a code path that `paths` does not list. `finish` and the checks after it read the paths from the record, not from the plan, so an edit of `Files` during the build changes nothing.
+- The record stores its scope: `scope` holds the paths and globs of the scope of the plan and of `[change] shared-paths`. `paths` holds the code paths of [ADR 0024](0024-test-report-as-evidence.md) of the diff of the change against the lifecycle base that `scope` matches, sorted. Thus the number of open changes in the diff does not change the list. When the diff has no code path in `scope`, `accept` takes the code paths since the commit that added the plan. `tree` is the hash of these paths only.
+- The record is stale (SD929) when the hash differs, or when the diff of the change has a code path that `scope` matches and `paths` does not list. `finish` and the checks after it read `scope` and `paths` from the record, not from the plan, so an edit of `Files` during the build changes nothing. After `finish`, the message of SD929 gives the one fix: revert the commit of `finish`, merge the base, accept again, and run `finish` again.
 - In CI, the checkout is the test merge of the branch into the base. A base commit that edits a listed path is a real conflict of meaning, and the record is stale. A base commit to other paths, or a Markdown edit, changes nothing. Code of an earlier pull request of the change is not listed, so the acceptance runs in the last pull request with code.
-- `check` checks only the record alone (SD928, SD931, SD932) where the diff adds or changes it. It checks the presence (SD927), the tree (SD929), the result (SD930), the count of acceptors (SD933), the acknowledgement (SD934) and the answers (SD938) only in 2 cases. One case is a diff that deletes the folder, as SD915 and SD916. The other case is a change that the branch added and deleted. Thus the first of 2 acceptors can commit, and a fix of the builder after a `rejected` record passes a hook that runs `check`. A folder deleted with no `finish` still needs a record. A later change never makes an old record stale.
+- `check` checks only the record alone (SD928, SD931, SD932) where the diff adds or changes it. It checks the presence (SD927), the tree (SD929), the result (SD930), the count of acceptors (SD933), the acknowledgement (SD934) and the answers (SD938) only in 2 cases. One case is a diff that deletes the folder, as SD915 and SD916. The other case is a change that the branch added and deleted. Thus the first of 2 acceptors can commit, and a fix of the builder after a `rejected` record passes a hook that runs `check`. SD927 needs the archive file in the head, so a folder deleted with no `finish` gives SD927, also when the base folder holds a record. A later change never makes an old record stale.
 
 ### `finish`
 
-- `finish` checks the record in step 5, before the evidence. The step numbers of 0.7.1 and the success value 6 of `finish --json` keep their meaning.
-- It stops on an absent (SD927), invalid (SD928), stale (SD929) or rejected (SD930) record. It stops on one session in 2 entries (SD931), and on a commit that mixes the record and other paths (SD932). It stops on an absent acceptor (SD933) and, with `branch`, on an absent acknowledgement (SD934).
+- `finish` checks the record in step 5, after the reports (part 5.1) and before the evidence (part 5.4). The step numbers of 0.7.1 and the success value 6 of `finish --json` keep their meaning.
+- It stops on an absent (SD927), invalid (SD928), stale (SD929) or rejected (SD930) record. It stops on one session in 2 entries (SD931), and, with `branch`, on a commit that breaks the rule of the record commits (SD932). It stops on an absent acceptor (SD933) and, with `branch`, on an absent acknowledgement (SD934).
 - It adds the archive file to its writes. A diff that changes or deletes an archive file gives SD935.
 
 ### "Not the author"
@@ -79,10 +79,10 @@ Option 1 and option (a). The design page gives the detail in [D3](../design/0.8.
 
 ### Who writes, and who acknowledges
 
-- The acceptor writes the record and commits it alone, in each approval mode. The builder never edits it. An agent never adds an entry to `acknowledged-by`. The rule of the skills and the hook `protect-approvals` say so.
+- The acceptor writes the record and commits it alone, in each approval mode. The builder never edits it. An agent never adds an entry to `acknowledged-by`. The rule of the skills says so, and the hook `protect-approvals` denies such a commit. The hook allows the commit of `finish`, which moves the same bytes to the archive. Rule A of the hook already keeps `spec-dna approve` for a person.
 - The record needs an acknowledgement when it holds a deviation, or when a person of `[owners]` matches a touched path:
   - `base`: the merge of the pull request of `finish`.
-  - `branch`: `spec-dna approve <slug> acceptance` adds the e-mail of its author to `acknowledged-by` and commits that file alone. The walk counts the entry only when that commit added it, its author has that e-mail, and no later commit changes the record, except another such commit or the commit of `finish`. The commit of `finish` moves the same bytes to the archive. A record commit of the acceptor empties `acknowledged-by`. A commit that changes the record and keeps an entry gives SD932, so the person approves again. Thus an approver never acknowledges a text that changed after the approval.
+  - `branch`: `spec-dna approve <slug> acceptance` adds the e-mail of its author to `acknowledged-by` and commits that file alone. The walk counts the entry only when that commit added it, its author has that e-mail, and no later commit changes the record, except another such commit or the commit of `finish`. The commit of `finish` moves the same bytes to the archive. A record commit of the acceptor empties `acknowledged-by`. Any other commit that changes the record and keeps an entry gives SD932, so the person approves again. An approval commit and the commit of `finish` are exceptions to each clause of SD932. Thus an approver never acknowledges a text that changed after the approval.
   - `review`: an approving review of the head commit ([ADR 0026](0026-approval-through-the-code-host.md)).
 
 ### The trust root
@@ -116,6 +116,6 @@ ADR 0006, ADR 0012 and ADR 0018 are accepted and locked, so this ADR does not ed
 
 - ADR 0006, "Finish", the sentence "`spec-dna finish <slug>` checks the change, applies the delta, checks the evidence and deletes the folder": it also checks the acceptance record and moves it to `.spec-dna/accepted/`.
 - ADR 0012, "The rule", condition 3 of an approval commit: a commit can also add the e-mail of its author to `acknowledged-by` of `acceptance.toml`, and change nothing else.
-- ADR 0018, "Decision Outcome", the hook `protect-approvals`: it also denies a `git commit` that adds an entry to `acknowledged-by`. The rule of the skills also says "never add an entry to `acknowledged-by`".
+- ADR 0018, "Decision Outcome", the hook `protect-approvals`: it also denies a `git commit` that adds an entry to `acknowledged-by` of a record in a change folder, except the commit of `finish`, which moves the same bytes to the archive. The rule of the skills also says "never add an entry to `acknowledged-by`".
 
 ## Amendments

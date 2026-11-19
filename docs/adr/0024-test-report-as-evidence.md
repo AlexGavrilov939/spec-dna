@@ -64,8 +64,9 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 ### The bind of a tag
 
 - An explicit name follows the ids: `case:<name>` or `case:"<name>"`. A binary of 0.7.1 ends the tag at that word, so it reads the same ids.
-- Else the tag binds to the first word or string literal of the first code block after the tag, when it names a case of the reports. The block ends before the first later line whose indent is not deeper than its first line, after a deeper line, at the next tag, or after 20 lines. Thus a test that did not run never lends its tag to the next test. A name matches when it equals the word, ends with it after a separator, or starts with it and `/`, after the removal of a final `[...]` or `(...)`.
-- A case with a file binds only a tag of that file.
+- Else the tag binds to the first word or string literal of the first code block after the tag, when it names a case of the reports. The block ends before the first later line whose indent is not deeper than its first line, after a deeper line. It also ends before a line with less indent than the tag, at the next tag, or after 20 lines. Thus, in the usual layout, the tag of a test that did not run does not bind to the next test. A name matches when it equals the word, ends with it after a separator, or starts with it and `/`, after the removal of a final `[...]` or `(...)`.
+- A case with a file binds only a tag of that file. A case with no file binds only a tag of the test file whose dotted path ends with its `classname`, or with the part before the last `.` (the form of pytest). When no file has such a path, it binds a tag of any test file.
+- The limits: a test in a comment after the tag, one case name in 2 files with no `file` and no such `classname`, and a test on one line. `case:` removes each doubt.
 - A tag with no case is not bound. It proves nothing, and the message names the fix.
 
 ### The proof and its states
