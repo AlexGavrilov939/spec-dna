@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # Build of 0.8.0, part A: the carry-over, the runner, the test report and the proof levels
