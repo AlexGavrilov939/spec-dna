@@ -1,0 +1,40 @@
+# case v070, recorded with spec-dna 0.7.0
+exit 0
+doc docs/decisions/0001-drip-first.md decisions/0001-drip-first decision accepted
+doc docs/intent/drip-schedule/intent.md intent/drip-schedule/intent intent accepted
+doc docs/intent/drip-schedule/plan.md intent/drip-schedule/plan plan approved
+doc docs/intent/drip-schedule/spec.md intent/drip-schedule/spec spec approved
+doc docs/questions.md questions questions -
+doc docs/requirements/valves.md requirements/valves requirements active
+doc docs/roadmap.md roadmap roadmap -
+file cd020bf35eb5c762bbf8250a35483aeb1c07e964 .claude/agents/Explore.md
+file deafabe2ea74b8294288e2bb39b391384cddd8db .claude/agents/fallback-advisor.md
+file 6bb8137f97b4bfff7d1adc7013717092d65cc97d .claude/agents/model-team.md
+file 6767605a2e424c7255d0de7ebf827e262d8a8af5 .claude/agents/verifier.md
+file 3ae7bddf16e96064cc3677456f01bce17a7faf8d .claude/settings.json
+file 830ba3eadce7afea1f7da86c233c5de82def5b35 .claude/skills/spec-dna-brainstorm/SKILL.md
+file 08856c418292a2caeb4acf0cfbecd3a7e6c87e0f .claude/skills/spec-dna-clarify/SKILL.md
+file 0756f8715bbcad97362f9ebe00d2828ba1daa0aa .claude/skills/spec-dna-finish/SKILL.md
+file 996c666cec00e496a7b30d58c0c753b2cdd63866 .claude/skills/spec-dna-post-mortem/SKILL.md
+file 4255d39db04d46266a710d3cab8525b0bb8e075f .claude/skills/spec-dna-review/SKILL.md
+file e8e969abdd392474400ebfa93ad54e1bf8c181da .claude/skills/spec-dna-specify/SKILL.md
+file 767d67c5bcaac8416ea9fd6fad1a2de11e280918 .claude/skills/spec-dna-tdd/SKILL.md
+file e0d36b98e9e7b4a4a9f58e441283ac82a7d9a66a .claude/skills/spec-dna-write-plan/SKILL.md
+file c56a0dd3f70fb0c39d6d2c76ca84baddcc4d1470 .claude/skills/spec-dna/SKILL.md
+file 5277090137ac0417f5d2d047f3e4d47ba9b94ea4 .pre-commit-config.yaml
+file 8e8261575923455c0ce9cf4981a70c0d11c48622 AGENTS.md
+file d3957efbae0a2676cf91615c4ac4b304d1a717d6 CLAUDE.md
+file 28405191ec3df1928c5ff4f601d2124675ea3079 REVIEW.md
+file d41471ce319577773d2de328d1a7404c2d5d2357 docs/decisions/0001-drip-first.md
+file ac181e4f7884512810ea020b08a0e88b4815e456 docs/intent/drip-schedule/intent.md
+file 2909636ce72512a8b3b9132d01dd25e69b1da3d6 docs/intent/drip-schedule/plan.md
+file 3c7be354715a8eb1efe3760608137f949012d629 docs/intent/drip-schedule/spec.md
+file ec069de4a22ae223e3ec7c58638202b9bd38f8f1 docs/questions.md
+file b6c5da1e8d4d6a98369d31e53317614a79b4ca9c docs/requirements/valves.md
+file d04a851e2aa5ac2b642c5b3fdd730c937a23d2ab docs/roadmap.md
+file c4a8c5cafdda7030f3c42b670e3b369b188170f4 evals/check.sh
+file 7a9ebc1780ffaaf52160560edbae0bf284280635 evals/example.json
+file 4212b1264159efb12c63d75c76cd50704d649bd7 evals/fixtures/example/notes.txt
+file 3778003fa5790c17ec9838bce8e9f09057bcccae spec-dna.toml
+file ee7888a41ff124f9e2fc23efb23d625e7390d7e6 src/schedule.sh
+file 2e25f800513373fd4a9f26ab4ea37e09343c6e2e tests/schedule_test.sh

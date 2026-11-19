@@ -1,6 +1,7 @@
 //! Tests of the committed fixtures of the upgrade (step 5, slice 1). The
-//! fixtures are projects with the pin 0.4.2 or 0.5.0. Only the real binaries of
-//! those versions give the exact bytes and markers of their files, so
+//! fixtures are projects with the pin 0.4.2 or 0.5.0 (and `v061` and `v070`,
+//! which `upgrade_v061.rs` and `upgrade_v070.rs` use). Only the real binaries
+//! of those versions give the exact bytes and markers of their files, so
 //! `tests/fixtures/upgrade/make.sh` records how the fixtures were made. A test
 //! here runs no old binary. It reads the result that `make.sh` recorded in
 //! `tests/fixtures/upgrade/recorded/<case>.txt`: the exit code of `check --all`,
@@ -464,5 +465,72 @@ fn the_fixtures_hold_what_the_plan_names() {
     for name in ["v04", "v05", "brownfield"] {
         let text = Repo::from_fixture(name, &[]).read("spec-dna.toml");
         assert!(!text.contains("[harness"), "{name}");
+    }
+}
+
+/// The fixture of 0.7.0 is the tree that the real binary 0.7.0 wrote, and it
+/// has what the plan of 0.7.1 names: a harness, a change with an intent, a
+/// spec and a plan, a decision, tasks with `Hours:`, a roadmap, a questions
+/// file and a pre-commit file with the hook `typos`. It is not a case of
+/// `CASES`: its pin is the version of the binary until the release moves it,
+/// so `check --all` passes today.
+#[test]
+fn the_v070_fixture_is_the_tree_that_the_real_binary_wrote() {
+    let repo = Repo::from_fixture("v070", &[]);
+    let rec = recorded("v070");
+    assert_eq!(rec.version, "0.7.0");
+    assert_eq!(rec.exit, 0);
+    assert!(rec.findings.is_empty(), "0.7.0 found: {:?}", rec.findings);
+    assert_eq!(
+        rec.files,
+        blobs(&repo),
+        "run tests/fixtures/upgrade/make.sh v070 again"
+    );
+    // The documents: one of each kind that the plan names.
+    let types: BTreeSet<&str> = rec.docs.iter().map(|d| d[2].as_str()).collect();
+    for ty in [
+        "decision",
+        "intent",
+        "spec",
+        "plan",
+        "requirements",
+        "roadmap",
+        "questions",
+    ] {
+        assert!(types.contains(ty), "v070 has no {ty}");
+    }
+    let status = |ty: &str| -> BTreeSet<String> {
+        rec.docs
+            .iter()
+            .filter(|d| d[2] == ty)
+            .map(|d| d[3].clone())
+            .collect()
+    };
+    assert_eq!(status("plan"), BTreeSet::from(["approved".to_string()]));
+    assert_eq!(status("spec"), BTreeSet::from(["approved".to_string()]));
+    // Each task of the plan has hours.
+    let plan = repo.read("docs/intent/drip-schedule/plan.md");
+    let tasks: Vec<&str> = plan.lines().filter(|l| l.starts_with("- [ ] t")).collect();
+    assert!(tasks.len() >= 2, "{plan}");
+    for task in tasks {
+        assert!(task.contains(" Hours: "), "{task}");
+    }
+    // The configuration: the pin, the profile, the harness and the approval.
+    let config = repo.read("spec-dna.toml");
+    for needle in [
+        "spec-dna = \"0.7.0\"\n",
+        "profile = \"standard\"",
+        "[harness]",
+        "level = \"lean\"",
+        "approval = \"branch\"",
+    ] {
+        assert!(config.contains(needle), "v070 configuration: {needle}");
+    }
+    // The generated files carry the marker of 0.7.0, and `typos` has no
+    // setting for the hashes.
+    assert!(repo.read("AGENTS.md").contains("<!-- spec-dna v0.7.0 h:"));
+    assert!(repo.read(".pre-commit-config.yaml").contains("id: typos"));
+    for name in ["_typos.toml", "typos.toml", ".typos.toml"] {
+        assert!(!repo.dir.join(name).exists(), "{name}");
     }
 }
