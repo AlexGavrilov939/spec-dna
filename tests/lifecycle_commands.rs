@@ -1932,3 +1932,180 @@ fn an_open_task_keeps_a_plan_that_lists_no_files_in_the_stage_build() {
     );
     assert_stage(&r, "build");
 }
+
+// A task of a person (design 0.8.0, D64)
+
+const REVIEW_TASKS: &str = "- [x] t1: Edit the code. Files: `src/dose.py`. Verify: `pytest`.\n- [ ] t2: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: 1.";
+const WAIT: &str = "wait for a person: task t2 is a task of a person; an agent does not tick it";
+
+/// A change in the stage `build`: the code differs from the base, and the
+/// open tasks are `order`.
+fn person_start(order: &str) -> Repo {
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], order)),
+            ("src/dose.py", "x = 2\n"),
+        ],
+    );
+    r
+}
+
+#[test]
+fn the_review_task_of_the_owner_ends_with_person_in_next() {
+    let r = person_start(REVIEW_TASKS);
+    let text = next_text(&r);
+    assert!(text.contains("stage build"), "{text}");
+    // Before D64 the line ended with `[skill: execute]`.
+    assert!(
+        text.contains("[ ] task t2: Review by the owner. Verify: the owner reviewed the code of the pull request [person]"),
+        "{text}"
+    );
+    let line = items(&text)
+        .into_iter()
+        .find(|l| l.contains("task t2"))
+        .unwrap();
+    assert!(line.ends_with(" [person]"), "{line}");
+    assert!(!line.contains("[skill:"), "{line}");
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with(&format!("[ ] {WAIT}")),
+        "{text}"
+    );
+    // The line of the progress keeps its skill.
+    assert!(
+        text.contains("tasks of `Order`: 1 of 2 done [skill: execute]"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_json_of_next_keeps_the_skill_and_adds_person() {
+    let r = person_start(REVIEW_TASKS);
+    let json = next_json(&r);
+    assert_eq!(field(&json, "stage"), "build");
+    assert!(
+        json.contains("\"text\":\"task t2: Review by the owner.")
+            && json.contains("\"skill\":\"execute\",\"person\":true}"),
+        "{json}"
+    );
+    // The item of the task and the last line have the field. The items of
+    // the other steps have none.
+    assert_eq!(json.matches("\"person\":true").count(), 2, "{json}");
+    assert!(json.contains(&format!("\"next\":\"{WAIT}\"")), "{json}");
+}
+
+#[test]
+fn the_label_by_person_marks_a_task_with_another_title() {
+    let r = person_start(
+        "- [x] t1: Edit the code. Files: `src/dose.py`. Verify: `pytest`.\n- [ ] t2: Check the valve by hand. Files: none. Verify: the valve closes. By: person. Hours: 1.",
+    );
+    let text = next_text(&r);
+    let line = items(&text)
+        .into_iter()
+        .find(|l| l.contains("task t2"))
+        .unwrap();
+    assert!(line.ends_with(" [person]"), "{line}");
+    assert!(
+        items(&text)
+            .last()
+            .unwrap()
+            .starts_with("[ ] wait for a person: task t2 "),
+        "{text}"
+    );
+    assert!(next_json(&r).contains("\"person\":true"));
+    // `status` shows the task of a person, too.
+    let (code, out, err) = r.run(&["status"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("next-task t2 [person]"), "{out}");
+    assert!(out.contains(&format!("next: {WAIT}")), "{out}");
+}
+
+#[test]
+fn a_task_of_an_agent_keeps_its_skill_before_a_task_of_a_person() {
+    let r = person_start(
+        "- [x] t1: Edit the code. Files: `src/dose.py`. Verify: `pytest`.\n- [ ] t2: Close the valve. Files: `src/dose.py`. Verify: `pytest`.\n- [ ] t3: Review by the owner. Files: none. Verify: the owner reviewed it.",
+    );
+    let text = next_text(&r);
+    assert!(text.contains("Verify: `pytest` [skill: execute]"), "{text}");
+    assert!(
+        !text.contains("[person]") && !text.contains("wait for a person"),
+        "{text}"
+    );
+    assert!(!next_json(&r).contains("person"));
+}
+
+#[test]
+fn an_open_step_of_an_agent_stays_the_last_line_before_the_wait_for_a_person() {
+    // t1 is done and only the review t2 is open, but no file of `Files`
+    // differs from the base: the agent still has a step.
+    let r = start();
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "routine", "")),
+            (PLAN, &plan("approved", &["src/dose.py"], REVIEW_TASKS)),
+        ],
+    );
+    let text = next_text(&r);
+    let last = *items(&text).last().unwrap();
+    assert_eq!(
+        last,
+        "[ ] change a file that `Files` of docs/intent/dose/plan.md lists: none differs from the base [skill: execute]",
+        "{text}"
+    );
+    assert!(!text.contains("wait for a person"), "{text}");
+    assert!(text.contains("task t2: Review by the owner. Verify: the owner reviewed the code of the pull request [person]"), "{text}");
+    let json = next_json(&r);
+    assert!(
+        json.contains("\"next\":\"change a file that `Files`") && !json.contains("wait for"),
+        "{json}"
+    );
+    let (_, out, _) = r.run(&["status"]);
+    assert!(
+        out.contains("next: change a file that `Files`") && !out.contains("wait for a person"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_next_task_is_the_first_open_task_of_an_agent() {
+    let r = person_start(
+        "- [ ] t1: Review by the owner. Files: none. Verify: the owner reviewed it.\n- [ ] t2: Close the valve. Files: `src/dose.py`. Verify: `pytest`.",
+    );
+    let text = next_text(&r);
+    assert!(
+        text.contains(
+            "[ ] task t2: Close the valve. Files: `src/dose.py`. Verify: `pytest` [skill: execute]"
+        ),
+        "{text}"
+    );
+    assert!(
+        !text.contains("[person]") && !text.contains("wait for a person"),
+        "{text}"
+    );
+    assert!(next_json(&r).contains("\"next_task\":{\"id\":\"t2\""));
+    let (_, out, _) = r.run(&["status"]);
+    assert!(
+        out.contains("next-task t2") && !out.contains("[person]"),
+        "{out}"
+    );
+    // With t2 done, only the person task is open and it is the next task.
+    stage(
+        &r,
+        &[(
+            PLAN,
+            &plan(
+                "approved",
+                &["src/dose.py"],
+                "- [ ] t1: Review by the owner. Files: none. Verify: the owner reviewed it.\n- [x] t2: Close the valve. Files: `src/dose.py`. Verify: `pytest`.",
+            ),
+        )],
+    );
+    let (_, out, _) = r.run(&["status"]);
+    assert!(out.contains("next-task t1 [person]"), "{out}");
+}

@@ -358,11 +358,11 @@ A change has no stage field. The stage is the first row of this table that match
 - The change that the default branch finished is no longer in the tree, so it has no stage. `spec-dna log` lists it.
 - The stage Maintain is not the stage of a change. `status` lists an open follow-up of an incident ([status](#status)).
 
-In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done and the tasks that are skipped (a task with a reason in `Skip:`, which is not needed and is closed). With a skipped task, the line of the tasks ends with `, <n> not needed`. A task whose text names `spec-dna finish <slug>` with the slug of the change closes with `finish`: it is not open, and the line of the tasks gets ``, <n> for `finish` `` after the part `not needed`. When each other task is closed, the stage leaves `build`, and its last line names `spec-dna finish <slug>`. The first task that is not closed is the next task.
+In the `build` stage, `next` also names the next open task of the plan, also if the plan is a draft. It gives the id, the text, the files and the verification of the task. The task list is the `Order` section of `plan.md` ([Tasks of a plan](types.md#tasks-of-a-plan)). `next` counts the tasks that are done and the tasks that are skipped (a task with a reason in `Skip:`, which is not needed and is closed). With a skipped task, the line of the tasks ends with `, <n> not needed`. A task whose text names `spec-dna finish <slug>` with the slug of the change closes with `finish`: it is not open, and the line of the tasks gets ``, <n> for `finish` `` after the part `not needed`. A task of a person is an open task that an agent does not tick ([Tasks of a plan](types.md#tasks-of-a-plan)). Its line ends with `[person]` in place of the skill. When each open task is a task of a person, and no step of an agent is open (for example a file of `Files` to change), the last line of `next` is `wait for a person: task <id> is a task of a person; an agent does not tick it`, and the stage stays `build`. If a step of an agent is open, it stays the last line. A draft plan keeps the approval as its last line. When each task that does not close with `finish` is closed, the stage leaves `build`, and its last line names `spec-dna finish <slug>`. The first open task of an agent is the next task. A task of a person is the next task only if each open task is a task of a person.
 
 ### Skills
 
-Each line of `next` has the name of the skill for its step. The list is fixed and has 9 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. With `--json`, each item has the field `skill`.
+Each line of `next` has the name of the skill for its step. The list is fixed and has 9 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. With `--json`, each item has the field `skill`. An item of a person (an open task of a person, and the line that waits for it) has the field `"person":true` too, and its text line ends with `[person]` in place of the skill. The skill of such an item stays `execute`, but an agent does not do the item.
 
 | Step | Skill |
 | --- | --- |
@@ -390,7 +390,7 @@ With `--json`, the output is one object:
 {"slug":"dose-limit","class":"routine","stage":"build","base":"3f2a9c1b7e0d4a11...","items":[{"done":true,"text":"the intent is accepted","skill":"brainstorm"}],"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"},"next":"change a file that `Files` of ...","notes":[]}
 ```
 
-`base` is a SHA, or `null`. `class` is `null` if the intent has no valid class, and with the policy `none`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
+`base` is a SHA, or `null`. `class` is `null` if the intent has no valid class, and with the policy `none`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. An item of a person has `"person":true`; the other items have no such field. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--base` that is not a commit; 4 git; 5 no folder for the slug.
 
@@ -498,7 +498,7 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 spec-dna status [--group <name>] [--base <rev>]
 ```
 
-`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total`, `skipped <n>` if a task is skipped, `finish <n>` if a task closes with `finish`, and the id of the next open task), and the token `partial <n>` when `<n>` requirements of the change have a partial `covers:` tag and no full evidence (`status --json`: the integer field `partial`, 0 if there is none). A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
+`status` lists each change of the working tree. For each change it gives the class, the stage, the statuses of the intent, spec and plan, the areas and the next gate. It also gives the progress of the tasks (`done/total`, `skipped <n>` if a task is skipped, `finish <n>` if a task closes with `finish`, and the id of the next open task, with `[person]` after it if it is a task of a person), and the token `partial <n>` when `<n>` requirements of the change have a partial `covers:` tag and no full evidence (`status --json`: the integer field `partial`, 0 if there is none). The line `next:` of `status` ends with `[person]` when the last item is an item of a person. A started change (an `accepted` intent) that has had no commit for `stale-days` days is `stale` (SD911). `status` also gives the number of started changes and the limit `max-started`.
 
 Then `status` lists each open follow-up of an incident. A follow-up is an item `- [ ]` in the `Follow-ups` section. The list gives the incident id, the path, the line and the text, and it ends with `[skill: post-mortem]`. This is the stage Maintain. The follow-ups are not part of a group, because an incident has no areas.
 
@@ -960,7 +960,7 @@ spec-dna upgrade [--dry-run] [--layout [--areas <file>]] [--pin-file <file>]
 | `--areas <file>` | With `--layout` only. A TOML file with the table `[areas]`. Each key is a document id of the 0.5 tree, and each value is an area: `"specs/pumps" = "pumps"`. Each mapped document moves to `<root>/requirements/<area>/<slug>.md`. Save the file outside the repository, as the file of `--pin-file`. A 0.6 project gets exit code 2 |
 | `--pin-file <file>` | The file `spec-dna-pin.toml` of the release, as a path from the current folder. `upgrade` copies its sums into `[spec-dna-sha256]`. The binary cannot know its own checksum |
 
-Save the file of `--pin-file` outside the repository, for example in the folder above it: `--pin-file ../spec-dna-pin.toml`. A file inside the repository makes the tree not clean, so `upgrade` refuses it (exit code 1). Verify the file with `gh attestation verify`.
+Save the file of `--pin-file` outside the repository, for example in the folder above it: `--pin-file ../spec-dna-pin.toml`. A file inside the repository makes the tree not clean, so `upgrade` refuses it (exit code 1). Verify the file with `gh attestation verify`. The command prints nothing when its output goes to a file or a pipe, so check its exit code (0 means verified).
 
 `upgrade` always reads and checks this file. The key `spec-dna` must be the version of the binary, and `[spec-dna-sha256]` must have valid sums. If not, `upgrade` exits with code 3. A project that has `[spec-dna-sha256]` needs the flag when the pin changes. A project with no table gets the table from the file, and the report says so.
 
@@ -1057,7 +1057,7 @@ The report lists these items:
 - each edit of `spec-dna.toml` beyond the pin (the `types` list and the `pending` layer of a 0.6 project);
 - the table `[spec-dna-sha256]`, if `--pin-file` added it, each warning of the harness configuration and each hand edit of `spec-dna.toml` that the plan cannot make;
 - the changes of behavior in the list below, for a project of 0.5 or earlier only;
-- the count of each error code of `check --all` on the new tree, without SD506.
+- the count of each error code of `check --all` on the new tree, without SD506. The check uses the new tree as its own base, as `check --all` does after the commit of the upgrade. Thus an old excess of a budget (SD702) is not an error. The check of a pull request compares with the merge base, so it can report other new findings.
 
 For a project of 0.5 or earlier, `upgrade` reports these changes of behavior, and the CHANGELOG records them. The report of a 0.6 project does not list them. The field `behavior` of `--json` is the same for each source:
 

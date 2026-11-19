@@ -703,7 +703,9 @@ fn after(tree: &Tree, plan: &Plan) -> Result<After, Fatal> {
         }
     }
     corpus.covers = covers;
-    let mut diags = check::gate(fin, None, None, &corpus).head;
+    // The corpus of the new tree is also the base. After the commit, `check --all`
+    // has the commit of the upgrade as its base, which is the same tree (D65).
+    let mut diags = check::gate(fin, Some(&corpus), None, &corpus).head;
     let texts = texts_after(tree, plan, &files, |p| {
         adapters::PATHS.contains(&p) || harness::wanted(p)
     })?;

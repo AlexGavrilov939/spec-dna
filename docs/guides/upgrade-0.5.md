@@ -16,7 +16,7 @@ Version 0.6.0 renames document types, statuses, configuration keys and harness r
 - The project pins spec-dna 0.4.0 or later. For an older pin, first move the project to 0.4.2 with the 0.4.2 binary and `spec-dna init`.
 - The repository has a commit, and the working tree is clean. `upgrade` reads `HEAD`, and it refuses a staged change, an unstaged change and an untracked file that git does not ignore.
 - Install the 0.6 binary ([quickstart.md](../quickstart.md#install)). Download `spec-dna-pin.toml` of the release.
-- Save `spec-dna-pin.toml` outside the repository, for example in the folder above it. A file inside the repository makes the tree not clean. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
+- Save `spec-dna-pin.toml` outside the repository, for example in the folder above it. A file inside the repository makes the tree not clean. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`. The command prints nothing when its output goes to a file or a pipe, so check its exit code (0 means verified).
 
 A project that has the table `[spec-dna-sha256]` needs this file. A project with no table can run `upgrade` without it. With the file, it gets the table.
 

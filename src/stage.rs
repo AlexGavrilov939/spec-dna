@@ -116,6 +116,10 @@ pub struct Item {
     pub done: bool,
     pub text: String,
     pub skill: &'static str,
+    /// True for an open task of a person, and for the line that waits for it
+    /// (design 0.8.0, D64). `next` prints `[person]` for it, and `--json` adds
+    /// `"person": true`. An agent does not do the item.
+    pub person: bool,
 }
 
 fn item(done: bool, step: Step, text: impl Into<String>) -> Item {
@@ -123,6 +127,24 @@ fn item(done: bool, step: Step, text: impl Into<String>) -> Item {
         done,
         text: text.into(),
         skill: skill(step),
+        person: false,
+    }
+}
+
+/// An item that a person does. The skill stays the skill of the step.
+fn person_item(step: Step, text: impl Into<String>) -> Item {
+    Item {
+        person: true,
+        ..item(false, step, text)
+    }
+}
+
+/// The end of the line of an item in `next`: the skill, or `[person]`.
+fn item_tail(i: &Item) -> String {
+    if i.person {
+        "[person]".to_string()
+    } else {
+        format!("[skill: {}]", i.skill)
     }
 }
 
@@ -594,8 +616,13 @@ impl<'a> Ctx<'a> {
                     ),
                 ));
             }
+            let after_task = items.len() + usize::from(t.next.is_some());
             if let Some(task) = &t.next {
-                items.push(item(false, Step::Execute, task_line(task)));
+                items.push(if task.by_person() {
+                    person_item(Step::Execute, task_line(task))
+                } else {
+                    item(false, Step::Execute, task_line(task))
+                });
                 next_task = Some(task.clone());
             }
             if !approved {
@@ -632,6 +659,24 @@ impl<'a> Ctx<'a> {
                             "change a file that `Files` of {dir}/plan.md lists: none differs from the base"
                         )
                     },
+                ));
+            }
+            // Only tasks of a person are open, and no step of an agent is open
+            // after the task (for example a file of `Files` to change). Then
+            // this line is the last line (design 0.8.0, D64). A step of an
+            // agent stays the last line, and so does the approval of a draft
+            // plan.
+            if approved
+                && let Some(task) = next_task.as_ref().filter(|t| t.by_person())
+                && only_person_open(ch, head)
+                && !items[after_task..].iter().any(|i| !i.done && !i.person)
+            {
+                items.push(person_item(
+                    Step::Execute,
+                    format!(
+                        "wait for a person: task {} is a task of a person; an agent does not tick it",
+                        task.id
+                    ),
                 ));
             }
             return report(Stage::Build, items, next_task);
@@ -709,6 +754,15 @@ impl<'a> Ctx<'a> {
         ));
         report(Stage::Deploy, items, None)
     }
+}
+
+/// True if each open task of the plan is a task of a person. A task that
+/// closes with `finish`, a duplicate and a closed task are not open.
+fn only_person_open(ch: &Change, head: &Corpus) -> bool {
+    ch.tasks(head)
+        .iter()
+        .filter(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(&ch.slug))
+        .all(PlanTask::by_person)
 }
 
 /// The step of the files of a routine change with a plan that lists no files.
@@ -867,11 +921,12 @@ pub fn next(
     let r = cx.derive(ch);
     if json {
         let items = r.items.iter().map(|i| {
-            Obj::new()
+            let o = Obj::new()
                 .bool("done", i.done)
                 .str("text", &i.text)
-                .str("skill", i.skill)
-                .end()
+                .str("skill", i.skill);
+            // The field is additive: only an item of a person has it.
+            if i.person { o.bool("person", true) } else { o }.end()
         });
         println!(
             "{}",
@@ -905,10 +960,10 @@ pub fn next(
     }
     for i in &r.items {
         println!(
-            "[{}] {} [skill: {}]",
+            "[{}] {} {}",
             if i.done { "x" } else { " " },
             i.text,
-            i.skill
+            item_tail(i)
         );
     }
     Ok(0)
@@ -1155,6 +1210,9 @@ pub fn status(
             }
             if let Some(t) = &r.tasks.next {
                 line.push_str(&format!(" next-task {}", t.id));
+                if t.by_person() {
+                    line.push_str(" [person]");
+                }
             }
         }
         if r.partial > 0 {
@@ -1167,7 +1225,12 @@ pub fn status(
             line.push_str(" stale");
         }
         println!("{line}");
-        println!("  next: {}", r.report.next());
+        let person = r.report.items.last().is_some_and(|i| i.person);
+        println!(
+            "  next: {}{}",
+            r.report.next(),
+            if person { " [person]" } else { "" }
+        );
     }
     for f in &follow {
         println!(

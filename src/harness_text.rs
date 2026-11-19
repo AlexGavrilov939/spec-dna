@@ -104,7 +104,7 @@ Commands:
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
 5. Write `Risks`. Write `Proof` with the commands that show the result and the `covers:` ids.
 6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`: the estimate. When the task is done, add `Actual: <n>`: the real hours. `spec-dna finish` adds them and prints the line `Hours:`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
-7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: <n>.` Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it. After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request.
+7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. By: person. Hours: <n>.` Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it. After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request.
 8. To change the plan after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
@@ -118,7 +118,7 @@ const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is 
 Commands:
 
 1. Work in your own git worktree or branch. Run `spec-dna next <slug>`.
-2. Take the first open task. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
+2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
 3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
 4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
 
@@ -597,7 +597,7 @@ mod tests {
     fn write_plan_writes_no_task_for_finish_and_the_review_task_is_optional() {
         let c = part(Skill::WritePlan, "Commands:");
         assert!(
-            c.contains("7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: <n>.`"),
+            c.contains("7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. By: person. Hours: <n>.`"),
             "{c}"
         );
         // The person ticks the task in a commit before `finish` runs.
@@ -617,6 +617,10 @@ mod tests {
             "{w}"
         );
         let e = part(Skill::Execute, "Commands:");
+        assert!(
+            e.contains("A task with `By: person` is not yours: never tick it."),
+            "{e}"
+        );
         assert!(
             e.contains("Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it."),
             "{e}"

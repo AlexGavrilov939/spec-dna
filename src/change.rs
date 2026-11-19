@@ -586,6 +586,11 @@ pub struct PlanTask {
     /// removed. `None` if the label is absent. A label with no text gives an
     /// empty string: the task is not skipped, and SD923 reports it.
     pub skip: Option<String>,
+    /// The text after the label `By:`, on one line, with one final `.`
+    /// removed. `None` if the label is absent. A label with no text gives an
+    /// empty string. [`by_person`](Self::by_person) reads it (design 0.8.0,
+    /// D64).
+    pub by: Option<String>,
     pub line: u32,
     /// The byte range of the item in the source of the plan.
     pub range: Range<u32>,
@@ -611,6 +616,15 @@ impl PlanTask {
         self.done || self.skipped()
     }
 
+    /// True if the task is a task of a person: an agent does not tick it
+    /// (design 0.8.0, D64). The label `By:` is present, or the text before
+    /// the first label is `Review by the owner` (ASCII case, one final period
+    /// allowed). The title is the title that `write-plan` wrote in 0.7.1, so a
+    /// plan of 0.7.1 is right with no edit.
+    pub fn by_person(&self) -> bool {
+        self.by.is_some() || self.text.eq_ignore_ascii_case(REVIEW_TITLE)
+    }
+
     /// True if the text of the task names `spec-dna finish <slug>` with the
     /// slug of its change. Only `finish` can do such a task, so an open task
     /// of this kind closes with `finish` (design 0.7.1, B1). The command is
@@ -629,6 +643,9 @@ impl PlanTask {
         self.text.contains("spec-dna finish")
     }
 }
+
+/// The title of the review task that `write-plan` writes (0.7.1).
+const REVIEW_TITLE: &str = "Review by the owner";
 
 /// True if `text` holds `spec-dna finish <slug>` and the slug ends there.
 fn names_finish(text: &str, slug: &str) -> bool {
@@ -704,11 +721,12 @@ enum Label {
     Hours,
     Actual,
     Skip,
+    By,
 }
 
 /// Parses one item of the `Order` section as a task. Returns `None` if the
 /// item is not a task (`duplicate` is false: `plan_tasks` sets it). The
-/// labels `Files:`, `Verify:`, `Hours:`, `Actual:` and `Skip:` are case-sensitive, they
+/// labels `Files:`, `Verify:`, `Hours:`, `Actual:`, `Skip:` and `By:` are case-sensitive, they
 /// follow white space or the start of the text, and a code span does not hold
 /// a label. Each is
 /// optional and ends at the next label.
@@ -724,6 +742,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
             ("Hours:", Label::Hours),
             ("Actual:", Label::Actual),
             ("Skip:", Label::Skip),
+            ("By:", Label::By),
         ] {
             let mut from = start;
             while let Some(i) = text[from..end].find(label) {
@@ -752,6 +771,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
     let mut hours = None;
     let mut actual = None;
     let mut skip = None;
+    let mut by = None;
     for (n, &(_, end, kind)) in labels.iter().enumerate() {
         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
         let seg = &text[end..stop];
@@ -775,6 +795,9 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
             Label::Skip => {
                 skip.get_or_insert_with(|| one_line(seg));
             }
+            Label::By => {
+                by.get_or_insert_with(|| one_line(seg));
+            }
             _ => {}
         }
     }
@@ -788,6 +811,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         hours: hours.flatten(),
         actual: actual.flatten(),
         skip,
+        by,
         line: item.line,
         range: item.range.clone(),
         duplicate: false,
@@ -950,12 +974,20 @@ fn tasks_of<'a>(items: impl Iterator<Item = &'a ListItem>) -> Vec<PlanTask> {
 }
 
 /// The first task that is not closed (not done and not skipped), is not a
-/// duplicate, and does not close with `finish` (design 0.7.1, B1). `slug` is the
-/// slug of the change.
+/// duplicate, and does not close with `finish` (design 0.7.1, B1). A task of a
+/// person comes after the tasks of an agent: it is the result only if each
+/// open task is a task of a person. `slug` is the slug of the change.
 pub fn next_open_task<'a>(tasks: &'a [PlanTask], slug: &str) -> Option<&'a PlanTask> {
-    tasks
+    let mut open = tasks
         .iter()
-        .find(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(slug))
+        .filter(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(slug));
+    // A task of a person is not for an agent: the first open task of an agent
+    // is the next task, if there is one (design 0.8.0, D64).
+    let first = open.next()?;
+    if !first.by_person() {
+        return Some(first);
+    }
+    open.find(|t| !t.by_person()).or(Some(first))
 }
 
 impl Change {
@@ -969,7 +1001,8 @@ impl Change {
     }
 
     /// The first open task of the plan, in the order of the file. A task that
-    /// closes with `finish` is not open (design 0.7.1, B1).
+    /// closes with `finish` is not open (design 0.7.1, B1). A task of a person
+    /// comes after the tasks of an agent (design 0.8.0, D64).
     pub fn next_open_task(&self, corpus: &Corpus) -> Option<PlanTask> {
         next_open_task(&self.tasks(corpus), &self.slug).cloned()
     }
@@ -1387,6 +1420,33 @@ mod tests {
         assert!(!t[3].skipped() && !t[3].closed() && !t[3].is_done());
         assert!(t[4].is_done() && t[4].closed() && !t[4].skipped());
         assert!(!t[2].closed());
+    }
+
+    #[test]
+    fn a_task_of_a_person_has_the_label_by_or_the_title_of_the_review() {
+        let t = tasks(&[
+            "- [ ] t1: Check the valve. Files: none. Verify: ok. By: person.",
+            "- [ ] t2: Review by the owner. Files: none. Verify: ok. Hours: 1.",
+            "- [ ] t3: review BY THE OWNER.",
+            "- [ ] t4: Review by the owner",
+            "- [ ] t5: Close the valve. Files: `a`. Verify: ok.",
+            "- [ ] t6: Review by the owner of the valve. Files: none.",
+            "- [ ] t7: Ask. By:",
+            "- [ ] t8: Close. Verify: `echo By: x` and `By: y` in code.",
+            "- [ ] t9: Close. by: person.",
+            "- [ ] t10: Close.By: person.",
+        ]);
+        let p: Vec<bool> = t.iter().map(PlanTask::by_person).collect();
+        assert_eq!(
+            p,
+            [
+                true, true, true, true, false, false, true, false, false, false
+            ]
+        );
+        assert_eq!(t[0].by.as_deref(), Some("person"));
+        assert_eq!(t[0].text, "Check the valve");
+        assert_eq!(t[6].by.as_deref(), Some(""));
+        assert_eq!(t[4].by, None);
     }
 
     #[test]

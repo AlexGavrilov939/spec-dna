@@ -97,7 +97,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | New dependency | `Cargo.toml` and `Cargo.lock`; the dependency table of `CONTRIBUTING.md` | OWN | ARC (the assessment), COR (the change) | REL | All |
 | Convention | `AGENTS.md`, `CONTRIBUTING.md`, `README.md` and `.github/pull_request_template.md`; lint and editor configs | OWN | ARC | DOC, REL | All |
 | Release | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`; the version in `README.md`, `docs/quickstart.md` and `docs/config.md`; the checkout SHA and the Claude Code version that `init` writes into a workflow (`src/init.rs`, `src/skeleton.rs`); the tag. The pin in `spec-dna.toml` of this repository moves in the release pull request, in the same commit as the version in `Cargo.toml` (ADR 0013): the tree binary does not count the pin line for SD503 | OWN | REL | ARC, TST | All |
-| CI or hooks | `.github/` except the PR template, `.pre-commit-config.yaml`, `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh` and `src/release.rs` | ARC | REL | TST | OWN |
+| CI or hooks | `.github/` except the PR template, `.pre-commit-config.yaml`, `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh`, `scripts/verify-release.sh`, `tests/release_check.rs` and `src/release.rs` | ARC | REL | TST | OWN |
 | Agent team | `.claude/` and `CLAUDE.md`; the pointers in `AGENTS.md` and `CONTRIBUTING.md` | OWN | ARC | DOC | All |
 
 ## Lifecycle of a change
@@ -265,6 +265,8 @@ scripts/demo-replay.sh               INI
 scripts/cross-build.sh               REL
 scripts/smoke.sh                     REL
 scripts/release-assets.sh            REL
+scripts/verify-release.sh            REL
+tests/release_check.rs               REL
 .github/pull_request_template.md     ARC (OWN)
 .github/                             REL: the other files
 .pre-commit-config.yaml              REL
