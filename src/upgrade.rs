@@ -698,6 +698,8 @@ fn after(tree: &Tree, plan: &Plan) -> Result<After, Fatal> {
                     line: i as u32 + 1,
                     target,
                     partial,
+                    case: None,
+                    proof: None,
                 });
             }
         }

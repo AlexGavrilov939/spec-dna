@@ -385,3 +385,83 @@ fn the_note_of_eval_pack_goes_when_the_pack_folder_exists() {
     let (_, out, _) = init_with(&r, answers, &["--reconfigure"]);
     assert!(!out.contains("spec-dna eval pack"), "{out}");
 }
+
+/// The key `[evidence] reports` (design 0.8.0, D1): `standard` and `strict`
+/// write `reports = []` with a comment, and `lite` writes none. `init` knows
+/// no runner, so it writes no glob.
+#[test]
+fn standard_and_strict_write_the_key_reports_and_lite_writes_none() {
+    for (profile, writes) in [("lite", false), ("standard", true), ("strict", true)] {
+        let r = repo();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let text = r.read("spec-dna.toml");
+        let t = table(&r);
+        let reports = t.get("evidence").and_then(|e| e.get("reports"));
+        if writes {
+            assert_eq!(
+                reports.and_then(toml::Value::as_array).map(Vec::len),
+                Some(0),
+                "{profile}: {text}"
+            );
+            assert!(text.contains("\n[evidence]\nreports = []  # "), "{text}");
+            // One table `[evidence]`, and `tree-exclude` is not written.
+            assert_eq!(text.matches("[evidence]").count(), 1, "{text}");
+            assert!(!text.contains("tree-exclude"), "{text}");
+        } else {
+            assert!(t.get("evidence").is_none(), "{profile}: {text}");
+        }
+        // `check` accepts the project, with and without the flag.
+        r.commit("adopt spec-dna");
+        for args in [&["check"][..], &["check", "--reports"][..]] {
+            let (code, out, err) = run(&r, args);
+            assert_eq!(code, 0, "{profile} {args:?}: {out}{err}");
+        }
+    }
+}
+
+#[test]
+fn reconfigure_keeps_the_reports_and_the_tree_exclude() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"standard\"\nharness = \"lean\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("spec-dna.toml").replace(
+        "reports = []",
+        "reports = [\"out/*.xml\"]\ntree-exclude = [\"**/*.txt\"]\ntests = [\"checks/**\"]",
+    );
+    r.write("spec-dna.toml", &text);
+    r.commit("adopt spec-dna");
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"standard\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let t = table(&r);
+    let list = |key: &str| -> Vec<String> {
+        t["evidence"][key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(list("reports"), ["out/*.xml"]);
+    assert_eq!(list("tree-exclude"), ["**/*.txt"]);
+    assert_eq!(list("tests"), ["checks/**"]);
+    // A profile of `lite` keeps a list that is not empty.
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"lite\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        table(&r)["evidence"]["reports"].as_array().map(Vec::len),
+        Some(1)
+    );
+}

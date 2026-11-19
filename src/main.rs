@@ -64,12 +64,14 @@ mod rank;
 mod registry;
 mod release;
 mod repo;
+mod report;
 mod sdlc;
 mod skeleton;
 mod split;
 mod stage;
 mod templates;
 mod transcript;
+mod tree;
 mod upgrade;
 mod upgrade_config;
 mod upgrade_docs;
@@ -152,7 +154,7 @@ layout, no project or a bad file, 4 git or write error.",
     ),
     (
         "check",
-        "check [--base <rev>] [--all] [--lint] [--staged]",
+        "check [--base <rev>] [--all] [--lint] [--staged] [--reports]",
         "Reports the diagnostics that are new against the merge base of <rev>
 and HEAD (default: HEAD). With --all, it reports every diagnostic. With
 --base, it reads tracked files only, as CI does. It prints the errors
@@ -170,8 +172,23 @@ origin/HEAD, then [change] base) and HEAD, and they print a note if there
 is none. If --base is older than the merge base of HEAD and origin/HEAD,
 the change checks and SD503 use that newer merge base, with a note.
 SD923 and SD924 skip a plan that was added when the pin was before 0.7.0,
-with a note. --json
+with a note. With --reports and [evidence] reports, it also reads the test
+reports from the disk: a missing report (SD613), a stale report (SD614), an
+unreadable report (SD615), a requirement whose tag binds to no passed test
+case (SD616 with --all, SD617 for a change). It does not combine with
+--staged. --json
 lists all diagnostics.",
+    ),
+    (
+        "evidence",
+        "evidence stamp [--json]",
+        "Reads each test report that [evidence] reports matches, and writes
+<report>.stamp next to it. The stamp holds the hash of the code tree and the
+hash of the report bytes. Run it after the tests, in the same job. It prints
+the count of reports and of passed, failed and skipped cases. Exit codes: 0
+stamped, 1 a report is unreadable (or git tracks it) or no file matches, so
+nothing got a stamp, 3 configuration (no [evidence] reports), 4 git or file
+error.",
     ),
     (
         "context",
@@ -573,6 +590,7 @@ struct Args {
     harness: Option<String>,
     /// `--compare <treatment>,<control>` of `eval verdict` (D59).
     compare: Option<String>,
+    reports: bool,
 }
 
 /// The options of `layer add`.
@@ -660,6 +678,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         arms: None,
         harness: None,
         compare: None,
+        reports: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -680,6 +699,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--all" => a.all = true,
             "--lint" => a.lint = true,
             "--staged" => a.staged = true,
+            "--reports" => a.reports = true,
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
             "--non-interactive" => a.non_interactive = true,
@@ -867,6 +887,9 @@ fn run(a: Args) -> Result<u8, Fatal> {
             }
         }
     }
+    if a.reports && a.command != "check" {
+        return Err(Fatal::Usage("--reports is an option of `check`".into()));
+    }
     if a.skip_open && a.command != "import" {
         return Err(Fatal::Usage("--skip-open is an option of `import`".into()));
     }
@@ -914,6 +937,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "upgrade" => upgrade(&Repo::discover(&cwd)?, &a),
         "import" => import(&cwd, &a),
         "check" => check(&Repo::discover(&cwd)?, &a),
+        "evidence" => evidence_cmd(&Repo::discover(&cwd)?, &a),
         "context" => context(&Repo::discover(&cwd)?, &a),
         "show" => show(&Repo::discover(&cwd)?, &a),
         "new" => new_doc(&Repo::discover(&cwd)?, &a),
@@ -1270,6 +1294,12 @@ fn skills_line(repo: &Repo) -> u32 {
 
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
+    if a.reports && a.staged {
+        return Err(Fatal::Usage(
+            "--reports reads report files from the disk, so it does not combine with --staged"
+                .into(),
+        ));
+    }
     // With `--staged`, the head tree is the git index. Each read of the head
     // tree then goes to the index, and no read lists untracked files.
     let staged_repo;
@@ -1438,10 +1468,16 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     }
     repo::trace("git base tree", &mut t);
     let mut loaded = repo::load(repo, &cfg, &snaps, !a.no_cache, true)?;
+    // The test reports (design 0.8.0, D1): only with `--reports`, a key that is
+    // not empty, and a report code that is on.
+    let want_reports = a.reports
+        && !cfg.evidence_reports.is_empty()
+        && diag::Code::REPORT_CODES.iter().any(|c| !cfg.is_off(*c));
     // The `covers:` tags of the test files, for the evidence checks.
-    if !(cfg.is_off(diag::Code::CoversUnresolved)
-        && cfg.is_off(diag::Code::RequirementUnverified)
-        && cfg.is_off(diag::Code::DeltaEvidenceMissing))
+    if want_reports
+        || !(cfg.is_off(diag::Code::CoversUnresolved)
+            && cfg.is_off(diag::Code::RequirementUnverified)
+            && cfg.is_off(diag::Code::DeltaEvidenceMissing))
     {
         // The working tree and the base, in parallel. The snapshots do not
         // tell whether a test file outside the document roots changed, so the
@@ -1464,6 +1500,14 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         repo::trace("evidence", &mut t);
     }
+    let reads = if want_reports {
+        let r = report::read(repo, &cfg)?;
+        evidence::bind_covers(&repo.root, &mut loaded.corpora[0].covers, &r);
+        repo::trace("reports", &mut t);
+        Some(r)
+    } else {
+        None
+    };
     t = std::time::Instant::now();
     let head = &loaded.corpora[0];
     let base = loaded.corpora.get(1);
@@ -1683,6 +1727,14 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         outcome.new.push(true);
     }
 
+    // SD613 to SD615: the state of the report files on the disk. The base has
+    // no report, so each finding is new.
+    if let Some(r) = &reads {
+        for d in r.diags(&cfg) {
+            outcome.head.push(d);
+            outcome.new.push(true);
+        }
+    }
     // A state code is never new, whichever check made it.
     for (d, new) in outcome.head.iter().zip(outcome.new.iter_mut()) {
         if d.code.is_state() {
@@ -1857,6 +1909,56 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         eprintln!("note: {n}");
     }
     Ok(if failed { 1 } else { 0 })
+}
+
+/// `spec-dna evidence stamp` (design 0.8.0, D1).
+fn evidence_cmd(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    if a.positional.first().map(String::as_str) != Some("stamp") {
+        return Err(Fatal::Usage(
+            "`evidence` needs a subcommand: `evidence stamp`".into(),
+        ));
+    }
+    expect_args(a, 1, 1)?;
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    let done = report::stamp(repo, &cfg)?;
+    let (mut pass, mut fail, mut skip) = (0, 0, 0);
+    for (_, _, c) in &done.reports {
+        pass += c.pass;
+        fail += c.fail;
+        skip += c.skip;
+    }
+    if a.json {
+        let reports = done.reports.iter().map(|(p, f, c)| {
+            Obj::new()
+                .str("path", p)
+                .str("format", f.name())
+                .num("pass", c.pass)
+                .num("fail", c.fail)
+                .num("skip", c.skip)
+                .end()
+        });
+        println!(
+            "{}",
+            Obj::new()
+                .num("stamped", done.reports.len())
+                .str("tree", &done.tree)
+                .num("pass", pass)
+                .num("fail", fail)
+                .num("skip", skip)
+                .raw("reports", &json::array(reports))
+                .end()
+        );
+    } else {
+        println!(
+            "stamped {} report(s) at tree {}: {pass} pass, {fail} fail, {skip} skip",
+            done.reports.len(),
+            done.tree
+        );
+    }
+    Ok(0)
 }
 
 /// The pin of `spec-dna.toml` in a commit. `None` if the commit has no
@@ -3747,6 +3849,17 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     };
     let mut head = loaded.corpora.remove(0);
     head.covers = evidence::load(repo, &cfg, None, true)?;
+    // Step 5.1: the test reports, when `[evidence] reports` is set and a report
+    // code is on.
+    let reads = if !cfg.evidence_reports.is_empty()
+        && diag::Code::REPORT_CODES.iter().any(|c| !cfg.is_off(*c))
+    {
+        let r = report::read(repo, &cfg)?;
+        evidence::bind_covers(&repo.root, &mut head.covers, &r);
+        Some(r)
+    } else {
+        None
+    };
     let diff = base_rev
         .as_deref()
         .map(|r| lifecycle::Diff::read(&repo.git, r, true))
@@ -3765,6 +3878,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         read: &read,
         exists: &exists,
         path_problem: &path_problem,
+        reports: reads.as_ref(),
     };
     let plan = match finish::plan(&cx) {
         Ok(p) => p,

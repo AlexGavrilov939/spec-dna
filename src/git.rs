@@ -320,6 +320,82 @@ impl Git {
         Ok(v)
     }
 
+    /// Returns the entries of the git index as (mode, object id, path): the
+    /// first stage of a path, with the full mode (`100644`, `100755`,
+    /// `120000` or `160000`). The path is the bytes that git writes, so a name
+    /// that is not UTF-8 stays whole. The code tree reads it (design 0.8.0, D1).
+    pub fn index_entries(&self) -> Result<Vec<(String, String, Vec<u8>)>, String> {
+        let out = self.run(&["ls-files", "-s", "-z"])?;
+        let mut v: Vec<(String, String, Vec<u8>)> = Vec::new();
+        for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let Some(tab) = rec.iter().position(|b| *b == b'\t') else {
+                continue;
+            };
+            // The text before the tab is `<mode> <object id> <stage>`: ASCII.
+            let meta = String::from_utf8_lossy(&rec[..tab]);
+            let path = &rec[tab + 1..];
+            let mut it = meta.split(' ');
+            let (mode, oid) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+            let stage: u8 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            // A conflicted path has the stages 1 to 3, one entry each: keep the
+            // first. The paths are in order, so the entries of one path are
+            // next to each other.
+            if stage != 0 && v.last().is_some_and(|l| l.2 == path) {
+                continue;
+            }
+            v.push((mode.to_string(), oid.to_string(), path.to_vec()));
+        }
+        Ok(v)
+    }
+
+    /// Returns the object ids that git would give to the files `paths` of the
+    /// working tree (`git hash-object --stdin-paths`, with the filters of the
+    /// repository, so the id is the one that `git add` writes). The result has
+    /// one id for each path, in order. A path is bytes. A path with a line feed
+    /// is hashed alone, because `--stdin-paths` reads one path for each line.
+    pub fn hash_files(&self, paths: &[Vec<u8>]) -> Result<Vec<String>, String> {
+        let (plain, odd): (Vec<usize>, Vec<usize>) =
+            (0..paths.len()).partition(|&i| !paths[i].contains(&b'\n'));
+        let mut out = vec![String::new(); paths.len()];
+        if !plain.is_empty() {
+            let mut input: Vec<u8> = Vec::new();
+            for &i in &plain {
+                input.extend_from_slice(&paths[i]);
+                input.push(b'\n');
+            }
+            let got = self.run_with_bytes(&["hash-object", "--stdin-paths"], input)?;
+            let ids: Vec<String> = String::from_utf8_lossy(&got)
+                .lines()
+                .map(str::to_string)
+                .collect();
+            if ids.len() != plain.len() {
+                return Err("git hash-object gave an unexpected number of ids".to_string());
+            }
+            for (i, id) in plain.iter().zip(ids) {
+                out[*i] = id;
+            }
+        }
+        for i in odd {
+            let name = std::str::from_utf8(&paths[i]).map_err(|_| {
+                format!(
+                    "cannot hash the file `{}`: its name has a line feed and is not UTF-8",
+                    String::from_utf8_lossy(&paths[i])
+                )
+            })?;
+            let got = self.run(&["hash-object", "--", name])?;
+            out[i] = String::from_utf8_lossy(&got).trim().to_string();
+        }
+        Ok(out)
+    }
+
+    /// Returns the object id that git gives to `bytes` as a blob, with no
+    /// filter (`git hash-object --stdin`). The text of a symbolic link is such
+    /// a blob.
+    pub fn hash_blob(&self, bytes: Vec<u8>) -> Result<String, String> {
+        let got = self.run_with_bytes(&["hash-object", "--stdin"], bytes)?;
+        Ok(String::from_utf8_lossy(&got).trim().to_string())
+    }
+
     /// Returns the files of the working tree under `specs` (git pathspecs):
     /// the tracked files, and the untracked files that git does not ignore.
     /// The paths are from the repository root, sorted, with no duplicate. A
@@ -1299,6 +1375,11 @@ impl Git {
 
     /// Runs a git command with `input` on its standard input.
     fn run_with_input(&self, args: &[&str], input: String) -> Result<Vec<u8>, String> {
+        self.run_with_bytes(args, input.into_bytes())
+    }
+
+    /// Like `run_with_input`, for input that is bytes and not text.
+    fn run_with_bytes(&self, args: &[&str], input: Vec<u8>) -> Result<Vec<u8>, String> {
         let mut child = self
             .cmd(args)
             .env("GIT_NO_LAZY_FETCH", "1")
@@ -1309,7 +1390,7 @@ impl Git {
             .map_err(|e| format!("cannot run git: {e}"))?;
         let mut stdin = child.stdin.take().unwrap();
         let writer = std::thread::spawn(move || {
-            let _ = stdin.write_all(input.as_bytes());
+            let _ = stdin.write_all(&input);
         });
         let out = child
             .wait_with_output()

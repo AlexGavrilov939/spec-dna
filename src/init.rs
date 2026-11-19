@@ -301,6 +301,13 @@ pub struct Plan {
     pub evidence: Option<Option<Severity>>,
     pub style: Style,
     pub tests: Vec<String>,
+    /// `[evidence] reports`. For a new project it is empty: `init` writes
+    /// `reports = []` with a comment in `standard` and `strict`, and it detects
+    /// no runner. For `--reconfigure` it is the list of the current file.
+    pub reports: Vec<String>,
+    /// For `--reconfigure`: the `[evidence] tree-exclude` of the current file,
+    /// if it sets one. `None`: the default list.
+    pub tree_exclude: Option<Vec<String>>,
     pub language: String,
     pub outcome: Vec<String>,
     pub amendments: Vec<String>,
@@ -890,6 +897,8 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         evidence: None,
         style: Style::Both,
         tests: facts.tests.iter().map(|t| t.0.clone()).collect(),
+        reports: Vec::new(),
+        tree_exclude: None,
         language,
         outcome: facts.outcome_aliases.clone(),
         amendments: facts.amendment_aliases.clone(),
@@ -1012,6 +1021,9 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     }
     // The current globs stay. The default list renders as no `[evidence]`.
     p.tests = cfg.evidence_tests.clone();
+    p.reports = cfg.evidence_reports.clone();
+    p.tree_exclude = (cfg.evidence_tree_exclude != config::DEFAULT_TREE_EXCLUDE)
+        .then(|| cfg.evidence_tree_exclude.clone());
     p.rows = cfg.roots.iter().map(row_of_root).collect();
     if let Some(h) = &cfg.harness {
         p.harness = h.clone();
@@ -1325,19 +1337,40 @@ pub fn render(plan: &Plan) -> String {
             out.push_str(&format!("{} = {}\n", toml_key(&k), toml_str(v)));
         }
     }
+    // The table `[evidence]`: the test globs, then the test reports (design
+    // 0.8.0, D1). A new project of `standard` or `strict` gets `reports = []`
+    // with a comment, because `init` knows no runner. `lite` writes no key.
+    let mut evidence: Vec<String> = Vec::new();
     match plan.style {
         Style::VerifiedBy => {
-            out.push_str("\n[evidence]\ntests = []  # evidence by `verified-by` only\n")
+            evidence.push("tests = []  # evidence by `verified-by` only".to_string())
         }
         _ if !plan.tests.is_empty()
             && plan.tests != config::DEFAULT_TEST_GLOBS.map(str::to_string) =>
         {
-            out.push_str(&format!(
-                "\n[evidence]\ntests = {}  # test files with `covers: <doc-id>#<key>` tags\n",
+            evidence.push(format!(
+                "tests = {}  # test files with `covers: <doc-id>#<key>` tags",
                 toml_list(&plan.tests)
             ))
         }
         _ => {}
+    }
+    if !plan.reports.is_empty() {
+        evidence.push(format!(
+            "reports = {}  # test reports: `spec-dna evidence stamp` stamps them, and `check --reports` reads them",
+            toml_list(&plan.reports)
+        ));
+    } else if plan.profile != Profile::Lite {
+        evidence.push(
+            "reports = []  # globs of the test reports (docs/config.md, \"Evidence\"); empty: a tag proves a requirement with no report"
+                .to_string(),
+        );
+    }
+    if let Some(x) = &plan.tree_exclude {
+        evidence.push(format!("tree-exclude = {}", toml_list(x)));
+    }
+    if !evidence.is_empty() {
+        out.push_str(&format!("\n[evidence]\n{}\n", evidence.join("\n")));
     }
     let factor = match plan.budgets {
         Budgets::Relaxed => Some(2.0),
@@ -4076,7 +4109,7 @@ fn resolved_answers(
     if plan.evidence.is_some() {
         evidence.push("[rules] evidence");
     }
-    if has("\n[evidence]\n") {
+    if has("\n[evidence]\ntests = ") {
         evidence.push("[evidence] tests");
     }
     let mut language = Vec::new();
@@ -4937,8 +4970,11 @@ mod tests {
             "{text}"
         );
         Config::parse(&text).unwrap();
-        // The default test globs render as no `[evidence]` table.
+        // The default test globs render as no `tests` key. A project of
+        // `standard` or `strict` gets the key `reports`, and `lite` none.
         plan.tests = config::DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
+        assert!(!render(&plan).contains("\ntests = "));
+        plan.profile = Profile::Lite;
         assert!(!render(&plan).contains("[evidence]"));
     }
 

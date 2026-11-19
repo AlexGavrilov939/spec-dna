@@ -2294,11 +2294,15 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         if on(Code::FinishIncomplete) {
             out.extend(finish_incomplete(ctx, ch, sole));
         }
-        if on(Code::DeltaEvidenceMissing) {
+        if on(Code::DeltaEvidenceMissing) || on(Code::ChangeUnproven) {
             let mine = |path: &str| sole || change::in_scope(&ch.files, path);
-            out.extend(evidence_missing(
-                ctx.head, ctx.base, ctx.base, &ch.change, &mine,
-            ));
+            // SD916 and SD617 are 2 checks of one function. A code that is
+            // off gives no diagnostic, so each stays as the profile sets it.
+            out.extend(
+                evidence_missing(ctx.head, ctx.base, ctx.base, &ch.change, &mine)
+                    .into_iter()
+                    .filter(|d| on(d.code)),
+            );
         }
         if on(Code::DecisionNeededUnaccepted) {
             out.extend(decisions_unaccepted(ctx.head, ctx.base, &ch.change));
@@ -2409,7 +2413,9 @@ fn req_index(c: &Corpus, id: &str, key: &str) -> Option<(u32, usize)> {
 
 /// SD916 for a change: each requirement that the change adds or changes has
 /// evidence in `head` (a `covers:` tag, a `verified-by` marker or the
-/// `verified-by` of the document).
+/// `verified-by` of the document). SD617 is the second check: a requirement
+/// that has a tag and no `verified-by` needs a bound test case that passed in
+/// a report. It runs only when the tags carry a result of the bind.
 ///
 /// - With a delta, the requirements are the targets of the `ADD` and `CHANGE`
 ///   lines that `head` applies. A line that `head` does not apply gives no
@@ -2479,6 +2485,19 @@ pub fn evidence_missing(
                 Code::DeltaEvidenceMissing,
                 format!("{}#{}", doc.id, req.key),
                 message,
+            ));
+        } else if let Some(why) = ev.unproven(di, doc, ri) {
+            // The requirement has a tag, and the test reports do not prove it
+            // (design 0.8.0, D1). `unproven` is `None` when no report is read.
+            out.push(crate::check::diag(
+                doc,
+                req.line,
+                Code::ChangeUnproven,
+                format!("{}#{}", doc.id, req.key),
+                format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and {why}",
+                    ch.slug, doc.id, req.key
+                ),
             ));
         }
     }

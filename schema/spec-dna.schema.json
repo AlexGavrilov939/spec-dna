@@ -204,6 +204,14 @@
         "tests": {
           "description": "Globs of the test files where `check` reads `covers: <doc-id>#<key>` tags. An empty list turns the tags off. Default: the usual test directories and file names of common stacks.",
           "$ref": "#/$defs/globs"
+        },
+        "reports": {
+          "description": "Globs from the repository root of the test report files (JUnit XML or the `spec-dna-report 1` line format). `spec-dna evidence stamp` stamps them, and `check --reports` and `finish` read them. A tag then proves a requirement only when a bound test case passed. An empty list turns the test reports off. Default: empty.",
+          "$ref": "#/$defs/globs"
+        },
+        "tree-exclude": {
+          "description": "Globs of the paths that the code tree leaves out, so that an edit of them does not make a test report stale. A list replaces the default. Default: each Markdown file (`**/*.md` and `**/*.markdown`).",
+          "$ref": "#/$defs/globs"
         }
       }
     },
@@ -920,10 +928,10 @@
       ]
     },
     "rules": {
-      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, reports, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(references|ids|budgets|drift|evidence|lint|layers|changes|SD[0-9]{3})$"
+        "pattern": "^(references|ids|budgets|drift|evidence|reports|lint|layers|changes|SD[0-9]{3})$"
       },
       "additionalProperties": {
         "$ref": "#/$defs/severity"

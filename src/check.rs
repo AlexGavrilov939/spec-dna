@@ -544,6 +544,18 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 r.key.clone(),
                 message,
             ));
+        } else if needs_evidence(d)
+            && let Some(why) = ev.unproven(di, d, ri)
+        {
+            // A tag names the requirement, and the test reports do not prove
+            // it. A state code: it is never new (design 0.8.0, D1).
+            out.push(diag(
+                d,
+                r.line,
+                Code::RequirementUnproven,
+                r.key.clone(),
+                format!("`{}#{}` is active, and {why}", d.id, r.key),
+            ));
         }
     }
     for t in &p.placeholders {

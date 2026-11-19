@@ -141,6 +141,8 @@ Artifact: A test with a `covers:` tag, run red before the code.
 
 Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is a requirement with no evidence. SD916 is a delta requirement with no `covers:` tag. They check the tag, not the order. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
+If `[evidence] reports` is set in `spec-dna.toml`, stage new files with `git add`, run the tests and `spec-dna evidence stamp` in one command line, and run the check with `--reports`: a tag then proves a requirement only when a test case bound to it passed.
+
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.";
 
 const REVIEW_PARTS: &str = r"When to use: Before a merge, or when a person asks for a review or answers one.
@@ -168,7 +170,7 @@ Commands:
 
 Artifact: The output of the `Proof` commands and of `spec-dna check`.
 
-Check: Each command ends with exit code 0, and the check gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence).
+Check: Each command ends with exit code 0, and the check gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence). If `[evidence] reports` is set in `spec-dna.toml`, stage new files with `git add`, run the tests and `spec-dna evidence stamp` in one command line before `finish`, and run the check with `--reports`.
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.";
 

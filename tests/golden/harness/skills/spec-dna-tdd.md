@@ -16,8 +16,10 @@ Artifact: A test with a `covers:` tag, run red before the code.
 
 Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD608 and no SD916. SD608 is a requirement with no evidence. SD916 is a delta requirement with no `covers:` tag. They check the tag, not the order. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
+If `[evidence] reports` is set in `spec-dna.toml`, stage new files with `git add`, run the tests and `spec-dna evidence stamp` in one command line, and run the check with `--reports`: a tag then proves a requirement only when a test case bound to it passed.
+
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
 
-<!-- spec-dna harness v{VERSION} h:2975d0f3a88d7989 -->
+<!-- spec-dna harness v{VERSION} h:4e8527dbf36a1294 -->

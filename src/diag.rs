@@ -25,6 +25,15 @@ macro_rules! codes {
 
         impl Code {
             pub const ALL: &[Code] = &[$(Code::$variant),*];
+            /// The codes of the test reports (SD613 to SD617). They run only
+            /// with `[evidence] reports`.
+            pub const REPORT_CODES: &[Code] = &[
+                Code::ReportMissing,
+                Code::ReportStale,
+                Code::ReportUnreadable,
+                Code::RequirementUnproven,
+                Code::ChangeUnproven,
+            ];
             /// Finds a code by its `SDnnn` form.
             pub fn from_code(s: &str) -> Option<Code> { Code::ALL.iter().copied().find(|c| c.code() == s) }
             pub fn code(self) -> &'static str { match self { $(Code::$variant => $code),* } }
@@ -35,7 +44,7 @@ macro_rules! codes {
             /// the diff. It is never "new" against the base, and `check --all`
             /// and `status` show it (design 0.6.0, K4, D35).
             pub fn is_state(self) -> bool {
-                matches!(self.code(), "SD911")
+                matches!(self.code(), "SD911" | "SD616")
             }
             /// The prose lint of requirement sentences (SD801-SD805). The
             /// human output of `check` gives one count for each code.
@@ -87,6 +96,11 @@ codes! {
     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
     DecisionLinksChange = "SD611", "decision-links-intent", Warning, "Link the decision from the intent instead. A finished intent can be deleted (SD202 allows it), but the locked text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent as plain text, not as a link, in an amendment or a live section. SD901 and `finish` would stop on a link.";
     LinkIntoChange = "SD612", "link-into-change", Warning, "Name the change as plain text. A reference into the folder of a change (a link, `[[id]]`, `depends-on`, `supersedes` or `from`) breaks when `spec-dna finish` deletes the folder, and `finish` stops on it. As an alternative, link the document that the change moves its text into.";
+    ReportMissing = "SD613", "report-missing", Warning, "Run the tests so that they write the report, then run `spec-dna evidence stamp` in the same job. `[evidence] reports` lists the globs of the report files. A report needs its stamp (`<report>.stamp`).";
+    ReportStale = "SD614", "report-stale", Warning, "Run the tests again, then run `spec-dna evidence stamp` on the same tree. The stamp names another tree, or the bytes of the report changed after the stamp. A change of code makes the report stale. A change of Markdown does not.";
+    ReportUnreadable = "SD615", "report-unreadable", Warning, "Write the report in a format that spec-dna reads: a JUnit XML subset or the `spec-dna-report 1` line format, as UTF-8, with no DTD, whole, and not above 64 MiB. Do not commit a report or a stamp: add them to `.gitignore`.";
+    RequirementUnproven = "SD616", "requirement-unproven", Warning, "A `covers:` tag names the requirement, and no test case that binds to the tag passed in the report. Make the test run and pass. Put the tag above the test, or add `case:<name>` to the tag. As an alternative, add `<!-- verified-by: <path> -->` for a check by a person.";
+    ChangeUnproven = "SD617", "change-unproven", Warning, "A requirement that the change adds or changes has a `covers:` tag, and no test case that binds to the tag passed in the report. Make the test run and pass. Put the tag above the test, or add `case:<name>` to the tag.";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
@@ -181,7 +195,7 @@ mod tests {
             assert!(seen.insert(c.code()), "duplicate {}", c.code());
             assert!(seen.insert(c.name()), "duplicate {}", c.name());
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
-            assert_eq!(c.is_state(), c.code() == "SD911");
+            assert_eq!(c.is_state(), matches!(c.code(), "SD911" | "SD616"));
             // Codes from 600 up are warnings. SD702 became an error by a decision at
             // checkpoint 2. SD507 is a warning, because ADR 0016 says that it is
             // never an error.
