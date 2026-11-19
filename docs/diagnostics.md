@@ -285,7 +285,7 @@ A change whose intent has the status `closed` does not proceed, so its spec give
     6. A merge commit stops the rule.
     7. The branch added and finished the change.
     8. The path is not in the `Files` of the plan at its approval commit.
-    9. A later commit set the artifact back after its approval. The message names the first commit that changed the status after the approval commit, or the working tree.
+    9. A later commit set the artifact back after its approval. The message names the first commit that changed the status after the approval commit, or the working tree. For the working tree, the message also says how the commit of the step back passes a hook that runs `spec-dna check`: skip only that hook for this commit, name the skip in the body, and make the approval commit next. A commit of the history gets no such text, because its hook has already run.
   - `check --json` has the field `approvals`: the approval commits that cleared a gate ([commands.md](commands.md#check)).
 - SD913:
   - The scope of a change has these parts:

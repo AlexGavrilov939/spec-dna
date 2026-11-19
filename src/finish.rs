@@ -97,6 +97,16 @@ pub struct Hours {
     /// counted task has one, or if a value is invalid: the notes of those
     /// cases are other notes.
     pub missing: Vec<String>,
+    /// The sum of the labels `Actual:` in hundredths of an hour (design 0.7.1,
+    /// B7). Each task that is not a duplicate counts, also a skipped task: its
+    /// time was spent. It is `None` if no such task has the label, or if a
+    /// value is invalid.
+    pub actual: Option<u64>,
+    /// The id and the text of each task with an invalid `Actual:`.
+    pub actual_invalid: Vec<(String, String)>,
+    /// The ids of the done tasks (not skipped) that have no `Actual:`. It is
+    /// empty if no task has the label, or if a value is invalid.
+    pub actual_missing: Vec<String>,
 }
 
 impl Hours {
@@ -125,6 +135,30 @@ impl Hours {
     }
 }
 
+impl Hours {
+    /// The total of the actual hours as a number of hours, or `None`.
+    pub fn actual_text(&self) -> Option<String> {
+        self.actual.map(format_hours)
+    }
+
+    /// The value of `actual` in `--json`: a number, or `null`.
+    pub fn actual_json(&self) -> String {
+        self.actual_text().unwrap_or_else(|| "null".to_string())
+    }
+
+    /// The line `Hours: ...` of the commit message (design 0.7.1, B7):
+    /// `<estimate>, actual <n>`, `actual <n>` with no estimate, or
+    /// `<estimate>`. `None` if the plan gives neither.
+    pub fn line(&self) -> Option<String> {
+        match (self.text(), self.actual_text()) {
+            (Some(h), Some(a)) => Some(format!("Hours: {h}, actual {a}")),
+            (None, Some(a)) => Some(format!("Hours: actual {a}")),
+            (Some(h), None) => Some(format!("Hours: {h}")),
+            (None, None) => None,
+        }
+    }
+}
+
 /// A number of hundredths as a number of hours, with no zero after the last
 /// digit: `350` is `3.5`, and `400` is `4`.
 pub fn format_hours(hundredths: u64) -> String {
@@ -136,9 +170,36 @@ pub fn format_hours(hundredths: u64) -> String {
     }
 }
 
+/// Adds the actual hours of the tasks of a plan into `out`.
+fn task_actual(tasks: &[change::PlanTask], out: &mut Hours) {
+    let mut sum = 0u64;
+    let mut any = false;
+    let mut missing = Vec::new();
+    for t in tasks.iter().filter(|t| !t.duplicate) {
+        let Some(value) = &t.actual else {
+            if t.is_done() {
+                missing.push(t.id.clone());
+            }
+            continue;
+        };
+        any = true;
+        match change::parse_actual(value) {
+            Some(n) => sum += n,
+            None => out
+                .actual_invalid
+                .push((t.id.clone(), lifecycle::short(value))),
+        }
+    }
+    if any && out.actual_invalid.is_empty() {
+        out.actual = Some(sum);
+        out.actual_missing = missing;
+    }
+}
+
 /// Adds the hours of the tasks of a plan.
 fn task_hours(tasks: &[change::PlanTask]) -> Hours {
     let mut out = Hours::default();
+    task_actual(tasks, &mut out);
     let (mut low, mut high) = (0u64, 0u64);
     let mut any = false;
     let mut missing = Vec::new();
@@ -195,7 +256,7 @@ const OPEN_TASKS_SHOWN: usize = 10;
 /// the first open tasks (at most `OPEN_TASKS_SHOWN`, the text cut at 60
 /// characters), and then the ids of the others, so that no open task is left
 /// out.
-fn open_tasks_reason(open: &[change::PlanTask]) -> String {
+fn open_tasks_reason(open: &[change::PlanTask], slug: &str) -> String {
     let shown: Vec<String> = open
         .iter()
         .take(OPEN_TASKS_SHOWN)
@@ -214,8 +275,15 @@ fn open_tasks_reason(open: &[change::PlanTask]) -> String {
     } else {
         format!("; also open: {}", rest.join(", "))
     };
+    // A task that names `spec-dna finish` with no slug, or with another one,
+    // gets a hint: only the real slug closes a task with `finish`.
+    let hint = if open.iter().any(|t| t.mentions_finish()) {
+        format!("; a task closes with `finish` only when its text names `spec-dna finish {slug}`")
+    } else {
+        String::new()
+    };
     format!(
-        "{} open task(s) in `Order` of `plan.md` ({}{more}); do each task, or close it with a reason in `Skip:`",
+        "{} open task(s) in `Order` of `plan.md` ({}{more}); do each task, or close it with a reason in `Skip:`{hint}",
         open.len(),
         shown.join("; ")
     )
@@ -253,13 +321,14 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     if let Some(ch) = changes.iter().find(|c| c.dir == cx.folder)
         && ch.intent_status() != "closed"
     {
+        // A task that names `spec-dna finish <slug>` closes with `finish`.
         let open: Vec<change::PlanTask> = ch
             .tasks(head)
             .into_iter()
-            .filter(|t| !t.closed() && !t.duplicate)
+            .filter(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(&ch.slug))
             .collect();
         if !open.is_empty() {
-            return stop(0, open_tasks_reason(&open), Vec::new());
+            return stop(0, open_tasks_reason(&open, &ch.slug), Vec::new());
         }
     }
 

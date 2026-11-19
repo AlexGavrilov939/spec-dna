@@ -105,14 +105,19 @@ impl Reason {
                 let (path, status) = back.map_or(("the artifact", "its first status"), |(p, s)| {
                     (p.as_str(), s.as_str())
                 });
-                // The working tree has no commit: it sets the status itself.
-                let who = if commit.is_some() {
-                    format!("the commit {sha}")
+                // The working tree has no commit: it sets the status itself. A
+                // hook that runs `check` rejects the commit of the step back, so
+                // the message names the way for that commit (design 0.7.1, B6).
+                let (who, way) = if commit.is_some() {
+                    (format!("the commit {sha}"), "")
                 } else {
-                    "the working tree".to_string()
+                    (
+                        "the working tree".to_string(),
+                        "; if this is the commit of the step back, a hook that runs `spec-dna check` rejects it: skip only that hook for this commit, name the skip in its body, and make the approval commit next",
+                    )
                 };
                 format!(
-                    "reason {n}: {who} set `{path}` back to `{status}` after its approval; approve it again with an approval commit before the work, or take the work out of the branch"
+                    "reason {n}: {who} set `{path}` back to `{status}` after its approval; approve it again with an approval commit before the work, or take the work out of the branch{way}"
                 )
             }
         }

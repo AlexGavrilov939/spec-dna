@@ -443,7 +443,7 @@ fn the_json_has_the_fields_of_the_contract_in_order() {
     assert_eq!(
         out.trim_end(),
         format!(
-            "{{\"changes\":[{{\"slug\":\"dose\",\"class\":\"higher-risk\",\"title\":\"Dose\",\"result\":\"finished\",\"delta\":{{\"add\":1,\"change\":1,\"remove\":1}},\"hours\":null,\"commit\":\"{sha}\",\"date\":\"2024-04-05\"}}],\"shallow\":false}}"
+            "{{\"changes\":[{{\"slug\":\"dose\",\"class\":\"higher-risk\",\"title\":\"Dose\",\"result\":\"finished\",\"delta\":{{\"add\":1,\"change\":1,\"remove\":1}},\"hours\":null,\"actual\":null,\"commit\":\"{sha}\",\"date\":\"2024-04-05\"}}],\"shallow\":false}}"
         )
     );
 }
@@ -459,7 +459,7 @@ fn the_text_has_one_line_for_each_change() {
     assert_eq!(
         text,
         format!(
-            "2024-04-05 finished dose higher-risk add 1 change 1 remove 1 hours - {} Dose\n",
+            "2024-04-05 finished dose higher-risk add 1 change 1 remove 1 hours - actual - {} Dose\n",
             &sha[..12]
         )
     );
@@ -1234,12 +1234,93 @@ fn log_json_gives_hours_as_low_and_high() {
     let sha = r.git_out(&["rev-parse", "HEAD"]);
     assert!(
         out.contains(&format!(
-            "\"hours\":{{\"low\":4.5,\"high\":4.5}},\"commit\":\"{sha}\""
+            "\"hours\":{{\"low\":4.5,\"high\":4.5}},\"actual\":null,\"commit\":\"{sha}\""
         )),
         "{out}"
     );
     let (_, text, _) = r.run(&["log"]);
     assert!(text.contains(" remove 1 hours 4.5 "), "{text}");
+}
+
+#[test]
+fn log_reads_the_actual_hours_of_the_line() {
+    // 0.7.1, B7: `Hours: <estimate>, actual <n>`.
+    let r = squashed_with("feat: dose\n\nHours: 2-3, actual 3.5");
+    let out = log_json(&r, &[]);
+    let sha = r.git_out(&["rev-parse", "HEAD"]);
+    assert!(
+        out.contains(&format!(
+            "\"hours\":{{\"low\":2,\"high\":3}},\"actual\":3.5,\"commit\":\"{sha}\""
+        )),
+        "{out}"
+    );
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" remove 1 hours 2-3 actual 3.5 "), "{text}");
+    // The estimate row of `stats --sdlc` reads the estimate, as before.
+    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    has(
+        indicator(&out, HOURS_ROW),
+        &[
+            "\"value\":2.5",
+            "a range counts as its midpoint; the total is 2-3 hours",
+        ],
+    );
+    // A line with no actual hours gives `actual -`.
+    let r = squashed_with("feat: dose\n\nHours: 4");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"actual\":null"), "{out}");
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" remove 1 hours 4 actual - "), "{text}");
+}
+
+#[test]
+fn log_reads_a_line_with_actual_hours_and_no_estimate() {
+    let r = squashed_with("feat: dose\n\nHours: actual 3");
+    let out = log_json(&r, &[]);
+    assert!(out.contains("\"hours\":null,\"actual\":3,"), "{out}");
+    let (_, text, _) = r.run(&["log"]);
+    assert!(text.contains(" remove 1 hours - actual 3 "), "{text}");
+    // `stats --sdlc` reads the estimate only: this commit has none.
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    has(
+        indicator(&out, HOURS_ROW),
+        &["no finished change has an `Hours:` line in the commit that deletes its folder"],
+    );
+}
+
+#[test]
+fn the_comma_of_the_hours_line_has_spaces_or_tabs_or_none() {
+    for (line, hours, actual) in [
+        ("Hours: 1,actual 2", "1", "2"),
+        ("Hours: 1 , actual 2", "1", "2"),
+        ("Hours: 1 \t,\t actual\t2.25", "1", "2.25"),
+        ("Hours:1-2, actual 0.5 \t", "1-2", "0.5"),
+    ] {
+        let r = squashed_with(&format!("feat: dose\n\n{line}"));
+        let (_, text, _) = r.run(&["log"]);
+        assert!(
+            text.contains(&format!(" remove 1 hours {hours} actual {actual} ")),
+            "{line:?}: {text}"
+        );
+    }
+    // A line that is not one of the 3 forms gives no value, and an earlier
+    // line counts.
+    for bad in [
+        "Hours: 1, actual",
+        "Hours: 1, actual 2-3",
+        "Hours: 1, actual 1.234",
+        "Hours: 1, actually 2",
+        "Hours: 1, 2",
+        "Hours: 1, actual 2 total",
+    ] {
+        let r = squashed_with(&format!("feat: dose\n\nHours: 7\n{bad}"));
+        let (_, text, _) = r.run(&["log"]);
+        assert!(
+            text.contains(" remove 1 hours 7 actual - "),
+            "{bad}: {text}"
+        );
+    }
 }
 
 #[test]

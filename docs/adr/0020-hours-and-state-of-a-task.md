@@ -58,3 +58,8 @@ Option 3.
 This ADR amends no locked text. ADR 0006 stays as it is: `Order` in `plan.md` gives the steps. This ADR adds 2 labels to a task of `Order`. The labels replace the section `Hours` of slice 3b (design 0.7.0, section 15) as the source of the hours.
 
 ## Amendments
+
+### 2026-11-19
+
+- A task can have the label `Actual: <n>`: the real hours of the task, in the number form of `Hours:`. `Hours:` stays the estimate. `finish` adds the estimates as before, and the `Actual:` values of each task, also of a skipped one. It prints `Hours: <estimate>, actual <n>`, or `Hours: actual <n>` with no estimate. Thus the commit message keeps the real hours after `finish` deletes the plan. This replaces the option "2 labels, `Estimate:` and `Hours:`" that this ADR did not choose: here the 2 values count apart, so no rule chooses between them.
+- An open task whose text names `spec-dna finish <slug>`, with the slug of its change, closes with `finish`. `next`, `status` and step 0 of `finish` treat it as closed, so `finish` never waits for a task that only `finish` can do. A task of a person, such as the review by the owner, stays open until a person ticks it.

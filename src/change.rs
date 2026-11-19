@@ -579,6 +579,9 @@ pub struct PlanTask {
     /// removed. `None` if the label is absent or has no text. [`parse_hours`]
     /// reads the value (design 0.7.0, D28, D41).
     pub hours: Option<String>,
+    /// The text after the label `Actual:`, with the rules of `hours`. The real
+    /// hours of the task. [`parse_actual`] reads the value (design 0.7.1, B7).
+    pub actual: Option<String>,
     /// The text after the label `Skip:`, on one line, with one final `.`
     /// removed. `None` if the label is absent. A label with no text gives an
     /// empty string: the task is not skipped, and SD923 reports it.
@@ -607,6 +610,45 @@ impl PlanTask {
     pub fn closed(&self) -> bool {
         self.done || self.skipped()
     }
+
+    /// True if the text of the task names `spec-dna finish <slug>` with the
+    /// slug of its change. Only `finish` can do such a task, so an open task
+    /// of this kind closes with `finish` (design 0.7.1, B1). The command is
+    /// followed by the end of the text, or by a character that is not a
+    /// letter, a digit, `-` or `_`. A code span counts. The text is the part
+    /// before the first label. The caller tests that the task is open.
+    pub fn closes_with_finish(&self, slug: &str) -> bool {
+        names_finish(&self.text, slug)
+    }
+
+    /// True if the text of the task names `spec-dna finish <word>` for any
+    /// word, with a slug or none. A task of this kind that is not
+    /// [`closes_with_finish`](Self::closes_with_finish) gets the hint of step 0
+    /// of `finish`.
+    pub fn mentions_finish(&self) -> bool {
+        self.text.contains("spec-dna finish")
+    }
+}
+
+/// True if `text` holds `spec-dna finish <slug>` and the slug ends there.
+fn names_finish(text: &str, slug: &str) -> bool {
+    if slug.is_empty() {
+        return false;
+    }
+    let command = format!("spec-dna finish {slug}");
+    let mut from = 0;
+    while let Some(i) = text[from..].find(&command) {
+        let end = from + i + command.len();
+        let ends = text[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '-' || c == '_'));
+        if ends {
+            return true;
+        }
+        from = end;
+    }
+    false
 }
 
 /// The range of hours of the value of the label `Hours:`, as 2 numbers of
@@ -615,35 +657,43 @@ impl PlanTask {
 /// digits, then 1 or 2 decimals after a `.` (optional), then an `h`
 /// (optional). Spaces or tabs can be around the `-`.
 pub fn parse_hours(value: &str) -> Option<(u64, u64)> {
-    fn number(t: &str) -> Option<u64> {
-        let t = t.strip_suffix('h').unwrap_or(t);
-        let (whole, frac) = match t.split_once('.') {
-            Some((w, f)) => (w, Some(f)),
-            None => (t, None),
-        };
-        let digits = |x: &str, max: usize| {
-            (1..=max).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_digit())
-        };
-        if !digits(whole, 4) || frac.is_some_and(|f| !digits(f, 2)) {
-            return None;
-        }
-        let mut v = whole.parse::<u64>().ok()? * 100;
-        if let Some(f) = frac {
-            let n: u64 = f.parse().ok()?;
-            v += if f.len() == 1 { n * 10 } else { n };
-        }
-        Some(v)
-    }
     match value.split_once('-') {
-        None => number(value).map(|n| (n, n)),
+        None => hour_number(value).map(|n| (n, n)),
         Some((a, b)) => {
             let (a, b) = (
-                number(a.trim_matches([' ', '\t']))?,
-                number(b.trim_matches([' ', '\t']))?,
+                hour_number(a.trim_matches([' ', '\t']))?,
+                hour_number(b.trim_matches([' ', '\t']))?,
             );
             (a <= b).then_some((a, b))
         }
     }
+}
+
+/// The hours of the value of the label `Actual:`, in hundredths of an hour:
+/// one number of the form of [`parse_hours`]. A range is not valid.
+pub fn parse_actual(value: &str) -> Option<u64> {
+    hour_number(value)
+}
+
+/// A number of hours as hundredths: 1 to 4 digits, then 1 or 2 decimals after
+/// a `.` (optional), then an `h` (optional).
+fn hour_number(t: &str) -> Option<u64> {
+    let t = t.strip_suffix('h').unwrap_or(t);
+    let (whole, frac) = match t.split_once('.') {
+        Some((w, f)) => (w, Some(f)),
+        None => (t, None),
+    };
+    let digits =
+        |x: &str, max: usize| (1..=max).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_digit());
+    if !digits(whole, 4) || frac.is_some_and(|f| !digits(f, 2)) {
+        return None;
+    }
+    let mut v = whole.parse::<u64>().ok()? * 100;
+    if let Some(f) = frac {
+        let n: u64 = f.parse().ok()?;
+        v += if f.len() == 1 { n * 10 } else { n };
+    }
+    Some(v)
 }
 
 /// The labels of a task line.
@@ -652,12 +702,13 @@ enum Label {
     Files,
     Verify,
     Hours,
+    Actual,
     Skip,
 }
 
 /// Parses one item of the `Order` section as a task. Returns `None` if the
 /// item is not a task (`duplicate` is false: `plan_tasks` sets it). The
-/// labels `Files:`, `Verify:`, `Hours:` and `Skip:` are case-sensitive, they
+/// labels `Files:`, `Verify:`, `Hours:`, `Actual:` and `Skip:` are case-sensitive, they
 /// follow white space or the start of the text, and a code span does not hold
 /// a label. Each is
 /// optional and ends at the next label.
@@ -671,6 +722,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
             ("Files:", Label::Files),
             ("Verify:", Label::Verify),
             ("Hours:", Label::Hours),
+            ("Actual:", Label::Actual),
             ("Skip:", Label::Skip),
         ] {
             let mut from = start;
@@ -698,6 +750,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
     let mut files_text = None;
     let mut verify = None;
     let mut hours = None;
+    let mut actual = None;
     let mut skip = None;
     for (n, &(_, end, kind)) in labels.iter().enumerate() {
         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
@@ -715,6 +768,10 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
                 let v = one_line(seg);
                 hours = Some((!v.is_empty()).then_some(v));
             }
+            Label::Actual if actual.is_none() => {
+                let v = one_line(seg);
+                actual = Some((!v.is_empty()).then_some(v));
+            }
             Label::Skip => {
                 skip.get_or_insert_with(|| one_line(seg));
             }
@@ -729,6 +786,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
         files_text,
         verify: verify.flatten(),
         hours: hours.flatten(),
+        actual: actual.flatten(),
         skip,
         line: item.line,
         range: item.range.clone(),
@@ -891,10 +949,13 @@ fn tasks_of<'a>(items: impl Iterator<Item = &'a ListItem>) -> Vec<PlanTask> {
     tasks
 }
 
-/// The first task that is not closed (not done and not skipped) and is not a
-/// duplicate.
-pub fn next_open_task(tasks: &[PlanTask]) -> Option<&PlanTask> {
-    tasks.iter().find(|t| !t.closed() && !t.duplicate)
+/// The first task that is not closed (not done and not skipped), is not a
+/// duplicate, and does not close with `finish` (design 0.7.1, B1). `slug` is the
+/// slug of the change.
+pub fn next_open_task<'a>(tasks: &'a [PlanTask], slug: &str) -> Option<&'a PlanTask> {
+    tasks
+        .iter()
+        .find(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(slug))
 }
 
 impl Change {
@@ -907,9 +968,10 @@ impl Change {
         }
     }
 
-    /// The first open task of the plan, in the order of the file.
+    /// The first open task of the plan, in the order of the file. A task that
+    /// closes with `finish` is not open (design 0.7.1, B1).
     pub fn next_open_task(&self, corpus: &Corpus) -> Option<PlanTask> {
-        next_open_task(&self.tasks(corpus)).cloned()
+        next_open_task(&self.tasks(corpus), &self.slug).cloned()
     }
 
     /// The open questions of the spec: the items `- [ ]` of its `Open
@@ -1256,7 +1318,7 @@ mod tests {
     fn a_long_item_is_cut_for_a_message() {
         let long = "word ".repeat(40);
         let plan = format!("---\nstatus: draft\n---\n# P\n\n## Files\n\n- {long}\n  more\n");
-        let c = corpus(&[("docs/intent/x/plan.md", &plan)]);
+        let c = corpus(&[("docs/intent/x/plan.md", plan.as_str())]);
         let shown = &collect(&c)[0].files_not_paths(&c)[0];
         assert_eq!(shown.chars().count(), 80, "{shown}");
         assert!(shown.ends_with("..."), "{shown}");
@@ -1334,9 +1396,9 @@ mod tests {
             "- [ ] t2: Two. Skip:",
             "- [ ] t3: Three.",
         ]);
-        assert_eq!(next_open_task(&t).unwrap().id, "t2");
+        assert_eq!(next_open_task(&t, "x").unwrap().id, "t2");
         let t = tasks(&["- [x] t1: One.", "- [ ] t2: Two. Skip: no."]);
-        assert!(next_open_task(&t).is_none());
+        assert!(next_open_task(&t, "x").is_none());
     }
 
     #[test]
@@ -1733,7 +1795,7 @@ mod tests {
                 ("t1", false, true)
             ]
         );
-        assert_eq!(next_open_task(&t).map(|t| t.id.as_str()), Some("t2"));
+        assert_eq!(next_open_task(&t, "x").map(|t| t.id.as_str()), Some("t2"));
     }
 
     #[test]
@@ -1884,10 +1946,10 @@ mod tests {
         let dup: Vec<_> = t.iter().map(|t| t.duplicate).collect();
         assert_eq!(dup, [false, false, true, false, true]);
         // `next_open_task` skips a duplicate: the open `t1` of line 3 is not it.
-        assert_eq!(next_open_task(&t).unwrap().text, "First");
+        assert_eq!(next_open_task(&t, "x").unwrap().text, "First");
         let t = tasks(&["- [x] t1: First.", "- [ ] t1: Again."]);
         assert!(t[1].duplicate);
-        assert!(next_open_task(&t).is_none());
+        assert!(next_open_task(&t, "x").is_none());
     }
 
     #[test]
@@ -1913,6 +1975,89 @@ mod tests {
         let c = corpus(&[("docs/intent/x/intent.md", "---\nstatus: draft\n---\n# I\n")]);
         assert!(collect(&c)[0].tasks(&c).is_empty());
         assert_eq!(collect(&c)[0].next_open_task(&c), None);
+    }
+
+    #[test]
+    fn a_task_closes_with_finish_when_its_text_names_the_command_with_the_slug() {
+        let t = tasks(&[
+            "- [ ] t1: Run `spec-dna finish demo` and commit the result. Files: none.",
+            "- [ ] t2: Run spec-dna finish demo",
+            "- [ ] t3: Run `spec-dna finish demo-2`.",
+            "- [ ] t4: Run `spec-dna finish demo_x`.",
+            "- [ ] t5: Run `spec-dna finish`.",
+            "- [ ] t6: Run `spec-dna finish demos`.",
+            "- [ ] t7: Run `spec-dna finish demo-2` or `spec-dna finish demo`.",
+            "- [ ] t8: Run `spec-dna finish demo --dry-run`, then commit.",
+            "- [ ] t9: Write the docs. Files: none. Verify: `spec-dna finish demo`.",
+            "- [ ] t10: Run `spec-dna finish demo.1`.",
+        ]);
+        let got: Vec<bool> = t.iter().map(|t| t.closes_with_finish("demo")).collect();
+        // The text before the first label counts: `Verify:` does not.
+        assert_eq!(
+            got,
+            [
+                true, true, false, false, false, false, true, true, false, true
+            ]
+        );
+        // The hint of step 0 reads any `spec-dna finish`.
+        assert!(t[2].mentions_finish() && t[4].mentions_finish());
+        assert!(!t[8].mentions_finish());
+        // An empty slug names nothing.
+        assert!(!t[4].closes_with_finish(""));
+    }
+
+    #[test]
+    fn the_next_open_task_skips_a_task_that_closes_with_finish() {
+        let plan = "---\nstatus: approved\n---\n# P\n\n## Order\n\n- [x] t1: One.\n- [ ] t2: Run `spec-dna finish x`.\n- [ ] t3: Three.\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        assert_eq!(
+            collect(&c)[0].next_open_task(&c).map(|t| t.id),
+            Some("t3".to_string())
+        );
+        let plan = plan.replace("- [ ] t3: Three.\n", "");
+        let c = corpus(&[("docs/intent/x/plan.md", plan.as_str())]);
+        assert_eq!(collect(&c)[0].next_open_task(&c), None);
+        // Another slug is no `finish` task.
+        let plan = plan.replace("finish x", "finish y");
+        let c = corpus(&[("docs/intent/x/plan.md", plan.as_str())]);
+        assert_eq!(
+            collect(&c)[0].next_open_task(&c).map(|t| t.id),
+            Some("t2".to_string())
+        );
+    }
+
+    #[test]
+    fn the_label_actual_is_read_and_a_range_is_no_value() {
+        let t = tasks(&[
+            "- [x] t1: Text. Hours: 1-2. Actual: 3.5.",
+            "- [x] t2: Text. Actual: 1. Hours: 2. Actual: 9.",
+            "- [x] t3: Text. Actual: . Hours: 1.",
+            "- [x] t4: Text with `Actual: 9` in code.",
+            "- [x] t5: Text. actual: 2.",
+        ]);
+        let a = |n: usize| t[n].actual.as_deref();
+        assert_eq!((a(0), t[0].hours.as_deref()), (Some("3.5"), Some("1-2")));
+        // The first label counts, and the order is free.
+        assert_eq!((a(1), t[1].hours.as_deref()), (Some("1"), Some("2")));
+        // An empty value is no value, a code span holds no label, and the
+        // label is case-sensitive.
+        assert_eq!(a(2), None);
+        assert_eq!(a(3), None);
+        assert_eq!(a(4), None);
+        // The value is one number: 1 to 4 digits, up to 2 decimals, an `h`.
+        for (v, want) in [
+            ("3.5", Some(350)),
+            ("0.25h", Some(25)),
+            ("1234", Some(123_400)),
+            ("1-2", None),
+            ("3-3", None),
+            ("12345", None),
+            ("1.234", None),
+            ("soon", None),
+            ("", None),
+        ] {
+            assert_eq!(parse_actual(v), want, "{v:?}");
+        }
     }
 
     #[test]

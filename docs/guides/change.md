@@ -91,7 +91,7 @@ Write the code in the files of the plan. Link each test to the requirement that 
 // covers: requirements/valves/closing#sensor-timeout
 ```
 
-A `covers:` tag can name an `ADD` requirement before `finish` writes it. If the work differs from the plan, update `plan.md` in the same commit as the work.
+A `covers:` tag can name an `ADD` requirement before `finish` writes it. If the work differs from the plan, update `plan.md` in the same commit as the work. If the work needs a file that `Files` does not list, the agent stops and asks the person (the skill `execute`). With a yes, add the path to `Files` of `plan.md` in the commit of the edit. A plan with an approval commit in this branch needs a new approval commit first, because a path that a later commit adds to `Files` gives SD910 (reason 8): set the plan back to `draft`, add the path, and approve it again (see [The approval commit](#the-approval-commit)).
 
 Write the test first, and commit it alone before the code. The `tdd` skill gives the way. The commit of the red test has the subject `test: <what the test checks> (red)`. If a hook of the project runs the tests, that hook rejects the commit, because the test fails. Skip only that hook, for that commit only:
 
@@ -104,19 +104,21 @@ The evals of `tdd` read the order of the commits, not their subjects. A test com
 
 The code can come in more than one pull request. Run `finish` in the last pull request. The pull request of `finish` deletes the folder, so the checks read the spec and the plan from the base tree. Correct `Files` or the delta in an earlier pull request.
 
-Before you open the pull request, run `spec-dna check`. Do not run `finish` yet: it stops while the task `Review by the owner` is open (see below).
+Before you open the pull request, run `spec-dna check`. Run `finish` after the last task, and after the review of the owner if the plan has a review task (see below).
 
 `finish` checks the approvals, the concerns, the open questions, the decisions and the hashes of the delta. Then it applies the delta to `requirements/valves/closing`. It checks the evidence of each new or changed requirement (SD916). It deletes the folder of the change.
 
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
-`finish` adds the `Hours:` labels of the tasks that are not skipped, and prints the line `Hours: <total>`. The total is a number, or a range `<low>-<high>` if a task has a range. Put this line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` and `stats --sdlc` read the last such line of the commit that deletes `intent.md`.
+`finish` adds the `Hours:` labels (the estimates) of the tasks that are not skipped, and the `Actual:` labels (the real hours) of each task, also of a skipped one, and prints the line `Hours: <estimate>, actual <n>`. Without `Actual:` the line is `Hours: <estimate>`. The estimate is a number, or a range `<low>-<high>` if a task has a range. When a task is done, add `Actual: <n>` to it. Put the line in the commit message of the change, and keep it in the squash message. A squash merge keeps only the message of the last pull request of the change, so the line is the only record of the hours. `log` reads the last such line of the commit that deletes `intent.md`; `stats --sdlc` reads the estimate.
 
-The review by the owner takes time too. End the plan with a task for it: `- [ ] t9: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.` The task has `Files: none` and a `Verify:`, so SD923 accepts it. Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it. Since 0.7.1, `finish` stops while a task is open, so the last steps of the change have this order:
+`finish` never waits for a task that only `finish` can do. A task whose text names `spec-dna finish <slug>` with the slug of its change closes with `finish`: `next`, `status` and step 0 of `finish` treat it as closed, and its estimate counts. Write no such task. If a plan has one, for example ``- [ ] t9: Run `spec-dna finish sensor-timeout` and commit the result``, it does not hold `finish`. A task that names `spec-dna finish` with no slug, or with another slug, is a task of real work, and `finish` stops at step 0 with a hint.
+
+The review by the owner is optional. A project whose owner reviews the pull request at the merge writes no review task. If the owner reviews the code before `finish`, end the plan with a task for it: `- [ ] t9: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: 1.` The task has `Files: none` and a `Verify:`, so SD923 accepts it. Only the owner ends this task. An agent never ticks it and never writes `Skip:` for it. It is a task of a person, so `finish` stops while it is open, and the last steps of the change have this order:
 
 1. Open the pull request with the code. The task `Review by the owner` is open.
 2. The owner reviews the pull request.
-3. A person ticks the task (`- [x]`), writes its real `Hours:`, and commits.
+3. A person ticks the task (`- [x]`), writes its `Actual:` hours, and commits.
 4. Run `spec-dna finish sensor-timeout --dry-run`, then `spec-dna finish sensor-timeout`. Commit the result in the same pull request.
 5. The owner approves the merge.
 
@@ -154,7 +156,7 @@ The steps of a higher-risk change in one branch:
 
 A `draft` spec or plan needs no approval of the artifact before it. The approval commit of a plan fixes its `Files`: a path that a later commit adds to `Files` has no approved plan (SD910, reason 8). This holds for a plan that an approval commit of the branch approved. A plan that the base tree already approves keeps the rule of 0.6: its scope is the `Files` of the head, and SD913 warns on a widened scope.
 
-- An approval holds while the artifact keeps its approval status at the head. If a later commit sets an approved artifact back (a plan back to `draft` after the code), SD910 gives reason 9 to the work that used the approval, and to the work between the step back and the next approval commit. To rework an approved plan, set it back to `draft`, change it, and approve it again with an approval commit before new work. An approval from the base tree follows the rule of 0.6: SD401 reports the step back.
+- An approval holds while the artifact keeps its approval status at the head. If a later commit sets an approved artifact back (a plan back to `draft` after the code), SD910 gives reason 9 to the work that used the approval, and to the work between the step back and the next approval commit. To rework an approved plan, set it back to `draft`, change it, and approve it again with an approval commit before new work. The same holds for a spec. A hook that runs `spec-dna check` rejects the commit of the step back, with `status: draft` (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on. The message of reason 9 for the working tree says the same. An approval from the base tree follows the rule of 0.6: SD401 reports the step back.
 - The e-mail of an author is not a proof. A person can set any e-mail. The control is the code host: `CODEOWNERS` for `docs/intent/`, a protected default branch and required signed commits.
 - An agent writes an approval commit only when the owner says so explicitly in the chat. This is the default rule of each project: `init` writes it into the generated line of `AGENTS.md`, and each skill repeats it. A person approves with `spec-dna approve <slug> <artifact>` in a terminal of their own ([commands.md](../commands.md#approve)). List in `approvers` the e-mails of the persons that approve, and list each e-mail that one person uses. A person that hides the e-mail on the code host has a `noreply` address too. Do not list the address of an agent or a bot: `check` warns about it (SD926).
 - The check needs the full history. Use `fetch-depth: 0` in the step of the checkout in your workflow. A shallow clone gives no approval, and `check` reports SD910 as with `approval = "base"`. If the clone is so shallow that the merge base is not reachable, `check` reports SD910 with reason 5 for each change that needs an approval, and it does not skip the check. `init` writes `fetch-depth: 0` in the workflows that it generates.

@@ -71,6 +71,7 @@ Commands:
 4. Under `Interfaces`, write `- none` or one paragraph if no interface changes. Else write one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
 5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
 6. Write each item of `Concerns` and `Open questions` with a box: `- [ ]` is open. If none applies, write one item `- none`.
+7. To change the spec after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on.
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
@@ -97,17 +98,18 @@ const WRITE_PLAN_PARTS: &str = r"When to use: Before the code of a change.
 
 Commands:
 
-1. Run `spec-dna next <slug>`. Run `spec-dna context <file>...` for the files that you plan to change.
+1. Run `spec-dna next <slug>`. Run `spec-dna context <file>...` for the files to change.
 2. Run `spec-dna new plan <slug>`.
-3. Under `Files`, list each path of the scope. Write each path in a code span.
+3. Under `Files`, list each path of the scope in a code span.
 4. Under `Order`, write one task for each step of 2 to 5 minutes. Give it a stable id, at most `max-task-files` exact paths (default 3) and one `Verify:`. Use this form: `- [ ] <id>: <text>. Files: <paths>. Verify: <check>.`
-5. Write `Risks`. Write `Proof`: the commands that show the result, and the `covers:` ids of the tests.
-6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
-7. End the plan with a task for the review by the owner: `- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.` Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it. The owner reviews the pull request with the code. After this review, a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request. `finish` stops while a task is open.
+5. Write `Risks`. Write `Proof` with the commands that show the result and the `covers:` ids.
+6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`: the estimate. When the task is done, add `Actual: <n>`: the real hours. `spec-dna finish` adds them and prints the line `Hours:`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.
+7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: <n>.` Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it. After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request.
+8. To change the plan after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on.
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (a task with too many paths) report only after the plan is `approved`. Before the approval, count the paths and the `Verify:` of each task. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Before the approval, count the paths. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Split a task that lists more than `max-task-files` paths. Give each task exact paths and one `Verify:`. Run the check again.";
 
@@ -124,7 +126,7 @@ Artifact: The code, the tests and the checked task.
 
 Check: The `Verify:` of the task passes. `spec-dna next <slug>` names the next open task, and the stage stays `build` until each task is `- [x]` or has a reason in `Skip:`. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`. The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
 
-If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person to change the plan.";
+If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit; a plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8).";
 
 const TDD_PARTS: &str = r"When to use: A requirement has no evidence, or the change adds behavior.
 
@@ -176,7 +178,7 @@ Commands:
 
 1. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop.
 2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
-3. Commit the result. If `spec-dna finish` prints a line `Hours: <total>`, put it into the commit message. Keep it in the squash message.
+3. Commit the result. If `spec-dna finish` prints a line `Hours:`, put it into the commit message. Keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
 
@@ -581,30 +583,29 @@ mod tests {
     }
 
     #[test]
-    fn write_plan_names_the_task_labels_hours_and_skip() {
+    fn write_plan_names_the_task_labels_hours_actual_and_skip() {
         let b = body(Skill::WritePlan);
         assert!(b.contains("at most `max-task-files` exact paths (default 3)"));
         assert!(!b.contains("at most 3") && !b.contains("more than 3 paths"));
         assert!(b.contains(
-            "6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`. `spec-dna finish` adds them and prints the line `Hours: <total>`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.\n"
+            "6. A task can end with `Hours: <n>` or `Hours: <a>-<b>`: the estimate. When the task is done, add `Actual: <n>`: the real hours. `spec-dna finish` adds them and prints the line `Hours:`. For a spike, write one task for each branch. After the spike, add `Skip: <reason>` to each task that is not needed, and tick it.\n"
         ));
         assert!(!b.contains("## Hours") && !b.contains("number of hours"));
     }
 
     #[test]
-    fn write_plan_ends_the_plan_with_a_review_task_for_the_owner() {
+    fn write_plan_writes_no_task_for_finish_and_the_review_task_is_optional() {
         let c = part(Skill::WritePlan, "Commands:");
         assert!(
-            c.contains("`- [ ] tN: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: <n>.`"),
+            c.contains("7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: <n>.`"),
             "{c}"
         );
-        // The person ticks the task in a commit before `finish` runs, because
-        // `finish` stops while a task is open.
+        // The person ticks the task in a commit before `finish` runs.
         assert!(
-            c.contains("a person ticks the task `- [x]` with its real hours in a commit. Then `spec-dna finish <slug>` runs"),
+            c.contains("After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request."),
             "{c}"
         );
-        assert!(c.contains("`finish` stops while a task is open."), "{c}");
+        assert!(!c.contains("`finish` stops while a task is open."), "{c}");
     }
 
     #[test]
@@ -612,7 +613,7 @@ mod tests {
         // `next` names this task for `execute`, so both skills carry the rule.
         let w = part(Skill::WritePlan, "Commands:");
         assert!(
-            w.contains("Only the review of the owner ends this task. An agent never ticks it and never writes `Skip:` for it."),
+            w.contains("Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it."),
             "{w}"
         );
         let e = part(Skill::Execute, "Commands:");
@@ -620,6 +621,36 @@ mod tests {
             e.contains("Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it."),
             "{e}"
         );
+    }
+
+    #[test]
+    fn specify_and_write_plan_give_the_way_of_the_step_back_to_draft() {
+        for (skill, n, artifact) in [(Skill::Specify, 7, "spec"), (Skill::WritePlan, 8, "plan")] {
+            let c = part(skill, "Commands:");
+            let want = format!(
+                "{n}. To change the {artifact} after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on."
+            );
+            assert!(c.contains(&want), "{skill:?}: {c}");
+        }
+    }
+
+    #[test]
+    fn execute_asks_the_person_before_it_adds_a_path_to_files() {
+        let f = part(Skill::Execute, "If the check fails:");
+        assert!(
+            f.contains("stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit; a plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8)."),
+            "{f}"
+        );
+    }
+
+    #[test]
+    fn finish_step_3_names_the_line_hours_only() {
+        let c = part(Skill::Finish, "Commands:");
+        assert!(
+            c.contains("3. Commit the result. If `spec-dna finish` prints a line `Hours:`, put it into the commit message."),
+            "{c}"
+        );
+        assert!(!c.contains("Hours: <total>"), "{c}");
     }
 
     #[test]

@@ -1541,7 +1541,7 @@ fn finish_json_gives_hours_as_low_and_high() {
     assert_eq!(code, 0, "{json}{err}");
     assert!(
         json.trim_end()
-            .ends_with("\"hours\":{\"low\":1.25,\"high\":2.25}}"),
+            .ends_with("\"hours\":{\"low\":1.25,\"high\":2.25},\"actual\":null}"),
         "{json}"
     );
 }
@@ -1638,7 +1638,7 @@ fn finish_runs_after_a_commit_that_ticks_the_review_task_of_the_owner() {
         ..Fx::default()
     }
     .start();
-    let review = "- [ ] t2: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.";
+    let review = "- [ ] t2: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: 1.";
     let plan = PLAN_OPEN
         .replace("- [ ] t2: Test the code.", review)
         .replace("- [ ] t3: Write the docs.\n", "")
@@ -1654,8 +1654,8 @@ fn finish_runs_after_a_commit_that_ticks_the_review_task_of_the_owner() {
     r.write(
         PLAN,
         &plan.replace(
-            "- [ ] t2: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 1.",
-            "- [x] t2: Review by the owner. Files: none. Verify: the owner approves the pull request. Hours: 2.",
+            "- [ ] t2: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: 1.",
+            "- [x] t2: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: 2.",
         ),
     );
     r.commit("review");
@@ -1667,4 +1667,282 @@ fn finish_runs_after_a_commit_that_ticks_the_review_task_of_the_owner() {
     r.commit("finish");
     let (code, out) = check(&r, "main");
     assert_eq!(code, 0, "{out}");
+}
+
+// A task that closes with `finish` (0.7.1, B1)
+
+#[test]
+fn a_task_that_names_finish_with_its_slug_closes_with_finish() {
+    // `finish` never waits for a task that only `finish` can do.
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 1."),
+        "- [ ] t2: Run `spec-dna finish dose` and commit the result. Files: none. Verify: `spec-dna check`. Hours: 0.5."
+    );
+    let r = with_tasks(&order);
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The estimate of the task counts.
+    assert_eq!(hours_line(&out), Some("Hours: 1.5"), "{out}");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(FOLDER).exists());
+    // The slug ends the text, or a character that is no part of a slug follows.
+    for text in [
+        "Run `spec-dna finish dose`",
+        "Run spec-dna finish dose",
+        "Run `spec-dna finish dose --dry-run`, then commit",
+        "Run spec-dna finish dose, then commit",
+    ] {
+        let order = format!("- [ ] t1: {text}. Files: none. Verify: read the diff.");
+        let (code, out, err) = fin(&with_tasks(&order), &["--dry-run"]);
+        assert_eq!(code, 0, "{text}: {out}{err}");
+    }
+}
+
+#[test]
+fn a_task_that_names_finish_without_its_slug_stops_at_step_0_with_the_hint() {
+    for text in [
+        "Run `spec-dna finish` and commit the result",
+        "Run `spec-dna finish other` and commit the result",
+        "Run `spec-dna finish dose-2` and commit the result",
+        "Run `spec-dna finish dose_x` and commit the result",
+    ] {
+        let order = format!(
+            "{}\n- [ ] t2: {text}. Files: none. Verify: read the diff.",
+            task("t1", true, "")
+        );
+        let r = with_tasks(&order);
+        let before = tree(&r);
+        let (code, out, err) = fin(&r, &["--dry-run"]);
+        assert_eq!(code, 1, "{text}: {out}{err}");
+        assert!(err.contains("stopped at step 0"), "{text}: {err}");
+        assert!(err.contains("1 open task(s)"), "{text}: {err}");
+        assert!(
+            err.contains(
+                "a task closes with `finish` only when its text names `spec-dna finish dose`"
+            ),
+            "{text}: {err}"
+        );
+        assert_eq!(tree(&r), before);
+    }
+    // A task of real work gets no hint, and a task that does not name `finish`
+    // gets none.
+    let (code, _, err) = fin(
+        &with_tasks("- [ ] t1: Write the docs. Files: none. Verify: read them."),
+        &["--dry-run"],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(!err.contains("a task closes with `finish`"), "{err}");
+}
+
+#[test]
+fn a_task_that_closes_with_finish_does_not_hide_another_open_task() {
+    let order = format!(
+        "{}\n{}\n{}",
+        task("t1", false, ""),
+        "- [ ] t2: Run `spec-dna finish dose`. Files: none. Verify: read the diff.",
+        task("t3", false, "")
+    );
+    let (code, _, err) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("2 open task(s)"), "{err}");
+    assert!(!err.contains("t2"), "{err}");
+}
+
+/// The task of the review by the owner, as the skill `write-plan` gives it.
+fn review_task_of_the_skill(r: &Repo, id: &str, box_: &str, hours: &str) -> String {
+    let (code, out, err) = r.run(&["skill", "show", "write-plan"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let example = out
+        .split('`')
+        .find(|s| s.contains("Review by the owner"))
+        .unwrap_or_else(|| panic!("no review task in the skill\n{out}"));
+    example
+        .replacen("- [ ]", &format!("- [{box_}]"), 1)
+        .replace("tN", id)
+        .replace("Hours: <n>.", hours)
+}
+
+#[test]
+fn finish_runs_after_a_person_ticks_the_review_task_of_the_skill() {
+    let r = Fx {
+        delta: &[CHANGE_CLOSE, ADD_FLUSH],
+        ..Fx::default()
+    }
+    .start();
+    let open = review_task_of_the_skill(&r, "t2", " ", "Hours: 1.");
+    let plan = |review: &str| {
+        plan_with_tasks(
+            &format!("{}\n{review}", task("t1", true, "Hours: 2. Actual: 3.")),
+            "",
+        )
+    };
+    r.write(PLAN, &plan(&open));
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    r.commit("work");
+    // The owner has not reviewed: `finish` stops at step 0 and names the task.
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("t2: Review by the owner"), "{err}");
+    // A person ticks it with the real hours.
+    let done = review_task_of_the_skill(&r, "t2", "x", "Hours: 1. Actual: 0.5.");
+    r.write(PLAN, &plan(&done));
+    r.commit("review");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(hours_line(&out), Some("Hours: 3, actual 3.5"), "{out}");
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_plan_that_ends_with_a_task_for_finish_can_finish_and_pass_check() {
+    let r = Fx {
+        delta: &[CHANGE_CLOSE, ADD_FLUSH],
+        ..Fx::default()
+    }
+    .start();
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 2."),
+        "- [ ] t2: Run `spec-dna finish dose` and commit the result. Files: none. Verify: `spec-dna check`. Hours: 0.5."
+    );
+    r.write(PLAN, &plan_with_tasks(&order, ""));
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    r.commit("work");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(FOLDER).exists());
+    assert_eq!(hours_line(&out), Some("Hours: 2.5"), "{out}");
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_eq!(code, 0, "{out}");
+}
+
+// The actual hours (0.7.1, B7)
+
+#[test]
+fn finish_adds_the_actual_hours_and_prints_them_after_the_estimate() {
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 1-2. Actual: 3."),
+        task("t2", true, "Hours: 1. Actual: 0.5.")
+    );
+    let r = with_tasks(&order);
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(hours_line(&out), Some("Hours: 2-3, actual 3.5"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
+    let (code, json, err) = fin(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(json.contains("\"actual\":3.5"), "{json}");
+    assert!(json.contains("\"hours\":{\"low\":2,\"high\":3}"), "{json}");
+    // The label order is free, and the first `Actual:` counts.
+    let order = task("t1", true, "Actual: 2. Hours: 1. Actual: 9.");
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(hours_line(&out), Some("Hours: 1, actual 2"), "{out}");
+}
+
+#[test]
+fn an_actual_total_with_no_estimate_has_no_estimate_part() {
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Actual: 1.5."),
+        task("t2", true, "Actual: 2.")
+    );
+    let (code, out, err) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(hours_line(&out), Some("Hours: actual 3.5"), "{out}");
+    let (_, json, _) = fin(&with_tasks(&order), &["--dry-run", "--json"]);
+    assert!(
+        json.contains("\"hours\":null") && json.contains("\"actual\":3.5"),
+        "{json}"
+    );
+}
+
+#[test]
+fn a_plan_with_no_actual_hours_prints_the_line_as_before() {
+    let order = format!(
+        "{}\n{}",
+        task("t1", true, "Hours: 1."),
+        task("t2", true, "Hours: 2.")
+    );
+    let r = with_tasks(&order);
+    let (_, out, _) = fin(&r, &["--dry-run"]);
+    assert_eq!(hours_line(&out), Some("Hours: 3"), "{out}");
+    assert!(!out.contains("actual"), "{out}");
+    assert!(!out.contains("note:"), "{out}");
+    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
+    assert!(json.contains("\"actual\":null"), "{json}");
+}
+
+#[test]
+fn the_actual_hours_of_a_skipped_task_count_and_a_duplicate_does_not() {
+    let order = format!(
+        "{}\n{}\n{}",
+        task("t1", true, "Hours: 1. Actual: 1."),
+        task("t2", true, "Hours: 4. Actual: 0.5. Skip: the store has it."),
+        task("t1", true, "Hours: 9. Actual: 9.")
+    );
+    let (code, out, err) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The estimate leaves out the skipped task, and the actual total keeps it.
+    assert_eq!(hours_line(&out), Some("Hours: 1, actual 1.5"), "{out}");
+}
+
+#[test]
+fn an_invalid_actual_value_gives_a_note_and_no_actual_total() {
+    for value in ["soon", "1-2", "3-3", "12345", "1.234"] {
+        let order = format!(
+            "{}\n{}",
+            task("t1", true, "Hours: 1. Actual: 2."),
+            task("t2", true, &format!("Hours: 1. Actual: {value}."))
+        );
+        let r = with_tasks(&order);
+        let (code, out, err) = fin(&r, &["--dry-run"]);
+        assert_eq!(code, 0, "{value}: {out}{err}");
+        assert!(
+            out.contains(&format!(
+                "note: the task `t2` has the value \"{value}\" in `Actual:`, which is no number of hours; no actual total\n"
+            )),
+            "{value}: {out}"
+        );
+        assert_eq!(hours_line(&out), Some("Hours: 2"), "{value}: {out}");
+        let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
+        assert!(json.contains("\"actual\":null"), "{value}: {json}");
+    }
+}
+
+#[test]
+fn a_done_task_with_no_actual_gives_a_note_and_the_total_of_the_others() {
+    let order = format!(
+        "{}\n{}\n{}\n{}",
+        task("t1", true, "Hours: 1. Actual: 2."),
+        task("t2", true, "Hours: 1."),
+        task("t3", true, "Hours: 1. Actual: 1."),
+        task("t4", true, "Hours: 1. Skip: no.")
+    );
+    let (code, out, err) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // A skipped task needs no `Actual:`, and the note names a done task only.
+    assert!(
+        out.contains("note: the done task `t2` has no `Actual:`; the actual total leaves it out\n"),
+        "{out}"
+    );
+    assert_eq!(hours_line(&out), Some("Hours: 3, actual 3"), "{out}");
+    let order = format!(
+        "{}\n{}\n{}",
+        task("t1", true, "Actual: 1."),
+        task("t2", true, ""),
+        task("t3", true, "")
+    );
+    let (_, out, _) = fin(&with_tasks(&order), &["--dry-run"]);
+    assert!(
+        out.contains(
+            "note: the done tasks `t2`, `t3` have no `Actual:`; the actual total leaves them out\n"
+        ),
+        "{out}"
+    );
 }
