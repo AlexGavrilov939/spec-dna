@@ -1,0 +1,158 @@
+{
+  "spec_dna": "0.8.0",
+  "claude_code": "2.1.326",
+  "models": [
+    "claude-a",
+    "claude-b"
+  ],
+  "started": "2026-11-17T08:29:02Z",
+  "target": "tdd",
+  "harness": "lean",
+  "runs": 2,
+  "seed": 24,
+  "resamples": 2000,
+  "max_total_usd": 10,
+  "estimate_usd": 8,
+  "spend_usd": 4.5,
+  "excluded": {
+    "with": 0,
+    "without": 0
+  },
+  "stopped": null,
+  "skills": [
+    {
+      "name": "tdd",
+      "evals": 2,
+      "with": {
+        "runs": 4,
+        "passes": 4,
+        "pass_rate": 1,
+        "cost_usd": 2.5,
+        "cost_per_correct_usd": 0.625
+      },
+      "without": {
+        "runs": 4,
+        "passes": 0,
+        "pass_rate": 0,
+        "cost_usd": 2,
+        "cost_per_correct_usd": null
+      },
+      "difference": {
+        "value": 1,
+        "low": 1,
+        "high": 1
+      },
+      "cost_ratio": null,
+      "verdict": "inconclusive",
+      "rule": null,
+      "below_floor": true,
+      "pairs": [
+        {
+          "eval": "tdd-1",
+          "run": 1,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.5,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": true,
+            "tokens": {
+              "in": 11,
+              "out": 22,
+              "cache_read": 33,
+              "cache_write": 44
+            },
+            "models": [
+              "claude-a"
+            ],
+            "turns": 2,
+            "seconds": 10.5
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.5,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": false,
+            "turns": 3,
+            "seconds": 12.0
+          }
+        },
+        {
+          "eval": "tdd-1",
+          "run": 2,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.25,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": true,
+            "turns": null,
+            "seconds": 13.5
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.5,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": false,
+            "turns": 5,
+            "seconds": 15.0
+          }
+        },
+        {
+          "eval": "tdd-2",
+          "run": 1,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.75,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": true,
+            "turns": 6,
+            "seconds": 16.5
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.5,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": false,
+            "turns": null,
+            "seconds": 18.0
+          }
+        },
+        {
+          "eval": "tdd-2",
+          "run": 2,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.0,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": true,
+            "turns": 8,
+            "seconds": 19.5
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.5,
+            "excluded": 0,
+            "permission_denials": 0,
+            "passed": false,
+            "turns": 9,
+            "seconds": 21.0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -377,7 +377,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]\neval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval records <result file>",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file> [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -416,13 +416,34 @@ at the cap. --dry-run prints the estimate also above the cap. Exit codes of --ab
 pack file, a stop by the cap or by api-error, 4 git or file error, 129, 130
 and 143 a signal.
 
+A harness arm is `none`, `lean`, `lean-no-advisor`, `full` or `project`. `--harness
+<arm>` gives the copy of each run that arm, in place of the harness files of the
+project (`project` keeps them, as before). The runner passes `--model` and
+`--effort` of the orchestrator of `lean` to each arm, also `project`, and it
+isolates the runs, so --no-isolate with --harness or --arms is a usage error. `eval run --arms
+<arm>,<arm>[,<arm>]` runs the plain evals in 2 or 3 arms, in waves: wave r runs
+each eval once in each arm, and the order of the arms rotates. It writes
+<dir>/results/arms-<time>.json, with one side for each arm of each run, and it
+gives no pass rate, so it never exits with 1. A stop by the cap keeps the
+complete waves. --resume goes on with the same arms and the evals of its file;
+an id must be in the file. Each run has `turns` and
+`seconds`. An eval file can have the key `change`: a folder whose files the
+runner commits on the branch of `branch`, so the copy has a diff against main.
+Exit codes of --arms and --harness: 2 usage, an unknown arm, 1 arm or more than
+3, --arms with --ab, --no-isolate with them.
+
 `eval pack` writes the pack of 57 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
 
 `eval verdict --release` prints the table of the release, one line for each name
 that has a row. `eval records <result file>` prints the records of the runs of a
-result file of --ab as JSON Lines (9 keys, no path, no text), and it computes each
-item again from them. `eval verdict` prints one line for each of the 11 skills and for agents-line:
+result file of --ab or --arms as JSON Lines (9 keys, and harness, turns and seconds
+for a result of 0.8.0; no path, no text), and it computes each item again from
+them. A verdict needs 5 evals and 15 complete pairs: below that it is
+inconclusive, with below_floor true. `eval verdict --compare <treatment>,<control>
+<result file>` gives the verdict of 2 arms of a result of --arms, on the complete
+waves (exit code 2 for names that are not 2 arms of the file, 3 for another
+file). `eval verdict` prints one line for each of the 11 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",
@@ -546,6 +567,12 @@ struct Args {
     no_isolate: bool,
     resume: Option<String>,
     release: bool,
+    /// `--arms <arm>,<arm>[,<arm>]` of `eval run` (D57).
+    arms: Option<String>,
+    /// `--harness <arm>` of `eval run` (D57).
+    harness: Option<String>,
+    /// `--compare <treatment>,<control>` of `eval verdict` (D59).
+    compare: Option<String>,
 }
 
 /// The options of `layer add`.
@@ -630,6 +657,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         no_isolate: false,
         resume: None,
         release: false,
+        arms: None,
+        harness: None,
+        compare: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -675,6 +705,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--no-isolate" => a.no_isolate = true,
             "--resume" => a.resume = Some(value("--resume")?),
             "--release" => a.release = true,
+            "--arms" => a.arms = Some(value("--arms")?),
+            "--harness" => a.harness = Some(value("--harness")?),
+            "--compare" => a.compare = Some(value("--compare")?),
             "--out" => a.out = Some(value("--out")?),
             "--runs" => {
                 let v = value("--runs")?;
@@ -855,11 +888,18 @@ fn run(a: Args) -> Result<u8, Fatal> {
             (a.ab, "--ab"),
             (a.no_isolate, "--no-isolate"),
             (a.resume.is_some(), "--resume"),
+            (a.arms.is_some(), "--arms"),
+            (a.harness.is_some(), "--harness"),
         ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
             }
         }
+    }
+    if a.command != "eval" && a.compare.is_some() {
+        return Err(Fatal::Usage(
+            "--compare is an option of `eval verdict`".into(),
+        ));
     }
     match a.command.as_str() {
         "" => {
@@ -3226,6 +3266,11 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             "--release is an option of `eval verdict`".into(),
         ));
     }
+    if a.compare.is_some() && sub != Some("verdict") {
+        return Err(Fatal::Usage(
+            "--compare is an option of `eval verdict`".into(),
+        ));
+    }
     if sub == Some("records") {
         // `records` reads one file that can be outside the repository. It takes
         // no option, and it needs no configuration.
@@ -3241,6 +3286,9 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             a.resume.is_some(),
             a.dry_run,
             a.release,
+            a.arms.is_some(),
+            a.harness.is_some(),
+            a.compare.is_some(),
         ]
         .contains(&true);
         if a.positional.len() != 2 || option {
@@ -3263,10 +3311,22 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             (a.no_isolate, "--no-isolate"),
             (a.resume.is_some(), "--resume"),
             (a.dry_run, "--dry-run"),
+            (a.arms.is_some(), "--arms"),
+            (a.harness.is_some(), "--harness"),
         ] {
             if given {
                 return Err(Fatal::Usage(format!("{name} is an option of `eval run`")));
             }
+        }
+        if let Some(pair) = &a.compare {
+            // `eval verdict --compare <treatment>,<control> <result file>`
+            // reads one file, as `eval records` does, and needs no project.
+            if a.release || a.positional.len() != 2 {
+                return Err(Fatal::Usage(
+                    "`eval verdict --compare <treatment>,<control>` takes one result file of `eval run --arms` and no --release".into(),
+                ));
+            }
+            return eval_compare_cmd(pair, &a.positional[1], a.json);
         }
         if a.positional.len() > 1 {
             return Err(Fatal::Usage(format!(
@@ -3289,17 +3349,67 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
         }
         _ => {}
     }
-    if !a.ab {
-        for (given, name) in [
-            (a.no_isolate, "--no-isolate"),
-            (a.resume.is_some(), "--resume"),
-        ] {
-            if given {
-                return Err(Fatal::Usage(format!(
-                    "{name} is an option of `eval run --ab`"
-                )));
-            }
+    if !a.ab && a.arms.is_none() {
+        if a.resume.is_some() {
+            return Err(Fatal::Usage(
+                "--resume is an option of `eval run --ab` and `eval run --arms`".into(),
+            ));
         }
+        if a.no_isolate && a.harness.is_none() {
+            return Err(Fatal::Usage(
+                "--no-isolate is an option of `eval run --ab`".into(),
+            ));
+        }
+    }
+    // The harness arms (D57) isolate the runs, so `--no-isolate` is a usage
+    // error with them. The arm names are checked before the pin.
+    let harness = match &a.harness {
+        Some(name) => eval_run::HarnessArm::parse(name)?,
+        None => eval_run::HarnessArm::Project,
+    };
+    if a.arms.is_some() {
+        if a.ab {
+            return Err(Fatal::Usage(
+                "--arms and --ab exclude each other: --arms compares harness arms, and --ab compares a skill".into(),
+            ));
+        }
+        if a.harness.is_some() {
+            return Err(Fatal::Usage(
+                "--arms and --harness exclude each other: --arms names its own arms".into(),
+            ));
+        }
+        if a.min_pass_rate.is_some() {
+            return Err(Fatal::Usage(
+                "--min-pass-rate is not an option of `eval run --arms`; a run of --arms gives no pass rate".into(),
+            ));
+        }
+    }
+    if a.no_isolate && (a.arms.is_some() || a.harness.is_some()) {
+        return Err(Fatal::Usage(
+            "--no-isolate is not an option with --arms or --harness: they isolate the runs, so the settings of a person cannot reach an arm".into(),
+        ));
+    }
+    if let Some(list) = &a.arms {
+        let arms = eval_ab::parse_arms(list)?;
+        if cfg.pin != VERSION {
+            return Err(pin_mismatch(&cfg));
+        }
+        let mut ids = a.positional[1..].to_vec();
+        ids.dedup();
+        return eval_ab::run_arms(
+            &repo,
+            &cfg,
+            &eval_ab::ArmsOpts {
+                arms,
+                ids,
+                runs: a.runs,
+                max_total_usd: a.max_total_usd,
+                out: a.out.clone(),
+                dry_run: a.dry_run,
+                json: a.json,
+                resume: a.resume.clone(),
+            },
+        );
     }
     if a.ab {
         if a.isolate && a.no_isolate {
@@ -3340,6 +3450,8 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                 isolate: !a.no_isolate,
                 json: a.json,
                 resume: a.resume.clone(),
+                harness,
+                named: a.harness.is_some(),
             },
         );
     }
@@ -3358,8 +3470,11 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             max_total_usd: a.max_total_usd,
             out: a.out.clone(),
             dry_run: a.dry_run,
-            isolate: a.isolate,
+            // A harness arm isolates the runs (D57).
+            isolate: a.isolate || a.harness.is_some(),
             json: a.json,
+            harness,
+            named: a.harness.is_some(),
         },
     )
 }
@@ -3420,6 +3535,44 @@ fn eval_release_cmd(json: bool) -> u8 {
     0
 }
 
+/// `eval verdict --compare <treatment>,<control> <result file>` (D59): the
+/// verdict of 2 arms of a result of `eval run --arms`. It reads one file and
+/// starts no agent. A name that is not 2 arms of the file is a usage error
+/// (exit code 2), and a file that is no result of `--arms` is a configuration
+/// error (exit code 3).
+fn eval_compare_cmd(pair: &str, file: &str, json: bool) -> Result<u8, Fatal> {
+    let (treatment, control) = match pair.split_once(',') {
+        Some((t, c)) if !t.is_empty() && !c.is_empty() && !c.contains(',') => (t, c),
+        _ => {
+            return Err(Fatal::Usage(format!(
+                "--compare: `{pair}` is not 2 arm names; use `<treatment>,<control>`"
+            )));
+        }
+    };
+    // The same name twice is a usage error, so it comes before the file.
+    if treatment == control {
+        return Err(Fatal::Usage(format!(
+            "--compare: `{treatment}` is named twice; give 2 different arms"
+        )));
+    }
+    let bytes = std::fs::read(file)
+        .map_err(|e| Fatal::Config(format!("eval verdict: cannot read `{file}` ({})", e.kind())))?;
+    let c = verdict::compare(&bytes, treatment, control).map_err(|e| match e {
+        verdict::CompareError::Usage(m) => Fatal::Usage(m),
+        verdict::CompareError::NotArms => Fatal::Config(format!(
+            "eval verdict: `{file}` is no result of `eval run --arms`"
+        )),
+    })?;
+    if json {
+        println!("{}", verdict::comparison_json(&c));
+    } else {
+        for line in verdict::comparison_text(&c) {
+            println!("{line}");
+        }
+    }
+    Ok(0)
+}
+
 /// `eval verdict`: the verdict of each skill and of `agents-line`. It reads
 /// the result files of the working tree and the table of the release
 /// (`verdict.rs`), and it starts no agent.
@@ -3456,6 +3609,7 @@ fn eval_verdict_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8,
                 .str("verdict", word(r))
                 .opt_str("source", source)
                 .opt_str("file", file)
+                .bool("below_floor", r.below_floor)
                 .end()
         });
         println!("{}", Obj::new().raw("verdicts", &json::array(items)).end());
@@ -3467,7 +3621,12 @@ fn eval_verdict_cmd(repo: &Repo, cfg: &config::Config, json: bool) -> Result<u8,
             verdict::Source::Release => "release".to_string(),
             verdict::Source::None => "-".to_string(),
         };
-        println!("{n} {} {source}", word(r));
+        let floor = if r.below_floor {
+            " (below the floor)"
+        } else {
+            ""
+        };
+        println!("{n} {} {source}{floor}", word(r));
     }
     Ok(0)
 }

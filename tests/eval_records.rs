@@ -354,3 +354,246 @@ fn the_committed_pilot_records_have_token_counts() {
     }
     assert_eq!(pilot, 200, "the 5 files of the pilot hold 200 records");
 }
+
+// D58: the records have 12 keys (`harness`, `turns` and `seconds` follow the 9
+// keys), and a result of `eval run --arms` gives the records of the batch.
+
+/// The golden line of a record of `small-080.json`: the line of `small.json`
+/// and the 3 new keys.
+fn line12(eval: &str, run: u32, arm: &str, cost: &str, first: bool, i: usize) -> String {
+    let old = line(eval, run, arm, cost, first);
+    let turns = if i % 3 == 2 {
+        "null".to_string()
+    } else {
+        (2 + i).to_string()
+    };
+    let seconds = 10.5 + 1.5 * i as f64;
+    format!(
+        "{},\"harness\":\"lean\",\"turns\":{turns},\"seconds\":{seconds}}}",
+        &old[..old.len() - 1]
+    )
+}
+
+fn golden12() -> String {
+    let mut lines = Vec::new();
+    let mut i = 0;
+    for (eval, run, with_cost) in [
+        ("tdd-1", 1, "0.5"),
+        ("tdd-1", 2, "0.25"),
+        ("tdd-2", 1, "0.75"),
+        ("tdd-2", 2, "1"),
+    ] {
+        let first = eval == "tdd-1" && run == 1;
+        lines.push(line12(eval, run, "with", with_cost, first, i));
+        lines.push(line12(eval, run, "without", "0.5", false, i + 1));
+        i += 2;
+    }
+    lines.join("\n") + "\n"
+}
+
+#[test]
+fn a_result_of_0_8_0_gives_records_of_12_keys() {
+    let path = fixture("small-080.json");
+    let (code, out, err) = records(&[path.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out, golden12());
+    assert_eq!(err, "eval records: 8 records of 1 names (tdd)\n");
+    // The first line has the 12 keys in their order.
+    let first = out.lines().next().unwrap();
+    let mut at = 0;
+    for k in [
+        "skill",
+        "eval",
+        "run",
+        "arm",
+        "pass",
+        "cost",
+        "tokens",
+        "models",
+        "claude_code",
+        "harness",
+        "turns",
+        "seconds",
+    ] {
+        let p = first[at..]
+            .find(&format!("\"{k}\":"))
+            .unwrap_or_else(|| panic!("no key {k} in order in {first}"));
+        at += p;
+    }
+}
+
+#[test]
+fn a_record_of_9_keys_still_imports_and_stays_9_keys() {
+    // `small.json` is a result of 0.7.0, with no `harness`, no `turns` and no
+    // `seconds`. Its records stay as they were.
+    let path = fixture("small.json");
+    let (code, out, err) = records(&[path.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out, golden());
+    assert!(!out.contains("\"harness\""), "{out}");
+}
+
+#[test]
+fn a_side_of_0_7_1_in_a_result_of_0_8_0_reads_as_null_turns_and_null_seconds() {
+    let text = fs::read_to_string(fixture("small-080.json")).unwrap();
+    // The first side loses its turns and its seconds, as a side of a file of
+    // 0.7.1 that `--resume` kept.
+    let turns = text
+        .find("\"turns\": 2,")
+        .expect("the turns of the first side");
+    let comma = text[..turns].rfind(',').unwrap();
+    let seconds = "\"seconds\": 10.5";
+    let end = text.find(seconds).expect("the seconds of the first side") + seconds.len();
+    let stripped = format!("{}{}", &text[..comma], &text[end..]);
+    let (code, out, err) = records_of(&stripped);
+    assert_eq!(code, 0, "{out}{err}");
+    let first = out.lines().next().unwrap();
+    assert!(
+        first.ends_with(",\"harness\":\"lean\",\"turns\":null,\"seconds\":null}"),
+        "{first}"
+    );
+    // The other lines keep their values.
+    assert_eq!(out.lines().nth(1), golden12().lines().nth(1));
+}
+
+#[test]
+fn a_negative_seconds_stops_the_import() {
+    let text = fs::read_to_string(fixture("small-080.json")).unwrap();
+    for bad in ["-1.0", "-0.1", "\"12\"", "1e999", "true", "100000000"] {
+        let (code, out, err) =
+            records_of(&text.replacen("\"seconds\": 10.5", &format!("\"seconds\": {bad}"), 1));
+        assert_eq!(code, 3, "{bad}: {out}{err}");
+        assert!(err.contains("`seconds`"), "{bad}: {err}");
+        assert_eq!(out, "", "nothing is printed: {bad}");
+        assert!(
+            !err.contains(bad.trim_matches('"')) || bad.len() < 3,
+            "the message names no value: {err}"
+        );
+    }
+}
+
+#[test]
+fn turns_and_harness_outside_their_form_stop_the_import() {
+    let text = fs::read_to_string(fixture("small-080.json")).unwrap();
+    for (from, to, key) in [
+        ("\"turns\": 2", "\"turns\": -1", "turns"),
+        ("\"turns\": 2", "\"turns\": 1.5", "turns"),
+        ("\"turns\": 2", "\"turns\": \"2\"", "turns"),
+        ("\"turns\": 2", "\"turns\": 100000000", "turns"),
+        ("\"harness\": \"lean\"", "\"harness\": \"evil\"", "harness"),
+        (
+            "\"harness\": \"lean\"",
+            "\"harness\": \"/home/x\"",
+            "harness",
+        ),
+        ("\"harness\": \"lean\"", "\"harness\": 5", "harness"),
+    ] {
+        let (code, out, err) = records_of(&text.replacen(from, to, 1));
+        assert_eq!(code, 3, "{to}: {out}{err}");
+        assert!(err.contains(&format!("`{key}`")), "{to}: {err}");
+        assert_eq!(out, "");
+    }
+}
+
+#[test]
+fn a_summary_below_the_floor_must_say_so() {
+    let text = fs::read_to_string(fixture("small-080.json")).unwrap();
+    // `below_floor` false with 4 pairs does not repeat from the runs.
+    let (code, out, err) =
+        records_of(&text.replace("\"below_floor\": true", "\"below_floor\": false"));
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("does not repeat") && err.contains("(below_floor)"),
+        "{err}"
+    );
+    // A verdict `on` below the floor does not repeat either.
+    let (code, out, err) =
+        records_of(&text.replace("\"verdict\": \"inconclusive\"", "\"verdict\": \"on\""));
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("does not repeat") && err.contains("(verdict)"),
+        "{err}"
+    );
+}
+
+/// The golden lines of `arms.json`: 2 evals, 2 runs, 3 arms.
+fn golden_arms() -> String {
+    let arms = ["none", "lean-no-advisor", "lean"];
+    let mut lines = Vec::new();
+    let mut n = 0;
+    for eval in ["team-01", "team-02"] {
+        for run in 1..=2 {
+            for arm in arms {
+                n += 1;
+                let cost = if n == 5 {
+                    "null".to_string()
+                } else {
+                    format!("{}", (0.25 * n as f64 * 100.0).round() / 100.0)
+                };
+                let tokens = if n == 4 {
+                    "null".to_string()
+                } else {
+                    "{\"in\":100,\"out\":200,\"cache_read\":300,\"cache_write\":400}".to_string()
+                };
+                let models = if arm == "lean" {
+                    "[\"claude-a\",\"claude-b\"]"
+                } else {
+                    "[\"claude-a\"]"
+                };
+                let turns = if n == 7 {
+                    "null".to_string()
+                } else {
+                    (n + 1).to_string()
+                };
+                let seconds = (n as f64 * 3.5 * 10.0).round() / 10.0;
+                lines.push(format!(
+                    "{{\"skill\":\"harness\",\"eval\":\"{eval}\",\"run\":{run},\"arm\":\"{arm}\",\"pass\":{},\"cost\":{cost},\"tokens\":{tokens},\"models\":{models},\"claude_code\":\"2.1.330\",\"harness\":\"{arm}\",\"turns\":{turns},\"seconds\":{seconds}}}",
+                    n % 2 == 0
+                ));
+            }
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
+#[test]
+fn a_result_of_arms_gives_one_record_for_each_run_of_each_arm() {
+    let path = fixture("arms.json");
+    let (code, out, err) = records(&[path.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out, golden_arms());
+    assert_eq!(err, "eval records: 12 records of 1 names (harness)\n");
+}
+
+#[test]
+fn a_side_of_arms_that_did_not_run_has_no_record() {
+    let text = r#"{"arms":["none","lean"],"claude_code":"2.1.330","models":["claude-a"],"evals":[{"id":"team-01","runs":1,"max_budget_usd":1,"results":[{"run":1,"arms":{"none":{"passed":true,"cost_usd":0.5,"models":["claude-a"],"tokens":null,"turns":1,"seconds":1.5},"lean":null}}]}]}"#;
+    let (code, out, err) = records_of(text);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "{\"skill\":\"harness\",\"eval\":\"team-01\",\"run\":1,\"arm\":\"none\",\"pass\":true,\"cost\":0.5,\"tokens\":null,\"models\":[\"claude-a\"],\"claude_code\":\"2.1.330\",\"harness\":\"none\",\"turns\":1,\"seconds\":1.5}\n"
+    );
+    // No run at all: nothing to import.
+    let (code, out, err) = records_of(
+        &text
+            .replace("\"passed\":true", "\"passed\":null")
+            .replace("\"none\":{", "\"none\":null,\"x\":{"),
+    );
+    assert_eq!(code, 3, "{out}{err}");
+}
+
+#[test]
+fn an_arm_outside_the_names_or_a_negative_seconds_stops_the_import_of_arms() {
+    let text = fs::read_to_string(fixture("arms.json")).unwrap();
+    let (code, out, err) = records_of(&text.replace(
+        "\"arms\": [\n    \"none\",\n    \"lean-no-advisor\",\n    \"lean\"\n  ]",
+        "\"arms\": [\n    \"none\",\n    \"nonsense\",\n    \"lean\"\n  ]",
+    ));
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("`arms`"), "{err}");
+    let (code, out, err) = records_of(&text.replace("\"seconds\": 3.5", "\"seconds\": -3.5"));
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("`seconds`"), "{err}");
+    assert_eq!(out, "");
+}

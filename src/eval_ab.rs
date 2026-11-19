@@ -19,12 +19,13 @@ use crate::adapters::{self, VERSION};
 use crate::config::{Config, Evals};
 use crate::config_text::{insert_keys, k, set_value};
 use crate::eval_run::{
-    Ctx, EPS, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts, claude_version,
-    copy_list, first_wait, harness_list, interrupt_signal, load_evals_in, make_out_dir,
-    normalize_out, now_secs, one_attempt, r6, replace_result, retry_waits, utc_time,
+    Ctx, EPS, HarnessArm, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts,
+    claude_version, first_wait, harness_list, interrupt_signal, load_evals, load_evals_in,
+    make_out_dir, normalize_out, now_secs, one_attempt, plan_eval, r6, replace_result, retry_waits,
+    select as select_ids, tokens_json, utc_time,
 };
 use crate::evals::{self, Eval};
-use crate::harness::Skill;
+use crate::harness::{self, Level, Skill};
 use crate::harness_text;
 use crate::json::{self, Obj};
 use crate::repo::{Fatal, Repo};
@@ -59,6 +60,10 @@ pub struct Opts {
     pub json: bool,
     /// The result file of an earlier run of the same target to go on with.
     pub resume: Option<String>,
+    /// `--harness <arm>` (D57). `Project` keeps the copy of 0.7.1.
+    pub harness: HarnessArm,
+    /// True when `--harness` is set (see `eval_run::Opts::named`).
+    pub named: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -114,6 +119,11 @@ struct Side {
     models: Vec<String>,
     /// The name and the result of each check. No command, no output.
     checks: Vec<(String, bool)>,
+    /// The `num_turns` of the run, if `claude` gave it (D58).
+    turns: Option<u32>,
+    /// The wall time of the agent process. A side of a result of 0.7.1 has
+    /// none.
+    seconds: Option<f64>,
 }
 
 /// One eval and run number, with the 2 arms. An arm that did not run is
@@ -236,6 +246,16 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         Some(file) => Some(read_resume_file(repo, file, &o.target)?),
         None => None,
     };
+    // A file of 0.7.1 has no `harness`: it is the arm `project`.
+    if let (Some(file), Some(v)) = (&o.resume, &resumed) {
+        let had = v.get("harness").as_str().unwrap_or("project");
+        if had != o.harness.name() {
+            return Err(Fatal::Usage(format!(
+                "--resume `{file}`: the file has the harness `{had}`, and this run has `{}`; use the same --harness",
+                o.harness.name()
+            )));
+        }
+    }
     let runs = match &resumed {
         Some(v) => {
             let file_runs = match v.get("runs") {
@@ -287,7 +307,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         cap,
         first,
         spend: 0.0,
-        excluded: [0, 0],
+        excluded: vec![0, 0],
         models: BTreeSet::new(),
         streak: 0,
     };
@@ -340,8 +360,11 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         check_sh,
         isolate: o.isolate,
         counter: 0,
+        arm: o.harness,
+        named: o.named,
     };
     let meta = Meta {
+        harness: o.harness,
         claude_code,
         started: started.clone(),
         target: o.target.clone(),
@@ -507,6 +530,8 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
 
 /// The values of a run that do not change.
 struct Meta {
+    /// The harness arm of the copy.
+    harness: HarnessArm,
     claude_code: Option<String>,
     started: String,
     target: String,
@@ -525,7 +550,7 @@ struct State {
     /// The cost of each attempt, also of an excluded one.
     spend: f64,
     /// The excluded attempts of each arm.
-    excluded: [u32; 2],
+    excluded: Vec<u32>,
     models: BTreeSet<String>,
     /// The excluded attempts in a row that are errors with no cost and no
     /// marker (`Refusal::Silent`). A real run resets it.
@@ -550,6 +575,7 @@ fn build_result(
     error: Option<String>,
 ) -> ResultFile {
     ResultFile {
+        harness: meta.harness,
         claude_code: meta.claude_code.clone(),
         models: state.models.iter().cloned().collect(),
         started: meta.started.clone(),
@@ -558,7 +584,7 @@ fn build_result(
         cap: meta.cap,
         estimate: meta.estimate,
         spend: state.spend,
-        excluded: state.excluded,
+        excluded: state.excluded.clone(),
         stopped,
         error,
         items: groups
@@ -611,11 +637,47 @@ fn sleep_unless_interrupted(seconds: u64) -> bool {
     interrupt_signal().is_none()
 }
 
-/// Runs one arm of one pair. An attempt that the API refused is excluded: no
-/// result counts it, and the spend gets the cost that it reports (0 if it
-/// reports none). The retry makes a new copy, with the same eval, arm and run.
-/// The cap is checked before each attempt: if the spend and the budget of the
-/// next run could pass it, the run does not start.
+/// The skills of the copy of `--ab --harness` (D57): the skills that `init`
+/// proposes for the profile `standard` at the level of the harness arm (the
+/// default skills of ADR 0023), and then the edit of the arm. `with` adds the
+/// measured skill, and `without` removes it. The pair `agents-line` has no
+/// skill in each arm.
+fn arm_skills(kind: Kind, arm: Arm, harness: HarnessArm) -> Vec<Skill> {
+    let Some(h) = harness.harness() else {
+        return Vec::new();
+    };
+    if h.level == Level::None {
+        return Vec::new();
+    }
+    let Kind::Skill(skill) = kind else {
+        return Vec::new();
+    };
+    let mut list =
+        crate::init::profile_skills(crate::config::Profile::Standard, h.level, &|s: Skill| {
+            s.default_on()
+        });
+    list.retain(|s| *s != skill);
+    if arm == Arm::With {
+        list.push(skill);
+    }
+    list.sort();
+    list
+}
+
+/// One side of one run for `run_side`.
+struct Job<'a> {
+    /// The name that the messages use: the group, or `harness`.
+    label: &'a str,
+    p: &'a Planned,
+    n: u32,
+    arm_name: &'a str,
+    /// The place of the arm in `State.excluded`.
+    arm_index: usize,
+    deny: Option<&'a str>,
+    edit: &'a dyn Fn(&Path) -> Result<(), Fatal>,
+}
+
+/// Runs one arm of one pair of `--ab`.
 fn run_arm(
     ctx: &mut Ctx,
     state: &mut State,
@@ -625,6 +687,38 @@ fn run_arm(
     n: u32,
 ) -> Result<Done, Fatal> {
     let deny = (arm == Arm::Without).then_some(DENIED);
+    let harness = ctx.arm;
+    let skills = arm_skills(g.kind, arm, harness);
+    // A harness arm has written the skill file with the generator, with its
+    // marker: the edit keeps it, so only the files of the host get the text
+    // of `skill show`.
+    let keep = harness != HarnessArm::Project;
+    let edit = |dir: &Path| {
+        write_harness_arm(dir, harness, &skills, false)?;
+        prepare(dir, g.kind, arm, keep)
+    };
+    run_side(
+        ctx,
+        state,
+        &Job {
+            label: &g.name,
+            p,
+            n,
+            arm_name: arm.name(),
+            arm_index: arm.index(),
+            deny,
+            edit: &edit,
+        },
+    )
+}
+
+/// Runs one side of one run. An attempt that the API refused is excluded: no
+/// result counts it, and the spend gets the cost that it reports (0 if it
+/// reports none). The retry makes a new copy, with the same eval, arm and run.
+/// The cap is checked before each attempt: if the spend and the budget of the
+/// next run could pass it, the run does not start.
+fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> {
+    let (p, n) = (job.p, job.n);
     let mut excluded = 0;
     // An account limit gets the long ladder, and it stays long after it.
     let mut account = false;
@@ -637,13 +731,9 @@ fn run_arm(
         }
         eprintln!(
             "eval run: {} {} run {n} of {} ({})",
-            g.name,
-            p.eval.id,
-            p.runs,
-            arm.name()
+            job.label, p.eval.id, p.runs, job.arm_name
         );
-        let edit = |dir: &Path| prepare(dir, g.kind, arm);
-        let r: RunResult = one_attempt(ctx, p, &edit, deny)?;
+        let r: RunResult = one_attempt(ctx, p, job.edit, job.deny)?;
         if r.interrupted {
             // An agent run that ended before a check was interrupted is paid.
             state.spend += r.cost.unwrap_or(0.0);
@@ -663,10 +753,12 @@ fn run_arm(
                 tokens: r.tokens,
                 models: r.models,
                 checks: r.checks,
+                turns: r.turns,
+                seconds: Some(r.seconds),
             }));
         };
         state.spend += r.cost.unwrap_or(0.0);
-        state.excluded[arm.index()] += 1;
+        state.excluded[job.arm_index] += 1;
         excluded += 1;
         account |= class == Refusal::Account;
         if class == Refusal::Silent {
@@ -685,9 +777,7 @@ fn run_arm(
         let wait = ladder[excluded as usize - 1];
         eprintln!(
             "eval run: the API refused the attempt ({} {} run {n}, {}); it is excluded. wait {wait} seconds, then try again",
-            g.name,
-            p.eval.id,
-            arm.name()
+            job.label, p.eval.id, job.arm_name
         );
         if !sleep_unless_interrupted(wait) {
             return Ok(Done::Stop(Stop::Interrupted));
@@ -699,7 +789,7 @@ fn run_arm(
 struct Prior {
     started: String,
     spend: f64,
-    excluded: [u32; 2],
+    excluded: Vec<u32>,
     models: BTreeSet<String>,
     pairs: Vec<Vec<PairRec>>,
 }
@@ -712,37 +802,7 @@ fn read_prior(v: &json::Value, groups: &[Group]) -> Prior {
         json::Value::Num(n) => Some(*n),
         _ => None,
     };
-    let side = |v: &json::Value| -> Option<Side> {
-        if !matches!(v, json::Value::Obj(_)) {
-            return None;
-        }
-        Some(Side {
-            claude_exit: num(v.get("claude_exit")).unwrap_or(-1.0) as i32,
-            subtype: v.get("subtype").as_str().map(str::to_string),
-            cost: num(v.get("cost_usd")),
-            excluded: num(v.get("excluded")).unwrap_or(0.0) as u32,
-            denials: num(v.get("permission_denials")).map(|n| n as u32),
-            passed: v.get("passed").is_true(),
-            tokens: read_tokens(v.get("tokens")),
-            models: v
-                .get("models")
-                .as_arr()
-                .iter()
-                .filter_map(|m| m.as_str().map(str::to_string))
-                .collect(),
-            checks: v
-                .get("checks")
-                .as_arr()
-                .iter()
-                .filter_map(|c| {
-                    Some((
-                        c.get("name").as_str()?.to_string(),
-                        c.get("passed").is_true(),
-                    ))
-                })
-                .collect(),
-        })
-    };
+    let side = read_side;
     let mut pairs: Vec<Vec<PairRec>> = groups.iter().map(|_| Vec::new()).collect();
     for item in v.get("skills").as_arr() {
         let Some(gi) = groups
@@ -777,7 +837,7 @@ fn read_prior(v: &json::Value, groups: &[Group]) -> Prior {
             .unwrap_or("1970-01-01T00:00:00Z")
             .to_string(),
         spend: num(v.get("spend_usd")).unwrap_or(0.0),
-        excluded: [
+        excluded: vec![
             num(ex.get("with")).unwrap_or(0.0) as u32,
             num(ex.get("without")).unwrap_or(0.0) as u32,
         ],
@@ -789,6 +849,45 @@ fn read_prior(v: &json::Value, groups: &[Group]) -> Prior {
             .collect(),
         pairs,
     }
+}
+
+/// Reads a side of a result file, or `None` for `null`.
+fn read_side(v: &json::Value) -> Option<Side> {
+    let num = |v: &json::Value| match v {
+        json::Value::Num(n) => Some(*n),
+        _ => None,
+    };
+    if !matches!(v, json::Value::Obj(_)) {
+        return None;
+    }
+    Some(Side {
+        claude_exit: num(v.get("claude_exit")).unwrap_or(-1.0) as i32,
+        subtype: v.get("subtype").as_str().map(str::to_string),
+        cost: num(v.get("cost_usd")),
+        excluded: num(v.get("excluded")).unwrap_or(0.0) as u32,
+        denials: num(v.get("permission_denials")).map(|n| n as u32),
+        passed: v.get("passed").is_true(),
+        tokens: read_tokens(v.get("tokens")),
+        models: v
+            .get("models")
+            .as_arr()
+            .iter()
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect(),
+        checks: v
+            .get("checks")
+            .as_arr()
+            .iter()
+            .filter_map(|c| {
+                Some((
+                    c.get("name").as_str()?.to_string(),
+                    c.get("passed").is_true(),
+                ))
+            })
+            .collect(),
+        turns: num(v.get("turns")).map(|n| n as u32),
+        seconds: num(v.get("seconds")),
+    })
 }
 
 /// Reads the `tokens` of a side of a result file: 4 integers, or `None`.
@@ -809,6 +908,20 @@ fn read_tokens(v: &json::Value) -> Option<Tokens> {
 /// with no `..`, valid JSON, and the result of the same target.
 fn read_resume_file(repo: &Repo, file: &str, target: &str) -> Result<json::Value, Fatal> {
     let bad = |m: String| Fatal::Usage(format!("--resume `{file}`: {m}"));
+    let v = read_result_file(repo, file)?;
+    if v.get("target").as_str() != Some(target) {
+        return Err(bad(format!(
+            "the file is the result of the target `{}`, not of `{target}`",
+            v.get("target").as_str().unwrap_or("?")
+        )));
+    }
+    Ok(v)
+}
+
+/// Reads the result file of `--resume`: a path of the repository with no
+/// `..` and the end `.json`, and valid JSON.
+fn read_result_file(repo: &Repo, file: &str) -> Result<json::Value, Fatal> {
+    let bad = |m: String| Fatal::Usage(format!("--resume `{file}`: {m}"));
     if file.is_empty()
         || file.starts_with('/')
         || file.contains('\\')
@@ -823,14 +936,7 @@ fn read_resume_file(repo: &Repo, file: &str, target: &str) -> Result<json::Value
     }
     let text = fs::read(repo.root.join(file)).map_err(|e| bad(format!("cannot read it ({e})")))?;
     let text = String::from_utf8(text).map_err(|_| bad("it is not UTF-8".into()))?;
-    let v = json::parse(&text).map_err(|e| bad(format!("it is not valid JSON ({e})")))?;
-    if v.get("target").as_str() != Some(target) {
-        return Err(bad(format!(
-            "the file is the result of the target `{}`, not of `{target}`",
-            v.get("target").as_str().unwrap_or("?")
-        )));
-    }
-    Ok(v)
+    json::parse(&text).map_err(|e| bad(format!("it is not valid JSON ({e})")))
 }
 
 /// Chooses the evals of the target, and the files of each fixture.
@@ -848,18 +954,7 @@ fn select(
             eval.allowed_tools.push("Skill".to_string());
         }
         let runs = runs.unwrap_or(eval.runs);
-        let pass_at = eval.pass_at.min(runs);
-        let fixture = copy_list(
-            repo,
-            &format!(":(literal){}", eval.fixture),
-            &format!("{}/", eval.fixture),
-        )?;
-        Ok(Planned {
-            eval,
-            runs,
-            pass_at,
-            fixture,
-        })
+        plan_eval(repo, eval, runs)
     };
     let mut groups = Vec::new();
     match target {
@@ -924,7 +1019,7 @@ fn select(
 /// the copy: the arm `without` edits the adapter files by design, and the
 /// adapter skill of the project lists the layer types of the project, not of
 /// the fixture. Both arms get the same edit.
-fn prepare(dir: &Path, kind: Kind, arm: Arm) -> Result<(), Fatal> {
+fn prepare(dir: &Path, kind: Kind, arm: Arm, keep_generated: bool) -> Result<(), Fatal> {
     pin_version(dir)?;
     adapter_rules_off(dir)?;
     let io = |what: &str, e: std::io::Error| {
@@ -935,6 +1030,7 @@ fn prepare(dir: &Path, kind: Kind, arm: Arm) -> Result<(), Fatal> {
             let rel = skill.path();
             let file = dir.join(&rel);
             match arm {
+                Arm::With if keep_generated && file.is_file() => {}
                 Arm::With => {
                     if let Some(parent) = file.parent() {
                         fs::create_dir_all(parent).map_err(|e| io(&rel, e))?;
@@ -968,6 +1064,96 @@ fn prepare(dir: &Path, kind: Kind, arm: Arm) -> Result<(), Fatal> {
                         }
                     }
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Writes the harness arm into the copy (D57). `project` keeps the harness
+/// files of the project as the copy. With `named` (`--arms` or `--harness`),
+/// it gets the pin of the binary, the rules `SD501` and `SD502` off and the
+/// adapter line of the binary, as each other arm does, so no arm differs in
+/// them. Without `named`, `project` writes nothing: `--ab` has its own edit.
+/// Another arm gets, in this order:
+///
+/// 1. the pin of the binary and the rules `SD501` and `SD502` off, in
+///    `spec-dna.toml` (the runner makes the file if the fixture has none),
+/// 2. the adapter line of the binary in `AGENTS.md` and `CLAUDE.md`,
+/// 3. the table `[harness]` of the arm, and
+/// 4. the files that the generator of `init` writes for that table.
+///
+/// `skills` is the list of `[harness] skills`. A built-in arm has none, and
+/// `--ab --harness` gives the default skills of its level. A fixture that has
+/// its own `[harness]` table is an error, because the arm is the table.
+pub(crate) fn write_harness_arm(
+    dir: &Path,
+    arm: HarnessArm,
+    skills: &[Skill],
+    named: bool,
+) -> Result<(), Fatal> {
+    let harness = arm.harness();
+    if harness.is_none() && !named {
+        return Ok(());
+    }
+    let io = |what: &str, e: std::io::Error| {
+        Fatal::Io(format!("cannot change `{what}` in the copy: {e}"))
+    };
+    let toml_path = dir.join("spec-dna.toml");
+    if !toml_path.is_file() {
+        fs::write(&toml_path, format!("spec-dna = \"{VERSION}\"\n"))
+            .map_err(|e| io("spec-dna.toml", e))?;
+    }
+    pin_version(dir)?;
+    adapter_rules_off(dir)?;
+    for rel in [adapters::AGENTS, adapters::CLAUDE] {
+        let path = dir.join(rel);
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        fs::write(&path, adapters::upsert_line(&text)).map_err(|e| io(rel, e))?;
+    }
+    let Some(mut h) = harness else {
+        return Ok(());
+    };
+    h.skills = skills.to_vec();
+    h.skills.sort();
+    let text = fs::read_to_string(&toml_path).map_err(|e| io("spec-dna.toml", e))?;
+    if text
+        .parse::<toml::Table>()
+        .is_ok_and(|t| t.contains_key("harness"))
+    {
+        return Err(Fatal::Config(format!(
+            "the fixture has a [harness] table in spec-dna.toml, and the harness arm `{}` writes that table; remove it from the fixture",
+            arm.name()
+        )));
+    }
+    let mut text = text;
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push('\n');
+    text.push_str(&h.toml_section());
+    fs::write(&toml_path, text).map_err(|e| io("spec-dna.toml", e))?;
+    let existing: Vec<(String, String)> = [harness::CLAUDE, harness::SETTINGS]
+        .into_iter()
+        .filter_map(|rel| {
+            fs::read_to_string(dir.join(rel))
+                .ok()
+                .map(|t| (rel.to_string(), t))
+        })
+        .collect();
+    let plan = harness::plan(&existing, None, &h, harness::Mode::Reconfigure)
+        .map_err(|e| Fatal::Config(format!("the harness arm `{}`: {e}", arm.name())))?;
+    for c in plan.changes {
+        let path = dir.join(&c.path);
+        match c.action {
+            harness::Action::Remove => {
+                let _ = fs::remove_file(&path);
+            }
+            harness::Action::Create | harness::Action::Change => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(|e| io(&c.path, e))?;
+                }
+                fs::write(&path, &c.text).map_err(|e| io(&c.path, e))?;
             }
         }
     }
@@ -1156,6 +1342,7 @@ fn item(g: &Group, pairs: &[PairRec]) -> Item {
 }
 
 struct ResultFile {
+    harness: HarnessArm,
     claude_code: Option<String>,
     models: Vec<String>,
     started: String,
@@ -1164,7 +1351,7 @@ struct ResultFile {
     cap: f64,
     estimate: f64,
     spend: f64,
-    excluded: [u32; 2],
+    excluded: Vec<u32>,
     stopped: Option<Stop>,
     /// The message of the error that stopped the run, with no path.
     error: Option<String>,
@@ -1206,15 +1393,7 @@ fn side_json(s: &Option<Side>) -> String {
     }
     .bool("passed", s.passed);
     let obj = match &s.tokens {
-        Some(t) => obj.raw(
-            "tokens",
-            &Obj::new()
-                .num("in", t.input)
-                .num("out", t.output)
-                .num("cache_read", t.cache_read)
-                .num("cache_write", t.cache_write)
-                .end(),
-        ),
+        Some(t) => obj.raw("tokens", &tokens_json(t)),
         None => obj.raw("tokens", "null"),
     };
     let checks = json::array(
@@ -1222,7 +1401,16 @@ fn side_json(s: &Option<Side>) -> String {
             .iter()
             .map(|(name, passed)| Obj::new().str("name", name).bool("passed", *passed).end()),
     );
-    obj.strs("models", &s.models).raw("checks", &checks).end()
+    let obj = obj.strs("models", &s.models).raw("checks", &checks);
+    let obj = match s.turns {
+        Some(n) => obj.num("turns", n),
+        None => obj.raw("turns", "null"),
+    };
+    match s.seconds {
+        Some(x) => obj.num("seconds", x),
+        None => obj.raw("seconds", "null"),
+    }
+    .end()
 }
 
 fn item_json(it: &Item) -> String {
@@ -1254,7 +1442,9 @@ fn item_json(it: &Item) -> String {
         Some(r) => obj.num("rule", r),
         None => obj.raw("rule", "null"),
     };
-    obj.raw("pairs", &pairs).end()
+    obj.bool("below_floor", a.is_some_and(|a| a.below_floor))
+        .raw("pairs", &pairs)
+        .end()
 }
 
 fn result_json(r: &ResultFile) -> String {
@@ -1272,7 +1462,8 @@ fn result_json(r: &ResultFile) -> String {
         .opt_str("claude_code", r.claude_code.as_deref())
         .raw("models", &models)
         .str("started", &r.started)
-        .str("target", &r.target);
+        .str("target", &r.target)
+        .str("harness", r.harness.name());
     let obj = match r.runs {
         Some(n) => obj.num("runs", n),
         None => obj.raw("runs", "null"),
@@ -1306,6 +1497,9 @@ fn result_text(r: &ResultFile) -> Vec<String> {
         };
         let verdict = match (it.complete, a.verdict, a.rule) {
             (false, ..) => "none, the pairs are not all done".to_string(),
+            (true, v, _) if a.below_floor => {
+                format!("{}, {}", v.name(), verdict::floor_text(a.pairs, a.evals))
+            }
             (true, v, Some(rule)) => format!("{} (rule {rule})", v.name()),
             (true, v, None) => v.name().to_string(),
         };
@@ -1396,6 +1590,722 @@ fn dry_run(
             p.runs,
             p.eval.max_budget_usd,
             f64::from(p.runs) * 2.0 * p.eval.max_budget_usd
+        );
+    }
+}
+
+// `eval run --arms` (D57).
+
+/// The options of `eval run --arms`.
+pub struct ArmsOpts {
+    pub arms: Vec<HarnessArm>,
+    pub ids: Vec<String>,
+    pub runs: Option<u32>,
+    pub max_total_usd: Option<f64>,
+    pub out: Option<String>,
+    pub dry_run: bool,
+    pub json: bool,
+    pub resume: Option<String>,
+}
+
+/// Reads the value of `--arms`: 2 or 3 different arm names. Another count, a
+/// name twice or an unknown name is a usage error.
+pub fn parse_arms(list: &str) -> Result<Vec<HarnessArm>, Fatal> {
+    let arms: Vec<HarnessArm> = list
+        .split(',')
+        .map(HarnessArm::parse)
+        .collect::<Result<_, _>>()?;
+    if !(2..=3).contains(&arms.len()) {
+        return Err(Fatal::Usage(format!(
+            "--arms takes 2 or 3 arms, got {}; use `--arms <arm>,<arm>[,<arm>]`",
+            arms.len()
+        )));
+    }
+    for (i, a) in arms.iter().enumerate() {
+        if arms[..i].contains(a) {
+            return Err(Fatal::Usage(format!(
+                "--arms names the arm `{}` twice",
+                a.name()
+            )));
+        }
+    }
+    Ok(arms)
+}
+
+/// One eval and run number of `--arms`, with a side for each arm. An arm that
+/// did not run is `None`.
+#[derive(Clone)]
+struct ArmRun {
+    eval: String,
+    run: u32,
+    sides: Vec<Option<Side>>,
+}
+
+impl ArmRun {
+    fn complete(&self) -> bool {
+        self.sides.iter().all(Option::is_some)
+    }
+}
+
+/// The order of the arms of one eval in one wave: the arms, rotated left by
+/// `(eval index + wave) mod arms`. The index counts from 0, and the wave from
+/// 1.
+fn rotation(arms: usize, eval_index: usize, wave: u32) -> Vec<usize> {
+    let k = (eval_index + wave as usize) % arms;
+    (0..arms).map(|j| (k + j) % arms).collect()
+}
+
+/// The values of an `--arms` run that do not change.
+struct ArmsMeta {
+    claude_code: Option<String>,
+    started: String,
+    arms: Vec<HarnessArm>,
+    runs: Option<u32>,
+    cap: f64,
+    estimate: f64,
+    out_dir: String,
+}
+
+fn arms_result_json(
+    meta: &ArmsMeta,
+    plan: &[Planned],
+    runs: &[ArmRun],
+    state: &State,
+    stopped: Option<Stop>,
+    error: Option<&str>,
+) -> String {
+    let names: Vec<String> = meta.arms.iter().map(|a| a.name().to_string()).collect();
+    let models = json::array(state.models.iter().map(|m| {
+        let mut s = String::new();
+        json::string(&mut s, m);
+        s
+    }));
+    let mut excluded = Obj::new();
+    for (a, n) in meta.arms.iter().zip(&state.excluded) {
+        excluded = excluded.num(a.name(), n);
+    }
+    let waves = verdict::complete_waves(
+        &plan
+            .iter()
+            .map(|p| {
+                (
+                    p.runs,
+                    runs.iter()
+                        .filter(|r| r.eval == p.eval.id)
+                        .map(|r| (r.run, r.complete()))
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    let evals = json::array(plan.iter().map(|p| {
+        let mut mine: Vec<&ArmRun> = runs.iter().filter(|r| r.eval == p.eval.id).collect();
+        mine.sort_by_key(|r| r.run);
+        let results = json::array(
+            mine.iter()
+                .filter(|r| r.sides.iter().any(Option::is_some))
+                .map(|r| {
+                    let mut sides = Obj::new();
+                    for (a, side) in meta.arms.iter().zip(&r.sides) {
+                        sides = sides.raw(a.name(), &side_json(side));
+                    }
+                    Obj::new().num("run", r.run).raw("arms", &sides.end()).end()
+                }),
+        );
+        Obj::new()
+            .str("id", &p.eval.id)
+            .num("runs", p.runs)
+            .num("max_budget_usd", r6(p.eval.max_budget_usd))
+            .raw("results", &results)
+            .end()
+    }));
+    let obj = Obj::new()
+        .str("spec_dna", VERSION)
+        .opt_str("claude_code", meta.claude_code.as_deref())
+        .raw("models", &models)
+        .str("started", &meta.started)
+        .strs("arms", &names);
+    let obj = match meta.runs {
+        Some(n) => obj.num("runs", n),
+        None => obj.raw("runs", "null"),
+    };
+    let obj = obj
+        .num("seed", verdict::SEED)
+        .num("resamples", verdict::RESAMPLES)
+        .num("max_total_usd", r6(meta.cap))
+        .num("estimate_usd", r6(meta.estimate))
+        .num("spend_usd", r6(state.spend))
+        .raw("excluded", &excluded.end())
+        .opt_str("stopped", stopped.map(Stop::name))
+        .num("waves", waves);
+    let obj = match error {
+        Some(e) => obj.str("error", e),
+        None => obj,
+    };
+    obj.raw("evals", &evals).end()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn arms_persist(
+    repo: &Repo,
+    meta: &ArmsMeta,
+    plan: &[Planned],
+    runs: &[ArmRun],
+    state: &State,
+    stopped: Option<Stop>,
+    error: Option<&str>,
+    written: &mut Option<String>,
+) -> Result<String, Fatal> {
+    let compact = arms_result_json(meta, plan, runs, state, stopped, error);
+    match written {
+        Some(path) => {
+            replace_result(repo, path, &compact)?;
+            Ok(path.clone())
+        }
+        None => {
+            let path = crate::eval_run::write_result(
+                repo,
+                &meta.out_dir,
+                "arms",
+                &meta.started,
+                &compact,
+            )?;
+            *written = Some(path.clone());
+            Ok(path)
+        }
+    }
+}
+
+/// Reads the result of an earlier `--arms` run: a path of the repository
+/// with no `..`, valid JSON, and the same arms in the same order.
+fn read_arms_resume(repo: &Repo, file: &str, arms: &[HarnessArm]) -> Result<json::Value, Fatal> {
+    let bad = |m: String| Fatal::Usage(format!("--resume `{file}`: {m}"));
+    let v = read_result_file(repo, file)?;
+    let had: Vec<&str> = v
+        .get("arms")
+        .as_arr()
+        .iter()
+        .filter_map(json::Value::as_str)
+        .collect();
+    let want: Vec<&str> = arms.iter().map(|a| a.name()).collect();
+    if had.is_empty() {
+        return Err(bad("the file is no result of `eval run --arms`".into()));
+    }
+    if had != want {
+        return Err(bad(format!(
+            "the file has the arms {}, and this run has {}; use the same arms in the same order",
+            had.join(","),
+            want.join(",")
+        )));
+    }
+    Ok(v)
+}
+
+/// Reads the sides of a result of `--arms` into the plan.
+fn read_arms_prior(v: &json::Value, plan: &[Planned], arms: &[HarnessArm]) -> (Prior, Vec<ArmRun>) {
+    let mut runs = Vec::new();
+    for item in v.get("evals").as_arr() {
+        let Some(id) = item.get("id").as_str() else {
+            continue;
+        };
+        if !plan.iter().any(|p| p.eval.id == id) {
+            continue;
+        }
+        for r in item.get("results").as_arr() {
+            let json::Value::Num(n) = r.get("run") else {
+                continue;
+            };
+            let run = *n as u32;
+            if run == 0 {
+                continue;
+            }
+            let sides = arms
+                .iter()
+                .map(|a| read_side(r.get("arms").get(a.name())))
+                .collect();
+            runs.push(ArmRun {
+                eval: id.to_string(),
+                run,
+                sides,
+            });
+        }
+    }
+    let ex = v.get("excluded");
+    let num = |v: &json::Value| match v {
+        json::Value::Num(n) => *n,
+        _ => 0.0,
+    };
+    let prior = Prior {
+        started: v
+            .get("started")
+            .as_str()
+            .unwrap_or("1970-01-01T00:00:00Z")
+            .to_string(),
+        spend: num(v.get("spend_usd")),
+        excluded: arms.iter().map(|a| num(ex.get(a.name())) as u32).collect(),
+        models: v
+            .get("models")
+            .as_arr()
+            .iter()
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect(),
+        pairs: Vec::new(),
+    };
+    (prior, runs)
+}
+
+/// `eval run --arms <arm>,<arm>[,<arm>] [<id>...]`: the plain evals of
+/// `[evals] dir` in 2 or 3 harness arms, in waves (D57). Wave `r` runs each
+/// eval once in each arm, and the order of the arms rotates (`rotation`). The
+/// result is `<dir>/results/arms-<time>.json`. A stop by the cap keeps the
+/// complete waves, and the analysis drops a partial wave. The command gives
+/// no pass rate, so it never exits with 1.
+pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
+    let first = first_wait()?;
+    let limits = Limits::from_env()?;
+    if o.resume.is_some() && (o.dry_run || o.out.is_some()) {
+        return Err(Fatal::Usage(
+            "--resume goes on in its own file; it takes no --dry-run and no --out".into(),
+        ));
+    }
+    let table = cfg.evals.as_ref().ok_or_else(|| {
+        Fatal::Config(
+            "spec-dna.toml has no [evals] table, and `eval run --arms` needs it; add the table (docs/config.md)"
+                .into(),
+        )
+    })?;
+    let out_dir = match o.out.as_deref() {
+        Some(p) => normalize_out(p, &table.dir)?,
+        None => format!("{}/{}", table.dir, evals::RESULTS),
+    };
+    let cap = o.max_total_usd.unwrap_or(table.max_total_usd);
+    let check_sh = repo.root.join(&table.dir).join(evals::CHECK_FILE);
+    let all = load_evals(repo, table)?;
+    if !check_sh.is_file() {
+        return Err(Fatal::Config(format!(
+            "{}/{}: the check file is absent; `eval run` sources it",
+            table.dir,
+            evals::CHECK_FILE
+        )));
+    }
+    let resumed = match &o.resume {
+        Some(file) => Some(read_arms_resume(repo, file, &o.arms)?),
+        None => None,
+    };
+    // `--resume` takes the evals of its file. An id names the evals to go on
+    // with, and it must be in the file. The other evals of the file keep their
+    // results and their runs.
+    let file_ids: Vec<String> = match &resumed {
+        Some(v) => v
+            .get("evals")
+            .as_arr()
+            .iter()
+            .filter_map(|e| e.get("id").as_str().map(str::to_string))
+            .collect(),
+        None => Vec::new(),
+    };
+    let selected = match (&o.resume, &resumed) {
+        (Some(file), Some(_)) => {
+            if let Some(id) = o.ids.iter().find(|id| !file_ids.contains(id)) {
+                return Err(Fatal::Usage(format!(
+                    "--resume `{file}`: the file has no eval `{id}`; its evals are {}",
+                    file_ids.join(", ")
+                )));
+            }
+            select_ids(all, &file_ids, &table.dir)?
+        }
+        _ => select_ids(all, &o.ids, &table.dir)?,
+    };
+    let runs = match &resumed {
+        Some(v) => {
+            let file_runs = match v.get("runs") {
+                json::Value::Num(n) => Some(*n as u32),
+                _ => None,
+            };
+            match (o.runs, file_runs) {
+                (None, f) => f,
+                (Some(n), Some(f)) if n >= f => Some(n),
+                (Some(n), Some(f)) => {
+                    return Err(Fatal::Usage(format!(
+                        "--runs {n} is below the file of --resume, which has --runs {f}; use {f} or more, or leave --runs out"
+                    )));
+                }
+                (Some(_), None) => {
+                    return Err(Fatal::Usage(
+                        "--runs with a file of --resume that kept the runs of each eval; leave --runs out".to_string(),
+                    ));
+                }
+            }
+        }
+        None => o.runs,
+    };
+    let mut plan = Vec::new();
+    // The evals that this run goes on with. Without `--resume`, each eval.
+    let mut active = Vec::new();
+    for eval in selected {
+        let go = o.ids.is_empty() || o.ids.contains(&eval.id);
+        let mut n = runs.unwrap_or(eval.runs);
+        if !go {
+            // An eval that this run leaves keeps the runs of its file.
+            let kept = resumed.as_ref().and_then(|v| {
+                v.get("evals")
+                    .as_arr()
+                    .iter()
+                    .find(|e| e.get("id").as_str() == Some(eval.id.as_str()))
+                    .and_then(|e| match e.get("runs") {
+                        json::Value::Num(k) => Some(*k as u32),
+                        _ => None,
+                    })
+            });
+            n = kept.unwrap_or(n);
+        }
+        plan.push(plan_eval(repo, eval, n)?);
+        active.push(go);
+    }
+    let n_arms = o.arms.len() as u32;
+    let todo = || {
+        plan.iter()
+            .zip(&active)
+            .filter(|(_, a)| **a)
+            .map(|(p, _)| p)
+    };
+    let total_runs: u32 = todo().map(|p| p.runs * n_arms).sum();
+    let estimate: f64 = todo()
+        .map(|p| f64::from(p.runs * n_arms) * p.eval.max_budget_usd)
+        .sum();
+    let names: Vec<&str> = o.arms.iter().map(|a| a.name()).collect();
+    let header = format!(
+        "{} evals, {} arms, {total_runs} runs, estimate {estimate:.2} USD, cap {cap:.2} USD",
+        todo().count(),
+        o.arms.len()
+    );
+    if o.dry_run {
+        arms_dry_run(
+            &plan, &names, &header, estimate, cap, total_runs, table, o.json,
+        );
+        return Ok(0);
+    }
+
+    let mut state = State {
+        cap,
+        first,
+        spend: 0.0,
+        excluded: vec![0; o.arms.len()],
+        models: BTreeSet::new(),
+        streak: 0,
+    };
+    let mut started = utc_time(now_secs());
+    let mut written: Option<String> = None;
+    let mut results: Vec<ArmRun> = Vec::new();
+    if let (Some(file), Some(v)) = (&o.resume, &resumed) {
+        let (prior, prior_runs) = read_arms_prior(v, &plan, &o.arms);
+        started = prior.started;
+        state.spend = prior.spend;
+        state.excluded = prior.excluded;
+        state.models = prior.models;
+        results = prior_runs;
+        written = Some(file.clone());
+    }
+    let remaining: f64 = todo()
+        .map(|p| {
+            let done: u32 = results
+                .iter()
+                .filter(|r| r.eval == p.eval.id)
+                .map(|r| r.sides.iter().filter(|s| s.is_some()).count() as u32)
+                .sum();
+            f64::from((p.runs * n_arms).saturating_sub(done)) * p.eval.max_budget_usd
+        })
+        .sum();
+    if state.spend + remaining > cap + EPS {
+        eprintln!(
+            "eval run: note: the estimate {:.2} USD is above max-total-usd {cap:.2} USD; the run stops before a run that could pass the cap, and --resume goes on",
+            state.spend + remaining
+        );
+    }
+    make_out_dir(repo, &out_dir)?;
+    let claude_code = claude_version()?;
+    let harness = harness_list(repo)?;
+    if !o.json {
+        println!("eval run --arms {}: {header}", names.join(","));
+    }
+    catch_interrupts();
+    let mut ctx = Ctx {
+        limits,
+        merge_instructions: false,
+        harness,
+        check_sh,
+        isolate: true,
+        counter: 0,
+        arm: HarnessArm::Project,
+        named: true,
+    };
+    let meta = ArmsMeta {
+        claude_code,
+        started: started.clone(),
+        arms: o.arms.clone(),
+        runs,
+        cap,
+        estimate,
+        out_dir,
+    };
+    let mut stopped: Option<Stop> = None;
+    let mut failed: Option<Fatal> = None;
+    let waves = plan.iter().map(|p| p.runs).max().unwrap_or(0);
+    // Wave, then eval, then arm: a stop by the cap leaves complete waves.
+    'waves: for r in 1..=waves {
+        for (ei, p) in plan.iter().enumerate() {
+            if r > p.runs || !active[ei] {
+                continue;
+            }
+            let at = match results
+                .iter()
+                .position(|x| x.eval == p.eval.id && x.run == r)
+            {
+                Some(at) => at,
+                None => {
+                    results.push(ArmRun {
+                        eval: p.eval.id.clone(),
+                        run: r,
+                        sides: vec![None; o.arms.len()],
+                    });
+                    results.len() - 1
+                }
+            };
+            for ai in rotation(o.arms.len(), ei, r) {
+                if results[at].sides[ai].is_some() {
+                    continue;
+                }
+                let arm = o.arms[ai];
+                ctx.arm = arm;
+                let edit = |dir: &Path| write_harness_arm(dir, arm, &[], true);
+                let done = run_side(
+                    &mut ctx,
+                    &mut state,
+                    &Job {
+                        label: "harness",
+                        p,
+                        n: r,
+                        arm_name: arm.name(),
+                        arm_index: ai,
+                        deny: None,
+                        edit: &edit,
+                    },
+                );
+                let done = match done {
+                    Ok(d) => d,
+                    Err(_) if interrupt_signal().is_some() => {
+                        stopped = Some(Stop::Interrupted);
+                        break 'waves;
+                    }
+                    Err(e) => {
+                        stopped = Some(Stop::Error);
+                        failed = Some(e);
+                        break 'waves;
+                    }
+                };
+                match done {
+                    Done::Counted(side) => {
+                        results[at].sides[ai] = Some(side);
+                        // The result is on the disk after each side, as for
+                        // `--ab`.
+                        if let Err(e) = arms_persist(
+                            repo,
+                            &meta,
+                            &plan,
+                            &results,
+                            &state,
+                            Some(Stop::Interrupted),
+                            None,
+                            &mut written,
+                        ) {
+                            eprintln!("eval run: cannot write the partial result: {}", e.message());
+                        }
+                    }
+                    Done::Stop(s) => {
+                        stopped = Some(s);
+                        break 'waves;
+                    }
+                }
+            }
+        }
+    }
+
+    let error = failed.as_ref().map(|e| error_text(repo, e.message()));
+    let compact = arms_result_json(&meta, &plan, &results, &state, stopped, error.as_deref());
+    if o.json {
+        println!("{compact}");
+    } else {
+        for line in arms_text(&meta, &plan, &results, &state, stopped, error.as_deref()) {
+            println!("{line}");
+        }
+    }
+    let path = arms_persist(
+        repo,
+        &meta,
+        &plan,
+        &results,
+        &state,
+        stopped,
+        error.as_deref(),
+        &mut written,
+    );
+    if let Some(e) = failed {
+        match &path {
+            Ok(p) => eprintln!("eval run: the partial result is in {p}"),
+            Err(w) => eprintln!(
+                "eval run: the partial result is not written: {}",
+                w.message()
+            ),
+        }
+        return Err(e);
+    }
+    let path = path?;
+    eprintln!("eval run: the result is in {path}");
+    match stopped {
+        None => Ok(0),
+        Some(Stop::MaxTotal) => {
+            eprintln!(
+                "eval run: stopped: the next run could pass max-total-usd {cap:.2} USD (the spend is {:.2} USD); the partial result is written, and the analysis drops a partial wave",
+                state.spend
+            );
+            Ok(3)
+        }
+        Some(Stop::Error) => unreachable!("an error returns above"),
+        Some(Stop::ApiError) => {
+            eprintln!(
+                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the arms again later with spec-dna eval run --arms {} --resume {path}",
+                names.join(",")
+            );
+            Ok(3)
+        }
+        Some(Stop::Interrupted) => {
+            let sig = interrupt_signal().unwrap_or(2);
+            eprintln!(
+                "eval run: interrupted; the partial result is written. Go on with spec-dna eval run --arms {} --resume {path}",
+                names.join(",")
+            );
+            Ok((128 + sig) as u8)
+        }
+    }
+}
+
+/// The text of the result of `--arms`: a line for each arm, the waves, the
+/// spend and the stop.
+fn arms_text(
+    meta: &ArmsMeta,
+    plan: &[Planned],
+    runs: &[ArmRun],
+    state: &State,
+    stopped: Option<Stop>,
+    error: Option<&str>,
+) -> Vec<String> {
+    let waves = verdict::complete_waves(
+        &plan
+            .iter()
+            .map(|p| {
+                (
+                    p.runs,
+                    runs.iter()
+                        .filter(|r| r.eval == p.eval.id)
+                        .map(|r| (r.run, r.complete()))
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    let planned = plan.iter().map(|p| p.runs).max().unwrap_or(0);
+    let mut lines = Vec::new();
+    for (i, arm) in meta.arms.iter().enumerate() {
+        let sides: Vec<&Side> = runs.iter().filter_map(|r| r.sides[i].as_ref()).collect();
+        let passed = sides.iter().filter(|s| s.passed).count();
+        let cost: f64 = sides.iter().map(|s| s.cost.unwrap_or(0.0)).sum();
+        lines.push(format!(
+            "{}: {passed} of {} runs passed, {cost:.2} USD",
+            arm.name(),
+            sides.len()
+        ));
+    }
+    lines.push(format!(
+        "waves: {waves} complete of {planned} planned; a partial wave is dropped"
+    ));
+    lines.push(format!("spend {:.2} USD", state.spend));
+    if state.excluded.iter().any(|n| *n > 0) {
+        let list: Vec<String> = meta
+            .arms
+            .iter()
+            .zip(&state.excluded)
+            .map(|(a, n)| format!("{} {n}", a.name()))
+            .collect();
+        lines.push(format!(
+            "excluded attempts (the API refused them, no result counts them): {}",
+            list.join(", ")
+        ));
+    }
+    if let Some(s) = stopped {
+        lines.push(format!("stopped: {}", s.name()));
+    }
+    if let Some(e) = error {
+        lines.push(format!("error: {e}"));
+    }
+    lines
+}
+
+#[allow(clippy::too_many_arguments)]
+fn arms_dry_run(
+    plan: &[Planned],
+    arms: &[&str],
+    header: &str,
+    estimate: f64,
+    cap: f64,
+    total_runs: u32,
+    table: &Evals,
+    json_out: bool,
+) {
+    let n = arms.len() as u32;
+    if json_out {
+        let list = json::array(plan.iter().map(|p| {
+            Obj::new()
+                .str("id", &p.eval.id)
+                .num("runs", p.runs)
+                .num("max_budget_usd", r6(p.eval.max_budget_usd))
+                .num(
+                    "estimate_usd",
+                    r6(f64::from(p.runs * n) * p.eval.max_budget_usd),
+                )
+                .end()
+        }));
+        println!(
+            "{}",
+            Obj::new()
+                .str("spec_dna", VERSION)
+                .bool("dry_run", true)
+                .strs(
+                    "arms",
+                    &arms.iter().map(|a| (*a).to_string()).collect::<Vec<_>>()
+                )
+                .str("evals_dir", &table.dir)
+                .num("max_total_usd", r6(cap))
+                .num("estimate_usd", r6(estimate))
+                .num("runs", total_runs)
+                .bool("above_cap", estimate > cap + EPS)
+                .raw("evals", &list)
+                .end()
+        );
+        return;
+    }
+    println!("eval run --arms {} (dry run): {header}", arms.join(","));
+    if estimate > cap + EPS {
+        println!(
+            "a real run starts, and stops before a run that could pass the cap: the estimate {estimate:.2} USD is above max-total-usd {cap:.2} USD; --resume goes on"
+        );
+    }
+    for p in plan {
+        println!(
+            "{}: {} runs, max-budget-usd {:.2}, estimate {:.2} USD",
+            p.eval.id,
+            p.runs,
+            p.eval.max_budget_usd,
+            f64::from(p.runs * n) * p.eval.max_budget_usd
         );
     }
 }

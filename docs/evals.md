@@ -69,6 +69,7 @@ An eval is the file `<dir>/<id>.json`. A JSON file directly in `<dir>` is an eva
 | `task` | yes | - | The request that the agent gets. Not empty, at most 8,000 bytes, and it does not start with `-` |
 | `fixture` | yes | - | A folder under `<dir>/`, but not under `<dir>/results/`. It has `/` separators and no `..`, `.`, empty segment or `\`. It holds at least one file |
 | `branch` | no | none | A git branch name of at most 100 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, `/` and `-`. It starts with a letter or a digit, has no `..` or `//`, and does not end with `/` or `.lock`. The branch `main` is the base branch, so it gives no switch |
+| `change` | no | none | A folder under `<dir>/` with the same rules as `fixture` (not under `<dir>/results/`, `/` separators, at least one file). The runner copies its files over the copy after the base commit, and makes one commit "spec-dna eval change" on the branch of `branch`. Thus `git diff --name-only main` shows the files of the change. `change` needs a `branch` that is not `main`. In the pack, the folder is `pack/changes/<id>/`. SD506 checks the key as it checks `fixture` |
 | `allowed-tools` | no | `[]` | A list of strings. Each one is not empty, does not start with `-`, and has no control character |
 | `max-turns` | no | `20` | An integer from 1 to 1,000 |
 | `max-budget-usd` | yes | - | The budget of one run. A number above 0, and at most `[evals] max-total-usd` |
@@ -86,7 +87,7 @@ A check can call a function of `<dir>/check.sh`, such as `tests_unchanged`. The 
 ## Run the evals
 
 ```text
-spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate]
+spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]
 ```
 
 The command needs the table `[evals]`. A pin that differs from the version of the binary stops the command, as it stops `check`. An unknown id is a usage error.
@@ -100,6 +101,7 @@ The command needs the table `[evals]`. A pin that differs from the version of th
 | `--out <dir>` | Writes the result to `<dir>/eval-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start). If the file exists, the name gets the next free suffix from `-2`. See [Results](#results) |
 | `--dry-run` | Checks the evals and prints each eval with its runs and the estimate. It starts no process and writes no file. Exit code 0, or 3 if the estimate is above the cap |
 | `--isolate` | Adds `--setting-sources project --strict-mcp-config` to `claude`. It is off by default, so CI and a laptop run the same command |
+| `--harness <arm>` | Gives the copy of each run the harness arm `<arm>` in place of the harness files of the project. See [Harness arms](#harness-arms). It isolates the runs, so `--no-isolate` with it is a usage error |
 | `--json` | Prints the result as one JSON object, and no text |
 
 `--isolate` has these effects, as a test with Claude Code 2.1.325 showed:
@@ -117,10 +119,10 @@ The command needs the table `[evals]`. A pin that differs from the version of th
 3. It runs `claude --version` once. If `claude` is absent or cannot start, it stops with exit code 3.
 4. For each eval and each run, it does steps 5 to 11. The loop has no early stop.
 5. It makes a temporary folder, `spec-dna-eval-<pid>-<n>`, in the temporary directory of the system (mode 700 on Unix).
-6. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path.
+6. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path. With `--arms` or `--harness`, this copy applies only to the arm `project`: a built-in arm gets the files that its table writes (see [Harness arms](#harness-arms)).
 7. The copy uses the list of git, so it does not copy a file that git ignores. It copies no symbolic link, and a warning names it.
-8. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name.
-9. It starts `claude` in the folder, and then it reads `total_cost_usd` and `subtype` from the output. If the cost is absent, the spend counts `max-budget-usd` for the run.
+8. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name. If `change` is set, it copies the files of that folder over the copy, and makes one commit "spec-dna eval change" on that branch (the same author and date as the base commit, no signature, no hook).
+9. It starts `claude` in the folder, and then it reads `total_cost_usd`, `subtype`, `num_turns` and `modelUsage` from the output. It measures the wall time of the process of `claude`. If the cost is absent, the spend counts `max-budget-usd` for the run.
 10. It runs each check with `sh -c` in the folder. The checks also run when `claude` failed. A run passes when `claude` exits with code 0 and each check passes.
 11. It deletes the folder, also after an error. It adds the cost to the spend. If the spend is above `max-total-usd` and a run remains, it stops.
 12. An eval passes when its passed runs are at least `min(pass-at, runs)`. The pass rate is the share of the evals that pass, not of the runs. The suite passes when the pass rate is at least `min-pass-rate`.
@@ -135,7 +137,7 @@ Details of the steps 9 and 10:
 - The runner keeps at most 16 MiB of the output of `claude` in memory. The output is one JSON object, or a list of events that ends with the object of type `result`.
 - The agent and the checks run with a neutral git setup: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (`eval@example.invalid`), `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, and `commit.gpgsign` and `tag.gpgsign` set to `false` through `GIT_CONFIG_COUNT`. Thus a `git commit` of the agent or of a check never depends on the identity or the signing of the machine. The copy is always a git repository with one base commit.
 - The script of a check sources `check.sh` of the project, never the copy. Then it runs the `run` text of the check.
-- The environment of a check has `SPEC_DNA_CHECK_SH`, the absolute path of `check.sh`, and `SPEC_DNA_EVAL_BASE`, the id of the base commit.
+- The environment of a check has `SPEC_DNA_CHECK_SH`, the absolute path of `check.sh`, and `SPEC_DNA_EVAL_BASE`, the id of the commit that `HEAD` has when the agent starts. If the eval has the key `change`, it is the commit of the change, so a check that compares a file with the base (`tests_unchanged`) does not see the change as an edit of the agent. The diff of the change against the branch `main` stays: the agent sees it, and so does an acceptor.
 
 ### Output
 
@@ -175,17 +177,64 @@ Claude Code checks `--max-budget-usd` against an estimate of the client, so the 
 `<dir>` cannot be `[evals] dir`, because SD506 reads each `*.json` file there. Use `<[evals] dir>/results`.
 
 ```json
-{"spec_dna":"0.6.0","claude_code":"2.1.325","started":"2026-11-15T10:15:00Z","evals_dir":"evals","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}]}]}]}
+{"spec_dna":"0.8.0","claude_code":"2.1.330","started":"2026-11-15T10:15:00Z","evals_dir":"evals","harness":"project","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}],"tokens":{"in":10,"out":20,"cache_read":30,"cache_write":40},"models":["claude-opus-5-5"],"turns":7,"seconds":41.3}]}]}
 ```
 
 - `claude_code` is the first word of `claude --version`, or `null`. `stopped` is `null` or `"max-total-usd"`.
 - After a stop, `pass_rate` is `null`, `passed` is `false`, and an eval that did not start has `"results":[]`.
 - `claude_exit` is the exit code of `claude`, or -1 if a signal ended it. `cost_usd` is `null` when `claude` gave no cost. `spend_usd` is the sum that the cap uses.
+- `harness` is the harness arm of the copies: `project`, or the value of `--harness`.
+- Each result has, after `checks`, the keys `tokens`, `models`, `turns` and `seconds`. `tokens` and `models` are the same sums and names as in the result of `--ab` (`null` and `[]` when `claude` gave no `modelUsage`). `turns` is the `num_turns` of the result of `claude`, or `null`. `seconds` is the wall time of the process of `claude` with 1 decimal. A result of 0.7.x has none of these 4 keys.
 - With `--dry-run`, `--json` prints one object: `spec_dna`, `dry_run` (`true`), `evals_dir`, `max_total_usd`, `estimate_usd`, and `evals`. Each item of `evals` has `id`, `runs`, `pass_at`, `max_budget_usd` and `estimate_usd`.
 
 The result has no task text, no check command, no output text of `claude`, no path of the machine and no value of the environment. Claude Code can keep its own session files on the machine. spec-dna does not read or copy them.
 
 A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats --sdlc` reads them for the indicator "eval pass rate". It uses the newest complete file by `started`. A file is complete when it has a string `started`, a number `pass_rate` from 0 to 1, and `"stopped": null`.
+
+## Harness arms
+
+A run of 0.7.1 copies the harness files of the project that runs the command: `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and `.claude/*`. Each past run thus had the team of its host, and the result did not name the team. A harness arm is a team that the runner writes into the copy, so the arms differ in the team only ([ADR 0030](adr/0030-harness-arms-time-record-and-verdict-floor.md)).
+
+| Arm | The copy |
+| --- | --- |
+| `none` | `[harness] level = "none"`. No `.claude/` folder |
+| `lean` | The level `lean` with the roles that `init` writes by default, including the advisor |
+| `lean-no-advisor` | `lean` with `advisor = { claude-code = "none" }`. It has no `advisorModel`, no `fallback-advisor.md` and no sentence of the advisor in the line of `CLAUDE.md`. That is the only difference from `lean` |
+| `full` | The level `full` |
+| `project` | The harness files of the project, as in 0.7.1. In `--arms` and `--harness`, it also gets the pin and the adapter line of the binary, `SD501` and `SD502` off, and the same `--model` and `--effort` as each other arm |
+
+For a built-in arm (not `project`), the runner writes the table `[harness]` of the arm into `spec-dna.toml` of the copy (it makes the file, with the pin of the binary, if the fixture has none), and runs the generator of `init` on the copy. It copies no `.claude/*`, no generated line and no `REVIEW.md` from the project. Each built-in arm has `skills = []`, `review-md = false` and `protect-tests = "off"`. Each arm gets the adapter line of the binary in `AGENTS.md` and `CLAUDE.md`, and `SD501` and `SD502` are off, as for `--ab`. A fixture with its own `[harness]` table is an error (exit code 3), because the arm is that table.
+
+In `--arms` and `--harness`, the runner passes `--model` and `--effort` with the values of the orchestrator of `lean` (`opus` and `xhigh`) to each arm, also `project`. Thus each arm has the same main model, and a comparison measures the team and not the main model. `--ab` without `--harness` keeps the command line of 0.7.1: no `--model` and no `--effort`. `--arms` and `--harness` isolate the runs (`--setting-sources project`), so the advisor of the user settings cannot reach an arm. `--no-isolate` with them is a usage error.
+
+### `--harness`
+
+`eval run --harness <arm>` runs the plain evals with one arm. The result has the key `harness`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level (the default skills of [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). Then the edit of `--ab` adds the measured skill to the arm `with` and removes it from the arm `without`, in the files and in `[harness] skills`. A skill runs beside the other default skills, as for a user. `--resume` of `--ab` refuses a file that has another harness (a file of 0.7.1 has `project`). `--ab` without `--harness` keeps the copy of 0.7.1.
+
+### `--arms`
+
+```text
+spec-dna eval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]
+```
+
+The command runs the plain evals of `<dir>` (all, or the ids) in 2 or 3 arms. It runs in waves: wave `r` runs each eval once in each arm. In one eval, the order of the arms rotates left by `(eval index + r) mod arms`, where the index counts from 0 in the order of the ids and `r` counts from 1. A stop by the cap keeps the complete waves, and the analysis drops a partial wave. The cap is checked before each run, as for `--ab`, and an API refusal follows the same back-off. The command gives no pass rate, so it never exits with 1. `--min-pass-rate` and `--harness` with `--arms` are usage errors, and so is `--arms` with `--ab`.
+
+The result is `<dir>/results/arms-<YYYYMMDD>T<HHMMSS>Z.json`. It has the keys of the result of `--ab` that do not name a target, and these keys:
+
+| Key | Content |
+| --- | --- |
+| `arms` | The names of the arms, in the order of the command line |
+| `excluded` | The excluded attempts of each arm: `{"<arm>": n}` |
+| `waves` | The number of complete waves |
+| `evals` | One item for each eval: `id`, `runs`, `max_budget_usd` and `results`. A result is `{"run": n, "arms": {"<arm>": <side>}}`. A side has the keys of a side of `--ab`, and it is `null` when its arm did not run |
+
+`--resume <result file>` goes on in the file. It needs the same arms in the same order, and it runs the sides that the file lacks. It takes the evals from the file: with no id, it goes on with each eval of the file, and an id names the evals to go on with and must be in the file (else exit code 2). An eval that the run leaves keeps its results in the file, and the spend of the file stays in the total. The message of a stop by `api-error` or by a signal gives the full command that goes on, with the arms and the path of the file. It takes no `--out` and no `--dry-run`. An arms file is no input of `eval verdict`, so a batch of `--arms` never enters the table of the skills.
+
+```text
+spec-dna eval verdict --compare <treatment>,<control> <result file> [--json]
+```
+
+`eval verdict --compare` gives the verdict of 2 arms of a result of `--arms`, with the bootstrap and the rules of [the verdict](#the-verdict). It uses the complete waves only, and the pairs are the runs of the 2 arms for the same eval and run. It prints the difference and the cost ratio with their 90% intervals, the verdict, and the number of waves. With `--json` it prints `treatment`, `control`, `waves`, `planned_waves`, `evals`, `pairs`, `with` (the treatment), `without` (the control), `difference`, `cost_ratio`, `verdict`, `rule` and `below_floor`. The command reads one file and needs no project. Exit codes: 0, 2 for names that are not 2 different arms of the file, 3 for a file that is not a result of `--arms`. The command holds no rule of a protocol: [ADR 0029](adr/0029-protocol-of-the-model-team-measurement.md) gives the rules of the model team, and a person reads the numbers.
 
 ## The pack and the measure of a skill
 
@@ -326,14 +375,14 @@ The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the 
 | --- | --- |
 | `spec_dna`, `claude_code`, `started` | The versions and the start time, as in the result of `eval run` |
 | `models` | The sorted names of the models that the results of `claude` list in `modelUsage`. Names only |
-| `target`, `runs`, `seed`, `resamples` | The target, the value of `--runs` (`null` if each eval kept its own runs), 24 and 2,000 |
+| `target`, `harness`, `runs`, `seed`, `resamples` | The target, the harness arm of the copies (`project` without `--harness`; a file of 0.7.1 has no key and reads as `project`), the value of `--runs` (`null` if each eval kept its own runs), 24 and 2,000 |
 | `max_total_usd`, `estimate_usd`, `spend_usd` | The cap, the estimate and the spend. The spend includes the excluded attempts |
 | `excluded` | `{"with": n, "without": n}`, the excluded attempts of each arm |
 | `stopped` | `null`, `"max-total-usd"`, `"api-error"`, `"error"` (a git or file error) or `"interrupted"` (SIGINT, SIGTERM, or a file that the runner writes during the run) |
 | `error` | Only when `stopped` is `"error"`: the first line of the message of the git or file error, with no path of the machine |
 | `skills` | One item for each skill, or one item `agents-line` |
 
-An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials`, `passed`, `tokens`, `models` and `checks`. `tokens` is `{"in","out","cache_read","cache_write"}`, the sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`, `cacheReadInputTokens` and `cacheCreationInputTokens` (a field that is absent counts 0), or `null` if `modelUsage` is absent or a count is not an integer of 0 or more. `models` is the sorted list of the names in `modelUsage` of that run. `checks` is a list of `{"name","passed"}`, one for each check of the eval: the names and the results, with no command and no output. A result file that an older binary wrote has none of these 3 keys, and `--resume` reads such a side as `null`, an empty list and an empty list. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
+An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule`, `below_floor` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials`, `passed`, `tokens`, `models`, `checks`, `turns` and `seconds`. `tokens` is `{"in","out","cache_read","cache_write"}`, the sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`, `cacheReadInputTokens` and `cacheCreationInputTokens` (a field that is absent counts 0), or `null` if `modelUsage` is absent or a count is not an integer of 0 or more. `models` is the sorted list of the names in `modelUsage` of that run. `checks` is a list of `{"name","passed"}`, one for each check of the eval: the names and the results, with no command and no output. `turns` is the `num_turns` of the result of `claude`, or `null`, and `seconds` is the wall time of the process with 1 decimal. A result file that an older binary wrote has none of these 5 keys, and `--resume` reads such a side as `null`, an empty list, an empty list, `null` and `null`. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
 
 ### The verdict
 
@@ -346,11 +395,13 @@ A skill gets the verdict `on` when one rule holds:
 
 The verdict is `off` when the high end of the interval of the difference is below 0. Else it is `inconclusive`. A skill that is off by default and is `inconclusive` stays off. The result file gives the rule of an `on` verdict (`"rule": 1` or `2`).
 
+The floor comes first: a verdict needs at least 5 evals and at least 15 complete pairs. Below the floor, the verdict is `inconclusive`, the item has `"below_floor": true` (and `false` above it), and the text says `below the floor (<n> pairs of <k> evals; the floor is 15 pairs of 5 evals)`. The floor is a constant of the release, with no configuration key. For 1 pair, [ADR 0030](adr/0030-harness-arms-time-record-and-verdict-floor.md) and the simulation below give `on` in 22% of the trials with no true gain and in 32% with a true gain of 0.20, so one pair that passes with the skill and fails without it must not turn a skill on. Each row of the table of the release has 15 pairs or more over at least 5 evals, so the table does not change. `eval verdict` and SD507 apply the floor also to a result file of 0.7.1: they count the complete pairs and the evals of its `pairs`, so a file of 0.7.1 below the floor reads as `inconclusive`. An item with no list `pairs` and no `below_floor` cannot be counted, and its verdict stands.
+
 ```text
 spec-dna eval verdict [--json]
 ```
 
-`eval verdict` prints one line for each of the 11 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`.
+`eval verdict` prints one line for each of the 11 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file","below_floor"}]}`. A name whose file is below the floor shows `(below the floor)` after the source.
 
 ```text
 spec-dna eval verdict --release [--json]
@@ -372,7 +423,7 @@ The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its e
 
 ### The records of a release
 
-A release keeps the result of its runs as records in `bench/results/evals/`. A record is one line of compact JSON for each run of each arm. It has 9 keys, in this order, and no other key:
+A release keeps the result of its runs as records in `bench/results/evals/`. A record is one line of compact JSON for each run of each arm. It has 9 keys, in this order, and a record of a result of 0.8.0 has 3 more keys after them (see the end of this section). It has no other key:
 
 | Key | Value |
 | --- | --- |
@@ -386,15 +437,21 @@ A release keeps the result of its runs as records in `bench/results/evals/`. A r
 | `models` | 1 to 8 sorted names of models. A name has 1 to 64 characters from `A-Z a-z 0-9 . _ : - [ ] /`, with no `..` and no `/` at the start, such as `claude-fable-5-2[1m]` |
 | `claude_code` | The version of Claude Code, or `null` |
 
-A record has no path, no text, no check name and no time. The pair is `eval` and `run`. The result files of the pilot (0.7.0) had no token counts, because the runner of the pilot kept one list of models for each file and no `tokens`. In 0.7.1 the records of the 200 runs of the pilot got their `tokens` from the transcripts of the pilot runs: the entry `cost-state` of a transcript holds the `modelUsage` and the total cost of the run, so the sums are those that the runner of this release writes (`in`, `out`, `cache_read`, `cache_write`). Each record matches one transcript of its own batch by its cost, and the same match gives the same counts for the 330 records of the later batches that have tokens. The models of a pilot record stay the list of its result file. A record can still have `"tokens": null` (a result file with no `modelUsage`), and `eval records` and the verdict read the field with a check for `null`.
+A record has no path, no text, no check name and no clock time. The pair is `eval` and `run`.
+
+A result of 0.8.0 gives records of 12 keys: the 9 keys, and then `harness`, `turns` and `seconds`, in this order. `harness` is the harness arm of the copy (`project` or a built-in name), `turns` is an integer or `null`, and `seconds` is a duration in seconds (a number from 0 to 10,000,000, or `null`). A duration is allowed in a record: [ADR 0021](adr/0021-eval-records-and-the-cap.md) means no clock time and no date. A result of 0.7.x has no such keys, so its records keep 9 keys, and a reader of the records reads a record of 9 keys as `project`, `null`, `null`. A negative `seconds`, a `turns` that is not an integer of 0 or more, and a `harness` that is not the name of an arm stop the import. The test of the table of the release reads both forms.
+
+A result of `eval run --arms` gives one record for each run of each arm, with the 12 keys. The `skill` is `harness`, the `arm` is the name of the arm, and `harness` is the same name. A side that did not run has no record, and a record of a partial wave stays in the file: the analysis drops it (`eval verdict --compare`). The test of the table of the release skips the skill `harness`, so a batch of `--arms` never enters the table of the skills. A batch of `--arms` goes to `bench/results/evals/<stamp>-harness.jsonl`.
+
+The result files of the pilot (0.7.0) had no token counts, because the runner of the pilot kept one list of models for each file and no `tokens`. In 0.7.1 the records of the 200 runs of the pilot got their `tokens` from the transcripts of the pilot runs: the entry `cost-state` of a transcript holds the `modelUsage` and the total cost of the run, so the sums are those that the runner of this release writes (`in`, `out`, `cache_read`, `cache_write`). Each record matches one transcript of its own batch by its cost, and the same match gives the same counts for the 330 records of the later batches that have tokens. The models of a pilot record stay the list of its result file. A record can still have `"tokens": null` (a result file with no `modelUsage`), and `eval records` and the verdict read the field with a check for `null`.
 
 ```text
 spec-dna eval records <result file>
 ```
 
-`eval records` reads one result file of `--ab` and prints its records on stdout. It prints `eval records: <n> records of <k> names (<names>)` on stderr. A person writes the output to `bench/results/evals/<stamp>-<target>.jsonl`, where `<stamp>` is the stamp of the name of the result file. A file of the records is a batch.
+`eval records` reads one result file of `--ab` or of `--arms` and prints its records on stdout. It prints `eval records: <n> records of <k> names (<names>)` on stderr. A person writes the output to `bench/results/evals/<stamp>-<target>.jsonl`, where `<stamp>` is the stamp of the name of the result file. A file of the records is a batch.
 
-The command builds each record from 9 values, and it never copies an object of the input. A value outside its form stops the command, and the message names the key and never the value. A string that has the shape of a secret or of a path of a machine (`sk-`, `ghp_`, `AKIA`, `-----BEGIN`, `Users/`, `/private/`, `/home/` or `@`) is outside its form too. The command refuses a file over 16 MiB before it reads it. After the records are built, the command computes each item again from them, and it compares the result with the item of the file: the runs, the passes, the sums of the costs, the interval of the difference, the interval of the cost ratio, the verdict and the rule. A run with `cost` `null` counts the `max-budget-usd` of its eval in the pack of the binary. A mismatch stops the command, and it prints no record. The command takes one file and no option. Exit codes: 0, 2 for a usage error, and 3 for a file that is not a result of `--ab`, an item with no verdict (the run is not complete; finish it with `--resume`), a value outside its form or a failed comparison.
+The command builds each record from 9 values (12 for a result of 0.8.0), and it never copies an object of the input. A value outside its form stops the command, and the message names the key and never the value. A string that has the shape of a secret or of a path of a machine (`sk-`, `ghp_`, `AKIA`, `-----BEGIN`, `Users/`, `/private/`, `/home/` or `@`) is outside its form too. The command refuses a file over 16 MiB before it reads it. After the records are built, the command computes each item again from them, and it compares the result with the item of the file: the runs, the passes, the sums of the costs, the interval of the difference, the interval of the cost ratio, the verdict and the rule. A run with `cost` `null` counts the `max-budget-usd` of its eval in the pack of the binary. A mismatch stops the command, and it prints no record. A summary of 0.8.0 has `below_floor`, and the comparison applies the floor of the verdict; a summary of 0.7.x has no such key and follows the rules of D33 only. A result of `--arms` has no summary, so the command checks each value against its form only. The command takes one file and no option. Exit codes: 0, 2 for a usage error, and 3 for a file that is not a result of `--ab` or `--arms`, an item with no verdict (the run is not complete; finish it with `--resume`), a value outside its form or a failed comparison.
 
 The binary holds the table of the release as the constant `verdict::RELEASE`, and not the records. For each name, the newest batch that has records of the name gives the row. Thus a confirmation batch must give a verdict alone: the batch of an earlier run does not add to it. A test reads the records on the disk, computes the table with the same functions, and compares it with the constant. If they differ, the test prints the text of the constant. `eval verdict --release` prints the table.
 
@@ -408,7 +465,19 @@ The rules are strict on purpose. A simulation on the bootstrap above gives the s
 | Rule 2 holds | 0.177 |
 | The verdict is `on` | 0.246 |
 
-Rule 2 adds almost nothing to rule 1 when the runs cost the same. The run is `cargo test --release --bin spec-dna verdict -- --ignored --nocapture`. A real eval has clusters of runs, so the shares of a real result can be lower. Thus only a large gain gives the verdict `on`, and a smaller gain stays `inconclusive`.
+Rule 2 adds almost nothing to rule 1 when the runs cost the same. The run is `cargo test --release --bin spec-dna simulation_of_d33 -- --ignored --nocapture`. A real eval has clusters of runs, so the shares of a real result can be lower. Thus only a large gain gives the verdict `on`, and a smaller gain stays `inconclusive`.
+
+A second simulation, `simulation_of_the_floor`, runs the same bootstrap for the sizes of the floor. The pass rate of the control is drawn from 0.2 to 0.8 for each eval, the arms are independent, and 600 trials (20,000 for the row of 1 pair) give the share of `on` with no true gain and with a true gain of 0.20. The row of 1 pair is exact for this model, `E[b(1 - b)] = 0.22` and `E[(b + 0.2)(1 - b)] = 0.32`, and the test asserts it:
+
+| Evals x runs | Pairs | `on`, no gain | `on`, gain 0.20 |
+| --- | --- | --- | --- |
+| 1 x 1 | 1 | 0.22 | 0.32 |
+| 1 x 3 | 3 | 0.10 | 0.21 |
+| 3 x 3 | 9 | 0.04 | 0.16 |
+| 5 x 3 | 15 | 0.03 | 0.19 |
+| 10 x 3 | 30 | 0.01 | 0.35 |
+
+With the floor, the rows below 15 pairs or below 5 evals give no `on`. The same test also runs the protocol of the model team (10 evals of 5 runs, 400 trials): a true gain of 0.20 gives `on` in about 0.49 of the trials, a gain of 0.30 in about 0.88, and no gain in 0.01. The run is `cargo test --release --bin spec-dna simulation_of_the_floor -- --ignored --nocapture`.
 
 ### The limits
 

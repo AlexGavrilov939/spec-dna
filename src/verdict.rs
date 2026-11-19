@@ -20,6 +20,10 @@ pub const SEED: u64 = 24;
 pub const RESAMPLES: usize = 2_000;
 /// The name of the pair of arms for the line of `AGENTS.md` (D34).
 pub const AGENTS_LINE: &str = "agents-line";
+/// The floor of a verdict (D59, Q39): at least 5 evals and at least 15
+/// complete pairs. Below it, the verdict is `inconclusive`.
+pub const FLOOR_EVALS: usize = 5;
+pub const FLOOR_PAIRS: usize = 15;
 /// The tolerance of a comparison of floating-point values.
 const EPS: f64 = 1e-9;
 /// The least gain of rule 1: 0.20 of the pass rate.
@@ -129,6 +133,11 @@ pub struct Analysis {
     pub verdict: Verdict,
     /// The rule that gives `on`: 1 or 2.
     pub rule: Option<u8>,
+    /// True when the sample is below the floor (D59). The verdict is then
+    /// `inconclusive`.
+    pub below_floor: bool,
+    /// The number of complete pairs.
+    pub pairs: usize,
 }
 
 fn arm_of(pairs: &[&Pair], with: bool) -> Arm {
@@ -170,6 +179,25 @@ fn ratio(wp: u32, wc: f64, op: u32, oc: f64) -> Option<f64> {
 /// Computes the analysis. `evals` holds the pairs of each eval. An eval with
 /// no pair is dropped. The result is the same for the same input.
 pub fn analyze(evals: &[Vec<Pair>]) -> Analysis {
+    let mut a = analyze_unfloored(evals);
+    if a.evals < FLOOR_EVALS || a.pairs < FLOOR_PAIRS {
+        a.below_floor = true;
+        a.verdict = Verdict::Inconclusive;
+        a.rule = None;
+    }
+    a
+}
+
+/// The text of a sample below the floor.
+pub fn floor_text(pairs: usize, evals: usize) -> String {
+    format!(
+        "below the floor ({pairs} pairs of {evals} evals; the floor is {FLOOR_PAIRS} pairs of {FLOOR_EVALS} evals)"
+    )
+}
+
+/// The analysis with the rules of D33 only, with no floor. The simulation of
+/// the floor uses it.
+pub fn analyze_unfloored(evals: &[Vec<Pair>]) -> Analysis {
     let evals: Vec<&Vec<Pair>> = evals.iter().filter(|e| !e.is_empty()).collect();
     let all: Vec<&Pair> = evals.iter().flat_map(|e| e.iter()).collect();
     let with = arm_of(&all, true);
@@ -239,6 +267,8 @@ pub fn analyze(evals: &[Vec<Pair>]) -> Analysis {
         cost_ratio,
         verdict,
         rule,
+        below_floor: false,
+        pairs: all.len(),
     }
 }
 
@@ -752,10 +782,43 @@ pub fn is_result_name(base: &str) -> bool {
         .is_some_and(|stamp| !stamp.is_empty() && !stamp.contains('/'))
 }
 
-/// The verdicts that a result file holds: the name and the verdict of each
-/// item of `skills` that has a verdict. A file that is not JSON, or that has
-/// no list `skills`, holds none.
-pub fn read_result(bytes: &[u8]) -> Vec<(String, Verdict)> {
+/// One item of a result file that has a verdict.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemVerdict {
+    pub name: String,
+    /// The verdict, with the floor applied.
+    pub verdict: Verdict,
+    pub below_floor: bool,
+}
+
+/// True when an item of a result file is below the floor. The reader counts
+/// the complete pairs and the evals in `pairs`, and it does not trust a stored
+/// `below_floor: false`. An item with no `pairs` cannot be counted: it keeps
+/// its stored `below_floor`, and with none its verdict stands.
+fn item_below_floor(item: &json::Value) -> bool {
+    let json::Value::Arr(pairs) = item.get("pairs") else {
+        return item.get("below_floor").is_true();
+    };
+    let complete: Vec<&json::Value> = pairs
+        .iter()
+        .filter(|p| {
+            matches!(p.get("with"), json::Value::Obj(_))
+                && matches!(p.get("without"), json::Value::Obj(_))
+        })
+        .collect();
+    let mut evals: Vec<&str> = complete
+        .iter()
+        .filter_map(|p| p.get("eval").as_str())
+        .collect();
+    evals.sort_unstable();
+    evals.dedup();
+    complete.len() < FLOOR_PAIRS || evals.len() < FLOOR_EVALS
+}
+
+/// The items of a result file that have a verdict. A file that is not JSON,
+/// or that has no list `skills`, holds none. An item below the floor reads as
+/// `inconclusive`, also when a file of 0.7.1 says `on`.
+pub fn read_items(bytes: &[u8]) -> Vec<ItemVerdict> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Vec::new();
     };
@@ -768,10 +831,294 @@ pub fn read_result(bytes: &[u8]) -> Vec<(String, Verdict)> {
         .iter()
         .filter_map(|item| {
             let name = item.get("name").as_str()?;
-            let verdict = Verdict::from_name(item.get("verdict").as_str()?)?;
-            Some((name.to_string(), verdict))
+            let stored = Verdict::from_name(item.get("verdict").as_str()?)?;
+            let below_floor = item_below_floor(item);
+            Some(ItemVerdict {
+                name: name.to_string(),
+                verdict: if below_floor {
+                    Verdict::Inconclusive
+                } else {
+                    stored
+                },
+                below_floor,
+            })
         })
         .collect()
+}
+
+// ---- `eval verdict --compare` (D59) ----
+
+/// Why `compare` stops.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CompareError {
+    /// The arms are not 2 arms of the file: exit code 2.
+    Usage(String),
+    /// The file is no result of `eval run --arms`: exit code 3.
+    NotArms,
+}
+
+/// One side of a result of `--arms`: the pass and the cost that the cap
+/// counts (the cost, or the budget of the eval if the run has none).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ArmSide {
+    passed: bool,
+    cost: f64,
+}
+
+/// The runs of one eval in a result of `--arms`.
+struct ArmsEval {
+    /// The runs that the plan has for the eval.
+    runs: u32,
+    /// The run number, and a side for each arm (`None`: not done).
+    results: Vec<(u32, Vec<Option<ArmSide>>)>,
+}
+
+/// The number of complete waves (D57): wave `r` is complete when each eval
+/// that plans a run `r` has that run in each arm. The count stops at the first
+/// wave that is not complete. `evals` holds, for each eval, its planned runs
+/// and the runs that it has with a flag for a run that has each arm.
+pub fn complete_waves(evals: &[(u32, Vec<(u32, bool)>)]) -> u32 {
+    let planned = evals.iter().map(|e| e.0).max().unwrap_or(0);
+    let mut waves = 0;
+    for r in 1..=planned {
+        let done = evals
+            .iter()
+            .filter(|(runs, _)| *runs >= r)
+            .all(|(_, results)| results.iter().any(|(run, done)| *run == r && *done));
+        if !done {
+            break;
+        }
+        waves = r;
+    }
+    waves
+}
+
+/// A result of `eval run --arms`.
+struct ArmsFile {
+    arms: Vec<String>,
+    evals: Vec<ArmsEval>,
+}
+
+impl ArmsFile {
+    fn waves(&self) -> u32 {
+        let list: Vec<(u32, Vec<(u32, bool)>)> = self
+            .evals
+            .iter()
+            .map(|e| {
+                (
+                    e.runs,
+                    e.results
+                        .iter()
+                        .map(|(run, sides)| (*run, sides.iter().all(Option::is_some)))
+                        .collect(),
+                )
+            })
+            .collect();
+        complete_waves(&list)
+    }
+
+    fn planned_waves(&self) -> u32 {
+        self.evals.iter().map(|e| e.runs).max().unwrap_or(0)
+    }
+}
+
+fn read_arms_file(bytes: &[u8]) -> Result<ArmsFile, CompareError> {
+    let not = || CompareError::NotArms;
+    let text = std::str::from_utf8(bytes).map_err(|_| not())?;
+    let value = json::parse(text).map_err(|_| not())?;
+    let arms: Vec<String> = match value.get("arms") {
+        json::Value::Arr(items) => items
+            .iter()
+            .map(|a| a.as_str().map(str::to_string))
+            .collect::<Option<_>>()
+            .ok_or_else(not)?,
+        _ => return Err(not()),
+    };
+    if !(2..=3).contains(&arms.len()) {
+        return Err(not());
+    }
+    let json::Value::Arr(items) = value.get("evals") else {
+        return Err(not());
+    };
+    let count = |v: &json::Value| match v {
+        json::Value::Num(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 1e6 => {
+            Some(*n as u32)
+        }
+        _ => None,
+    };
+    // An arm named twice, or 2 results for one eval and run, make a file that
+    // the runner never writes: the analysis would count a run twice.
+    if arms.iter().enumerate().any(|(i, a)| arms[..i].contains(a)) {
+        return Err(not());
+    }
+    let mut evals = Vec::new();
+    let mut seen_ids: Vec<&str> = Vec::new();
+    for item in items {
+        if let Some(id) = item.get("id").as_str() {
+            if seen_ids.contains(&id) {
+                return Err(not());
+            }
+            seen_ids.push(id);
+        }
+        let runs = count(item.get("runs")).ok_or_else(not)?;
+        let budget = match item.get("max_budget_usd") {
+            json::Value::Num(n) if n.is_finite() && *n >= 0.0 => *n,
+            _ => return Err(not()),
+        };
+        let mut results = Vec::new();
+        for r in item.get("results").as_arr() {
+            let run = count(r.get("run")).ok_or_else(not)?;
+            if results.iter().any(|(seen, _): &(u32, _)| *seen == run) {
+                return Err(not());
+            }
+            let sides: Option<Vec<Option<ArmSide>>> = arms
+                .iter()
+                .map(|name| {
+                    let side = r.get("arms").get(name);
+                    if !matches!(side, json::Value::Obj(_)) {
+                        return Some(None);
+                    }
+                    // A cost that is absent or null counts as the budget of
+                    // the eval, as in the cap. A negative or other cost is a
+                    // fault of the file.
+                    let cost = match side.get("cost_usd") {
+                        json::Value::Num(n) if n.is_finite() && *n >= 0.0 => *n,
+                        json::Value::Null => budget,
+                        _ => return None,
+                    };
+                    Some(Some(ArmSide {
+                        passed: side.get("passed").is_true(),
+                        cost,
+                    }))
+                })
+                .collect();
+            results.push((run, sides.ok_or_else(not)?));
+        }
+        evals.push(ArmsEval { runs, results });
+    }
+    Ok(ArmsFile { arms, evals })
+}
+
+/// The comparison of 2 arms of a result of `--arms`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Comparison {
+    pub treatment: String,
+    pub control: String,
+    /// The complete waves that the analysis uses.
+    pub waves: u32,
+    /// The waves that the plan has.
+    pub planned_waves: u32,
+    /// The analysis. `with` is the treatment, and `without` is the control.
+    pub analysis: Analysis,
+}
+
+/// The verdict of 2 arms of a result of `eval run --arms`: the bootstrap and
+/// the rules of D33, with the floor of D59, on the complete waves. The pairs
+/// are the runs of the 2 arms, for the same eval and run. The rules of the
+/// model-team protocol (ADR 0029) are not here: a person reads the numbers.
+pub fn compare(bytes: &[u8], treatment: &str, control: &str) -> Result<Comparison, CompareError> {
+    let file = read_arms_file(bytes)?;
+    if treatment == control {
+        return Err(CompareError::Usage(format!(
+            "--compare: `{treatment}` is named twice; give 2 different arms"
+        )));
+    }
+    let place = |name: &str| {
+        file.arms.iter().position(|a| a == name).ok_or_else(|| {
+            CompareError::Usage(format!(
+                "--compare: the file has no arm `{name}`; its arms are {}",
+                file.arms.join(", ")
+            ))
+        })
+    };
+    let (t, c) = (place(treatment)?, place(control)?);
+    let waves = file.waves();
+    let by_eval: Vec<Vec<Pair>> = file
+        .evals
+        .iter()
+        .map(|e| {
+            e.results
+                .iter()
+                .filter(|(run, _)| *run <= waves)
+                .filter_map(|(_, sides)| {
+                    let (a, b) = (sides[t]?, sides[c]?);
+                    Some(Pair {
+                        with_passed: a.passed,
+                        with_cost: a.cost,
+                        without_passed: b.passed,
+                        without_cost: b.cost,
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    Ok(Comparison {
+        treatment: treatment.to_string(),
+        control: control.to_string(),
+        waves,
+        planned_waves: file.planned_waves(),
+        analysis: analyze(&by_eval),
+    })
+}
+
+/// The JSON of `eval verdict --compare`. `with` is the treatment and
+/// `without` is the control, as in the items of `--ab`.
+pub fn comparison_json(c: &Comparison) -> String {
+    let a = &c.analysis;
+    let obj = json::Obj::new()
+        .str("treatment", &c.treatment)
+        .str("control", &c.control)
+        .num("waves", c.waves)
+        .num("planned_waves", c.planned_waves)
+        .num("evals", a.evals)
+        .num("pairs", a.pairs)
+        .raw("with", &arm_json(Some(&a.with)))
+        .raw("without", &arm_json(Some(&a.without)))
+        .raw("difference", &interval_json(&a.difference));
+    let obj = match &a.cost_ratio {
+        Some(r) => obj.raw("cost_ratio", &interval_json(r)),
+        None => obj.raw("cost_ratio", "null"),
+    };
+    let obj = obj.str("verdict", a.verdict.name());
+    let obj = match a.rule {
+        Some(r) => obj.num("rule", r),
+        None => obj.raw("rule", "null"),
+    };
+    obj.bool("below_floor", a.below_floor).end()
+}
+
+/// The text of `eval verdict --compare`: the line of the verdict with both
+/// intervals, and the line of the waves.
+pub fn comparison_text(c: &Comparison) -> Vec<String> {
+    let a = &c.analysis;
+    let ratio = match &a.cost_ratio {
+        Some(r) => format!("{:.2} ({:.2} to {:.2})", r.value, r.low, r.high),
+        None => "undefined".to_string(),
+    };
+    let verdict = if a.below_floor {
+        format!("{}, {}", a.verdict.name(), floor_text(a.pairs, a.evals))
+    } else if let Some(rule) = a.rule {
+        format!("{} (rule {rule})", a.verdict.name())
+    } else {
+        a.verdict.name().to_string()
+    };
+    let (t, k) = (&c.treatment, &c.control);
+    vec![
+        format!(
+            "{t} against {k}: {t} {} of {} runs passed, {k} {} of {}, difference {:+.2} ({:+.2} to {:+.2}), cost ratio {ratio}, verdict {verdict}",
+            a.with.passes,
+            a.with.runs,
+            a.without.passes,
+            a.without.runs,
+            a.difference.value,
+            a.difference.low,
+            a.difference.high,
+        ),
+        format!(
+            "waves: {} complete of {} planned; a partial wave is dropped",
+            c.waves, c.planned_waves
+        ),
+    ]
 }
 
 /// Where a verdict comes from.
@@ -788,6 +1135,8 @@ pub enum Source {
 pub struct Resolved {
     pub verdict: Option<Verdict>,
     pub source: Source,
+    /// True when the file that gave the verdict is below the floor.
+    pub below_floor: bool,
 }
 
 /// The verdict of a name: the newest result file that holds a verdict of the
@@ -803,10 +1152,11 @@ pub fn resolve(name: &str, files: &[(String, Vec<u8>)]) -> Resolved {
     candidates
         .sort_by_key(|(p, _)| std::cmp::Reverse(result_order(p.rsplit('/').next().unwrap_or(p))));
     for (path, bytes) in candidates {
-        if let Some((_, v)) = read_result(bytes).into_iter().find(|(n, _)| n == name) {
+        if let Some(i) = read_items(bytes).into_iter().find(|i| i.name == name) {
             return Resolved {
-                verdict: Some(v),
+                verdict: Some(i.verdict),
                 source: Source::Project(path.clone()),
+                below_floor: i.below_floor,
             };
         }
     }
@@ -814,10 +1164,12 @@ pub fn resolve(name: &str, files: &[(String, Vec<u8>)]) -> Resolved {
         Some(v) => Resolved {
             verdict: Some(v),
             source: Source::Release,
+            below_floor: false,
         },
         None => Resolved {
             verdict: None,
             source: Source::None,
+            below_floor: false,
         },
     }
 }
@@ -841,6 +1193,14 @@ fn result_order(base: &str) -> (String, u32, String) {
 mod tests {
     use super::*;
 
+    /// The name and the verdict of each item of a result file.
+    fn read_result(bytes: &[u8]) -> Vec<(String, Verdict)> {
+        read_items(bytes)
+            .into_iter()
+            .map(|i| (i.name, i.verdict))
+            .collect()
+    }
+
     fn pair(w: bool, o: bool) -> Pair {
         Pair {
             with_passed: w,
@@ -859,6 +1219,213 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    /// Evals with their own number of runs: each item is (runs, passes with
+    /// the skill, passes without it).
+    fn shaped(evals: &[(u32, u32, u32)]) -> Vec<Vec<Pair>> {
+        evals
+            .iter()
+            .map(|&(n, w, o)| (0..n).map(|r| pair(r < w, r < o)).collect())
+            .collect()
+    }
+
+    #[test]
+    fn nine_pairs_of_3_evals_with_a_gain_are_below_the_floor() {
+        let d = shaped(&[(3, 3, 0), (3, 3, 0), (3, 3, 0)]);
+        let a = analyze(&d);
+        assert_eq!(a.pairs, 9);
+        assert!(a.below_floor);
+        assert_eq!((a.verdict, a.rule), (Verdict::Inconclusive, None));
+        // The rules of D33 alone would give `on`: the floor is what stops it.
+        let raw = analyze_unfloored(&d);
+        assert!(!raw.below_floor);
+        assert_eq!((raw.verdict, raw.rule), (Verdict::On, Some(1)));
+        // The numbers of the analysis stay.
+        assert_eq!((a.with.passes, a.without.passes), (9, 0));
+        assert_eq!(a.difference, raw.difference);
+    }
+
+    #[test]
+    fn one_pair_with_a_gain_is_not_on() {
+        let a = analyze(&shaped(&[(1, 1, 0)]));
+        assert!(a.below_floor);
+        assert_eq!(a.verdict, Verdict::Inconclusive);
+        // A loss below the floor is not `off` either.
+        let a = analyze(&shaped(&[(3, 0, 3), (3, 0, 3), (3, 0, 3)]));
+        assert!(a.below_floor);
+        assert_eq!(a.verdict, Verdict::Inconclusive);
+    }
+
+    #[test]
+    fn the_floor_is_5_evals_and_15_pairs() {
+        let all_gain = |runs: &[u32]| {
+            let d: Vec<(u32, u32, u32)> = runs.iter().map(|&n| (n, n, 0)).collect();
+            analyze(&shaped(&d))
+        };
+        // 14 pairs of 5 evals: below. 15 pairs of 5 evals: not below.
+        assert!(all_gain(&[3, 3, 3, 3, 2]).below_floor);
+        assert!(!all_gain(&[3, 3, 3, 3, 3]).below_floor);
+        // 16 pairs of 4 evals: below, as the evals are too few.
+        assert!(all_gain(&[4, 4, 4, 4]).below_floor);
+        // 5 evals, one of them with no pair: that eval does not count.
+        assert!(all_gain(&[4, 4, 4, 4, 0]).below_floor);
+        assert!(!all_gain(&[3, 3, 3, 3, 3, 3]).below_floor);
+        let a = all_gain(&[3, 3, 3, 3, 3]);
+        assert_eq!((a.pairs, a.evals), (15, 5));
+        assert_eq!((a.verdict, a.rule), (Verdict::On, Some(1)));
+    }
+
+    #[test]
+    fn fifteen_pairs_of_5_evals_with_the_data_of_the_tdd_row_give_on() {
+        // The row `tdd` of the release: 11 passes with the skill, 0 without,
+        // in 5 evals of 3 runs.
+        let a = analyze(&shaped(&[
+            (3, 3, 0),
+            (3, 3, 0),
+            (3, 2, 0),
+            (3, 2, 0),
+            (3, 1, 0),
+        ]));
+        assert_eq!((a.with.passes, a.without.passes, a.pairs), (11, 0, 15));
+        assert!(!a.below_floor);
+        assert_eq!((a.verdict, a.rule), (Verdict::On, Some(1)));
+    }
+
+    #[test]
+    fn an_item_of_a_result_file_below_the_floor_reads_as_inconclusive() {
+        let side = r#"{"passed":true}"#;
+        let pair = |eval: &str, run: u32| {
+            format!(r#"{{"eval":"{eval}","run":{run},"with":{side},"without":{side}}}"#)
+        };
+        // A file of 0.7.1: no `below_floor`, 3 pairs of 1 eval.
+        let old = format!(
+            r#"{{"skills":[{{"name":"tdd","verdict":"on","rule":1,"pairs":[{},{},{}]}}]}}"#,
+            pair("tdd-1", 1),
+            pair("tdd-1", 2),
+            pair("tdd-1", 3)
+        );
+        assert_eq!(
+            read_result(old.as_bytes()),
+            vec![("tdd".to_string(), Verdict::Inconclusive)]
+        );
+        // The same item with 15 pairs of 5 evals keeps its verdict.
+        let list: Vec<String> = (1..=5)
+            .flat_map(|e| (1..=3).map(move |r| (e, r)))
+            .map(|(e, r)| pair(&format!("tdd-{e}"), r))
+            .collect();
+        let big = format!(
+            r#"{{"skills":[{{"name":"tdd","verdict":"on","rule":1,"pairs":[{}]}}]}}"#,
+            list.join(",")
+        );
+        assert_eq!(
+            read_result(big.as_bytes()),
+            vec![("tdd".to_string(), Verdict::On)]
+        );
+        // A half pair does not count.
+        let half = format!(
+            r#"{{"skills":[{{"name":"tdd","verdict":"on","pairs":[{}]}}]}}"#,
+            list.iter()
+                .map(|p| p.replacen(side, "null", 1))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert_eq!(
+            read_result(half.as_bytes()),
+            vec![("tdd".to_string(), Verdict::Inconclusive)]
+        );
+        // A file of 0.8.0 says it: `below_floor` decides.
+        let new = r#"{"skills":[{"name":"tdd","verdict":"inconclusive","below_floor":true}]}"#;
+        assert_eq!(
+            read_result(new.as_bytes()),
+            vec![("tdd".to_string(), Verdict::Inconclusive)]
+        );
+    }
+
+    #[test]
+    fn a_stored_below_floor_false_does_not_hide_a_count_below_the_floor() {
+        let side = r#"{"passed":true}"#;
+        let item = format!(
+            r#"{{"skills":[{{"name":"tdd","verdict":"on","below_floor":false,"pairs":[{{"eval":"tdd-1","run":1,"with":{side},"without":{side}}}]}}]}}"#
+        );
+        let items = read_items(item.as_bytes());
+        assert_eq!(items.len(), 1);
+        assert!(items[0].below_floor);
+        assert_eq!(items[0].verdict, Verdict::Inconclusive);
+        // With no `pairs`, the stored key is all that the reader has.
+        let bare = r#"{"skills":[{"name":"tdd","verdict":"on","below_floor":true}]}"#;
+        assert!(read_items(bare.as_bytes())[0].below_floor);
+        let bare = r#"{"skills":[{"name":"tdd","verdict":"on","below_floor":false}]}"#;
+        assert!(!read_items(bare.as_bytes())[0].below_floor);
+    }
+
+    /// A result of `--arms` with the arms `a` and `b`, and the evals `evals`.
+    fn arms_file(arms: &str, evals: &str) -> Vec<u8> {
+        format!(r#"{{"arms":{arms},"evals":[{evals}]}}"#).into_bytes()
+    }
+
+    fn arms_eval(id: &str, results: &[&str]) -> String {
+        format!(
+            r#"{{"id":"{id}","runs":2,"max_budget_usd":1,"results":[{}]}}"#,
+            results.join(",")
+        )
+    }
+
+    fn arms_run(run: u32, cost_a: &str) -> String {
+        format!(
+            r#"{{"run":{run},"arms":{{"a":{{"passed":true,"cost_usd":{cost_a}}},"b":{{"passed":false,"cost_usd":1}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn compare_refuses_a_file_with_a_repeat_or_a_negative_cost() {
+        let ok = arms_file(
+            r#"["a","b"]"#,
+            &arms_eval("e-1", &[&arms_run(1, "1"), &arms_run(2, "1")]),
+        );
+        assert!(compare(&ok, "a", "b").is_ok());
+        // The same run twice in one eval.
+        let twice = arms_file(
+            r#"["a","b"]"#,
+            &arms_eval("e-1", &[&arms_run(1, "1"), &arms_run(1, "1")]),
+        );
+        assert_eq!(compare(&twice, "a", "b"), Err(CompareError::NotArms));
+        // The same eval twice.
+        let one = arms_eval("e-1", &[&arms_run(1, "1")]);
+        let evals = arms_file(r#"["a","b"]"#, &format!("{one},{one}"));
+        assert_eq!(compare(&evals, "a", "b"), Err(CompareError::NotArms));
+        // The same arm twice in the list of arms.
+        let arms = arms_file(r#"["a","a"]"#, &one);
+        assert_eq!(compare(&arms, "a", "b"), Err(CompareError::NotArms));
+        // A negative cost is a fault of the file, and a null cost is the budget.
+        let neg = arms_file(r#"["a","b"]"#, &arms_eval("e-1", &[&arms_run(1, "-1")]));
+        assert_eq!(compare(&neg, "a", "b"), Err(CompareError::NotArms));
+        let null = arms_file(r#"["a","b"]"#, &arms_eval("e-1", &[&arms_run(1, "null")]));
+        assert!(compare(&null, "a", "b").is_ok());
+        // The same name twice on the command line stays a usage error.
+        assert!(matches!(
+            compare(&ok, "a", "a"),
+            Err(CompareError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn each_row_of_the_release_is_above_the_floor() {
+        for (name, row) in computed() {
+            let files = load();
+            let recs = &files
+                .iter()
+                .find(|(s, _)| *s == row.batch)
+                .expect("the batch of the row")
+                .1;
+            let a = analysis_of(recs, &name).0;
+            assert!(
+                !a.below_floor,
+                "{name}: {} pairs of {} evals",
+                a.pairs, a.evals
+            );
+            assert!(a.pairs >= 15 && a.evals >= 5, "{name}");
+        }
     }
 
     #[test]
@@ -1112,6 +1679,22 @@ mod tests {
         "claude_code",
     ];
 
+    /// The keys of a record of 0.8.0 (ADR 0030): the 9 keys, and then 3.
+    const RECORD_KEYS_080: [&str; 12] = [
+        "skill",
+        "eval",
+        "run",
+        "arm",
+        "pass",
+        "cost",
+        "tokens",
+        "models",
+        "claude_code",
+        "harness",
+        "turns",
+        "seconds",
+    ];
+
     struct Rec {
         skill: String,
         eval: String,
@@ -1148,13 +1731,30 @@ mod tests {
             return Err("no object".into());
         };
         let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
-        if keys != RECORD_KEYS {
+        // A record of 9 keys (0.7.x) reads as `project`, `null`, `null`.
+        let long = keys == RECORD_KEYS_080;
+        if keys != RECORD_KEYS && !long {
             return Err(format!("keys {keys:?}"));
         }
         let text = |k: &str| v.get(k).as_str().map(str::to_string);
+        let harness_batch = long && v.get("skill").as_str() == Some("harness");
         let skill = text("skill")
-            .filter(|s| names().contains(&s.as_str()))
+            .filter(|s| harness_batch || names().contains(&s.as_str()))
             .ok_or("skill")?;
+        if long {
+            let arm = v.get("harness").as_str().ok_or("harness")?;
+            crate::eval_run::HarnessArm::parse(arm).map_err(|_| "harness")?;
+            match v.get("turns") {
+                json::Value::Null => {}
+                json::Value::Num(n) if n.fract() == 0.0 && *n >= 0.0 => {}
+                _ => return Err("turns".into()),
+            }
+            match v.get("seconds") {
+                json::Value::Null => {}
+                json::Value::Num(n) if n.is_finite() && *n >= 0.0 => {}
+                _ => return Err("seconds".into()),
+            }
+        }
         let eval = text("eval")
             .filter(|s| crate::eval_records::valid_eval_id(s))
             .ok_or("eval")?;
@@ -1165,6 +1765,8 @@ mod tests {
         let with = match v.get("arm").as_str() {
             Some("with") => true,
             Some("without") => false,
+            // A record of a batch of `--arms` names its harness arm.
+            Some(a) if harness_batch && v.get("harness").as_str() == Some(a) => false,
             _ => return Err("arm".into()),
         };
         let pass = match v.get("pass") {
@@ -1245,12 +1847,15 @@ mod tests {
                     "{name}: lines"
                 );
                 assert!(!text.contains('\r'), "{name}: CR");
+                // A batch of `--arms` has the skill `harness`. It never enters
+                // the table of the skills (ADR 0030).
                 let recs = text
                     .lines()
                     .enumerate()
                     .map(|(i, l)| {
                         read_record(l).unwrap_or_else(|e| panic!("{name}:{}: {e}", i + 1))
                     })
+                    .filter(|r| r.skill != "harness")
                     .collect();
                 Some((stem, recs))
             })
@@ -1433,6 +2038,43 @@ mod tests {
             "RELEASE does not agree with bench/results/evals. Paste this text:\n{}",
             rust_text(&rows)
         );
+    }
+
+    #[test]
+    fn the_reader_of_the_records_takes_9_or_12_keys_and_skips_the_batch_of_arms() {
+        let nine = r#"{"skill":"tdd","eval":"tdd-1","run":1,"arm":"with","pass":true,"cost":0.5,"tokens":null,"models":["claude-a"],"claude_code":"2.1.326"}"#;
+        assert!(read_record(nine).is_ok());
+        let twelve = nine.replace(
+            "\"claude_code\":\"2.1.326\"",
+            "\"claude_code\":\"2.1.326\",\"harness\":\"lean\",\"turns\":3,\"seconds\":12.5",
+        );
+        assert!(
+            read_record(&twelve).is_ok(),
+            "{:?}",
+            read_record(&twelve).err()
+        );
+        // The 3 keys are in their order, and each has its form.
+        for bad in [
+            twelve.replace("\"turns\":3", "\"turns\":-1"),
+            twelve.replace("\"seconds\":12.5", "\"seconds\":-0.5"),
+            twelve.replace("\"harness\":\"lean\"", "\"harness\":\"other\""),
+            twelve.replace(
+                "\"turns\":3,\"seconds\":12.5",
+                "\"seconds\":12.5,\"turns\":3",
+            ),
+        ] {
+            assert!(read_record(&bad).is_err(), "{bad}");
+        }
+        // A record of a batch of arms: the skill `harness` and the arm name.
+        let batch = twelve
+            .replace("\"skill\":\"tdd\"", "\"skill\":\"harness\"")
+            .replace("\"arm\":\"with\"", "\"arm\":\"lean\"");
+        assert_eq!(
+            read_record(&batch).map(|r| r.skill),
+            Ok("harness".to_string())
+        );
+        // Only a record of 12 keys can have the skill `harness`.
+        assert!(read_record(&nine.replace("tdd\"", "harness\"")).is_err());
     }
 
     #[test]
@@ -1655,5 +2297,122 @@ mod tests {
         println!("share of rule 1: {:.3}", share(rule1));
         println!("share of rule 2: {:.3}", share(rule2));
         println!("share of on:     {:.3}", share(on));
+    }
+
+    /// A uniform draw in [0, 1).
+    fn uniform(g: &mut SplitMix64) -> f64 {
+        (g.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// One trial of the floor simulation (D59 and D61): `evals` evals of
+    /// `runs` runs. The pass rate of the control is drawn from 0.2 to 0.8 for
+    /// each eval, and the treatment has that rate plus `gain`. The arms are
+    /// independent. A run of the treatment costs `cost` USD, and a run of
+    /// the control costs 1 USD.
+    fn trial(
+        g: &mut SplitMix64,
+        evals: usize,
+        runs: usize,
+        gain: f64,
+        cost: f64,
+    ) -> Vec<Vec<Pair>> {
+        (0..evals)
+            .map(|_| {
+                let base = 0.2 + 0.6 * uniform(g);
+                (0..runs)
+                    .map(|_| Pair {
+                        with_passed: uniform(g) < base + gain,
+                        with_cost: cost,
+                        without_passed: uniform(g) < base,
+                        without_cost: 1.0,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The simulation of the floor (D59) on the real bootstrap: the share of
+    /// trials with `on` for the sizes of the table of D59, with and without
+    /// the floor, and the power of the protocol of D61 (10 evals of 5 runs).
+    /// Run it with
+    /// `cargo test --release --bin spec-dna simulation_of_the_floor -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "the simulation of the floor (D59, D61); it takes some seconds in release"]
+    fn simulation_of_the_floor() {
+        // The row of 1 pair needs more trials: its share of `on` is a
+        // number to compare with the exact value below.
+        const TRIALS: u32 = 600;
+        const TRIALS_ONE: u32 = 20_000;
+        println!(
+            "simulation of the floor: {TRIALS} trials ({TRIALS_ONE} for 1 pair), pass rates of the control from 0.2 to 0.8"
+        );
+        println!(
+            "evals x runs | pairs | on, no gain | on, gain 0.20 | on with the floor (no gain, gain 0.20)"
+        );
+        for (k, (evals, runs)) in [(1, 1), (1, 3), (3, 3), (5, 3), (10, 3)]
+            .into_iter()
+            .enumerate()
+        {
+            let mut share = [[0u32; 2]; 2];
+            let trials = if evals * runs == 1 {
+                TRIALS_ONE
+            } else {
+                TRIALS
+            };
+            for (j, gain) in [0.0, 0.2].into_iter().enumerate() {
+                let mut g = SplitMix64::new(2_000_000 + 100 * k as u64 + j as u64);
+                for _ in 0..trials {
+                    let d = trial(&mut g, evals, runs, gain, 1.0);
+                    share[j][0] += u32::from(analyze_unfloored(&d).verdict == Verdict::On);
+                    share[j][1] += u32::from(analyze(&d).verdict == Verdict::On);
+                }
+            }
+            let f = |n: u32| f64::from(n) / f64::from(trials);
+            println!(
+                "{evals} x {runs} | {} | {:.2} | {:.2} | {:.2}, {:.2}",
+                evals * runs,
+                f(share[0][0]),
+                f(share[1][0]),
+                f(share[0][1]),
+                f(share[1][1])
+            );
+            // One pair is `on` only when the arm with the skill passes and
+            // the other fails. The control rate `b` is uniform from 0.2 to
+            // 0.8, so the share is E[b (1 - b)] = 0.22 with no gain, and
+            // E[(b + 0.2) (1 - b)] = 0.32 with a gain of 0.20. (The lab table
+            // of ADR 0030 had 0.29 and 0.44: it did not follow this model.)
+            if evals * runs == 1 {
+                assert!((f(share[0][0]) - 0.22).abs() < 0.02, "{}", f(share[0][0]));
+                assert!((f(share[1][0]) - 0.32).abs() < 0.02, "{}", f(share[1][0]));
+            }
+            // Below the floor, no trial is `on`.
+            if evals * runs < FLOOR_PAIRS || evals < FLOOR_EVALS {
+                assert_eq!(share[0][1] + share[1][1], 0);
+            }
+        }
+        // The power of the protocol of D61: 10 evals of 5 runs.
+        const POWER_TRIALS: u32 = 400;
+        println!("power of D61: {POWER_TRIALS} trials of 10 evals x 5 runs");
+        for (gain, cost) in [(0.0, 1.0), (0.2, 1.0), (0.3, 1.0), (0.0, 1.25)] {
+            let mut g = SplitMix64::new(3_000_000 + (gain * 100.0) as u64 + (cost * 1000.0) as u64);
+            let (mut better, mut no_gain_at_cost) = (0u32, 0u32);
+            for _ in 0..POWER_TRIALS {
+                let a = analyze(&trial(&mut g, 10, 5, gain, cost));
+                let is_better = a.verdict == Verdict::On;
+                better += u32::from(is_better);
+                no_gain_at_cost += u32::from(
+                    !is_better
+                        && a.difference.high >= 0.0
+                        && a.difference.high < 0.20
+                        && a.cost_ratio.is_some_and(|r| r.low > 1.0),
+                );
+            }
+            let f = |n: u32| f64::from(n) / f64::from(POWER_TRIALS);
+            println!(
+                "true gain {gain:.2}, cost ratio {cost:.2}: better {:.2}, no-gain-at-cost {:.2}",
+                f(better),
+                f(no_gain_at_cost)
+            );
+        }
     }
 }

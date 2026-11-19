@@ -11,6 +11,7 @@
 use crate::adapters::VERSION;
 use crate::config::{Config, Evals};
 use crate::evals::{self, Eval};
+use crate::harness::{Harness, Level, Model, Role};
 use crate::json::{self, Obj, Value};
 use crate::repo::{Fatal, Repo};
 use std::fs;
@@ -41,6 +42,84 @@ pub struct Opts {
     pub dry_run: bool,
     pub isolate: bool,
     pub json: bool,
+    /// `--harness <arm>` (D57): the harness of the copy.
+    pub harness: HarnessArm,
+    /// True when `--harness` is set. The arm is then named: each arm, also
+    /// `project`, gets the model flags, the pin and the adapter line.
+    pub named: bool,
+}
+
+/// A harness arm (D57, ADR 0030): the team that the runner writes into the
+/// copy of a run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HarnessArm {
+    /// The files of the project that runs the command. 0.7.1 does this.
+    Project,
+    None,
+    Lean,
+    /// `lean` with the role `advisor` set to `none`.
+    LeanNoAdvisor,
+    Full,
+}
+
+impl HarnessArm {
+    /// The names, in the order that the help text and the messages use.
+    pub const ALL: [HarnessArm; 5] = [
+        HarnessArm::None,
+        HarnessArm::Lean,
+        HarnessArm::LeanNoAdvisor,
+        HarnessArm::Full,
+        HarnessArm::Project,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            HarnessArm::Project => "project",
+            HarnessArm::None => "none",
+            HarnessArm::Lean => "lean",
+            HarnessArm::LeanNoAdvisor => "lean-no-advisor",
+            HarnessArm::Full => "full",
+        }
+    }
+
+    /// Reads an arm name. An unknown name is a usage error.
+    pub fn parse(s: &str) -> Result<HarnessArm, Fatal> {
+        HarnessArm::ALL
+            .into_iter()
+            .find(|a| a.name() == s)
+            .ok_or_else(|| {
+                let names: Vec<&str> = HarnessArm::ALL.iter().map(|a| a.name()).collect();
+                Fatal::Usage(format!("`{s}` is no harness arm; use {}", names.join(", ")))
+            })
+    }
+
+    /// The harness that the arm writes into the copy, or `None` for `project`.
+    /// Each built-in arm has no skill, no `REVIEW.md` and no hook
+    /// `protect-tests`, so the arms differ only in the level and the roles.
+    pub fn harness(self) -> Option<Harness> {
+        let mut h = match self {
+            HarnessArm::Project => return None,
+            HarnessArm::None => Harness::new(Level::None),
+            HarnessArm::Lean => Harness::new(Level::Lean),
+            HarnessArm::LeanNoAdvisor => {
+                let mut h = Harness::new(Level::Lean);
+                h.cfg_mut(Role::Advisor).model = Model::None;
+                h
+            }
+            HarnessArm::Full => Harness::new(Level::Full),
+        };
+        h.skills = Vec::new();
+        h.review_md = false;
+        Some(h)
+    }
+}
+
+/// The `--model` and `--effort` that the runner passes in a named arm: the
+/// values of the orchestrator of `lean`, in each arm (Q20).
+fn model_flags() -> (String, String) {
+    let lean = Harness::new(Level::Lean);
+    let c = lean.cfg(Role::Orchestrator);
+    (c.model.name().to_string(), c.effort.name().to_string())
 }
 
 /// An eval with the values that `eval run` uses: the `--runs` option replaces
@@ -51,6 +130,8 @@ pub(crate) struct Planned {
     pub(crate) pass_at: u32,
     /// The files of the fixture: the source, and the path in the copy.
     pub(crate) fixture: Vec<(PathBuf, String)>,
+    /// The files of the change (D60), or an empty list.
+    pub(crate) change: Vec<(PathBuf, String)>,
 }
 
 /// The result of one run.
@@ -77,6 +158,10 @@ pub(crate) struct RunResult {
     pub(crate) models: Vec<String>,
     /// The sums of the token counts over `modelUsage`, or `None`.
     pub(crate) tokens: Option<Tokens>,
+    /// The `num_turns` of the result of `claude`, or `None`.
+    pub(crate) turns: Option<u32>,
+    /// The wall time of the agent process, in seconds with 1 decimal.
+    pub(crate) seconds: f64,
 }
 
 /// The token counts of one run: the sums over the entries of `modelUsage`.
@@ -124,6 +209,8 @@ struct Report {
     outcomes: Vec<Outcome>,
     /// The number of runs that did not start, after a stop by the cap.
     stopped: Option<u32>,
+    /// The harness of the copy of each run.
+    harness: HarnessArm,
 }
 
 impl Report {
@@ -188,18 +275,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     let mut plan = Vec::new();
     for eval in selected {
         let runs = o.runs.unwrap_or(eval.runs);
-        let pass_at = eval.pass_at.min(runs);
-        let fixture = copy_list(
-            repo,
-            &format!(":(literal){}", eval.fixture),
-            &format!("{}/", eval.fixture),
-        )?;
-        plan.push(Planned {
-            eval,
-            runs,
-            pass_at,
-            fixture,
-        });
+        plan.push(plan_eval(repo, eval, runs)?);
     }
     let total_runs: u32 = plan.iter().map(|p| p.runs).sum();
     let estimate: f64 = plan
@@ -238,6 +314,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         estimate,
         outcomes: Vec::new(),
         stopped: None,
+        harness: o.harness,
     };
     let mut ctx = Ctx {
         limits: Limits::from_env()?,
@@ -246,7 +323,12 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         check_sh,
         isolate: o.isolate,
         counter: 0,
+        arm: o.harness,
+        named: o.named,
     };
+    let arm = o.harness;
+    let named = o.named;
+    let edit = |dir: &Path| crate::eval_ab::write_harness_arm(dir, arm, &[], named);
     let mut spend = 0.0;
     let mut started_runs = 0;
     'evals: for p in &plan {
@@ -259,7 +341,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         };
         for n in 1..=p.runs {
             eprintln!("eval run: {} run {n} of {}", p.eval.id, p.runs);
-            let result = match one_run(&mut ctx, p) {
+            let result = match one_attempt(&mut ctx, p, &edit, None) {
                 Ok(r) => r,
                 Err(e) => {
                     let sofar = spend + outcome.spend();
@@ -311,6 +393,28 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     Ok(report.exit_code())
 }
 
+/// The plan of one eval: its runs, its pass-at and the files of its fixture
+/// and of its change.
+pub(crate) fn plan_eval(repo: &Repo, eval: Eval, runs: u32) -> Result<Planned, Fatal> {
+    let pass_at = eval.pass_at.min(runs);
+    let fixture = copy_list(
+        repo,
+        &format!(":(literal){}", eval.fixture),
+        &format!("{}/", eval.fixture),
+    )?;
+    let change = match &eval.change {
+        Some(c) => copy_list(repo, &format!(":(literal){c}"), &format!("{c}/"))?,
+        None => Vec::new(),
+    };
+    Ok(Planned {
+        eval,
+        runs,
+        pass_at,
+        fixture,
+        change,
+    })
+}
+
 /// Checks the value of `--out`: a folder below the repository root, and not
 /// `[evals] dir`, because the check SD506 reads each `*.json` file there.
 pub(crate) fn normalize_out(path: &str, dir: &str) -> Result<String, Fatal> {
@@ -342,7 +446,7 @@ pub(crate) fn normalize_out(path: &str, dir: &str) -> Result<String, Fatal> {
 /// Reads and checks each eval file of the working tree: the tracked files, and
 /// the untracked files that git does not ignore. It returns the evals in the
 /// order of their ids.
-fn load_evals(repo: &Repo, table: &Evals) -> Result<Vec<Eval>, Fatal> {
+pub(crate) fn load_evals(repo: &Repo, table: &Evals) -> Result<Vec<Eval>, Fatal> {
     load_evals_in(repo, table, &table.dir, &|dir| {
         format!("no eval file in `{dir}`; an eval is the file `{dir}/<id>.json`")
     })
@@ -413,7 +517,7 @@ pub(crate) fn read_limited(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> 
 }
 
 /// Selects the evals of the ids. With no id, it selects each eval.
-fn select(all: Vec<Eval>, ids: &[String], dir: &str) -> Result<Vec<Eval>, Fatal> {
+pub(crate) fn select(all: Vec<Eval>, ids: &[String], dir: &str) -> Result<Vec<Eval>, Fatal> {
     if ids.is_empty() {
         return Ok(all);
     }
@@ -567,6 +671,13 @@ pub(crate) struct Ctx {
     pub(crate) check_sh: PathBuf,
     pub(crate) isolate: bool,
     pub(crate) counter: u32,
+    /// The harness of the copy (D57). `Project` copies the harness files of
+    /// the project. Another arm copies none, and its `edit` writes the arm.
+    pub(crate) arm: HarnessArm,
+    /// True for `--arms` and `--harness`: each arm, also `project`, gets the
+    /// same `--model` and `--effort`, so the main model never differs between
+    /// the arms. A run with no named arm keeps the command line of 0.7.1.
+    pub(crate) named: bool,
 }
 
 /// A temporary folder. The drop removes it, also after an error.
@@ -676,11 +787,6 @@ fn copy_files(dir: &Path, files: &[(PathBuf, String)]) -> Result<(), Fatal> {
     Ok(())
 }
 
-/// Makes the copy, runs `claude` and the checks, and removes the copy.
-fn one_run(ctx: &mut Ctx, p: &Planned) -> Result<RunResult, Fatal> {
-    one_attempt(ctx, p, &|_| Ok(()), None)
-}
-
 /// One attempt of a run. `edit` changes the copy after the files are copied
 /// and before the base commit (`--ab` uses it for the arm). `deny` is the
 /// value of `--disallowedTools`, which goes after the place of
@@ -694,10 +800,12 @@ pub(crate) fn one_attempt(
     let temp = make_temp(&mut ctx.counter)?;
     let dir = temp.0.as_path();
     copy_files(dir, &p.fixture)?;
-    if ctx.merge_instructions {
-        copy_harness_merged(dir, &ctx.harness)?;
-    } else {
-        copy_files(dir, &ctx.harness)?;
+    if ctx.arm == HarnessArm::Project {
+        if ctx.merge_instructions {
+            copy_harness_merged(dir, &ctx.harness)?;
+        } else {
+            copy_files(dir, &ctx.harness)?;
+        }
     }
     edit(dir)?;
     let hooks = dir.join(".git").join("no-hooks");
@@ -722,10 +830,39 @@ pub(crate) fn one_attempt(
             "spec-dna eval base",
         ],
     )?;
-    let base = git_in(dir, &["rev-parse", "HEAD"])?;
     if let Some(branch) = p.eval.switch_branch() {
         git_in(dir, &["switch", "-q", "-c", branch])?;
     }
+    if !p.change.is_empty() {
+        // D60: the files of the change are one commit on the branch, so the
+        // diff against `main` shows them.
+        copy_files(dir, &p.change)?;
+        git_in(dir, &["add", "-A"])?;
+        git_in(
+            dir,
+            &[
+                "-c",
+                "user.name=spec-dna",
+                "-c",
+                "user.email=eval@spec-dna.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                &format!("core.hooksPath={hooks}"),
+                "commit",
+                "-q",
+                "--no-verify",
+                "--allow-empty",
+                "-m",
+                "spec-dna eval change",
+            ],
+        )?;
+    }
+    // The base of the checks is the commit before the agent starts: the commit
+    // of the change comes before it, so a check like `tests_unchanged` does
+    // not see the change as a diff. The branch `main` is the base of the diff
+    // that the agent sees.
+    let base = git_in(dir, &["rev-parse", "HEAD"])?;
 
     let mut cmd = Command::new("claude");
     cmd.arg("-p").arg(&p.eval.task);
@@ -747,6 +884,10 @@ pub(crate) fn one_attempt(
         "--permission-mode",
         "dontAsk",
     ]);
+    if ctx.named {
+        let (model, effort) = model_flags();
+        cmd.args(["--model", &model, "--effort", &effort]);
+    }
     if ctx.isolate {
         cmd.args(["--setting-sources", "project", "--strict-mcp-config"]);
     }
@@ -758,6 +899,7 @@ pub(crate) fn one_attempt(
     neutral_git_env(&mut cmd);
     binary_first_on_path(&mut cmd);
     own_process_group(&mut cmd);
+    let agent_start = Instant::now();
     let mut child = cmd.spawn().map_err(|e| start_failed(&e))?;
     let out_reader = child
         .stdout
@@ -769,6 +911,8 @@ pub(crate) fn one_attempt(
         .map(|r| std::thread::spawn(move || tee_stderr(r)));
     let ended = wait_limited(&mut child, ctx.limits.agent)
         .map_err(|e| Fatal::Io(format!("cannot wait for `claude`: {e}")))?;
+    // The wall time of the agent process, with 1 decimal.
+    let seconds = (agent_start.elapsed().as_secs_f64() * 10.0).round() / 10.0;
     let stdout = out_reader.and_then(|h| h.join().ok()).unwrap_or_default();
     let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
     if ended == Ended::Interrupted {
@@ -785,6 +929,8 @@ pub(crate) fn one_attempt(
             interrupted: true,
             models: Vec::new(),
             tokens: None,
+            turns: None,
+            seconds: 0.0,
         });
     }
     let timed_out = ended == Ended::TimedOut;
@@ -804,6 +950,7 @@ pub(crate) fn one_attempt(
     }
     let models = result_models(&stdout);
     let tokens = result_tokens(&stdout);
+    let turns = result_turns(&stdout);
 
     let mut checks = Vec::new();
     for c in &p.eval.checks {
@@ -843,6 +990,8 @@ pub(crate) fn one_attempt(
                 interrupted: true,
                 models,
                 tokens,
+                turns,
+                seconds,
             });
         }
         if ended == Ended::TimedOut {
@@ -864,6 +1013,8 @@ pub(crate) fn one_attempt(
         interrupted: false,
         models,
         tokens,
+        turns,
+        seconds,
     })
 }
 
@@ -1140,6 +1291,17 @@ fn result_models(stdout: &[u8]) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// The `num_turns` of the result of `claude`: an integer of 0 or more, else
+/// `None`.
+fn result_turns(stdout: &[u8]) -> Option<u32> {
+    match result_object(stdout)?.get("num_turns") {
+        Value::Num(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 1e6 => {
+            Some(*n as u32)
+        }
+        _ => None,
+    }
 }
 
 /// The sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`,
@@ -1502,7 +1664,17 @@ fn report_json(r: &Report) -> String {
                 Some(c) => obj.num("cost_usd", r6(c)),
                 None => obj.raw("cost_usd", "null"),
             };
-            obj.raw("checks", &checks).end()
+            let obj = obj.raw("checks", &checks);
+            let obj = match &x.tokens {
+                Some(t) => obj.raw("tokens", &tokens_json(t)),
+                None => obj.raw("tokens", "null"),
+            };
+            let obj = obj.strs("models", &x.models);
+            let obj = match x.turns {
+                Some(n) => obj.num("turns", n),
+                None => obj.raw("turns", "null"),
+            };
+            obj.num("seconds", x.seconds).end()
         }));
         Obj::new()
             .str("id", &o.id)
@@ -1520,6 +1692,7 @@ fn report_json(r: &Report) -> String {
         .opt_str("claude_code", r.claude_code.as_deref())
         .str("started", &r.started)
         .str("evals_dir", &r.evals_dir)
+        .str("harness", r.harness.name())
         .num("min_pass_rate", r6(r.min_pass_rate))
         .num("max_total_usd", r6(r.max_total_usd))
         .num("estimate_usd", r6(r.estimate))
@@ -1530,6 +1703,16 @@ fn report_json(r: &Report) -> String {
         None => obj.raw("pass_rate", "null"),
     };
     obj.bool("passed", r.passed()).raw("evals", &evals).end()
+}
+
+/// The JSON of the token counts of a run.
+pub(crate) fn tokens_json(t: &Tokens) -> String {
+    Obj::new()
+        .num("in", t.input)
+        .num("out", t.output)
+        .num("cache_read", t.cache_read)
+        .num("cache_write", t.cache_write)
+        .end()
 }
 
 /// Makes the folder of `--out`, and checks that it is a folder.
@@ -1754,6 +1937,8 @@ mod tests {
                     interrupted: false,
                     models: Vec::new(),
                     tokens: None,
+                    turns: None,
+                    seconds: 0.0,
                 })
                 .collect(),
         }
@@ -1780,6 +1965,7 @@ mod tests {
             estimate: 0.0,
             outcomes: passes.iter().map(|p| outcome(1, 1, &[*p])).collect(),
             stopped: None,
+            harness: HarnessArm::Project,
         };
         assert!(mk(&[true, false], 0.5).passed());
         assert!(!mk(&[true, false], 0.51).passed());

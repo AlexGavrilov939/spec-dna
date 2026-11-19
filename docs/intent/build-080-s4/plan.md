@@ -25,6 +25,7 @@ status: approved
 
 - The brief must be a function of the tree of one commit. The design lists the cases that it cannot prove.
 - The `toml` crate of the build has no writer, so the writer is code of the slice.
+- S1 did not build the removal of the agent `acceptor` under `eval run --ab --harness`, because the skill and the role come in this slice; build it here (design D57, D62).
 
 ## Proof
 
