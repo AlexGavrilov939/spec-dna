@@ -12,13 +12,13 @@ The gate keeps the requirements true, but 3 things above them have no check:
 - A rule of the layer `rules` must stay true, and no change says which rule it can break.
 - The work differs from the plan or the spec, and the record of the difference dies with the plan at `finish`.
 
-The owner decided on 2026-11-18: `[owners]` maps a path glob to the needed reviewers, a person or an agent role, with no R, A, C or I letters and no list of personas. A rule can carry a stable id, a spec declares the invariants that bear on it, `check` resolves the ids, and the acceptance record answers each one. During the build, the agent records each deviation in one section of the change. `finish` prints the deviations and needs the acknowledgement of the owner. How do the 3 rules fit the record of [ADR 0025](0025-independent-acceptance.md) and the 3 approval modes?
+The owner decided on 2026-11-18: `[owners]` maps a path glob to the needed reviewers, a person or an agent role, with no R, A, C or I letters and no list of personas. A rule can carry a stable id, a spec declares the invariants that bear on it, `check` resolves the ids, and the acceptance record answers each one. During the build, the agent records each deviation in one section of the change. `finish` prints the deviations and needs the acknowledgement of the owner. On 2026-11-19 the owner moved the persons of `[owners]` and the mode `review` to 0.8.1, so 0.8.0 keeps the agent roles. The owner also made the invariants and the owner roles opt-in by a key in the profile `standard`, and turned the 3 mechanisms off in `lite`. How do the 3 rules fit the record of [ADR 0025](0025-independent-acceptance.md) and the approval modes `base` and `branch`?
 
 Constraints:
 
 - One record per change. The owners, the answers and the deviations are parts of it, not new stores.
 - Reuse the ids, the aliases and the pinned hashes of [ADR 0001](0001-information-model.md).
-- `check` has no network. The persons of `review` are checked by `spec-dna reviews` ([ADR 0026](0026-approval-through-the-code-host.md)).
+- `check` has no network.
 - An absent table or section keeps the behavior of 0.7.1.
 
 Evidence ([design 0.8.0](../design/0.8.0.md#1-evidence-and-sources)):
@@ -32,7 +32,7 @@ Evidence ([design 0.8.0](../design/0.8.0.md#1-evidence-and-sources)):
 
 For the owners:
 
-1. A table `[owners]`: a glob to a list of roles and persons.
+1. A table `[owners]`: a glob to a list of roles.
 2. Read the code owners file of the host.
 3. The field `owner` of the front matter of a document.
 
@@ -54,17 +54,16 @@ Option 1, option (a) and option (i). The design page gives the detail in [D5](..
 
 ### Owners by path
 
-- `[owners]` maps a glob from the root to a list of entries. A role is a name of lowercase letters, digits and `-`, at most 40 characters. A person is `@<login>` or an e-mail, in the form of the mode: an e-mail with `branch`, a login or a hidden address that gives one with `review`, either with `base`. A bad glob or entry, or a person in a form that the mode can never match, is exit code 3.
+- `[owners]` maps a glob from the root to a list of role names. A role is a name of lowercase letters, digits and `-`, at most 40 characters. A bad glob or another entry, such as a login or an e-mail, is exit code 3. The persons of `[owners]` moved to 0.8.1 with [ADR 0026](0026-approval-through-the-code-host.md).
 - Each glob that matches a touched path applies. The result is the union, so no order and no last match exist.
 - The touched paths of a change are the paths of its diff against the lifecycle base. When the diff holds more than one change, a path counts for a change whose `Files` covers it. The folder of the change and the archive do not count.
-- Each role of a matched glob needs an acceptor with that role in the record (SD933). The acceptor runs the skill `accept` with `--role <name>`.
-- The persons of one glob form a group, and one person of the group approves. With `branch`, that person runs `spec-dna approve <slug> acceptance` (SD934). With `review`, that login approves the head commit. With `base`, spec-dna checks nothing, and `check` prints a note.
-- `approvers` approve the artifacts and the deviations. A person of `[owners]` approves paths. One person in both lists satisfies both with one act.
+- Each role of a matched glob needs an acceptor with that role in the record (SD933). The builder runs `spec-dna accept <slug> --brief --role <name>` for that acceptor.
+- The table is the switch: with no table, no role is needed. The table needs the acceptance, so it has no effect in `lite`.
 
 ### Invariants
 
 - The id of an invariant is the requirement id of a rule. No new id: a second id would give one sentence 2 names, and the requirement id is already stable.
-- A spec declares its invariants in the optional section `Invariants`, one item `<doc-id>#<key>@<hash>` each, or `none`. `spec-dna show` prints the hash.
+- The key `[change] invariants = true` turns the mechanism on, and `init` writes it in `strict`. With the key, the spec template has the section `Invariants`. A spec declares its invariants there, one item `<doc-id>#<key>@<hash>` each, or `none`. `spec-dna show` prints the hash. Without the key, a section `Invariants` is plain text. A key, not the section alone: the skill and the template ask for the section, so the section is no act of the project.
 - `check` resolves each item. An item that does not have the form, names no requirement, or names a requirement outside a `rule` document gives SD936. A hash that differs from the rule now gives SD937, an error for a spec that the diff touches, as SD914. For an item whose rule the delta of the same spec changes, SD937 compares the hash of the item with the hash of that delta line, not with the rule now: the delta line pins the old text, and after `finish` the rule has the new text by design. A rule that the same delta adds or removes is no invariant of the change, so SD936 reports the item before the approval. When the default branch changes a pinned rule, the author pins it again in a pull request of its own, as for SD914.
 - The record answers each item with the same pin: `held`, `not-affected` with a reason, or `violated` with a reason. An absent answer gives SD938. `violated` makes the result `rejected`.
 - A change with no spec declares no invariant. The skill `accept` still reads the rules that `context` serves for the files of the change.
@@ -74,12 +73,12 @@ Option 1, option (a) and option (i). The design page gives the detail in [D5](..
 - The plan has the optional section `Deviations`. The builder adds an item `- <id> (<kind>): <text>` in the commit of the work. The kind is `plan` (files, tasks, order, approach) or `spec` (the behavior differs from a requirement or a delta line).
 - A `spec` item names a delta line of the spec (`Delta: <verb> <doc-id>#<key>`), or a change folder of the tree (`Follow-up: <slug>`). If it names neither, the item gives SD940. An item of a bad form gives SD939.
 - The acceptor copies each item into the record with the verdict `accepted` or `rejected`. An item with no copy, or with another text, gives SD938.
-- `finish` prints each deviation, and `finish --json` gets the list `deviations`. A record with a deviation needs an acknowledgement: the merge with `base`, an approval commit of an approver with `branch`, an approving review with `review`.
+- `finish` prints each deviation, and `finish --json` gets the list `deviations`. A record with a deviation needs an acknowledgement: the merge with `base`, an approval commit of an approver with `branch`. The deviations are a part of the acceptance, so they need no key.
 - After `finish`, the deviations live in the archived record. In the pull request of `finish`, the checks read the plan of the base tree, so the record is their only carrier.
 
 ### Upgrade
 
-`Invariants` is read only in a spec, and `Deviations` only in a plan, that a commit added at a pin of 0.8.0 or later. A section of the same name in an older artifact keeps its meaning. No commit found gives the rule of 0.8.0.
+`upgrade` adds no key. `Invariants` is read only with the key and in a spec, and `Deviations` only in a plan, that a commit added at a pin of 0.8.0 or later. A section of the same name in an older artifact keeps its meaning. No commit found gives the rule of 0.8.0.
 
 ### Rejected
 
@@ -93,13 +92,12 @@ Option 1, option (a) and option (i). The design page gives the detail in [D5](..
 
 ### Consequences
 
-- Good: a sensitive path asks for the review that it needs, in the record or on the host.
+- Good: a sensitive path asks for the review of its role, in the record.
 - Good: a rule that a change can break is named, pinned, and answered.
 - Good: each deviation survives `finish`, with the verdict of the acceptor and an acknowledgement.
 - Bad: each matched role costs one more acceptance run.
 - Bad: a change of a rule makes each open spec that pins it give SD937.
 - Bad: a spec can omit a rule that applies. The acceptor can miss it too.
-- Bad: with `base`, the persons of `[owners]` have no check.
 - Neutral: with no table and no section, nothing changes.
 
 ## Amends

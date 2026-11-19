@@ -13,7 +13,7 @@ The gate keeps the requirements linked and checked, but nothing above them stays
 The owner decided for 0.8.0:
 
 - An area has a summary that stores the hashes of the requirements that it rests on.
-- A summary is stale when a requirement changes. This is an error in `standard` and `strict` and a warning in `lite`.
+- A summary is stale when a requirement changes. This is an error in `standard` and `strict` and a warning in `lite`. On 2026-11-19 the owner turned each new mechanism of 0.8.0 off in `lite`, so the roll-up is off there.
 - The `system` and `product` documents rest on the summaries.
 - A project splits or condenses an area that is over its budget.
 - `context` reads from the top down.
@@ -49,7 +49,7 @@ Option 1 with form A.
 ### The type and the levels
 
 - `summary` is the 16th type. It has no status, no required section and no requirement key, and it is not normative. Its budget is 3,000 and 6,000 characters.
-- The default graph gets the layer `summaries`: folder `summaries`, `keep = "forever"`, `context = "always"`, no edges. The implied graph of a project with no `[layers]` table does not get the layer, because a folder `summaries/` of 0.7.1 can hold documents of another type. `init` writes the default graph for a project of 30 documents or more, so such a new project gets the layer. `spec-dna layer add summaries` adds the layer to another project.
+- The default graph gets the layer `summaries`: folder `summaries`, `keep = "forever"`, `context = "always"`, no edges. The implied graph of a project with no `[layers]` table does not get the layer, because a folder `summaries/` of 0.7.1 can hold documents of another type. `init` writes the default graph for a project of 30 documents or more, so such a new project gets the layer in `standard` and `strict`. `spec-dna layer add summaries` adds the layer to another project.
 - `<summaries folder>/<area>.md` is the summary of the folder `<requirements folder>/<area>/`. A folder of any depth is an area. Thus a split area gets a deeper summary, and the levels follow the folders.
 - A `system` or `product` document with the field `rests-on` is the top. A `system` document rests on the whole layer `requirements`. A `product` document rests on the `system` documents with `rests-on`, or on the whole layer when there is none.
 
@@ -75,14 +75,14 @@ All codes default to Warning. A new rule group `rollup` holds SD641 to SD645. Th
 
 | Code | Finding | lite | standard | strict |
 | --- | --- | --- | --- | --- |
-| SD641 | A pin no longer holds: the text changed, the target was removed or is not active, or the target left the frontier | warning | error | error |
-| SD642 | An item of the frontier has no pin | warning | error | error |
-| SD643 | A pin has a bad form, is ambiguous, names an item of the same or a higher level, or sits in a type other than `summary`, `system` and `product` | warning | error | error |
-| SD644 | A summary whose path names no area folder | warning | error | error |
+| SD641 | A pin no longer holds: the text changed, the target was removed or is not active, or the target left the frontier | off | error | error |
+| SD642 | An item of the frontier has no pin | off | error | error |
+| SD643 | A pin has a bad form, is ambiguous, names an item of the same or a higher level, or sits in a type other than `summary`, `system` and `product` | off | error | error |
+| SD644 | A summary whose path names no area folder | off | error | error |
 | SD645 | Against the base, the set of pins (resolved targets and hashes) changed and the text did not, and no change finished in the diff edited the text | off | warning | warning |
-| SD705 | An area over its soft budget | warning | warning | error |
-| SD706 | An area over its hard budget: new, under it in the base, or grown by more than `growth` | warning | error | error |
-| SD707 | An area over its hard budget in the base, grown by `growth` or less | warning | warning | error |
+| SD705 | An area over its soft budget | off | warning | error |
+| SD706 | An area over its hard budget: new, under it in the base, or grown by more than `growth` | off | error | error |
+| SD707 | An area over its hard budget in the base, grown by `growth` or less | off | warning | error |
 
 Each stale pin is one diagnostic with the pin as its target, so the gate sees a second stale pin as new.
 
@@ -92,13 +92,13 @@ Each stale pin is one diagnostic with the pin as its target, so the gate sees a 
 
 The guard turns a refresh with no text change into a named claim. It does not check that a new text is true: a one-word edit passes the guard. Only a reader checks meaning: the acceptor or the owner.
 
-A summary is not an artifact of a change, so no approval mode asks for a status. An edit of its text and a claim with `--holds` are in the diff of the pull request. The merge (`base`) or the approving review of the head (`review`) covers that diff. In `branch` mode, a claim has only SD645. The acceptance record does not carry the claim in 0.8.0.
+A summary is not an artifact of a change, so no approval mode asks for a status. An edit of its text and a claim with `--holds` are in the diff of the pull request. The merge (`base`) covers that diff. In `branch` mode, a claim has only SD645. The acceptance record does not carry the claim in 0.8.0.
 
 ### `finish`, `next` and `mv`
 
 - The text of a requirement changes only when `finish` applies the delta, so no pin of an area summary is stale during the build. In the build, `next` prints a note that names the due roll-up documents: each summary, `system` or `product` document whose frontier holds a target of the delta. The agent edits the text of each one whose meaning changes. The level above pins that text, so that level is stale at once, and the agent updates that level in the build. The acceptor reads these edits.
 - `spec-dna finish <slug> [--holds <id>...]`. In step 5, after the evidence and before the archive of the record, one function re-pins each due roll-up document whose text the change edited. The compare uses the tree before the commit that added the plan, so an edit that merged in an earlier pull request of the change counts. The function also re-pins each due document that `--holds` names. That option is a claim that the text still holds, and the diff and SD645 show the claim. The function prints the other due documents. It never stops, so it has no step number. The last check of step 5 does not count SD641 and SD642 of the printed documents.
-- After `finish`, `check` reports each printed summary as stale (SD641) until an agent edits the summary and runs `refresh`, or runs `refresh --holds`. The fix costs one more commit, and in `review` mode one more review of the head.
+- After `finish`, `check` reports each printed summary as stale (SD641) until an agent edits the summary and runs `refresh`, or runs `refresh --holds`. The fix costs one more commit.
 - SD913 does not report a roll-up document, as it does not report a path of `shared-paths`.
 - The preservation check of `mv` does not count SD641 and SD642. `mv` prints the summaries whose frontier changed. A move of an area folder also moves its summaries.
 
@@ -106,7 +106,7 @@ A summary is not an artifact of a change, so no approval mode asks for a status.
 
 The size of an area is the body characters of its documents that are not inactive. A sub-area with a summary counts as its summary. `[budgets.area]` holds `soft` and `hard` in characters. With no table, no area budget. The rule against the base is the rule of SD702 to SD704. The fix is a split into sub-areas, each with a summary, or a shorter text.
 
-`init` writes the table: `lite` 120,000 and no hard budget, `standard` 60,000 and 120,000, `strict` 40,000 and 80,000. 120,000 characters are about 30,000 tokens, an area that an agent can still read in one request.
+`init` writes the table: `standard` 60,000 and 120,000, `strict` 40,000 and 80,000. In `lite`, `init` writes no table and no layer `summaries`. 120,000 characters are about 30,000 tokens, an area that an agent can still read in one request.
 
 ### `context`
 
@@ -134,7 +134,7 @@ A new tier `summary` comes after the conventions and before the rules. It holds 
 - Good: a project with no summary sees no change.
 - Bad: one front matter line of about 60 bytes for each requirement of an area.
 - Bad: an agent can write `--holds` and read nothing. SD645 makes it visible, not false.
-- Bad: a due summary that the agent neither edits nor names in `finish --holds` is stale after `finish`. The pull request then needs one more commit, and in `review` mode one more review.
+- Bad: a due summary that the agent neither edits nor names in `finish --holds` is stale after `finish`. The pull request then needs one more commit.
 - Bad: the acceptor does not see a claim of `finish --holds`. Only the diff and SD645 show it.
 - Neutral: the area becomes a folder of any depth. `--group` keeps its first-folder rule.
 
@@ -144,6 +144,6 @@ ADR 0001, ADR 0005 and ADR 0017 are accepted and locked, so this ADR does not ed
 
 - ADR 0001, "Change-risk classes": spec-dna compares the suffix `@<hash>` of the pins of `rests-on`. A suffix on a link in the body stays parsed and ignored. The model has a 16th type, `summary`.
 - ADR 0005, the default graph: it has the layer `summaries`. The implied graph does not.
-- ADR 0017, "What `init` writes": `init` writes `[budgets.area]` for each profile.
+- ADR 0017, "What `init` writes": `init` writes `[budgets.area]` for `standard` and `strict`.
 
 ## Amendments

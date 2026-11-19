@@ -73,7 +73,7 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 
 - A requirement passed when at least one bound case passed and no bound case failed. A skipped case is no pass. A pass after a rerun is a fail.
 - The states, from best to worst: `reliable`, `passed-once`, `verified` (`verified-by`), `tagged`, `owed`, `none`.
-- `reliable`: each bound case that passed has at least `[evidence] reliable-runs` passes (default 3) in the stamped reports of the current tree, with no fail. The runner repeats the tests. `[evidence] reliable-for` (`none`, `higher-risk`, `all`) selects the changes that need it at `finish` (SD620).
+- `reliable`: each bound case that passed has at least `[evidence] reliable-runs` passes (default 3) in the stamped reports of the current tree, with no fail. The runner repeats the tests. `[evidence] reliable-for` (`none`, `higher-risk`, `all`) selects the changes that need it at `finish` (SD620). The level is a level of the test report, so SD620 runs only with `reports` set.
 - `verified-by` keeps its meaning, as a check by a person. The report does not apply to it.
 
 ### Where the report counts
@@ -88,6 +88,10 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 - The hash of a requirement does not cover the marker. `PARSER_VERSION` goes to 17.
 - A debt never counts as proof. SD916, SD617 and SD620 stop `finish` as before. For an active requirement with no evidence, SD618 replaces SD608. A bad reason, or a debt on a requirement with evidence, gives SD619.
 - `status` and `stats` show the count of debts and their reasons.
+
+### The profiles
+
+On 2026-11-19 the owner decided the profiles of 0.8.0. In `lite`, each new code of this ADR is off. In `standard` and `strict`, the test reports are on only by `[evidence] reports`, and the reliable level only by `[evidence] reliable-for`. In `strict`, `init` writes `reliable-for = "higher-risk"`, and the path of `reports` only for a runner that it detects. The proof debt has no key, because a marker on one requirement is the switch. In `standard` its codes are warnings, so a marker never stops a change there.
 
 ### Rejected
 

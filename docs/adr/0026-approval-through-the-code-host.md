@@ -4,6 +4,8 @@ status: proposed
 
 # 0026. Approval through the code host
 
+Moved to 0.8.1: on 2026-11-19 the owner moved the mode `review` and the persons of `[owners]` from 0.8.0 to 0.8.1. 0.8.0 does not depend on this ADR. The status stays `proposed`. The [design note of 0.8.1](../design/0.8.1-note.md) keeps the detail.
+
 ## Context and Problem Statement
 
 [ADR 0012](0012-approval-in-the-branch.md) counts an approval commit when the e-mail of its author is in `[change] approvers`. The e-mail is no proof. [ADR 0018](0018-approval-by-a-person.md) adds that an agent often commits with the e-mail of its owner, so `check` cannot tell its approval commit from a commit of the owner. The code host knows which account approved a pull request, and the host authenticates that account. spec-dna does not read it.
@@ -17,7 +19,7 @@ Constraints:
 - The same commits and the same reviews give the same result.
 - `base` and `branch` keep their rules.
 
-Evidence ([design 0.8.0](../design/0.8.0.md#1-evidence-and-sources)):
+Evidence ([design note of 0.8.1](../design/0.8.1-note.md#2-evidence)):
 
 - gh 2.101.0 fills `{owner}` and `{repo}` from the remote, and `gh api --paginate --slurp` gives one JSON array (F18).
 - A review of the REST API has `user.login`, `state` and `commit_id`. The documentation of the host says: "Pull request authors cannot approve their own pull requests" (F19).
@@ -32,7 +34,7 @@ Evidence ([design 0.8.0](../design/0.8.0.md#1-evidence-and-sources)):
 
 ## Decision Outcome
 
-Option 2. The design page gives the detail in [D4](../design/0.8.0.md#d4-approval-through-a-review-of-the-host).
+Option 2. The design note of 0.8.1 gives the detail in [D4](../design/0.8.1-note.md#d4-approval-through-a-review-of-the-host).
 
 ### The mode
 
@@ -53,7 +55,7 @@ Option 2. The design page gives the detail in [D4](../design/0.8.0.md#d4-approva
 - The items that need an approval come from the git diff of the merge base and the head commit:
   - each artifact whose approval status the diff sets needs an approver;
   - the acceptance record, when it needs an acknowledgement ([ADR 0025](0025-independent-acceptance.md)), needs an approver;
-  - each group of persons of `[owners]` that matches a touched path needs one person of the group ([ADR 0027](0027-owners-invariants-and-write-back.md)).
+  - each group of persons of `[owners]` that matches a touched path needs one person of the group (D5 of the [design note of 0.8.1](../design/0.8.1-note.md#4-the-persons-of-owners-item-5-of-080)).
 - For each login, the last review with the state `APPROVED`, `CHANGES_REQUESTED` or `DISMISSED` is its state. It counts when it is `APPROVED` and its `commit_id` is the head commit. A review of the author of the pull request never counts.
 - Exit codes, in the table of the commands:
   - 0: each approval is present.
@@ -87,7 +89,7 @@ With `review`, `init` writes `.github/workflows/spec-dna-reviews.yml`. The workf
 - Option 4: one app for each host, and a bot commit is one more e-mail to trust.
 - A review of an older commit: the code after it has no review. Run `finish` before the review.
 - A new key for the logins: 2 lists of the same persons.
-- A host other than GitHub in 0.8.0: no second adapter exists yet. A new host is a new reader of its command line tool.
+- A host other than GitHub: no second adapter exists yet. A new host is a new reader of its command line tool.
 
 ### Consequences
 
