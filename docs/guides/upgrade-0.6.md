@@ -27,7 +27,7 @@ The new commands:
 - The project pins spec-dna 0.6.0 or later. For an older pin, first use [the guide of 0.5](upgrade-0.5.md).
 - The repository has a commit, and the working tree is clean. `upgrade` reads `HEAD`, and it refuses a staged change, an unstaged change and an untracked file that git does not ignore.
 - Install the 0.7.0 binary ([quickstart.md](../quickstart.md#install)). Download `spec-dna-pin.toml` of the release.
-- Save `spec-dna-pin.toml` outside the repository, for example in the folder above it. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
+- Save `spec-dna-pin.toml` outside the repository, for example in the folder above it. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`. The command prints nothing when its output goes to a file or a pipe, so check its exit code (0 means verified).
 
 A project that has the table `[spec-dna-sha256]` needs this file. A project with no table can run `upgrade` without it.
 

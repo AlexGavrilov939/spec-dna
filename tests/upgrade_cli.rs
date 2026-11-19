@@ -918,22 +918,36 @@ fn the_locked_cites_do_not_depend_on_the_severity_of_sd611() {
     );
 }
 
+/// Runs the plan, the write and `check --all` on `repo`, and compares the
+/// errors of the report with the errors of `check --all`.
+fn assert_counts_equal(name: &str, repo: &Repo) {
+    let (code, plan, err) = upgrade(repo, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{name}: {plan}{err}");
+    let (code, out, err) = upgrade(repo, &[]);
+    assert_eq!(code, 0, "{name}: {out}{err}");
+    repo.commit("upgrade");
+    let (_, check, _) = repo.run(&["check", "--all", "--json"]);
+    assert_eq!(
+        errors_of_report(&plan),
+        errors_of_check(&check),
+        "{name}: the report and check --all give the same errors"
+    );
+}
+
 #[test]
 fn the_counts_of_the_report_equal_check_all_after_the_write() {
     for (name, base, overlays) in CASES {
-        let repo = Repo::from_fixture(base, overlays);
-        let (code, plan, err) = upgrade(&repo, &["--dry-run", "--json"]);
-        assert_eq!(code, 0, "{name}: {plan}{err}");
-        let (code, out, err) = upgrade(&repo, &[]);
-        assert_eq!(code, 0, "{name}: {out}{err}");
-        repo.commit("upgrade");
-        let (_, check, _) = repo.run(&["check", "--all", "--json"]);
-        assert_eq!(
-            errors_of_report(&plan),
-            errors_of_check(&check),
-            "{name}: the report and check --all give the same errors"
-        );
+        assert_counts_equal(name, &Repo::from_fixture(base, overlays));
     }
+}
+
+/// A decision over its hard budget before the upgrade. The in-memory check has
+/// the new tree as its base (D65), so it counts no SD702, as `check --all`
+/// after the commit of the upgrade does.
+#[test]
+fn an_old_excess_of_a_budget_is_not_an_error_of_the_report() {
+    let repo = Repo::from_fixture("v05", &["budget-decision"]);
+    assert_counts_equal("budget-decision", &repo);
 }
 
 // --- the harness (D147) ---

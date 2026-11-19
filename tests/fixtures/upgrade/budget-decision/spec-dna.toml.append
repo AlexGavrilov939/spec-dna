@@ -1,0 +1,3 @@
+[budgets.decision]
+soft = 100
+hard = 200

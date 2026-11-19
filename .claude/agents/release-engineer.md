@@ -14,7 +14,7 @@ Read first: `.claude/agents/ownership.md`, `docs/adr/0003-distribution.md`, `CON
 
 - `CHANGELOG.md`: the file and the release sections. The responsible agent of a change writes its entry.
 - The version in `Cargo.toml` and `Cargo.lock`, and the version strings in `README.md`, `docs/quickstart.md` and `docs/config.md`
-- `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh`, and `src/release.rs` (the targets and the asset names)
+- `scripts/cross-build.sh`, `scripts/smoke.sh`, `scripts/release-assets.sh`, `scripts/verify-release.sh`, `tests/release_check.rs`, and `src/release.rs` (the targets and the asset names)
 - `.github/`: the workflows, `dependabot.yml`, the issue templates and `CODEOWNERS`. `architect` owns the pull request template.
 - `.pre-commit-config.yaml`
 
@@ -35,6 +35,7 @@ Read first: `.claude/agents/ownership.md`, `docs/adr/0003-distribution.md`, `CON
 3. Add the dated section to `CHANGELOG.md`, Update the version in `README.md`, `docs/quickstart.md` and `docs/config.md`.
 4. Run the commands of `AGENTS.md`, section "Done means checked", and `scripts/demo-replay.sh`.
 5. Give the owner the diff, the commands and their results. Wait for the approval.
+6. After the owner publishes the release, run `scripts/verify-release.sh --download v<version>`. Give the whole output. If the output has no line `<n> of <n>` with 9 assets, or the exit code is not 0, the release failed. Never read the result of `gh attestation verify` from a file or a pipe: it prints nothing on success there.
 
 ## Never
 

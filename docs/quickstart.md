@@ -53,6 +53,8 @@ To verify the build provenance of a file, use the [GitHub CLI](https://cli.githu
 gh attestation verify "spec-dna-$v-$t" --repo AlexGavrilov939/spec-dna
 ```
 
+The command prints nothing when its output goes to a file or a pipe, so check its exit code (0 means verified).
+
 ### Build from source
 
 On another platform, or if your policy does not allow downloaded binaries, build the version from its tag. You need Rust 1.88 or later. For v0.4.2 and later, the command needs no package name. For v0.4.1 and earlier, add `spec-dna` at the end, because those tags have other packages with binaries.
@@ -102,7 +104,7 @@ The profile sets which diagnostics fail `check`. The profiles are `lite` (only w
 
 ### Pin the sums
 
-`init` pins the version with `spec-dna = "<version>"`. To pin the sums of the binaries too, first commit the result of `init`. Save `spec-dna-pin.toml` of the release in the folder above the repository, and verify it with `gh attestation verify`.
+`init` pins the version with `spec-dna = "<version>"`. To pin the sums of the binaries too, first commit the result of `init`. Save `spec-dna-pin.toml` of the release in the folder above the repository, and verify it with `gh attestation verify`. The command prints nothing when its output goes to a file or a pipe, so check its exit code (0 means verified).
 
 Then run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`. The command adds the table `[spec-dna-sha256]` to the end of `spec-dna.toml`, and it changes no other file. You can remove the lines of the targets that your team does not use. Commit the result in a commit that changes only `spec-dna.toml`. A configuration change is a change of its own (SD503).
 
@@ -256,7 +258,7 @@ For the evals skeleton, `init` writes a second workflow, `.github/workflows/agen
 
 ## Upgrade
 
-1. Download `spec-dna-pin.toml` of the new release. Save it outside the repository, for example in the folder above it, because `upgrade` needs a clean tree. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`.
+1. Download `spec-dna-pin.toml` of the new release. Save it outside the repository, for example in the folder above it, because `upgrade` needs a clean tree. Verify it with `gh attestation verify ../spec-dna-pin.toml --repo AlexGavrilov939/spec-dna`. The command prints nothing when its output goes to a file or a pipe, so check its exit code (0 means verified).
 2. Install the new binary. Verify it against its sum in `spec-dna-pin.toml`.
 3. Commit or stash your changes. Run `spec-dna upgrade --dry-run --pin-file ../spec-dna-pin.toml` to see the diff.
 4. Run `spec-dna upgrade --pin-file ../spec-dna-pin.toml`. It moves the pin and the sums in `spec-dna.toml` to the new version. It also writes the adapters and the harness files of the new version, and it keeps a harness file that you edited.
