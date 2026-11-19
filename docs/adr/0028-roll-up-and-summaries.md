@@ -49,7 +49,7 @@ Option 1 with form A.
 ### The type and the levels
 
 - `summary` is the 16th type. It has no status, no required section and no requirement key, and it is not normative. Its budget is 3,000 and 6,000 characters.
-- The default graph gets the layer `summaries`: folder `summaries`, `keep = "forever"`, `context = "always"`, no edges. The implied graph of a project with no `[layers]` table does not get the layer, because a folder `summaries/` of 0.7.1 can hold documents of another type. `init` writes the default graph for a project of 30 documents or more, so such a new project gets the layer in `standard` and `strict`. `spec-dna layer add summaries` adds the layer to another project.
+- The default graph gets the layer `summaries`: folder `summaries`, `keep = "forever"`, `context = "always"`, no edges. The implied graph of a project with no `[layers]` table does not get the layer. A folder `summaries/` of 0.7.1 can hold documents of another type. `init` writes the default graph for a project of 30 documents or more, so such a new project gets the layer in `standard` and `strict`. `spec-dna layer add summaries` adds the layer to another project.
 - `<summaries folder>/<area>.md` is the summary of the folder `<requirements folder>/<area>/`. A folder of any depth is an area. Thus a split area gets a deeper summary, and the levels follow the folders.
 - A `system` or `product` document with the field `rests-on` is the top. A `system` document rests on the whole layer `requirements`. A `product` document rests on the `system` documents with `rests-on`, or on the whole layer when there is none.
 
@@ -57,7 +57,7 @@ Option 1 with form A.
 
 - The front matter field `rests-on` lists the pins. A pin is not in the body, so it is not in the hash of the body, not in a budget and not in `context`.
 - The frontier of a document is the set of items that it must pin: each active requirement in its scope. The summary of the highest sub-area that has one replaces the requirements of that sub-area. An active requirement is one that SD608 reads (status `active`).
-- A pin to a requirement matches when `hash_matches` accepts its hash. A pin to a document matches when its hash is the `frozen_hash` of the document: the text outside the amendment, history and live sections, without link destinations. No new hash definition.
+- A pin to a requirement matches when `hash_matches` accepts its hash. A pin to a document matches when its hash is the `frozen_hash` of the document. This hash covers the text outside the amendment, history and live sections, without link destinations. No new hash definition.
 - A pin resolves as a reference: document aliases, key aliases, the section aliases of a split and the legacy ids.
 - A pin names only an item below its document, so no cycle can pass `check`.
 
@@ -96,17 +96,17 @@ A summary is not an artifact of a change, so no approval mode asks for a status.
 
 ### `finish`, `next` and `mv`
 
-- The text of a requirement changes only when `finish` applies the delta, so no pin of an area summary is stale during the build. In the build, `next` prints a note that names the due roll-up documents: each summary, `system` or `product` document whose frontier holds a target of the delta. The agent edits the text of each one whose meaning changes. The level above pins that text, so that level is stale at once, and the agent updates that level in the build. The acceptor reads these edits.
-- `spec-dna finish <slug> [--holds <id>...]`. In step 5, after the evidence and before the archive of the record, one function re-pins each due roll-up document whose text the change edited. The compare uses the tree before the commit that added the plan, so an edit that merged in an earlier pull request of the change counts. The function also re-pins each due document that `--holds` names. That option is a claim that the text still holds, and the diff and SD645 show the claim. The function prints the other due documents. It never stops, so it has no step number. The last check of step 5 does not count SD641 and SD642 of the printed documents.
+- The text of a requirement changes only when `finish` applies the delta, so no pin of an area summary is stale during the build. In the build, `next` prints a note that names the due roll-up documents: each summary, `system` or `product` document whose frontier holds a target of the delta. The agent edits the text of each one whose meaning changes. The level above pins that text, so that level is stale at once. The agent updates that level in the build. The acceptor reads these edits.
+- `spec-dna finish <slug> [--holds <id>...]`. In step 5, after the evidence and before the archive of the record, one function re-pins each due roll-up document whose text the change edited. The compare uses the tree before the commit that added the plan. Thus it counts an edit that an earlier pull request of the change merged. The function also re-pins each due document that `--holds` names. That option is a claim that the text still holds, and the diff and SD645 show the claim. The function prints the other due documents. It never stops, so it has no step number. The last check of step 5 does not count SD641 and SD642 of the printed documents.
 - After `finish`, `check` reports each printed summary as stale (SD641) until an agent edits the summary and runs `refresh`, or runs `refresh --holds`. The fix costs one more commit.
 - SD913 does not report a roll-up document, as it does not report a path of `shared-paths`.
 - The preservation check of `mv` does not count SD641 and SD642. `mv` prints the summaries whose frontier changed. A move of an area folder also moves its summaries.
 
 ### The budget of an area
 
-The size of an area is the body characters of its documents that are not inactive. A sub-area with a summary counts as its summary. `[budgets.area]` holds `soft` and `hard` in characters. The area budget is a mechanism of its own, not a part of the roll-up: the table is its key, and with no table it checks nothing. The rule against the base is the rule of SD702 to SD704. The fix is a split into sub-areas, each with a summary, or a shorter text.
+The size of an area is the body characters of its documents that are not inactive. A sub-area with a summary counts as its summary. `[budgets.area]` holds `soft` and `hard` in characters. The area budget is a mechanism of its own. It is not a part of the roll-up. The table is its key, and with no table it checks nothing. The rule against the base is the rule of SD702 to SD704. The fix is a split into sub-areas, each with a summary, or a shorter text.
 
-`init` writes the table: `standard` 60,000 and 120,000, `strict` 40,000 and 80,000. In `lite`, `init` writes no table and no layer `summaries`. 120,000 characters are about 30,000 tokens, an area that an agent can still read in one request.
+`init` writes the table: `standard` 60,000 and 120,000, `strict` 40,000 and 80,000. In `lite`, `init` writes no table and no layer `summaries`. 120,000 characters are about 30,000 tokens. An agent can still read an area of this size in one request.
 
 ### `context`
 
@@ -125,7 +125,7 @@ A new tier `summary` comes after the conventions and before the rules. It holds 
 - Form B: a new hash definition, and no name of the changed requirement without a base. A move inside the area would change the hash, unless the hash drops the ids.
 - Form C: the pins would be in the body. Thus each refresh would change the hash that the level above pins, and each change would go up to the top. They would also cost bytes in `context`.
 - A refresh with no guard: one command would silence SD641.
-- A refresh that always needs a text change: a correct summary would get a needless edit, and that edit would go up to the next level.
+- A refresh that always needs a text change. A correct summary would get a needless edit, and that edit would go up to the next level.
 
 ### Consequences
 

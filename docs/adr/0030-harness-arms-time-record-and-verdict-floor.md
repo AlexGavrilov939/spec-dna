@@ -37,14 +37,14 @@ Option 2.
 - Each arm gets the adapter line of the binary.
 - The runner passes `--model` and `--effort` with the orchestrator values of `lean` to each arm, so the main model is the same in each arm.
 - `spec-dna eval run --arms <arm>,<arm>[,<arm>] [<id>...]` runs 2 or 3 arms on the plain evals. It runs in waves. Wave `r` runs each eval once in each arm, and the order of the arms in one eval rotates by `(eval index + r) mod arms`. A stop by the cap keeps the complete waves, and the analysis drops a partial wave. The result file is `arms-<stamp>.json`, and `--resume` works as for `--ab`.
-- `--harness <arm>` gives one arm to a plain `eval run`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level. Then the edit of `--ab` adds or removes the measured skill. When the role of the skill has an agent file at that level, the arm `without` also loses that file and the sentence of the role in the line of `CLAUDE.md`. The skill `accept` and the agent `acceptor` are an example.
+- `--harness <arm>` gives one arm to a plain `eval run`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level. Then the edit of `--ab` adds or removes the measured skill. When the role of the skill has an agent file at that level, the arm `without` also loses that file. It also loses the sentence of the role in the line of `CLAUDE.md`. The skill `accept` and the agent `acceptor` are an example.
 - A batch with `--harness` is a new condition, not the condition of a row of 0.7.1. Without the option, `--ab` keeps the copy of 0.7.1.
 - `--arms` and `--harness` isolate the runs (`--setting-sources project`). `--no-isolate` with them is a usage error.
 - `spec-dna eval verdict --compare <treatment>,<control> <result file>` gives the verdict of 2 arms of a result of `--arms`.
 
 ### The time and the team of a run
 
-- Each run gets `seconds`, the wall time of the agent process that the runner measures, and `turns`, the `num_turns` of the result of `claude` or `null`.
+- Each run gets `seconds` and `turns`. `seconds` is the wall time of the agent process that the runner measures. `turns` is the `num_turns` of the result of `claude`, or `null`.
 - A plain `eval run` result gets `tokens`, `models`, `turns` and `seconds` for each run.
 - A record gets 3 keys after its 9 keys: `harness` (the arm of the copy), `turns` and `seconds`. For a batch of `--arms`, `skill` is `harness` and `arm` is the name of the arm. The test of the table of the release skips the name `harness`, so such a batch never enters the table. A record of 9 keys stays valid and reads as `project`, `null`, `null`.
 

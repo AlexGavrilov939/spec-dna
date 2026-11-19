@@ -35,7 +35,7 @@ Files and tools: a harness role and a skill, the hook `protect-approvals`, and t
 
 ## Concerns
 
-None. The limit of the record of acceptance (it cannot show that the acceptor is not the builder) is in the section "Does not prove" of decision D3 of the design page.
+None. The record of acceptance cannot show that the acceptor is not the builder. The section "Does not prove" of decision D3 of the design page states this limit.
 
 ## Open questions
 

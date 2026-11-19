@@ -6,7 +6,7 @@ status: proposed
 
 ## Context and Problem Statement
 
-The agent that writes the code also says that the code is done. `finish` then applies the delta and deletes the folder of the change, so no file keeps what was tried. The owner decided on 2026-11-18: each change that has a plan needs an independent acceptance. An agent in a new session, not the author, tries to break the change and writes a record, and `finish` does not pass without a valid record. On 2026-11-19 the owner allowed an acceptor that runs as a subagent of the building session, on one condition: the builder never writes its brief. The owner also turned the acceptance off in the profile `lite`.
+The agent that writes the code also says that the code is done. `finish` then applies the delta and deletes the folder of the change, so no file keeps what was tried. The owner decided on 2026-11-18: each change that has a plan needs an independent acceptance. An agent in a new session, not the author, tries to break the change and writes a record. `finish` does not pass without a valid record. On 2026-11-19 the owner allowed an acceptor that runs as a subagent of the building session, on one condition: the builder never writes its brief. The owner also turned the acceptance off in the profile `lite`.
 
 Where does the record stay after `finish`, what can "not the author" mean in a deterministic gate, and who is the root of the trust?
 
@@ -54,22 +54,22 @@ Option 1, option (a) and option (iii). The design page gives the detail in [D3](
 ### When a record is needed
 
 - The acceptance is on in `standard` and `strict`, and off in `lite`: there, each record code is off and `finish` needs no record. SD927 to SD940 are in the new rule group `acceptance`, so no group rule of 0.7.1 changes them.
-- Each change that `finish` applies needs one record when the acceptance is on and its plan is new. A plan is new when an ancestor of the lifecycle base added it at a pin of 0.8.0 or later (`git log -1 --diff-filter=A <base>`, as B5 of [design 0.7.1 part B](../design/0.7.1-b.md#b5-a-plan-of-an-earlier-version-and-sd923)), when `base..HEAD` added it, or when no commit added it. Thus a branch cannot set the pin back for one commit to skip the record. In a shallow clone, SD927 names the cause. `next` names `accept` only for such a change.
+- Each change that `finish` applies needs one record when the acceptance is on and its plan is new. A plan is new when an ancestor of the lifecycle base added it at a pin of 0.8.0 or later (`git log -1 --diff-filter=A <base>`, as B5 of [design 0.7.1 part B](../design/0.7.1-b.md#b5-a-plan-of-an-earlier-version-and-sd923)). A plan is also new when `base..HEAD` added it or when no commit added it. Thus a branch cannot set the pin back for one commit to skip the record. In a shallow clone, SD927 names the cause. `next` names `accept` only for such a change.
 - A closed change and a small fix need none.
 - A `routine` change needs 1 acceptor. A `higher-risk` change needs `[change] higher-risk-acceptors` (default 1). Each role of `[owners]` that matches a path of `paths` needs an acceptor with that role ([ADR 0027](0027-owners-invariants-and-write-back.md)). One entry can count for both.
 
 ### The record
 
 - One TOML file: `acceptance.toml` in the folder of the change, then `.spec-dna/accepted/<slug>.toml` (or `<slug>-2.toml`) after `finish`.
-- The fields: `format`, `change`, `scope`, `paths`, `tree`, `result` (`accepted` or `rejected`), `acknowledged-by`, and the tables `[[acceptor]]` (role, brief, session, agent, model, result), `[[proof]]`, `[[invariant]]`, `[[deviation]]`, `[[attempt]]` and `[[finding]]` (acceptor number, severity, path, line, text). 2 acceptors can have the same role, so an attempt or a finding names the number of its acceptor.
+- The fields: `format`, `change`, `scope`, `paths`, `tree`, `result` (`accepted` or `rejected`) and `acknowledged-by`. The tables: `[[acceptor]]` (role, brief, session, agent, model, result), `[[proof]]`, `[[invariant]]`, `[[deviation]]`, `[[attempt]]` and `[[finding]]` (acceptor number, severity, path, line, text). 2 acceptors can have the same role, so an attempt or a finding names the number of its acceptor.
 - The rules: no unknown key, at most 16,384 bytes, no answer `pending`, at least one attempt for each acceptor, and a path for each finding. The top `result` is `accepted` only when each acceptor accepted, no `important` finding exists, no invariant is `violated` and no deviation is `rejected`.
 - `spec-dna accept <slug> [--role <name>] [--session <id>]` writes the skeleton with the computed fields. A person can write the same file by hand. The gate reads the file, not the skill.
-- `spec-dna accept <slug> --brief [--role <name>]` prints the brief: the task and the rules of the record (fixed text of the format), the intent, the spec and the plan, `scope`, `paths` and `tree`, the invariants, the deviations, and the roles of `[owners]` that match. It is a function of the committed state only: both forms refuse (exit code 1) while the folder, except the record, or `spec-dna.toml` has an uncommitted edit. Its last line is the hash of the text before it. The builder passes the output unchanged, and the acceptor copies the hash into `brief` of its entry.
+- `spec-dna accept <slug> --brief [--role <name>]` prints the brief. The brief holds the task and the rules of the record (fixed text of the format). It also holds the intent, the spec and the plan, `scope`, `paths` and `tree`, the invariants, the deviations, and the roles of `[owners]` that match. It depends only on the committed state. Both forms refuse (exit code 1) while the folder, except the record, or `spec-dna.toml` has an uncommitted edit. Its last line is the hash of the text before it. The builder passes the output unchanged, and the acceptor copies the hash into `brief` of its entry.
 
 ### The tree of the record
 
 - The record stores its scope: `scope` holds the paths and globs of the scope of the plan and of `[change] shared-paths`. `paths` holds the code paths of [ADR 0024](0024-test-report-as-evidence.md) of the diff of the change against the lifecycle base that `scope` matches, sorted. Thus open changes do not change the list. When the diff has no code path in `scope`, `accept` takes the code paths since the commit that added the plan. `tree` is the hash of these paths only.
-- The record is stale (SD929) when the hash differs, or when the diff of the change has a code path that `scope` matches and `paths` does not list. `finish` and the checks after it read `scope` and `paths` from the record, not from the plan, so an edit of `Files` during the build changes nothing.
+- The record is stale (SD929) when the hash differs. It is also stale when the diff of the change has a code path that `scope` matches and `paths` does not list. `finish` and the checks after it read `scope` and `paths` from the record, not from the plan. An edit of `Files` during the build changes nothing.
 - In CI, the checkout is the test merge of the branch into the base. A base commit that edits a listed path is a real conflict of meaning, and the record is stale. A base commit to other paths, or a Markdown edit, changes nothing. Code of an earlier pull request of the change is not listed, so the acceptance runs in the last pull request with code.
 - `check` checks only the record and its commits (SD928, SD931, SD932) where the diff adds or changes it. It checks the presence (SD927), the tree (SD929), the result (SD930), the count of acceptors (SD933), the acknowledgement (SD934) and the answers (SD938) only in 2 cases. One case is a diff that deletes the folder, as SD915 and SD916. The other case is a change that the branch added and deleted. Thus the first of 2 acceptors can commit. SD927 needs the archive file in the head, so a folder deleted with no `finish` gives SD927, also when the base folder holds a record. A later change never makes an old record stale.
 
@@ -93,7 +93,7 @@ Option 1, option (a) and option (iii). The design page gives the detail in [D3](
 - The acceptor writes the record and commits it alone, in each approval mode. The builder never edits it. An agent never adds an entry to `acknowledged-by`. The rule of the skills says so, and the hook `protect-approvals` denies such a commit. Rule A of the hook already keeps `spec-dna approve` for a person.
 - The record needs an acknowledgement when it holds a deviation:
   - `base`: the merge of the pull request of `finish`. `strict` uses `base`.
-  - `branch`: `spec-dna approve <slug> acceptance` adds the e-mail of its author to `acknowledged-by` and commits that file alone. The walk counts the entry only when that commit added it, its author has that e-mail, and no later commit changes the record, except another such commit or the commit of `finish`, which moves the same bytes to the archive. Any other commit that changes the record and keeps an entry gives SD932, so the approver approves again. Thus an approver never acknowledges a text that changed after the approval.
+  - `branch`: `spec-dna approve <slug> acceptance` adds the e-mail of its author to `acknowledged-by` and commits that file alone. The walk counts the entry only when that commit added it and its author has that e-mail. It counts the entry only if no later commit changes the record. The exceptions are another such commit and the commit of `finish`, which moves the same bytes to the archive. Any other commit that changes the record and keeps an entry gives SD932, so the approver approves again. An approver never acknowledges a text that changed after the approval.
 - The persons of `[owners]` and the mode `review` of [ADR 0026](0026-approval-through-the-code-host.md) moved to 0.8.1.
 
 ### The trust root
@@ -103,7 +103,7 @@ A forged record costs one file and one commit. The root of the trust is the pers
 ### Rejected
 
 - Option 2: each pull request appends to one file, so 2 branches conflict (ADR 0001).
-- Option 3: the squash title replaces the message, `finish` must validate the record before a commit exists, and `check` cannot read a message on the default branch.
+- Option 3: the squash title replaces the message. `finish` must validate the record before a commit exists. `check` cannot read a message on the default branch.
 - Option 4: a new type changes the type table, the layers and the templates, and a Markdown document is a search hit. The default search tools of agents skip a hidden folder.
 - Option (b): it needs a hook and a trailer of the builder. The owner can add it later (design, Q10).
 - Option (c): an agent often commits with the e-mail of its owner ([ADR 0018](0018-approval-by-a-person.md)), so each honest change would fail.

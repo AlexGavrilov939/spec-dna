@@ -6,13 +6,13 @@ status: proposed
 
 ## Context and Problem Statement
 
-`init` writes a model team for Claude Code at the level `lean` ([ADR 0004](0004-harness.md)): a main model, an advisor, a verifier, a search agent and 2 hooks. No measurement shows that the team or the advisor gives better work for its cost. The owner gives 400 USD to compare no harness, `lean` without the advisor, and `lean`, on about 10 tasks with 5 runs for each arm. The result decides whether 0.8.1 gets an advisor gate. This ADR is the pre-registration: it fixes the arms, the tasks, the oracle, the verdict and the use of the result before any paid run.
+`init` writes a model team for Claude Code at the level `lean` ([ADR 0004](0004-harness.md)). The team has a main model, an advisor, a verifier, a search agent and 2 hooks. No measurement shows that the team or the advisor gives better work for its cost. The owner gives 400 USD to compare no harness, `lean` without the advisor, and `lean`, on about 10 tasks with 5 runs for each arm. The result decides whether 0.8.1 gets an advisor gate. This ADR is the pre-registration: it fixes the arms, the tasks, the oracle, the verdict and the use of the result before any paid run.
 
 Evidence:
 
 - The committed records of 0.7.0 and 0.7.1 list the advisor model in 755 of 770 runs. The host team of those runs is not recorded. Thus no past result can separate the advisor from the rest.
 - The mean cost of a past run, with the advisor, was 0.7 to 1.9 USD.
-- A lab simulation of the bootstrap of [ADR 0016](0016-skill-evals.md) with 10 tasks and 5 runs gave a verdict of a gain in about 48% of trials for a true gain of 0.20. For a true gain of 0.30, the share was 85%. With no gain, a false gain occurred in 3% of trials or less.
+- A lab simulation of the bootstrap of [ADR 0016](0016-skill-evals.md) with 10 tasks and 5 runs gave the verdict of a gain in about 48% of trials for a true gain of 0.20. For a true gain of 0.30, the share was 85%. With no gain, a false gain occurred in 3% of trials or less.
 - A check that greps the prose of the agent is weak: the evals `review-N` show it.
 
 ## Considered Options
@@ -35,7 +35,7 @@ Option 4.
 
 ### Tasks
 
-12 candidates, 10 in the batch. Each task is a small synthetic project in Python with `unittest`, with no code of a consumer project. Each has a task text, visible tests, a hidden oracle, a reference solution and a wrong solution. The kinds: a rule in the docs, a wrong first idea (the trace points at the wrong module), a spec conflict (the rule of the project wins over the request), a trap at a boundary, and a regression of a refactor. Rules of the selection:
+12 candidates, 10 in the batch. Each task is a small synthetic project in Python with `unittest`, with no code of a consumer project. Each has a task text, visible tests, a hidden oracle, a reference solution and a wrong solution. The kinds are: a rule in the docs, a wrong first idea (the trace points at the wrong module), a spec conflict (the rule of the project wins over the request), a trap at a boundary, and a regression of a refactor. Rules of the selection:
 
 - The wrong solution passes the visible tests and fails the oracle.
 - The task text does not state the trap.
@@ -49,7 +49,7 @@ The files are in `bench/team/` of this repository.
 - Only deterministic checks: the visible tests stay unchanged, the visible tests pass, and the hidden tests pass. No check reads the prose of the agent.
 - The hidden tests are in `<evals dir>/oracle/<id>/` of the project that runs the batch, outside the fixture. The runner never copies them into the copy. After `claude` exits, a function of `check.sh` copies them in and runs them.
 - The agent gets no path of the project. The batch runs a binary that is outside the project folder.
-- Self-test with no model: the fixture fails the oracle, the reference solution passes each check, and the wrong solution passes the visible tests and fails the oracle.
+- Self-test with no model. The fixture fails the oracle. The reference solution passes each check. The wrong solution passes the visible tests and fails the oracle.
 
 ### Metrics
 
@@ -60,8 +60,8 @@ For each arm: the pass rate with its 90% interval, the cost, the cost per correc
 The pilot runs do not count in the verdict.
 
 1. The self-test of the oracle and the runner tests with a stub `claude`. No cost.
-2. The manipulation check: 3 tasks, 1 run, arms A, B and C, about 18 USD. The step passes when each run lists the main model of `lean`, no run of A or B lists the advisor model, and at least 2 of 3 C runs list that model. If the step fails, the work stops until a person fixes the arms, and this step runs again. Claude Code 2.1.328 lists `--model` and `--effort` in its help.
-3. The headroom: 12 candidates, 2 runs in arm B, about 45 USD. The batch keeps 10: first the tasks with 1 of 2 passes, then 0 of 2, then 2 of 2, each group in the order of the ids. A task with an error of `claude` in both runs is a broken fixture, and the batch drops it. If fewer than 10 candidates remain, the work stops before the main batch, and the owner decides: a fix of the broken fixtures, or fewer tasks under a floor that the owner states. No task drops in silence below the floor.
+2. The manipulation check: 3 tasks, 1 run, arms A, B and C, about 18 USD. The step passes when each run lists the main model of `lean`, no run of A or B lists the advisor model, and at least 2 of 3 C runs list that model. If the step fails, the work stops until a person fixes the arms. Then this step runs again. Claude Code 2.1.328 lists `--model` and `--effort` in its help.
+3. The headroom: 12 candidates, 2 runs in arm B, about 45 USD. The batch keeps 10 tasks in this order: the tasks with 1 of 2 passes, then those with 0 of 2, then those with 2 of 2. Each group keeps the order of the ids. A task with an error of `claude` in both runs is a broken fixture, and the batch drops it. If fewer than 10 candidates remain, the work stops before the main batch. The owner then decides on a fix of the broken fixtures, or on fewer tasks under a floor that the owner states. No task drops in silence below the floor.
 
 The fallback uses the projected cost of the 3 arms. `M` is 400 USD minus the spend of the pilot minus 10 USD. One wave costs `W` = 10 x (`a` + `b` + `c`). `b` is the mean cost of a B run of step 3. `a` and `c` are `b` times the ratios of A and C to B in step 2.
 
@@ -69,18 +69,18 @@ With 5 x `W` <= `M`, the batch has 5 runs. If not, the work stops, and the owner
 
 ### Main batch
 
-- 10 tasks, 5 runs, 3 arms: 150 runs. The runner runs in waves: wave `r` runs each task once in each arm, and the order of the arms rotates with the task and the wave.
+- 10 tasks, 5 runs, 3 arms: 150 runs. The runner runs in waves. Wave `r` runs each task once in each arm. The order of the arms rotates with the task and the wave.
 - `max-budget-usd` is 4.0 for each run. `--max-total-usd` is 400 USD minus the spend of the pilot, minus 10 USD of reserve.
 - A refused run follows the back-off of the runner and does not count.
 - The floor: 10 tasks and 3 complete waves. A partial wave does not count. Below the floor, there is no verdict.
 
 ### Verdict
 
-Each comparison of a treatment X with a control Y uses the bootstrap of ADR 0016 by task (seed 24, 2,000 resamples, 90% interval), on complete waves only:
+Each comparison of a treatment X with a control Y uses the bootstrap of ADR 0016 by task (seed 24, 2,000 resamples, 90% interval). It uses complete waves only:
 
 - `better`: rule 1 or rule 2 of ADR 0016.
 - `worse`: the high end of the interval of the difference is below 0.
-- `no-gain-at-cost`: not `better` and not `worse`; the high end of the difference is below 0.20, and the low end of the ratio of the costs per correct outcome is above 1.00.
+- `no-gain-at-cost`: not `better` and not `worse`. The high end of the difference is below 0.20. The low end of the ratio of the costs per correct outcome is above 1.00.
 - `inconclusive`: each other result. An undefined ratio of the costs gives `inconclusive` in place of `no-gain-at-cost`.
 
 `eval verdict --compare` prints the verdict of ADR 0016 and both intervals. A person reads the result of this protocol from these numbers. The binary holds no rule of this protocol.

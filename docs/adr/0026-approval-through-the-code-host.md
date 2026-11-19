@@ -4,13 +4,13 @@ status: proposed
 
 # 0026. Approval through the code host
 
-Moved to 0.8.1: on 2026-11-19 the owner moved the mode `review` and the persons of `[owners]` from 0.8.0 to 0.8.1. 0.8.0 does not depend on this ADR. The status stays `proposed`. The [design note of 0.8.1](../design/0.8.1-note.md) keeps the detail.
+Moved to 0.8.1. On 2026-11-19 the owner moved the mode `review` and the persons of `[owners]` from 0.8.0 to 0.8.1. 0.8.0 does not depend on this ADR. The status stays `proposed`. The [design note of 0.8.1](../design/0.8.1-note.md) keeps the detail.
 
 ## Context and Problem Statement
 
 [ADR 0012](0012-approval-in-the-branch.md) counts an approval commit when the e-mail of its author is in `[change] approvers`. The e-mail is no proof. [ADR 0018](0018-approval-by-a-person.md) adds that an agent often commits with the e-mail of its owner, so `check` cannot tell its approval commit from a commit of the owner. The code host knows which account approved a pull request, and the host authenticates that account. spec-dna does not read it.
 
-The owner decided on 2026-11-18: a third mode, `approval = "review"`. The approval is an approving review of the pull request by an owner. The commit modes stay for a repository with no code host. Which command reads the reviews? How does CI make that command a required check? How does the review map to the intent, the spec and the plan? What happens on a squash merge?
+The owner decided on 2026-11-18: a third mode, `approval = "review"`. The approval is a review by an owner that approves the pull request. The commit modes stay for a repository with no code host. Which command reads the reviews? How does CI make that command a required check? How does the review map to the intent, the spec and the plan? What happens on a squash merge?
 
 Constraints:
 
@@ -38,7 +38,7 @@ Option 2. The design note of 0.8.1 gives the detail in [D4](../design/0.8.1-note
 
 ### The mode
 
-- `[change] approval` is `base`, `branch` or `review`. With `review`, the approval of an artifact is an approving review of the pull request, on its head commit, by an approver.
+- `[change] approval` is `base`, `branch` or `review`. With `review`, the approval of an artifact is a review by an approver that approves the pull request on its head commit.
 - `approvers` items have 2 forms. An e-mail matches the author of a commit. `@<login>` matches an account of the host. A hidden address `<id>+<login>@users.noreply.github.com` gives the login too. With `review`, the list needs one login, or the exit code is 3.
 - The `status` lines stay. A person runs `spec-dna approve`, or the agent sets the status on the word of the owner. The status says what was approved, and the review says who approved it. With `review`, `approve` makes the status commit with no check of its author.
 
@@ -80,7 +80,7 @@ With `review`, `init` writes `.github/workflows/spec-dna-reviews.yml`. The workf
 ### What the gate proves
 
 - `reviews` proves one fact: at the time of the job, an account of the list approved the head commit for each item that needs it.
-- The branch protection of the host must do the rest: the check is required, the merge waits for it on the last head, no administrator skips it, and the host knows who holds the account.
+- The branch protection of the host must do the rest. The check is required. The merge waits for it on the last head. No administrator skips it. The host knows who holds the account.
 
 ### Rejected
 

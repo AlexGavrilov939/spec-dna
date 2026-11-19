@@ -45,23 +45,23 @@ Exit codes: 0 each asset is verified, 1 a failure, 2 a usage error.
 
 ### The workflow
 
-The release job creates the release as a draft, runs `scripts/verify-release.sh` on the local assets (the same digests as the attestations), and only then publishes the draft. A failure keeps the draft, so nothing is published. The job keeps its permissions.
+The release job creates the release as a draft and runs `scripts/verify-release.sh` on the local assets (the same digests as the attestations). Only then does it publish the draft. A failure keeps the draft, so nothing is published. The job keeps its permissions.
 
 ### The checklist and the docs
 
 - The checklist of `release-engineer` gets a step after the publication: run `scripts/verify-release.sh --download v<version>` and give the whole output. No final line `<n> of <n>`, or an exit code other than 0, is a failed release.
-- The pages that name `gh attestation verify` say that the command prints nothing when its output goes to a file or a pipe, so a person checks its exit code.
+- The pages that name `gh attestation verify` say that the command prints nothing when its output goes to a file or a pipe. They tell a person to check its exit code.
 
 ### The test
 
-A test puts a stub `gh` first on `PATH`. The asset names come from the targets of `src/release.rs`. These cases fail: a stub that exits 0 with no output (the defect of 0.7.1), a stub that prints 0, a stub that exits 1 for one asset, an absent asset, an extra file and a wrong sum. A stub that prints 1 passes. The stub records its arguments, and each call has the signer workflow, the source ref and `--deny-self-hosted-runners`.
+A test puts a stub `gh` first on `PATH`. The asset names come from the targets of `src/release.rs`. These cases fail: a stub that exits 0 with no output (the defect of 0.7.1), a stub that prints 0 and a stub that exits 1 for one asset. An absent asset, an extra file and a wrong sum also fail. A stub that prints 1 passes. The stub records its arguments. Each call has the signer workflow, the source ref and `--deny-self-hosted-runners`.
 
 ### Rejected
 
 - Option 1: the defect of 0.7.1 was a step of a person with a lost exit code.
 - Option 3: a network call in the binary, against ADR 0003 and the offline rule of `check`.
 - A check after the publication only: an immutable release cannot be fixed, so the check must stop the publication.
-- An offline check with a downloaded bundle and a trusted root: the release does not publish the bundle, and the check needs one online fetch first.
+- An offline check with a downloaded bundle and a trusted root. The release does not publish the bundle, and the check needs one online fetch first.
 - A scheduled job that checks each release again: one more workflow for a result that the release job already proves.
 
 ### Consequences
@@ -73,6 +73,6 @@ A test puts a stub `gh` first on `PATH`. The asset names come from the targets o
 
 ## Amends
 
-ADR 0003 is accepted and locked, so this ADR does not edit it. This rule applies in addition to its section on phase 2: the release workflow verifies the attestation of each asset with `scripts/verify-release.sh` before it publishes the release.
+ADR 0003 is accepted and locked, so this ADR does not edit it. This rule applies in addition to its section on phase 2. The release workflow verifies the attestation of each asset with `scripts/verify-release.sh` before it publishes the release.
 
 ## Amendments

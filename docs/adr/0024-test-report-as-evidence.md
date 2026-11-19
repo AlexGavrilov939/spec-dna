@@ -6,7 +6,7 @@ status: proposed
 
 ## Context and Problem Statement
 
-A `covers:` tag links a test to a requirement. `check` and `finish` read the tag, and they never see if the test ran or passed ([ADR 0001](0001-information-model.md): "spec-dna still does not claim that tests pass"). A skipped test or a failed test clears SD608 and SD916. A test that passes once can be flaky. A requirement whose proof is owed for a known reason looks the same as a requirement with no proof. So an author adds a false tag to clear SD608.
+A `covers:` tag links a test to a requirement. `check` and `finish` read the tag. They never see if the test ran or passed ([ADR 0001](0001-information-model.md): "spec-dna still does not claim that tests pass"). A skipped test or a failed test clears SD608 and SD916. A test that passes once can be flaky. A requirement whose proof is owed for a known reason looks the same as a requirement with no proof. So an author adds a false tag to clear SD608.
 
 How does a requirement count as proven only when its test ran and passed, with a deterministic core and no network in `check`?
 
@@ -54,7 +54,7 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 - `[evidence] reports` lists globs of report files. spec-dna reads them from the disk, even when git ignores them.
 - The list of formats is closed: `junit` (a subset of JUnit XML) and `lines`. The `lines` format is `spec-dna-report 1`, then one line for each case: `<pass|fail|skip>`, a tab, a path or `-`, a tab and the case name. Any runner can write the line format with a small script. A new format is a new reader and one more name.
 - The XML reader is own code. It reads UTF-8 only, and it rejects a DTD, so it never loads an external entity.
-- An unknown format, a parse error, a `testsuite` whose `tests` count differs from its `testcase` elements (a cut file), a file over 64 MiB, or a report or stamp that git tracks gives SD615. A committed report can be a hand-written one, so the gate refuses option 4.
+- Each of these gives SD615: an unknown format, a parse error, a `testsuite` whose `tests` count differs from its `testcase` elements (a cut file), a file over 64 MiB, and a report or stamp that git tracks. A committed report can be a hand-written one, so the gate refuses option 4.
 
 ### The stamp
 
@@ -64,9 +64,9 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 ### The bind of a tag
 
 - An explicit name follows the ids: `case:<name>` or `case:"<name>"`. A binary of 0.7.1 ends the tag at that word, so it reads the same ids.
-- Else the tag binds to the first word or string literal of the first code block after the tag, when it names a case of the reports. The block ends before the first later line whose indent is not deeper than its first line, after a deeper line. It also ends before a line with less indent than the tag, at the next tag, or after 20 lines. Thus, in the usual layout, the tag of a test that did not run does not bind to the next test. A name matches when it equals the word, ends with it after a separator, or starts with it and `/`, after the removal of a final `[...]` or `(...)`.
-- A case with a file binds only a tag of that file. A case with no file binds only a tag of the test file whose dotted path ends with its `classname`, or with the part before the last `.` (the form of pytest). When no file has such a path, it binds a tag of any test file.
-- The limits: an unrelated passing case that shares a word of the block, a test in a comment after the tag, one case name in 2 files with no `file` and no such `classname`, and a test on one line. `case:` removes each doubt.
+- Else the tag binds to the first word or string literal of the first code block after the tag. It binds only when that word names a case of the reports. The block ends before the first later line whose indent is not deeper than its first line, after a deeper line. It also ends before a line with less indent than the tag, at the next tag, or after 20 lines. Thus, in the usual layout, the tag of a test that did not run does not bind to the next test. First remove a final `[...]` or `(...)` from the name. A name matches when it equals the word, ends with it after a separator, or starts with it and `/`.
+- A case with a file binds only a tag of that file. A case with no file binds only a tag of a test file whose dotted path ends with its `classname`. It also binds a tag of a test file whose dotted path ends with the part before the last `.` (the form of pytest). When no file has such a path, it binds a tag of any test file.
+- The limits are these doubtful cases. An unrelated case that passes can share a word of the block. A test can be in a comment after the tag. One case name can be in 2 files with no `file` and no such `classname`. A test can be on one line. `case:` removes each doubt.
 - A tag with no case is not bound. It proves nothing, and the message names the fix.
 
 ### The proof and its states
@@ -80,7 +80,7 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 
 - `finish` reads the reports when `[evidence] reports` is set (step 5).
 - `check` reads them only with `--reports`. `init` writes no flag, because its CI job runs no tests. The change guide gives the steps for the job that runs the tests: the tests, `spec-dna evidence stamp`, and `check --reports`. The hook `check --staged` keeps the rule of 0.7.1, so a commit needs no fresh report.
-- New codes carry the new facts: SD613 to SD615 for the report, SD616 (an active requirement, a state code) and SD617 (a requirement of a change) for a tag with no passed case.
+- New codes carry the new facts. SD613 to SD615 are for the report. SD616 (an active requirement, a state code) and SD617 (a requirement of a change) are for a tag with no passed case.
 
 ### The proof debt
 
@@ -91,7 +91,7 @@ Option 3, and option (a) for "passes reliably". The design page gives the detail
 
 ### The profiles
 
-On 2026-11-19 the owner decided the profiles of 0.8.0. In `lite`, each new code of this ADR is off. The codes are in the new rule groups `reports` (SD613 to SD617) and `proof` (SD618 to SD620), so a rule for the group `evidence` of 0.7.1 does not change them. In `standard` and `strict`, the test reports are on only by `[evidence] reports`, and the reliable level only by `[evidence] reliable-for`. `init` writes `reports = []` with a comment in both, and in `strict` it writes `reliable-for = "higher-risk"` as a comment. The proof debt has no key: the marker is an act of the author on one requirement, as `verified-by` is, not a switch of the project. In `standard` its codes are warnings, so a marker never stops a change there.
+On 2026-11-19 the owner decided the profiles of 0.8.0. In `lite`, each new code of this ADR is off. The codes are in the new rule groups `reports` (SD613 to SD617) and `proof` (SD618 to SD620). A rule for the group `evidence` of 0.7.1 does not change them. In `standard` and `strict`, the test reports are on only by `[evidence] reports`, and the reliable level only by `[evidence] reliable-for`. `init` writes `reports = []` with a comment in both, and in `strict` it writes `reliable-for = "higher-risk"` as a comment. The proof debt has no key. The marker is an act of the author on one requirement, as `verified-by` is. It is not a switch of the project. In `standard` its codes are warnings, so a marker never stops a change there.
 
 ### Rejected
 
@@ -101,7 +101,7 @@ On 2026-11-19 the owner decided the profiles of 0.8.0. In `lite`, each new code 
 - A bind by file only: many runners write no file. A bind by a language parser: one parser for each language.
 - A wrapper command that runs the tests and stamps: more code (signals, exit codes, Windows). Its only gain is a local edit between the run and the stamp, and the acceptor runs the tests again.
 - Option (b): a requirement that no change touches stays at `passed-once`, and different trees mix in code change. Repetition on one tree is the definition of a flaky test.
-- Options (c) and (d): a committed ledger gives conflicts (ADR 0001, "Concurrency"), a cache of CI is not in a fresh checkout, and git does not fetch notes by default.
+- Options (c) and (d) fail for these reasons. A committed ledger gives conflicts (ADR 0001, "Concurrency"). A cache of CI is not in a fresh checkout. Git does not fetch notes by default.
 - A date or an expiry on a debt: a check reads no clock ([ADR 0006](0006-change-lifecycle.md)).
 - A crate for XML: a new dependency for a small subset.
 
