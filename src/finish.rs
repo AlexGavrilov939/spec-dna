@@ -53,6 +53,10 @@ pub struct Ctx<'a> {
     /// in the path, or a path outside the repository), or `None`. `main` gives
     /// `path_problem` of the repository root.
     pub path_problem: &'a dyn Fn(&str) -> Option<String>,
+    /// The read of the test reports (design 0.8.0, D1), with the result of the
+    /// bind on the tags of `head`. `None`: the reports are off, so step 5 reads
+    /// the tags as 0.7.1 does.
+    pub reports: Option<&'a crate::report::Reads>,
 }
 
 /// A file that `finish` writes.
@@ -499,6 +503,18 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         );
     }
 
+    // Step 5.1: the test reports are present, readable and fresh.
+    if let Some(reads) = cx.reports {
+        let diags = reads.diags(cx.config);
+        if !diags.is_empty() {
+            return stop(
+                5,
+                "a test report is missing, stale or unreadable; run the tests, then `spec-dna evidence stamp`, then `finish` again",
+                diags,
+            );
+        }
+    }
+
     // Step 5: the evidence, then the check of the whole result.
     let files = ch.files(head);
     let others_touched = changes
@@ -506,11 +522,19 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         .filter(|c| c.dir != cx.folder)
         .any(|c| cx.diff.is_some_and(|d| d.under(&c.dir).next().is_some()));
     let scope = |p: &str| !others_touched || change::in_scope(&files, p);
-    let missing = lifecycle::evidence_missing(&rebuilt, base, head, ch, &scope);
+    let mut missing = lifecycle::evidence_missing(&rebuilt, base, head, ch, &scope);
+    // SD617 is a result of the test reports. A project that turned it off keeps
+    // the tags as evidence.
+    missing.retain(|d| d.code != Code::ChangeUnproven || !cx.config.is_off(Code::ChangeUnproven));
     if !missing.is_empty() {
+        let unproven = missing.iter().all(|d| d.code == Code::ChangeUnproven);
         return stop(
             5,
-            "a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`)",
+            if unproven {
+                "a requirement that the change adds or changes has a tag, and no bound test case passed in the reports (the lines are lines of the result of `finish`)"
+            } else {
+                "a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`)"
+            },
             missing,
         );
     }
@@ -1719,6 +1743,8 @@ mod tests {
                 line: i as u32 + 1,
                 target: t.to_string(),
                 partial: false,
+                case: None,
+                proof: None,
             })
             .collect();
         let base = corpus(cfg, base_files);
@@ -1743,6 +1769,7 @@ mod tests {
             read: &read,
             exists: &exists,
             path_problem: &|_| None,
+            reports: None,
         })
     }
 

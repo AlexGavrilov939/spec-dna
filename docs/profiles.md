@@ -21,6 +21,8 @@ An error fails `check` when the error is new against the base. A warning never f
 | `drift` | SD606, SD607 | off | warning | error |
 | `evidence` | SD103 (a `verified-by` path is not in the git tree), SD105 (a `covers:` tag names no requirement) | warning | error | error |
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
+| `reports` | SD613 (report missing), SD614 (report stale), SD615 (report unreadable), SD617 (change unproven) | off | error | error |
+| `reports` | SD616 (an active requirement is unproven by the reports) | off | warning | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
 | `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan), SD918 (incident with no eval) | off | warning | warning |
@@ -29,6 +31,8 @@ An error fails `check` when the error is new against the base. A warning never f
 | `changes` | SD910 (gate approval missing), SD914 (delta invalid), SD915 (finish incomplete), SD916 (delta evidence missing), SD919 (concern open), SD920 (decision needed, not accepted), SD922 (question open) | warning | error | error |
 
 The other codes keep the severity of [docs/diagnostics.md](diagnostics.md) in every profile. For example, SD405 (the locked text of an accepted decision changed) is always an error. SD506 (an eval file that is not valid, or an absent `check.sh`) is in no group, so it is an error in every profile. SD507 (a skill in `skills` that is off by default, see [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) is in no group too. It is off in `lite` and `standard`, and a warning in `strict`. Only a rule for SD506 or SD507 in `[rules]` can change them. SD612 (a link into the folder of a change) is also in no group: it is a warning in each profile, and a rule for SD612 changes it.
+
+The group `reports` is new in 0.8.0. Its codes run only with `[evidence] reports` ([config.md](config.md#test-reports)). They are off in `lite`, and in `standard` and `strict` they run only when the project sets the key, so `upgrade` gives a project of 0.7.1 no new error. A rule for the group `evidence` does not change them. A rule for the group `reports`, or for one code, turns them on in `lite` too. 0.8.0 adds no key to a project that `upgrade` moves.
 
 The rule groups `layers` and `changes` are new in 0.6.0. The word `rules` still names the severity table of the file. A layer named `rules` is not that table: `[rules]` is the severity table, and `[layers.rules]` is the layer.
 
@@ -75,7 +79,9 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 | `[harness] protect-tests` | `off` | `fix-branches` (`off` for the link style `verified-by`) | as `standard` |
 | `[evals]` (question 14) | `none` | `skeleton` | `skeleton`, and a note on `eval pack` |
 | `[harness] protect-approvals` | not written | not written | `true` |
+| `[evidence] reports` | not written | `[]`, with a comment | `[]`, with a comment |
 
+- `init` detects no test runner, so it writes `reports = []`. The key turns the test reports on when the project lists the globs of its report files ([config.md](config.md#test-reports)). `--reconfigure` keeps the list.
 - A skill is on by default when `spec-dna skill list` says so. The rule of [ADR 0023](adr/0023-default-skills-from-the-release-table.md) reads the 7 skills of the design, the verdict of the skill in the table of the release, and a constant of the release. A skill outside the 7 can be on by default when its verdict is `on`. `full` ignores the verdicts: a person chooses it.
 - With the policy `none`, `init` writes no skill.
 - `lite`, `standard` and `strict` differ in the approval, the hook and the severities, and `strict` also reads the verdicts. `standard` and `strict` have the same rule for the skills.

@@ -51,6 +51,7 @@ dir = ".spec-dna/templates"     # project templates (default); not a root
 
 [evidence]
 tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
+reports = ["reports/*.xml"]     # test reports that a tag needs (default: none, so a tag alone proves a requirement)
 
 [evals]                         # optional: the agent evals (see "The table `evals`")
 dir = "evals"                   # the folder of the evals (default "evals")
@@ -126,7 +127,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617, and no rule for the group `evidence` changes them. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -156,6 +157,8 @@ sonnet = "high"
 | `layers.<name>.max-started` | integer | none | The most started changes. |
 | `layers.<name>.stale-days` | integer | none | The days without a commit before a change is stale. |
 | `evidence.tests` | list of globs | the default test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list disables the tags. |
+| `evidence.reports` | list of globs | `[]` | The test report files, as globs from the repository root. Empty: the test reports are off, and a tag alone proves a requirement. With a list, `spec-dna evidence stamp` stamps the reports, and `check --reports` and `finish` read them ([Test reports](#test-reports)). `init` writes `reports = []` with a comment in `standard` and `strict`, and no key in `lite`. |
+| `evidence.tree-exclude` | list of globs | `["**/*.md", "**/*.markdown"]` | The paths that the code tree leaves out, so that an edit of them does not make a report stale. A list replaces the default. A project whose Markdown files are code sets its own list. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`. The value is a URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
@@ -582,6 +585,39 @@ The word `partial` comes first after `covers:` (in any ASCII case, with or witho
 - A partial tag that names no requirement gives SD105, as a full tag does.
 - `show` lists the partial tags apart from the sources, `status` gives the token `partial <n>`, and `stats --sdlc` gives the share of requirements that have a partial tag and no full evidence.
 - A binary before 0.7.0 reads no id after the word `partial`, so it reads no evidence from such a tag.
+
+### Test reports
+
+A tag is a claim of the author. With `[evidence] reports`, a tag proves a requirement only when a test case that binds to it passed in a report. Without the key, nothing changes: a tag alone is evidence, as in 0.7.1. An empty list is the same as no key. The `lite` profile turns the codes of the reports off. `[evidence] reports` and the group `reports` of `[rules]` are the only switches.
+
+How it works:
+
+1. The tests write a report. spec-dna reads 2 formats. `junit` is a subset of JUnit XML: the elements `testsuites`, `testsuite` and `testcase`, the attributes `name`, `classname` and `file`, and the children `failure`, `error`, `skipped`, `flakyFailure`, `flakyError`, `rerunFailure` and `rerunError`. spec-dna reads UTF-8 only, and it rejects a DTD. `lines` is a format for any runner: the first line is `spec-dna-report 1`, and each other line is `pass`, `fail` or `skip`, a tab, a path from the repository root or `-`, a tab and the name of the case. A blank line and a line that starts with `#` do not count.
+2. `spec-dna evidence stamp` writes `<report>.stamp` next to each report. The stamp holds the hash of the code tree and the hash of the report bytes. Run it after the tests, in the same job.
+3. `check --reports` and `finish` read the reports from the disk, also when git ignores them. A report counts when it is readable, git does not track it, it has a stamp, and the stamp names the current code tree and the bytes of the report.
+
+The code tree is one hash of the code as it was when the tests ran. It covers each file that git tracks, with the bytes on the disk. A symbolic link counts with the text that it names, as git stores it, and a submodule counts with its entry in the git index (the tree does not look into it). It leaves out these paths: the files that `tree-exclude` matches (default: each Markdown file), the folders of the `intent` layer, `.spec-dna/`, the files that `init` writes with `spec-dna.toml` and the report files with their stamps. An untracked file does not count. Thus a change of documents never makes a report stale, and a change of code does. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale: stage new files before the stamp.
+
+A tag binds to a test case in these ways:
+
+- The tag names the case: `# covers: loans#renew case:test_renew_on_time`, or `case:"renew on time"` when the name has spaces. `case:` comes after the ids, and its value is the `name` of the case as the report writes it. Do not use a name with a `#`: a binary before 0.8.0 reads `case:X#y` as an id, so it reports SD105 for it. Use the name without its part before the `#`, or the full name from the report when it has no `#`.
+- Else the tag binds to the first word or string literal of the first code block after the tag that names a case of the reports. A string literal and a name come before a keyword that starts a test (`it`, `test`, `fn`, `def`, `func` and similar), so `it('closes on timeout', ...)` binds to the case "closes on timeout" and not to a case that ends with the word `it`. The block starts at the first line after the tag that is not blank and not a comment. It ends before the first later line whose indent is not deeper than the indent of its first line, after a deeper line. It also ends before a line with less indent than the tag, before the next `covers:` line, and after 20 lines. A tag in the lines of a doc comment (the lines `/**`, `* covers: ...` and `*/`) binds to the test below the comment: the line that opens the comment (`/**`) gives the indent of the tag. A comment in the body of a test does not bind to the next test. A case name matches a word when, without a final `[...]` or `(...)`, it equals the word, ends with the word after `.`, `::`, `/`, `#`, a space, `>` or `›`, or starts with the word and `/`.
+- A case that has a `file` binds only a tag of that file. A runner that starts in a subfolder writes a shorter path, so the path of the tag can also end with `/` and the `file` of the case. A case with no `file` and a `classname` binds only a tag of a test file whose dotted path (the path without its extension, with `.` for `/`) ends with the `classname`, or with its part before the last `.`, in whole segments. The pytest `classname` `tests.test_valves.TestValves` names `tests/test_valves.py`. When no test file has such a path, the case binds a tag of any test file.
+- A tag with no case is not bound. It proves nothing, and the message names the fix.
+
+A requirement passes when at least one case that binds to it passed, and no such case failed. A skipped case is no pass and no fail. A case that passed after a rerun (`flakyFailure`, `rerunFailure`) counts as a fail. A `verified-by` record is a check by a person: the report does not apply to it.
+
+The bind can be wrong in 4 cases. An unrelated case that passes shares a word of the block. A test is in a comment after the tag, so the block starts at the next real test. One case name is in 2 files, in a report with no `file` and no `classname` that names a file. A test is on one line with no deeper line, so the block runs on. `case:` removes each doubt. The messages of SD616 and SD617 name the case, so a reviewer can see the bind.
+
+With no fresh report, each full tag is unbound, so SD616 or SD617 still tell that the requirement is unproven, also when a setting makes SD613 to SD615 a warning or turns them off. A report that is in no root (its path is below no `[[roots]]` path) takes the severity of the project for SD613 to SD615, but the requirement keeps the severity of its own root.
+
+A glob of `reports` is a path from the repository root: an absolute path, a drive letter and a `..` segment are errors of the configuration (exit code 3). A folder that does not exist has no report (SD613). A folder that exists and cannot be read is an input error (exit code 4), because it must not look like a project with no report.
+
+A report is unreadable (SD615) in these cases: an unknown format, a parse error (also a `testcase` inside a `testcase`), a `testsuite` whose `tests` count is not its number of `testcase` elements (a cut file), a file over 64 MiB, a `<!DOCTYPE`, and a report or a stamp that git tracks. A report in git can be a hand-written one. Add the reports to `.gitignore`.
+
+What the reports do not prove. A test can pass and still not check the requirement: the tag is a claim of the author. A person or an agent can write a report by hand, because the stamp binds bytes to a tree, not to a run. `check --reports` reads files outside git. Without `--reports`, `check` keeps the rule of 0.7.1, so the hook `check --staged` needs no report.
+
+[Diagnostics](diagnostics.md#test-reports-sd613-to-sd617) lists the codes. [The change guide](guides/change.md#test-reports-in-ci) gives the steps for CI.
 
 ## Patterns and globs
 

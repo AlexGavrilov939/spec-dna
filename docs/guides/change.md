@@ -136,6 +136,24 @@ A spike is a short task that tries or measures one option before you decide. Som
 - To add a path to `Files` of a plan that an approval commit approved, use the same 2 commits. Else the new path gives SD910 (reason 8).
 - Do not edit the delta in the pull request of `finish`. A new approval commit there does not help, because the squash merge keeps no commit of the branch.
 
+### Test reports in CI
+
+A tag is a claim of the author. With `[evidence] reports`, a tag proves a requirement only when a test case that binds to it passed ([Test reports](../config.md#test-reports)). `init` writes `reports = []` and no `--reports`, because its CI job runs no tests and does not know your test command. To use the reports, make 3 steps:
+
+1. Set the globs of the report files of your runner in `spec-dna.toml`, for example `reports = ["target/nextest/ci/junit.xml"]`, and add the folder of the reports to `.gitignore`. A report that git tracks gives SD615.
+2. In the CI job that runs the tests, run the tests so that they write the report. Then, in the same job, run `spec-dna evidence stamp`. The stamp binds the report to the code tree.
+3. Run `spec-dna check --reports --base origin/HEAD` after the stamp. A skipped test, a failed test and a tag that binds to no test case now give SD617 when the pull request finishes the change.
+
+```sh
+cargo nextest run --profile ci      # the runner writes the JUnit XML report
+spec-dna evidence stamp             # bind the report to this tree
+spec-dna check --reports --base origin/HEAD
+```
+
+Run the same 2 commands on your machine before `finish`: the tests, then `spec-dna evidence stamp`. Stage new files with `git add` first, because an untracked file is not in the code tree. `finish` reads the reports when the key is set, and it stops at step 5 if a report is missing, stale or unreadable (SD613 to SD615) or if a tag has no passed test case (SD617). A change of code after the stamp makes the report stale (SD614). A change of Markdown does not. The hook `check --staged` needs no report.
+
+A runner with no JUnit output can write the line format: `spec-dna-report 1`, then one line `pass`, `fail` or `skip`, a tab, a path or `-`, a tab and the name of the case. If the tag is not above the test, add the name of the case to the tag: `// covers: requirements/valves/closing#sensor-timeout case:closes_on_timeout`.
+
 ## The approval commit
 
 This section is for a project with `[change] approval = "branch"`. `check` then walks the commits of the branch from the oldest. A commit that edits an artifact or a path of `Files` needs the approval of the artifact before it. The approval is in the base tree, or in an approval commit that comes before this commit.
@@ -227,6 +245,7 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 | SD913 | A change of the diff has a plan, and the diff touches a file that no `Files` of the diff lists. Before a plan exists, SD913 gives nothing | List the file in `Files`, also an edit of `clarify` such as the questions, or move the edit to a pull request of its own |
 | SD914 | A delta line is not valid, or its hash is not the hash of the current text | Run `spec-dna show`. Correct the line in its own pull request before `finish` ([a delta that depends on a spike](#a-delta-that-depends-on-a-spike)) |
 | SD916 | A new or changed requirement has no full evidence. A `covers: partial` tag alone is not evidence | Add a test with a `covers:` tag that covers all of it, or a `verified-by` path |
+| SD613 to SD615, SD617 | With `[evidence] reports`: a test report is missing, stale or unreadable, or a tag has no passed test case | Run the tests, then `spec-dna evidence stamp`. Put the tag above the test, or add `case:<name>` ([test reports in CI](#test-reports-in-ci)) |
 | SD917 | The class of the intent is too low for the diff | Set a higher class. Add the documents of that class |
 | SD919 | An approved spec has an open concern | Resolve the concern. Write its resolution |
 | SD922 | An approved spec has an open question | Answer the question (`- [x]`). Write the answer after it |

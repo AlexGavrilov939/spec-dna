@@ -45,6 +45,12 @@ pub struct Config {
     pub rules: Rules,
     /// Globs of the files where `check` reads `covers:` tags.
     pub evidence_tests: Vec<String>,
+    /// `[evidence] reports`: globs of the test report files, from the root.
+    /// Empty: the test reports are off (design 0.8.0, D1).
+    pub evidence_reports: Vec<String>,
+    /// `[evidence] tree-exclude`: globs of the paths that the code tree leaves
+    /// out. The default is `DEFAULT_TREE_EXCLUDE`. A list replaces it.
+    pub evidence_tree_exclude: Vec<String>,
     /// The document types of the project. Empty: every type.
     pub types: Vec<DocType>,
     /// The number of characters that a document over its hard budget in the
@@ -938,6 +944,10 @@ impl Profile {
             "SD917" | "SD921" | "SD923" | "SD924" | "SD925" => (None, Some(W), Some(E)),
             "SD918" => (None, Some(W), Some(W)),
             "SD507" => (None, None, Some(W)),
+            // The test reports (design 0.8.0, D1). Off in `lite`. The codes run
+            // only with a `[evidence] reports` key that is not empty.
+            "SD613" | "SD614" | "SD615" | "SD617" => (None, Some(E), Some(E)),
+            "SD616" => (None, Some(W), Some(E)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -953,12 +963,13 @@ impl Profile {
 pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
-pub const GROUPS: [(&str, &[&str]); 8] = [
+pub const GROUPS: [(&str, &[&str]); 9] = [
     ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
     ("drift", &["SD606", "SD607"]),
     ("evidence", &["SD103", "SD105", "SD608"]),
+    ("reports", &["SD613", "SD614", "SD615", "SD616", "SD617"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
     (
@@ -971,6 +982,24 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
 ];
 
 /// True for a code of the group `changes`: SD905 and SD910 to SD926.
+/// Why a glob of `[evidence] reports` is not a path below the repository root,
+/// or `None`. A report glob is from the root: it has no absolute path, no drive
+/// letter and no `..` segment.
+fn report_glob_problem(glob: &str) -> Option<&'static str> {
+    let g = glob.trim();
+    let bytes = g.as_bytes();
+    if g.starts_with('/') || g.starts_with('\\') {
+        return Some("it is an absolute path");
+    }
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return Some("it starts with a drive letter");
+    }
+    if g.split(['/', '\\']).any(|seg| seg == "..") {
+        return Some("it has a `..` segment");
+    }
+    None
+}
+
 fn is_change_code(code: Code) -> bool {
     GROUPS
         .iter()
@@ -1205,6 +1234,11 @@ pub const DEFAULT_TEST_GLOBS: [&str; 10] = [
     "**/*_spec.*",
 ];
 
+/// The default of `[evidence] tree-exclude`: the paths that the code tree
+/// leaves out (design 0.8.0, D1). Each Markdown file is a document, so an edit
+/// of a document never makes a test report stale.
+pub const DEFAULT_TREE_EXCLUDE: [&str; 2] = ["**/*.md", "**/*.markdown"];
+
 /// The line (from 1) of the key `approvers` in the table `[change]` of a
 /// configuration text. It is 1 if the text has no such line.
 fn approvers_line(text: &str) -> u32 {
@@ -1407,11 +1441,26 @@ impl Config {
             }
         }
         let mut evidence_tests = DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
+        let mut evidence_reports: Vec<String> = Vec::new();
+        let mut evidence_tree_exclude = DEFAULT_TREE_EXCLUDE.map(str::to_string).to_vec();
         if let Some(v) = t.take("evidence") {
             let tbl = v.as_table().ok_or("`evidence` must be a table")?;
             let mut f = Fields::new(tbl, "evidence.");
             if f.table.contains_key("tests") {
                 evidence_tests = f.opt_strs("tests")?;
+            }
+            if f.table.contains_key("reports") {
+                evidence_reports = f.opt_strs("reports")?;
+                for g in &evidence_reports {
+                    if let Some(why) = report_glob_problem(g) {
+                        return Err(format!(
+                            "`evidence.reports` has the glob `{g}`: {why}; a report is a file of the repository"
+                        ));
+                    }
+                }
+            }
+            if f.table.contains_key("tree-exclude") {
+                evidence_tree_exclude = f.opt_strs("tree-exclude")?;
             }
             f.done()?;
         }
@@ -1514,6 +1563,8 @@ impl Config {
             profile,
             rules,
             evidence_tests,
+            evidence_reports,
+            evidence_tree_exclude,
             types,
             growth,
             conventions,
@@ -2532,6 +2583,34 @@ rules = { lint = "error" }
     }
 
     #[test]
+    fn the_keys_of_the_test_reports_have_defaults_and_checks() {
+        let text = |ev: &str| {
+            format!("spec-dna = \"0.1.0\"\n[evidence]\n{ev}\n[[roots]]\npath = \"docs\"\n")
+        };
+        let c = Config::parse(&text("")).unwrap();
+        assert!(c.evidence_reports.is_empty());
+        assert_eq!(c.evidence_tree_exclude, ["**/*.md", "**/*.markdown"]);
+        let c = Config::parse(&text("reports = [\"out/*.xml\"]\ntree-exclude = []")).unwrap();
+        assert_eq!(c.evidence_reports, ["out/*.xml"]);
+        assert!(c.evidence_tree_exclude.is_empty());
+        let e = Config::parse(&text("reports = \"out.xml\"")).unwrap_err();
+        assert!(e.contains("evidence.reports"), "{e}");
+        // The group `reports` is a rule group: it sets SD613 to SD617, and the
+        // group `evidence` does not.
+        let on = |rule: &str, p: &str| {
+            Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\nprofile = \"{p}\"\n[rules]\n{rule}\n[[roots]]\npath = \"docs\"\n"
+            ))
+            .unwrap()
+            .severity(Code::ReportMissing, None)
+        };
+        assert_eq!(on("evidence = \"error\"", "lite"), None);
+        assert_eq!(on("reports = \"error\"", "lite"), Some(Severity::Error));
+        assert_eq!(on("reports = \"off\"", "strict"), None);
+        assert_eq!(on("", "standard"), Some(Severity::Error));
+    }
+
+    #[test]
     fn required_sections_groups_and_evidence_globs() {
         let c = Config::parse(
             r#"
@@ -3526,6 +3605,33 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             c.severity(Code::TruthChangedWithoutChange, Some(0)),
             Some(W)
         );
+    }
+
+    #[test]
+    fn the_profile_rows_of_the_report_codes() {
+        use Severity::{Error as E, Warning as W};
+        // The design table of D1: code, lite, standard, strict. Each code is in
+        // the group `reports` and in no other group.
+        let rows = [
+            (Code::ReportMissing, None, Some(E), Some(E)),
+            (Code::ReportStale, None, Some(E), Some(E)),
+            (Code::ReportUnreadable, None, Some(E), Some(E)),
+            (Code::RequirementUnproven, None, Some(W), Some(E)),
+            (Code::ChangeUnproven, None, Some(E), Some(E)),
+        ];
+        for (code, lite, standard, strict) in rows {
+            for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
+                let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+                assert_eq!(c.severity(code, None), want, "{} {profile}", code.code());
+            }
+            let groups: Vec<&str> = GROUPS
+                .iter()
+                .filter(|g| g.1.contains(&code.code()))
+                .map(|g| g.0)
+                .collect();
+            assert_eq!(groups, ["reports"], "{}", code.code());
+        }
+        assert_eq!(Code::REPORT_CODES.len(), 5);
     }
 
     #[test]

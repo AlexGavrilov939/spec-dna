@@ -10,6 +10,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | `upgrade` | Move a project that pins 0.4.0 or later to the version of the binary, and move the pin | [upgrade](#upgrade) |
 | `import` | Move a project of Spec Kit 1.4.1 or OpenSpec 2.0.0 into the layout of spec-dna, with a proof | [import](#import) |
 | `check` | Run the controls of the gate | [check](#check) |
+| `evidence stamp` | Stamp the test reports with the hash of the code tree | [evidence](#evidence) |
 | `context` | Print the sections that an agent needs | [context](#context) |
 | `show` | Print a document, a section or a requirement | [show](#show) |
 | `new` | Write a document from a template, also the 3 documents of a change | [new](#new) |
@@ -56,6 +57,8 @@ spec-dna check --base origin/master # in CI: new diagnostics against the merge b
 spec-dna check --all                # every diagnostic
 spec-dna check --lint               # also list each prose lint warning (any profile)
 spec-dna check --staged             # check the git index, as a pre-commit hook does
+spec-dna check --reports --base origin/master   # in CI after the tests: also read the stamped test reports
+spec-dna evidence stamp             # after the tests: write <report>.stamp for each test report
 spec-dna context requirements/valves/closing --path src/valves.rs
 spec-dna context requirements/valves/closing --query "close a valve after a sensor timeout"
 spec-dna show requirements/valves/closing#sensor-timeout
@@ -123,7 +126,7 @@ At the end, `init` prints the bytes that the adapters add to the prompt prefix o
 ## check
 
 ```text
-spec-dna check [--base <rev>] [--all] [--lint] [--staged]
+spec-dna check [--base <rev>] [--all] [--lint] [--staged] [--reports]
 ```
 
 `check` runs the controls of ADR 0001 on the working tree, or with `--staged` on the git index. With `--base`, the base is the merge base of `<rev>` and `HEAD`. Without `--base`, the base is `HEAD`.
@@ -133,6 +136,8 @@ spec-dna check [--base <rev>] [--all] [--lint] [--staged]
 - Without `--base`, `check` also reads the untracked documents that git does not ignore.
 - With `--base`, it reads only tracked files, as CI does.
 - With `--staged`, the head tree is the git index: the tree that the next commit records. `check` reads `spec-dna.toml`, the documents, the test files, the code and the harness files (SD501, SD502, SD504, SD505) from the index. Untracked files and edits that are not staged do not count. `--staged` works with `--base` and `--all`, and the base does not change. `check` stops with exit code 4 for an unmerged path in the index, and with exit code 3 if `spec-dna.toml` is not in the index.
+
+- With `--reports` and a `[evidence] reports` list that is not empty, `check` also reads the test reports from the disk, also when git ignores them ([Test reports](config.md#test-reports)). It reports a missing, stale or unreadable report (SD613 to SD615), and a requirement whose tag binds to no passed test case (SD616 with `--all`, SD617 for a change that the diff finishes). `--reports` does not combine with `--staged` (exit code 2), because the hook of a commit needs no report. With no key, or with an empty list, `--reports` changes nothing. `--reports` is an option of `check` only. The codes of the reports are off in `lite`.
 
 The hook that `init` writes runs `spec-dna check --staged`. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101).
 
@@ -194,6 +199,24 @@ docs/decisions/timer.md:8: info: the locked text links `../intent/dose/intent.md
 The line is not a diagnostic. It has no code, no severity and no rule, it is not in the counts, and it does not change the exit code. If the target was in the folder of an intent, the line names the change, and the commit that `log` gives for it ("finished in" or "closed in"). If the history has no such commit (a shallow clone, or a deletion that is not committed yet), the line says "the change `<slug>` (`spec-dna log` names its commit)". For another target, it says "the new place of the text, or the reason for its removal". Add an amendment to the decision that names the target. An amendment section clears the line when a code span or a word of prose with a `/` in the section equals the target as written (with no `#` fragment), the id or the path of the place that is gone (from the root of the documents or of the repository, with or without `.md`), or, for a change folder, when the slug of the change is in a code span. A link to the target in the amendment gives SD102, because that text can change. Without `--all`, `check` prints no such line. A reference to a document that exists, with an absent section, is not a locked link.
 
 The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target`, `pointer` (the text after "points to" in the info line) and `commit` (the full id of the commit that the pointer names, or `null`). The list is empty if there is no locked link. The field `approvals` is always in the output too, after `locked_links`. It lists the approval commits that cleared a gate of SD910, in the order of the walk. Each entry has `commit` (the full id), `path` (the artifact that the commit approved) and `author` (the author e-mail). The list is empty with `[change] approval = "base"`, and also when no gate needed an approval commit ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
+
+## evidence
+
+```text
+spec-dna evidence stamp [--json]
+```
+
+`evidence stamp` binds the test reports to the code tree ([Test reports](config.md#test-reports)). It reads each file that `[evidence] reports` matches, and it writes `<report>.stamp` next to it:
+
+```text
+spec-dna-stamp 1
+tree 3f2a9c1b7e0d4a11
+report 9c1b7e0d4a113f2a
+```
+
+`tree` is the hash of the code tree now. `report` is the hash of the bytes of the report. Run the command after the tests, in the same job, so the stamp is exact. It prints `stamped <n> report(s) at tree <hash>: <p> pass, <f> fail, <s> skip`. With `--json`, the output has `stamped`, `tree`, `pass`, `fail`, `skip` and `reports`: for each report, its `path`, `format` (`junit` or `lines`) and counts.
+
+It reads the whole set before it writes. If one report is unreadable, nothing gets a stamp. A report that git tracks is a refusal too, because a committed report can be a hand-written one. Exit codes: 0 stamped; 1 a report is unreadable, git tracks a report, or no file matches (nothing got a stamp); 2 usage (no `stamp`); 3 configuration (no `[evidence] reports`, a glob of it that is absolute or has `..`, or a different pin); 4 git or file error (also a folder of reports that exists and cannot be read).
 
 ## context
 
@@ -452,7 +475,7 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
     - A relative link of a delta line moves to the path of the target document.
     - The result keeps CRLF, a BOM and the final newline of each file.
     - A line that the tree applies already is skipped, so a second run changes nothing.
-6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document.
+6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document. With `[evidence] reports`, step 5 has 2 more parts, and the numbers of the steps stay. Step 5.1 runs first: each test report must be present, readable and fresh (SD613 to SD615). Step 5.4 is the check of the evidence: a requirement that has a tag also needs a bound test case that passed in the reports (SD617). Run the tests and `spec-dna evidence stamp` before `finish`, in the same checkout ([Test reports](config.md#test-reports)). The steps are off in `lite`.
 
 If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code.
 
@@ -1198,10 +1221,10 @@ An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `spe
 | Code | Meaning |
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
-| 1 | `check` found a new error (with `--all`: any error), the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `approve` refused (steps 3 to 7), `upgrade` or `import` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
+| 1 | `check` found a new error (with `--all`: any error), `evidence stamp` found an unreadable report or no report, the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `approve` refused (steps 3 to 7), `upgrade` or `import` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
 | 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with 1 arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its file, an `index` of a place that gives no type, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
-| 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `import`: no project, an unknown layout or a bad file of `--areas`. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent. For `eval verdict --compare`: a file that is no result of `eval run --arms` |
-| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `approve`: the commit failed, and the file has its old text. For `import`: a failed `git mv` or write, and the message gives the commands that restore the tree. For `eval run`: the temporary folder, the copy, the base commit or the result file |
+| 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case, `evidence stamp` with no `[evidence] reports`, or a glob of `[evidence] reports` that is absolute or has `..`), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `import`: no project, an unknown layout or a bad file of `--areas`. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent. For `eval verdict --compare`: a file that is no result of `eval run --arms` |
+| 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `approve`: the commit failed, and the file has its old text. For `import`: a failed `git mv` or write, and the message gives the commands that restore the tree. For `eval run`: the temporary folder, the copy, the base commit or the result file. For `evidence stamp` and `check --reports`: a folder of reports that exists and cannot be read |
 | 5 | A target names no document, section or requirement. For `finish`, `next` and `approve`: no folder for the slug, and for `approve` also no file of the artifact |
 
 A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.

@@ -189,6 +189,8 @@ src/json.rs                          COR: the writer. TRN: the transcript reader
 src/check.rs, src/diag.rs            DIA
 src/drift.rs, src/cite.rs            DIA. CTX is C for src/cite.rs
 src/evidence.rs, src/lint.rs         DIA
+src/report.rs                        DIA: the 2 readers of a test report (JUnit XML subset and the line format), the stamp and the read of the reports (D1)
+src/tree.rs                          COR: the code tree and its hash, the second compare of the pinned hashes (D1). DIA is C for the paths that it excludes
 src/context.rs, src/rank.rs          CTX
 src/mv.rs, src/split.rs              HYG
 src/registry.rs                      HYG
@@ -217,6 +219,7 @@ docs/assets/                         ARC (OWN)
 tests/cli.rs                         The agent of each command: its cases. TST: the structure and the shared helpers
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA
+tests/evidence_reports.rs            DIA: the test reports, the stamp, the bind and SD613 to SD617. TST: the fixtures of the 5 runners
 tests/layers_checks.rs, tests/sd921.rs, tests/task_checks.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
 tests/finish.rs                      HYG
 tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
