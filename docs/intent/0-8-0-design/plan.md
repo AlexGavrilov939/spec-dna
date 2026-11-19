@@ -6,16 +6,16 @@ status: approved
 ## Files
 
 - `docs/design/0.8.0.md` The design page.
-- `docs/adr/` ADRs 0024 to 0031.
+- `docs/adr/0024-test-report-as-evidence.md`, `docs/adr/0025-independent-acceptance.md`, `docs/adr/0026-approval-through-the-code-host.md`, `docs/adr/0027-owners-invariants-and-write-back.md`, `docs/adr/0028-roll-up-and-summaries.md`, `docs/adr/0029-protocol-of-the-model-team-measurement.md`, `docs/adr/0030-harness-arms-time-record-and-verdict-floor.md`, `docs/adr/0031-the-release-check.md` ADRs 0024 to 0031.
 - `docs/intent/0-8-0-design/` This change.
 
 ## Order
 
 - [x] t1: Read the code and the evals of 0.7.1 and trace the 3 carry-over defects. Files: `docs/design/0.8.0.md`. Verify: section 1 and section 8 of the design page name the cause of each defect with a cite.
-- [x] t2: Write the design page and ADRs 0024 to 0031 with `architect`. Files: `docs/design/0.8.0.md`, `docs/adr/`. Verify: each ADR has at most 14,000 characters (the budget of an ADR).
+- [x] t2: Write the design page and ADRs 0024 to 0031 with `architect`. Files: `docs/design/0.8.0.md`, `docs/adr/0024-test-report-as-evidence.md`, `docs/adr/0025-independent-acceptance.md`, `docs/adr/0026-approval-through-the-code-host.md`, `docs/adr/0027-owners-invariants-and-write-back.md`, `docs/adr/0028-roll-up-and-summaries.md`, `docs/adr/0029-protocol-of-the-model-team-measurement.md`, `docs/adr/0030-harness-arms-time-record-and-verdict-floor.md`, `docs/adr/0031-the-release-check.md`. Verify: each ADR has at most 14,000 characters (the budget of an ADR).
 - [x] t3: Add the overview and the slice plan. Files: `docs/design/0.8.0.md`. Verify: section 12 of the design page lists each slice with its tests, its estimate and its eval budget.
-- [x] t4: Run an independent critique with `checker`, and apply the fixes. Files: `docs/design/0.8.0.md`, `docs/adr/`. Verify: the report of the second pass of `checker` has no open blocker.
-- [x] t5: Check the language of the new text with `docs-editor`. Files: `docs/design/0.8.0.md`, `docs/adr/`. Verify: `pre-commit run --all-files` passes.
+- [x] t4: Run an independent critique with `checker`, and apply the fixes. Files: `docs/design/0.8.0.md`, `docs/adr/0024-test-report-as-evidence.md`, `docs/adr/0025-independent-acceptance.md`, `docs/adr/0026-approval-through-the-code-host.md`, `docs/adr/0027-owners-invariants-and-write-back.md`, `docs/adr/0028-roll-up-and-summaries.md`, `docs/adr/0029-protocol-of-the-model-team-measurement.md`, `docs/adr/0030-harness-arms-time-record-and-verdict-floor.md`, `docs/adr/0031-the-release-check.md`. Verify: the report of the second pass of `checker` has no open blocker.
+- [x] t5: Check the language of the new text with `docs-editor`. Files: `docs/design/0.8.0.md`, `docs/adr/0024-test-report-as-evidence.md`, `docs/adr/0025-independent-acceptance.md`, `docs/adr/0026-approval-through-the-code-host.md`, `docs/adr/0027-owners-invariants-and-write-back.md`, `docs/adr/0028-roll-up-and-summaries.md`, `docs/adr/0029-protocol-of-the-model-team-measurement.md`, `docs/adr/0030-harness-arms-time-record-and-verdict-floor.md`, `docs/adr/0031-the-release-check.md`. Verify: `pre-commit run --all-files` passes.
 - [ ] t6: The owner reads the design and answers the questions of section 9. Files: none. Verify: the owner gave the answers.
 
 ## Risks

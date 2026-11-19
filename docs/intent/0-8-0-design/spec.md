@@ -36,8 +36,8 @@ Files and tools: a harness role and a skill, the hook `protect-approvals`, the w
 
 ## Concerns
 
-- [ ] The record of acceptance cannot show that the acceptor is not the builder. The design states the limit and names the person who acknowledges as the trust root. The owner must accept the limit (Q10, Q11, Q12).
+None. The limit of the record of acceptance (it cannot show that the acceptor is not the builder) is in the section "Does not prove" of decision D3 of the design page.
 
 ## Open questions
 
-- [ ] Answer the questions of section 9 of the design page. The owner answers them before the build of slice S2.
+None. The questions for the owner are in section 9 of the design page. Task t6 of the plan tracks the answers.
