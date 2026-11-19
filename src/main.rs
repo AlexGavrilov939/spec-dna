@@ -1833,10 +1833,9 @@ fn base_pin(repo: &Repo, commit: &str) -> Result<Option<String>, Fatal> {
         .and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b))))
 }
 
-/// True if `spec-dna.toml` differs from its text in `base` in the pin line
-/// and in no other line. The head text is the working tree, or the git index
-/// for `--staged`.
-fn pin_line_only_change(repo: &Repo, base: &str) -> Result<bool, Fatal> {
+/// The text of `spec-dna.toml` in `base` and in the head: the working tree, or
+/// the git index for `--staged`. `None` if the file is absent in one of them.
+fn config_texts(repo: &Repo, base: &str) -> Result<Option<(String, String)>, Fatal> {
     let old = repo
         .git
         .read_at(&[(base.to_string(), config::FILE_NAME.to_string())])
@@ -1846,21 +1845,39 @@ fn pin_line_only_change(repo: &Repo, base: &str) -> Result<bool, Fatal> {
         .flatten();
     let new = repo.git.head_file(config::FILE_NAME).map_err(Fatal::Io)?;
     Ok(match (old, new) {
-        (Some(old), Some(new)) => config::pin_line_only_change(
-            &String::from_utf8_lossy(&old),
-            &String::from_utf8_lossy(&new),
-        ),
-        _ => false,
+        (Some(old), Some(new)) => Some((
+            String::from_utf8_lossy(&old).into_owned(),
+            String::from_utf8_lossy(&new).into_owned(),
+        )),
+        _ => None,
     })
+}
+
+/// True if `spec-dna.toml` differs from its text in `base` in the pin line
+/// and in no other line. The head text is the working tree, or the git index
+/// for `--staged`.
+fn pin_line_only_change(repo: &Repo, base: &str) -> Result<bool, Fatal> {
+    Ok(
+        config_texts(repo, base)?
+            .is_some_and(|(old, new)| config::pin_line_only_change(&old, &new)),
+    )
+}
+
+/// True if `spec-dna.toml` is the edit of `spec-dna upgrade` for a release
+/// that needs no other edit: it differs from its text in `base` only in the
+/// pin line and in `[spec-dna-sha256]`, and the base pins an earlier version.
+fn pin_upgrade_only_change(repo: &Repo, base: &str) -> Result<bool, Fatal> {
+    Ok(config_texts(repo, base)?
+        .is_some_and(|(old, new)| config::pin_upgrade_only_change(&old, &new)))
 }
 
 /// SD503: a change that edits `spec-dna.toml` together with documents or
 /// code. A configuration change must be a change of its own. The files that
-/// `init` writes with it (the adapters, the harness files, the hook files
-/// that `init` writes or upgrades, the starter files of the evals, and files
-/// named `spec-dna*`) do not count,
+/// `init` writes with it (`init::is_tool_file`) do not count,
 /// and a new `spec-dna.toml` (the adoption) is not checked. In a tree binary,
-/// a change of the pin line alone is not a change of `spec-dna.toml`.
+/// a change of the pin line alone is not a change of `spec-dna.toml`. In each
+/// binary, a pin that moves to a later version, with `[spec-dna-sha256]`, is
+/// not one either.
 fn config_not_alone(
     repo: &Repo,
     cfg: &config::Config,
@@ -1879,23 +1896,16 @@ fn config_not_alone(
     if repo.is_tree_binary() && pin_line_only_change(repo, base)? {
         return Ok(None);
     }
-    // The starter files of `skeleton` come with the table `[evals]`.
-    let starter: Vec<String> = cfg
-        .evals
-        .as_ref()
-        .map(|e| evals::skeleton_paths(&e.dir).to_vec())
-        .unwrap_or_default();
+    // In each binary, the edit of `upgrade` for a release (a pin that moves to
+    // a later version, with `[spec-dna-sha256]`) is not a change either
+    // (ADR 0019).
+    if pin_upgrade_only_change(repo, base)? {
+        return Ok(None);
+    }
     let others: Vec<&str> = changed
         .iter()
         .map(|(p, _)| p.as_str())
-        .filter(|p| {
-            *p != config::FILE_NAME
-                && !adapters::PATHS.contains(p)
-                && !harness::is_output_path(p)
-                && !starter.iter().any(|s| s == p)
-                && !init::HOOK_FILES.contains(p)
-                && !p.rsplit('/').next().unwrap_or(p).starts_with("spec-dna")
-        })
+        .filter(|p| *p != config::FILE_NAME && !init::is_tool_file(cfg, p))
         .collect();
     let Some(first) = others.first() else {
         return Ok(None);

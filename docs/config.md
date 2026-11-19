@@ -41,6 +41,7 @@ policy = "three-class"          # required in the table: "three-class", "two-cla
 gate = "block"                  # "block", "warn" or "off"
 high-risk-layers = ["interfaces", "rules"]  # a delta in these layers makes a change higher-risk (default)
 high-risk-paths = []            # globs from the repository root (default: none)
+shared-paths = []               # documents that each change can edit (SD913) (default: none)
 max-fanout = 8                  # documents that one change can touch before SD905 (default)
 approval = "base"               # "base" or "branch": where an approval can be (default: "base")
 approvers = []                  # the author e-mails of the approval commits, with approval = "branch"
@@ -132,6 +133,7 @@ sonnet = "high"
 | `change.gate` | string | none | `"block"`, `"warn"` or `"off"`. It sets the severity of SD910: error, warning or off. Without the key, SD910 takes the severity of the profile. A rule of `[rules]` for SD910 has priority. |
 | `change.high-risk-layers` | array of strings | `["interfaces", "rules"]`, without the names that the graph does not have | The layers whose documents make a change higher-risk. Each name must be a layer of the graph, or the exit code is 3. |
 | `change.high-risk-paths` | array of strings | `[]` | Globs from the repository root. A path that matches one of them makes a change higher-risk. A glob is not empty, is not absolute, and has no `.` or `..` segment. |
+| `change.shared-paths` | array of strings | `[]` | Globs from the repository root, in the form of `high-risk-paths`: the documents that each change can edit, such as a roadmap or a list of open questions. SD913 does not report a path that matches one of them. No other check reads the key. An empty glob is an error (exit code 3). |
 | `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
 | `change.max-task-files` | integer | `3` | The most paths that one task of an approved plan lists in its label `Files:` before SD924. An integer from 1 to 20, or the exit code is 3. |
 | `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
@@ -348,6 +350,7 @@ policy = "three-class"                      # "three-class", "two-class" or "non
 gate = "block"                              # "block", "warn" or "off"
 high-risk-layers = ["interfaces", "rules"]  # layers whose documents make a change higher-risk
 high-risk-paths = []                        # globs from the repository root
+shared-paths = ["docs/roadmap.md"]          # documents that each change can edit (SD913)
 max-fanout = 8                              # documents that one change can touch before SD905
 max-task-files = 3                          # paths that one task of an approved plan lists before SD924 (1 to 20)
 approval = "branch"                         # "base" or "branch": where an approval can be (default: "base")
@@ -357,7 +360,7 @@ base = "main"                               # a local branch, for a repository w
 
 The table `[change]` sets the change process: the change classes that the project uses, and the strictness of the gate. [The change guide](guides/change.md) gives the process. The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate.
 
-`spec-dna init` writes the table with the 5 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). It also writes `approval` and `approvers`: see [Approval in the branch](#approval-in-the-branch). `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
+`spec-dna init` writes the table with the 6 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths`, `shared-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). It also writes `approval` and `approvers`: see [Approval in the branch](#approval-in-the-branch). `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
 
 `policy` has these values:
 
@@ -378,7 +381,7 @@ The key `gate` sets the severity of SD910. The order of the sources for SD910 is
 
 With `gate = "block"`, a change to the artifact of a stage needs the approval of the earlier artifact. With `approval = "base"`, the base tree must show it. With `approval = "branch"`, an approval commit of an approver in the branch also counts.
 
-`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `max-fanout` is the limit of SD905. `max-task-files` is the limit of SD924, and it is the size of a task that a person can review. `init` does not write it, and `init --reconfigure` keeps the value that the file has. An absent key means 3.
+`high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `shared-paths` lists the documents that SD913 does not report: a path that no change owns, such as a roadmap, is not outside the plan of a change. `max-fanout` is the limit of SD905. `max-task-files` is the limit of SD924, and it is the size of a task that a person can review. `init` does not write it, and `init --reconfigure` keeps the value that the file has. An absent key means 3.
 
 The lifecycle checks compare the head with the merge base of a base revision and `HEAD`. The base revision is the first of these:
 

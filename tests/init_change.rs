@@ -148,7 +148,7 @@ fn list(t: &toml::Table, key: &str) -> Vec<String> {
 const CODEOWNERS_LINE: &str = "docs/intent/*/spec.md @OWNER";
 
 #[test]
-fn a_new_project_gets_three_class_block_and_the_seven_keys() {
+fn a_new_project_gets_three_class_block_and_the_eight_keys() {
     let r = Repo::empty();
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -173,7 +173,8 @@ fn a_new_project_gets_three_class_block_and_the_seven_keys() {
             "high-risk-layers",
             "high-risk-paths",
             "max-fanout",
-            "policy"
+            "policy",
+            "shared-paths"
         ]
     );
     // The preview says how the answers 4 and 5 were applied.
@@ -526,14 +527,14 @@ fn reconfigure_of_a_file_with_no_change_table_stays_with_none() {
     let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(r.change().is_none(), "an upgrade adds no table");
-    // An answer for a policy writes the table with the 5 keys and the 2 keys
+    // An answer for a policy writes the table with the 6 keys and the 2 keys
     // of the approval.
     let (code, out, err) = r.init_with("change-policy = \"three-class\"\n", &["--reconfigure"]);
     assert_eq!(code, 0, "{out}{err}");
     let t = r.change().unwrap();
     assert_eq!(text(&t, "policy"), "three-class");
     assert_eq!(text(&t, "gate"), "block");
-    assert_eq!(t.len(), 7);
+    assert_eq!(t.len(), 8);
     // The new table is a change of its own: no SD503, and no SD502.
     r.commit("choose a policy");
     let (code, out, err) = r.run(&["check", "--base", "HEAD~1"]);

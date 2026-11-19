@@ -2019,7 +2019,9 @@ fn approval_missing(
 
 /// SD913: a path of the diff is outside the scope of each change of the diff.
 /// It runs only if a change of the diff has a plan: before a plan exists, a
-/// change has no `Files`, so it has no scope to check against.
+/// change has no `Files`, so it has no scope to check against. It does not
+/// report a file that SD503 does not count (`init::is_tool_file`), or a path
+/// that a glob of `[change] shared-paths` matches.
 fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
     if !changes.iter().any(|c| c.has_plan(ctx)) {
         return Vec::new();
@@ -2032,6 +2034,8 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         // that no tree covers.
         if changes.iter().any(|c| change::in_scope(&c.scope, p))
             || ctx.paths().generated.contains(p)
+            || crate::init::is_tool_file(ctx.config, p)
+            || shared_path(ctx.config, p)
             || changes.iter().any(|c| c.covers(ctx, p))
         {
             continue;
@@ -2082,6 +2086,15 @@ fn not_paths_note(slug: &str, item: &str) -> String {
     format!(
         "; the `Files` of the change `{slug}` has an item that is not a path (the first is \"{item}\"): write each path or glob in a code span"
     )
+}
+
+/// True if a glob of `shared-paths` matches the path.
+fn shared_path(config: &Config, path: &str) -> bool {
+    let path = path.trim_start_matches("./").trim_start_matches('/');
+    config
+        .shared_paths
+        .iter()
+        .any(|g| crate::glob::matches(g, path))
 }
 
 /// True if a glob of `high-risk-paths` matches the path.

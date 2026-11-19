@@ -9,6 +9,13 @@
 //! `spec-dna.toml` and another counted file) does not fire. Any other changed
 //! line of `spec-dna.toml` counts, so SD503 fires with a document or with
 //! `Cargo.toml`.
+//!
+//! In each binary, SD503 does not count a pin that moves to a later version
+//! (ADR 0019, 0.7.1). The cases of a release binary here therefore have a base
+//! that pins a later version: the pin moves back, and only a tree binary
+//! ignores that move. The cases of the tree binary use the same base, so they
+//! fail if the rule of the tree binary is removed: a later pin that moves back
+//! is not an upgrade.
 
 mod common;
 
@@ -17,6 +24,9 @@ use common::*;
 /// The pin of the base commit. It is 0.6.0 or later, so SD503 applies, and it
 /// is not the version of the binary.
 const OLD: &str = "0.6.0";
+
+/// A pin after the version of the binary, so a move to the binary goes back.
+const LATER: &str = "9.9.9";
 
 fn config(pin: &str, extra: &str) -> String {
     format!("spec-dna = \"{pin}\"\n{extra}[[roots]]\npath = \"docs\"\n")
@@ -29,8 +39,13 @@ fn cargo(name: &str, version: &str) -> String {
 /// A repository with 1 commit: the configuration that pins `OLD`, a
 /// `Cargo.toml` with `name` and `cargo_version`, and 1 document.
 fn base(name: &str, cargo_version: &str) -> Repo {
+    base_at(OLD, name, cargo_version)
+}
+
+/// `base` with the pin `pin`.
+fn base_at(pin: &str, name: &str, cargo_version: &str) -> Repo {
     let r = Repo::new();
-    r.write("spec-dna.toml", &config(OLD, ""));
+    r.write("spec-dna.toml", &config(pin, ""));
     r.write("Cargo.toml", &cargo(name, cargo_version));
     r.write("docs/a.md", "# A\n\nA text.\n");
     r.commit("base");
@@ -63,7 +78,7 @@ fn modes(r: &Repo) -> Vec<(&'static str, Vec<&'static str>)> {
 #[test]
 fn a_pin_only_change_in_a_tree_binary_is_not_a_configuration_change() {
     // The release shape: the pin and the version of `Cargo.toml` move together.
-    let r = base("spec-dna", OLD);
+    let r = base_at(LATER, "spec-dna", OLD);
     move_pin(&r, "");
     r.write("Cargo.toml", &cargo("spec-dna", VERSION));
     for (name, args) in modes(&r) {
@@ -77,7 +92,7 @@ fn a_pin_only_change_in_a_tree_binary_is_not_a_configuration_change() {
 fn a_pin_change_with_a_document_in_a_tree_binary_has_no_sd503() {
     // The pin line is not a change of `spec-dna.toml`. The document is the
     // only counted file, and SD503 needs the configuration and another file.
-    let r = base("spec-dna", VERSION);
+    let r = base_at(LATER, "spec-dna", VERSION);
     move_pin(&r, "");
     r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
     for (name, args) in modes(&r) {
@@ -133,7 +148,7 @@ fn a_change_of_the_configuration_alone_has_no_sd503_in_a_tree_binary() {
 
 #[test]
 fn a_release_binary_in_a_repository_with_another_package_keeps_sd503() {
-    let r = base("spec-dna", OLD);
+    let r = base_at(LATER, "spec-dna", OLD);
     r.write("Cargo.toml", &cargo("tool", VERSION));
     move_pin(&r, "");
     for (mode, args) in modes(&r) {
@@ -145,7 +160,7 @@ fn a_release_binary_in_a_repository_with_another_package_keeps_sd503() {
 
 #[test]
 fn a_release_binary_in_a_repository_with_no_cargo_toml_keeps_sd503() {
-    let r = base("spec-dna", VERSION);
+    let r = base_at(LATER, "spec-dna", VERSION);
     r.git(&["rm", "-q", "-f", "Cargo.toml"]);
     r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
     move_pin(&r, "");
@@ -162,7 +177,7 @@ fn a_release_binary_in_a_repository_with_no_cargo_toml_keeps_sd503() {
 #[test]
 fn a_package_with_another_version_keeps_sd503() {
     // The name is right, the version is not the version of the binary.
-    let r = base("spec-dna", OLD);
+    let r = base_at(LATER, "spec-dna", OLD);
     r.write("Cargo.toml", &cargo("spec-dna", "9.9.9"));
     move_pin(&r, "");
     for (mode, args) in modes(&r) {
@@ -175,7 +190,7 @@ fn a_package_with_another_version_keeps_sd503() {
 #[test]
 fn a_cargo_toml_in_a_folder_does_not_make_a_tree_binary() {
     // Only the file at the top level of the repository counts.
-    let r = base("spec-dna", OLD);
+    let r = base_at(LATER, "spec-dna", OLD);
     r.git(&["rm", "-q", "-f", "Cargo.toml"]);
     r.write("docs/Cargo.toml", &cargo("spec-dna", VERSION));
     move_pin(&r, "");
@@ -222,7 +237,7 @@ fn an_unknown_table_still_gives_exit_code_3_in_a_tree_binary() {
 fn check_staged_reads_the_manifest_and_the_configuration_of_the_index() {
     // The index has the release shape. The working tree changes after the
     // staging, and `--staged` ignores that change.
-    let r = base("spec-dna", OLD);
+    let r = base_at(LATER, "spec-dna", OLD);
     move_pin(&r, "");
     r.write("Cargo.toml", &cargo("spec-dna", VERSION));
     r.git(&["add", "-A"]);
@@ -241,7 +256,7 @@ fn pin_only_change_with_crlf_in_the_working_tree_gives_no_sd503() {
     // The base has LF line ends. The working tree has CRLF line ends, as a
     // checkout with `core.autocrlf` gives, and the change moves the pin. The
     // TOML meaning of the 2 texts differs in the pin line only.
-    let r = base("spec-dna", VERSION);
+    let r = base_at(LATER, "spec-dna", VERSION);
     r.write("spec-dna.toml", &config(VERSION, "").replace('\n', "\r\n"));
     r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
     for (name, args) in modes(&r) {
@@ -272,7 +287,7 @@ fn a_change_of_the_line_ends_alone_is_no_pin_only_change() {
 #[cfg(unix)]
 fn linked_base() -> Repo {
     let r = Repo::new();
-    r.write("spec-dna.toml", &config(OLD, ""));
+    r.write("spec-dna.toml", &config(LATER, ""));
     r.write("manifest/Cargo.toml", &cargo("spec-dna", VERSION));
     std::os::unix::fs::symlink("manifest/Cargo.toml", r.dir.join("Cargo.toml")).unwrap();
     r.write("docs/a.md", "# A\n\nA text.\n");

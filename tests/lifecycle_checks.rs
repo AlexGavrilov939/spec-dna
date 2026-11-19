@@ -1324,3 +1324,78 @@ fn a_budgets_plan_table_with_one_field_takes_the_old_default_for_the_other() {
     assert!(budget_codes(&out).is_empty(), "{out}");
     assert_eq!(code, 0, "{out}");
 }
+
+// SD913: the files of the tool, and `[change] shared-paths` (0.7.1, B3 and B8)
+
+/// A branch with an approved plan whose `Files` is `src/dose.py`. `change` has
+/// more keys of `[change]`. The base `main` has the plan, and `feature` is the
+/// branch. A test edits files on `feature`.
+fn scoped(change: &str) -> Repo {
+    let r = repo_with(&config(
+        "standard",
+        &format!("gate = \"warn\"\n{change}"),
+        "",
+        "",
+    ));
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n",
+    );
+    r.write(
+        "docs/intent/dose/plan.md",
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+    );
+    r.write("src/dose.py", "x = 1\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r
+}
+
+const QUESTIONS: &str = "---\ntype: research\n---\n# Questions\n";
+
+/// The paths of the SD913 lines of `check` on the branch.
+fn outside(r: &Repo) -> Vec<String> {
+    let (_, out, _) = r.run(&["check"]);
+    out.lines()
+        .filter(|l| l.contains(" SD913 "))
+        .map(|l| l.split(':').next().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn sd913_skips_the_files_that_the_tool_writes() {
+    let r = scoped("");
+    r.write("src/dose.py", "x = 2\n");
+    for p in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".claude/skills/spec-dna/SKILL.md",
+        ".pre-commit-config.yaml",
+        ".husky/pre-commit",
+        "tools/spec-dna-pin.toml",
+    ] {
+        r.write(p, "text\n");
+    }
+    let cfg = r.read("spec-dna.toml");
+    r.write("spec-dna.toml", &format!("{cfg}\n# A comment.\n"));
+    assert_eq!(outside(&r), Vec::<String>::new());
+    // A file that is no file of the tool is still outside.
+    r.write("src/other.py", "y = 1\n");
+    assert_eq!(outside(&r), ["src/other.py"]);
+}
+
+#[test]
+fn sd913_skips_a_path_of_shared_paths() {
+    // The edit of `src/dose.py` ties the diff to the change.
+    let r = scoped("");
+    r.write("src/dose.py", "x = 2\n");
+    r.write("docs/questions.md", QUESTIONS);
+    assert_eq!(outside(&r), ["docs/questions.md"]);
+    let r = scoped("shared-paths = [\"docs/questions.md\", \"notes/**\"]\n");
+    r.write("src/dose.py", "x = 2\n");
+    r.write("docs/questions.md", QUESTIONS);
+    r.write("notes/a/b.txt", "text\n");
+    r.write("src/other.py", "y = 1\n");
+    assert_eq!(outside(&r), ["src/other.py"]);
+}

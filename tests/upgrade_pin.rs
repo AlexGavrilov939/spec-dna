@@ -268,3 +268,71 @@ fn a_pin_file_of_another_version_stops_a_project_with_no_table_too() {
     assert_eq!(code, 3, "{out}{err}");
     assert_eq!(repo.git_out(&["status", "--porcelain"]), "");
 }
+
+// --- SD503 and a pin that moves to a later version (0.7.1, B3) ---
+
+/// The text of a configuration that pins `pin`, with `extra` after the roots.
+fn config_of(pin: &str, extra: &str) -> String {
+    format!("spec-dna = \"{pin}\"\n[[roots]]\npath = \"docs\"\n{extra}")
+}
+
+/// A repository whose base `main` pins `base_pin`. The branch `feature` has the
+/// configuration `head` and a changed script, in 1 commit. The result of
+/// `check --base main --json` is the gate of the pull request.
+fn upgraded_branch(base_pin: &str, head: &str) -> (Repo, String) {
+    let repo = Repo::new();
+    repo.write("spec-dna.toml", &config_of(base_pin, ""));
+    repo.write("docs/a.md", "# A\n");
+    repo.write("src/a.sh", "echo 1\n");
+    repo.commit("base");
+    repo.git(&["switch", "-q", "-c", "feature"]);
+    repo.write("spec-dna.toml", head);
+    repo.write("src/a.sh", "echo 2\n");
+    repo.commit("upgrade and work");
+    let (code, out, err) = repo.run(&["check", "--base", "main", "--json"]);
+    assert_ne!(code, 3, "{out}{err}");
+    (repo, out)
+}
+
+#[test]
+fn a_pin_that_moves_to_a_later_version_is_no_sd503_with_other_work() {
+    let (_, out) = upgraded_branch("0.6.1", &config_of(VERSION, ""));
+    assert!(!out.contains("\"code\":\"SD503\""), "{out}");
+}
+
+#[test]
+fn a_pin_that_moves_to_a_later_version_with_a_sums_table_is_no_sd503() {
+    // The table of the release file: valid for the pin of the binary.
+    let table = format!("\n{}", sums_table(VERSION, 'a'));
+    let (_, out) = upgraded_branch("0.6.1", &config_of(VERSION, &table));
+    assert!(!out.contains("\"code\":\"SD503\""), "{out}");
+}
+
+#[test]
+fn a_pin_and_another_edit_of_the_configuration_is_sd503() {
+    let (_, out) = upgraded_branch("0.6.1", &config_of(VERSION, "[rules]\nSD608 = \"off\"\n"));
+    assert!(out.contains("\"code\":\"SD503\""), "{out}");
+}
+
+#[test]
+fn a_move_to_the_same_pin_with_a_new_table_is_sd503() {
+    // The pin does not move: a change of the table alone counts as before.
+    let table = format!("\n{}", sums_table(VERSION, 'a'));
+    let repo = Repo::new();
+    repo.write("spec-dna.toml", &config_of(VERSION, ""));
+    repo.write("docs/a.md", "# A\n");
+    repo.commit("base");
+    repo.git(&["switch", "-q", "-c", "feature"]);
+    repo.write("spec-dna.toml", &config_of(VERSION, &table));
+    repo.write("src/a.sh", "echo 2\n");
+    repo.commit("work");
+    let (_, out, _) = repo.run(&["check", "--base", "main", "--json"]);
+    assert!(out.contains("\"code\":\"SD503\""), "{out}");
+}
+
+#[test]
+fn a_base_pin_after_the_head_pin_is_sd503() {
+    // The head binary is older than the base pin: the move goes back.
+    let (_, out) = upgraded_branch("9.9.9", &config_of(VERSION, ""));
+    assert!(out.contains("\"code\":\"SD503\""), "{out}");
+}

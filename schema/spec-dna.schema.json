@@ -77,6 +77,15 @@
           },
           "uniqueItems": true
         },
+        "shared-paths": {
+          "description": "Globs from the repository root: documents that each change can edit, such as a roadmap. SD913 does not report a path that matches one of them. Default: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
         "max-fanout": {
           "description": "The most requirement documents that one change can touch before SD905. Default 8.",
           "type": "integer",

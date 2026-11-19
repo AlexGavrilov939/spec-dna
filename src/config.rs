@@ -94,6 +94,9 @@ pub struct Config {
     /// `[change] high-risk-paths`: globs from the repository root. The
     /// default is none.
     pub high_risk_paths: Vec<String>,
+    /// `[change] shared-paths`: globs from the repository root. SD913 does not
+    /// report a path that one of them matches. The default is none.
+    pub shared_paths: Vec<String>,
     /// `[change] max-fanout`: the most requirement documents that one change
     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
     pub max_fanout: u32,
@@ -285,6 +288,7 @@ struct ChangeTable {
     gate: Option<Gate>,
     high_risk_layers: Vec<String>,
     high_risk_paths: Vec<String>,
+    shared_paths: Vec<String>,
     max_fanout: u32,
     max_task_files: u32,
     base: Option<String>,
@@ -300,6 +304,7 @@ impl ChangeTable {
             gate: None,
             high_risk_layers: default_high_risk_layers(graph),
             high_risk_paths: Vec::new(),
+            shared_paths: Vec::new(),
             max_fanout: DEFAULT_MAX_FANOUT,
             max_task_files: DEFAULT_MAX_TASK_FILES,
             base: None,
@@ -356,7 +361,8 @@ impl ChangeTable {
                 out
             }
         };
-        let high_risk_paths = high_risk_paths_value(&f.opt_strs("high-risk-paths")?)?;
+        let high_risk_paths = globs_value("high-risk-paths", &f.opt_strs("high-risk-paths")?)?;
+        let shared_paths = globs_value("shared-paths", &f.opt_strs("shared-paths")?)?;
         let max_fanout = f.opt_u32("max-fanout")?.unwrap_or(DEFAULT_MAX_FANOUT);
         let max_task_files = match f.take("max-task-files") {
             None => DEFAULT_MAX_TASK_FILES,
@@ -409,6 +415,7 @@ impl ChangeTable {
             gate,
             high_risk_layers,
             high_risk_paths,
+            shared_paths,
             max_fanout,
             max_task_files,
             base,
@@ -444,15 +451,21 @@ fn branch_name_problem(name: &str) -> Option<String> {
     None
 }
 
-/// Checks `[change] high-risk-paths`: globs from the repository root. A glob
-/// is not empty, has no `\`, is not absolute, has no `.` or `..` segment,
-/// and is listed once. A leading `./` is removed.
-fn high_risk_paths_value(globs: &[String]) -> Result<Vec<String>, String> {
+/// True if `[change] shared-paths` and `high-risk-paths` accept `glob`.
+pub fn is_valid_glob(glob: &str) -> bool {
+    globs_value("shared-paths", &[glob.to_string()]).is_ok()
+}
+
+/// Checks `[change] high-risk-paths` or `[change] shared-paths` (`key`):
+/// globs from the repository root. A glob is not empty, has no `\`, is not
+/// absolute, has no `.` or `..` segment, and is listed once. A leading `./` is
+/// removed.
+fn globs_value(key: &str, globs: &[String]) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     for g in globs {
         let bad = |why: &str| {
             Err(format!(
-                "`change.high-risk-paths`: `{g}` {why}; write a glob from the repository root, such as `src/api/**`"
+                "`change.{key}`: `{g}` {why}; write a glob from the repository root, such as `src/api/**`"
             ))
         };
         let mut v = g.trim();
@@ -709,6 +722,40 @@ pub fn pin_line_only_change(old: &str, new: &str) -> bool {
     }
     let (old, new) = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n"));
     old != new && without_pin(&old) == without_pin(&new)
+}
+
+/// True if `new` is the edit of `spec-dna upgrade` for a release that needs no
+/// other edit (ADR 0019): `old` and `new` differ only in the pin line and in
+/// the table `[spec-dna-sha256]`, and the pin of `old` is an earlier version
+/// than the pin of `new`. A pin that is not 3 numbers, an equal pin and a pin
+/// that moves back give `false`. The compare reads `\r\n` as `\n`.
+pub fn pin_upgrade_only_change(old: &str, new: &str) -> bool {
+    fn without_pin_and_sums(text: &str) -> String {
+        let mut in_header = true;
+        let mut in_sums = false;
+        let kept: String = text
+            .replace("\r\n", "\n")
+            .split_inclusive('\n')
+            .filter(|line| {
+                let t = line.trim();
+                if t.starts_with('[') {
+                    in_header = false;
+                    in_sums = t.starts_with("[spec-dna-sha256]");
+                }
+                !(in_sums || (in_header && is_pin_line(line)))
+            })
+            .collect();
+        // The table comes last in the file of a release. Its blank line before
+        // it is no change of the configuration.
+        kept.trim_end().to_string()
+    }
+    let (Some(from), Some(to)) = (
+        scan_pin(old).and_then(|p| Version::parse(&p)),
+        scan_pin(new).and_then(|p| Version::parse(&p)),
+    ) else {
+        return false;
+    };
+    from < to && without_pin_and_sums(old) == without_pin_and_sums(new)
 }
 
 /// True if the text of a `Cargo.toml` is the package `spec-dna` with the
@@ -1483,6 +1530,7 @@ impl Config {
             change_gate: change.gate,
             high_risk_layers: change.high_risk_layers,
             high_risk_paths: change.high_risk_paths,
+            shared_paths: change.shared_paths,
             max_fanout: change.max_fanout,
             max_task_files: change.max_task_files,
             change_base: change.base,
@@ -2636,6 +2684,49 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
+    fn a_pin_upgrade_moves_the_pin_to_a_later_version_and_changes_the_sums_only() {
+        let old = "spec-dna = \"0.6.1\"\n\n[[roots]]\npath = \"docs\"\n";
+        let new = "spec-dna = \"0.7.1\"\n\n[[roots]]\npath = \"docs\"\n";
+        assert!(pin_upgrade_only_change(old, new));
+        // The table of sums comes with the new pin, at the end or in the middle.
+        let sums = "[spec-dna-sha256]\n\"a\" = \"1\"\n";
+        assert!(pin_upgrade_only_change(old, &format!("{new}\n{sums}")));
+        assert!(pin_upgrade_only_change(
+            &format!("{old}\n{sums}"),
+            &format!("{new}\n[spec-dna-sha256]\n\"b\" = \"2\"\n")
+        ));
+        assert!(pin_upgrade_only_change(
+            old,
+            &format!("spec-dna = \"0.7.1\"\n\n{sums}\n[[roots]]\npath = \"docs\"\n")
+        ));
+        // The line ends are read as `\n`.
+        assert!(pin_upgrade_only_change(
+            &old.replace('\n', "\r\n"),
+            &format!("{new}\n{sums}")
+        ));
+        // Another line, an equal pin, a pin that goes back or a pin that is
+        // not a version: the file counts as before.
+        assert!(!pin_upgrade_only_change(old, &new.replace("docs", "doc")));
+        assert!(!pin_upgrade_only_change(old, old));
+        assert!(!pin_upgrade_only_change(old, &format!("{old}\n{sums}")));
+        assert!(!pin_upgrade_only_change(new, old));
+        assert!(!pin_upgrade_only_change(
+            old,
+            &new.replace("0.7.1", "latest")
+        ));
+        assert!(!pin_upgrade_only_change(&old.replace("0.6.1", "x"), new));
+        assert!(!pin_upgrade_only_change(
+            old,
+            &format!("{new}\n[rules]\nSD608 = \"off\"\n")
+        ));
+        // A pin line that moves into a table is no pin line.
+        assert!(!pin_upgrade_only_change(
+            old,
+            "[[roots]]\nspec-dna = \"0.7.1\"\npath = \"docs\"\n"
+        ));
+    }
+
+    #[test]
     fn a_pin_only_change_differs_in_the_pin_line_and_nowhere_else() {
         let old = "spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n";
         let new = "spec-dna = \"0.7.0\"\n[[roots]]\npath = \"docs\"\n";
@@ -3323,6 +3414,17 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ["src/api/**", "db/*.sql"]
         );
         assert!(ok("high-risk-paths = []").high_risk_paths.is_empty());
+        // shared-paths: the same rules, with its own key in the message.
+        assert!(ok("shared-paths = []").shared_paths.is_empty());
+        assert_eq!(
+            ok("shared-paths = [\"./docs/roadmap.md\"]").shared_paths,
+            ["docs/roadmap.md"]
+        );
+        let e = err("shared-paths = [\"\"]");
+        assert!(
+            e.contains("`change.shared-paths`") && e.contains("is empty"),
+            "{e}"
+        );
         for (bad, want) in [
             ("high-risk-paths = [\"\"]", "is empty"),
             ("high-risk-paths = [\"/abs/**\"]", "relative path"),
@@ -3717,7 +3819,8 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "high-risk-paths",
                 "max-fanout",
                 "max-task-files",
-                "policy"
+                "policy",
+                "shared-paths"
             ]
         );
         for (k, bad) in [
@@ -3727,6 +3830,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ("gate", "1"),
             ("high-risk-layers", "1"),
             ("high-risk-paths", "1"),
+            ("shared-paths", "1"),
             ("max-fanout", "\"x\""),
             ("max-task-files", "\"x\""),
         ] {

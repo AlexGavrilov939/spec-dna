@@ -801,7 +801,9 @@ fn a_config_change_with_the_skill_files_is_not_alone() {
 #[test]
 fn a_pin_change_with_the_new_and_the_old_skill_paths_gives_no_sd503() {
     // The pull request of the pin of 0.7.0: the pin moves, `init` writes the
-    // 11 skill folders and removes the 3 folders of the 0.6 names.
+    // 11 skill folders and removes the 3 folders of the 0.6 names. The file
+    // has another edit too (a rule), so it counts as a change of the
+    // configuration: only the skill paths keep SD503 away.
     let r = Repo::new();
     r.write(
         "spec-dna.toml",
@@ -814,7 +816,9 @@ fn a_pin_change_with_the_new_and_the_old_skill_paths_gives_no_sd503() {
     r.commit("base");
     r.write(
         "spec-dna.toml",
-        &format!("spec-dna = \"{VERSION}\"\n\n[[roots]]\npath = \"docs\"\n"),
+        &format!(
+            "spec-dna = \"{VERSION}\"\n\n[[roots]]\npath = \"docs\"\n\n[rules]\nSD608 = \"off\"\n"
+        ),
     );
     for f in OLD_PATHS {
         fs::remove_file(r.dir.join(f)).unwrap();
