@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: closed
 class: higher-risk
 ---
 # 0.8.0 design
