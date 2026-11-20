@@ -1,0 +1,118 @@
+format = 1
+change = "build-080-s4"
+scope = [".claude/agents/ownership.md", "docs/agents.md", "docs/commands.md", "docs/concepts.md", "docs/config.md", "docs/diagnostics.md", "docs/evals.md", "docs/glossary.md", "docs/guides/change.md", "docs/guides/upgrade-0.6.md", "docs/harness.md", "docs/init.md", "docs/intent/build-080-s4/acceptance.toml", "docs/profiles.md", "docs/quickstart.md", "schema/spec-dna.schema.json", "src/accept.rs", "src/acceptance.rs", "src/approval.rs", "src/check.rs", "src/config.rs", "src/diag.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/finish.rs", "src/git.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/record.rs", "src/stage.rs", "src/tree.rs", "src/upgrade.rs", "src/upgrade_config.rs", "src/verdict.rs", "tests/*.rs", "tests/golden/**"]
+paths = ["src/accept.rs", "src/acceptance.rs", "src/config.rs", "src/diag.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/finish.rs", "src/git.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/record.rs", "src/stage.rs", "src/tree.rs", "src/upgrade.rs", "src/upgrade_config.rs", "src/verdict.rs", "tests/accept_cmd.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/branch_approval.rs", "tests/cli.rs", "tests/config_step4.rs", "tests/eval_ab.rs", "tests/evidence_reports.rs", "tests/finish.rs", "tests/finish_sd913.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/hook_approvals.rs", "tests/init_evals.rs", "tests/init_profiles.rs", "tests/lifecycle_base.rs", "tests/lifecycle_commands.rs", "tests/skill_cmd.rs", "tests/upgrade_cli.rs", "tests/upgrade_config.rs", "tests/upgrade_v061.rs", "tests/upgrade_v070.rs"]
+tree = "efe3183810e3abcd"
+result = "rejected"
+acknowledged-by = []
+
+[[acceptor]]
+role = "acceptor"
+brief = "9b080a7c2f56599b"
+session = "95b8c89a-a705-46a8-b9a5-0e484b1e2cf7"
+agent = "unknown"
+model = "claude-opus-5-5"
+result = "rejected"
+
+[[attempt]]
+acceptor = 1
+text = "Ran the commands of `Proof`: `pre-commit run --all-files`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` (2755 passed, 0 failed, 3 ignored) pass. The tests are the only probe of the eval, upgrade, init and verdict paths. The `checker` report and `finish` in the pull request are outside this brief."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Ran `spec-dna accept build-080-s4 --brief` with the tree binary on HEAD 6640cbf. It gives `brief 9b080a7c2f56599b` and the tree `efe3183810e3abcd`, as this brief. The skeleton has the same `scope`, `paths` and `tree`, and `scope` has no word of the prose."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The defects of the first acceptance, in a scratch repository: the hook passes the commit of the state that `finish` stages, also with `diff.renames = copies`. `next` shows the item `accept` open for a wrong brief, for SD931 and for SD933. `accept` refuses a skeleton of 19,147 bytes (403 code paths) with exit code 1 and writes no file."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A record with a second acceptor table that a person wrote with the header `[[acceptor]]  # by hand`, or `[[ acceptor ]]`, and an attempt after it. A third `accept` prints `acceptor: 3`, but it puts the new entry in position 2."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "The full flow: `accept`, fill, commit, `next` gives `[x]`, `finish --dry-run` lists the archive file, `finish` writes it with the bytes of the record, and `check --staged` gives no code of SD927 to SD935."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A valid record that is untracked: `finish` stops at step 0, but `next` shows the item `accept` as done."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Edits of a committed record: `paths`, `scope` or `tree` in upper case give SD928 from the compare of the brief. `acceptor = 0`, the placeholder value in `model`, an unknown key, a role in upper case, `format = 2`, another `change` and an empty `session` give SD928. 2 entries with one session and one agent give SD931, `rejected` gives SD930, and an `important` finding with `accepted` gives SD928. A comment, a brief in upper case and CRLF line ends pass."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A later commit changes `state` of `[[proof]]` from `tagged` to `reliable`: `finish` and `next` pass."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "A `higher-risk` change with `higher-risk-acceptors = 2`: 1 entry gives SD933 in `finish` and an open item in `next`. A second `accept --role security` with its own brief passes. Entry 2 with the brief of the role `acceptor` gives SD928."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A code edit in `scope` after the record gives SD929 and an open item, and its revert makes the record fresh again. A code edit outside `scope` gives no SD929. A plan edit that adds `src/other.py` to `Files`, and an edit of that file, pass `finish`, as design D3 item 4 says. A second `accept` then refuses."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The archive after `finish`: a later edit gives SD935, and the hook denies it. A delete of the archive file in the branch gives SD927. The hook denies a new archive file of another slug, and a copy as `valve-timeout-2.toml`."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The hook denies a commit that adds an entry to `acknowledged-by` in 6 forms: `commit -am`, `-c` before `commit`, `add && commit`, `sh -c`, a variable before `git` and `--amend`. An edit and a commit in one call pass, a limit that docs/harness.md states."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Usage: `--brief --session`, `--role 9bad` and `../x` give exit code 2, an unknown slug gives 5, and an unknown `--base` gives 3. A session with a quote, a backslash, a tab, a line feed and a line `[[acceptor]]` gives a valid TOML string."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "An ignored, untracked file `next` in the root, where `next` is a code span of `Files`: `next` goes into `scope`, and the brief hash changes from 89c05eca2d8b96a1 to ef3dc6048cf4457e."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "A plan names `Makefile` in `Files`, and the change deletes it. After the delete, `scope` and `paths` have no `Makefile`. A later commit adds `Makefile` again with other text: `finish --dry-run` and `next` pass with no SD929. The same steps with `build.mk` keep the path in `paths` and give SD929."
+outcome = "broke"
+
+[[finding]]
+acceptor = 1
+severity = "important"
+path = "src/accept.rs"
+line = 221
+text = "`scope_of` keeps a bare name of the plan (no `/`, `.` or `*`) only when the path exists on disk now. The fix commit 6d0ac8e added this test, and it reads the working tree, not the committed state. When the change deletes such a path (`Makefile`), the path leaves `scope` and `paths`, against docs/commands.md line 401: a deleted code path stays in the list. A later commit can then add the file again with other text, and `finish` and `next` give no SD929. Also, an ignored file with the name of a word of the plan (`next`) puts the word in `scope` and changes the brief, so the brief is not a function of the committed state (docs/commands.md line 352). Read the name in the trees of HEAD and of the base, or keep each name that the diff has."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/record.rs"
+line = 905
+text = "`add_acceptor` finds an acceptor table only by the exact line `[[acceptor]]`. A header with a comment (`[[acceptor]]  # by hand`) or with spaces (`[[ acceptor ]]`) is valid TOML, but the scan does not see it. A second `accept` then puts its entry before that table and prints a wrong number. The check at src/accept.rs line 340 counts the entries only. Also compare the role and the session of entry n after the parse."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/stage.rs"
+line = 348
+text = "The item `accept` of `next` reads the record of the working tree. A valid record that is untracked or not committed gives `[x]`, but `finish` stops at step 0, and step 5.2 reads the record of HEAD. The fix commit says that `next` shows the item open until the record passes the checks of `finish`."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/record.rs"
+line = 360
+text = "The brief says: do not change `[[proof]]`. No check reads it: `validate` checks only that `state` is a proof state, and the compare of the brief does not cover the table. A later commit that changes `state` from `tagged` to `reliable` passes `finish` and `next`."
