@@ -2391,15 +2391,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             let slug = match &folder {
                 Some((_, slug)) => slug.clone(),
                 // An archive file names its change in the field `change`.
-                None => crate::record::Record::parse(&text)
-                    .map(|r| r.change)
-                    .unwrap_or_else(|_| {
-                        p.rsplit('/')
-                            .next()
-                            .unwrap_or(p)
-                            .trim_end_matches(".toml")
-                            .to_string()
-                    }),
+                None => acc::archive_owner(p, &text),
             };
             let (rec, mut problems) = acc::read_record(cfg, &text, &slug, facts_of(&slug));
             if let (Some(rec), Some((dir, _)), true) = (&rec, &folder, on(Code::AcceptanceInvalid))
@@ -2443,15 +2435,19 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             continue;
         };
         let record_path = format!("{}/{}", c.dir, crate::record::FILE_NAME);
-        // The archive file that the diff adds: the newest number of the slug.
-        let archive = ctx
+        // The archive file that the diff adds for this change: the file whose
+        // field `change` is the slug, the newest number of the slug. The name of
+        // a file decides nothing: `fix-2.toml` can be the archive of the change
+        // `fix-2`, and it can be the file 2 of the change `fix`.
+        let added: Vec<&str> = ctx
             .diff
             .files
             .iter()
             .filter(|(_, k)| *k == PathChange::Added)
-            .filter_map(|(p, _)| acc::archive_number(p, &c.slug).map(|n| (n, p)))
-            .max_by_key(|(n, _)| *n)
-            .map(|(_, p)| p.clone());
+            .map(|(p, _)| p.as_str())
+            .collect();
+        let found = acc::archive_of(&c.slug, &added, &mut |p| ctx.git.head_file(p))?;
+        let archive = found.as_ref().map(|(p, _)| p.clone());
         let Some(archive) = archive else {
             out.push(path_diag(
                 &record_path,
@@ -2469,7 +2465,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             ));
             continue;
         };
-        let Some(bytes) = ctx.git.head_file(&archive)? else {
+        let Some((_, bytes)) = found else {
             continue;
         };
         // The archive file is the record that `finish` moved: the same bytes as

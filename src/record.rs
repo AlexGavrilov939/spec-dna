@@ -949,11 +949,18 @@ pub fn add_acceptor(text: &str, role: &str, session: &str) -> String {
     } else {
         text.len()
     });
-    let mut out = head.trim_end_matches('\n').to_string();
-    out.push_str("\n\n");
-    out.push_str(&block);
+    // The new text has the line end of the file: CRLF if its first line ends so.
+    let eol = if text.find('\n').is_some_and(|i| text[..i].ends_with('\r')) {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut out = head.trim_end_matches(['\r', '\n']).to_string();
+    out.push_str(eol);
+    out.push_str(eol);
+    out.push_str(&block.replace('\n', eol));
     if !tail.is_empty() {
-        out.push('\n');
+        out.push_str(eol);
         out.push_str(tail);
     }
     out
@@ -1649,6 +1656,26 @@ mod tests {
             assert!(at("session = \"s2\"") < at("session = \"s3\""), "{out}");
             assert!(at("session = \"s3\"") < at("Tried 2."), "{out}");
         }
+    }
+
+    #[test]
+    fn a_second_acceptor_is_written_with_the_line_end_of_the_file() {
+        // A file with CRLF gets CRLF for the whole new entry, and no lone LF.
+        let crlf = valid_text().replace('\n', "\r\n");
+        let out = add_acceptor(&crlf, "security", "s2");
+        assert_eq!(Record::parse(&out).unwrap().acceptors.len(), 2);
+        assert_eq!(out.matches('\n').count(), out.matches("\r\n").count());
+        assert!(out.starts_with(&crlf[..crlf.find("[[proof]]").unwrap()]));
+        // A file with LF stays with LF.
+        let lf = add_acceptor(&valid_text(), "security", "s2");
+        assert!(!lf.contains('\r'));
+        // A file that ends with its last acceptor.
+        let only = crlf[..crlf.find("[[proof]]").unwrap()]
+            .trim_end()
+            .to_string();
+        let out = add_acceptor(&only, "acceptor", "s9");
+        assert_eq!(out.matches('\n').count(), out.matches("\r\n").count());
+        assert_eq!(Record::parse(&out).unwrap().acceptors.len(), 2);
     }
 
     #[test]

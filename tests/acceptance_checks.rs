@@ -336,6 +336,28 @@ fn finish_archives_a_record_that_is_present_also_in_lite_and_for_an_old_pin() {
 }
 
 #[test]
+fn a_skeleton_with_pending_values_is_not_archived_also_when_no_rule_needs_a_record() {
+    // A plan of an older pin needs no record. A record in the folder that is a
+    // skeleton still goes through the structural rules of SD928 before step 5.5:
+    // the archive is never edited, so it must not get a record that breaks them.
+    let r = on_base("0.7.1", &config("standard", ""), INTENT_TEXT);
+    let (code, out, err) = run(&r, &["accept", SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("a skeleton");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        format!("{out}{err}").contains("SD928"),
+        "the code is named: {out}{err}"
+    );
+    assert!(!r.dir.join(ARCHIVE).exists(), "no archive file is written");
+    assert!(
+        r.dir.join(RECORD).exists(),
+        "the record stays in the folder"
+    );
+}
+
+#[test]
 fn finish_with_no_record_and_no_need_writes_no_archive_file() {
     let r = on_base("0.7.1", &config("standard", ""), INTENT_TEXT);
     let (code, out, err) = run(&r, &["finish", SLUG]);

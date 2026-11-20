@@ -51,6 +51,52 @@ pub fn archive_number(path: &str, slug: &str) -> Option<u32> {
     ok.then(|| n.parse().ok()).flatten().filter(|n| *n >= 2)
 }
 
+/// The change that an archive file belongs to: the field `change` inside the
+/// file. The name of the file decides nothing: `fix-2.toml` is the archive of
+/// the change `fix-2`, and also the file 2 of the change `fix`. Only a file that
+/// does not read as a record has no field, and then the name without `.toml` is
+/// the change (SD928 reports the file that does not read).
+pub fn archive_owner(path: &str, text: &str) -> String {
+    record::Record::parse(text)
+        .map(|r| r.change)
+        .unwrap_or_else(|_| {
+            path.rsplit('/')
+                .next()
+                .unwrap_or(path)
+                .trim_end_matches(".toml")
+                .to_string()
+        })
+}
+
+/// The result of the read of one file: its bytes, or `None` if it has none.
+type Read = Result<Option<Vec<u8>>, String>;
+
+/// The archive file of the change `slug` among the archive files that a diff
+/// adds: its path and its bytes. A file is the archive of the change if its
+/// field `change` is the slug ([`archive_owner`]); the number in its name only
+/// orders the files of one change (the newest wins). `read` gives the
+/// bytes of a path, or `None` if there is no file.
+pub fn archive_of(
+    slug: &str,
+    added: &[&str],
+    read: &mut dyn FnMut(&str) -> Read,
+) -> Result<Option<(String, Vec<u8>)>, String> {
+    let mut best: Option<(u32, String, Vec<u8>)> = None;
+    for p in added {
+        // The number orders the files of one change. A file whose name has no
+        // number of this slug comes first (a file that a person named).
+        let n = archive_number(p, slug).unwrap_or(0);
+        if best.as_ref().is_some_and(|(m, _, _)| *m >= n) {
+            continue;
+        }
+        let Some(bytes) = read(p)? else { continue };
+        if archive_owner(p, &String::from_utf8_lossy(&bytes)) == slug {
+            best = Some((n, (*p).to_string(), bytes));
+        }
+    }
+    Ok(best.map(|(_, p, b)| (p, b)))
+}
+
 /// The path of the archive file that `finish` writes for the slug:
 /// `<slug>.toml`, or the first `<slug>-<n>.toml` from 2 on whose file does not
 /// exist. `exists` tells if a path exists on disk.
@@ -697,6 +743,51 @@ mod tests {
         assert_eq!(n(".spec-dna/accepted/other.toml", "demo"), None);
         assert_eq!(n(".spec-dna/accepted/demo.md", "demo"), None);
         assert_eq!(n("docs/demo.toml", "demo"), None);
+    }
+
+    /// The archive file of a change among 2 changes whose names overlap.
+    #[test]
+    fn the_archive_of_a_change_is_the_file_that_names_it_in_the_field_change() {
+        let file = |change: &str| {
+            format!(
+                "format = 1\nchange = \"{change}\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n"
+            )
+            .into_bytes()
+        };
+        let a = ".spec-dna/accepted/fix.toml";
+        let b = ".spec-dna/accepted/fix-2.toml";
+        let c = ".spec-dna/accepted/fix-3.toml";
+        // `fix-2.toml` is the archive of the change `fix-2`, not the file 2 of `fix`.
+        let find = |slug: &str, added: &[&str], files: &[(&str, &str)]| {
+            let mut read =
+                |p: &str| Ok(files.iter().find(|(f, _)| *f == p).map(|(_, ch)| file(ch)));
+            archive_of(slug, added, &mut read).unwrap().map(|(p, _)| p)
+        };
+        let both = [(a, "fix"), (b, "fix-2")];
+        for order in [[a, b], [b, a]] {
+            assert_eq!(find("fix", &order, &both).as_deref(), Some(a));
+            assert_eq!(find("fix-2", &order, &both).as_deref(), Some(b));
+        }
+        // `fix` deleted with no `finish`: the file of `fix-2` hides nothing.
+        assert_eq!(find("fix", &[b], &[(b, "fix-2")]), None);
+        assert_eq!(find("fix-2", &[b], &[(b, "fix-2")]).as_deref(), Some(b));
+        // The file 2 of the change `fix`, and the archive of `fix-2`, in one diff.
+        let three = [(a, "fix"), (b, "fix"), (c, "fix-2")];
+        assert_eq!(find("fix", &[a, b, c], &three).as_deref(), Some(b));
+        // A file of `fix-2` named `fix-3`: the field decides.
+        assert_eq!(find("fix-2", &[a, b, c], &three).as_deref(), Some(c));
+        assert_eq!(find("fix-2", &[a, b], &[(a, "fix"), (b, "fix")]), None);
+        // A file that does not read is owned by its name.
+        let mut bad = |_: &str| Ok(Some(b"not a record = = =".to_vec()));
+        assert_eq!(
+            archive_of("fix-2", &[b], &mut bad)
+                .unwrap()
+                .map(|x| x.0)
+                .as_deref(),
+            Some(b)
+        );
+        let mut bad = |_: &str| Ok(Some(b"not a record = = =".to_vec()));
+        assert_eq!(archive_of("fix", &[b], &mut bad).unwrap(), None);
     }
 
     #[test]

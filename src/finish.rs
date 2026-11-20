@@ -599,7 +599,22 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             // No rule needs the record, but a record in the folder is archived.
             let path = format!("{}/{}", cx.folder, crate::record::FILE_NAME);
             if (cx.exists)(&path) {
-                return (cx.read)(&path).map(Some).map_err(Failure::Io);
+                let text = (cx.read)(&path).map_err(Failure::Io)?;
+                // The archive is never edited: a record that is not valid (a
+                // skeleton with `pending` values) must not go into it. The
+                // structural rules of SD928 run here, as with a need.
+                if !cx.config.is_off(Code::AcceptanceInvalid) {
+                    let facts = acc::plan_facts(ch, cx.head);
+                    let (_, problems) = acc::read_record(cx.config, &text, &ch.slug, facts);
+                    if !problems.is_empty() {
+                        let diags = problems
+                            .into_iter()
+                            .map(|m| record_diag(&path, &ch.slug, Code::AcceptanceInvalid, m))
+                            .collect();
+                        return stop(5, "the acceptance record is not valid", diags);
+                    }
+                }
+                return Ok(Some(text));
             }
             return Ok(None);
         }
