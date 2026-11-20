@@ -3733,7 +3733,7 @@ fn eval_release_cmd(json: bool) -> u8 {
 /// `eval verdict --compare <treatment>,<control> <result file>` (D59): the
 /// verdict of 2 arms of a result of `eval run --arms`. It reads one file and
 /// starts no agent. A name that is not 2 arms of the file is a usage error
-/// (exit code 2), and a file that is no result of `--arms` is a configuration
+/// (exit code 2). A file that is no result of `--arms` is a configuration
 /// error (exit code 3).
 fn eval_compare_cmd(pair: &str, file: &str, json: bool) -> Result<u8, Fatal> {
     let (treatment, control) = match pair.split_once(',') {

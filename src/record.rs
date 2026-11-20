@@ -2,7 +2,7 @@
 //! acceptor tried, what it found and what it decided. This module has the
 //! pure parts: the reader, the rules of a valid record, the hash of the code
 //! that the record lists, the brief and the writer of the skeleton. It reads
-//! no git data and no file, so the command `accept` and the checks of the
+//! no git data and no file. So the command `accept` and the checks of the
 //! record (`finish` and `check`, part 2 of slice S4) use the same code.
 //!
 //! The `toml` crate of the build has no writer, so the writer makes the text
@@ -508,7 +508,7 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
             "{what} has the value `{PENDING}`; write the answer"
         ));
     }
-    // The result logic: `accepted` only when nothing speaks against it.
+    // The result logic: `accepted` only when no other value contradicts it.
     if r.result == "accepted" {
         let against: Vec<&str> = [
             (

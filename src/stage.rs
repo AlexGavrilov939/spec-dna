@@ -299,9 +299,9 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
 }
 
 /// The item `accept` of each open change that has an approved plan and needs a
-/// record, by the rule of `acceptance::need_for_change`. With the acceptance off
-/// (the profile `lite`), with no base and with a plan of a version before 0.8.0,
-/// the map is empty, so `next` prints the output of 0.7.1.
+/// record, by the rule of `acceptance::need_for_change`. The map is empty with
+/// the acceptance off (the profile `lite`), with no base, or with a plan of a
+/// version before 0.8.0. Then `next` prints the output of 0.7.1.
 fn accept_items(
     repo: &Repo,
     cfg: &Config,
@@ -328,9 +328,10 @@ fn accept_items(
 }
 
 /// The item `accept` of one change that needs a record. The record is done when
-/// the checks of `finish` step 5.2 pass for it (`acceptance.rs`): it is valid,
-/// its briefs are right, it is fresh and `accepted`, no 2 entries are of the same
-/// acceptor, and it has the entries that the change needs. A code edit after the
+/// the checks of `finish` step 5.2 pass for it (`acceptance.rs`). They pass when
+/// the record is valid, its briefs are right, it is fresh and `accepted`, no 2
+/// entries are of the same acceptor, and it has the entries that the change
+/// needs. A code edit after the
 /// acceptance makes it stale, and the item is open again (design 0.8.0, D3 item
 /// 9). An open item names the first problem.
 fn accept_item(

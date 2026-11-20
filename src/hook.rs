@@ -1714,8 +1714,8 @@ fn moved_to_approval(
         .collect();
     let old = if amend { "HEAD~1" } else { "HEAD" };
     // `--no-renames`: a staged delete of the record and a new archive file
-    // look like a rename, and `--name-only` then prints the new path only, so
-    // the deleted record would not be seen (also with `diff.renames = copies`).
+    // look like a rename, and `--name-only` then prints the new path only. So
+    // the diff would not list the deleted record (also with `diff.renames = copies`).
     let mut args = vec!["diff", "--name-only", "--no-renames", "-z", old, "--"];
     args.extend(specs.iter().map(String::as_str));
     let mut paths: Vec<String> = Vec::new();

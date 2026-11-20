@@ -123,7 +123,7 @@ pub struct Status {
     pub untracked: Vec<String>,
 }
 
-/// The result of a read in a bound ([`Git::head_file_checked`], [`read_limited`]).
+/// The result of a read with a size limit ([`Git::head_file_checked`], [`read_limited`]).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Limited {
     /// There is no file.
@@ -136,7 +136,7 @@ pub enum Limited {
     TooBig,
 }
 
-/// Reads a regular file in a bound. It looks at the path with `symlink_metadata`
+/// Reads a regular file with a size limit. It looks at the path with `symlink_metadata`
 /// first, so it never follows a link, and it reads at most `limit` bytes.
 pub fn read_limited(full: &Path, limit: usize) -> Limited {
     use std::io::Read;
@@ -379,7 +379,7 @@ impl Git {
             let stage: u8 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
             // A conflicted path has the stages 1 to 3, one entry each: keep the
             // first. The paths are in order, so the entries of one path are
-            // next to each other.
+            // adjacent.
             if stage != 0 && v.last().is_some_and(|l| l.2 == path) {
                 continue;
             }
@@ -389,8 +389,8 @@ impl Git {
     }
 
     /// Returns the object ids that git would give to the files `paths` of the
-    /// working tree (`git hash-object --stdin-paths`, with the filters of the
-    /// repository, so the id is the one that `git add` writes). The result has
+    /// working tree. The command is `git hash-object --stdin-paths`, with the
+    /// filters of the repository, so the id is the one that `git add` writes. The result has
     /// one id for each path, in order. A path is bytes. A path with a line feed
     /// is hashed alone, because `--stdin-paths` reads one path for each line.
     pub fn hash_files(&self, paths: &[Vec<u8>]) -> Result<Vec<String>, String> {
@@ -971,12 +971,12 @@ impl Git {
 
     /// The tip of the branch that the lifecycle base `base` starts (design 0.8.0,
     /// D3 item 8). It is `HEAD`, with one case: on the test merge that a code host
-    /// makes for a pull request, `HEAD` is a merge commit with 2 parents, its
-    /// first parent is the base and its second parent is the tip of the branch.
-    /// The merge commit is no commit of the branch. In every other case (a
-    /// merge of the base into the branch, an octopus merge, a merge whose first
-    /// parent is not the base) the tip is `HEAD`. The result is `HEAD` or a full
-    /// commit id; it is the one source of the range of the branch.
+    /// makes for a pull request, `HEAD` is a merge commit with 2 parents. Its
+    /// first parent is the base, and its second parent is the tip of the branch.
+    /// The merge commit is no commit of the branch. In every other case the tip is
+    /// `HEAD`. Examples are a merge of the base into the branch, an octopus
+    /// merge, and a merge whose first parent is not the base. The result is `HEAD`
+    /// or a full commit id. It is the one source of the range of the branch.
     pub fn branch_tip(&self, base: &str) -> String {
         let head = || "HEAD".to_string();
         let Ok(out) = self.run(&["rev-list", "--no-walk", "--parents", "HEAD"]) else {
@@ -1495,10 +1495,10 @@ impl Git {
         Ok(std::fs::read(self.root.join(path)).ok())
     }
 
-    /// Like [`Git::head_file`], for a file of a size that a caller bounds: it
+    /// Like [`Git::head_file`], for a file with a size limit from the caller. It
     /// gives `None` for an absent file, for anything that is not a regular file
     /// (a link, a folder, a device), and for a file of more than `limit` bytes.
-    /// [`Git::head_file_checked`] tells the cases apart.
+    /// [`Git::head_file_checked`] separates the cases.
     pub fn head_file_limited(&self, path: &str, limit: usize) -> Result<Option<Vec<u8>>, String> {
         Ok(match self.head_file_checked(path, limit)? {
             Limited::Bytes(b) => Some(b),
@@ -1506,7 +1506,7 @@ impl Git {
         })
     }
 
-    /// Reads a head file in a bound: the file of the working tree, or the index
+    /// Reads a head file with a size limit: the file of the working tree, or the index
     /// entry for a `staged` `Git`. It reads at most `limit` bytes and never
     /// follows a link, so a link to a huge file costs nothing. For a `staged`
     /// `Git`, the mode and the size of the blob come before the read.

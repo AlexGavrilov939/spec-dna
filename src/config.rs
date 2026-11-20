@@ -804,8 +804,8 @@ pub fn pin_upgrade_only_change(old: &str, new: &str) -> bool {
         return true;
     }
     // `upgrade` also adds the names of the skills that the release gives
-    // (ADR 0025). The list `skills` of `[harness]` on one line may gain
-    // names of skills. Nothing else may change.
+    // (ADR 0025). The list `skills` of `[harness]` on one line may get
+    // more names of skills. Nothing else may change.
     let ((old_rest, old_list), (new_rest, new_list)) =
         (without_skills_line(&old), without_skills_line(&new));
     let (Some(old_list), Some(new_list)) = (old_list, new_list) else {
