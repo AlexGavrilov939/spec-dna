@@ -202,7 +202,7 @@ impl Diag {
     }
 
     /// The fix text of the finding. It is the fix of the code, with one case:
-    /// SD935 for a cut history (a shallow clone). The archive file is honest
+    /// SD935 for a cut history (a shallow clone). The archive file is not wrong
     /// there, so the fix must not tell the user to revert it.
     pub fn fix(&self) -> &'static str {
         let said = |mark: &str| self.message.contains(mark);

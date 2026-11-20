@@ -1072,9 +1072,9 @@ fn prepare(dir: &Path, kind: Kind, arm: Arm, keep_generated: bool) -> Result<(),
 
 /// Writes the harness arm into the copy (D57). `project` keeps the harness
 /// files of the project as the copy. With `named` (`--arms` or `--harness`),
-/// it gets the pin of the binary, the rules `SD501` and `SD502` off and the
-/// adapter line of the binary, as each other arm does, so no arm differs in
-/// them. Without `named`, `project` writes nothing: `--ab` has its own edit.
+/// it gets the same items as each other arm: the pin of the binary, the rules
+/// `SD501` and `SD502` off, and the adapter line of the binary. So no arm differs
+/// in them. Without `named`, `project` writes nothing: `--ab` has its own edit.
 /// Another arm gets, in this order:
 ///
 /// 1. the pin of the binary and the rules `SD501` and `SD502` off, in

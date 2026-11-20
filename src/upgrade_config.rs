@@ -842,13 +842,13 @@ fn since_label(skills: &[Skill]) -> String {
     names.join(" and ")
 }
 
-/// The skills of `NEW_SKILLS` that a release after the pin of the text added, that
-/// `init` proposes for the profile and the level of the text, and that `list`
-/// lacks, with the words of the report that name the reason. The result is empty
-/// when the text has no valid pin or level, when the list is empty, and when
-/// the level or the change policy is `none`. `init` proposes `accept` for no
-/// level in the profile `lite`, so `lite` never gets it. A text that does not
-/// parse has no result.
+/// The skills of `NEW_SKILLS` that the text needs, with the words of the report
+/// that name the reason. A release after the pin of the text added each such
+/// skill, `init` proposes it for the profile and the level of the text, and
+/// `list` lacks it. The result is empty when the text has no valid pin or level,
+/// when the list is empty, or when the level or the change policy is `none`.
+/// `init` proposes `accept` for no level in the profile `lite`, so `lite` never
+/// gets it. A text that does not parse has no result.
 fn new_skills(table: &Table, list: &[String], on: &dyn Fn(Skill) -> bool) -> (Vec<Skill>, String) {
     let none = (Vec::new(), String::new());
     let pin = table
@@ -906,11 +906,11 @@ fn new_skills(table: &Table, list: &[String], on: &dyn Fn(Skill) -> bool) -> (Ve
 /// text that does not parse, stay as they are, so a second run changes
 /// nothing.
 ///
-/// A list that is not empty, in a file that pins a version before the release
-/// that gave a skill, also gets that skill if `init` proposes it for the profile
-/// and the level of the file (ADR 0023, amendment of 2026-11-19): `tdd`,
-/// `execute`, `verify`, `finish`, `debug` and `post-mortem` (0.7.0), and
-/// `accept` (0.8.0, ADR 0025). `lite` gets no `accept`. A list with no old
+/// A list that is not empty gets a new skill in this case: the file pins a
+/// version before the release that gave the skill, and `init` proposes the
+/// skill for the profile and the level of the file (ADR 0023, amendment of
+/// 2026-11-19). The skills are `tdd`, `execute`, `verify`, `finish`, `debug` and
+/// `post-mortem` (0.7.0), and `accept` (0.8.0, ADR 0025). `lite` gets no `accept`. A list with no old
 /// name keeps its order, and the new names follow in the order of D2. An empty
 /// list stays empty. A list of many lines that no rename touches stays as it
 /// is, and a warning gives the names to add by hand.

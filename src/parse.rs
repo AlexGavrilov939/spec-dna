@@ -599,8 +599,8 @@ impl ItemScan {
                 if let Some(h) = self.heading.take() {
                     let found = ItemSection::from_heading(&h);
                     // The 2 sections of 0.8.0 are a new name. A document of 0.7.1
-                    // must parse as 0.7.1 parsed it, so a heading with such a name
-                    // reads as an unnamed heading, and it starts its section only
+                    // must parse as 0.7.1 parsed it. So a heading with such a name
+                    // reads as an unnamed heading. It starts its section only
                     // at level 2, where no `Order` of a lower level holds it.
                     let new = found.filter(|s| s.is_new());
                     let named = found.filter(|s| !s.is_new());

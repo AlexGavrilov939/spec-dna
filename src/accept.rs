@@ -4,14 +4,15 @@
 //! The second form writes no file: it prints the brief, one text that is a
 //! function of the committed state of the repository.
 //!
-//! Both forms refuse (exit code 1) while the folder of the change, except
-//! `acceptance.toml`, or `spec-dna.toml` has an edit that `HEAD` does not have,
-//! in the index or in the working tree. They also refuse while a code path that
-//! `scope` matches has such an edit, or is untracked (a deleted file is an edit).
+//! Both forms refuse (exit code 1) while an edit that `HEAD` does not have is in
+//! the index or in the working tree. The edit can be in the folder of the change,
+//! except `acceptance.toml`, or in `spec-dna.toml`. They also refuse while a code
+//! path that `scope` matches has such an edit, or is untracked (a deleted file is
+//! an edit).
 //! The brief and its compare then read the same committed files, and the brief
 //! is a function of the committed state. `finish` and `check` read the same
 //! files, so they find no stale record for a file that `accept` ignored. The
-//! command is for each profile: a project that never runs it sees no change.
+//! command works in each profile: a project that never runs it sees no change.
 //!
 //! The command does no check of the person: an agent or a person can run it,
 //! and a person can write the same file by hand (ADR 0006).
@@ -53,10 +54,10 @@ pub struct Declared {
 }
 
 /// The items of `Invariants` and `Deviations` that the files of a change declare
-/// (design 0.8.0, D6 and D7). The function reads the text of the spec and the
-/// plan and the key `[change] invariants` only, with no git data and no other
-/// document. It applies no rule of the pin: only
-/// [`crate::acceptance::declared_for`] calls it, and that function applies the
+/// (design 0.8.0, D6 and D7). The function reads only the text of the spec and
+/// the plan and the key `[change] invariants`, with no git data and no other
+/// document. It applies no rule of the pin. Only
+/// [`crate::acceptance::declared_for`] calls it. That function applies the
 /// rule, so `accept`, the brief, the compare of the brief of SD928, the answers
 /// (SD938) and `finish` read the same items. An item that is not valid gives no
 /// entry: SD936 and SD939 report it.
@@ -132,13 +133,13 @@ pub fn brief_text(
     })
 }
 
-/// The scope of a change: the patterns of the plan that
-/// [`Change::scope_patterns`] gives (the items of `Files` and the `Files:` of
-/// the tasks, as SD913 reads them, without a word or a bare name) and the globs
-/// of `[change] shared-paths`. It is sorted, with no duplicate, so the order of
-/// the plan does not change the record. The scope is a function of the plan
-/// text alone: no file on the disk changes it. A `shared-paths` glob stays
-/// always.
+/// The scope of a change: the patterns of the plan and the globs of
+/// `[change] shared-paths`. [`Change::scope_patterns`] gives the patterns: the
+/// items of `Files` and the `Files:` of the tasks, as SD913 reads them, without
+/// a word or a bare name. The scope is sorted, with no duplicate, so the order
+/// of the plan does not change the record. The scope is a function of the plan
+/// text alone: no file on the disk changes it. A `shared-paths` glob always
+/// stays.
 pub fn scope_of(cfg: &Config, ch: &Change, corpus: &Corpus) -> Vec<String> {
     let mut scope = ch.scope_patterns(corpus);
     scope.extend(cfg.shared_paths.iter().cloned());
@@ -309,7 +310,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let full = repo.root.join(&record_path);
     let session = record::session_value(o.session);
     // A link is no record, and `accept` never reads through it: the check
-    // looks at the path itself, and the read has a bound.
+    // looks at the path itself, and the read has a size limit.
     let existing = match crate::git::read_limited(&full, crate::acceptance::READ_LIMIT) {
         crate::git::Limited::Absent => None,
         crate::git::Limited::Bytes(b) => Some(String::from_utf8_lossy(&b).into_owned()),
@@ -402,7 +403,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         });
         (text, 1, true)
     };
-    // A record over the size limit is never valid, and the acceptor may not
+    // A record over the size limit is never valid, and the acceptor must not
     // shorten `paths`, the invariants or the deviations. Refuse before any write.
     if text.len() > record::MAX_BYTES {
         return Err(Fatal::Refused(oversize_message(
@@ -512,9 +513,9 @@ pub fn dropped_patterns(files: &[String]) -> Vec<String> {
 }
 
 /// The first changed code path that `Files` covers only through a pattern that
-/// the scope of a record cannot hold, and that `scope` does not cover. The
-/// answer is the path and that pattern. The one rule of the refusal of `accept`
-/// and of SD929, so a second place cannot let such a path pass.
+/// the scope of a record cannot hold, and that `scope` does not cover. It
+/// returns the path and that pattern. This is the one rule of the refusal of
+/// `accept` and of SD929, so a second place cannot let such a path pass.
 pub fn uncovered_path(
     files: &[String],
     scope: &[String],
@@ -538,8 +539,8 @@ pub fn uncovered_path(
 /// hold, and the record would then leave a changed code file out. The patterns
 /// are the words and the bare names of `Files` (`Makefile`): the scope is a
 /// function of the plan text, and it keeps only a pattern with a `/`, a `.` or
-/// a `*` ([`change::is_scope_pattern`]). Such a record could never be fixed by
-/// its acceptor: an empty `scope` or a code file that no pattern covers.
+/// a `*` ([`change::is_scope_pattern`]). The acceptor cannot fix such a record:
+/// it has an empty `scope` or a code file that no pattern covers.
 fn refuse_uncovered(
     ch: &Change,
     corpus: &Corpus,
@@ -586,8 +587,8 @@ fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 /// Refuses while the folder of the change (except the record) or
 /// `spec-dna.toml` has an edit that `HEAD` does not have, in the index or in
 /// the working tree. An untracked file of the folder counts as an edit. It
-/// returns each path that has such an edit, or is untracked, so that the caller
-/// can read the code paths among them ([`refuse_dirty_code`]).
+/// returns each path that has such an edit, or is untracked. The caller reads
+/// the code paths among them ([`refuse_dirty_code`]).
 fn refuse_uncommitted(repo: &Repo, folder: &str) -> Result<Vec<String>, Fatal> {
     if repo.head_commit().is_none() {
         return Err(Fatal::Refused(

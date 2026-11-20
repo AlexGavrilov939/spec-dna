@@ -129,7 +129,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 10 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again. The 2 sections of 0.8.0, `Invariants` and `Deviations`, are the exception: only a heading of level 2 starts them, and a heading of another level with such a name reads as an unnamed heading. Thus a plan of 0.7.1 with `### Deviations` under `Order` keeps its tasks.
+The parser keeps the list items of 10 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again. The 2 sections of 0.8.0, `Invariants` and `Deviations`, follow another rule: only a heading of level 2 starts them. A heading of another level with such a name reads as an unnamed heading. Thus a plan of 0.7.1 with `### Deviations` under `Order` keeps its tasks.
 
 | Section | Document | Items |
 | --- | --- | --- |
@@ -154,11 +154,11 @@ A requirement also has the byte range of its sentence. The sentence is the text 
 
 The section `Invariants` of a spec lists the rules that the change must keep true. It is on only with `[change] invariants = true` ([config.md](config.md#the-acceptance-record)). Without the key, a section with this name is plain text, and no check reads it. With the key, `spec-dna new spec` writes the section with the item `none`.
 
-An item is `<doc-id>#<key>@<hash>`. The id and the key name a requirement of a document of the type `rule`, and the hash is the hash that `spec-dna show <doc-id>#<key>` prints. The item `none` says that no rule applies. It stands alone. A change with no spec declares no invariant.
+An item is `<doc-id>#<key>@<hash>`. The id and the key name a requirement of a document of the type `rule`. The hash is the hash that `spec-dna show <doc-id>#<key>` prints. The item `none` says that no rule applies. It stands alone. A change with no spec declares no invariant.
 
 - SD936 reports an item that has another form, names no requirement, names a requirement outside a `rule` document, or names a rule that the delta of the same spec adds or removes. Such a rule cannot stay true across the change, and an added rule has no hash to pin.
-- SD937 reports a hash that is not the hash of the rule now. If the delta of the same spec has a `CHANGE` line for the rule, the hash of the item must be the hash of that line, not the hash of the rule now: the line pins the old text, and after `finish` the rule has the new text.
-- The record has one `[[invariant]]` entry for each item, with `id` equal to the item, and `answer` `held`, `not-affected` or `violated`. The two last answers need a `reason`. SD938 reports an item with no answer. An answer `violated` makes the result `rejected`.
+- SD937 reports a hash that is not the hash of the rule now. If the delta of the same spec has a `CHANGE` line for the rule, the hash of the item must be the hash of that line, not the hash of the rule now. The line pins the old text. After `finish` the rule has the new text.
+- The record has one `[[invariant]]` entry for each item, with `id` equal to the item, and `answer` `held`, `not-affected` or `violated`. The last 2 answers need a `reason`. SD938 reports an item with no answer. An answer `violated` makes the result `rejected`.
 - A spec that a commit added when `spec-dna.toml` pinned a version before 0.8.0 keeps its section as plain text.
 
 ```md
@@ -169,7 +169,7 @@ An item is `<doc-id>#<key>@<hash>`. The id and the key name a requirement of a d
 
 ### Deviations
 
-The section `Deviations` of a plan lists each difference between the work and the plan or the spec. The builder adds one item for each deviation, in the commit of the work. The edit changes the plan after its approval, as the tick of a box does, and SD910 gives no finding for it. The section needs no key: the record carries the deviations, so they are on where the acceptance is on.
+The section `Deviations` of a plan lists each difference between the work and the plan or the spec. The builder adds one item for each deviation, in the commit of the work. The edit changes the plan after its approval, as the tick of a box does, and SD910 gives no finding for it. The section needs no key: the record holds the deviations, so they are on where the acceptance is on.
 
 An item is `- <id> (<kind>): <text>`. The id is unique in the section: it has letters, digits, `-` and `_`. The kind is `plan` (the files, the tasks, the order or the approach) or `spec` (the behavior differs from a requirement or a delta line). A `spec` item names a way to fix the difference: `Delta: <verb> <doc-id>#<key>` names a line of the delta of the spec, or `Follow-up: <slug>` names a change folder of the tree. A `plan` item needs neither.
 
@@ -203,7 +203,7 @@ A requirement can end with the marker `<!-- proof-owed: <reason> -->`. It record
 - **sensor-timeout**: When a moisture sensor times out, the controller SHALL close the valve of its bed. <!-- proof-owed: environment -->
 ```
 
-- The marker can stand next to the markers `aliases` and `verified-by`, in any order. Write it at the end of the requirement. The parser reads each of the 3 markers anywhere in the sentence, and it removes the marker from the text and the hash. Only a marker at the end leaves the sentence range that `show` gives. A marker in a code span is text, and it is no `proof-owed` marker. The parser reads the first `proof-owed` marker of a requirement. A `CHANGE` line of a delta that has a `proof-owed` marker replaces the old marker of the requirement. A line with no such marker keeps it.
+- The marker can stand next to the markers `aliases` and `verified-by`, in any order. Write it at the end of the requirement. The parser reads each of the 3 markers anywhere in the sentence. It removes the marker from the text and the hash. Only a marker at the end leaves the sentence range that `show` gives. A marker in a code span is text, and it is no `proof-owed` marker. The parser reads the first `proof-owed` marker of a requirement. A `CHANGE` line of a delta that has a `proof-owed` marker replaces the old marker of the requirement. A line with no such marker keeps it.
 - The hash of the requirement does not cover the marker. Thus a marker gives no SD914 and no SD921, and `PARSER_VERSION` is 17.
 - A debt is no proof. A requirement with a debt and no evidence gives SD618 in place of SD608. A reason that is not in the list, or a marker on a requirement that has evidence, gives SD619. `finish` still needs evidence for a requirement that the change adds or changes (SD916). [Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt) and [Diagnostics](diagnostics.md#proof-levels-and-the-proof-debt-sd618-to-sd620) give the rules.
 

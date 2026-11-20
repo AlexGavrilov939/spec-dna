@@ -44,9 +44,9 @@ pub struct Cover {
 /// The result of the bind of a tag to the test cases of the reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Proof {
-    /// A bound case passed, and no bound case failed. The bound case that
-    /// passed least and its passes: the number of reports in which it passed.
-    /// Each bound case counts, and a case counts once for one report.
+    /// A bound case passed, and no bound case failed. The data is the bound case
+    /// that passed least and its number of passes (the reports in which it
+    /// passed). Each bound case counts, and a case counts once for one report.
     Passed(String, usize),
     /// Each bound case was skipped. The name of a case.
     Skipped(String),
@@ -110,9 +110,9 @@ impl ProofState {
     }
 }
 
-/// The reasons of a proof debt, a closed list: a person must look (`manual`),
-/// CI has no such device, account or data (`environment`), a third party
-/// (`external`), the test is not written (`pending`).
+/// The reasons of a proof debt. The list is closed: a person must look
+/// (`manual`), CI has no such device, account or data (`environment`), the cause
+/// is a third party (`external`), or the test is not written (`pending`).
 pub const OWED_REASONS: [&str; 4] = ["manual", "environment", "external", "pending"];
 
 /// What SD620 needs for one change (design 0.8.0, D2).
@@ -779,7 +779,7 @@ fn least_passes(bound: &[&Case]) -> Option<(String, usize)> {
 
 /// Sets the result of the bind on each full tag of `covers`. It reads the test
 /// files from the working tree. When no report is fresh, each full tag gets
-/// `Unbound`: the report problems (SD613 to SD615) say why, but a setting that
+/// `Unbound`. The report problems (SD613 to SD615) say why. A setting that
 /// turns them off or makes them a warning must not turn the requirement into a
 /// proven one.
 pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) {
@@ -904,11 +904,15 @@ impl Evidence {
     }
 
     /// The reason why the test reports do not prove a requirement, or `None`.
-    /// It is `None` when the reports are not read, when the requirement has no
-    /// full tag with a result, when it has a `verified-by` (a check by a
-    /// person, which the report does not apply to), and when a bound case
-    /// passed and no bound case failed. The text names the case, so a reviewer
-    /// can see the bind.
+    /// It is `None` in these cases:
+    ///
+    /// - The reports are not read.
+    /// - The requirement has no full tag with a result.
+    /// - The requirement has a `verified-by` (a check by a person, which the
+    ///   report does not apply to).
+    /// - A bound case passed and no bound case failed.
+    ///
+    /// The text names the case, so a reviewer can see the bind.
     pub fn unproven(&self, di: u32, d: &Doc, r: usize) -> Option<String> {
         let proofs = self.proofs.get(&(di, r))?;
         if !d.verified_by.is_empty() || !d.parsed.reqs[r].verified_by.is_empty() {
@@ -967,13 +971,13 @@ impl Evidence {
     }
 
     /// The reason why requirement `r` is below `reliable` (SD620), or `None`.
-    /// It is `Some` in 2 cases. The state is `PassedOnce`: the text names the
-    /// bound case with the fewest passes. Or the requirement has a
-    /// `verified-by` record and a full tag with a bound case that failed or was
-    /// skipped: the record does not replace the passes of a tag. A requirement
-    /// with a `verified-by` record and no tag, or a tag that binds to no case,
-    /// is not below `reliable`. A requirement with no pass and no
-    /// `verified-by` is SD617 or SD916.
+    /// It is `Some` in 2 cases. In the first case the state is `PassedOnce`: the
+    /// text names the bound case with the fewest passes. In the second case the
+    /// requirement has a `verified-by` record and a full tag with a bound case
+    /// that failed or was skipped: the record does not replace the passes of a
+    /// tag. A requirement with a `verified-by` record and no tag, or a tag that
+    /// binds to no case, is not below `reliable`. A requirement with no pass and
+    /// no `verified-by` is SD617 or SD916.
     pub fn not_reliable(&self, di: u32, d: &Doc, r: usize, runs: usize) -> Option<String> {
         let proofs = self.proofs.get(&(di, r))?;
         match self.state(di, d, r, runs) {

@@ -7,7 +7,8 @@
 //! `models` and `claude_code`. It has no path, no text and no time.
 //!
 //! The writer is an allowlist. It builds each record from 9 values (12 for a
-//! result of 0.8.0) that it checks against their form, and it never copies an object of the input.
+//! result of 0.8.0). It checks each value against its form, and it never copies
+//! an object of the input.
 //! A value outside its form stops the import. A message names the key and
 //! never the value, because the value can be a secret. After the records are
 //! built, the command computes each item again from them (`verdict::analyze`)

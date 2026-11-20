@@ -1,14 +1,14 @@
 //! Test reports as evidence (design 0.8.0, D1). This module holds the 2
-//! readers of a report (a subset of JUnit XML, and the line format), the stamp
-//! that binds a report to the code tree, and the read of all reports of a
-//! project.
+//! readers of a report: a subset of JUnit XML, and the line format. It also
+//! holds the stamp that binds a report to the code tree, and the read of all
+//! reports of a project.
 //!
 //! The XML reader is code of spec-dna with no dependency. It reads UTF-8 only.
 //! It never loads an external entity, because a DTD is an error.
 //!
-//! A report counts as proof only when it is readable, the git index does not
-//! hold it, it has a stamp, and the stamp names the current code tree and the
-//! bytes of the report (`read`).
+//! A report counts as proof only when all these are true: it is readable, the
+//! git index does not hold it, it has a stamp, and the stamp names the current
+//! code tree and the bytes of the report (`read`).
 
 use crate::config::Config;
 use crate::diag::{Code, Diag, Severity};

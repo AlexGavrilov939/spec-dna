@@ -289,7 +289,7 @@ fn usable_code(code: &str) -> bool {
 /// True if a pattern of the plan is a pattern of the scope of a record: it has
 /// no white space, and it has a `/`, a `.` or a `*` (the rule of
 /// [`plain_path`]). A word in a code span of the prose of a `Files` item, such
-/// as `next`, is no path. A bare name such as `Makefile` is none either: the
+/// as `next`, is no path. A bare name such as `Makefile` is no path either: the
 /// scope is a function of the plan text alone, and no file on the disk changes
 /// it. The form `./Makefile` has a `/`, so it is a pattern.
 pub fn is_scope_pattern(p: &str) -> bool {
@@ -1144,7 +1144,7 @@ pub struct InvariantLine {
 }
 
 /// The items of the section `Invariants` of a spec. The one item `none` says
-/// that no rule applies. It stands alone, so `none` next to a pin is invalid.
+/// that no rule applies. It stands alone, so `none` with a pin is invalid.
 pub fn invariant_lines(spec: &Doc) -> Vec<InvariantLine> {
     let items: Vec<&ListItem> = section_items(spec, ItemSection::Invariants).collect();
     items

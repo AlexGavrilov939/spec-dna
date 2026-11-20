@@ -7,16 +7,17 @@
 //! count. On a clean checkout, the entries equal the output of
 //! `git ls-tree -r HEAD`.
 //!
-//! The code paths exclude each path that `[evidence] tree-exclude` matches, each
-//! path in a folder of the `intent` layer, each path under `.spec-dna/`, each
-//! tool file (`init::is_tool_file`), and each report with its stamp. Thus a
-//! change of documents, of a record or of `finish` never changes the tree.
+//! The code paths exclude these paths: each path that `[evidence] tree-exclude`
+//! matches, each path in a folder of the `intent` layer, each path under
+//! `.spec-dna/`, each tool file (`init::is_tool_file`), and each report with its
+//! stamp. Thus a change of documents, of a record or of `finish` never changes
+//! the tree.
 //!
 //! A tracked file that differs from the index gives the mode and the object id
-//! of what is on disk: a regular file gives the id of its content, and a
+//! of what is on disk. A regular file gives the id of its content. A
 //! symbolic link gives the id of its text (the path that it names) with the
 //! mode `120000`. A submodule keeps the entry of the git index: the tree does
-//! not look into it. A path is bytes, so a name that is not UTF-8 stays whole.
+//! not read the files inside it. A path is bytes, so a name that is not UTF-8 stays whole.
 
 use crate::config::Config;
 use crate::git::Git;

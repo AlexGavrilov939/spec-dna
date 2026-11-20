@@ -1,16 +1,16 @@
 //! The rules around the acceptance record that `finish` and `check` share
 //! (design 0.8.0, D3 items 1, 3, 7, 8 and 9).
 //!
-//! - "A change that needs a record" (item 1) is one function: `needs_record`.
-//!   `finish` (step 5.2), `check` and `next` call it.
+//! - One function, `needs_record`, implements the rule "a change that needs a
+//!   record" (item 1). `finish` (step 5.2), `check` and `next` call it.
 //! - The archive file of a finished change: its path and its name rule
 //!   (item 3).
 //! - The checks that read a record: the rules of a valid record with the compare
 //!   of the brief (SD928, item 8), SD929, SD930, SD931 and SD933 (item 7).
 //!
 //! The functions read git and the files that the caller names. They write
-//! nothing. The code of the diagnostics is in `diag.rs`, and the severity is
-//! the severity of the profile (the group `acceptance` of `config.rs`).
+//! nothing. The code of the diagnostics is in `diag.rs`. The severity is the
+//! severity of the profile (the group `acceptance` of `config.rs`).
 
 use crate::accept::{self, Composed, Texts};
 use crate::change::{self, Change};
@@ -52,9 +52,9 @@ pub fn archive_number(path: &str, slug: &str) -> Option<u32> {
 }
 
 /// The change that an archive file belongs to: the field `change` inside the
-/// file. The name of the file decides nothing: `fix-2.toml` is the archive of
+/// file. The name of the file does not decide it: `fix-2.toml` is the archive of
 /// the change `fix-2`, and also the file 2 of the change `fix`. Only a file that
-/// does not read as a record has no field, and then the name without `.toml` is
+/// does not read as a record has no field. Then the name without `.toml` is
 /// the change (SD928 reports the file that does not read).
 pub fn archive_owner(path: &str, text: &str) -> String {
     record::Record::parse(text)
@@ -73,7 +73,7 @@ type Read = Result<Option<Vec<u8>>, String>;
 
 /// The archive file of the change `slug` among the archive files that a diff
 /// adds: its path and its bytes. A file is the archive of the change if its
-/// field `change` is the slug ([`archive_owner`]); the number in its name only
+/// field `change` is the slug ([`archive_owner`]). The number in its name only
 /// orders the files of one change (the newest wins). `read` gives the
 /// bytes of a path, or `None` if there is no file.
 pub fn archive_of(
@@ -99,9 +99,9 @@ pub fn archive_of(
     Ok(best.map(|(_, p, b)| (p, b)))
 }
 
-/// The biggest file that a reader of a record or of an archive file reads: a
+/// The biggest file that a reader of a record or of an archive file reads. A
 /// record is small. A caller reads with this limit (`Git::head_file_checked`):
-/// a link or a big file in the diff costs no read.
+/// the caller does not read a link or a big file in the diff.
 pub const READ_LIMIT: usize = 256 * 1024;
 
 /// The biggest change file (`intent.md`, `spec.md`, `plan.md`) that the compare
@@ -120,10 +120,11 @@ pub fn unreadable_message(path: &str, why: &Limited) -> String {
     )
 }
 
-/// The path outside the archive folder, among the paths that a diff adds, of a
-/// file that reads as the record of the change `slug`: the archive file that a
-/// commit moved out of `.spec-dna/accepted/`. A record in a folder of a change
-/// (`is_folder_record`) is no archive file. `read` gives the bytes of a path.
+/// The path of a file that reads as the record of the change `slug`. The path is
+/// among the paths that a diff adds and is outside the archive folder. The file
+/// is the archive file that a commit moved out of `.spec-dna/accepted/`. A record
+/// in a folder of a change (`is_folder_record`) is not an archive file. `read`
+/// gives the bytes of a path.
 pub fn moved_archive(
     slug: &str,
     added: &[&str],
@@ -147,8 +148,8 @@ pub fn moved_archive(
 }
 
 /// The path of the archive file that `finish` writes for the slug:
-/// `<slug>.toml`, or the first `<slug>-<n>.toml` from 2 on whose file does not
-/// exist. `exists` tells if a path exists on disk.
+/// `<slug>.toml`, or the first `<slug>-<n>.toml` with `n` of 2 or more whose
+/// file does not exist. `exists` tells if a path exists on disk.
 pub fn next_archive_path(slug: &str, exists: &dyn Fn(&str) -> bool) -> String {
     let first = format!("{ARCHIVE_DIR}/{slug}.toml");
     if !exists(&first) {
@@ -186,15 +187,16 @@ pub enum Need {
 /// The rule of D3 item 1, for a change that has a plan and is not closed. The
 /// caller checks both.
 ///
-/// A record is needed when the acceptance is on (SD927 is not off), and the plan
+/// A record is needed when the acceptance is on (SD927 is not off) and the plan
 /// is new:
 /// - a plan that the base tree does not have (a commit of the branch added it,
 ///   or no commit did) is always new (Q43). So a branch cannot set the pin back
 ///   for one commit to skip the record;
-/// - a plan that the base tree has is new if the newest commit that added it and
-///   that is an ancestor of the lifecycle base pinned 0.8.0 or later in
-///   `spec-dna.toml`. A pin before 0.8.0 gives no record, with a note. No such
-///   commit (a shallow clone), or no pin in it, gives the stricter result.
+/// - a plan that the base tree has is new if the newest commit that added it,
+///   and that is an ancestor of the lifecycle base, pinned 0.8.0 or later in
+///   `spec-dna.toml`. A pin before 0.8.0 gives no record, with a note. If no
+///   such commit exists (a shallow clone), or if the commit has no pin, the
+///   result is the stricter one.
 ///
 /// `plan_in_base` tells if the tree of `base_rev` has the plan at `plan_path`.
 pub fn needs_record(
@@ -228,9 +230,9 @@ fn is_before_0_8(pin: &str) -> bool {
 }
 
 /// The pin of `spec-dna.toml` in the newest commit that added `path` and that is
-/// an ancestor of `base_rev`. The outer `None`: no such commit (a shallow clone).
-/// The inner `None`: that commit has no pin. The rule of D3 item 1 for a plan,
-/// and the rule of D6 for a spec, both read it here.
+/// an ancestor of `base_rev`. The outer `None` means no such commit (a shallow
+/// clone). The inner `None` means that the commit has no pin. The rule of D3
+/// item 1 for a plan and the rule of D6 for a spec both read it here.
 pub fn pin_when_added(
     git: &Git,
     base_rev: &str,
@@ -255,19 +257,19 @@ pub fn pin_when_added(
 /// section is plain text (design 0.8.0, D6 and D7). This is the one rule for
 /// `check`, `finish`, `next`, the skeleton and the brief.
 ///
-/// - The pin is the one of the commit that added the file. For a file that the
+/// - The pin is the pin of the commit that added the file. For a file that the
 ///   tree of the base has, it is the newest such commit in the history of the
-///   base. For any other file, a file of the branch or any file with no base, it
-///   is the newest such commit in the history of `HEAD`. So a plan that the branch
-///   adds under a pin of 0.7.1 is plain text too: the owner rule is that a 0.7.1
-///   project gets no new error without a key. (The acceptance for a new plan is the
-///   exception of Q43, and it has its own rule, [`needs_record`].)
-/// - A file with no commit found (a shallow clone, a file that is not committed)
-///   and a commit with no pin get the rules of 0.8.0, the stricter result. A
-///   repository with no commit has none to read.
+///   base. For any other file (a file of the branch, or any file with no base),
+///   it is the newest such commit in the history of `HEAD`. So a plan that the
+///   branch adds under a pin of 0.7.1 is plain text too: the owner rule is that
+///   a 0.7.1 project gets no new error without a key. (The acceptance for a new
+///   plan is the exception of Q43. It has its own rule, [`needs_record`].)
+/// - A file with no commit found (a shallow clone, or a file that is not
+///   committed) and a commit with no pin get the rules of 0.8.0, the stricter
+///   result. A repository with no commit has none to read.
 ///
-/// The reader of the pin is [`added_before`], the one that `skip_early_plans`
-/// (SD923 and SD924, the version 0.7.0) calls too, so the 2 rules read one commit.
+/// The reader of the pin is [`added_before`]. `skip_early_plans` (SD923 and
+/// SD924, the version 0.7.0) calls it too, so the 2 rules read one commit.
 pub fn section_is_read(git: &Git, base_rev: Option<&str>, path: &str) -> Result<bool, String> {
     if git.commit("HEAD").is_none() {
         return Ok(true);
@@ -290,10 +292,11 @@ pub fn section_is_read(git: &Git, base_rev: Option<&str>, path: &str) -> Result<
 
 /// The pin of `spec-dna.toml` in the newest commit of the history of `rev` that
 /// added `path`, if that pin is a version before `first`. `None` if the pin is
-/// `first` or later, if the commit has no pin, or if no commit is found (a shallow
-/// clone, a file that is not committed): each of these is the stricter result. The
-/// one reader of the pin of an adding commit for `section_is_read` (the version
-/// 0.8.0) and `skip_early_plans` (the version 0.7.0).
+/// `first` or later, if the commit has no pin, or if no commit is found (a
+/// shallow clone, a file that is not committed): each of these is the stricter
+/// result. It is the one reader of the pin of an adding commit for
+/// `section_is_read` (the version 0.8.0) and `skip_early_plans` (the version
+/// 0.7.0).
 pub fn added_before(
     git: &Git,
     rev: &str,
@@ -407,11 +410,11 @@ pub fn acceptors_missing(cfg: &Config, class: Class, rec: &Record) -> Option<Str
 
 /// SD938: the declared invariants and deviations that the record does not
 /// answer (design 0.8.0, D6 and D7). An invariant needs an `[[invariant]]` entry
-/// with the same pin: the same `<doc-id>#<key>@<hash>`, so an answer for another
+/// with the same pin: the same `<doc-id>#<key>@<hash>`. An answer for another
 /// hash of the rule is no answer. A deviation needs a `[[deviation]]` entry with
-/// the same id, kind and text, with each run of white space as one space. An
-/// entry that no plan item names gives no finding. `check`, `finish` and `next`
-/// all call this one function. The messages name the entry to add.
+/// the same id, kind and text, with each run of white space read as one space.
+/// An entry that no plan item names gives no finding. `check`, `finish` and
+/// `next` all call this one function. The messages name the entry to add.
 pub fn answers_missing(rec: &Record, decl: &accept::Declared) -> Vec<String> {
     let mut out = Vec::new();
     let answered: Vec<String> = rec
@@ -448,9 +451,9 @@ pub fn answers_missing(rec: &Record, decl: &accept::Declared) -> Vec<String> {
 }
 
 /// The paths among `paths` whose sections are not read as 0.8.0 reads them
-/// ([`section_is_read`]). The one function that `check`
-/// ([`crate::lifecycle::skip_early_sections`]), `finish` and `next`
-/// ([`sections_of`]) call, with one lookup for each distinct path.
+/// ([`section_is_read`]). `check` ([`crate::lifecycle::skip_early_sections`]),
+/// `finish` and `next` ([`sections_of`]) all call this one function. It makes
+/// one lookup for each distinct path.
 pub fn sections_skipped(
     git: &Git,
     base_rev: Option<&str>,
@@ -492,9 +495,10 @@ fn section_messages(sec: &Sections, code: Code) -> Vec<String> {
 }
 
 /// The items that the spec and the plan of the change `ch` declare, with the
-/// rule of the pin applied ([`section_is_read`]): a spec or a plan of 0.7.1 declares
-/// nothing. The one function that `accept` (the skeleton and the brief), the compare
-/// of the brief (SD928), SD938 and `finish` call, so they read the same items.
+/// rule of the pin applied ([`section_is_read`]): a spec or a plan of 0.7.1
+/// declares nothing. `accept` (the skeleton and the brief), the compare of the
+/// brief (SD928), SD938 and `finish` all call this one function, so they read
+/// the same items.
 pub fn declared_for(
     cfg: &Config,
     git: &Git,
@@ -519,7 +523,7 @@ pub fn declared_for(
 }
 
 /// Reads [`Sections`] for the change `ch` of the head tree. `base_rev` is the
-/// lifecycle base. The one function that `finish` (step 5.2) and `next` call, so
+/// lifecycle base. `finish` (step 5.2) and `next` call this one function, so
 /// they read the same items as `check` does.
 pub fn sections_of(
     cfg: &Config,
@@ -620,7 +624,7 @@ pub const STALE_BEFORE_FINISH: &str = "delete the record";
 
 /// The plan of a change, as the stale rule reads it: the patterns that its scope
 /// has, and every code span of `Files`. Each reader of the rule builds it from
-/// the plan that it reads: the plan of the head, or for a folder that the diff
+/// the plan that it reads: the plan of the head or, for a folder that the diff
 /// deletes, the newest plan of the branch.
 #[derive(Clone, Debug, Default)]
 pub struct PlanScope {
@@ -663,12 +667,12 @@ const SHARED_ADDED_MARK: &str = "shared-paths changed after the acceptance";
 /// The words of a SD929 message for code that changed after the acceptance.
 const CODE_MARKS: [&str; 2] = ["the hash of the code", "the diff has the code path"];
 
-/// What changed after the acceptance, for the text of `next` and `finish`, read
-/// from a SD929 message of [`stale`]. One phrase for each kind of reason in the
-/// message: the scope of the plan, a pattern that the record has and no source
-/// has, a name that `Files` has and a record cannot hold, a new glob of
-/// `shared-paths`, and the code. The text is what changed, so the user fixes the
-/// right thing.
+/// What changed after the acceptance, for the text of `next` and `finish`. It
+/// reads a SD929 message of [`stale`]. It gives one phrase for each kind of
+/// reason in the message: the scope of the plan, a pattern that the record has
+/// and no source has, a name that `Files` has and a record cannot hold, a new
+/// glob of `shared-paths`, and the code. The text says what changed, so the user
+/// fixes the right thing.
 pub fn stale_cause(message: &str) -> String {
     let mut phrases: Vec<&str> = Vec::new();
     if message.contains(SCOPE_MARK) {
@@ -712,8 +716,8 @@ pub fn base_shared_paths(git: &Git, base_rev: &str) -> Result<Option<Vec<String>
 /// 2 rules. A record is stale if:
 ///
 /// - the plan has a pattern that `scope` of the record has not, or the record has
-///   a pattern that the plan has not. The globs of `[change] shared-paths` of the
-///   head configuration are left out on both sides: the record does not mark
+///   a pattern that the plan has not. Both sides omit the globs of
+///   `[change] shared-paths` of the head configuration: the record does not mark
 ///   which globs came from that key, and a change of the key after the
 ///   acceptance must not make a record stale (design 0.8.0, D3 item 4). So a
 ///   glob that a later commit removes from the key reads as a glob that the plan
@@ -803,7 +807,7 @@ pub fn stale_reasons(
         }
         // A glob of `shared-paths` that the base configuration has not is new
         // since the acceptance. A changed code path that only such a glob covers
-        // got in with no acceptance. A glob that the base has is as old as the
+        // has no acceptance. A glob that the base has is as old as the
         // record: a base commit that adds one changes no record.
         if let Some(base_shared) = base_rev
             .map(|r| base_shared_paths(git, r))
@@ -890,8 +894,8 @@ fn is_hash(s: &str) -> bool {
 /// The 3 files of a change in one tree, as text. `None` for a missing file. With
 /// them, the configuration of the same tree: the brief reads the key `[change]
 /// invariants`, so the compare of an entry needs the key that its adding commit
-/// had. `None`: the tree has no configuration that reads, and the head
-/// configuration stands in.
+/// had. `None` means that the tree has no configuration that reads. Then the
+/// head configuration replaces it.
 struct Files {
     intent: Option<String>,
     spec: Option<String>,
@@ -945,14 +949,16 @@ enum Source {
 /// record, the brief of the entry against the brief that the tree of its adding
 /// commit gives (design 0.8.0, D3 item 8).
 ///
-/// - An entry that the record of the base has, by its role, session and brief,
-///   was compared in its own pull request, so it is not compared again.
+/// - The compare skips an entry that the record of the base has (same role,
+///   session and brief). The pull request of that entry compared it.
 /// - The adding commit is the oldest commit of the latest unbroken run of the
-///   commits of the branch (`Git::first_parent_commits`: `<base>..<tip>`, first parent, the oldest first; on a test merge the tip is the second parent of `HEAD`) whose record holds
-///   an entry with the same triple. An entry that no commit holds takes the
-///   index with `--staged`, else the working tree.
-/// - A shallow clone that cuts the commits of the branch gives one problem that names
-///   `fetch-depth: 0`.
+///   commits of the branch whose record holds an entry with the same triple.
+///   `Git::first_parent_commits` gives the commits: `<base>..<tip>`, first
+///   parent, the oldest first. On a test merge the tip is the second parent of
+///   `HEAD`. An entry that no commit holds takes the index with `--staged`, else
+///   the working tree.
+/// - A shallow clone that cuts the commits of the branch gives one problem that
+///   names `fetch-depth: 0`.
 pub fn brief_problems(
     cfg: &Config,
     git: &Git,
@@ -1129,10 +1135,10 @@ pub const CUT_MARK: &str = "is cut (a shallow clone)";
 /// The SD935 message if the archive file `archive`, which the diff adds with
 /// the bytes `bytes`, is not the record that `finish` moves: the bytes differ
 /// from the folder record, or no folder record is in the history of the branch
-/// or in the base. The rule is one rule for the first commit of `finish` and
-/// for a later commit that edits the file: `finish` writes the folder record,
-/// byte for byte. In a shallow clone that cuts the commits of the branch, the record
-/// cannot be found: the message then names the cause and `fetch-depth: 0`.
+/// or in the base. One rule applies to the first commit of `finish` and to a
+/// later commit that edits the file: `finish` writes the folder record, byte
+/// for byte. In a shallow clone that cuts the commits of the branch, the
+/// record cannot be found: the message then names the cause and `fetch-depth: 0`.
 pub fn archive_differs(
     git: &Git,
     base_rev: &str,
@@ -1168,8 +1174,8 @@ pub fn archive_differs(
 /// `finish`").
 #[derive(Clone, Debug)]
 pub struct FinishFacts {
-    /// The file `<folder>/acceptance.toml` of the working tree, read in a bound
-    /// that never follows a link.
+    /// The file `<folder>/acceptance.toml` of the working tree. The read has a
+    /// size limit and never follows a link.
     pub record: RecordFile,
     pub need: Need,
     /// The problems of the compare of the briefs (SD928).

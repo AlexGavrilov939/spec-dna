@@ -1163,7 +1163,7 @@ fn decision_ids(text: &str) -> Vec<&str> {
 
 /// SD936 and SD937 for the section `Invariants` of the spec of a change (design
 /// 0.8.0, D6). They run only with `[change] invariants` (the severity of the two
-/// codes is off without the key), and they read the head tree only, so `check`,
+/// codes is off without the key). They read the head tree only, so `check`,
 /// `finish` step 5.2 and `next` use this one function.
 ///
 /// - SD936: an item has no valid form, names no document, no requirement or a
@@ -1980,7 +1980,8 @@ fn scope_paths(
 
 /// The newest artifacts of a change whose folder the diff deletes, as the
 /// branch has them before the deletion. For each of `intent.md`, `spec.md` and
-/// `plan.md`, the last commit of the branch (`<base>..<tip>`, [`Git::branch_tip`]) that touched the file gives the
+/// `plan.md`, the last commit of the branch (`<base>..<tip>`,
+/// [`Git::branch_tip`]) that touched the file gives the
 /// text: the file in that commit, or, if the commit deleted it, in its first
 /// parent. `None` if the branch did not touch the folder, or git cannot give
 /// the text (a shallow clone).
@@ -2669,10 +2670,10 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
     }
     let intent_dirs = intent_dirs(cfg);
     let mut out = Vec::new();
-    // The facts of the plan: for a change that the diff deletes, the plan of the
-    // branch before the deletion, as `finish` read it (the base plan can differ,
-    // when the branch edited `Files`). For any other change, its plan in the
-    // tree that the checks read.
+    // The facts of the plan. For a change that the diff deletes, use the plan of
+    // the branch before the deletion, as `finish` read it. The base plan can
+    // differ, when the branch edited `Files`. For any other change, use its plan
+    // in the tree that the checks read.
     let facts_of = |slug: &str| {
         changes
             .iter()

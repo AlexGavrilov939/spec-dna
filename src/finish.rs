@@ -631,14 +631,15 @@ fn record_diag(path: &str, slug: &str, code: Code, message: String) -> Diag {
     }
 }
 
-/// Step 5.2 (design 0.8.0, D3 item 9): for a change that needs a record, the
-/// record of the head is present, valid, fresh, accepted, and has the acceptors
-/// that the change needs, and its sections are valid and answered. The step stops
-/// at the first code of SD927 to SD933 and SD936 to SD940 that is not off, and it
-/// reports each finding of that code. It returns the text of
-/// the record, which step 5.5 moves, or `None` if the folder has no record to move
-/// (a record that no rule needs is returned too, with no check). For a
-/// plan of a version before 0.8.0 it adds the note of the design to the plan.
+/// Step 5.2 (design 0.8.0, D3 item 9). For a change that needs a record, the
+/// record of the head must be present, valid, fresh and accepted. It must have
+/// the acceptors that the change needs, and its sections must be valid and
+/// answered. The step stops at the first code of SD927 to SD933 and SD936 to
+/// SD940 that is not off, and it reports each finding of that code. It returns
+/// the text of the record, which step 5.5 moves, or `None` if the folder has no
+/// record to move. A record that no rule needs is returned too, with no check.
+/// For a plan of a version before 0.8.0 it adds the note of the design to the
+/// plan.
 fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, Failure> {
     use crate::acceptance::{self as acc, Need};
     let Some(f) = cx.acceptance else {
@@ -666,7 +667,7 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             if let acc::RecordFile::Text(text) = &f.record {
                 let text = text.clone();
                 // The archive is never edited: a record that is not valid (a
-                // skeleton with `pending` values) must not go into it. The
+                // skeleton with `pending` values) must not enter it. The
                 // structural rules of SD928 run here, as with a need.
                 if !cx.config.is_off(Code::AcceptanceInvalid) {
                     let facts = acc::plan_facts(ch, cx.head);
@@ -760,7 +761,7 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
 }
 
 /// Step 5.5 (design 0.8.0, D3 item 3): the record moves to the archive file. The
-/// plan adds the file to its writes, and the record goes away with the folder.
+/// plan adds the file to its writes, and the record is deleted with the folder.
 /// A path that git ignores, or that has a link, stops the step before any write.
 fn archive(cx: &Ctx, record: Option<String>, out: &mut Plan) -> Result<(), Failure> {
     let (Some(text), Some(f)) = (record, cx.acceptance) else {
