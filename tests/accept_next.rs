@@ -255,6 +255,33 @@ fn a_fresh_accepted_record_makes_the_item_done_and_a_code_edit_opens_it_again() 
 }
 
 #[test]
+fn a_path_that_the_plan_adds_or_drops_after_the_record_opens_the_item_again() {
+    for drop in [false, true] {
+        let r = built("standard");
+        commit_record(&r, "accepted");
+        assert!(accept_line(&next_text(&r)).unwrap().starts_with("[x] "));
+        let plan = std::fs::read_to_string(r.dir.join(PLAN)).unwrap();
+        if drop {
+            r.write(PLAN, &plan.replace("- `tests/test_valves.py`\n", ""));
+        } else {
+            r.write(
+                PLAN,
+                &plan.replace(
+                    "- `tests/test_valves.py`\n",
+                    "- `tests/test_valves.py`\n- `src/backdoor.py`\n",
+                ),
+            );
+            r.write("src/backdoor.py", "def hidden():\n    pass\n");
+        }
+        r.commit("the plan changes its paths");
+        let out = next_text(&r);
+        let line = accept_line(&out).unwrap();
+        assert!(line.starts_with("[ ] "), "{line}");
+        assert!(line.contains("stale") && line.contains("accept"), "{line}");
+    }
+}
+
+#[test]
 fn a_rejected_record_leaves_the_item_open() {
     let r = built("standard");
     commit_record(&r, "rejected");

@@ -22,7 +22,7 @@ use crate::change::{self, Change, Delta, Verb};
 use crate::config::{self, ChangePolicy, Config};
 use crate::diag::{Code, Diag};
 use crate::evidence::Evidence;
-use crate::git::{Git, PathChange};
+use crate::git::{Git, Limited, PathChange};
 use crate::hash::{Hash, hex};
 use crate::model::{Class, Corpus, Doc, DocType, Res};
 use crate::parse::{ItemSection, ListItem, ParsedDoc, parse};
@@ -1587,6 +1587,8 @@ struct BranchScope {
     /// The facts of the plan of the branch for the rules of a record. `finish`
     /// reads the same plan, before it deletes the folder.
     facts: crate::acceptance::PlanFacts,
+    /// The scope of a record for the plan of the branch ([`crate::accept::scope_of`]).
+    plan_scope: Vec<String>,
 }
 
 impl DiffChange {
@@ -1609,6 +1611,7 @@ impl DiffChange {
                     paragraph: newest.files_paragraph_only(&corpus),
                     scope,
                     facts: crate::acceptance::plan_facts(&newest, &corpus),
+                    plan_scope: crate::accept::scope_of(ctx.config, &newest, &corpus),
                 })
             })
             .as_ref()
@@ -2408,8 +2411,22 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             if folder.is_none() && !acc::is_archive_path(p) {
                 continue;
             }
-            let Some(bytes) = ctx.git.head_file(p)? else {
-                continue;
+            // A link, a folder or a file over the limit is not read: it is no
+            // record, and SD928 says so.
+            let bytes = match ctx.git.head_file_checked(p, acc::READ_LIMIT)? {
+                Limited::Bytes(b) => b,
+                Limited::Absent => continue,
+                other => {
+                    if on(Code::AcceptanceInvalid) {
+                        let slug = match &folder {
+                            Some((_, slug)) => slug.clone(),
+                            None => acc::archive_owner(p, ""),
+                        };
+                        let m = acc::unreadable_message(p, &other);
+                        out.push(path_diag(p, Code::AcceptanceInvalid, &slug, m));
+                    }
+                    continue;
+                }
             };
             let text = String::from_utf8_lossy(&bytes).into_owned();
             let slug = match &folder {
@@ -2477,7 +2494,9 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             .copied()
             .filter(|p| acc::is_archive_path(p))
             .collect();
-        let found = acc::archive_of(&c.slug, &in_folder, &mut |p| ctx.git.head_file(p))?;
+        let found = acc::archive_of(&c.slug, &in_folder, &mut |p| {
+            ctx.git.head_file_limited(p, acc::READ_LIMIT)
+        })?;
         let archive = found.as_ref().map(|(p, _)| p.clone());
         let Some(archive) = archive else {
             // A commit can move the archive file out of its folder: the diff
@@ -2487,7 +2506,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
                     &c.slug,
                     &added,
                     &|p| acc::record_folder(p, &intent_dirs).is_some(),
-                    &mut |p| ctx.git.head_file(p),
+                    &mut |p| ctx.git.head_file_limited(p, acc::READ_LIMIT),
                 )?
             {
                 out.push(path_diag(
@@ -2532,8 +2551,14 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             // SD928 reports a record that does not read.
             continue;
         };
+        // The scope of the plan as `finish` read it: the newest plan of the
+        // branch for a deleted folder, else the plan of the tree.
+        let plan_scope = match ch.branch(ctx) {
+            Some(b) => b.plan_scope.clone(),
+            None => crate::accept::scope_of(cfg, c, ctx.corpus(ch)),
+        };
         if on(Code::AcceptanceStale)
-            && let Some(m) = acc::stale(cfg, ctx.git, &rec, Some(ctx.diff), true)?
+            && let Some(m) = acc::stale(cfg, ctx.git, &rec, Some(ctx.diff), &plan_scope, true)?
         {
             out.push(path_diag(&archive, Code::AcceptanceStale, &c.slug, m));
         }

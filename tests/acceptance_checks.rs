@@ -1600,3 +1600,231 @@ fn a_file_outside_the_archive_folder_is_no_archive_file_and_sd927_stays() {
         assert!(!has(&out, "SD935"), "no archive file moved: {out}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_link_in_the_diff_is_never_read_for_a_moved_archive_file() {
+    use std::os::unix::fs::symlink;
+    // The folder is deleted with no `finish`. The diff adds a link to a big
+    // sparse file, a link to a folder, and the archive file moved to a plain
+    // path. The check reads no link, and it still finds the moved file.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    let sparse = std::env::temp_dir().join(format!("spec-dna-sparse-{}", std::process::id()));
+    std::fs::File::create(&sparse)
+        .unwrap()
+        .set_len(3_000_000_000)
+        .unwrap();
+    std::fs::create_dir_all(r.dir.join("notes")).unwrap();
+    symlink(&sparse, r.dir.join("notes/big-link")).unwrap();
+    symlink("../docs", r.dir.join("notes/dir-link")).unwrap();
+    r.write("notes/valve-timeout.toml", &t);
+    finished_by_hand(&r, None);
+    let (code, out, err) = run(&r, &["check"]);
+    let _ = std::fs::remove_file(&sparse);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "{out}");
+    let line = out.lines().find(|l| l.contains(" SD935 ")).expect("SD935");
+    assert!(line.starts_with("notes/valve-timeout.toml"), "{line}");
+}
+
+// A link where a record should be: no reader follows it. The target is a sparse
+// file of 3 GB, so a reader that follows the link would read 3 GB. The tests
+// assert the finding, not the time.
+
+/// A sparse file of 3 GB outside the repository, and the link `at` to it.
+#[cfg(unix)]
+fn link_to_big_file(r: &Repo, at: &str) -> std::path::PathBuf {
+    let sparse = std::env::temp_dir().join(format!(
+        "spec-dna-sparse-{}-{}",
+        std::process::id(),
+        at.replace('/', "-")
+    ));
+    std::fs::File::create(&sparse)
+        .unwrap()
+        .set_len(3_000_000_000)
+        .unwrap();
+    std::fs::create_dir_all(r.dir.join(at).parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&sparse, r.dir.join(at)).unwrap();
+    sparse
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_named_acceptance_toml_gives_sd928_in_check_finish_next_and_accept() {
+    let r = built();
+    let sparse = link_to_big_file(&r, RECORD);
+    r.commit("a link where the record should be");
+    // `check` reads the diff: SD928 names the path, and the exit code is 1.
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let line = out.lines().find(|l| l.contains(" SD928 ")).expect("SD928");
+    assert!(
+        line.starts_with(RECORD) && line.contains("not a regular file"),
+        "{line}"
+    );
+    // `finish` stops with exit code 1 at step 4, which refuses to delete through
+    // a link, and it writes no archive file. It reads nothing through the link.
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("symbolic link") || err.contains("symbolic link"),
+        "{out}{err}"
+    );
+    assert!(!r.dir.join(ARCHIVE).exists());
+    // `next` keeps the item `accept` open.
+    let (code, out, err) = run(&r, &["next", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("[ ] ") && l.contains("not a regular file")),
+        "{out}"
+    );
+    // `accept` refuses, and the link stays.
+    let (code, out, err) = run(&r, &["accept", SLUG, "--session", "s2"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("not a regular file"), "{out}{err}");
+    assert!(
+        std::fs::symlink_metadata(r.dir.join(RECORD))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let _ = std::fs::remove_file(&sparse);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_named_as_the_archive_file_gives_sd927_and_sd928_and_no_error_exit() {
+    let r = base_flow();
+    commit_record(&r, &["acceptor"], "accepted");
+    let sparse = link_to_big_file(&r, ARCHIVE);
+    finished_by_hand(&r, None);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "the link is no archive file: {out}");
+    let line = out.lines().find(|l| l.contains(" SD928 ")).expect("SD928");
+    assert!(
+        line.starts_with(ARCHIVE) && line.contains("not a regular file"),
+        "{line}"
+    );
+    let _ = std::fs::remove_file(&sparse);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_over_the_read_limit_gives_sd928_and_is_not_read() {
+    let r = built();
+    r.write(RECORD, &"# filler\n".repeat(40_000));
+    r.commit("a record of 360 KB");
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let line = out.lines().find(|l| l.contains(" SD928 ")).expect("SD928");
+    assert!(line.contains("more than 262144 bytes"), "{line}");
+    // `finish` stops with SD928 at step 5, before it writes an archive file.
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        has(&out, "SD928") && out.contains("more than 262144 bytes"),
+        "{out}{err}"
+    );
+    assert!(!r.dir.join(ARCHIVE).exists());
+}
+
+// SD929: the scope of the record is the scope of the plan of the head. One
+// function decides it for `accept`, `next`, `finish` and `check`.
+
+/// A commit after the record that adds `src/backdoor.py` to `Files` of the plan
+/// and adds the file.
+fn add_backdoor(r: &Repo) {
+    let plan = r.read(PLAN).replace(
+        "- `tests/test_valves.py`\n",
+        "- `tests/test_valves.py`\n- `src/backdoor.py`\n",
+    );
+    r.write(PLAN, &plan);
+    r.write("src/backdoor.py", "def hidden():\n    pass\n");
+    r.commit("a new path in the plan, and its file");
+}
+
+/// A commit after the record that takes a pattern out of `Files` of the plan.
+fn drop_a_pattern(r: &Repo) {
+    let plan = r.read(PLAN).replace("- `tests/test_valves.py`\n", "");
+    r.write(PLAN, &plan);
+    r.commit("a pattern out of the plan");
+}
+
+#[test]
+fn a_path_that_the_plan_adds_after_the_record_stops_finish_with_sd929() {
+    let r = built();
+    commit_record(&r, &["acceptor"], "accepted");
+    add_backdoor(&r);
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD929"), "{out}");
+    assert!(out.contains("src/backdoor.py"), "{out}");
+    assert!(!r.dir.join(ARCHIVE).exists(), "finish wrote the archive");
+    // `accept` refuses the same state.
+    let (code, out, err) = run(&r, &["accept", SLUG, "--session", "s2"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("changed since the record") || err.contains("changed"),
+        "{out}{err}"
+    );
+}
+
+#[test]
+fn a_pattern_that_the_plan_drops_after_the_record_stops_finish_with_sd929() {
+    let r = built();
+    commit_record(&r, &["acceptor"], "accepted");
+    drop_a_pattern(&r);
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD929"), "{out}");
+    assert!(out.contains("tests/test_valves.py"), "{out}");
+}
+
+#[test]
+fn check_gives_sd929_for_an_archive_whose_scope_is_not_the_scope_of_the_plan() {
+    // The plan adds a path after the record, and the change is finished by hand.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    add_backdoor(&r);
+    finished_by_hand(&r, Some(&t));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let line = out.lines().find(|l| l.contains(" SD929 ")).expect("SD929");
+    assert!(line.contains("src/backdoor.py"), "{line}");
+    // The same for a pattern that the plan drops.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    drop_a_pattern(&r);
+    finished_by_hand(&r, Some(&t));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD929"), "{out}");
+}
+
+#[test]
+fn a_plan_edit_that_keeps_the_scope_leaves_the_record_fresh_in_finish_and_check() {
+    // A tick, and a new line in the text of the plan: the scope is the same.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    let plan = r
+        .read(PLAN)
+        .replace("- A slow sensor.", "- A slow sensor, again.");
+    r.write(PLAN, &plan);
+    r.commit("a risk in the plan");
+    finished_by_hand(&r, Some(&t));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!has(&out, "SD929"), "{out}");
+    let r = built();
+    commit_record(&r, &["acceptor"], "accepted");
+    let plan = r
+        .read(PLAN)
+        .replace("- A slow sensor.", "- A slow sensor, again.");
+    r.write(PLAN, &plan);
+    r.commit("a risk in the plan");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+}

@@ -598,8 +598,22 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             out.notes.extend(note.clone());
             // No rule needs the record, but a record in the folder is archived.
             let path = format!("{}/{}", cx.folder, crate::record::FILE_NAME);
-            if (cx.exists)(&path) {
-                let text = (cx.read)(&path).map_err(Failure::Io)?;
+            // A link or a file over the limit is no record: SD928 stops, and
+            // nothing is read through the link.
+            if let acc::RecordFile::Unreadable(m) = &f.record {
+                if !cx.config.is_off(Code::AcceptanceInvalid) {
+                    let diags = vec![record_diag(
+                        &path,
+                        &ch.slug,
+                        Code::AcceptanceInvalid,
+                        m.clone(),
+                    )];
+                    return stop(5, "the acceptance record is not valid", diags);
+                }
+                return Ok(None);
+            }
+            if let acc::RecordFile::Text(text) = &f.record {
+                let text = text.clone();
                 // The archive is never edited: a record that is not valid (a
                 // skeleton with `pending` values) must not go into it. The
                 // structural rules of SD928 run here, as with a need.
@@ -631,8 +645,18 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             .collect();
         stop(5, why, diags)
     };
-    let text = if (cx.exists)(&path) {
-        (cx.read)(&path).map_err(Failure::Io)?
+    let text = if let acc::RecordFile::Text(text) = &f.record {
+        text.clone()
+    } else if let acc::RecordFile::Unreadable(m) = &f.record {
+        // A link or a file over the limit: the record does not read.
+        if on(Code::AcceptanceInvalid) {
+            return stop_with(
+                Code::AcceptanceInvalid,
+                "the acceptance record is not valid",
+                vec![m.clone()],
+            );
+        }
+        return Ok(None);
     } else {
         if on(Code::AcceptanceMissing) {
             return stop_with(

@@ -355,7 +355,17 @@ fn accept_item(
         .next()
         .flatten()
         .map(|b| String::from_utf8_lossy(&b).into_owned());
-    let on_disk = std::fs::read_to_string(repo.root.join(&path)).ok();
+    // A link or a file over the limit is not read: it is no record.
+    let on_disk = match crate::git::read_limited(&repo.root.join(&path), acceptance::READ_LIMIT) {
+        crate::git::Limited::Bytes(b) => Some(String::from_utf8_lossy(&b).into_owned()),
+        crate::git::Limited::Absent => None,
+        other => {
+            return Ok(open(format!(
+                "{} Then commit the record alone, and run `spec-dna finish {slug}`",
+                acceptance::unreadable_message(&path, &other)
+            )));
+        }
+    };
     let text = match (committed, on_disk) {
         (None, None) => {
             return Ok(open(format!(
@@ -376,7 +386,8 @@ fn accept_item(
     // a check that is off stops neither of them.
     let stale = match &rec {
         Some(r) if on(Code::AcceptanceStale) => {
-            acceptance::stale(cfg, &repo.git, r, diff, false).map_err(Fatal::Io)?
+            let plan_scope = crate::accept::scope_of(cfg, ch, head);
+            acceptance::stale(cfg, &repo.git, r, diff, &plan_scope, false).map_err(Fatal::Io)?
         }
         _ => None,
     };

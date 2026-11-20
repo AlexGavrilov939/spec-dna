@@ -961,6 +961,35 @@ fn a_mixed_plan_where_only_a_bare_name_changes_is_refused_with_the_two_ways_out(
 }
 
 #[test]
+fn a_path_of_files_with_a_space_is_refused_with_the_real_cause_and_the_glob() {
+    // The scope is not empty, and the changed file is only in `Files` with a space.
+    let r = with_files(
+        &config("standard", ""),
+        "- `src/valves.py`\n- `src/a b.py`\n",
+        &["src/a b.py"],
+    );
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let all = format!("{out}{err}");
+    assert!(
+        all.contains("`src/a b.py`") && all.contains("has a space"),
+        "{all}"
+    );
+    assert!(all.contains("`src/a*b.py`"), "the glob: {all}");
+    assert!(!all.contains("no `/`"), "no false cause: {all}");
+    // The scope is empty: the same cause.
+    let r = with_files(&config("standard", ""), "- `src/a b.py`\n", &["src/a b.py"]);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let all = format!("{out}{err}");
+    assert!(
+        all.contains("has a space") && all.contains("`src/a*b.py`"),
+        "{all}"
+    );
+    assert!(!all.contains("no `/`"), "no false cause: {all}");
+}
+
+#[test]
 fn the_two_ways_out_work_the_form_with_a_dot_slash_and_shared_paths() {
     // The form `./Makefile`.
     let r = with_files(

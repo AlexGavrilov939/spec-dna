@@ -290,9 +290,19 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let record_path = format!("{folder}/{}", record::FILE_NAME);
     let full = repo.root.join(&record_path);
     let session = record::session_value(o.session);
-    let (text, number, created) = if full.exists() {
-        let old =
-            std::fs::read_to_string(&full).map_err(|e| Fatal::Io(format!("{record_path}: {e}")))?;
+    // A link is no record, and `accept` never reads through it: the check
+    // looks at the path itself, and the read has a bound.
+    let existing = match crate::git::read_limited(&full, crate::acceptance::READ_LIMIT) {
+        crate::git::Limited::Absent => None,
+        crate::git::Limited::Bytes(b) => Some(String::from_utf8_lossy(&b).into_owned()),
+        other => {
+            return Err(Fatal::Refused(crate::acceptance::unreadable_message(
+                &record_path,
+                &other,
+            )));
+        }
+    };
+    let (text, number, created) = if let Some(old) = existing {
         let r = Record::parse(&old).map_err(|e| {
             Fatal::Refused(format!(
                 "`{record_path}` is not a record that `accept` can read: {e}; fix it, or delete it and accept again"
@@ -304,9 +314,24 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
                 r.change
             )));
         }
-        if r.scope != scope || r.paths != paths || !tree::matches(&r.tree, &tree_hash) {
+        // The function that SD929, `next` and `finish` use decides first, so
+        // no 2 places use 2 rules. The compare of `paths` stays: `paths` also
+        // differs when a path left the diff.
+        let why = crate::acceptance::stale_reasons(&cfg, &repo.git, &r, diff.as_ref(), &scope)
+            .map_err(Fatal::Io)?;
+        if !why.is_empty() || r.scope != scope || r.paths != paths {
+            let why = if why.is_empty() {
+                "its `scope`, `paths` or `tree` differ from the repository now".to_string()
+            } else {
+                why.join("; ")
+            };
             return Err(Fatal::Refused(format!(
-                "the code that `{record_path}` lists changed since the record: its `scope`, `paths` or `tree` differ from the repository now; delete the record and accept again"
+                "the code that `{record_path}` lists changed since the record: {why}; delete the record and accept again"
+            )));
+        }
+        if !tree::matches(&r.tree, &tree_hash) {
+            return Err(Fatal::Refused(format!(
+                "the code that `{record_path}` lists changed since the record: its `tree` differs from the repository now; delete the record and accept again"
             )));
         }
         let n = r.acceptors.len() + 1;
@@ -395,23 +420,48 @@ fn refuse_uncovered(
     if dropped.is_empty() {
         return Ok(());
     }
-    let ways = "write the path with a `/` or a `.` in `Files` of the plan (the form `./Makefile` works), or add it to `[change] shared-paths`";
+    let ways = |p: &str| {
+        if p.trim().contains(char::is_whitespace) {
+            let glob = p.split_whitespace().collect::<Vec<_>>().join("*");
+            format!(
+                "a path of `Files` has no space; write the glob `{glob}` instead (a `*` matches the space), or add the path to `[change] shared-paths`"
+            )
+        } else {
+            "write the path with a `/` or a `.` in `Files` of the plan (the form `./Makefile` works), or add it to `[change] shared-paths`".to_string()
+        }
+    };
+    // The cause of a pattern that the scope cannot hold.
+    let cause = |p: &str| {
+        if p.trim().contains(char::is_whitespace) {
+            "has a space"
+        } else {
+            "has no `/`, no `.` and no `*`"
+        }
+    };
     if scope.is_empty() {
         return Err(Fatal::Refused(format!(
-            "the scope of the record is empty: the patterns of `Files` of the plan ({}) have no `/`, no `.` and no `*`, so the record cannot hold them; {ways}",
+            "the scope of the record is empty: the patterns of `Files` of the plan cannot be in the record ({}); {}",
             dropped
                 .iter()
-                .map(|p| format!("`{p}`"))
+                .map(|p| format!("`{p}` {}", cause(p)))
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            ways(&dropped[0])
         )));
     }
     if let Some(p) = changed
         .iter()
         .find(|p| is_code(p) && change::in_scope(&dropped, p) && !change::in_scope(scope, p))
     {
+        // The dropped pattern that covers the file names the cause.
+        let pattern = dropped
+            .iter()
+            .find(|d| change::in_scope(std::slice::from_ref(d), p))
+            .map_or("", String::as_str);
         return Err(Fatal::Refused(format!(
-            "the changed file `{p}` is in `Files` of the plan only as a name with no `/`, no `.` and no `*`, so the scope of the record does not cover it; {ways}"
+            "the changed file `{p}` is in `Files` of the plan only as `{pattern}`, which {}, so the scope of the record does not cover it; {}",
+            cause(pattern),
+            ways(pattern)
         )));
     }
     Ok(())

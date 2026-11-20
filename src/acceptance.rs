@@ -16,7 +16,7 @@ use crate::accept::{self, Composed, Texts};
 use crate::change::{self, Change};
 use crate::config::{self, Config, Version};
 use crate::diag::Code;
-use crate::git::Git;
+use crate::git::{Git, Limited, read_limited};
 use crate::lifecycle::Diff;
 use crate::model::{Class, Corpus};
 use crate::parse::{ParsedDoc, parse};
@@ -99,8 +99,26 @@ pub fn archive_of(
     Ok(best.map(|(_, p, b)| (p, b)))
 }
 
-/// The biggest file that [`moved_archive`] reads: a record is small.
-const MOVED_READ_LIMIT: usize = 256 * 1024;
+/// The biggest file that a reader of a record or of an archive file reads: a
+/// record is small. A caller reads with this limit (`Git::head_file_checked`):
+/// a link or a big file in the diff costs no read.
+pub const READ_LIMIT: usize = 256 * 1024;
+
+/// The biggest change file (`intent.md`, `spec.md`, `plan.md`) that the compare
+/// of the brief reads from the working tree.
+const DOC_READ_LIMIT: usize = 4 * 1024 * 1024;
+
+/// The SD928 text for a record path whose file is not read: a link or another
+/// file that is not a regular file, or a file of more than [`READ_LIMIT`] bytes.
+pub fn unreadable_message(path: &str, why: &Limited) -> String {
+    let what = match why {
+        Limited::TooBig => format!("a file of more than {READ_LIMIT} bytes"),
+        _ => "not a regular file (a link, or a folder)".to_string(),
+    };
+    format!(
+        "`{path}` is {what}, so it is not read as a record; replace it with the record that `spec-dna accept` writes (a regular file of at most {READ_LIMIT} bytes)"
+    )
+}
 
 /// The path outside the archive folder, among the paths that a diff adds, of a
 /// file that reads as the record of the change `slug`: the archive file that a
@@ -117,7 +135,7 @@ pub fn moved_archive(
             continue;
         }
         let Some(bytes) = read(p)? else { continue };
-        if bytes.len() > MOVED_READ_LIMIT {
+        if bytes.len() > READ_LIMIT {
             continue;
         }
         let text = String::from_utf8_lossy(&bytes);
@@ -371,20 +389,51 @@ pub const STALE_AFTER_FINISH: &str = "revert the commit of `finish`";
 /// The start of the fix in a SD929 message before `finish` (a folder record).
 pub const STALE_BEFORE_FINISH: &str = "delete the record";
 
-/// SD929: the record is stale. The hash of `paths` differs from the code that
-/// `git` reads (the working tree, or the index for a `staged` `Git`), or the diff
-/// has a code path that `scope` matches and `paths` does not list. `after_finish`
-/// chooses the fix that the message names. `None`: the record is fresh.
-pub fn stale(
+/// Why a record is stale: one text for each reason, empty if the record is
+/// fresh. One function decides it for `accept` (the refusal), SD929 in `check`,
+/// `next` and `finish` step 5.2, so no 2 places use 2 rules. A record is stale if
+/// its `scope` is not `plan_scope` (the scope of the plan of the head, from
+/// [`crate::accept::scope_of`]: a pattern that the plan has and the record has
+/// not, or the reverse), or the hash of `paths` differs from the code that `git`
+/// reads (the working tree, or the index for a `staged` `Git`), or the diff has a
+/// code path that `scope` matches and `paths` does not list.
+pub fn stale_reasons(
     cfg: &Config,
     git: &Git,
     rec: &Record,
     diff: Option<&Diff>,
-    after_finish: bool,
-) -> Result<Option<String>, String> {
+    plan_scope: &[String],
+) -> Result<Vec<String>, String> {
+    let mut why: Vec<String> = Vec::new();
+    let quote = |v: Vec<&String>| {
+        v.iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let only_plan: Vec<&String> = plan_scope
+        .iter()
+        .filter(|p| !rec.scope.contains(p))
+        .collect();
+    let only_record: Vec<&String> = rec
+        .scope
+        .iter()
+        .filter(|p| !plan_scope.contains(p))
+        .collect();
+    if !only_plan.is_empty() {
+        why.push(format!(
+            "the plan has the pattern {} in its scope, and `scope` of the record has not",
+            quote(only_plan)
+        ));
+    }
+    if !only_record.is_empty() {
+        why.push(format!(
+            "`scope` of the record has the pattern {}, and the plan has not",
+            quote(only_record)
+        ));
+    }
     let entries = tree::entries_of(git, cfg)?;
     let now = record::tree_hash(&entries, &rec.paths);
-    let mut why: Vec<String> = Vec::new();
     if !tree::matches(&rec.tree, &now) {
         why.push(format!(
             "the hash of the code that `paths` lists is {now}, and the record has {}",
@@ -403,6 +452,20 @@ pub fn stale(
             }
         }
     }
+    Ok(why)
+}
+
+/// SD929: the record is stale ([`stale_reasons`]). `after_finish` chooses the fix
+/// that the message names. `None`: the record is fresh.
+pub fn stale(
+    cfg: &Config,
+    git: &Git,
+    rec: &Record,
+    diff: Option<&Diff>,
+    plan_scope: &[String],
+    after_finish: bool,
+) -> Result<Option<String>, String> {
+    let why = stale_reasons(cfg, git, rec, diff, plan_scope)?;
     if why.is_empty() {
         return Ok(None);
     }
@@ -592,7 +655,9 @@ pub fn brief_problems(
                     for n in names {
                         // A working tree with `core.autocrlf` has CRLF, and `accept
                         // --brief` reads the files of `HEAD` with LF (ADR 0019).
-                        texts.push(text_of(git.head_file(&format!("{folder}/{n}"))?).map(|t| {
+                        let read =
+                            git.head_file_limited(&format!("{folder}/{n}"), DOC_READ_LIMIT)?;
+                        texts.push(text_of(read).map(|t| {
                             String::from_utf8_lossy(&record::to_lf(t.as_bytes())).into_owned()
                         }));
                     }
@@ -709,6 +774,9 @@ pub fn archive_differs(
 /// `finish`").
 #[derive(Clone, Debug)]
 pub struct FinishFacts {
+    /// The file `<folder>/acceptance.toml` of the working tree, read in a bound
+    /// that never follows a link.
+    pub record: RecordFile,
     pub need: Need,
     /// The problems of the compare of the briefs (SD928).
     pub brief_problems: Vec<String>,
@@ -718,6 +786,18 @@ pub struct FinishFacts {
     pub archive: String,
     /// The ignore rule of git for that path, if there is one.
     pub ignored: Option<String>,
+}
+
+/// The record file of a change folder in the working tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecordFile {
+    /// The folder has no record.
+    Absent,
+    /// The text of the record.
+    Text(String),
+    /// A link, another file that is not a regular file, or a file over
+    /// [`READ_LIMIT`]: the message for SD928.
+    Unreadable(String),
 }
 
 /// The rule "a change that needs a record" for a change of the head tree: the
@@ -766,12 +846,17 @@ pub fn finish_facts(
 ) -> Result<Option<FinishFacts>, Fatal> {
     let need = need_for_change(repo, cfg, ch, head, base, base_rev)?;
     let record_path = format!("{}/{}", ch.dir, record::FILE_NAME);
-    let present = repo.root.join(&record_path).is_file();
-    if need.is_none() && !present {
+    let record = match read_limited(&repo.root.join(&record_path), READ_LIMIT) {
+        Limited::Absent => RecordFile::Absent,
+        Limited::Bytes(b) => RecordFile::Text(String::from_utf8_lossy(&b).into_owned()),
+        other => RecordFile::Unreadable(unreadable_message(&record_path, &other)),
+    };
+    if need.is_none() && record == RecordFile::Absent {
         return Ok(None);
     }
     let archive = next_archive_path(&ch.slug, &|p| repo.root.join(p).exists());
     let mut f = FinishFacts {
+        record,
         ignored: repo.git.ignore_rule(&archive),
         archive,
         need: need.unwrap_or(Need::No(None)),
@@ -781,10 +866,10 @@ pub fn finish_facts(
     let (Need::Yes { .. }, Some(base_rev)) = (&f.need, base_rev) else {
         return Ok(Some(f));
     };
-    let Ok(text) = std::fs::read_to_string(repo.root.join(&record_path)) else {
+    let RecordFile::Text(text) = &f.record else {
         return Ok(Some(f));
     };
-    let Ok(rec) = Record::parse(&text) else {
+    let Ok(rec) = Record::parse(text) else {
         return Ok(Some(f));
     };
     if !cfg.is_off(Code::AcceptanceInvalid) {
@@ -792,7 +877,8 @@ pub fn finish_facts(
             brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec).map_err(Fatal::Io)?;
     }
     if !cfg.is_off(Code::AcceptanceStale) {
-        f.stale = stale(cfg, &repo.git, &rec, diff, false).map_err(Fatal::Io)?;
+        let plan_scope = crate::accept::scope_of(cfg, ch, head);
+        f.stale = stale(cfg, &repo.git, &rec, diff, &plan_scope, false).map_err(Fatal::Io)?;
     }
     Ok(Some(f))
 }

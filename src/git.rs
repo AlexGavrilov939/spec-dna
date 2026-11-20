@@ -123,6 +123,46 @@ pub struct Status {
     pub untracked: Vec<String>,
 }
 
+/// The result of a read in a bound ([`Git::head_file_checked`], [`read_limited`]).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Limited {
+    /// There is no file.
+    Absent,
+    /// The bytes of a regular file of at most the limit.
+    Bytes(Vec<u8>),
+    /// The path is a link, a folder or another file that is not a regular file.
+    NotRegular,
+    /// A regular file of more than the limit.
+    TooBig,
+}
+
+/// Reads a regular file in a bound. It looks at the path with `symlink_metadata`
+/// first, so it never follows a link, and it reads at most `limit` bytes.
+pub fn read_limited(full: &Path, limit: usize) -> Limited {
+    use std::io::Read;
+    let Ok(meta) = std::fs::symlink_metadata(full) else {
+        return Limited::Absent;
+    };
+    if !meta.file_type().is_file() {
+        return Limited::NotRegular;
+    }
+    if meta.len() > limit as u64 {
+        return Limited::TooBig;
+    }
+    let Ok(file) = std::fs::File::open(full) else {
+        return Limited::Absent;
+    };
+    // One byte more than the limit shows a file that grew after the check.
+    let mut bytes = Vec::new();
+    if file.take(limit as u64 + 1).read_to_end(&mut bytes).is_err() {
+        return Limited::Absent;
+    }
+    if bytes.len() > limit {
+        return Limited::TooBig;
+    }
+    Limited::Bytes(bytes)
+}
+
 impl Git {
     pub fn new(root: &Path) -> Git {
         Git {
@@ -1455,6 +1495,52 @@ impl Git {
         Ok(std::fs::read(self.root.join(path)).ok())
     }
 
+    /// Like [`Git::head_file`], for a file of a size that a caller bounds: it
+    /// gives `None` for an absent file, for anything that is not a regular file
+    /// (a link, a folder, a device), and for a file of more than `limit` bytes.
+    /// [`Git::head_file_checked`] tells the cases apart.
+    pub fn head_file_limited(&self, path: &str, limit: usize) -> Result<Option<Vec<u8>>, String> {
+        Ok(match self.head_file_checked(path, limit)? {
+            Limited::Bytes(b) => Some(b),
+            _ => None,
+        })
+    }
+
+    /// Reads a head file in a bound: the file of the working tree, or the index
+    /// entry for a `staged` `Git`. It reads at most `limit` bytes and never
+    /// follows a link, so a link to a huge file costs nothing. For a `staged`
+    /// `Git`, the mode and the size of the blob come before the read.
+    pub fn head_file_checked(&self, path: &str, limit: usize) -> Result<Limited, String> {
+        if self.staged {
+            let entry = self.run(&["ls-files", "-s", "-z", "--", path])?;
+            if entry.is_empty() {
+                return Ok(Limited::Absent);
+            }
+            // One entry whose path is `path` (a folder lists its files), and a
+            // regular mode.
+            let mut want = format!("\t{path}").into_bytes();
+            want.push(0);
+            let regular = entry.starts_with(b"100644 ") || entry.starts_with(b"100755 ");
+            if !regular || !entry.ends_with(&want) || entry.iter().filter(|b| **b == 0).count() != 1
+            {
+                return Ok(Limited::NotRegular);
+            }
+            let size = self.run(&["cat-file", "-s", &format!(":{path}")])?;
+            let size: usize = String::from_utf8_lossy(&size)
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad size of `{path}` from git"))?;
+            if size > limit {
+                return Ok(Limited::TooBig);
+            }
+            return Ok(match self.head_file(path)? {
+                Some(b) => Limited::Bytes(b),
+                None => Limited::Absent,
+            });
+        }
+        Ok(read_limited(&self.root.join(path), limit))
+    }
+
     /// True if the head entry of `path` is a symbolic link: the file of the
     /// working tree, or the entry of the git index (mode 120000) for a
     /// `staged` `Git`. The path is from the repository root. A path that is
@@ -2692,5 +2778,52 @@ mod tests {
         let merge = t.git(&["rev-parse", "HEAD"]);
         let got = Git::new(&t.dir).commit_messages(&[merge]).unwrap();
         assert_eq!(got[0].as_deref(), Some("merge side\n\nHours: 1\n"));
+    }
+
+    /// A bounded read gives a regular file only: no link, no folder, no file over
+    /// the limit, and it never reads the target of a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_bounded_read_gives_a_small_regular_file_and_never_follows_a_link() {
+        use std::os::unix::fs::symlink;
+        let t = Tmp::new();
+        t.write("small.txt", "format = 1\n");
+        t.write("big.txt", &"x".repeat(100));
+        t.write("sub/inner.txt", "inner\n");
+        // A sparse file: its size is big, and it takes no disk.
+        let sparse = t.dir.join("sparse.bin");
+        fs::File::create(&sparse)
+            .unwrap()
+            .set_len(3_000_000_000)
+            .unwrap();
+        symlink("small.txt", t.dir.join("link-small")).unwrap();
+        symlink(&sparse, t.dir.join("link-sparse")).unwrap();
+        symlink("sub", t.dir.join("link-dir")).unwrap();
+        symlink("no-such-file", t.dir.join("link-dangling")).unwrap();
+        for staged in [false, true] {
+            let g = if staged {
+                t.git(&[
+                    "add",
+                    "--",
+                    "small.txt",
+                    "big.txt",
+                    "sub",
+                    "link-small",
+                    "link-dir",
+                ]);
+                t.git(&["add", "--", "link-sparse", "link-dangling"]);
+                Git::new(&t.dir).staged()
+            } else {
+                Git::new(&t.dir)
+            };
+            let read = |p: &str| g.head_file_limited(p, 64).unwrap();
+            assert_eq!(read("small.txt").as_deref(), Some(&b"format = 1\n"[..]));
+            assert_eq!(read("big.txt"), None, "over the limit, staged {staged}");
+            for link in ["link-small", "link-sparse", "link-dir", "link-dangling"] {
+                assert_eq!(read(link), None, "{link}, staged {staged}");
+            }
+            assert_eq!(read("sub"), None, "a folder, staged {staged}");
+            assert_eq!(read("absent.txt"), None);
+        }
     }
 }
