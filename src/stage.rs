@@ -12,6 +12,7 @@ use crate::acceptance::{self, Need};
 use crate::approval::Branch;
 use crate::change::{self, Change, PlanTask, Verb};
 use crate::config::{Approval, ChangePolicy, Config};
+use crate::diag::Code;
 use crate::evidence::{self, Evidence};
 use crate::json::{self, Obj};
 use crate::lifecycle::{self, Diff, ReqChangeKind};
@@ -316,32 +317,40 @@ fn accept_items(
             continue;
         }
         let need = acceptance::need_for_change(repo, cfg, &ch, head, base, base_rev)?;
-        if matches!(need, Some(Need::Yes { .. })) {
-            out.insert(ch.slug.clone(), accept_item(repo, cfg, &ch, head, diff)?);
+        if let (Some(Need::Yes { .. }), Some(base_rev)) = (&need, base_rev) {
+            out.insert(
+                ch.slug.clone(),
+                accept_item(repo, cfg, &ch, head, base_rev, diff)?,
+            );
         }
     }
     Ok(out)
 }
 
 /// The item `accept` of one change that needs a record. The record is done when
-/// it is valid, fresh and `accepted`. A code edit after the acceptance makes it
-/// stale, and the item is open again (design 0.8.0, D3 item 9).
+/// the checks of `finish` step 5.2 pass for it (`acceptance.rs`): it is valid,
+/// its briefs are right, it is fresh and `accepted`, no 2 entries are of the same
+/// acceptor, and it has the entries that the change needs. A code edit after the
+/// acceptance makes it stale, and the item is open again (design 0.8.0, D3 item
+/// 9). An open item names the first problem.
 fn accept_item(
     repo: &Repo,
     cfg: &Config,
     ch: &Change,
     head: &Corpus,
+    base_rev: &str,
     diff: Option<&Diff>,
 ) -> Result<AcceptItem, Fatal> {
     let slug = &ch.slug;
     let path = format!("{}/{}", ch.dir, record::FILE_NAME);
     let open = |text: String| AcceptItem { done: false, text };
+    let on = |c: Code| !cfg.is_off(c);
     let Ok(text) = std::fs::read_to_string(repo.root.join(&path)) else {
         return Ok(open(format!(
             "accept the change: run `spec-dna accept {slug} --brief`, give the whole output, unchanged, to an agent `acceptor`, and commit the record that it writes"
         )));
     };
-    let (rec, problems): (Option<Record>, Vec<String>) =
+    let (rec, mut problems): (Option<Record>, Vec<String>) =
         acceptance::read_record(cfg, &text, slug, acceptance::plan_facts(ch, head));
     let Some(rec) = rec else {
         return Ok(open(format!(
@@ -349,23 +358,42 @@ fn accept_item(
             problems.first().map_or("", String::as_str)
         )));
     };
-    if acceptance::stale(cfg, &repo.git, &rec, diff, false)
-        .map_err(Fatal::Io)?
-        .is_some()
+    if on(Code::AcceptanceInvalid) {
+        problems.extend(
+            acceptance::brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec)
+                .map_err(Fatal::Io)?,
+        );
+        if let Some(first) = problems.first() {
+            return Ok(open(format!(
+                "the record `{path}` is not valid ({first}); the acceptor fixes it"
+            )));
+        }
+    }
+    if on(Code::AcceptanceStale)
+        && acceptance::stale(cfg, &repo.git, &rec, diff, false)
+            .map_err(Fatal::Io)?
+            .is_some()
     {
         return Ok(open(format!(
             "the record `{path}` is stale, because the code changed after the acceptance: delete it, commit, and run `spec-dna accept {slug} --brief` again"
         )));
     }
-    if rec.result == "rejected" {
+    if on(Code::AcceptanceRejected) && rec.result == "rejected" {
         return Ok(open(format!(
             "the record `{path}` says `rejected`: fix each finding in the code, delete the record, commit, and accept again"
         )));
     }
-    if let Some(first) = problems.first() {
+    if on(Code::SelfAccepted)
+        && let Some(first) = acceptance::self_accepted(&rec).first()
+    {
         return Ok(open(format!(
-            "the record `{path}` is not valid ({first}); the acceptor fixes it"
+            "the record `{path}` is not accepted ({first}); run `spec-dna accept {slug}` again with another agent"
         )));
+    }
+    if on(Code::AcceptorMissing)
+        && let Some(why) = acceptance::acceptors_missing(cfg, ch.class, &rec)
+    {
+        return Ok(open(why));
     }
     Ok(AcceptItem {
         done: true,

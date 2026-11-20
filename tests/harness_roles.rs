@@ -571,6 +571,7 @@ fn the_acceptor_has_the_tools_of_a_reader_and_one_write_and_no_edit() {
     for w in [
         "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
         "Your prompt is the output of `spec-dna accept <slug> --brief`. If it is not, run that command first, and work from its output.",
+        "7. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner.",
         "Write only `acceptance.toml`",
         "Report each defect as a finding. Do not fix it.",
     ] {

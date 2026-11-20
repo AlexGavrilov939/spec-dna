@@ -119,8 +119,30 @@ pub fn brief_text(
 /// the `Files:` of the tasks, as SD913 reads them) and the globs of
 /// `[change] shared-paths`. It is sorted, with no duplicate, so the order of
 /// the plan does not change the record.
-pub fn scope_of(cfg: &Config, ch: &Change, corpus: &Corpus) -> Vec<String> {
-    let mut scope = ch.files(corpus);
+///
+/// SD913 takes each code span of a `Files` item as a pattern, also a word of the
+/// prose such as `next`. A word matches only a file of that name, so SD913 does
+/// no harm. The scope is written in the record and in the brief, so a pattern
+/// of the plan stays only when it looks like a path or a glob (the rule of
+/// [`crate::change::plain_path`]): it has a `/`, a `.` or a `*`, and no white
+/// space. A name with none of these (`Makefile`) stays when `exists` says that
+/// the path exists. A `shared-paths` glob stays always.
+pub fn scope_of(
+    cfg: &Config,
+    ch: &Change,
+    corpus: &Corpus,
+    exists: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let looks_like_a_path = |p: &str| {
+        let p = p.trim();
+        (!p.contains(char::is_whitespace) && p.contains(['/', '.', '*']))
+            || exists(p.strip_prefix("./").unwrap_or(p))
+    };
+    let mut scope: Vec<String> = ch
+        .files(corpus)
+        .into_iter()
+        .filter(|p| looks_like_a_path(p))
+        .collect();
     scope.extend(cfg.shared_paths.iter().cloned());
     scope.sort();
     scope.dedup();
@@ -196,7 +218,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let spec_path = ch.spec.as_ref().map(path_of);
 
     // The scope, the paths and the tree (D3 item 4).
-    let scope = scope_of(&cfg, ch, &head);
+    let scope = scope_of(&cfg, ch, &head, &|p| repo.root.join(p).exists());
     let is_code = |p: &str| tree::is_code_path(&cfg, p, &intent_dirs);
     refuse_dirty_code(&dirty, &scope, &is_code)?;
     let diff = base_rev
@@ -337,6 +359,16 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         });
         (text, 1, true)
     };
+    // A record over the size limit is never valid, and the acceptor may not
+    // shorten `paths`. Refuse before any write.
+    if text.len() > record::MAX_BYTES {
+        return Err(Fatal::Refused(format!(
+            "the record `{record_path}` would have {} bytes, and a record has at most {} bytes; the cause is too many paths: `paths` lists {} code paths. Split the change into smaller changes, each with its own folder, and accept each one",
+            text.len(),
+            record::MAX_BYTES,
+            paths.len()
+        )));
+    }
     write_atomic(&full, &text).map_err(|e| Fatal::Io(format!("{record_path}: {e}")))?;
     if o.json {
         println!(

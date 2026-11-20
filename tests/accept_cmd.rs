@@ -742,3 +742,81 @@ fn the_help_lists_the_command_and_its_options() {
     let (_, all, _) = r.run(&["--help"]);
     assert!(all.contains("accept <slug>"), "{all}");
 }
+
+#[test]
+fn a_skeleton_over_the_size_limit_is_refused_and_names_the_cause_and_the_fix() {
+    // 500 code paths of 40 bytes each make a `paths` line over 16,384 bytes.
+    let r = built_with(&config("standard", "shared-paths = [\"gen/*.txt\"]\n"));
+    for n in 0..500 {
+        r.write(&format!("gen/a_module_with_a_long_name_{n:04}.txt"), "x\n");
+    }
+    r.commit("many files");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let all = format!("{out}{err}");
+    assert!(all.contains("16384") || all.contains("16,384"), "{all}");
+    assert!(
+        all.contains("too many paths") && all.contains("Split the change"),
+        "{all}"
+    );
+    // No file is written.
+    assert!(!r.dir.join(RECORD).exists());
+}
+
+/// The `Files` section of a real plan has prose around its code spans. A word
+/// in a code span (`accept`, `next`) or a phrase (`eval run --ab`) is no path,
+/// so it stays out of `scope`. A bare name that exists (`Makefile`) stays in.
+#[test]
+fn the_scope_leaves_out_the_code_spans_that_are_no_paths() {
+    let plan = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n\
+- `src/valves.py`, `src/other.py` The record, its rules, its writer, and the command with the brief.\n\
+- `src/stage.rs`, `src/harness.rs` The item `accept` of `next`, the agent `acceptor`, the skill and the hook.\n\
+- `src/check.rs`, `src/diag.rs` The codes, the group `acceptance`, the keys and the CLI.\n\
+- `src/init.rs` The key that `init` writes, and the step of `finish` and `check`.\n\
+- `schema/spec-dna.schema.json` The keys.\n\
+- `tests/*.py`, `tests/golden/**` The tests and the golden files.\n\
+- `.claude/agents/ownership.md` The file rows.\n\
+- `src/eval_ab.rs` The arm `without` of `eval run --ab`.\n\
+- `Makefile`, `Dockerfile`, `Cargo.toml` Two bare names.\n\
+\n## Order\n\n- [x] t1: Close the valve. Files: `src/valves.py`. Verify: the test passes.\n\
+\n## Risks\n\n- A slow sensor.\n\n## Proof\n\nThe test covers `requirements/valves#sensor-timeout`.\n";
+    let r = start(&config("standard", ""));
+    r.write("Makefile", "all:\n");
+    r.commit("a makefile");
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, plan);
+    r.commit("plan");
+    r.write(CODE, CODE_NEW);
+    r.commit("code");
+    let t = write_record(&r);
+    let scope = t
+        .lines()
+        .find(|l| l.starts_with("scope = "))
+        .unwrap_or_else(|| panic!("{t}"));
+    for word in [
+        "\"accept\"",
+        "\"acceptance\"",
+        "\"acceptor\"",
+        "\"check\"",
+        "\"finish\"",
+        "\"init\"",
+        "\"next\"",
+        "\"without\"",
+        "eval run --ab",
+        "\"Dockerfile\"",
+    ] {
+        assert!(!scope.contains(word), "{word} in {scope}");
+    }
+    for path in [
+        "\".claude/agents/ownership.md\"",
+        "\"tests/*.py\"",
+        "\"tests/golden/**\"",
+        "\"schema/spec-dna.schema.json\"",
+        "\"src/valves.py\"",
+        "\"Cargo.toml\"",
+        "\"Makefile\"",
+    ] {
+        assert!(scope.contains(path), "{path} not in {scope}");
+    }
+}

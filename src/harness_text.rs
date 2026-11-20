@@ -207,7 +207,7 @@ Commands:
 6. Answer each invariant, and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding with the path of the summary if it is wrong.
 7. Read each deviation, and compare it with the diff.
 8. Write each defect as `[[finding]]` with its path. Set each `result`.
-9. Commit the record alone, in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`. Edit no other file.
+9. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`. Edit no other file.
 
 Artifact: `acceptance.toml` in the folder of the change.
 

@@ -671,7 +671,7 @@ Steps:
 6. Answer each invariant and each deviation that this text lists. Use `held`, `not-affected` or `violated` for an invariant, and `accepted` or `rejected` for a deviation. A `not-affected` or `violated` answer needs a `reason`.
 7. Write each defect as a `[[finding]]` with the severity `important` or `nit`, a path from the root of the repository and a text. Do not fix a defect.
 8. Set `result` of your entry and the top `result` to `accepted` or `rejected`. Set the top `result` to `accepted` only when each acceptor accepted, no finding is `important`, no invariant is `violated` and no deviation is `rejected`.
-9. Commit `acceptance.toml` alone. Edit no other file.
+9. Commit `acceptance.toml` alone. This commit is part of your task. It is no approval commit, and it needs no go-ahead of the owner. Make it in a call of its own after the write. Edit no other file.
 
 Tables of the record. Write only these keys:
 
@@ -893,20 +893,26 @@ pub fn skeleton(s: &Skeleton) -> String {
 /// of the first acceptor stay. It returns the new text.
 pub fn add_acceptor(text: &str, role: &str, session: &str) -> String {
     let block = acceptor_block(role, session);
-    // The end of the last `[[acceptor]]` table: the next line that starts a
-    // table, or the end of the text.
+    // The end of the last `[[acceptor]]` table: the first line that starts a
+    // table after it, or the end of the text. Another table (an attempt) can sit
+    // between 2 acceptor tables, so the scan reads the whole text.
     let mut offset = 0;
     let mut last: Option<usize> = None;
     let mut insert_at = text.len();
+    let mut open = false;
     for line in text.split_inclusive('\n') {
         let t = line.trim();
         if t == "[[acceptor]]" {
             last = Some(offset);
-        } else if last.is_some() && t.starts_with('[') {
+            open = true;
+        } else if open && t.starts_with('[') {
             insert_at = offset;
-            break;
+            open = false;
         }
         offset += line.len();
+    }
+    if open {
+        insert_at = text.len();
     }
     let (head, tail) = text.split_at(if last.is_some() {
         insert_at
@@ -1430,6 +1436,19 @@ mod tests {
     }
 
     #[test]
+    fn the_brief_says_that_the_commit_of_the_record_is_part_of_the_task() {
+        for part in [
+            "Commit `acceptance.toml` alone.",
+            "This commit is part of your task.",
+            "It is no approval commit, and it needs no go-ahead of the owner.",
+            "Make it in a call of its own after the write.",
+            "Edit no other file.",
+        ] {
+            assert!(BRIEF_TEXT.contains(part), "{part}");
+        }
+    }
+
+    #[test]
     fn the_fixed_text_of_format_1_is_about_3_kilobytes_and_has_no_pending_rule_gap() {
         let n = BRIEF_TEXT.len();
         assert!((2000..=4000).contains(&n), "{n}");
@@ -1447,7 +1466,7 @@ mod tests {
         assert_eq!(brief_hash(&b).as_deref(), Some(PINNED_BRIEF_HASH));
     }
 
-    const PINNED_BRIEF_HASH: &str = "bcb3b662d5591544";
+    const PINNED_BRIEF_HASH: &str = "c6493dfa353660cc";
 
     #[test]
     fn toml_strings_round_trip_through_the_reader() {
@@ -1532,6 +1551,39 @@ mod tests {
         );
         let out = add_acceptor(&only, "acceptor", "s9");
         assert_eq!(Record::parse(&out).unwrap().acceptors.len(), 2);
+    }
+
+    #[test]
+    fn the_new_acceptor_goes_after_the_last_acceptor_table_also_between_other_tables() {
+        // A hand-written layout: an attempt sits between the 2 acceptor tables.
+        let acceptor = |n: u32| {
+            format!(
+                "[[acceptor]]\nrole = \"acceptor\"\nbrief = \"{HASH}\"\nsession = \"s{n}\"\nagent = \"unknown\"\nresult = \"accepted\"\n"
+            )
+        };
+        let attempt = |n: u32| {
+            format!("[[attempt]]\nacceptor = {n}\ntext = \"Tried {n}.\"\noutcome = \"held\"\n")
+        };
+        let head = "format = 1\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n";
+        let text = format!(
+            "{head}\n{}\n{}\n{}\n{}",
+            acceptor(1),
+            attempt(1),
+            acceptor(2),
+            attempt(2)
+        );
+        let out = add_acceptor(&text, "security", "s3");
+        let r = Record::parse(&out).unwrap();
+        assert_eq!(r.acceptors.len(), 3);
+        assert_eq!(r.acceptors[2].session, "s3");
+        assert_eq!(r.acceptors[2].role, "security");
+        // The new table follows the second acceptor, and the second attempt
+        // keeps its place after the new entry.
+        let at = |needle: &str| out.find(needle).unwrap();
+        assert!(at("session = \"s2\"") < at("session = \"s3\""));
+        assert!(at("session = \"s3\"") < at("Tried 2."));
+        assert!(at("Tried 1.") < at("session = \"s2\""));
+        assert_eq!(r.attempts.len(), 2);
     }
 
     #[test]

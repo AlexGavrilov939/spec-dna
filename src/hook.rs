@@ -1713,7 +1713,10 @@ fn moved_to_approval(
         .map(|d| format!(":(top,literal){d}"))
         .collect();
     let old = if amend { "HEAD~1" } else { "HEAD" };
-    let mut args = vec!["diff", "--name-only", "-z", old, "--"];
+    // `--no-renames`: a staged delete of the record and a new archive file
+    // look like a rename, and `--name-only` then prints the new path only, so
+    // the deleted record would not be seen (also with `diff.renames = copies`).
+    let mut args = vec!["diff", "--name-only", "--no-renames", "-z", old, "--"];
     args.extend(specs.iter().map(String::as_str));
     let mut paths: Vec<String> = Vec::new();
     let mut old_tree = Some(old);

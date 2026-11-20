@@ -265,3 +265,71 @@ fn a_rejected_record_leaves_the_item_open() {
         "{line}"
     );
 }
+
+/// The item runs the checks of `finish` step 5.2: a record that `finish` stops
+/// on is no done item (a wrong brief hash, SD931 and SD933).
+#[test]
+fn a_record_with_a_wrong_brief_leaves_the_item_open_with_the_first_problem() {
+    let r = built("standard");
+    commit_record(&r, "accepted");
+    let text = r.read(RECORD);
+    let hash = text
+        .lines()
+        .find_map(|l| l.strip_prefix("brief = \""))
+        .unwrap()
+        .trim_end_matches('"')
+        .to_string();
+    r.write(RECORD, &text.replace(&hash, "0123456789abcdef"));
+    r.commit("a wrong brief");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(line.starts_with("[ ] ") && line.contains("brief"), "{line}");
+}
+
+#[test]
+fn too_few_acceptors_and_a_self_accepted_record_leave_the_item_open() {
+    // SD933: a higher-risk change needs 2 acceptors, and the record has 1.
+    let two = config("standard").replace(
+        "gate = \"block\"",
+        "gate = \"block\"\nhigher-risk-acceptors = 2",
+    );
+    let r = Repo::with_config(&two);
+    base_files(&r);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    change_files(&r);
+    r.write(
+        INTENT,
+        &INTENT_TEXT.replace("class: routine", "class: higher-risk"),
+    );
+    r.commit("plan");
+    add_code(&r);
+    commit_record(&r, "accepted");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(
+        line.starts_with("[ ] ") && line.contains("acceptor entries"),
+        "{line}"
+    );
+    // SD931: 2 entries with the same session and the same agent.
+    let (code, out, err) = r.run(&["accept", SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let hash = brief_hash(&r);
+    let text = r
+        .read(RECORD)
+        .replace("agent = \"unknown\"", "agent = \"a1\"")
+        .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
+        .replace("result = \"pending\"", "result = \"accepted\"");
+    let text = format!(
+        "{text}\n[[attempt]]\nacceptor = 2\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n"
+    );
+    r.write(RECORD, &text);
+    r.commit("a second entry");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(
+        line.starts_with("[ ] ") && line.contains("same `session`"),
+        "{line}"
+    );
+}

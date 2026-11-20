@@ -537,6 +537,51 @@ fn allows_the_commit_of_finish_that_moves_the_record_to_the_archive() {
     assert_eq!(answer(&r, "git commit -am 'feat: finish'"), "");
 }
 
+/// The tree as `finish` and `git add` leave it for the commit: `git rm` of the
+/// record in the folder and `git add` of the archive file. Git sees a rename
+/// there, and `git diff --name-only` prints the new path only.
+fn staged_like_finish(archive: &str, renames: Option<&str>) -> Repo {
+    let r = with_record(&["owner@example.org"]);
+    if let Some(v) = renames {
+        r.git(&["config", "diff.renames", v]);
+    }
+    let bytes = if archive.is_empty() {
+        r.read(RECORD)
+    } else {
+        archive.to_string()
+    };
+    r.git(&["rm", "-q", RECORD]);
+    r.write(ARCHIVE, &bytes);
+    r.git(&["add", ARCHIVE]);
+    r
+}
+
+#[test]
+fn allows_the_staged_commit_of_finish_with_each_setting_of_rename_detection() {
+    // Git detects the rename by default, with `copies`, and not with `false`.
+    for renames in [None, Some("true"), Some("copies"), Some("false")] {
+        let r = staged_like_finish("", renames);
+        assert_eq!(
+            answer(&r, "git commit -m 'feat: finish'"),
+            "",
+            "diff.renames = {renames:?}"
+        );
+    }
+}
+
+#[test]
+fn denies_the_staged_commit_of_finish_when_the_archive_bytes_differ() {
+    // The same staged shape, and the bytes of the archive file have an entry.
+    let edited = record(&["forged@example.org"], "A name has no unit.");
+    for renames in [None, Some("copies"), Some("false")] {
+        let r = staged_like_finish(&edited, renames);
+        assert_denies(
+            &answer(&r, "git commit -m 'feat: finish'"),
+            &[ARCHIVE, "not the record"],
+        );
+    }
+}
+
 /// The project after `finish`: the record is deleted, and the archive file
 /// has the bytes `archive`.
 fn finished(archive: &str) -> Repo {
