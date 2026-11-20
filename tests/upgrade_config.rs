@@ -83,7 +83,15 @@ fn the_new_configuration_keeps_the_roots_of_the_old_one() {
 // --- the skills that are new in 0.7.0 (ADR 0023, amendment of 2026-11-19) ---
 
 /// The skills that 0.7.0 adds, in the order of D2.
-const ADDED: [&str; 6] = ["execute", "tdd", "verify", "finish", "debug", "post-mortem"];
+const ADDED: [&str; 7] = [
+    "execute",
+    "tdd",
+    "verify",
+    "accept",
+    "finish",
+    "debug",
+    "post-mortem",
+];
 
 /// The skills that are on by default in this build, from `skill list --json`.
 fn default_skills() -> Vec<String> {
@@ -143,9 +151,22 @@ fn upgrade_adds_the_skills_that_are_new_in_0_7_0_for_the_profile() {
         let mut want = vec!["review".to_string()];
         want.extend(added.clone());
         assert_eq!(skills_of(&repo), want, "{profile}: {out}");
+        // `accept` and its agent come together, and `lite` gets neither
+        // (ADR 0025).
+        for path in [
+            ".claude/skills/spec-dna-accept/SKILL.md",
+            ".claude/agents/acceptor.md",
+        ] {
+            assert_eq!(
+                repo.dir.join(path).exists(),
+                !only_finish,
+                "{profile}: {path}: {out}"
+            );
+        }
         if !added.is_empty() {
             assert!(
-                out.contains(", new in 0.7.0 and on by default for the profile `")
+                out.contains(", new in 0.7.0")
+                    && out.contains(" and on by default for the profile `")
                     && out.contains("remove a name to turn its skill off"),
                 "{profile}: {out}"
             );

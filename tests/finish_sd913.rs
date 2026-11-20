@@ -11,6 +11,16 @@ use common::*;
 
 const VALVES: &str = "---\nstatus: active\n---\n# Valves\n\n## Requirements\n\n- **close**: The controller SHALL close the valve in 5 seconds.\n- **open**: The controller SHALL open the valve in 5 seconds.\n";
 const CONFIG: &str = "profile = \"standard\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n";
+
+/// The configuration with the group `acceptance` off. These tests are about
+/// SD913, and a plan that the branch adds would need an acceptance record.
+fn no_record(config: &str) -> String {
+    config.replace(
+        "SD608 = \"off\"\n",
+        "SD608 = \"off\"\nacceptance = \"off\"\n",
+    )
+}
+
 const INTENT: &str = "---\nstatus: accepted\nclass: higher-risk\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n";
 const PLAN: &str = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n";
 /// The same plan, with plain paths: no code span in `Files`.
@@ -247,7 +257,7 @@ const PLAN_ONE: &str = "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src
 /// `higher-risk` change), and a plan only if `base_plan` is `Some`. The branch
 /// writes `branch_plan` with the code, then runs `finish` in its own commit.
 fn finished_on_branch(base_plan: Option<&str>, branch_plan: &str, routine: bool) -> Repo {
-    let r = Repo::with_config(CONFIG);
+    let r = Repo::with_config(&no_record(CONFIG));
     r.write("docs/requirements/valves.md", VALVES);
     r.write("src/dose.py", "x = 1\n");
     let (_, out, _) = r.run(&["show", "requirements/valves#close", "--json"]);
@@ -311,7 +321,7 @@ fn a_file_added_to_files_on_the_branch_is_in_scope_after_finish() {
 #[test]
 fn a_file_in_no_version_of_files_still_gives_sd913() {
     for base_plan in [None, Some(PLAN_ONE)] {
-        let r = Repo::with_config(CONFIG);
+        let r = Repo::with_config(&no_record(CONFIG));
         r.write("docs/requirements/valves.md", VALVES);
         r.write("src/dose.py", "x = 1\n");
         r.write("src/other.py", "y = 1\n");

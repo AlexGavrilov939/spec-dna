@@ -18,10 +18,10 @@ Commands:
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Before the approval, count the paths. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Split a task that lists more than `max-task-files` paths. Give each task exact paths and one `Verify:`. Run the check again.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:db1ddf7e63b58ce6 -->
+<!-- spec-dna harness v{VERSION} h:9b8c4d22ec42314a -->

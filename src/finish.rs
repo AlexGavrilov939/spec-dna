@@ -57,6 +57,9 @@ pub struct Ctx<'a> {
     /// bind on the tags of `head`. `None`: the reports are off, so step 5 reads
     /// the tags as 0.7.1 does.
     pub reports: Option<&'a crate::report::Reads>,
+    /// The facts of the acceptance record that `main` read with git (design
+    /// 0.8.0, D3). `None`: steps 5.2 and 5.5 run no check, as in 0.7.1.
+    pub acceptance: Option<&'a crate::acceptance::FinishFacts>,
 }
 
 /// A file that `finish` writes.
@@ -83,6 +86,12 @@ pub struct Plan {
 
     /// The hours of the tasks of the plan of the change.
     pub hours: Hours,
+    /// The notes that the report prints with the result (design 0.8.0, D3 item
+    /// 1: the note for a plan of a version before 0.8.0).
+    pub notes: Vec<String>,
+    /// The archive file that step 5.5 adds to `writes`, if the change needed a
+    /// record.
+    pub archive: Option<String>,
 }
 
 /// The hours of the tasks of a plan (design 0.7.0, section 15). Each task that
@@ -515,6 +524,9 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         }
     }
 
+    // Step 5.2: the acceptance record.
+    let record = acceptance(cx, ch, &mut out)?;
+
     // Step 5: the evidence, then the check of the whole result.
     let files = ch.files(head);
     let others_touched = changes
@@ -550,8 +562,169 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
             missing,
         );
     }
+    // Step 5.5: the record moves to the archive folder.
+    archive(cx, record, &mut out)?;
     no_new_errors(cx, &rebuilt, Some(base), &created)?;
     Ok(out)
+}
+
+/// A diagnostic of the record, on the record file.
+fn record_diag(path: &str, slug: &str, code: Code, message: String) -> Diag {
+    Diag {
+        path: path.to_string(),
+        line: 1,
+        code,
+        doc: path.to_string(),
+        target: slug.to_string(),
+        message,
+        severity: Severity::Error,
+    }
+}
+
+/// Step 5.2 (design 0.8.0, D3 item 9): for a change that needs a record, the
+/// record of the head is present, valid, fresh, accepted, and has the acceptors
+/// that the change needs. The step stops at the first code of SD927 to SD933 that
+/// is not off, and it reports each finding of that code. It returns the text of
+/// the record, which step 5.5 moves, or `None` if the folder has no record to move
+/// (a record that no rule needs is returned too, with no check). For a
+/// plan of a version before 0.8.0 it adds the note of the design to the plan.
+fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, Failure> {
+    use crate::acceptance::{self as acc, Need};
+    let Some(f) = cx.acceptance else {
+        return Ok(None);
+    };
+    let shallow = match &f.need {
+        Need::No(note) => {
+            out.notes.extend(note.clone());
+            // No rule needs the record, but a record in the folder is archived.
+            let path = format!("{}/{}", cx.folder, crate::record::FILE_NAME);
+            // A link or a file over the limit is no record: SD928 stops, and
+            // nothing is read through the link.
+            if let acc::RecordFile::Unreadable(m) = &f.record {
+                if !cx.config.is_off(Code::AcceptanceInvalid) {
+                    let diags = vec![record_diag(
+                        &path,
+                        &ch.slug,
+                        Code::AcceptanceInvalid,
+                        m.clone(),
+                    )];
+                    return stop(5, "the acceptance record is not valid", diags);
+                }
+                return Ok(None);
+            }
+            if let acc::RecordFile::Text(text) = &f.record {
+                let text = text.clone();
+                // The archive is never edited: a record that is not valid (a
+                // skeleton with `pending` values) must not go into it. The
+                // structural rules of SD928 run here, as with a need.
+                if !cx.config.is_off(Code::AcceptanceInvalid) {
+                    let facts = acc::plan_facts(ch, cx.head);
+                    let (_, problems) = acc::read_record(cx.config, &text, &ch.slug, facts);
+                    if !problems.is_empty() {
+                        let diags = problems
+                            .into_iter()
+                            .map(|m| record_diag(&path, &ch.slug, Code::AcceptanceInvalid, m))
+                            .collect();
+                        return stop(5, "the acceptance record is not valid", diags);
+                    }
+                }
+                return Ok(Some(text));
+            }
+            return Ok(None);
+        }
+        Need::Yes { shallow } => *shallow,
+    };
+    let cfg = cx.config;
+    let on = |c: Code| !cfg.is_off(c);
+    let path = format!("{}/{}", cx.folder, crate::record::FILE_NAME);
+    let slug = ch.slug.as_str();
+    let stop_with = |code: Code, why: &str, messages: Vec<String>| {
+        let diags = messages
+            .into_iter()
+            .map(|m| record_diag(&path, slug, code, m))
+            .collect();
+        stop(5, why, diags)
+    };
+    let text = if let acc::RecordFile::Text(text) = &f.record {
+        text.clone()
+    } else if let acc::RecordFile::Unreadable(m) = &f.record {
+        // A link or a file over the limit: the record does not read.
+        if on(Code::AcceptanceInvalid) {
+            return stop_with(
+                Code::AcceptanceInvalid,
+                "the acceptance record is not valid",
+                vec![m.clone()],
+            );
+        }
+        return Ok(None);
+    } else {
+        if on(Code::AcceptanceMissing) {
+            return stop_with(
+                Code::AcceptanceMissing,
+                "the change needs an acceptance record, and the folder has none",
+                vec![acc::missing_message(
+                    slug,
+                    &format!("`{path}` is absent"),
+                    shallow,
+                )],
+            );
+        }
+        return Ok(None);
+    };
+    let facts = acc::plan_facts(ch, cx.head);
+    let (rec, mut problems) = acc::read_record(cfg, &text, slug, facts);
+    problems.extend(f.brief_problems.iter().cloned());
+    if let Some((code, messages)) =
+        acc::first_stop(cfg, ch.class, rec.as_ref(), problems, f.stale.clone())
+    {
+        let why = match code {
+            Code::AcceptanceInvalid => "the acceptance record is not valid".to_string(),
+            // The text follows the reason: the scope of the plan, or the code.
+            Code::AcceptanceStale => format!(
+                "the acceptance record is stale: {}",
+                acc::stale_cause(messages.first().map_or("", String::as_str))
+            ),
+            Code::AcceptanceRejected => "the acceptance record says `rejected`".to_string(),
+            Code::SelfAccepted => {
+                "2 acceptor entries have the same session and the same agent".to_string()
+            }
+            _ => "the acceptance record has too few acceptors".to_string(),
+        };
+        return stop_with(code, &why, messages);
+    }
+    Ok(Some(text))
+}
+
+/// Step 5.5 (design 0.8.0, D3 item 3): the record moves to the archive file. The
+/// plan adds the file to its writes, and the record goes away with the folder.
+/// A path that git ignores, or that has a link, stops the step before any write.
+fn archive(cx: &Ctx, record: Option<String>, out: &mut Plan) -> Result<(), Failure> {
+    let (Some(text), Some(f)) = (record, cx.acceptance) else {
+        return Ok(());
+    };
+    if let Some(rule) = &f.ignored {
+        return stop(
+            5,
+            format!(
+                "git ignores the archive file `{}` by the rule `{rule}`; remove the rule, so the record stays in the repository, then run `finish` again",
+                f.archive
+            ),
+            Vec::new(),
+        );
+    }
+    if let Some(why) = (cx.path_problem)(&f.archive) {
+        return stop(5, why, Vec::new());
+    }
+    out.writes.push(Write {
+        path: f.archive.clone(),
+        old: None,
+        // The archive has LF: a working tree with `core.autocrlf` has CRLF, and
+        // git has LF (ADR 0019).
+        new: String::from_utf8_lossy(&crate::record::to_lf(text.as_bytes())).into_owned(),
+    });
+    out.writes.sort_by(|a, b| a.path.cmp(&b.path));
+    out.archive = Some(f.archive.clone());
+    Ok(())
 }
 
 /// The problem of a path that `finish` writes or deletes, if there is one: a
@@ -1826,6 +1999,7 @@ mod tests {
             exists: &exists,
             path_problem: &|_| None,
             reports: None,
+            acceptance: None,
         })
     }
 

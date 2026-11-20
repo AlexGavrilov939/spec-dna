@@ -61,6 +61,9 @@ pub enum Role {
     Orchestrator,
     Advisor,
     Verifier,
+    /// The agent that accepts a finished change (design 0.8.0, D3). It comes
+    /// with the skill `accept`: see `Harness::has_role`.
+    Acceptor,
     Researcher,
     Implementer,
     CodeSimplifier,
@@ -68,10 +71,11 @@ pub enum Role {
 }
 
 impl Role {
-    pub const ALL: [Role; 7] = [
+    pub const ALL: [Role; 8] = [
         Role::Orchestrator,
         Role::Advisor,
         Role::Verifier,
+        Role::Acceptor,
         Role::Researcher,
         Role::Implementer,
         Role::CodeSimplifier,
@@ -84,6 +88,7 @@ impl Role {
             Role::Orchestrator => "orchestrator",
             Role::Advisor => "advisor",
             Role::Verifier => "verifier",
+            Role::Acceptor => "acceptor",
             Role::Researcher => "researcher",
             Role::Implementer => "implementer",
             Role::CodeSimplifier => "code-simplifier",
@@ -102,7 +107,7 @@ impl Role {
 
     pub fn default_model(self) -> &'static str {
         match self {
-            Role::Orchestrator | Role::Verifier => "opus",
+            Role::Orchestrator | Role::Verifier | Role::Acceptor => "opus",
             Role::Advisor => "fable",
             Role::Researcher | Role::Helper => "haiku",
             Role::Implementer | Role::CodeSimplifier => "sonnet",
@@ -294,6 +299,8 @@ pub enum Skill {
     Tdd,
     Review,
     Verify,
+    /// The independent acceptance of a finished change (design 0.8.0, D3).
+    Accept,
     Finish,
     Debug,
     PostMortem,
@@ -353,7 +360,7 @@ pub fn gone_skill_answer_message(name: &str) -> Option<String> {
 }
 
 impl Skill {
-    pub const ALL: [Skill; 11] = [
+    pub const ALL: [Skill; 12] = [
         Skill::Brainstorm,
         Skill::Specify,
         Skill::Clarify,
@@ -362,6 +369,7 @@ impl Skill {
         Skill::Tdd,
         Skill::Review,
         Skill::Verify,
+        Skill::Accept,
         Skill::Finish,
         Skill::Debug,
         Skill::PostMortem,
@@ -378,6 +386,7 @@ impl Skill {
             Skill::Tdd => "tdd",
             Skill::Review => "review",
             Skill::Verify => "verify",
+            Skill::Accept => "accept",
             Skill::Finish => "finish",
             Skill::Debug => "debug",
             Skill::PostMortem => "post-mortem",
@@ -412,16 +421,18 @@ impl Skill {
             Skill::Specify | Skill::Clarify => Some(Stage::Design),
             Skill::WritePlan | Skill::Execute => Some(Stage::Build),
             Skill::Tdd => Some(Stage::Test),
-            Skill::Review | Skill::Verify => Some(Stage::Deploy),
+            Skill::Review | Skill::Verify | Skill::Accept => Some(Stage::Deploy),
             Skill::Finish => Some(Stage::Closed),
             Skill::Debug | Skill::PostMortem => None,
         }
     }
 
-    /// True for the 7 skills that D2 turns on. This is a fact of the design,
-    /// and it does not change with a table of verdicts. The 4 other skills
-    /// (`execute`, `tdd`, `verify` and `debug`) are off in D2 until a verdict
-    /// gives them `on`.
+    /// True for the 8 skills that D2 turns on: the 7 of D2 and `accept` (ADR
+    /// 0025, amendment of ADR 0023). This is a fact of the design, and it does
+    /// not change with a table of verdicts. The 4 other skills (`execute`,
+    /// `tdd`, `verify` and `debug`) are off in D2 until a verdict gives them
+    /// `on`. `init` proposes `accept` only where the acceptance is on, so not in
+    /// the profile `lite`.
     pub fn in_d2(self) -> bool {
         !matches!(
             self,
@@ -439,7 +450,7 @@ impl Skill {
     }
 }
 
-/// The 11 names, with commas, for a message.
+/// The 12 names, with commas, for a message.
 pub fn skill_keys() -> String {
     let keys: Vec<&str> = Skill::ALL.iter().map(|s| s.key()).collect();
     keys.join(", ")
@@ -605,9 +616,17 @@ impl Harness {
         &mut self.roles[i]
     }
 
+    /// Returns true if the level includes the role and the configuration uses
+    /// it. The role `acceptor` comes with the skill `accept`: a configuration
+    /// with no such skill has no role of that name (design 0.8.0, D3).
+    pub fn has_role(&self, role: Role) -> bool {
+        self.level.includes(role)
+            && (role != Role::Acceptor || self.skills.contains(&Skill::Accept))
+    }
+
     /// Returns true if the level includes the role and the role is not off.
     pub fn on(&self, role: Role) -> bool {
-        self.level.includes(role) && self.cfg(role).model != Model::None
+        self.has_role(role) && self.cfg(role).model != Model::None
     }
 
     pub fn context_hook_on(&self) -> bool {
@@ -831,7 +850,7 @@ impl Harness {
             s += &format!("protect-approvals = {b}\n");
         }
         s += "\n[harness.roles]\n";
-        for r in Role::ALL.into_iter().filter(|r| self.level.includes(*r)) {
+        for r in Role::ALL.into_iter().filter(|r| self.has_role(*r)) {
             let c = self.cfg(r);
             let mut parts = vec![format!("claude-code = {}", quote(c.model.name()))];
             if r == Role::Advisor {
@@ -952,7 +971,7 @@ impl AgentDef {
     }
 }
 
-const AGENT_DEFS: [AgentDef; 5] = [
+const AGENT_DEFS: [AgentDef; 6] = [
     AgentDef {
         role: Role::Advisor,
         name: "fallback-advisor",
@@ -989,6 +1008,24 @@ Report:
 - Each defect: the file and line or the command, the expected result, and the actual result.
 - Each check that you could not run, with the reason.
 - If you found no defect, list the commands that you ran.",
+    },
+    AgentDef {
+        role: Role::Acceptor,
+        name: "acceptor",
+        tools: &["Read", "Grep", "Glob", "Bash", "Write"],
+        omit_claude_md: false,
+        description: "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
+        body: r#"Your prompt is the output of `spec-dna accept <slug> --brief`. If it is not, run that command first, and work from its output.
+
+1. Run each command of `Proof`. With `[evidence] reports`, run the tests and `spec-dna evidence stamp` in one command line.
+2. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that it prints as `acceptor` in each of your attempts and findings. Copy the hash of the last line of your brief into `brief` of your entry.
+3. Try to break the change: bad input, limits, errors, each path of `Files`, and each requirement read as a test. Write each try as `[[attempt]]`.
+4. Answer each invariant, and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding with the path of the summary if it is wrong.
+5. Read each deviation, and compare it with the diff.
+6. Write each defect as `[[finding]]` with its path. Set each `result`.
+7. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`.
+
+Write only `acceptance.toml`. Report each defect as a finding. Do not fix it."#,
     },
     AgentDef {
         role: Role::Researcher,
@@ -1189,6 +1226,7 @@ fn team_page(h: &Harness) -> String {
     }
     for r in [
         Role::Verifier,
+        Role::Acceptor,
         Role::Researcher,
         Role::Implementer,
         Role::CodeSimplifier,
@@ -4212,6 +4250,7 @@ opus = "xhigh"
             ("tdd", "stage", Some("test"), false),
             ("review", "stage", Some("deploy"), true),
             ("verify", "stage", Some("deploy"), false),
+            ("accept", "stage", Some("deploy"), true),
             ("finish", "stage", Some("closed"), true),
             ("debug", "event", None, false),
             ("post-mortem", "event", None, true),
@@ -4236,7 +4275,7 @@ opus = "xhigh"
             let s = Skill::from_key(n).unwrap_or_else(|| panic!("`{n}` is no skill"));
             assert_eq!(s.kind(), SkillKind::Stage, "{n}");
         }
-        // The 9 names of `next` and the 2 event skills.
+        // The 10 names of `next` and the 2 event skills.
         assert_eq!(Skill::ALL.len(), crate::stage::SKILLS.len() + 2);
     }
 
@@ -4323,14 +4362,18 @@ opus = "xhigh"
         let off = plan_of(&with_skills(""));
         assert_eq!(plan_of(&with_skills("review-md = true")), off);
         let all = plan_of(&with_skills(
-            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]",
+            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"accept\", \"finish\", \"post-mortem\"]",
         ));
         let listing: usize = Skill::ALL
             .iter()
             .filter(|s| s.in_d2())
             .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
             .sum();
-        assert_eq!(all, off + listing);
+        // The skill `accept` brings the agent `acceptor`: its description is in
+        // each request too.
+        let acceptor = Role::Acceptor.agent().unwrap();
+        let agent = format!("- {}: {}\n", acceptor.name, acceptor.description).len();
+        assert_eq!(all, off + listing + agent);
         assert!(listing <= 1250);
     }
 

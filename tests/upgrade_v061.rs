@@ -85,8 +85,17 @@ fn default_skills() -> Vec<String> {
         .collect()
 }
 
-/// The skills that 0.7.0 adds, in the order of D2.
-const ADDED_NAMES: [&str; 6] = ["execute", "tdd", "verify", "finish", "debug", "post-mortem"];
+/// The skills that 0.7.0 and 0.8.0 add, in the order of D2. `accept` is new in
+/// 0.8.0, and `lite` never gets it.
+const ADDED_NAMES: [&str; 7] = [
+    "execute",
+    "tdd",
+    "verify",
+    "accept",
+    "finish",
+    "debug",
+    "post-mortem",
+];
 
 /// The names of `skills` that an upgrade of 0.6 gives in this build: each new
 /// name of the rename that is on by default, `review` (the list of 0.6.1 has
@@ -112,6 +121,7 @@ fn renamed_skills(profile: &str) -> Vec<String> {
         "tdd",
         "review",
         "verify",
+        "accept",
         "finish",
         "debug",
         "post-mortem",
@@ -292,11 +302,15 @@ fn upgrade_writes_the_new_skills_and_changes_no_other_key() {
         // The paths: the 3 old skills go, each new name with the default on
         // comes, and the other generated files change.
         let kinds = changed(&repo);
-        let new: BTreeSet<String> = renamed_skills(case.profile)
+        let mut new: BTreeSet<String> = renamed_skills(case.profile)
             .iter()
             .filter(|n| *n != "review")
             .map(|n| skill_file(n))
             .collect();
+        // The skill `accept` brings the agent `acceptor` (ADR 0025).
+        if new.contains(&skill_file("accept")) {
+            new.insert(".claude/agents/acceptor.md".to_string());
+        }
         let removed: BTreeSet<String> = OLD_SKILL_FILES.iter().map(|p| p.to_string()).collect();
         assert_eq!(
             kinds.get("A").cloned().unwrap_or_default(),

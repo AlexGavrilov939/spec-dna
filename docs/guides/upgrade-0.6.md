@@ -90,7 +90,7 @@ A skill that the list leaves out is still available. `next` names the skill of e
 
 A hook that runs `spec-dna check` refuses each commit while the pin is older than the binary, so the upgrade is the first commit of a branch. The line `next:` of `upgrade` tells what the pull request can hold:
 
-- If only the pin and the table `[spec-dna-sha256]` change in `spec-dna.toml`, SD503 does not count the file. The same pull request can also hold other work. Only a move to a later version counts.
+- If only the pin, the table `[spec-dna-sha256]` and new skill names in the list `skills` change in `spec-dna.toml`, SD503 does not count the file. The same pull request can also hold other work. Only a move to a later version counts.
 - If `spec-dna.toml` has other edits (the report lists them), the pull request changes `spec-dna.toml` and generated files only. A document or a code file in the same pull request gives SD503. A change of the list `skills` is such an edit.
 
 SD503 does not count the generated files, and it does not count the 3 skill files of 0.6 that `upgrade` removes ([Files that SD503 counts](../diagnostics.md#files-that-sd503-counts)).

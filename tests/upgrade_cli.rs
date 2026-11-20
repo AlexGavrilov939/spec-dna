@@ -236,6 +236,7 @@ fn the_message_of_a_dirty_tree_tells_how_to_stash_the_work() {
 }
 
 const NEXT_PIN_ONLY: &str = "next: commit the paths above in one commit of their own. Only the pin of spec-dna.toml changes, so the pull request can also hold other work (SD503 does not count a pin that moves to a later version).";
+const NEXT_SKILLS_ONLY: &str = "next: commit the paths above in one commit of their own. spec-dna.toml changes only in the pin and in new skill names, so the pull request can also hold other work (SD503 does not count them).";
 const NEXT_OTHER: &str = "next: commit the paths above in one commit, in a pull request of its own: spec-dna.toml has edits beyond the pin (SD503).";
 
 /// The line after `to commit:` in the text of `upgrade`.
@@ -319,16 +320,16 @@ fn the_next_line_says_that_a_pin_only_edit_can_ride_with_other_work() {
 
 #[test]
 fn the_next_line_names_the_pull_request_of_its_own_for_other_edits() {
-    // The names of 0.6 and the new skills are edits beyond the pin.
-    for skills in [
-        "[\"intent\", \"spec\", \"plan\", \"review\"]",
-        "[\"review\"]",
-    ] {
-        let repo = project_0_6_1(skills);
-        let (code, out, err) = upgrade(&repo, &["--dry-run"]);
-        assert_eq!(code, 0, "{skills}: {out}{err}");
-        assert_eq!(line_after_to_commit(&out), NEXT_OTHER, "{skills}: {out}");
-    }
+    // The names of 0.6 are an edit beyond the pin.
+    let repo = project_0_6_1("[\"intent\", \"spec\", \"plan\", \"review\"]");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(line_after_to_commit(&out), NEXT_OTHER, "{out}");
+    // New skill names only: SD503 does not count them, so other work can ride.
+    let repo = project_0_6_1("[\"review\"]");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(line_after_to_commit(&out), NEXT_SKILLS_ONLY, "{out}");
     // A 0.5 file is rewritten, so it has edits beyond the pin too.
     let repo = Repo::from_fixture("v05", &[]);
     let (code, out, err) = upgrade(&repo, &["--dry-run"]);
@@ -2113,7 +2114,9 @@ fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
     assert!(
         toml.contains(&format!(
             "skills = {}\n",
+            // The pin is before 0.8.0, so `accept` follows `review` (ADR 0025).
             renamed(&["brainstorm", "specify", "clarify", "write-plan"])
+                .replace("\"review\"]", "\"review\", \"accept\"]")
         )),
         "{toml}"
     );

@@ -38,8 +38,13 @@ const TEST_NEW: &str = "# covers: requirements/valves#overflow\ndef test_overflo
 const ADD: &str = "- ADD requirements/valves#sensor-timeout: When a sensor gives no value for 60 seconds, the controller SHALL close the valve of its bed.";
 
 fn config(change: &str) -> String {
+    config_rules(change, "")
+}
+
+/// The configuration with more `[rules]` lines.
+fn config_rules(change: &str, rules: &str) -> String {
     format!(
-        "profile = \"standard\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{change}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
+        "profile = \"standard\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{change}\n[rules]\nSD608 = \"off\"\n{rules}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
     )
 }
 
@@ -1178,9 +1183,13 @@ struct Replay {
 
 impl Replay {
     fn new(change: &str) -> Replay {
+        Replay::with_rules(change, "")
+    }
+
+    fn with_rules(change: &str, rules: &str) -> Replay {
         let origin = Repo::empty();
         git(&origin.dir, &["init", "-q", "--bare", "-b", "main"]);
-        let r = Repo::with_config(&config(change));
+        let r = Repo::with_config(&config_rules(change, rules));
         r.write(REQ, VALVES);
         r.write(CODE, CODE_OLD);
         r.write(TEST, TEST_OLD);
@@ -1290,7 +1299,9 @@ fn a_higher_risk_change_needs_2_pull_requests_with_a_squash_merge() {
 #[test]
 fn the_same_changes_in_one_pull_request_give_one_error_reason_7() {
     for class in ["routine", "higher-risk"] {
-        let rp = Replay::new(&branch_keys(&[APPROVER]));
+        // The change is branch-born, so its plan is new and needs an acceptance
+        // record. This test is about SD910, so the group `acceptance` is off.
+        let rp = Replay::with_rules(&branch_keys(&[APPROVER]), "acceptance = \"off\"\n");
         first_pull_request(&rp.r, class);
         // `finish` in the same branch.
         rp.r.write(CODE, CODE_NEW);

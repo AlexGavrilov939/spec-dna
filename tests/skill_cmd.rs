@@ -6,10 +6,10 @@ mod common;
 
 use common::Repo;
 
-/// The 11 names, with the kind, the stage and a flag for the 7 skills of D2,
-/// in the order of D2. The default of a skill follows the rule of ADR 0023,
+/// The 12 names, with the kind, the stage and a flag for the 8 skills of D2
+/// (the 7 and `accept`), in the order of D2. The default of a skill follows the rule of ADR 0023,
 /// so the tests read it with `expected_defaults`.
-const SKILLS: [(&str, &str, &str, bool); 11] = [
+const SKILLS: [(&str, &str, &str, bool); 12] = [
     ("brainstorm", "stage", "plan", true),
     ("specify", "stage", "design", true),
     ("clarify", "stage", "design", true),
@@ -18,6 +18,7 @@ const SKILLS: [(&str, &str, &str, bool); 11] = [
     ("tdd", "stage", "test", false),
     ("review", "stage", "deploy", true),
     ("verify", "stage", "deploy", false),
+    ("accept", "stage", "deploy", true),
     ("finish", "stage", "closed", true),
     ("debug", "event", "-", false),
     ("post-mortem", "event", "-", true),
@@ -86,7 +87,7 @@ fn list_prints_one_line_for_each_skill_with_no_configuration() {
         .lines()
         .map(|l| l.split_whitespace().collect())
         .collect();
-    assert_eq!(lines.len(), 11, "{out}");
+    assert_eq!(lines.len(), 12, "{out}");
     for (l, (name, kind, stage, _)) in lines.iter().zip(SKILLS) {
         // The name, the kind, the stage and the state. The default is checked
         // below.
@@ -152,7 +153,7 @@ fn list_json_has_the_fields_of_the_contract() {
         "{defaults:?} is the default of no value of the constant: {:?}",
         expected_defaults()
     );
-    assert_eq!(out.matches("\"name\":").count(), 11, "{out}");
+    assert_eq!(out.matches("\"name\":").count(), 12, "{out}");
     let r = project("[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\"]\n");
     let (code, out, err) = r.run(&["skill", "list", "--json"]);
     assert_eq!(code, 0, "{out}{err}");

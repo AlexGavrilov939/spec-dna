@@ -16,6 +16,8 @@ macro_rules! eprintln {
     ($($arg:tt)*) => { $crate::out::stderr(format_args!("{}\n", format_args!($($arg)*))) };
 }
 
+mod accept;
+mod acceptance;
 mod adapters;
 mod approval;
 mod approve;
@@ -61,6 +63,7 @@ mod mv;
 mod out;
 mod parse;
 mod rank;
+mod record;
 mod registry;
 mod release;
 mod repo;
@@ -309,6 +312,30 @@ has the approval status needs no commit. Exit codes: 1 a refusal, 2 usage, 3
 pin or configuration, 4 git or write error, 5 no folder or no file.",
     ),
     (
+        "accept",
+        "accept <slug> [--role <name>] [--session <id>] [--base <rev>]\naccept <slug> --brief [--role <name>] [--base <rev>]",
+        "Writes the acceptance record of the change <slug>, or prints its brief. The
+acceptor is an agent that did not write the code. The first form writes the
+skeleton `acceptance.toml` in the folder of the change: the scope of the plan,
+the code paths of the diff that the scope matches, the hash of their content,
+one [[proof]] for each requirement that the change adds or changes, and one
+[[acceptor]] entry with the value pending in each field that the acceptor still
+writes. With --session, the entry names that session; without it, or with an
+empty value, it names `unknown`. A second run adds one [[acceptor]] entry,
+with the same role or another, and prints its number. If the code that the
+record lists changed, it refuses: delete the record and accept again. The
+second form writes no file. It prints the brief: one text that is a function of
+the committed files of the repository, with the first line
+`spec-dna-brief 1 <slug> <role>` (the role is `acceptor` without --role) and
+the hash of the text on the last line. Give the whole output of --brief,
+unchanged, as the prompt of the acceptor. Both forms refuse (exit 1) while the
+folder of the change, except acceptance.toml, or spec-dna.toml has an edit that
+HEAD does not have: commit the work, then accept. The base is the merge base of
+--base (default: origin/HEAD, then [change] base) and HEAD. Exit codes: 0
+written or printed, 1 a refusal, 2 usage, 3 pin or configuration, 4 git or file
+error, 5 no folder for the slug.",
+    ),
+    (
         "next",
         "next <slug> [--base <rev>]",
         "Prints the checklist to the next gate of the change <slug>. The stage
@@ -460,7 +487,7 @@ them. A verdict needs 5 evals and 15 complete pairs: below that it is
 inconclusive, with below_floor true. `eval verdict --compare <treatment>,<control>
 <result file>` gives the verdict of 2 arms of a result of --arms, on the complete
 waves (exit code 2 for names that are not 2 arms of the file, 3 for another
-file). `eval verdict` prints one line for each of the 11 skills and for agents-line:
+file). `eval verdict` prints one line for each of the 12 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",
@@ -469,7 +496,7 @@ holds the name, then the table of the release. It starts no agent.",
         "skill",
         "skill list [--json]\nskill show <name> [--json]",
         "Prints the skills of the workflow pack. It reads no document and writes
-nothing. `skill list` prints one line for each of the 11 skills, in the order
+nothing. `skill list` prints one line for each of the 12 skills, in the order
 of the design: the name, the kind (stage or event), the stage (or -), the
 state in the project and the default. The state is on or off, as `[harness]
 skills` of spec-dna.toml has it, or - if the project has no spec-dna.toml.
@@ -591,6 +618,12 @@ struct Args {
     /// `--compare <treatment>,<control>` of `eval verdict` (D59).
     compare: Option<String>,
     reports: bool,
+    /// `--brief` of `accept` (D3).
+    brief: bool,
+    /// `--role <name>` of `accept` (D3).
+    role: Option<String>,
+    /// `--session <id>` of `accept` (D3).
+    session: Option<String>,
 }
 
 /// The options of `layer add`.
@@ -679,6 +712,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         harness: None,
         compare: None,
         reports: false,
+        brief: false,
+        role: None,
+        session: None,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -700,6 +736,9 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--lint" => a.lint = true,
             "--staged" => a.staged = true,
             "--reports" => a.reports = true,
+            "--brief" => a.brief = true,
+            "--role" => a.role = Some(value("--role")?),
+            "--session" => a.session = Some(value("--session")?),
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
             "--non-interactive" => a.non_interactive = true,
@@ -890,6 +929,17 @@ fn run(a: Args) -> Result<u8, Fatal> {
     if a.reports && a.command != "check" {
         return Err(Fatal::Usage("--reports is an option of `check`".into()));
     }
+    if a.command != "accept" {
+        for (given, name) in [
+            (a.brief, "--brief"),
+            (a.role.is_some(), "--role"),
+            (a.session.is_some(), "--session"),
+        ] {
+            if given {
+                return Err(Fatal::Usage(format!("{name} is an option of `accept`")));
+            }
+        }
+    }
     if a.skip_open && a.command != "import" {
         return Err(Fatal::Usage("--skip-open is an option of `import`".into()));
     }
@@ -947,6 +997,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "index" => index(&Repo::discover(&cwd)?, &a),
         "finish" => finish(&Repo::discover(&cwd)?, &a),
         "approve" => approve(&Repo::discover(&cwd)?, &a),
+        "accept" => accept(&Repo::discover(&cwd)?, &a),
         "next" => next(&Repo::discover(&cwd)?, &a),
         "status" => status(&Repo::discover(&cwd)?, &a),
         "log" => log(&Repo::discover(&cwd)?, &a),
@@ -2143,15 +2194,16 @@ fn human_lines(diags: &[&diag::Diag], lint: bool) -> Vec<String> {
         ));
     }
     // The fix of each listed code, once, so that an agent needs no lookup.
-    let mut fixes: Vec<Code> = Vec::new();
+    let mut fixes: Vec<(Code, &'static str)> = Vec::new();
     for d in diags {
-        if (lint || !d.code.is_prose_lint()) && !fixes.contains(&d.code) {
-            fixes.push(d.code);
+        let fix = (d.code, d.fix());
+        if (lint || !d.code.is_prose_lint()) && !fixes.contains(&fix) {
+            fixes.push(fix);
         }
     }
     fixes.sort();
-    for code in fixes {
-        out.push(format!("{} fix: {}", code.code(), code.fix()));
+    for (code, fix) in fixes {
+        out.push(format!("{} fix: {fix}", code.code()));
     }
     out
 }
@@ -3223,6 +3275,29 @@ fn approve(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     approve::run(repo, &a.positional[0], &a.positional[1], a.json)
 }
 
+/// `accept <slug> [--role <name>] [--session <id>]` and `accept <slug> --brief
+/// [--role <name>]`: the acceptance record and its brief (`accept.rs`).
+fn accept(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    expect_args(a, 1, 1)?;
+    if a.brief && a.session.is_some() {
+        return Err(Fatal::Usage(
+            "--session is an option of the form that writes the record; `accept <slug> --brief` takes --role only".into(),
+        ));
+    }
+    accept::run(
+        repo,
+        &a.positional[0],
+        &accept::Opts {
+            brief: a.brief,
+            role: a.role.as_deref(),
+            session: a.session.as_deref(),
+            base: a.base.as_deref(),
+            json: a.json,
+            use_cache: !a.no_cache,
+        },
+    )
+}
+
 /// The areas of the group `name` of `spec-dna.toml`. An unknown group is a
 /// usage error.
 fn group_areas<'a>(cfg: &'a config::Config, name: &str) -> Result<&'a [String], Fatal> {
@@ -3326,7 +3401,7 @@ fn skill(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     }
 }
 
-/// Prints the table of the 11 skills. `on` is the list of `[harness] skills`,
+/// Prints the table of the 12 skills. `on` is the list of `[harness] skills`,
 /// or `None` for a project with no configuration.
 fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
     let state = |s: harness::Skill| on.map(|l| if l.contains(&s) { "on" } else { "off" });
@@ -3875,6 +3950,19 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let read = |p: &str| mv::read(repo, p).map_err(|e| e.message().to_string());
     let exists = |p: &str| repo.root.join(p).exists();
     let path_problem = |p: &str| finish::path_problem(&repo.root, p);
+    // Steps 5.2 and 5.5: the facts of the acceptance record, read with git.
+    let facts = match change::collect(&head).iter().find(|c| c.dir == folder) {
+        Some(ch) => acceptance::finish_facts(
+            repo,
+            &cfg,
+            ch,
+            &head,
+            base.as_ref(),
+            base_rev.as_deref(),
+            diff.as_ref(),
+        )?,
+        None => None,
+    };
     let cx = finish::Ctx {
         config: &cfg,
         head: &head,
@@ -3886,6 +3974,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         exists: &exists,
         path_problem: &path_problem,
         reports: reads.as_ref(),
+        acceptance: facts.as_ref(),
     };
     let plan = match finish::plan(&cx) {
         Ok(p) => p,
@@ -3980,6 +4069,9 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
             plan.writes.len(),
             plan.removes.len()
         );
+    }
+    for note in &plan.notes {
+        eprintln!("note: {note}");
     }
     // `finish` makes no commit, so the person or the agent that commits writes
     // the line in the message.

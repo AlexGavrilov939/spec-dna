@@ -132,7 +132,17 @@ fn has(out: &str, code: &str) -> bool {
 
 /// A pull request with one pytest report that holds `child` for the case.
 fn pytest_pr(profile: &str, child: &str) -> Repo {
-    let r = pr(profile, REPORTS, &[("tests/test_valves.py", PY_TEST)]);
+    pytest_pr_with(profile, "", child)
+}
+
+/// Like `pytest_pr`, with the lines `rules` added to `[rules]`.
+fn pytest_pr_with(profile: &str, rules: &str, child: &str) -> Repo {
+    let r = pr_with(
+        profile,
+        rules,
+        REPORTS,
+        &[("tests/test_valves.py", PY_TEST)],
+    );
     r.write(
         "reports/junit.xml",
         &junit(
@@ -478,7 +488,8 @@ fn no_report_and_no_stamp_give_sd613() {
 
 #[test]
 fn a_code_edit_after_the_stamp_gives_sd614_and_a_markdown_edit_does_not() {
-    let r = pytest_pr("standard", "");
+    // The file of the archive has no record text, so the group `acceptance` is off.
+    let r = pytest_pr_with("standard", "acceptance = \"off\"\n", "");
     let (code, out) = check(&r, &[]);
     assert_eq!(code, 0, "{out}");
     // A Markdown edit, and an edit of the record: the tree is the same.

@@ -831,7 +831,7 @@ fn fresh_project_init_check_uninstall() {
     assert!(
         out.starts_with(
             &format!(
-                "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/Explore.md\n{}wrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: ",
+                "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/acceptor.md\nwrote .claude/agents/Explore.md\n{}wrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: ",
                 default_skills()
                     .iter()
                     .map(|n| format!("wrote .claude/skills/spec-dna-{n}/SKILL.md\n"))
@@ -897,6 +897,7 @@ fn fresh_project_init_check_uninstall() {
     let status = git(&r.dir, &["status", "--porcelain"]);
     let mut deleted: Vec<String> = [
         ".claude/agents/Explore.md",
+        ".claude/agents/acceptor.md",
         ".claude/agents/fallback-advisor.md",
         ".claude/agents/model-team.md",
         ".claude/agents/verifier.md",
@@ -3216,8 +3217,8 @@ fn init_asks_on_a_terminal() {
         "9. Budget level (default, relaxed, tight, off) [default]: ",
         "11. CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
         "12. Agent harness (none, lean, full) [lean]: ",
-        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,execute,tdd,review,verify,finish,debug,post-mortem review-md=true protect-tests=fix-branches]: ",
-        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable verifier=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high code-simplifier=sonnet:high]: ",
+        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,execute,tdd,review,verify,accept,finish,debug,post-mortem review-md=true protect-tests=fix-branches]: ",
+        "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable verifier=opus:high acceptor=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high code-simplifier=sonnet:high]: ",
         "14. Evals (none, skeleton) [skeleton]: ",
         "Agent harness: full (for Claude Code)",
         "  create .claude/agents/verifier.md (agent verifier: sonnet, medium)",
@@ -5127,11 +5128,13 @@ fn eval_pack_and_eval_run_ab_need_the_evals_table_and_eval_verdict_does_not() {
     assert_eq!(code, 3, "{err}");
     let (code, out, err) = r.run(&["eval", "verdict"]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out.lines().count(), 12, "{out}");
+    assert_eq!(out.lines().count(), 13, "{out}");
     assert!(out.starts_with("brainstorm "), "{out}");
     assert!(out.ends_with(" release\n"), "{out}");
     assert!(out.contains("\nagents-line "), "{out}");
-    assert!(!out.contains("unmeasured"), "{out}");
+    // The skill `accept` has no measure in the table of the release yet.
+    assert_eq!(out.matches("unmeasured").count(), 1, "{out}");
+    assert!(out.contains("\naccept unmeasured -\n"), "{out}");
 }
 
 // The status of a generated index (D29 of 0.7.0)

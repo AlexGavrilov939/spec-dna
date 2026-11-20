@@ -1,0 +1,1294 @@
+//! The rules around the acceptance record that `finish` and `check` share
+//! (design 0.8.0, D3 items 1, 3, 7, 8 and 9).
+//!
+//! - "A change that needs a record" (item 1) is one function: `needs_record`.
+//!   `finish` (step 5.2), `check` and `next` call it.
+//! - The archive file of a finished change: its path and its name rule
+//!   (item 3).
+//! - The checks that read a record: the rules of a valid record with the compare
+//!   of the brief (SD928, item 8), SD929, SD930, SD931 and SD933 (item 7).
+//!
+//! The functions read git and the files that the caller names. They write
+//! nothing. The code of the diagnostics is in `diag.rs`, and the severity is
+//! the severity of the profile (the group `acceptance` of `config.rs`).
+
+use crate::accept::{self, Composed, Texts};
+use crate::change::{self, Change};
+use crate::config::{self, Config, Version};
+use crate::diag::Code;
+use crate::git::{Git, Limited, read_limited};
+use crate::lifecycle::Diff;
+use crate::model::{Class, Corpus};
+use crate::parse::{ParsedDoc, parse};
+use crate::record::{self, Acceptor, Expect, Record};
+use crate::repo::{Fatal, Repo};
+use crate::tree;
+use std::collections::HashSet;
+use std::sync::Arc;
+
+/// The folder of the archive files (design 0.8.0, D3 item 3).
+pub const ARCHIVE_DIR: &str = ".spec-dna/accepted";
+
+/// The first version whose plans need an acceptance record.
+const FIRST_VERSION: Version = Version(0, 8, 0);
+
+/// True if `path` is a file of the archive folder.
+pub fn is_archive_path(path: &str) -> bool {
+    path.strip_prefix(ARCHIVE_DIR)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// The number of an archive file of the slug: 1 for `<slug>.toml`, `n` for
+/// `<slug>-<n>.toml`. `None` for any other path.
+pub fn archive_number(path: &str, slug: &str) -> Option<u32> {
+    let name = path.strip_prefix(ARCHIVE_DIR)?.strip_prefix('/')?;
+    let stem = name.strip_suffix(".toml")?;
+    if stem == slug {
+        return Some(1);
+    }
+    let n = stem.strip_prefix(slug)?.strip_prefix('-')?;
+    let ok = !n.is_empty() && !n.starts_with('0') && n.bytes().all(|b| b.is_ascii_digit());
+    ok.then(|| n.parse().ok()).flatten().filter(|n| *n >= 2)
+}
+
+/// The change that an archive file belongs to: the field `change` inside the
+/// file. The name of the file decides nothing: `fix-2.toml` is the archive of
+/// the change `fix-2`, and also the file 2 of the change `fix`. Only a file that
+/// does not read as a record has no field, and then the name without `.toml` is
+/// the change (SD928 reports the file that does not read).
+pub fn archive_owner(path: &str, text: &str) -> String {
+    record::Record::parse(text)
+        .map(|r| r.change)
+        .unwrap_or_else(|_| {
+            path.rsplit('/')
+                .next()
+                .unwrap_or(path)
+                .trim_end_matches(".toml")
+                .to_string()
+        })
+}
+
+/// The result of the read of one file: its bytes, or `None` if it has none.
+type Read = Result<Option<Vec<u8>>, String>;
+
+/// The archive file of the change `slug` among the archive files that a diff
+/// adds: its path and its bytes. A file is the archive of the change if its
+/// field `change` is the slug ([`archive_owner`]); the number in its name only
+/// orders the files of one change (the newest wins). `read` gives the
+/// bytes of a path, or `None` if there is no file.
+pub fn archive_of(
+    slug: &str,
+    added: &[&str],
+    read: &mut dyn FnMut(&str) -> Read,
+) -> Result<Option<(String, Vec<u8>)>, String> {
+    let mut best: Option<(u32, String, Vec<u8>)> = None;
+    // Only a file of the archive folder is an archive file: the filter of the
+    // path that `finish` writes. A file elsewhere is never the archive.
+    for p in added.iter().filter(|p| is_archive_path(p)) {
+        // The number orders the files of one change. A file whose name has no
+        // number of this slug comes first (a file that a person named).
+        let n = archive_number(p, slug).unwrap_or(0);
+        if best.as_ref().is_some_and(|(m, _, _)| *m >= n) {
+            continue;
+        }
+        let Some(bytes) = read(p)? else { continue };
+        if archive_owner(p, &String::from_utf8_lossy(&bytes)) == slug {
+            best = Some((n, (*p).to_string(), bytes));
+        }
+    }
+    Ok(best.map(|(_, p, b)| (p, b)))
+}
+
+/// The biggest file that a reader of a record or of an archive file reads: a
+/// record is small. A caller reads with this limit (`Git::head_file_checked`):
+/// a link or a big file in the diff costs no read.
+pub const READ_LIMIT: usize = 256 * 1024;
+
+/// The biggest change file (`intent.md`, `spec.md`, `plan.md`) that the compare
+/// of the brief reads from the working tree.
+const DOC_READ_LIMIT: usize = 4 * 1024 * 1024;
+
+/// The SD928 text for a record path whose file is not read: a link or another
+/// file that is not a regular file, or a file of more than [`READ_LIMIT`] bytes.
+pub fn unreadable_message(path: &str, why: &Limited) -> String {
+    let what = match why {
+        Limited::TooBig => format!("a file of more than {READ_LIMIT} bytes"),
+        _ => "not a regular file (a link, or a folder)".to_string(),
+    };
+    format!(
+        "`{path}` is {what}, so it is not read as a record; replace it with the record that `spec-dna accept` writes (a regular file of at most {READ_LIMIT} bytes)"
+    )
+}
+
+/// The path outside the archive folder, among the paths that a diff adds, of a
+/// file that reads as the record of the change `slug`: the archive file that a
+/// commit moved out of `.spec-dna/accepted/`. A record in a folder of a change
+/// (`is_folder_record`) is no archive file. `read` gives the bytes of a path.
+pub fn moved_archive(
+    slug: &str,
+    added: &[&str],
+    is_folder_record: &dyn Fn(&str) -> bool,
+    read: &mut dyn FnMut(&str) -> Read,
+) -> Result<Option<String>, String> {
+    for p in added {
+        if is_archive_path(p) || is_folder_record(p) {
+            continue;
+        }
+        let Some(bytes) = read(p)? else { continue };
+        if bytes.len() > READ_LIMIT {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        if record::Record::parse(&text).is_ok_and(|r| r.change == slug) {
+            return Ok(Some((*p).to_string()));
+        }
+    }
+    Ok(None)
+}
+
+/// The path of the archive file that `finish` writes for the slug:
+/// `<slug>.toml`, or the first `<slug>-<n>.toml` from 2 on whose file does not
+/// exist. `exists` tells if a path exists on disk.
+pub fn next_archive_path(slug: &str, exists: &dyn Fn(&str) -> bool) -> String {
+    let first = format!("{ARCHIVE_DIR}/{slug}.toml");
+    if !exists(&first) {
+        return first;
+    }
+    (2u32..)
+        .map(|n| format!("{ARCHIVE_DIR}/{slug}-{n}.toml"))
+        .find(|p| !exists(p))
+        .expect("an unbounded range has a free name")
+}
+
+/// The folder and the slug of a record in the folder of a change: a path
+/// `<intent folder>/<slug>/acceptance.toml`. `intent_dirs` are the folders of
+/// the layer `intent`.
+pub fn record_folder(path: &str, intent_dirs: &[String]) -> Option<(String, String)> {
+    let folder = path.strip_suffix(&format!("/{}", record::FILE_NAME))?;
+    let (dir, slug) = folder.rsplit_once('/')?;
+    intent_dirs
+        .iter()
+        .any(|d| d == dir)
+        .then(|| (folder.to_string(), slug.to_string()))
+}
+
+/// What the rule "a change that needs a record" finds.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Need {
+    /// No record is needed. The text is the note that `finish` prints when the
+    /// plan is older than 0.8.0.
+    No(Option<String>),
+    /// A record is needed. `shallow` is true if the clone is shallow and the
+    /// history has no commit that added the plan.
+    Yes { shallow: bool },
+}
+
+/// The rule of D3 item 1, for a change that has a plan and is not closed. The
+/// caller checks both.
+///
+/// A record is needed when the acceptance is on (SD927 is not off), and the plan
+/// is new:
+/// - a plan that the base tree does not have (a commit of the branch added it,
+///   or no commit did) is always new (Q43). So a branch cannot set the pin back
+///   for one commit to skip the record;
+/// - a plan that the base tree has is new if the newest commit that added it and
+///   that is an ancestor of the lifecycle base pinned 0.8.0 or later in
+///   `spec-dna.toml`. A pin before 0.8.0 gives no record, with a note. No such
+///   commit (a shallow clone), or no pin in it, gives the stricter result.
+///
+/// `plan_in_base` tells if the tree of `base_rev` has the plan at `plan_path`.
+pub fn needs_record(
+    cfg: &Config,
+    git: &Git,
+    base_rev: &str,
+    plan_path: &str,
+    plan_in_base: bool,
+) -> Result<Need, String> {
+    if cfg.is_off(Code::AcceptanceMissing) {
+        return Ok(Need::No(None));
+    }
+    if !plan_in_base {
+        return Ok(Need::Yes { shallow: false });
+    }
+    let Some(commit) = git.added_at(base_rev, plan_path)? else {
+        return Ok(Need::Yes {
+            shallow: git.is_shallow(),
+        });
+    };
+    let text = git
+        .read_at(&[(commit, config::FILE_NAME.to_string())])?
+        .into_iter()
+        .next()
+        .flatten();
+    let pin = text.and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b)));
+    match pin {
+        Some(pin) if Version::parse(&pin).is_some_and(|v| v < FIRST_VERSION) => {
+            Ok(Need::No(Some(format!(
+                "`{plan_path}` was added when spec-dna.toml pinned {pin}, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does"
+            ))))
+        }
+        _ => Ok(Need::Yes { shallow: false }),
+    }
+}
+
+/// The message of SD927 for a missing record. `where_` names the place that
+/// should have it.
+pub fn missing_message(slug: &str, where_: &str, shallow: bool) -> String {
+    let mut m = format!(
+        "the change `{slug}` needs an acceptance record, and {where_}; give the output of `spec-dna accept {slug} --brief`, unchanged, to an agent `acceptor`, and commit the record that it writes"
+    );
+    if shallow {
+        m.push_str(
+            "; the clone is shallow, so the commit that added the plan is not in the history: fetch the full history (`fetch-depth: 0`)",
+        );
+    }
+    m
+}
+
+/// What the rules of a valid record need to know of the plan of the change.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PlanFacts {
+    pub has_files: bool,
+    pub tasks_have_files: bool,
+}
+
+/// Reads the facts from the change and the corpus that has its plan.
+pub fn plan_facts(ch: &Change, corpus: &Corpus) -> PlanFacts {
+    PlanFacts {
+        has_files: !ch.scope_patterns(corpus).is_empty(),
+        tasks_have_files: ch
+            .tasks(corpus)
+            .iter()
+            .any(|t| !t.duplicate && t.files.iter().any(|f| crate::change::is_scope_pattern(f))),
+    }
+}
+
+/// Reads a record and checks the rules of a valid record (SD928, without the
+/// compare of the brief). It returns the record, if the text reads, and one text
+/// for each broken rule.
+pub fn read_record(
+    cfg: &Config,
+    text: &str,
+    slug: &str,
+    facts: PlanFacts,
+) -> (Option<Record>, Vec<String>) {
+    let intent_dirs = crate::lifecycle::intent_dirs(cfg);
+    let is_code = |p: &str| tree::is_code_path(cfg, p, &intent_dirs);
+    let expect = Expect {
+        slug,
+        plan_has_files: facts.has_files,
+        tasks_have_files: facts.tasks_have_files,
+        is_code_path: &is_code,
+    };
+    match Record::parse(text) {
+        Ok(r) => {
+            let problems = record::validate(&r, &expect);
+            (Some(r), problems)
+        }
+        Err(e) => (None, vec![e]),
+    }
+}
+
+/// SD931: 2 acceptor entries have the same `session` and the same `agent`. The
+/// value `unknown` and an empty value match no value.
+pub fn self_accepted(rec: &Record) -> Vec<String> {
+    let claim = |v: &str| !v.trim().is_empty() && v != record::UNKNOWN && v != record::PENDING;
+    let mut out = Vec::new();
+    for (j, b) in rec.acceptors.iter().enumerate() {
+        if !claim(&b.session) || !claim(&b.agent) {
+            continue;
+        }
+        if let Some(i) = rec.acceptors[..j]
+            .iter()
+            .position(|a| a.session == b.session && a.agent == b.agent)
+        {
+            out.push(format!(
+                "acceptor {} and acceptor {} have the same `session` (`{}`) and the same `agent` (`{}`); an acceptor must be another agent than the builder and the other acceptors",
+                i + 1,
+                j + 1,
+                b.session,
+                b.agent
+            ));
+        }
+    }
+    out
+}
+
+/// SD933: the record has fewer acceptor entries than the class of the change
+/// needs. The roles of `[owners]` are a later slice, so none adds to the count.
+pub fn acceptors_missing(cfg: &Config, class: Class, rec: &Record) -> Option<String> {
+    let needed = match class {
+        Class::Routine => 1,
+        Class::HigherRisk => cfg.higher_risk_acceptors as usize,
+    };
+    (rec.acceptors.len() < needed).then(|| {
+        format!(
+            "the record has {} acceptor entries, and a {} change needs {needed}; run `spec-dna accept {} [--role <name>]` for each missing acceptor",
+            rec.acceptors.len(),
+            class.name(),
+            rec.change
+        )
+    })
+}
+
+/// The first check of the record that stops `finish` step 5.2, and its messages.
+/// `finish` and `next` use this one function, so a check that is off stops
+/// neither. The order is the order of the codes: SD928 (`problems`: the rules of
+/// a valid record, and the compare of the briefs), SD929 (`stale`), SD930,
+/// SD931 and SD933. A record that does not read (`rec` is `None`) stops with
+/// SD928 only; with SD928 off it passes, as no other check can read it.
+pub fn first_stop(
+    cfg: &Config,
+    class: Class,
+    rec: Option<&Record>,
+    problems: Vec<String>,
+    stale: Option<String>,
+) -> Option<(Code, Vec<String>)> {
+    let on = |c: Code| !cfg.is_off(c);
+    if on(Code::AcceptanceInvalid) && !problems.is_empty() {
+        return Some((Code::AcceptanceInvalid, problems));
+    }
+    let rec = rec?;
+    if on(Code::AcceptanceStale)
+        && let Some(why) = stale
+    {
+        return Some((Code::AcceptanceStale, vec![why]));
+    }
+    if on(Code::AcceptanceRejected)
+        && let Some(why) = rejected(rec)
+    {
+        return Some((Code::AcceptanceRejected, vec![why]));
+    }
+    if on(Code::SelfAccepted) {
+        let found = self_accepted(rec);
+        if !found.is_empty() {
+            return Some((Code::SelfAccepted, found));
+        }
+    }
+    if on(Code::AcceptorMissing)
+        && let Some(why) = acceptors_missing(cfg, class, rec)
+    {
+        return Some((Code::AcceptorMissing, vec![why]));
+    }
+    None
+}
+
+/// SD930: the top `result` is `rejected`.
+pub fn rejected(rec: &Record) -> Option<String> {
+    (rec.result == "rejected").then(|| {
+        format!(
+            "the record of the change `{}` says `rejected`; fix each finding in the code, delete the record, and accept again",
+            rec.change
+        )
+    })
+}
+
+/// The start of the fix in a SD929 message after `finish` (an archive file).
+pub const STALE_AFTER_FINISH: &str = "revert the commit of `finish`";
+
+/// The start of the fix in a SD929 message before `finish` (a folder record).
+pub const STALE_BEFORE_FINISH: &str = "delete the record";
+
+/// The plan of a change, as the stale rule reads it: the patterns that its scope
+/// has, and every code span of `Files`. Each reader of the rule builds it from
+/// the plan that it reads: the plan of the head, or for a folder that the diff
+/// deletes, the newest plan of the branch.
+#[derive(Clone, Debug, Default)]
+pub struct PlanScope {
+    /// The patterns of `Files` that a record can hold ([`Change::scope_patterns`]),
+    /// without the globs of `[change] shared-paths`. Sorted, with no duplicate.
+    pub patterns: Vec<String>,
+    /// Every code span of `Files` ([`Change::files`]): the view of SD913.
+    pub files: Vec<String>,
+}
+
+impl PlanScope {
+    pub fn of(ch: &Change, corpus: &Corpus) -> PlanScope {
+        let mut patterns = ch.scope_patterns(corpus);
+        patterns.sort();
+        patterns.dedup();
+        PlanScope {
+            patterns,
+            files: ch.files(corpus),
+        }
+    }
+}
+
+/// The words of a SD929 message for a plan that has a pattern that the record
+/// has not. [`stale_cause`] reads them.
+const SCOPE_MARK: &str = "the scope of the plan has the pattern";
+
+/// The words of a SD929 message for a record that has a pattern that neither the
+/// plan nor `[change] shared-paths` has. [`stale_cause`] reads them.
+const RECORD_ONLY_MARK: &str = "neither the plan nor `[change] shared-paths` has it";
+
+/// The words of the SD929 message for a changed path that `Files` covers only
+/// through a pattern that a record cannot hold. [`stale_cause`] reads them.
+const UNCOVERED_MARK: &str = "of the plan only as";
+
+/// The words of the SD929 message for a changed path that only a glob of
+/// `[change] shared-paths` covers, a glob that the base configuration has not.
+/// [`stale_cause`] reads them.
+const SHARED_ADDED_MARK: &str = "shared-paths changed after the acceptance";
+
+/// The words of a SD929 message for code that changed after the acceptance.
+const CODE_MARKS: [&str; 2] = ["the hash of the code", "the diff has the code path"];
+
+/// What changed after the acceptance, for the text of `next` and `finish`, read
+/// from a SD929 message of [`stale`]. One phrase for each kind of reason in the
+/// message: the scope of the plan, a pattern that the record has and no source
+/// has, a name that `Files` has and a record cannot hold, a new glob of
+/// `shared-paths`, and the code. The text is what changed, so the user fixes the
+/// right thing.
+pub fn stale_cause(message: &str) -> String {
+    let mut phrases: Vec<&str> = Vec::new();
+    if message.contains(SCOPE_MARK) {
+        phrases.push("the scope of the plan changed after the acceptance");
+    }
+    if message.contains(RECORD_ONLY_MARK) {
+        phrases
+            .push("the record has a pattern that neither the plan nor `[change] shared-paths` has");
+    }
+    if message.contains(UNCOVERED_MARK) {
+        phrases.push("a changed path is in `Files` only as a bare name or a path with a space");
+    }
+    if message.contains(SHARED_ADDED_MARK) {
+        phrases.push("shared-paths changed after the acceptance");
+    }
+    if CODE_MARKS.iter().any(|m| message.contains(m)) {
+        phrases.push("the code changed after the acceptance");
+    }
+    if phrases.is_empty() {
+        phrases.push("the code changed after the acceptance");
+    }
+    phrases.join(" and ")
+}
+
+/// The globs of `[change] shared-paths` in the configuration of `base_rev`, or
+/// `None` if the base has no configuration that reads.
+pub fn base_shared_paths(git: &Git, base_rev: &str) -> Result<Option<Vec<String>>, String> {
+    let text = git
+        .read_at(&[(base_rev.to_string(), config::FILE_NAME.to_string())])?
+        .into_iter()
+        .next()
+        .flatten();
+    Ok(text
+        .and_then(|b| Config::parse(&String::from_utf8_lossy(&b)).ok())
+        .map(|c| c.shared_paths))
+}
+
+/// Why a record is stale: one text for each reason, empty if the record is
+/// fresh. One function decides it for `accept` (the refusal of a second
+/// acceptor), SD929 in `check`, `next` and `finish` step 5.2, so no 2 places use
+/// 2 rules. A record is stale if:
+///
+/// - the plan has a pattern that `scope` of the record has not, or the record has
+///   a pattern that the plan has not. The globs of `[change] shared-paths` of the
+///   head configuration are left out on both sides: the record does not mark
+///   which globs came from that key, and a change of the key after the
+///   acceptance must not make a record stale (design 0.8.0, D3 item 4). So a
+///   glob that a later commit removes from the key reads as a glob that the plan
+///   lacks, and makes the record stale: write the record again.
+/// - a changed code path is in `Files` of the plan only as a pattern that a
+///   record cannot hold (a bare name, or a path with a space), and neither
+///   `scope` nor `[change] shared-paths` covers it
+///   ([`crate::accept::uncovered_path`]),
+/// - the hash of `paths` differs from the code that `git` reads (the working
+///   tree, or the index for a `staged` `Git`), or
+/// - the diff has a code path that `scope` matches and `paths` does not list.
+pub fn stale_reasons(
+    cfg: &Config,
+    git: &Git,
+    rec: &Record,
+    diff: Option<&Diff>,
+    plan: &PlanScope,
+    base_rev: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut why: Vec<String> = Vec::new();
+    let quote = |v: Vec<&String>| {
+        v.iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let shared = &cfg.shared_paths;
+    let plan_side: Vec<&String> = plan
+        .patterns
+        .iter()
+        .filter(|p| !shared.contains(p))
+        .collect();
+    let rec_side: Vec<&String> = rec.scope.iter().filter(|p| !shared.contains(p)).collect();
+    let only_plan: Vec<&String> = plan_side
+        .iter()
+        .filter(|p| !rec_side.contains(p))
+        .copied()
+        .collect();
+    let only_record: Vec<&String> = rec_side
+        .iter()
+        .filter(|p| !plan_side.contains(p))
+        .copied()
+        .collect();
+    if !only_plan.is_empty() {
+        why.push(format!(
+            "{SCOPE_MARK} {}, and `scope` of the record has not",
+            quote(only_plan)
+        ));
+    }
+    if !only_record.is_empty() {
+        why.push(format!(
+            "`scope` of the record has the pattern {}, and {RECORD_ONLY_MARK} (the plan dropped it, or the key lost it)",
+            quote(only_record)
+        ));
+    }
+    let entries = tree::entries_of(git, cfg)?;
+    let now = record::tree_hash(&entries, &rec.paths);
+    if !tree::matches(&rec.tree, &now) {
+        why.push(format!(
+            "{} that `paths` lists is {now}, and the record has {}",
+            CODE_MARKS[0], rec.tree
+        ));
+    }
+    if let Some(diff) = diff {
+        let intent_dirs = crate::lifecycle::intent_dirs(cfg);
+        let is_code = |p: &str| tree::is_code_path(cfg, p, &intent_dirs);
+        let changed: Vec<String> = diff.files.iter().map(|f| f.0.clone()).collect();
+        for p in record::select_paths(&rec.scope, &changed, &is_code) {
+            if !rec.paths.contains(&p) {
+                why.push(format!(
+                    "{} `{p}`, which `scope` matches and `paths` does not list",
+                    CODE_MARKS[1]
+                ));
+            }
+        }
+        // `scope` and the globs of `shared-paths` are what the record covers.
+        let mut covered = rec.scope.clone();
+        covered.extend(shared.iter().cloned());
+        if let Some((p, pattern)) =
+            crate::accept::uncovered_path(&plan.files, &covered, &changed, &is_code)
+        {
+            why.push(format!(
+                "the changed code path `{p}` is in `Files` {UNCOVERED_MARK} `{pattern}`, which {}, so `scope` of the record does not cover it; {}",
+                crate::accept::scope_cause(&pattern),
+                crate::accept::scope_way(&pattern)
+            ));
+        }
+        // A glob of `shared-paths` that the base configuration has not is new
+        // since the acceptance. A changed code path that only such a glob covers
+        // got in with no acceptance. A glob that the base has is as old as the
+        // record: a base commit that adds one changes no record.
+        if let Some(base_shared) = base_rev
+            .map(|r| base_shared_paths(git, r))
+            .transpose()?
+            .flatten()
+        {
+            let added: Vec<String> = shared
+                .iter()
+                .filter(|g| !base_shared.contains(g))
+                .cloned()
+                .collect();
+            for p in changed.iter().filter(|p| is_code(p)) {
+                if change::in_scope(&rec.scope, p) || change::in_scope(&base_shared, p) {
+                    continue;
+                }
+                if let Some(g) = added
+                    .iter()
+                    .find(|g| change::in_scope(std::slice::from_ref(g), p))
+                {
+                    why.push(format!(
+                        "the changed code path `{p}` is covered only by the glob `{g}` of `[change] shared-paths`, which the base configuration has not: {SHARED_ADDED_MARK}; accept again, or revert the change of `shared-paths`"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(why)
+}
+
+/// SD929: the record is stale ([`stale_reasons`]). `after_finish` chooses the fix
+/// that the message names. `None`: the record is fresh.
+pub fn stale(
+    cfg: &Config,
+    git: &Git,
+    rec: &Record,
+    diff: Option<&Diff>,
+    plan: &PlanScope,
+    base_rev: Option<&str>,
+    after_finish: bool,
+) -> Result<Option<String>, String> {
+    let why = stale_reasons(cfg, git, rec, diff, plan, base_rev)?;
+    if why.is_empty() {
+        return Ok(None);
+    }
+    let slug = &rec.change;
+    // `Diag::fix` reads the mark to choose the fix of the same place.
+    let fix = if after_finish {
+        format!(
+            "{STALE_AFTER_FINISH}, merge the base, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
+        )
+    } else {
+        format!(
+            "{STALE_BEFORE_FINISH}, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
+        )
+    };
+    Ok(Some(format!(
+        "the record of the change `{slug}` is stale: {}; {fix}",
+        why.join("; ")
+    )))
+}
+
+// The compare of the brief (SD928, item 8).
+
+/// The identity of an entry: its role, session and brief.
+fn triple(a: &Acceptor) -> (String, String, String) {
+    (
+        a.role.clone(),
+        a.session.clone(),
+        a.brief.to_ascii_lowercase(),
+    )
+}
+
+fn triples(text: Option<&[u8]>) -> HashSet<(String, String, String)> {
+    text.and_then(|b| Record::parse(&String::from_utf8_lossy(b)).ok())
+        .map(|r| r.acceptors.iter().map(triple).collect())
+        .unwrap_or_default()
+}
+
+/// True if `s` is 16 hexadecimal digits.
+fn is_hash(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The 3 files of a change in one tree, as text. `None` for a missing file.
+struct Files {
+    intent: Option<String>,
+    spec: Option<String>,
+    plan: Option<String>,
+}
+
+fn text_of(b: Option<Vec<u8>>) -> Option<String> {
+    b.map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// The `declared` items of the files of a tree, read as `finish` and `check`
+/// read a change: the 3 files parse into a corpus of their own.
+fn declared_of(cfg: &Config, folder: &str, files: &Files) -> accept::Declared {
+    let mut docs: Vec<(String, Arc<ParsedDoc>)> = Vec::new();
+    for (name, text) in [
+        ("intent.md", &files.intent),
+        ("spec.md", &files.spec),
+        ("plan.md", &files.plan),
+    ] {
+        if let Some(t) = text {
+            docs.push((format!("{folder}/{name}"), Arc::new(parse(t))));
+        }
+    }
+    let corpus = Corpus::build(cfg, docs.iter().map(|d| d.0.clone()).collect(), docs);
+    match change::collect(&corpus)
+        .into_iter()
+        .find(|c| c.dir == folder)
+    {
+        Some(ch) => accept::declared(cfg, &ch, &corpus),
+        None => accept::Declared::default(),
+    }
+}
+
+/// Where the tree of an entry comes from.
+enum Source {
+    Commit(String),
+    /// No commit has the entry: the index with `--staged`, else the working
+    /// tree.
+    Head,
+}
+
+/// The problems of the compare: for each entry that the branch adds to the
+/// record, the brief of the entry against the brief that the tree of its adding
+/// commit gives (design 0.8.0, D3 item 8).
+///
+/// - An entry that the record of the base has, by its role, session and brief,
+///   was compared in its own pull request, so it is not compared again.
+/// - The adding commit is the oldest commit of the latest unbroken run of the
+///   commits of the branch (`Git::first_parent_commits`: `<base>..<tip>`, first parent, the oldest first; on a test merge the tip is the second parent of `HEAD`) whose record holds
+///   an entry with the same triple. An entry that no commit holds takes the
+///   index with `--staged`, else the working tree.
+/// - A shallow clone that cuts the commits of the branch gives one problem that names
+///   `fetch-depth: 0`.
+pub fn brief_problems(
+    cfg: &Config,
+    git: &Git,
+    base_rev: &str,
+    folder: &str,
+    rec: &Record,
+) -> Result<Vec<String>, String> {
+    let rec_path = format!("{folder}/{}", record::FILE_NAME);
+    let slug = folder.rsplit('/').next().unwrap_or(folder);
+    let base_triples = triples(
+        git.read_at(&[(base_rev.to_string(), rec_path.clone())])?
+            .into_iter()
+            .next()
+            .flatten()
+            .as_deref(),
+    );
+    // The entries to compare: those that the base does not have, and whose
+    // `brief` is a hash (the rules of a valid record report any other value).
+    let entries: Vec<(usize, &Acceptor)> = rec
+        .acceptors
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| is_hash(&a.brief) && !base_triples.contains(&triple(a)))
+        .collect();
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+    if git.range_is_cut(base_rev) {
+        let list: Vec<String> = entries.iter().map(|(i, _)| (i + 1).to_string()).collect();
+        return Ok(vec![format!(
+            "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the brief of acceptor {} cannot be compared with its adding commit; fetch the full history (`fetch-depth: 0`)",
+            list.join(", ")
+        )]);
+    }
+    let commits = git.first_parent_commits(base_rev)?;
+    let specs: Vec<(String, String)> = commits
+        .iter()
+        .map(|c| (c.clone(), rec_path.clone()))
+        .collect();
+    let per_commit: Vec<HashSet<(String, String, String)>> = git
+        .read_at(&specs)?
+        .into_iter()
+        .map(|t| triples(t.as_deref()))
+        .collect();
+    // The files of each source, read once.
+    let mut cache: Vec<(String, Files)> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    for (i, a) in entries {
+        let t = triple(a);
+        let mut run: Option<usize> = None;
+        for (ci, set) in per_commit.iter().enumerate() {
+            if set.contains(&t) {
+                run.get_or_insert(ci);
+            } else {
+                run = None;
+            }
+        }
+        let source = match run {
+            Some(ci) => Source::Commit(commits[ci].clone()),
+            None => Source::Head,
+        };
+        let (key, place) = match &source {
+            Source::Commit(c) => (
+                c.clone(),
+                format!("its adding commit {}", &c[..c.len().min(12)]),
+            ),
+            Source::Head => (
+                String::new(),
+                format!(
+                    "the {} that holds the entry (no commit has it yet)",
+                    if git.is_staged() {
+                        "index"
+                    } else {
+                        "working tree"
+                    }
+                ),
+            ),
+        };
+        if !cache.iter().any(|(k, _)| *k == key) {
+            let names = ["intent.md", "spec.md", "plan.md"];
+            let mut texts: Vec<Option<String>> = Vec::new();
+            match &source {
+                Source::Commit(c) => {
+                    let specs: Vec<(String, String)> = names
+                        .iter()
+                        .map(|n| (c.clone(), format!("{folder}/{n}")))
+                        .collect();
+                    texts.extend(git.read_at(&specs)?.into_iter().map(text_of));
+                }
+                Source::Head => {
+                    for n in names {
+                        // A working tree with `core.autocrlf` has CRLF, and `accept
+                        // --brief` reads the files of `HEAD` with LF (ADR 0019).
+                        let read =
+                            git.head_file_limited(&format!("{folder}/{n}"), DOC_READ_LIMIT)?;
+                        texts.push(text_of(read).map(|t| {
+                            String::from_utf8_lossy(&record::to_lf(t.as_bytes())).into_owned()
+                        }));
+                    }
+                }
+            }
+            let mut it = texts.into_iter();
+            cache.push((
+                key.clone(),
+                Files {
+                    intent: it.next().flatten(),
+                    spec: it.next().flatten(),
+                    plan: it.next().flatten(),
+                },
+            ));
+        }
+        let files = &cache.iter().find(|(k, _)| *k == key).expect("cached").1;
+        let (Some(intent), Some(plan)) = (&files.intent, &files.plan) else {
+            out.push(format!(
+                "the brief of acceptor {} cannot be computed again: the tree of {place} has no `intent.md` or no `plan.md` in `{folder}`; remove the entry, and accept again from a new brief",
+                i + 1
+            ));
+            continue;
+        };
+        let decl = declared_of(cfg, folder, files);
+        let text = accept::brief_text(
+            cfg,
+            slug,
+            &a.role,
+            &Texts {
+                intent,
+                spec: files.spec.as_deref(),
+                plan,
+            },
+            &Composed {
+                scope: &rec.scope,
+                paths: &rec.paths,
+                tree: &rec.tree,
+            },
+            &decl,
+        );
+        let want = record::brief_hash(&text).unwrap_or_default();
+        if !want.eq_ignore_ascii_case(&a.brief) {
+            out.push(format!(
+                "the brief of acceptor {} is not the brief of {place}; remove the entry, and accept again from a new brief",
+                i + 1
+            ));
+        }
+    }
+    Ok(out)
+}
+
+// The bytes of an archive file (SD935).
+
+/// The text of the folder record that `finish` moved to `archive`: the newest
+/// text of `<folder>/acceptance.toml` in the commits of the branch (see `Git::first_parent_commits`; first
+/// parent), else its text in the base.
+fn moved_record(git: &Git, base_rev: &str, folder: &str) -> Result<Option<Vec<u8>>, String> {
+    let rec_path = format!("{folder}/{}", record::FILE_NAME);
+    let commits = git.first_parent_commits(base_rev)?;
+    let mut specs: Vec<(String, String)> = commits
+        .iter()
+        .map(|c| (c.clone(), rec_path.clone()))
+        .collect();
+    specs.push((base_rev.to_string(), rec_path));
+    // The newest commit comes last, and the base is the oldest source.
+    let mut texts = git.read_at(&specs)?;
+    let base_text = texts.pop().flatten();
+    Ok(texts.into_iter().rev().flatten().next().or(base_text))
+}
+
+/// The words of the SD935 message for a cut history. `Diag::fix` reads them, so
+/// the finding for a cut history gets its own fix text.
+pub const CUT_MARK: &str = "is cut (a shallow clone)";
+
+/// The SD935 message if the archive file `archive`, which the diff adds with
+/// the bytes `bytes`, is not the record that `finish` moves: the bytes differ
+/// from the folder record, or no folder record is in the history of the branch
+/// or in the base. The rule is one rule for the first commit of `finish` and
+/// for a later commit that edits the file: `finish` writes the folder record,
+/// byte for byte. In a shallow clone that cuts the commits of the branch, the record
+/// cannot be found: the message then names the cause and `fetch-depth: 0`.
+pub fn archive_differs(
+    git: &Git,
+    base_rev: &str,
+    folder: &str,
+    archive: &str,
+    bytes: &[u8],
+) -> Result<Option<String>, String> {
+    let rec_path = format!("{folder}/{}", record::FILE_NAME);
+    // A cut history (a shallow clone) hides the folder record. SD928 compares
+    // only a record in a folder, and after `finish` there is none, so SD935 itself
+    // names the cause. A repository that is not shallow is never cut.
+    if git.range_is_cut(base_rev) {
+        return Ok(Some(format!(
+            "the history of the branch (`{base_rev}` to its tip) {CUT_MARK}, so the bytes of the archive file `{archive}` cannot be compared with `{rec_path}`; fetch the full history (`fetch-depth: 0`)"
+        )));
+    }
+    Ok(match moved_record(git, base_rev, folder)? {
+        // CRLF and LF are one record (ADR 0019).
+        Some(old) if record::to_lf(&old) == record::to_lf(bytes) => None,
+        Some(_) => Some(format!(
+            "the archive file `{archive}` is not the record of the change that `finish` moves: its bytes differ from `{rec_path}`; write the file again with `spec-dna finish`, or revert the edit"
+        )),
+        None => Some(format!(
+            "the archive file `{archive}` has no `{rec_path}` in the base or in the commits of the branch, so no `finish` moved it; run `spec-dna accept` and `spec-dna finish`"
+        )),
+    })
+}
+
+// The facts that `finish` needs (step 5.2 and 5.5).
+
+/// The facts of `finish` about the record. `main` computes them with git, and
+/// `finish::plan` stays free of git (design 0.8.0, section 11, "The steps of
+/// `finish`").
+#[derive(Clone, Debug)]
+pub struct FinishFacts {
+    /// The file `<folder>/acceptance.toml` of the working tree, read in a bound
+    /// that never follows a link.
+    pub record: RecordFile,
+    pub need: Need,
+    /// The problems of the compare of the briefs (SD928).
+    pub brief_problems: Vec<String>,
+    /// The reason of SD929, if the record is stale.
+    pub stale: Option<String>,
+    /// The path of the archive file that `finish` writes.
+    pub archive: String,
+    /// The ignore rule of git for that path, if there is one.
+    pub ignored: Option<String>,
+}
+
+/// The record file of a change folder in the working tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecordFile {
+    /// The folder has no record.
+    Absent,
+    /// The text of the record.
+    Text(String),
+    /// A link, another file that is not a regular file, or a file over
+    /// [`READ_LIMIT`]: the message for SD928.
+    Unreadable(String),
+}
+
+/// The rule "a change that needs a record" for a change of the head tree: the
+/// one function that `finish`, `next` and `check` use (design 0.8.0, D3 item 1).
+/// It returns `None` when the rule does not apply: the acceptance is off, the
+/// change has no plan, it is closed, or git names no lifecycle base. `base` and
+/// `base_rev` are the lifecycle tree and its commit.
+pub fn need_for_change(
+    repo: &Repo,
+    cfg: &Config,
+    ch: &Change,
+    head: &Corpus,
+    base: Option<&Corpus>,
+    base_rev: Option<&str>,
+) -> Result<Option<Need>, Fatal> {
+    let (Some(plan), Some(base), Some(base_rev)) = (&ch.plan, base, base_rev) else {
+        return Ok(None);
+    };
+    if ch.intent_status() == "closed" || cfg.is_off(Code::AcceptanceMissing) {
+        return Ok(None);
+    }
+    let plan_path = &head.docs[plan.doc as usize].path;
+    needs_record(
+        cfg,
+        &repo.git,
+        base_rev,
+        plan_path,
+        base.by_path.contains_key(plan_path),
+    )
+    .map(Some)
+    .map_err(Fatal::Io)
+}
+
+/// Computes the facts for the change `ch` of the folder. It returns `None` when
+/// `finish` has no step 5.2 for the change ([`need_for_change`]) and the folder
+/// has no record to archive. A record in the folder is archived in each profile
+/// and for each plan, also when no rule needs it.
+pub fn finish_facts(
+    repo: &Repo,
+    cfg: &Config,
+    ch: &Change,
+    head: &Corpus,
+    base: Option<&Corpus>,
+    base_rev: Option<&str>,
+    diff: Option<&Diff>,
+) -> Result<Option<FinishFacts>, Fatal> {
+    let need = need_for_change(repo, cfg, ch, head, base, base_rev)?;
+    let record_path = format!("{}/{}", ch.dir, record::FILE_NAME);
+    let record = match read_limited(&repo.root.join(&record_path), READ_LIMIT) {
+        Limited::Absent => RecordFile::Absent,
+        Limited::Bytes(b) => RecordFile::Text(String::from_utf8_lossy(&b).into_owned()),
+        other => RecordFile::Unreadable(unreadable_message(&record_path, &other)),
+    };
+    if need.is_none() && record == RecordFile::Absent {
+        return Ok(None);
+    }
+    let archive = next_archive_path(&ch.slug, &|p| repo.root.join(p).exists());
+    let mut f = FinishFacts {
+        record,
+        ignored: repo.git.ignore_rule(&archive),
+        archive,
+        need: need.unwrap_or(Need::No(None)),
+        brief_problems: Vec::new(),
+        stale: None,
+    };
+    let (Need::Yes { .. }, Some(base_rev)) = (&f.need, base_rev) else {
+        return Ok(Some(f));
+    };
+    let RecordFile::Text(text) = &f.record else {
+        return Ok(Some(f));
+    };
+    let Ok(rec) = Record::parse(text) else {
+        return Ok(Some(f));
+    };
+    if !cfg.is_off(Code::AcceptanceInvalid) {
+        f.brief_problems =
+            brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec).map_err(Fatal::Io)?;
+    }
+    if !cfg.is_off(Code::AcceptanceStale) {
+        let plan = PlanScope::of(ch, head);
+        f.stale =
+            stale(cfg, &repo.git, &rec, diff, &plan, Some(base_rev), false).map_err(Fatal::Io)?;
+    }
+    Ok(Some(f))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(acceptors: &[(&str, &str, &str)]) -> Record {
+        let mut text = String::from(
+            "format = 1\nchange = \"demo\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n",
+        );
+        for (role, session, agent) in acceptors {
+            text.push_str(&format!(
+                "\n[[acceptor]]\nrole = \"{role}\"\nbrief = \"0123456789abcdef\"\nsession = \"{session}\"\nagent = \"{agent}\"\nresult = \"accepted\"\n"
+            ));
+        }
+        Record::parse(&text).unwrap()
+    }
+
+    #[test]
+    fn an_archive_path_is_a_file_of_the_archive_folder() {
+        assert!(is_archive_path(".spec-dna/accepted/demo.toml"));
+        assert!(is_archive_path(".spec-dna/accepted/a/b.toml"));
+        assert!(!is_archive_path(".spec-dna/accepted"));
+        assert!(!is_archive_path(".spec-dna/acceptedx/demo.toml"));
+        assert!(!is_archive_path("docs/.spec-dna/accepted/demo.toml"));
+    }
+
+    #[test]
+    fn the_archive_number_of_a_name_is_1_for_the_slug_and_n_for_a_suffix() {
+        let n = |p: &str, s: &str| archive_number(p, s);
+        assert_eq!(n(".spec-dna/accepted/demo.toml", "demo"), Some(1));
+        assert_eq!(n(".spec-dna/accepted/demo-2.toml", "demo"), Some(2));
+        assert_eq!(n(".spec-dna/accepted/demo-13.toml", "demo"), Some(13));
+        // A slug that ends in a number is its own slug, not a numbered file.
+        assert_eq!(n(".spec-dna/accepted/demo-2.toml", "demo-2"), Some(1));
+        assert_eq!(n(".spec-dna/accepted/demo-1.toml", "demo"), None);
+        assert_eq!(n(".spec-dna/accepted/demo-02.toml", "demo"), None);
+        assert_eq!(n(".spec-dna/accepted/demo-x.toml", "demo"), None);
+        assert_eq!(n(".spec-dna/accepted/other.toml", "demo"), None);
+        assert_eq!(n(".spec-dna/accepted/demo.md", "demo"), None);
+        assert_eq!(n("docs/demo.toml", "demo"), None);
+    }
+
+    /// The archive file of a change among 2 changes whose names overlap.
+    #[test]
+    fn the_archive_of_a_change_is_the_file_that_names_it_in_the_field_change() {
+        let file = |change: &str| {
+            format!(
+                "format = 1\nchange = \"{change}\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n"
+            )
+            .into_bytes()
+        };
+        let a = ".spec-dna/accepted/fix.toml";
+        let b = ".spec-dna/accepted/fix-2.toml";
+        let c = ".spec-dna/accepted/fix-3.toml";
+        // `fix-2.toml` is the archive of the change `fix-2`, not the file 2 of `fix`.
+        let find = |slug: &str, added: &[&str], files: &[(&str, &str)]| {
+            let mut read =
+                |p: &str| Ok(files.iter().find(|(f, _)| *f == p).map(|(_, ch)| file(ch)));
+            archive_of(slug, added, &mut read).unwrap().map(|(p, _)| p)
+        };
+        let both = [(a, "fix"), (b, "fix-2")];
+        for order in [[a, b], [b, a]] {
+            assert_eq!(find("fix", &order, &both).as_deref(), Some(a));
+            assert_eq!(find("fix-2", &order, &both).as_deref(), Some(b));
+        }
+        // `fix` deleted with no `finish`: the file of `fix-2` hides nothing.
+        assert_eq!(find("fix", &[b], &[(b, "fix-2")]), None);
+        assert_eq!(find("fix-2", &[b], &[(b, "fix-2")]).as_deref(), Some(b));
+        // The file 2 of the change `fix`, and the archive of `fix-2`, in one diff.
+        let three = [(a, "fix"), (b, "fix"), (c, "fix-2")];
+        assert_eq!(find("fix", &[a, b, c], &three).as_deref(), Some(b));
+        // A file of `fix-2` named `fix-3`: the field decides.
+        assert_eq!(find("fix-2", &[a, b, c], &three).as_deref(), Some(c));
+        assert_eq!(find("fix-2", &[a, b], &[(a, "fix"), (b, "fix")]), None);
+        // A file that does not read is owned by its name.
+        let mut bad = |_: &str| Ok(Some(b"not a record = = =".to_vec()));
+        assert_eq!(
+            archive_of("fix-2", &[b], &mut bad)
+                .unwrap()
+                .map(|x| x.0)
+                .as_deref(),
+            Some(b)
+        );
+        let mut bad = |_: &str| Ok(Some(b"not a record = = =".to_vec()));
+        assert_eq!(archive_of("fix", &[b], &mut bad).unwrap(), None);
+    }
+
+    /// A path outside the archive folder is never the archive of a change, also
+    /// when it reads as the record of the change; `moved_archive` finds it.
+    #[test]
+    fn a_path_outside_the_archive_folder_is_no_archive_and_a_record_there_is_a_moved_one() {
+        let record = b"format = 1\nchange = \"fix\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n".to_vec();
+        for p in ["notes/fix.toml", "keep/fix.txt", "src/fix"] {
+            let mut read = |_: &str| Ok(Some(record.clone()));
+            assert_eq!(archive_of("fix", &[p], &mut read).unwrap(), None, "{p}");
+        }
+        let no_folder = |_: &str| false;
+        let mut read = |p: &str| {
+            Ok(match p {
+                "keep/fix.txt" | "docs/fix/acceptance.toml" => Some(record.clone()),
+                "src/fix" => Some(b"not a record".to_vec()),
+                _ => None,
+            })
+        };
+        let added = ["src/fix", "keep/fix.txt"];
+        assert_eq!(
+            moved_archive("fix", &added, &no_folder, &mut read)
+                .unwrap()
+                .as_deref(),
+            Some("keep/fix.txt")
+        );
+        // Another change, a non-record file, and a path of the archive folder.
+        assert_eq!(
+            moved_archive("other", &added, &no_folder, &mut read).unwrap(),
+            None
+        );
+        assert_eq!(
+            moved_archive("fix", &["src/fix"], &no_folder, &mut read).unwrap(),
+            None
+        );
+        let inside = [".spec-dna/accepted/fix.toml"];
+        assert_eq!(
+            moved_archive("fix", &inside, &no_folder, &mut read).unwrap(),
+            None
+        );
+        // A record in the folder of a change is no moved archive file.
+        let folder = |p: &str| p.ends_with("/acceptance.toml");
+        assert_eq!(
+            moved_archive("fix", &["docs/fix/acceptance.toml"], &folder, &mut read).unwrap(),
+            None
+        );
+    }
+
+    /// The text of `next` and `finish` follows the reason of the SD929 message.
+    #[test]
+    fn the_cause_of_a_stale_record_follows_the_reason_of_the_message() {
+        let scope = format!("{SCOPE_MARK} `src/x.rs`, and `scope` of the record has not");
+        let uncovered = format!(
+            "the changed code path `Makefile` is in `Files` {UNCOVERED_MARK} `Makefile`, which has no `/`"
+        );
+        let code = format!(
+            "{} that `paths` lists is a, and the record has b",
+            CODE_MARKS[0]
+        );
+        let diff = format!("{} `src/y.rs`, which `scope` matches", CODE_MARKS[1]);
+        assert!(stale_cause(&scope).starts_with("the scope of the plan changed"));
+        assert!(
+            stale_cause(&uncovered).starts_with("a changed path is in `Files` only as a bare name")
+        );
+        assert!(!stale_cause(&uncovered).contains("scope of the plan"));
+        assert!(stale_cause(&code).starts_with("the code changed"));
+        assert!(stale_cause(&diff).starts_with("the code changed"));
+        let both = format!("{scope}; {code}");
+        assert_eq!(
+            stale_cause(&both),
+            "the scope of the plan changed after the acceptance and the code changed after the acceptance"
+        );
+        let shared = format!(
+            "the changed code path `lib/a.py` is covered only by the glob `lib/**`: {SHARED_ADDED_MARK}; accept again"
+        );
+        assert_eq!(
+            stale_cause(&shared),
+            "shared-paths changed after the acceptance"
+        );
+        let lost =
+            format!("`scope` of the record has the pattern `lib/**`, and {RECORD_ONLY_MARK}");
+        assert!(stale_cause(&lost).contains("`[change] shared-paths`"));
+        assert!(!stale_cause(&lost).contains("scope of the plan"));
+    }
+
+    #[test]
+    fn the_next_archive_path_takes_the_first_free_number() {
+        let taken = |set: &'static [&'static str]| move |p: &str| set.contains(&p);
+        assert_eq!(
+            next_archive_path("demo", &taken(&[])),
+            ".spec-dna/accepted/demo.toml"
+        );
+        assert_eq!(
+            next_archive_path("demo", &taken(&[".spec-dna/accepted/demo.toml"])),
+            ".spec-dna/accepted/demo-2.toml"
+        );
+        assert_eq!(
+            next_archive_path(
+                "demo",
+                &taken(&[
+                    ".spec-dna/accepted/demo.toml",
+                    ".spec-dna/accepted/demo-2.toml",
+                    ".spec-dna/accepted/demo-4.toml"
+                ])
+            ),
+            ".spec-dna/accepted/demo-3.toml"
+        );
+    }
+
+    #[test]
+    fn a_record_in_the_folder_of_a_change_has_a_folder_and_a_slug() {
+        let dirs = vec!["docs/intent".to_string()];
+        let f = |p: &str| record_folder(p, &dirs);
+        assert_eq!(
+            f("docs/intent/demo/acceptance.toml"),
+            Some(("docs/intent/demo".to_string(), "demo".to_string()))
+        );
+        assert_eq!(f("docs/intent/demo/other.toml"), None);
+        assert_eq!(f("docs/intent/demo/deep/acceptance.toml"), None);
+        assert_eq!(f("docs/other/demo/acceptance.toml"), None);
+        assert_eq!(f("docs/intent/acceptance.toml"), None);
+    }
+
+    #[test]
+    fn two_entries_with_a_claim_in_common_give_sd931_and_unknown_gives_none() {
+        let same = rec(&[("acceptor", "s1", "a1"), ("reviewer", "s1", "a1")]);
+        assert_eq!(self_accepted(&same).len(), 1);
+        let other_agent = rec(&[("acceptor", "s1", "a1"), ("reviewer", "s1", "a2")]);
+        assert!(self_accepted(&other_agent).is_empty());
+        let other_session = rec(&[("acceptor", "s1", "a1"), ("reviewer", "s2", "a1")]);
+        assert!(self_accepted(&other_session).is_empty());
+        // 2 subagents of one session: no agent id.
+        let unknown = rec(&[("acceptor", "s1", "unknown"), ("reviewer", "s1", "unknown")]);
+        assert!(self_accepted(&unknown).is_empty());
+        let both_unknown = rec(&[
+            ("acceptor", "unknown", "unknown"),
+            ("a", "unknown", "unknown"),
+        ]);
+        assert!(self_accepted(&both_unknown).is_empty());
+    }
+
+    #[test]
+    fn the_count_of_acceptors_follows_the_class_and_the_key() {
+        let cfg = |n: u32| {
+            Config::parse(&format!(
+                "spec-dna = \"0.1.0\"\n[change]\npolicy = \"three-class\"\nhigher-risk-acceptors = {n}\n[[roots]]\npath = \"docs\"\n"
+            ))
+            .unwrap()
+        };
+        let one = rec(&[("acceptor", "s1", "unknown")]);
+        let two = rec(&[("acceptor", "s1", "unknown"), ("acceptor", "s2", "unknown")]);
+        assert!(acceptors_missing(&cfg(3), Class::Routine, &one).is_none());
+        assert!(acceptors_missing(&cfg(2), Class::HigherRisk, &one).is_some());
+        assert!(acceptors_missing(&cfg(2), Class::HigherRisk, &two).is_none());
+        assert!(acceptors_missing(&cfg(3), Class::HigherRisk, &two).is_some());
+        assert!(acceptors_missing(&cfg(1), Class::HigherRisk, &one).is_none());
+    }
+
+    #[test]
+    fn a_rejected_result_gives_sd930() {
+        let mut r = rec(&[("acceptor", "s1", "unknown")]);
+        assert!(rejected(&r).is_none());
+        r.result = "rejected".to_string();
+        assert!(rejected(&r).is_some());
+    }
+
+    #[test]
+    fn the_message_of_a_missing_record_names_the_shallow_clone_only_when_it_is_one() {
+        let plain = missing_message("demo", "`x` is absent", false);
+        assert!(plain.contains("accept demo --brief") && !plain.contains("fetch-depth"));
+        let shallow = missing_message("demo", "`x` is absent", true);
+        assert!(shallow.contains("fetch-depth: 0"));
+    }
+}

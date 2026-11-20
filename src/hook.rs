@@ -1537,12 +1537,16 @@ fn status_of(text: &str) -> Option<String> {
 }
 
 /// Handles one `PreToolUse` event of `Bash`. It returns the JSON of a deny
-/// for a call that runs `spec-dna approve`, and for a `git commit` that moves
-/// the status of an artifact of a change to its approval value. Another call
+/// for a call that runs `spec-dna approve`, for a `git commit` that moves
+/// the status of an artifact of a change to its approval value, and for a
+/// `git commit` that adds an entry to `acknowledged-by` of the record
+/// `acceptance.toml` in a change folder. Another call
 /// gives `None`, also when the input is bad or `git` fails. `project` is
 /// `CLAUDE_PROJECT_DIR`. `git` runs `git -C <dir> <args>`. It runs 0 times for
 /// a command with no word `commit` after a word `git`, and then 3 times, and 2
-/// more times for each artifact file that the working tree changes.
+/// more times for each artifact file that the working tree changes (the old
+/// text and the index of an artifact file or a record, and the old text, the
+/// index and the working tree for a record).
 pub fn approvals(
     input: &str,
     opts: &ApprovalsOpts,
@@ -1573,7 +1577,9 @@ pub fn approvals(
     for words in &segments {
         if let Some((i, _)) = git_commit(words)
             && before.iter().copied().chain(&words[..i]).any(|w| {
-                let w = w.to_ascii_lowercase();
+                // The archive folder `.spec-dna/accepted/` is a path, not an
+                // edit of a status: the commit of `finish` adds it.
+                let w = w.to_ascii_lowercase().replace(".spec-dna/accepted", "");
                 w.contains("accepted") || w.contains("approved")
             })
         {
@@ -1698,12 +1704,19 @@ fn moved_to_approval(
         return None;
     }
     let root = PathBuf::from(&top);
+    // The folders of the changes, and the archive folder of the acceptance
+    // records.
     let specs: Vec<String> = intent
         .iter()
+        .map(String::as_str)
+        .chain([crate::acceptance::ARCHIVE_DIR])
         .map(|d| format!(":(top,literal){d}"))
         .collect();
     let old = if amend { "HEAD~1" } else { "HEAD" };
-    let mut args = vec!["diff", "--name-only", "-z", old, "--"];
+    // `--no-renames`: a staged delete of the record and a new archive file
+    // look like a rename, and `--name-only` then prints the new path only, so
+    // the deleted record would not be seen (also with `diff.renames = copies`).
+    let mut args = vec!["diff", "--name-only", "--no-renames", "-z", old, "--"];
     args.extend(specs.iter().map(String::as_str));
     let mut paths: Vec<String> = Vec::new();
     let mut old_tree = Some(old);
@@ -1729,7 +1742,50 @@ fn moved_to_approval(
     paths.extend(split_z(&git(&root, &args)?.stdout));
     paths.sort();
     paths.dedup();
+    // The old text of each record that this commit deletes, and the archive
+    // files. The archive files are checked after the loop, because they
+    // sort before the folders of the changes.
+    let mut deleted: Vec<String> = Vec::new();
+    let mut archives: Vec<String> = Vec::new();
     for path in paths {
+        if crate::acceptance::is_archive_path(&path) {
+            archives.push(path);
+            continue;
+        }
+        // The record of a change: an agent adds no entry to `acknowledged-by`
+        // (design 0.8.0, D3 item 11). The commit of `finish` deletes this file,
+        // so it adds no entry here.
+        if record_slug(&path, intent).is_some() {
+            let entries = |text: Option<String>| -> Vec<String> {
+                text.as_deref()
+                    .and_then(acknowledged_by)
+                    .unwrap_or_default()
+            };
+            let old_text = match old_tree {
+                Some(rev) => git(&root, &["show", &format!("{rev}:{path}")])
+                    .filter(|o| o.ok)
+                    .map(|o| o.stdout),
+                None => None,
+            };
+            let old = entries(old_text.clone());
+            let index = git(&root, &["show", &format!(":{path}")])
+                .filter(|o| o.ok)
+                .map(|o| o.stdout);
+            let tree = read_limited(&root.join(&path));
+            if let (Some(text), true) = (&old_text, index.is_none() || tree.is_none()) {
+                deleted.push(text.clone());
+            }
+            if entries(index)
+                .into_iter()
+                .chain(entries(tree))
+                .any(|e| !old.contains(&e))
+            {
+                return Some(format!(
+                    "{path} adds an entry to `acknowledged-by` in this commit. An agent never acknowledges a record. Remove the entry; only a person acknowledges a record, in a terminal of their own."
+                ));
+            }
+            continue;
+        }
         let Some((slug, artifact, approved)) = artifact_of(&path, intent) else {
             continue;
         };
@@ -1752,7 +1808,48 @@ fn moved_to_approval(
             ));
         }
     }
+    // The archive files (design 0.8.0, D3 item 3). `finish` adds one with the
+    // content of the record that it deletes. A file that is in the old tree
+    // stays as it is, and a new file must be such a copy.
+    for path in archives {
+        let old = match old_tree {
+            Some(rev) => git(&root, &["show", &format!("{rev}:{path}")])
+                .filter(|o| o.ok)
+                .map(|o| o.stdout),
+            None => None,
+        };
+        let index = git(&root, &["show", &format!(":{path}")])
+            .filter(|o| o.ok)
+            .map(|o| o.stdout);
+        let tree = read_limited(&root.join(&path));
+        // `core.autocrlf` makes a file CRLF on disk and LF in HEAD, so the
+        // compare reads `\r\n` as `\n` (as SD503 does, ADR 0019).
+        let new: Vec<String> = index.into_iter().chain(tree).map(|s| lf(&s)).collect();
+        let old = old.map(|s| lf(&s));
+        match old {
+            Some(old) => {
+                // A delete is no edit: a person can revert the commit of `finish`.
+                if new.iter().any(|n| *n != old) {
+                    return Some(format!(
+                        "{path} edits an archive file in this commit. An archive file never changes. Restore the file."
+                    ));
+                }
+            }
+            None => {
+                if new.iter().any(|n| !deleted.iter().any(|d| lf(d) == *n)) {
+                    return Some(format!(
+                        "{path} is an archive file that is not the record that this commit deletes from the change folder. Only `spec-dna finish` writes an archive file, with the content of the record (line ends CRLF and LF count the same). Remove the file, and run `spec-dna finish` again."
+                    ));
+                }
+            }
+        }
+    }
     None
+}
+
+/// The text with each `\r\n` read as `\n`.
+fn lf(text: &str) -> String {
+    text.replace("\r\n", "\n")
 }
 
 /// True if the output of `rev-parse --show-toplevel` is a path.
@@ -1764,6 +1861,28 @@ fn split_z(out: &str) -> impl Iterator<Item = String> + '_ {
     out.split('\0')
         .filter(|p| !p.is_empty())
         .map(str::to_string)
+}
+
+/// The slug of a path `<dir>/<slug>/acceptance.toml`, if `dir` is one of the
+/// folders.
+fn record_slug(path: &str, intent: &[String]) -> Option<String> {
+    intent.iter().find_map(|d| {
+        let rest = path.strip_prefix(d.as_str())?.strip_prefix('/')?;
+        let (slug, file) = rest.split_once('/')?;
+        (file == "acceptance.toml" && !slug.is_empty()).then(|| slug.to_string())
+    })
+}
+
+/// The strings of the top-level array `acknowledged-by` of a record. `None` if
+/// the text is not TOML, so the hook cannot read it, or has no such array.
+fn acknowledged_by(text: &str) -> Option<Vec<String>> {
+    let table: toml::Table = text.parse().ok()?;
+    let list = table.get("acknowledged-by")?.as_array()?;
+    Some(
+        list.iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+    )
 }
 
 /// The slug, the artifact name and the approval value of a path

@@ -145,6 +145,13 @@ codes! {
     TaskTooLarge = "SD924", "task-too-large", Warning, "Split the task. Write each part as its own task with at most `[change] max-task-files` paths in `Files:` and one `Verify:`.";
     CheckboxMissing = "SD925", "checkbox-missing", Warning, "Write the task box at the start of the item: `- [ ]` for an open item, `- [x]` for a resolved item. SD919 and SD922 read the box. To state that the section has no item, write one item that starts with the word `none`, followed by `:`, `.` or the end.";
 ApproverAgent = "SD926", "approver-agent", Warning, "Remove the address from `[change] approvers` in spec-dna.toml, in a pull request of its own (SD503). List the e-mails of the persons that approve.";
+    AcceptanceMissing = "SD927", "acceptance-missing", Warning, "The change needs an acceptance record, and the head has none. Give the brief of `spec-dna accept <slug> --brief`, unchanged, to an agent `acceptor`. The acceptor runs `spec-dna accept <slug>` and writes `acceptance.toml` in the folder of the change. Then run `spec-dna finish <slug>`. In a shallow clone, the commit that added the plan can be absent from the history: fetch the full history (`fetch-depth: 0`).";
+    AcceptanceInvalid = "SD928", "acceptance-invalid", Warning, "The record breaks a rule of a valid record. The message names the rule. Fix the record: write each answer, and replace each `pending` value. Do not edit the code. If the `brief` of an entry is not the brief of its commit, remove the entry, and accept again from a new brief.";
+    AcceptanceStale = "SD929", "acceptance-stale", Warning, "The code that the record lists changed after the acceptance, or the diff has a code path of the scope that the record does not list. Before `finish`: delete the record, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again. After `finish`: revert the commit of `finish`, merge the base, and do the same.";
+    AcceptanceRejected = "SD930", "acceptance-rejected", Warning, "The record says `rejected`. Fix each finding in the code, delete the record, and accept again.";
+    SelfAccepted = "SD931", "self-accepted", Warning, "2 acceptor entries have the same `session` and the same `agent`. An acceptor must be another agent than the builder. Remove the entry, and accept again with an acceptor that has its own session or agent id. The value `unknown` matches no value.";
+    AcceptorMissing = "SD933", "acceptor-missing", Warning, "The record has fewer acceptors than the change needs: 1 for a routine change, `[change] higher-risk-acceptors` for a higher-risk change, and one for each role of `[owners]` that matches a path of the record. Run `spec-dna accept <slug> [--role <name>]` for each missing acceptor.";
+    RecordEdited = "SD935", "record-edited", Warning, "A file of `.spec-dna/accepted/` is an archive of a finished change. Do not edit or delete it. Revert the edit.";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -159,6 +166,16 @@ pub struct Diag {
     /// requirement lint.
     pub severity: Severity,
 }
+
+/// The fix of SD935 when the history is cut: the finding says that the bytes
+/// cannot be compared, not that they differ.
+pub const CUT_HISTORY_FIX: &str = "Fetch the full history (`fetch-depth: 0`) and run `check` again. Do not change the archive file because of this finding: it is not an edit.";
+
+/// The fix of SD929 for a record in the folder of the change, before `finish`.
+pub const STALE_BEFORE_FINISH_FIX: &str = "Delete the record, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
+
+/// The fix of SD929 for an archive file, after `finish`.
+pub const STALE_AFTER_FINISH_FIX: &str = "Revert the commit of `finish`, merge the base, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
 
 impl Diag {
     /// The gate compares diagnostics with the base by this fingerprint (ADR
@@ -179,6 +196,24 @@ impl Diag {
         )
     }
 
+    /// The fix text of the finding. It is the fix of the code, with one case:
+    /// SD935 for a cut history (a shallow clone). The archive file is honest
+    /// there, so the fix must not tell the user to revert it.
+    pub fn fix(&self) -> &'static str {
+        let said = |mark: &str| self.message.contains(mark);
+        match self.code {
+            Code::RecordEdited if said(crate::acceptance::CUT_MARK) => CUT_HISTORY_FIX,
+            // The message names the place: the fix follows it.
+            Code::AcceptanceStale if said(crate::acceptance::STALE_AFTER_FINISH) => {
+                STALE_AFTER_FINISH_FIX
+            }
+            Code::AcceptanceStale if said(crate::acceptance::STALE_BEFORE_FINISH) => {
+                STALE_BEFORE_FINISH_FIX
+            }
+            _ => self.code.fix(),
+        }
+    }
+
     pub fn json(&self, new: bool) -> String {
         Obj::new()
             .str("code", self.code.code())
@@ -190,7 +225,7 @@ impl Diag {
             .num("line", self.line)
             .str("target", &self.target)
             .str("message", &self.message)
-            .str("fix", self.code.fix())
+            .str("fix", self.fix())
             .end()
     }
 }
@@ -222,6 +257,42 @@ mod tests {
                 c.code()
             );
         }
+    }
+
+    #[test]
+    fn the_fix_of_sd935_for_a_cut_history_does_not_say_revert() {
+        let mut d = Diag {
+            path: ".spec-dna/accepted/a.toml".into(),
+            line: 1,
+            code: Code::RecordEdited,
+            doc: String::new(),
+            target: String::new(),
+            message: "the archive file differs".into(),
+            severity: Severity::Error,
+        };
+        assert_eq!(d.fix(), Code::RecordEdited.fix());
+        assert!(d.fix().contains("Revert the edit"));
+        d.message = format!("the history {} and more", crate::acceptance::CUT_MARK);
+        assert!(!d.fix().contains("Revert"));
+        assert!(d.fix().contains("fetch-depth: 0"));
+        assert!(d.json(false).contains("fetch-depth: 0"));
+        // SD929 follows the place that its message names.
+        d.code = Code::AcceptanceStale;
+        d.message = format!(
+            "the record is stale; {}, merge",
+            crate::acceptance::STALE_AFTER_FINISH
+        );
+        assert_eq!(d.fix(), STALE_AFTER_FINISH_FIX);
+        d.message = format!(
+            "the record is stale; {}, run",
+            crate::acceptance::STALE_BEFORE_FINISH
+        );
+        assert_eq!(d.fix(), STALE_BEFORE_FINISH_FIX);
+        d.message = "the record is stale".into();
+        assert_eq!(d.fix(), Code::AcceptanceStale.fix());
+        // Another code keeps the fix of the code.
+        d.code = Code::AcceptanceInvalid;
+        assert_eq!(d.fix(), Code::AcceptanceInvalid.fix());
     }
 
     #[test]

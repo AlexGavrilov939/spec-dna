@@ -123,6 +123,46 @@ pub struct Status {
     pub untracked: Vec<String>,
 }
 
+/// The result of a read in a bound ([`Git::head_file_checked`], [`read_limited`]).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Limited {
+    /// There is no file.
+    Absent,
+    /// The bytes of a regular file of at most the limit.
+    Bytes(Vec<u8>),
+    /// The path is a link, a folder or another file that is not a regular file.
+    NotRegular,
+    /// A regular file of more than the limit.
+    TooBig,
+}
+
+/// Reads a regular file in a bound. It looks at the path with `symlink_metadata`
+/// first, so it never follows a link, and it reads at most `limit` bytes.
+pub fn read_limited(full: &Path, limit: usize) -> Limited {
+    use std::io::Read;
+    let Ok(meta) = std::fs::symlink_metadata(full) else {
+        return Limited::Absent;
+    };
+    if !meta.file_type().is_file() {
+        return Limited::NotRegular;
+    }
+    if meta.len() > limit as u64 {
+        return Limited::TooBig;
+    }
+    let Ok(file) = std::fs::File::open(full) else {
+        return Limited::Absent;
+    };
+    // One byte more than the limit shows a file that grew after the check.
+    let mut bytes = Vec::new();
+    if file.take(limit as u64 + 1).read_to_end(&mut bytes).is_err() {
+        return Limited::Absent;
+    }
+    if bytes.len() > limit {
+        return Limited::TooBig;
+    }
+    Limited::Bytes(bytes)
+}
+
 impl Git {
     pub fn new(root: &Path) -> Git {
         Git {
@@ -900,6 +940,15 @@ impl Git {
     /// gives `None`: its boundary commit shows each file as added, and the
     /// commit is not the true add. The lookup is one `git log`.
     pub fn added_by(&self, path: &str) -> Result<Option<String>, String> {
+        self.added_at("HEAD", path)
+    }
+
+    /// Like `added_by`, for the history of `rev`: the newest commit that is an
+    /// ancestor of `rev` (or `rev` itself) and added the literal path
+    /// (`git log -1 --diff-filter=A <rev> -- <path>`). `None` if no such commit
+    /// exists, or in a shallow clone. A path that a later commit deleted and a
+    /// commit added again gives the newest add.
+    pub fn added_at(&self, rev: &str, path: &str) -> Result<Option<String>, String> {
         if self.is_shallow() {
             return Ok(None);
         }
@@ -912,12 +961,100 @@ impl Git {
             "--no-renames",
             "--diff-filter=A",
             "--format=%H",
-            "HEAD",
+            rev,
             "--",
             &spec,
         ])?;
         let id = String::from_utf8_lossy(&out).trim().to_string();
         Ok((!id.is_empty()).then_some(id))
+    }
+
+    /// The tip of the branch that the lifecycle base `base` starts (design 0.8.0,
+    /// D3 item 8). It is `HEAD`, with one case: on the test merge that a code host
+    /// makes for a pull request, `HEAD` is a merge commit with 2 parents, its
+    /// first parent is the base and its second parent is the tip of the branch.
+    /// The merge commit is no commit of the branch. In every other case (a
+    /// merge of the base into the branch, an octopus merge, a merge whose first
+    /// parent is not the base) the tip is `HEAD`. The result is `HEAD` or a full
+    /// commit id; it is the one source of the range of the branch.
+    pub fn branch_tip(&self, base: &str) -> String {
+        let head = || "HEAD".to_string();
+        let Ok(out) = self.run(&["rev-list", "--no-walk", "--parents", "HEAD"]) else {
+            return head();
+        };
+        let line = String::from_utf8_lossy(&out).trim().to_string();
+        let ids: Vec<&str> = line.split_whitespace().collect();
+        // `HEAD`, then its parents.
+        let [_, first, second] = ids[..] else {
+            return head();
+        };
+        let Ok(base_id) = self.run(&["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")])
+        else {
+            return head();
+        };
+        if String::from_utf8_lossy(&base_id).trim() == first {
+            second.to_string()
+        } else {
+            head()
+        }
+    }
+
+    /// The commits of the branch on the first-parent line, the oldest first:
+    /// the output of `git rev-list --reverse --first-parent <base>..<tip>`, with
+    /// `<tip>` from [`Git::branch_tip`]. On a test merge the range does not hold
+    /// the merge commit. The acceptance record reads its entries in this order.
+    pub fn first_parent_commits(&self, base: &str) -> Result<Vec<String>, String> {
+        let range = format!("{base}..{}", self.branch_tip(base));
+        let out = self.run(&["rev-list", "--reverse", "--first-parent", &range])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// True if a shallow clone cuts the history of the branch ([`Git::first_parent_commits`]): the repository
+    /// is shallow, and the oldest commit of the range has no parent that the
+    /// repository has. A real root commit of a shallow repository gives the same
+    /// answer, which is the stricter one.
+    pub fn range_is_cut(&self, base: &str) -> bool {
+        if !self.is_shallow() {
+            return false;
+        }
+        // A base that the clone does not have gives an error: the history is cut.
+        let Ok(commits) = self.first_parent_commits(base) else {
+            return true;
+        };
+        commits.first().is_some_and(|oldest| {
+            self.run(&["rev-parse", "--verify", "-q", &format!("{oldest}^")])
+                .is_err()
+        })
+    }
+
+    /// The ignore rule of git for a path, as `<source>:<line>:<pattern>`, or
+    /// `None` if no rule ignores it (`git check-ignore -v`). A tracked file is
+    /// never ignored.
+    pub fn ignore_rule(&self, path: &str) -> Option<String> {
+        let out = self
+            .cmd(&["check-ignore", "-v", "--", path])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let rule = text.lines().next()?.split('\t').next()?.trim();
+        (!rule.is_empty()).then(|| rule.to_string())
+    }
+
+    /// The root of the repository.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// True if the head tree is the git index (`check --staged`).
+    pub fn is_staged(&self) -> bool {
+        self.staged
     }
 
     /// Returns the commits (id and committer date) that touched a path, the
@@ -1356,6 +1493,52 @@ impl Git {
             return Ok(got.into_iter().next().flatten());
         }
         Ok(std::fs::read(self.root.join(path)).ok())
+    }
+
+    /// Like [`Git::head_file`], for a file of a size that a caller bounds: it
+    /// gives `None` for an absent file, for anything that is not a regular file
+    /// (a link, a folder, a device), and for a file of more than `limit` bytes.
+    /// [`Git::head_file_checked`] tells the cases apart.
+    pub fn head_file_limited(&self, path: &str, limit: usize) -> Result<Option<Vec<u8>>, String> {
+        Ok(match self.head_file_checked(path, limit)? {
+            Limited::Bytes(b) => Some(b),
+            _ => None,
+        })
+    }
+
+    /// Reads a head file in a bound: the file of the working tree, or the index
+    /// entry for a `staged` `Git`. It reads at most `limit` bytes and never
+    /// follows a link, so a link to a huge file costs nothing. For a `staged`
+    /// `Git`, the mode and the size of the blob come before the read.
+    pub fn head_file_checked(&self, path: &str, limit: usize) -> Result<Limited, String> {
+        if self.staged {
+            let entry = self.run(&["ls-files", "-s", "-z", "--", path])?;
+            if entry.is_empty() {
+                return Ok(Limited::Absent);
+            }
+            // One entry whose path is `path` (a folder lists its files), and a
+            // regular mode.
+            let mut want = format!("\t{path}").into_bytes();
+            want.push(0);
+            let regular = entry.starts_with(b"100644 ") || entry.starts_with(b"100755 ");
+            if !regular || !entry.ends_with(&want) || entry.iter().filter(|b| **b == 0).count() != 1
+            {
+                return Ok(Limited::NotRegular);
+            }
+            let size = self.run(&["cat-file", "-s", &format!(":{path}")])?;
+            let size: usize = String::from_utf8_lossy(&size)
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad size of `{path}` from git"))?;
+            if size > limit {
+                return Ok(Limited::TooBig);
+            }
+            return Ok(match self.head_file(path)? {
+                Some(b) => Limited::Bytes(b),
+                None => Limited::Absent,
+            });
+        }
+        Ok(read_limited(&self.root.join(path), limit))
     }
 
     /// True if the head entry of `path` is a symbolic link: the file of the
@@ -2316,6 +2499,157 @@ mod tests {
         assert_eq!(w.commits[0].author_email, "stranger@example.test");
     }
 
+    /// A base commit on `main`, then a feature branch of 2 commits.
+    /// Returns the base id and the ids of the 2 branch commits.
+    fn feature_branch(t: &Tmp) -> (String, String, String) {
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.git(&["checkout", "-q", "-b", "feature"]);
+        t.write("f1.txt", "1\n");
+        let f1 = t.commit("dev@example.test", "feature 1");
+        t.write("f2.txt", "2\n");
+        let f2 = t.commit("dev@example.test", "feature 2");
+        (base, f1, f2)
+    }
+
+    /// The test merge that a code host makes: a detached `HEAD` on `main`, and
+    /// a merge commit of the branch (the first parent is `main`).
+    fn test_merge(t: &Tmp) -> String {
+        t.git(&["checkout", "-q", "main"]);
+        t.write("other.txt", "main moves on\n");
+        let main = t.commit("base@example.test", "main moves on");
+        t.git(&["checkout", "-q", "--detach", "main"]);
+        t.git(&[
+            "-c",
+            "user.email=ci@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "test merge",
+            "feature",
+        ]);
+        main
+    }
+
+    #[test]
+    fn the_branch_tip_is_head_for_a_plain_branch() {
+        let t = Tmp::new();
+        let (base, f1, f2) = feature_branch(&t);
+        let g = Git::new(&t.dir);
+        assert_eq!(g.branch_tip(&base), "HEAD");
+        assert_eq!(g.first_parent_commits(&base).unwrap(), [f1, f2]);
+    }
+
+    #[test]
+    fn the_branch_tip_of_a_test_merge_is_its_second_parent() {
+        let t = Tmp::new();
+        let (_, f1, f2) = feature_branch(&t);
+        let main = test_merge(&t);
+        let g = Git::new(&t.dir);
+        // The lifecycle base of a test merge is the first parent.
+        assert_eq!(g.branch_tip(&main), f2);
+        // The branch commits, and not the merge commit.
+        assert_eq!(g.first_parent_commits(&main).unwrap(), [f1, f2]);
+    }
+
+    #[test]
+    fn main_merged_into_the_branch_keeps_head_as_the_tip() {
+        let t = Tmp::new();
+        let (base, f1, f2) = feature_branch(&t);
+        t.git(&["checkout", "-q", "main"]);
+        t.write("other.txt", "main moves on\n");
+        let main = t.commit("base@example.test", "main moves on");
+        t.git(&["checkout", "-q", "feature"]);
+        t.git(&[
+            "-c",
+            "user.email=dev@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge main",
+            "main",
+        ]);
+        let g = Git::new(&t.dir);
+        // The first parent of `HEAD` is the branch, not the base: `HEAD` is the tip.
+        assert_eq!(g.branch_tip(&main), "HEAD");
+        let commits = g.first_parent_commits(&main).unwrap();
+        assert_eq!(commits.len(), 3, "{commits:?} {base} {f1} {f2}");
+        assert_eq!(commits[..2], [f1, f2]);
+    }
+
+    #[test]
+    fn an_octopus_merge_and_a_merge_of_another_branch_keep_head_as_the_tip() {
+        let t = Tmp::new();
+        let (base, _, _) = feature_branch(&t);
+        t.git(&["checkout", "-q", "-b", "other", &base]);
+        t.write("o.txt", "o\n");
+        t.commit("dev@example.test", "other");
+        t.git(&["checkout", "-q", "-b", "third", &base]);
+        t.write("t.txt", "t\n");
+        t.commit("dev@example.test", "third");
+        t.git(&["checkout", "-q", "--detach", "main"]);
+        t.git(&[
+            "-c",
+            "user.email=ci@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "octopus",
+            "feature",
+            "other",
+            "third",
+        ]);
+        let g = Git::new(&t.dir);
+        assert_eq!(g.branch_tip(&base), "HEAD");
+        // A 2-parent merge whose first parent is not the base.
+        t.git(&["checkout", "-q", "other"]);
+        t.git(&[
+            "-c",
+            "user.email=dev@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge feature",
+            "third",
+        ]);
+        assert_eq!(g.branch_tip(&base), "HEAD");
+    }
+
+    #[test]
+    fn a_shallow_clone_of_a_test_merge_cuts_the_range_at_depth_1_and_2() {
+        let t = Tmp::new();
+        feature_branch(&t);
+        test_merge(&t);
+        let url = format!("file://{}", t.dir.display());
+        let first = t.git(&["rev-parse", "HEAD^1"]);
+        for depth in ["1", "2"] {
+            let clone = std::env::temp_dir()
+                .join(format!("spec-dna-gitmod-{}-tm{depth}", std::process::id()));
+            let _ = fs::remove_dir_all(&clone);
+            let _guard = Tmp { dir: clone.clone() };
+            let work = Tmp::new();
+            // The clone of a detached `HEAD` is the test merge.
+            git_in(
+                &work.dir,
+                &[
+                    "clone",
+                    "-q",
+                    "--depth",
+                    depth,
+                    &url,
+                    clone.to_str().unwrap(),
+                ],
+            );
+            let g = Git::new(&clone);
+            assert!(g.is_shallow(), "depth {depth}");
+            assert!(g.range_is_cut(&first), "depth {depth}");
+        }
+    }
+
     #[test]
     fn a_shallow_clone_reports_it_and_has_no_merge_base_below_the_boundary() {
         let t = Tmp::new();
@@ -2444,5 +2778,52 @@ mod tests {
         let merge = t.git(&["rev-parse", "HEAD"]);
         let got = Git::new(&t.dir).commit_messages(&[merge]).unwrap();
         assert_eq!(got[0].as_deref(), Some("merge side\n\nHours: 1\n"));
+    }
+
+    /// A bounded read gives a regular file only: no link, no folder, no file over
+    /// the limit, and it never reads the target of a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_bounded_read_gives_a_small_regular_file_and_never_follows_a_link() {
+        use std::os::unix::fs::symlink;
+        let t = Tmp::new();
+        t.write("small.txt", "format = 1\n");
+        t.write("big.txt", &"x".repeat(100));
+        t.write("sub/inner.txt", "inner\n");
+        // A sparse file: its size is big, and it takes no disk.
+        let sparse = t.dir.join("sparse.bin");
+        fs::File::create(&sparse)
+            .unwrap()
+            .set_len(3_000_000_000)
+            .unwrap();
+        symlink("small.txt", t.dir.join("link-small")).unwrap();
+        symlink(&sparse, t.dir.join("link-sparse")).unwrap();
+        symlink("sub", t.dir.join("link-dir")).unwrap();
+        symlink("no-such-file", t.dir.join("link-dangling")).unwrap();
+        for staged in [false, true] {
+            let g = if staged {
+                t.git(&[
+                    "add",
+                    "--",
+                    "small.txt",
+                    "big.txt",
+                    "sub",
+                    "link-small",
+                    "link-dir",
+                ]);
+                t.git(&["add", "--", "link-sparse", "link-dangling"]);
+                Git::new(&t.dir).staged()
+            } else {
+                Git::new(&t.dir)
+            };
+            let read = |p: &str| g.head_file_limited(p, 64).unwrap();
+            assert_eq!(read("small.txt").as_deref(), Some(&b"format = 1\n"[..]));
+            assert_eq!(read("big.txt"), None, "over the limit, staged {staged}");
+            for link in ["link-small", "link-sparse", "link-dir", "link-dangling"] {
+                assert_eq!(read(link), None, "{link}, staged {staged}");
+            }
+            assert_eq!(read("sub"), None, "a folder, staged {staged}");
+            assert_eq!(read("absent.txt"), None);
+        }
     }
 }

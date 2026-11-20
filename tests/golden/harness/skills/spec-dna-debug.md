@@ -18,6 +18,6 @@ Check: The regression test passes, and the earlier tests pass.
 
 If the check fails: Go back to step 2. Make no new fix without a new cause. After 3 failed fixes, stop and ask the person.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:5ca8b4dec0e89e17 -->
+<!-- spec-dna harness v{VERSION} h:bf7e54fc92ace4f3 -->

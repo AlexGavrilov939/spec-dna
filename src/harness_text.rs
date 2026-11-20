@@ -1,5 +1,5 @@
-//! The text of the 11 skills of the workflow pack and of `REVIEW.md` (ADR
-//! 0008, step 4 S3; ADR 0010). The text is static: no value of the
+//! The text of the 12 skills of the workflow pack and of `REVIEW.md` (ADR
+//! 0008, step 4 S3; ADR 0010; ADR 0025 for `accept`). The text is static: no value of the
 //! configuration goes into it, so its hash is the same in each project.
 //!
 //! The layout of this file:
@@ -20,12 +20,33 @@ use crate::adapters::approval_sentence;
 use crate::harness::Skill;
 
 /// The rule of Q5. Each skill body ends with it, in the same words. The line
-/// of `AGENTS.md` and `CONTRIBUTING.md` of the build state the same rule.
+/// of `AGENTS.md` and `CONTRIBUTING.md` of the build state the same rule. The
+/// last sentence is the rule of the acceptance record (design 0.8.0, D3 item
+/// 11): the hook `protect-approvals` denies the commit that breaks it. It is not
+/// in the line of `AGENTS.md`, so the always-on text does not grow.
 pub const APPROVAL_RULE: &str = concat!(
     "Never set `accepted` or `approved`. ",
     approval_sentence!(),
-    " An approval commit changes only the `status` line."
+    " An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`."
 );
+
+/// The rule of the skill `accept`. The first sentence is for the `status` line
+/// of an artifact only, because the acceptor sets `result = "accepted"` in the
+/// record. The other sentences are the same as in `APPROVAL_RULE`.
+pub const ACCEPT_RULE: &str = concat!(
+    "Never set the `status` line of an artifact to `accepted` or `approved`. ",
+    approval_sentence!(),
+    " An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`."
+);
+
+/// The rule that ends the body of `skill`.
+fn rule_of(skill: Skill) -> &'static str {
+    if skill == Skill::Accept {
+        ACCEPT_RULE
+    } else {
+        APPROVAL_RULE
+    }
+}
 
 /// The review policy. `REVIEW.md` and the skill `spec-dna-review` both hold it.
 pub const REVIEW_POLICY: &str = r"## Passes
@@ -109,7 +130,7 @@ Commands:
 
 Artifact: `plan.md` with `Files`, `Order`, `Risks` and `Proof`.
 
-Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Before the approval, count the paths. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Split a task that lists more than `max-task-files` paths. Give each task exact paths and one `Verify:`. Run the check again.";
 
@@ -174,6 +195,26 @@ Check: Each command ends with exit code 0, and the check gives no error. `finish
 
 If the check fails: Find the cause. Fix it, and run all the commands again. Do not say that the work is done.";
 
+const ACCEPT_PARTS: &str = r#"When to use: The tasks of a change are done. The builder starts the acceptor.
+
+Commands:
+
+1. If you built the change, do not accept it. Run `spec-dna accept <slug> --brief`, with `--role <name>` for each role of `[owners]` that the brief names. Give each whole output, unchanged, as the prompt of one agent `acceptor`. Add no word before or after it. For a `higher-risk` change, prefer an acceptor in a new session.
+2. As the acceptor, work from the brief only. If your prompt is not the output of `spec-dna accept <slug> --brief`, run that command and read its output.
+3. Run each command of `Proof`. With `[evidence] reports`, run the tests and `spec-dna evidence stamp` in one command line.
+4. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that it prints as `acceptor` in each of your attempts and findings. Copy the hash of the last line of your brief into `brief` of your entry.
+5. Try to break the change: bad input, limits, errors, each path of `Files`, and each requirement read as a test. Write each try as `[[attempt]]`.
+6. Answer each invariant, and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding if one is wrong.
+7. Read each deviation, and compare it with the diff.
+8. Write each defect as `[[finding]]` with its path. Set each `result`.
+9. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`. Edit no other file.
+
+Artifact: `acceptance.toml` in the folder of the change.
+
+Check: Stage the record with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD928. After the record is committed, `spec-dna next` and `spec-dna finish <slug> --dry-run` show SD929 (stale) and SD930 (rejected): `check` does not. Without `origin/HEAD`, pass the default branch with `--base`.
+
+If the check fails: Fix the record. Never fix the code: write a finding."#;
+
 const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its tasks are done, and its `Proof` passes. Its intent, spec and plan, with their approval commits, are merged in an earlier pull request.
 
 Commands:
@@ -222,8 +263,9 @@ If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the 
 
 /// The `description` of a skill. It is in each request, so it is one short
 /// sentence. It starts with the scope of D5 and then the trigger of D2. The limits of D6 are 160
-/// characters for one description, 1,900 bytes for the listing of the 11
-/// skills and 1,250 bytes for the listing of the 7 skills of D2.
+/// characters for one description, 1,900 bytes for the listing of the 12
+/// skills and 1,250 bytes for the listing of the 8 skills of D2 (the 7 and
+/// `accept`).
 pub fn description(skill: Skill) -> &'static str {
     match skill {
         Skill::Brainstorm => {
@@ -250,6 +292,9 @@ pub fn description(skill: Skill) -> &'static str {
         Skill::Verify => {
             "In a spec-dna project, before you say that the work is done, run the proof and read its output."
         }
+        Skill::Accept => {
+            "In a spec-dna project, when the tasks of a change are done, have an agent that did not build it try to break it and write a record."
+        }
         Skill::Finish => {
             "In a spec-dna project, when a change is ready, run spec-dna finish to apply its delta."
         }
@@ -273,6 +318,7 @@ fn parts(skill: Skill) -> &'static str {
         Skill::Tdd => TDD_PARTS,
         Skill::Review => REVIEW_PARTS,
         Skill::Verify => VERIFY_PARTS,
+        Skill::Accept => ACCEPT_PARTS,
         Skill::Finish => FINISH_PARTS,
         Skill::Debug => DEBUG_PARTS,
         Skill::PostMortem => POST_MORTEM_PARTS,
@@ -282,7 +328,7 @@ fn parts(skill: Skill) -> &'static str {
 /// The body of a skill: the text between the front matter and the marker. It
 /// is the text that `spec-dna skill show` prints.
 pub fn body(skill: Skill) -> String {
-    let mut s = format!("{}\n\n{APPROVAL_RULE}", parts(skill));
+    let mut s = format!("{}\n\n{}", parts(skill), rule_of(skill));
     if skill == Skill::Review {
         s += &format!("\n\n{REVIEW_POLICY}");
     }
@@ -341,15 +387,15 @@ mod tests {
     #[test]
     fn the_listings_keep_the_budgets_of_d6() {
         let all = listing(&Skill::ALL);
-        assert!(all <= 1900, "the 11 skills: {all} bytes");
-        // D6 is a budget for the 7 skills of D2.
+        assert!(all <= 1900, "the 12 skills: {all} bytes");
+        // D6 is a budget for the 8 skills of D2 (the 7 and `accept`).
         let d2: Vec<Skill> = Skill::ALL.into_iter().filter(|s| s.in_d2()).collect();
         let on = listing(&d2);
-        assert!(on <= 1250, "the 7 skills of D2: {on} bytes");
+        assert!(on <= 1250, "the 8 skills of D2: {on} bytes");
     }
 
     #[test]
-    fn the_skills_of_d2_are_the_7_that_the_design_turns_on() {
+    fn the_skills_of_d2_are_the_8_that_the_design_turns_on() {
         let on: Vec<&str> = Skill::ALL
             .iter()
             .filter(|s| s.in_d2())
@@ -363,6 +409,7 @@ mod tests {
                 "clarify",
                 "write-plan",
                 "review",
+                "accept",
                 "finish",
                 "post-mortem"
             ]
@@ -396,7 +443,7 @@ mod tests {
             }
             assert!(b.contains("\nCommands:\n\n1. "), "{s:?}: numbered commands");
             // The rule of Q5 is in each body, once.
-            assert_eq!(b.matches(APPROVAL_RULE).count(), 1, "{s:?}");
+            assert_eq!(b.matches(rule_of(s)).count(), 1, "{s:?}");
         }
     }
 
@@ -520,6 +567,16 @@ mod tests {
         has(
             Skill::Verify,
             &["`Proof`", "`spec-dna check`", "SD915", "SD916"],
+        );
+        has(
+            Skill::Accept,
+            &[
+                "`spec-dna accept <slug> --brief`",
+                "unchanged",
+                "`acceptor`",
+                "SD928",
+                "SD929",
+            ],
         );
         has(Skill::Finish, &["`spec-dna finish <slug>`", "--dry-run"]);
         has(Skill::Debug, &["regression test", "3 failed fixes"]);
@@ -706,7 +763,14 @@ mod tests {
         for s in Skill::ALL {
             let b = body(s);
             assert!(!b.contains("status: accepted") && !b.contains("status: approved"));
-            assert!(b.contains("Never set `accepted` or `approved`."), "{s:?}");
+            // The skill `accept` limits the sentence to the `status` line,
+            // because its acceptor sets `result = "accepted"` in the record.
+            let first = if s == Skill::Accept {
+                "Never set the `status` line of an artifact to `accepted` or `approved`."
+            } else {
+                "Never set `accepted` or `approved`."
+            };
+            assert!(b.contains(first), "{s:?}");
         }
     }
 }

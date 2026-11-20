@@ -18,6 +18,6 @@ Check: The `Verify:` of the task passes. `spec-dna next <slug>` names the next o
 
 If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit; a plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8).
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:5129cd4fc20fdd60 -->
+<!-- spec-dna harness v{VERSION} h:70fedbb8e12077ff -->
