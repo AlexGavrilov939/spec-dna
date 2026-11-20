@@ -219,18 +219,9 @@ pub fn skip_early_plans(
     let first_current = config::Version(0, 7, 0);
     let mut early: Vec<(String, String)> = Vec::new();
     for path in paths {
-        let Some(commit) = git.added_by(path)? else {
-            continue;
-        };
-        let text = git
-            .read_at(&[(commit, config::FILE_NAME.to_string())])?
-            .into_iter()
-            .next()
-            .flatten();
-        let pin = text.and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b)));
-        if let Some(pin) = pin
-            && config::Version::parse(&pin).is_some_and(|v| v < first_current)
-        {
+        // The reader of the pin of an adding commit that the sections of 0.8.0
+        // (`section_is_read`) use too.
+        if let Some(pin) = crate::acceptance::added_before(git, "HEAD", path, first_current)? {
             early.push((path.to_string(), pin));
         }
     }
@@ -312,14 +303,22 @@ pub fn skip_early_sections(
     Ok(())
 }
 
-/// SD914 and SD937 are errors only for a spec that the diff touches (design
-/// 0.6.0, K3, and 0.8.0, D6). For a spec that the diff does not touch, the
-/// severity is a warning. `touched` tells if the diff has a path. This is the one
-/// rule: `check` and `finish` (the result of step 5) both call it, so what `finish`
-/// lets pass, `check` accepts. With no lifecycle base, no spec is touched.
-pub fn lower_untouched(diags: &mut [Diag], touched: &dyn Fn(&str) -> bool) {
+/// The codes that `check` reads as errors only for a spec that the diff touches
+/// (design 0.6.0, K3, and 0.8.0, D6): SD914 and SD937.
+pub const TOUCHED_CODES: [Code; 2] = [Code::DeltaInvalid, Code::InvariantStale];
+
+/// The codes that `finish` reads so for the result of step 5: SD937 only. SD914
+/// in the result of `finish` is an error for each spec, as in 0.7.1.
+pub const FINISH_TOUCHED_CODES: [Code; 1] = [Code::InvariantStale];
+
+/// Lowers the severity of the diagnostics of `codes` to a warning for a spec that
+/// the diff does not touch. `touched` tells if the diff has a path. This is the
+/// one rule, with the list of codes as a parameter: `check` uses
+/// [`TOUCHED_CODES`], and `finish` (the result of step 5) uses
+/// [`FINISH_TOUCHED_CODES`]. With no lifecycle base, no spec is touched.
+pub fn lower_untouched(diags: &mut [Diag], codes: &[Code], touched: &dyn Fn(&str) -> bool) {
     for d in diags {
-        if matches!(d.code, Code::DeltaInvalid | Code::InvariantStale)
+        if codes.contains(&d.code)
             && d.severity == crate::diag::Severity::Error
             && !touched(&d.path)
         {

@@ -99,6 +99,14 @@ pub struct Plan {
     pub deviations: Vec<Deviation>,
 }
 
+/// True if `finish --json` has the key `deviations` (design 0.8.0, D7): the plan
+/// has at least one deviation, or the pin of `spec-dna.toml` is 0.8.0 or later. A
+/// project of 0.7.1 with no deviation sees the output of 0.7.1.
+pub fn emits_deviations(pin: &str, count: usize) -> bool {
+    count > 0
+        || crate::config::Version::parse(pin).is_some_and(|v| v >= crate::config::Version(0, 8, 0))
+}
+
 /// One deviation as step 5.3 reports it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Deviation {
@@ -1801,8 +1809,9 @@ fn no_new_errors(
     created: &HashSet<String>,
 ) -> Result<(), Failure> {
     type Key = (Code, String, String);
-    // SD914 and SD937 are errors only for a spec that the diff touches, as `check`
-    // reads them ([`lifecycle::lower_untouched`]). The result of `finish` deletes
+    // SD937 is an error only for a spec that the diff touches, as `check` reads it
+    // ([`lifecycle::lower_untouched`]). SD914 stays an error for each spec, as in
+    // 0.7.1. The result of `finish` deletes
     // the folder of this change, so a stale pin that it shows is the pin of another
     // open spec. If this diff touches that spec, `check` of the pull request gives
     // an error, so `finish` stops. If not, it is a warning, and the author of that
@@ -1810,7 +1819,7 @@ fn no_new_errors(
     let touched = |p: &str| cx.diff.is_some_and(|d| d.files.iter().any(|(f, _)| f == p));
     let errors = |c: &Corpus| -> Vec<Diag> {
         let mut all = check::diagnose_against(cx.config, c, base);
-        lifecycle::lower_untouched(&mut all, &touched);
+        lifecycle::lower_untouched(&mut all, &lifecycle::FINISH_TOUCHED_CODES, &touched);
         all.into_iter()
             .filter(|d| d.severity == Severity::Error)
             .collect()
@@ -1967,6 +1976,15 @@ fn list<'a>(items: impl Iterator<Item = &'a str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_key_deviations_is_for_a_deviation_or_a_pin_of_0_8_0() {
+        assert!(!emits_deviations("0.7.1", 0));
+        assert!(emits_deviations("0.7.1", 1));
+        assert!(emits_deviations("0.8.0", 0));
+        assert!(emits_deviations("0.9.2", 0));
+        assert!(!emits_deviations("not a version", 0));
+    }
 
     fn config(extra: &str) -> Config {
         Config::parse(&format!(

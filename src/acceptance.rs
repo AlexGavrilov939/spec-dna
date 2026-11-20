@@ -255,38 +255,54 @@ pub fn pin_when_added(
 /// section is plain text (design 0.8.0, D6 and D7). This is the one rule for
 /// `check`, `finish`, `next`, the skeleton and the brief.
 ///
-/// - With a base (`base_rev`), a file that the tree of the base lacks is a file
-///   of the branch, and it gets the rules of 0.8.0 (Q43). For a file that the
-///   base has, the commit that added it is the newest one in the history of the
-///   base.
-/// - With no base, the commit is the newest one in the history of `HEAD`, as
-///   `skip_early_plans` reads it. No base is needed.
+/// - The pin is the one of the commit that added the file. For a file that the
+///   tree of the base has, it is the newest such commit in the history of the
+///   base. For any other file, a file of the branch or any file with no base, it
+///   is the newest such commit in the history of `HEAD`. So a plan that the branch
+///   adds under a pin of 0.7.1 is plain text too: the owner rule is that a 0.7.1
+///   project gets no new error without a key. (The acceptance for a new plan is the
+///   exception of Q43, and it has its own rule, [`needs_record`].)
 /// - A file with no commit found (a shallow clone, a file that is not committed)
 ///   and a commit with no pin get the rules of 0.8.0, the stricter result. A
 ///   repository with no commit has none to read.
+///
+/// The reader of the pin is [`added_before`], the one that `skip_early_plans`
+/// (SD923 and SD924, the version 0.7.0) calls too, so the 2 rules read one commit.
 pub fn section_is_read(git: &Git, base_rev: Option<&str>, path: &str) -> Result<bool, String> {
     if git.commit("HEAD").is_none() {
         return Ok(true);
     }
     let rev = match base_rev {
-        Some(rev) => {
-            let in_base = git
+        Some(rev)
+            if git
                 .read_at(&[(rev.to_string(), path.to_string())])?
                 .into_iter()
                 .next()
                 .flatten()
-                .is_some();
-            if !in_base {
-                return Ok(true);
-            }
+                .is_some() =>
+        {
             rev
         }
-        None => "HEAD",
+        _ => "HEAD",
     };
-    Ok(!pin_when_added(git, rev, path)?
+    Ok(added_before(git, rev, path, FIRST_VERSION)?.is_none())
+}
+
+/// The pin of `spec-dna.toml` in the newest commit of the history of `rev` that
+/// added `path`, if that pin is a version before `first`. `None` if the pin is
+/// `first` or later, if the commit has no pin, or if no commit is found (a shallow
+/// clone, a file that is not committed): each of these is the stricter result. The
+/// one reader of the pin of an adding commit for `section_is_read` (the version
+/// 0.8.0) and `skip_early_plans` (the version 0.7.0).
+pub fn added_before(
+    git: &Git,
+    rev: &str,
+    path: &str,
+    first: Version,
+) -> Result<Option<String>, String> {
+    Ok(pin_when_added(git, rev, path)?
         .flatten()
-        .as_deref()
-        .is_some_and(is_before_0_8))
+        .filter(|p| Version::parse(p).is_some_and(|v| v < first)))
 }
 
 /// The message of SD927 for a missing record. `where_` names the place that

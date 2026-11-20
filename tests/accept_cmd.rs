@@ -1024,6 +1024,21 @@ fn s5_config(keys: &str) -> String {
     )
 }
 
+/// Commits the plan under the pin 0.8.0, then sets the pin of the binary in a
+/// commit of its own. The sections `Invariants` and `Deviations` are read as 0.8.0
+/// reads them only in a file whose adding commit has a pin of 0.8.0 or later.
+fn commit_plan_at_0_8_0(r: &Repo) {
+    let t = r.read("spec-dna.toml");
+    let (_, rest) = t.split_once('\n').unwrap();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{rest}"));
+    r.commit("plan");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{rest}"),
+    );
+    r.commit("move the pin");
+}
+
 /// A pull request whose spec has the section `Invariants` with `items` and whose
 /// plan has the section `Deviations` with `devs` (a section with no text is not
 /// written).
@@ -1061,7 +1076,7 @@ fn s5_built(keys: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
     r.write(INTENT, INTENT_TEXT);
     r.write(SPEC, &spec);
     r.write(PLAN, &plan);
-    r.commit("plan");
+    commit_plan_at_0_8_0(&r);
     r.write(CODE, CODE_NEW);
     r.write(TEST, TEST_NEW);
     r.commit("code");
@@ -1272,4 +1287,60 @@ fn a_record_over_the_size_limit_names_the_largest_part_and_its_fix() {
     let r = s5_built("", &|_| String::new(), "- d1 (plan): fine");
     let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
     assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn the_message_of_a_record_over_the_limit_names_the_part_of_the_text_that_would_be_written() {
+    // The paths: the message names the largest part with its size.
+    let r = built_with(&config("standard", "shared-paths = [\"gen/*.txt\"]\n"));
+    for n in 0..500 {
+        r.write(&format!("gen/a_module_with_a_long_name_{n:04}.txt"), "x\n");
+    }
+    r.commit("many files");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is paths (") && err.contains("too many paths"),
+        "{err}"
+    );
+    // The other tables: the record holds a long attempt, and a second acceptor
+    // would push it over the limit.
+    let r = built();
+    write_record(&r);
+    let t = r.read(RECORD);
+    r.write(
+        RECORD,
+        &format!(
+            "{t}\n[[attempt]]\nacceptor = 1\ntext = \"{}\"\noutcome = \"held\"\n",
+            "a".repeat(16_384 - t.len() - 70)
+        ),
+    );
+    assert!(r.read(RECORD).len() <= 16_384);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2", "--role", "second"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is the other tables (")
+            && err.contains("Shorten the text of the attempts"),
+        "{err}"
+    );
+    // The answers of the invariants: a long reason that an acceptor wrote counts
+    // under the invariants, not under the other tables.
+    let r = s5_built("invariants = true\n", &pin_item, "");
+    write_record(&r);
+    let base_len = r.read(RECORD).len();
+    let t = r.read(RECORD).replace(
+        "answer = \"pending\"",
+        &format!(
+            "answer = \"not-affected\"\nreason = \"{}\"",
+            "b".repeat(16_384 - base_len - 60)
+        ),
+    );
+    assert!(t.len() <= 16_384, "{}", t.len());
+    r.write(RECORD, &t);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2", "--role", "second"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is invariants (") && err.contains("shorten the answers"),
+        "{err}"
+    );
 }

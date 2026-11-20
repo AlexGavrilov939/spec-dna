@@ -1443,6 +1443,23 @@ fn pin(r: &Repo, key: &str) -> String {
     )
 }
 
+/// Sets the pin of `spec-dna.toml`, the first line.
+fn set_pin(r: &Repo, pin: &str) {
+    let t = r.read("spec-dna.toml");
+    let (_, rest) = t.split_once('\n').unwrap();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{rest}"));
+}
+
+/// Commits the work of the branch under the pin 0.8.0, then sets the pin of the
+/// binary in a commit of its own. A file that this commit adds is read as 0.8.0
+/// reads it: its adding commit has the pin 0.8.0.
+fn commit_at_0_8_0(r: &Repo, msg: &str) {
+    set_pin(r, "0.8.0");
+    r.commit(msg);
+    set_pin(r, VERSION);
+    r.commit("move the pin");
+}
+
 /// A pull request: the base on `main`, then the branch `feature`. The base commit
 /// pins 0.8.0, as a project that adopted 0.8.0 has it, and a later commit moves
 /// the pin to the version of the binary.
@@ -1706,7 +1723,7 @@ fn a_spec_that_a_commit_added_at_pin_0_7_1_keeps_its_free_text_and_a_new_spec_do
     let r = inv_repo("standard", "invariants = true\n");
     on_branch(&r);
     inv_spec(&r, "draft", INV_DELTA, free);
-    r.commit("spec");
+    commit_at_0_8_0(&r, "spec");
     let (_, out, _) = r.run(&["check", "--base", "main"]);
     assert_eq!(codes_of(&out, "SD936"), 2, "{out}");
 }
@@ -1733,7 +1750,7 @@ fn the_invariant_codes_give_the_same_result_on_the_test_merge_and_after_main_mer
         INV_DELTA,
         &format!("- {}", pin(&r, "valve-closed")),
     );
-    r.commit("an honest spec");
+    commit_at_0_8_0(&r, "an honest spec");
     in_test_merge(&r);
     let (code, out, _) = r.run(&["check", "--base", "main"]);
     assert_eq!(code, 0, "{out}");
@@ -1897,7 +1914,7 @@ fn a_plan_that_a_commit_added_at_pin_0_7_1_keeps_a_section_deviations_of_plain_t
     on_branch(&r);
     inv_spec(&r, "draft", INV_DELTA, "- none");
     dev_plan(&r, "- It went well.");
-    r.commit("plan");
+    commit_at_0_8_0(&r, "plan");
     let (_, out, _) = r.run(&["check", "--base", "main"]);
     assert_eq!(codes_of(&out, "SD939"), 1, "{out}");
 }
@@ -1908,7 +1925,7 @@ fn the_deviation_codes_give_the_same_result_on_the_test_merge() {
     on_branch(&r);
     inv_spec(&r, "draft", INV_DELTA, "- none");
     dev_plan(&r, "- d1 (plan): An honest note.");
-    r.commit("plan");
+    commit_at_0_8_0(&r, "plan");
     in_test_merge(&r);
     let (_, out, _) = r.run(&["check", "--base", "main"]);
     assert_eq!(
@@ -1964,7 +1981,7 @@ fn each_defect_of_the_new_codes_gives_the_same_code_in_the_3_states_of_a_pull_re
         let r = inv_repo("standard", "invariants = true\n");
         on_branch(&r);
         setup(&r);
-        r.commit("a defect");
+        commit_at_0_8_0(&r, "a defect");
         for (state, out) in three_states(&r).iter().enumerate() {
             assert_eq!(codes_of(out, code), 1, "{code} in state {state}: {out}");
         }
@@ -2080,4 +2097,117 @@ fn a_symlink_for_a_spec_or_a_plan_is_a_finding_not_an_error_exit() {
         let (code, out, err) = r.run(args);
         assert!(code == 0 || code == 1, "{args:?}: exit {code}: {out}{err}");
     }
+}
+
+/// A pull request that adds the change `dose` in its first commit under the pin
+/// `first`. If `later` is set, a second commit sets that pin. The plan is
+/// `approved`, has one task with no `Files:` and no `Verify:` (SD923, which 0.7.1
+/// skips for a plan of a pin before 0.7.0), and a section `Deviations` of free
+/// text (SD939, which 0.8.0 skips for a plan of a pin before 0.8.0).
+fn branch_added(first: &str, later: Option<&str>) -> Repo {
+    let cfg = inv_config("standard", "");
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("README.md", "# Project\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("spec-dna.toml", &format!("spec-dna = \"{first}\"\n{cfg}"));
+    inv_spec(&r, "draft", INV_DELTA, "- none");
+    r.write(
+        "docs/intent/dose/plan.md",
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n\n## Order\n\n- [ ] t1: Do it.\n\n## Risks\n\n- None.\n\n## Proof\n\nThe test.\n\n## Deviations\n\n- we moved a file\n",
+    );
+    r.commit("the change");
+    if let Some(p) = later {
+        r.write("spec-dna.toml", &format!("spec-dna = \"{p}\"\n{cfg}"));
+        r.write("README.md", "# Project, new pin\n");
+        r.commit("move the pin");
+    }
+    r
+}
+
+#[test]
+fn a_file_that_the_branch_adds_reads_the_pin_of_its_adding_commit_for_both_pin_rules() {
+    // (pin of the adding commit, later pin, SD923 findings, SD939 findings).
+    // SD923 skips a plan before 0.7.0, and SD939 skips a plan before 0.8.0. Both
+    // read the pin of the adding commit, with a base and with none.
+    let cases = [
+        ("0.6.9", None, 0, 0),
+        ("0.7.1", None, 1, 0),
+        ("0.8.0", Some(VERSION), 1, 1),
+        ("0.6.9", Some(VERSION), 0, 0),
+        ("0.7.5", Some(VERSION), 1, 0),
+    ];
+    for (first, later, sd923, sd939) in cases {
+        let r = branch_added(first, later);
+        for args in [
+            &["check", "--all", "--base", "main"][..],
+            &["check", "--all"][..],
+        ] {
+            let out = r.run(args).1;
+            assert_eq!(
+                codes_of(&out, "SD923"),
+                sd923,
+                "{first} {later:?} {args:?}: {out}"
+            );
+            assert_eq!(
+                codes_of(&out, "SD939"),
+                sd939,
+                "{first} {later:?} {args:?}: {out}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_plan_at_pin_0_7_1_and_a_spec_at_pin_0_8_0_in_one_change_each_read_their_own_pin() {
+    let cfg = inv_config("standard", "invariants = true\n");
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write("README.md", "# Project\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    // The plan comes under 0.7.1, the spec under 0.8.0.
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.7.1\"\n{cfg}"));
+    dev_plan(&r, "- we moved a file");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Change\n\n## Intent\n\nText.\n",
+    );
+    r.commit("the plan");
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{cfg}"));
+    inv_spec(&r, "draft", INV_DELTA, "- The valve stays closed.");
+    r.commit("the spec");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.commit("move the pin");
+    for args in [
+        &["check", "--all", "--base", "main"][..],
+        &["check", "--all"][..],
+    ] {
+        let out = r.run(args).1;
+        assert_eq!(codes_of(&out, "SD939"), 0, "{args:?}: {out}");
+        assert_eq!(codes_of(&out, "SD936"), 1, "{args:?}: {out}");
+    }
+}
+
+#[test]
+fn a_shallow_clone_reads_the_sections_as_0_8_0_does() {
+    // No adding commit is known in a shallow clone: the stricter result holds.
+    let r = branch_added("0.7.1", None);
+    let dst = r.dir.with_extension("shallow");
+    let _ = std::fs::remove_dir_all(&dst);
+    shallow_clone(&r.dir, &dst, 1);
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_spec-dna"))
+        .args(["check", "--all"])
+        .current_dir(&dst)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let _ = std::fs::remove_dir_all(&dst);
+    assert_eq!(codes_of(&text, "SD939"), 1, "{text}");
 }

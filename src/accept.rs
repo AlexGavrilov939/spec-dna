@@ -362,6 +362,16 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         }
         let n = r.acceptors.len() + 1;
         let text = record::add_acceptor(&old, role, &session);
+        // The reader of a record refuses a text over the limit, so the size check
+        // comes before the check of the new entry.
+        if text.len() > record::MAX_BYTES {
+            return Err(Fatal::Refused(oversize_message(
+                &record_path,
+                text.len(),
+                record::text_parts(&text),
+                (paths.len(), decl.invariants.len(), decl.deviations.len()),
+            )));
+        }
         // The new text must read, and the new entry must be the last acceptor,
         // with the printed number as its position. The entries before it stay.
         // A text that `add_acceptor` cannot place (a line of a multi-line value
@@ -398,17 +408,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         return Err(Fatal::Refused(oversize_message(
             &record_path,
             text.len(),
-            &record::skeleton_parts(&record::Skeleton {
-                slug,
-                scope: &scope,
-                paths: &paths,
-                tree: &tree_hash,
-                role,
-                session: &session,
-                proofs: &proofs,
-                invariants: &decl.invariants,
-                deviations: &decl.deviations,
-            }),
+            record::text_parts(&text),
             (paths.len(), decl.invariants.len(), decl.deviations.len()),
         )));
     }
@@ -435,48 +435,47 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     Ok(0)
 }
 
-/// The refusal for a record over [`record::MAX_BYTES`]. It names the largest of
-/// the parts that grow with the change (`paths`, the invariants and the
-/// deviations) with its size, and the fix for that part. If no such part is the
-/// largest, the entries of the acceptors and the proof entries are. `counts` is
-/// the number of paths, of invariants and of deviations.
+/// The refusal for a record over [`record::MAX_BYTES`]. It names the largest part
+/// of the text that `accept` would write: the line `paths`, the invariants, the
+/// deviations, or all other tables, with its size, and the fix for that part.
+/// `counts` is the number of paths, of invariants and of deviations.
 fn oversize_message(
     record_path: &str,
     bytes: usize,
-    parts: &[(&'static str, usize); 3],
+    parts: record::TextParts,
     counts: (usize, usize, usize),
 ) -> String {
     let head = format!(
         "the record `{record_path}` would have {bytes} bytes, and a record has at most {} bytes",
         record::MAX_BYTES
     );
-    let grown: usize = parts.iter().map(|p| p.1).sum();
-    let (name, size) = parts
-        .iter()
-        .copied()
-        .max_by_key(|p| p.1)
-        .unwrap_or(("paths", 0));
-    if bytes.saturating_sub(grown) > size {
-        return format!(
-            "{head}; the largest part is the other tables of the record ({} bytes: the entries of the acceptors, the attempts and the proof entries). Split the change into smaller changes, each with its own folder, and accept each one",
-            bytes - grown
-        );
-    }
+    let all = [
+        ("paths", parts.paths),
+        ("invariants", parts.invariants),
+        ("deviations", parts.deviations),
+        ("other", parts.other),
+    ];
+    let (name, size) = all.into_iter().max_by_key(|p| p.1).unwrap_or(("paths", 0));
     let fix = match name {
         "invariants" => format!(
-            "the cause is too many invariants: `Invariants` of the spec lists {} items. List fewer rules, or split the change into smaller changes, each with its own folder",
+            "the cause is the invariants: `Invariants` of the spec lists {} items, and the answers are in the entries. List fewer rules, shorten the answers, or split the change into smaller changes, each with its own folder",
             counts.1
         ),
         "deviations" => format!(
             "the cause is the deviations: `Deviations` of the plan lists {} items. Shorten the text of each item, list fewer items, or split the change into smaller changes, each with its own folder",
             counts.2
         ),
+        "other" => "the cause is the other tables: the entries of the acceptors, the attempts, the findings and the proof entries. Shorten the text of the attempts and the findings, or split the change into smaller changes, each with its own folder".to_string(),
         _ => format!(
             "the cause is too many paths: `paths` lists {} code paths. Split the change into smaller changes, each with its own folder, and accept each one",
             counts.0
         ),
     };
-    format!("{head}; the largest part is {name} ({size} bytes); {fix}")
+    let named = match name {
+        "other" => "the other tables".to_string(),
+        n => n.to_string(),
+    };
+    format!("{head}; the largest part is {named} ({size} bytes); {fix}")
 }
 
 /// The words that tell the user how to write a `Files` pattern that the scope of

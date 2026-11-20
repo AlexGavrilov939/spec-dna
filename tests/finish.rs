@@ -2000,6 +2000,21 @@ fn s5_built(
     s5_built_with(profile, keys, rules, invariants, deviations, false)
 }
 
+/// Commits the plan under the pin 0.8.0, then sets the pin of the binary in a
+/// commit of its own. The sections `Invariants` and `Deviations` are read as 0.8.0
+/// reads them only in a file whose adding commit has a pin of 0.8.0 or later.
+fn commit_plan_at_0_8_0(r: &Repo) {
+    let t = r.read("spec-dna.toml");
+    let (_, rest) = t.split_once('\n').unwrap();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{rest}"));
+    r.commit("plan");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{rest}"),
+    );
+    r.commit("move the pin");
+}
+
 /// Like `s5_built`. With `other_in_base`, the base commit also holds an open
 /// change `other` whose spec pins `rules/safety#valve-closed`. The base commit
 /// pins 0.8.0 and a later commit sets the pin of the binary, so the spec of
@@ -2059,7 +2074,7 @@ fn s5_built_with(
             "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- [x] t1: Close the valve. Files: `src/valves.py`. Verify: the test passes.\n\n## Risks\n\n- A slow sensor.\n\n## Proof\n\nThe test covers `requirements/valves#sensor-timeout`.\n{dev_section}"
         ),
     );
-    r.commit("plan");
+    commit_plan_at_0_8_0(&r);
     r.write("src/valves.py", S5_CODE_NEW);
     r.write("tests/test_valves.py", S5_TEST_NEW);
     r.commit("code");
@@ -2332,12 +2347,13 @@ fn finish_json_has_the_list_deviations_with_id_kind_text_and_verdict() {
         out.contains("\"deviations\":[{\"id\":\"d1\",\"kind\":\"plan\",\"text\":\"The timeout check moved to `src/sensors.rs`.\",\"verdict\":\"accepted\"}]"),
         "{out}"
     );
-    // No deviation: an empty list, and no line `Deviations:`.
+    // No deviation, and a pin before 0.8.0: no key `deviations`, as in 0.7.1, and
+    // no line `Deviations:`.
     let r = s5_built("standard", "", "", |_| String::new(), "");
     s5_record(&r, |t| t);
     let (code, out, err) = s5_finish(&r, &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("\"deviations\":[]"), "{out}");
+    assert!(!out.contains("deviations"), "{out}");
     let (code, out, err) = s5_finish(&r, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!out.contains("Deviations:"), "{out}");
@@ -2348,7 +2364,7 @@ fn in_lite_with_no_record_finish_prints_no_deviations_and_exits_0() {
     let r = s5_built("lite", "", "", |_| String::new(), S5_DEV_PLAN);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("\"deviations\":[]"), "{out}");
+    assert!(!out.contains("deviations"), "{out}");
 }
 
 #[test]
@@ -2940,4 +2956,37 @@ fn a_link_for_a_spec_or_a_plan_gives_no_error_exit_in_the_commands_that_read_the
             "{args:?}: exit {code}: {out}{err}"
         );
     }
+}
+
+#[test]
+fn finish_still_stops_on_the_sd914_of_another_untouched_spec_as_in_0_7_1() {
+    // `dose` and `other` are in the base, and both have a `CHANGE` line for the
+    // requirement `close`. After step 4 the hash of `other` is stale. 0.7.1 stops
+    // `finish dose` on that SD914 (an error for each spec in the result). The
+    // lowering of the severity for an untouched spec is for SD937 only.
+    let h = hash(&Fx::default().start(), "requirements/valves#close");
+    let other_spec = format!(
+        "---\nstatus: approved\n---\n# Other\n\n## Delta\n\n- CHANGE requirements/valves#close@{h}: The controller SHALL close the valve in 3 seconds.\n"
+    );
+    let r = Fx {
+        delta: &[CHANGE_CLOSE],
+        extra: &[
+            (
+                "docs/intent/other/intent.md",
+                "---\nstatus: accepted\nclass: higher-risk\n---\n# Other\n\n## Intent\n\nAnother change.\n",
+            ),
+            ("docs/intent/other/spec.md", &other_spec),
+        ],
+        ..Fx::default()
+    }
+    .start();
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    let (code, out, err) = fin(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("\"step\":5")
+            && out.contains("\"code\":\"SD914\"")
+            && out.contains("docs/intent/other/spec.md"),
+        "{out}"
+    );
 }

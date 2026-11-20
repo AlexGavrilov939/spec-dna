@@ -465,6 +465,21 @@ fn next_skips_the_checks_that_finish_skips() {
     assert_ne!(code, 0);
 }
 
+/// Commits the plan under the pin 0.8.0, then sets the pin of the binary in a
+/// commit of its own. The sections `Invariants` and `Deviations` are read as 0.8.0
+/// reads them only in a file whose adding commit has a pin of 0.8.0 or later.
+fn commit_plan_at_0_8_0(r: &Repo) {
+    let t = r.read("spec-dna.toml");
+    let (_, rest) = t.split_once('\n').unwrap();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{rest}"));
+    r.commit("plan");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{rest}"),
+    );
+    r.commit("move the pin");
+}
+
 /// The item runs the checks of the sections too (design 0.8.0, D6 and D7): a
 /// deviation that the record does not copy leaves it open, with the message of
 /// SD938, and a bad item of the plan leaves it open with SD939.
@@ -478,7 +493,7 @@ fn a_deviation_that_the_record_lacks_and_a_bad_deviation_leave_the_item_open() {
         r.git(&["checkout", "-q", "-b", "feature"]);
         change_files(&r);
         r.write(PLAN, &format!("{PLAN_TEXT}\n## Deviations\n\n{devs}\n"));
-        r.commit("plan");
+        commit_plan_at_0_8_0(&r);
         add_code(&r);
         r
     };

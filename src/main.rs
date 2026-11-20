@@ -1591,7 +1591,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .iter()
             .flat_map(|d| d.files.iter().map(|(p, _)| p.as_str()))
             .collect();
-        lifecycle::lower_untouched(&mut outcome.head, &|p| touched.contains(&p));
+        lifecycle::lower_untouched(&mut outcome.head, &lifecycle::TOUCHED_CODES, &|p| {
+            touched.contains(&p)
+        });
     }
     // SD912 is new when the head has more started changes than the lifecycle
     // base has (K5).
@@ -4020,12 +4022,12 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if !a.dry_run {
         finish::write_plan(&repo.root, &repo.git, &plan).map_err(|e| Fatal::Io(e.message))?;
     }
-    report_finish(slug, &folder, a, &plan);
+    report_finish(slug, &folder, a, &plan, &cfg.pin);
     Ok(0)
 }
 
 /// The report of a plan that no step stopped, written or not (`--dry-run`).
-fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
+fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &str) {
     let diff_of = |w: &finish::Write| init::unified_diff(&w.path, w.old.as_deref(), &w.new, false);
     if a.json {
         let writes = plan.writes.iter().map(|w| {
@@ -4042,27 +4044,30 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
                 .str("diff", "")
                 .end()
         });
+        let mut o = Obj::new()
+            .str("slug", slug)
+            .bool("ok", true)
+            .bool("dry_run", a.dry_run)
+            .num("step", 6)
+            .raw("diagnostics", "[]")
+            .raw("files", &json::array(writes.chain(removes)));
+        // A project of 0.7.1 with no deviation sees the output of 0.7.1.
+        if finish::emits_deviations(pin, plan.deviations.len()) {
+            o = o.raw(
+                "deviations",
+                &json::array(plan.deviations.iter().map(|d| {
+                    Obj::new()
+                        .str("id", &d.id)
+                        .str("kind", &d.kind)
+                        .str("text", &d.text)
+                        .str("verdict", &d.verdict)
+                        .end()
+                })),
+            );
+        }
         println!(
             "{}",
-            Obj::new()
-                .str("slug", slug)
-                .bool("ok", true)
-                .bool("dry_run", a.dry_run)
-                .num("step", 6)
-                .raw("diagnostics", "[]")
-                .raw("files", &json::array(writes.chain(removes)))
-                .raw(
-                    "deviations",
-                    &json::array(plan.deviations.iter().map(|d| {
-                        Obj::new()
-                            .str("id", &d.id)
-                            .str("kind", &d.kind)
-                            .str("text", &d.text)
-                            .str("verdict", &d.verdict)
-                            .end()
-                    })),
-                )
-                .raw("hours", &plan.hours.json())
+            o.raw("hours", &plan.hours.json())
                 .raw("actual", &plan.hours.actual_json())
                 .end()
         );
