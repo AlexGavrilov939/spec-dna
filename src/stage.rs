@@ -391,9 +391,24 @@ fn accept_item(
     let Some((code, messages)) =
         acceptance::first_stop(cfg, ch.class, rec.as_ref(), problems, stale)
     else {
+        // With each check on, the record is valid, fresh and accepted. With a check
+        // off, the text says only that the checks that are on passed.
+        let all_on = [
+            Code::AcceptanceInvalid,
+            Code::AcceptanceStale,
+            Code::AcceptanceRejected,
+            Code::SelfAccepted,
+            Code::AcceptorMissing,
+        ]
+        .into_iter()
+        .all(on);
         return Ok(AcceptItem {
             done: true,
-            text: format!("the record `{path}` is valid, fresh and accepted"),
+            text: if all_on && rec.is_some() {
+                format!("the record `{path}` is valid, fresh and accepted")
+            } else {
+                format!("the record `{path}` passes the checks that are on")
+            },
         });
     };
     Ok(open(match code {

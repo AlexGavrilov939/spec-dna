@@ -1215,6 +1215,92 @@ fn a_shallow_clone_that_cuts_the_history_gives_sd928_that_names_fetch_depth() {
     assert!(line.contains("fetch-depth: 0"), "{line}");
 }
 
+/// A clone of `src` with `depth` commits, and `origin/HEAD` on the first parent
+/// of the test merge (the base that CI uses). `src` has the test merge on `HEAD`.
+fn shallow_test_merge(src: &Repo, depth: usize) -> Repo {
+    let dst = Repo::empty();
+    shallow_clone(&src.dir, &dst.dir, depth);
+    let base = src.git_out(&["rev-parse", "HEAD^1"]).trim().to_string();
+    dst.git(&[
+        "fetch",
+        "-q",
+        "--depth",
+        &depth.to_string(),
+        "origin",
+        &format!("{base}:refs/remotes/origin/main"),
+    ]);
+    origin_head(&dst.dir, &base);
+    dst
+}
+
+#[test]
+fn a_shallow_clone_of_the_test_merge_gives_sd935_for_an_edited_archive_file() {
+    // The history is cut at depth 2 and 3, so the bytes cannot be compared: SD935
+    // itself names the cause and the fix. SD928 has no folder record to compare.
+    let src = base_flow();
+    let t = commit_record(&src, &["acceptor"], "accepted");
+    finished_by_hand(&src, Some(&format!("{t}# edited\n")));
+    in_test_merge(&src);
+    for depth in [2, 3] {
+        let dst = shallow_test_merge(&src, depth);
+        let (code, out, err) = run(&dst, &["check"]);
+        assert_eq!(code, 1, "depth {depth}: {out}{err}");
+        let line = out
+            .lines()
+            .find(|l| l.contains(" SD935 "))
+            .unwrap_or_else(|| panic!("depth {depth}: no SD935 in\n{out}{err}"));
+        assert!(line.starts_with(ARCHIVE), "{line}");
+        assert!(line.contains("fetch-depth: 0"), "depth {depth}: {line}");
+    }
+    // At depth 4 the oldest commit of the branch has its parent: the compare
+    // runs, and the edit is the finding.
+    let dst = shallow_test_merge(&src, 4);
+    let (_, out, err) = run(&dst, &["check"]);
+    assert!(has(&out, "SD935"), "depth 4: {out}{err}");
+    // A full history: the edit is the finding, and an honest `finish` gives none.
+    let (_, out, err) = run(&src, &["check"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD935 "))
+        .unwrap_or_else(|| panic!("no SD935 in\n{out}{err}"));
+    assert!(!line.contains("fetch-depth"), "{line}");
+    let honest = base_flow();
+    commit_record(&honest, &["acceptor"], "accepted");
+    let (code, out, err) = run(&honest, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    honest.commit("finish");
+    in_test_merge(&honest);
+    let (_, out, err) = run(&honest, &["check"]);
+    assert!(!has(&out, "SD935"), "{out}{err}");
+    assert!(!out.contains("fetch-depth"), "{out}{err}");
+}
+
+/// A known limit, pinned so that a later change is seen (docs/diagnostics.md,
+/// "does not prove"): on a test merge, the base must be the commit that the merge
+/// was made on. With an older base, the commits of `main` are commits of the
+/// branch, and the compare of the archive file finds no folder record.
+#[test]
+fn an_older_base_on_the_test_merge_reads_the_main_commits_as_branch_commits() {
+    let r = base_flow();
+    commit_record(&r, &["acceptor"], "accepted");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("finish");
+    in_test_merge(&r);
+    // The default base gives no finding.
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD935"), "{out}{err}");
+    // `origin/HEAD` on the commit where the branch forked: an older base, and a
+    // false SD935.
+    let fork = r
+        .git_out(&["merge-base", "HEAD^1", "HEAD^2"])
+        .trim()
+        .to_string();
+    origin_head(&r.dir, &fork);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(has(&out, "SD935"), "known limit: {out}{err}");
+}
+
 // check: SD935 for the bytes of an archive file that the diff adds.
 
 #[test]

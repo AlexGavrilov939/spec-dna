@@ -175,7 +175,7 @@ pub fn needs_record(
     match pin {
         Some(pin) if Version::parse(&pin).is_some_and(|v| v < FIRST_VERSION) => {
             Ok(Need::No(Some(format!(
-                "`{plan_path}` was added when spec-dna.toml pinned {pin}, before 0.8.0, so `finish` needs no acceptance record"
+                "`{plan_path}` was added when spec-dna.toml pinned {pin}, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does"
             ))))
         }
         _ => Ok(Need::Yes { shallow: false }),
@@ -630,8 +630,8 @@ fn moved_record(git: &Git, base_rev: &str, folder: &str) -> Result<Option<Vec<u8
 /// from the folder record, or no folder record is in the history of the branch
 /// or in the base. The rule is one rule for the first commit of `finish` and
 /// for a later commit that edits the file: `finish` writes the folder record,
-/// byte for byte. It returns `None` in a shallow clone that cuts the commits of the branch:
-/// the record cannot be found, and SD928 reports the cut.
+/// byte for byte. In a shallow clone that cuts the commits of the branch, the record
+/// cannot be found: the message then names the cause and `fetch-depth: 0`.
 pub fn archive_differs(
     git: &Git,
     base_rev: &str,
@@ -639,10 +639,15 @@ pub fn archive_differs(
     archive: &str,
     bytes: &[u8],
 ) -> Result<Option<String>, String> {
-    if git.range_is_cut(base_rev) {
-        return Ok(None);
-    }
     let rec_path = format!("{folder}/{}", record::FILE_NAME);
+    // A cut history (a shallow clone) hides the folder record. SD928 compares
+    // only a record in a folder, and after `finish` there is none, so SD935 itself
+    // names the cause. A repository that is not shallow is never cut.
+    if git.range_is_cut(base_rev) {
+        return Ok(Some(format!(
+            "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the bytes of the archive file `{archive}` cannot be compared with `{rec_path}`; fetch the full history (`fetch-depth: 0`)"
+        )));
+    }
     Ok(match moved_record(git, base_rev, folder)? {
         // CRLF and LF are one record (ADR 0019).
         Some(old) if record::to_lf(&old) == record::to_lf(bytes) => None,

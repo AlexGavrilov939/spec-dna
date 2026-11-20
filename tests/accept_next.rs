@@ -399,8 +399,35 @@ fn next_skips_the_checks_that_finish_skips() {
     let out = next_text(&r);
     let line = accept_line(&out).unwrap();
     assert!(line.starts_with("[x] "), "{line}");
+    // The text says only what was checked: no "valid", no "accepted".
+    assert!(line.contains("passes the checks that are on"), "{line}");
+    assert!(
+        !line.contains("valid") && !line.contains("accepted"),
+        "{line}"
+    );
     let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
+    // With SD930 off, a `rejected` record is done, and the text does not say
+    // that it is accepted.
+    let cfg = config("standard").replace("SD608 = \"off\"", "SD608 = \"off\"\nSD930 = \"off\"");
+    let r = Repo::with_config(&cfg);
+    base_files(&r);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    change_files(&r);
+    r.commit("plan");
+    add_code(&r);
+    commit_record(&r, "rejected");
+    let line = accept_line(&next_text(&r)).map(str::to_string).unwrap();
+    assert!(line.starts_with("[x] "), "{line}");
+    assert!(line.contains("passes the checks that are on"), "{line}");
+    assert!(!line.contains("accepted"), "{line}");
+    // With each check on, the text is the text of before.
+    let r = built("standard");
+    commit_record(&r, "accepted");
+    let line = accept_line(&next_text(&r)).map(str::to_string).unwrap();
+    assert!(line.contains("valid, fresh and accepted"), "{line}");
     // With SD928 on, both stop.
     let r = built("standard");
     r.write(RECORD, "this is = not a record [\n");
