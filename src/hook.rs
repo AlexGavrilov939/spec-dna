@@ -1809,7 +1809,7 @@ fn moved_to_approval(
         }
     }
     // The archive files (design 0.8.0, D3 item 3). `finish` adds one with the
-    // bytes of the record that it deletes. A file that is in the old tree
+    // content of the record that it deletes. A file that is in the old tree
     // stays as it is, and a new file must be such a copy.
     for path in archives {
         let old = match old_tree {
@@ -1838,7 +1838,7 @@ fn moved_to_approval(
             None => {
                 if new.iter().any(|n| !deleted.iter().any(|d| lf(d) == *n)) {
                     return Some(format!(
-                        "{path} is an archive file that is not the record that this commit deletes from the change folder. Only `spec-dna finish` writes an archive file, with the bytes of the record. Remove the file, and run `spec-dna finish` again."
+                        "{path} is an archive file that is not the record that this commit deletes from the change folder. Only `spec-dna finish` writes an archive file, with the content of the record (line ends CRLF and LF count the same). Remove the file, and run `spec-dna finish` again."
                     ));
                 }
             }

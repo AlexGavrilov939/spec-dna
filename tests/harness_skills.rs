@@ -1021,7 +1021,7 @@ fn accept_tells_the_builder_to_pass_the_brief_unchanged_and_the_acceptor_to_work
         "Make it in a call of its own after the write",
         "the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`",
         "Artifact: `acceptance.toml` in the folder of the change.",
-        "no SD928 and no SD929",
+        "`spec-dna check --base origin/HEAD` gives no SD928. After the record is committed, `spec-dna next` and `spec-dna finish <slug> --dry-run` show SD929 (stale) and SD930 (rejected): `check` does not.",
         "If the check fails: Fix the record. Never fix the code: write a finding.",
     ] {
         assert!(s.contains(w), "`{w}`\n{s}");

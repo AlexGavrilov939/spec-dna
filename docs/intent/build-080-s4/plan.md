@@ -5,7 +5,7 @@ status: approved
 
 ## Files
 
-- `src/record.rs`, `src/accept.rs` The record, its rules, its writer, and the command with the brief.
+- `src/record.rs`, `src/accept.rs`, `src/change.rs` The record, its rules, its writer, the command with the brief, and the rule that reads the scope patterns of a plan.
 - `src/finish.rs`, `src/lifecycle.rs`, `src/approval.rs` Steps 5.2 and 5.5, the archive and the check of the diff.
 - `src/acceptance.rs`, `src/tree.rs` The rule "a change that needs a record", the compare of the brief, the checks of the record that `finish` and `check` share, and the code tree of the index.
 - `src/check.rs`, `src/diag.rs`, `src/config.rs`, `src/git.rs`, `src/main.rs`, `src/init.rs` The codes, the group `acceptance`, the keys, the lookup of the pin, the CLI and the key that `init` writes.
