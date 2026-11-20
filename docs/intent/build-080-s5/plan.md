@@ -21,7 +21,7 @@ status: approved
 
 - [x] t1: Build the invariants: the section, the ids with hashes, the key, SD936 and SD937, and the answers in the record (`core-engineer`, `diagnostics-engineer`). Files: `src/lifecycle.rs`, `src/record.rs`, `src/config.rs`. Verify: `cargo test --test lifecycle_checks --test accept_cmd` passes, and each new test failed before the change. Hours: 6.
 - [x] t2: Build the deviations: the section, `finish` 5.3, SD939 and SD940 (`hygiene-engineer`, `diagnostics-engineer`). Files: `src/finish.rs`, `src/lifecycle.rs`, `src/record.rs`. Verify: `cargo test --test finish --test lifecycle_checks` passes, and each new test failed before the change. Hours: 4.
-- [ ] t3: Accept this slice with the mechanism of S4 and commit the record (`acceptor`). Files: `docs/intent/build-080-s5/acceptance.toml`. Verify: the tree binary gives no SD927 to SD931 for the record. Hours: 2.
+- [x] t3: Accept this slice with the mechanism of S4 and commit the record (`acceptor`). Files: `docs/intent/build-080-s5/acceptance.toml`. Verify: the tree binary gives no SD927 to SD931 for the record. Result: the first acceptor accepted the slice, with 7 findings of severity `nit`. The documentation nit is fixed. The 5 nits in code stay open, because a fix would make the record stale; the report of the part lists them. Hours: 2.
 
 ## Risks
 
