@@ -765,7 +765,7 @@ fn a_skeleton_over_the_size_limit_is_refused_and_names_the_cause_and_the_fix() {
 
 /// The `Files` section of a real plan has prose around its code spans. A word
 /// in a code span (`accept`, `next`) or a phrase (`eval run --ab`) is no path,
-/// so it stays out of `scope`. A bare name that exists (`Makefile`) stays in.
+/// so it stays out of `scope`. So is a bare name with no `/`, `.` or `*` (`Makefile`): the scope is a function of the plan text alone.
 #[test]
 fn the_scope_leaves_out_the_code_spans_that_are_no_paths() {
     let plan = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n\
@@ -777,7 +777,7 @@ fn the_scope_leaves_out_the_code_spans_that_are_no_paths() {
 - `tests/*.py`, `tests/golden/**` The tests and the golden files.\n\
 - `.claude/agents/ownership.md` The file rows.\n\
 - `src/eval_ab.rs` The arm `without` of `eval run --ab`.\n\
-- `Makefile`, `Dockerfile`, `Cargo.toml` Two bare names.\n\
+- `Makefile`, `Dockerfile`, `Cargo.toml` Three names.\n\
 \n## Order\n\n- [x] t1: Close the valve. Files: `src/valves.py`. Verify: the test passes.\n\
 \n## Risks\n\n- A slow sensor.\n\n## Proof\n\nThe test covers `requirements/valves#sensor-timeout`.\n";
     let r = start(&config("standard", ""));
@@ -805,6 +805,7 @@ fn the_scope_leaves_out_the_code_spans_that_are_no_paths() {
         "\"without\"",
         "eval run --ab",
         "\"Dockerfile\"",
+        "\"Makefile\"",
     ] {
         assert!(!scope.contains(word), "{word} in {scope}");
     }
@@ -815,8 +816,80 @@ fn the_scope_leaves_out_the_code_spans_that_are_no_paths() {
         "\"schema/spec-dna.schema.json\"",
         "\"src/valves.py\"",
         "\"Cargo.toml\"",
-        "\"Makefile\"",
     ] {
         assert!(scope.contains(path), "{path} not in {scope}");
     }
+}
+
+/// The scope is a function of the plan text. A bare word `next` in a code span
+/// stays out, so an ignored untracked file of that name changes no byte of the
+/// brief. A deleted root file with a dot stays in `paths`, as an `absent` line.
+#[test]
+fn the_scope_and_the_brief_do_not_depend_on_the_disk() {
+    let plan = PLAN_TEXT.replace(
+        "- `tests/test_valves.py`\n",
+        "- `tests/test_valves.py`\n- `config.ini`, `Makefile`, `next` A setting, a build file and a word.\n",
+    );
+    let r = Repo::with_config(&config("standard", ""));
+    r.write(".gitignore", "reports/\nnext\n");
+    r.write(REQ, VALVES);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write("config.ini", "a = 1\n");
+    r.write("Makefile", "all:\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, &plan);
+    r.commit("plan");
+    r.write(CODE, CODE_NEW);
+    r.commit("code");
+    let before = brief(&r, &[]);
+    r.write("next", "an ignored file\n");
+    assert_eq!(before, brief(&r, &[]));
+    // A deleted root file with a dot stays in `paths`. A bare root file is no
+    // part of the scope, with the file or without it.
+    std::fs::remove_file(r.dir.join("config.ini")).unwrap();
+    std::fs::remove_file(r.dir.join("Makefile")).unwrap();
+    r.git(&["add", "-A"]);
+    r.commit("delete files");
+    let t = write_record(&r);
+    assert!(t.contains("\"config.ini\""), "{t}");
+    let scope = t.lines().find(|l| l.starts_with("scope = ")).unwrap();
+    assert!(
+        !scope.contains("Makefile") && !scope.contains("\"next\""),
+        "{scope}"
+    );
+    let paths = t.lines().find(|l| l.starts_with("paths = ")).unwrap();
+    assert!(paths.contains("\"config.ini\""), "{paths}");
+}
+
+/// A hand-written layout: other header forms, and an attempt between 2 acceptor
+/// tables. The printed number is the position of the new entry.
+#[test]
+fn a_second_run_numbers_the_new_entry_by_its_position_in_a_hand_written_layout() {
+    let r = built();
+    write_record(&r);
+    let t = r
+        .read(RECORD)
+        .replace("[[acceptor]]\n", "[[ acceptor ]]  # the first\n");
+    let t = format!("{t}\n[[attempt]]\nacceptor = 1\ntext = \"Tried.\"\noutcome = \"held\"\n");
+    r.write(RECORD, &t);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.lines().any(|l| l == "acceptor: 2"), "{out}");
+    // The attempt sits between the 2 acceptor tables: the third run still
+    // numbers by position, after the last acceptor table.
+    let t = r.read(RECORD);
+    let t = format!("{t}\n[[attempt]]\nacceptor = 2\ntext = \"Tried 2.\"\noutcome = \"held\"\n");
+    r.write(RECORD, &t);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s3"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.lines().any(|l| l == "acceptor: 3"), "{out}");
+    let after = r.read(RECORD);
+    let at = |needle: &str| after.find(needle).unwrap();
+    assert!(at("session = \"s2\"") < at("session = \"s3\""), "{after}");
+    assert!(at("session = \"s3\"") < at("Tried 2."), "{after}");
 }

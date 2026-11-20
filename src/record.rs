@@ -888,6 +888,19 @@ pub fn skeleton(s: &Skeleton) -> String {
     out
 }
 
+/// The header of a table on one line: `Some((true, name))` for `[[name]]` and
+/// `Some((false, name))` for `[name]`. White space and a comment after `#` do
+/// not count, and the white space inside the brackets does not count. `None` if
+/// the line is no header.
+fn table_header(line: &str) -> Option<(bool, &str)> {
+    let t = line.split('#').next().unwrap_or("").trim();
+    if let Some(inner) = t.strip_prefix("[[").and_then(|r| r.strip_suffix("]]")) {
+        return Some((true, inner.trim()));
+    }
+    let inner = t.strip_prefix('[')?.strip_suffix(']')?;
+    Some((false, inner.trim()))
+}
+
 /// Adds one entry `[[acceptor]]` to the text of a record, after its last
 /// `[[acceptor]]` table. Each other byte stays, so the comments and the tables
 /// of the first acceptor stay. It returns the new text.
@@ -901,13 +914,16 @@ pub fn add_acceptor(text: &str, role: &str, session: &str) -> String {
     let mut insert_at = text.len();
     let mut open = false;
     for line in text.split_inclusive('\n') {
-        let t = line.trim();
-        if t == "[[acceptor]]" {
-            last = Some(offset);
-            open = true;
-        } else if open && t.starts_with('[') {
-            insert_at = offset;
-            open = false;
+        match table_header(line) {
+            Some((true, "acceptor")) => {
+                last = Some(offset);
+                open = true;
+            }
+            Some(_) if open => {
+                insert_at = offset;
+                open = false;
+            }
+            _ => {}
         }
         offset += line.len();
     }
@@ -1584,6 +1600,41 @@ mod tests {
         assert!(at("session = \"s3\"") < at("Tried 2."));
         assert!(at("Tried 1.") < at("session = \"s2\""));
         assert_eq!(r.attempts.len(), 2);
+    }
+
+    #[test]
+    fn the_acceptor_header_is_read_with_spaces_a_comment_and_an_indent() {
+        let head = "format = 1\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n";
+        let body = |n: u32| {
+            format!(
+                "role = \"acceptor\"\nbrief = \"{HASH}\"\nsession = \"s{n}\"\nagent = \"unknown\"\nresult = \"accepted\"\n"
+            )
+        };
+        let attempt = |n: u32| {
+            format!("[[attempt]]\nacceptor = {n}\ntext = \"Tried {n}.\"\noutcome = \"held\"\n")
+        };
+        for (first, second) in [
+            ("[[acceptor]]  # x", "[[ acceptor ]]"),
+            ("  [[acceptor]]", "[[acceptor]] # y"),
+            ("[[ acceptor ]]", "\t[[  acceptor  ]]\t# z"),
+        ] {
+            let text = format!(
+                "{head}\n{first}\n{}\n{}\n{second}\n{}\n{}",
+                body(1),
+                attempt(1),
+                body(2),
+                attempt(2)
+            );
+            assert_eq!(Record::parse(&text).unwrap().acceptors.len(), 2);
+            let out = add_acceptor(&text, "security", "s3");
+            let r = Record::parse(&out).unwrap();
+            assert_eq!(r.acceptors.len(), 3, "{out}");
+            assert_eq!(r.acceptors[2].session, "s3", "{out}");
+            assert_eq!(r.acceptors[2].role, "security", "{out}");
+            let at = |needle: &str| out.find(needle).unwrap();
+            assert!(at("session = \"s2\"") < at("session = \"s3\""), "{out}");
+            assert!(at("session = \"s3\"") < at("Tried 2."), "{out}");
+        }
     }
 
     #[test]

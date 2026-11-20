@@ -123,25 +123,19 @@ pub fn brief_text(
 /// SD913 takes each code span of a `Files` item as a pattern, also a word of the
 /// prose such as `next`. A word matches only a file of that name, so SD913 does
 /// no harm. The scope is written in the record and in the brief, so a pattern
-/// of the plan stays only when it looks like a path or a glob (the rule of
-/// [`crate::change::plain_path`]): it has a `/`, a `.` or a `*`, and no white
-/// space. A name with none of these (`Makefile`) stays when `exists` says that
-/// the path exists. A `shared-paths` glob stays always.
-pub fn scope_of(
-    cfg: &Config,
-    ch: &Change,
-    corpus: &Corpus,
-    exists: &dyn Fn(&str) -> bool,
-) -> Vec<String> {
-    let looks_like_a_path = |p: &str| {
-        let p = p.trim();
-        (!p.contains(char::is_whitespace) && p.contains(['/', '.', '*']))
-            || exists(p.strip_prefix("./").unwrap_or(p))
-    };
+/// of the plan stays only when it has no white space and contains a `/`, a `.`
+/// or a `*` (the rule of [`crate::change::plain_path`]). The scope is thus a
+/// function of the plan text alone: no file on the disk changes it. A bare name
+/// with none of these characters (`Makefile`, `LICENSE`) is not in the scope. A
+/// `shared-paths` glob stays always.
+pub fn scope_of(cfg: &Config, ch: &Change, corpus: &Corpus) -> Vec<String> {
     let mut scope: Vec<String> = ch
         .files(corpus)
         .into_iter()
-        .filter(|p| looks_like_a_path(p))
+        .filter(|p| {
+            let p = p.trim();
+            !p.contains(char::is_whitespace) && p.contains(['/', '.', '*'])
+        })
         .collect();
     scope.extend(cfg.shared_paths.iter().cloned());
     scope.sort();
@@ -218,7 +212,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let spec_path = ch.spec.as_ref().map(path_of);
 
     // The scope, the paths and the tree (D3 item 4).
-    let scope = scope_of(&cfg, ch, &head, &|p| repo.root.join(p).exists());
+    let scope = scope_of(&cfg, ch, &head);
     let is_code = |p: &str| tree::is_code_path(&cfg, p, &intent_dirs);
     refuse_dirty_code(&dirty, &scope, &is_code)?;
     let diff = base_rev
@@ -335,13 +329,19 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         }
         let n = r.acceptors.len() + 1;
         let text = record::add_acceptor(&old, role, &session);
-        // The new text must read, and it must have one more entry. A text that
-        // `add_acceptor` cannot place (a `[` line in a string) is a refusal.
-        if Record::parse(&text).is_err_and(|_| true)
-            || Record::parse(&text).is_ok_and(|t| t.acceptors.len() != n)
-        {
+        // The new text must read, and the new entry must be the last acceptor,
+        // with the printed number as its position. The entries before it stay.
+        // A text that `add_acceptor` cannot place (a line of a multi-line value
+        // that looks like a table header) is a refusal.
+        let placed = Record::parse(&text).is_ok_and(|t| {
+            t.acceptors.len() == n
+                && t.acceptors[..n - 1] == r.acceptors[..]
+                && t.acceptors[n - 1].role == role
+                && t.acceptors[n - 1].session == session
+        });
+        if !placed {
             return Err(Fatal::Refused(format!(
-                "`accept` cannot add an `[[acceptor]]` entry to `{record_path}` and keep it a valid TOML text; add the entry by hand, or delete the record and accept again"
+                "`accept` cannot add an `[[acceptor]]` entry to `{record_path}` as entry {n}; add the entry by hand after the last `[[acceptor]]` table, or delete the record and accept again"
             )));
         }
         (text, n, false)

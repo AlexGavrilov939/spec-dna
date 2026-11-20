@@ -345,10 +345,29 @@ fn accept_item(
     let path = format!("{}/{}", ch.dir, record::FILE_NAME);
     let open = |text: String| AcceptItem { done: false, text };
     let on = |c: Code| !cfg.is_off(c);
-    let Ok(text) = std::fs::read_to_string(repo.root.join(&path)) else {
-        return Ok(open(format!(
-            "accept the change: run `spec-dna accept {slug} --brief`, give the whole output, unchanged, to an agent `acceptor`, and commit the record that it writes"
-        )));
+    // `finish` reads the record of `HEAD`, and its step 0 refuses an uncommitted
+    // record. The item is done only for a committed record.
+    let committed = repo
+        .git
+        .read_at(&[("HEAD".to_string(), path.clone())])
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .next()
+        .flatten()
+        .map(|b| String::from_utf8_lossy(&b).into_owned());
+    let on_disk = std::fs::read_to_string(repo.root.join(&path)).ok();
+    let text = match (committed, on_disk) {
+        (None, None) => {
+            return Ok(open(format!(
+                "accept the change: run `spec-dna accept {slug} --brief`, give the whole output, unchanged, to an agent `acceptor`, and commit the record that it writes"
+            )));
+        }
+        (Some(c), Some(d)) if c == d => c,
+        _ => {
+            return Ok(open(format!(
+                "the record `{path}` has an edit that `HEAD` does not have: commit the record alone, then run `spec-dna finish {slug}`"
+            )));
+        }
     };
     let (rec, mut problems): (Option<Record>, Vec<String>) =
         acceptance::read_record(cfg, &text, slug, acceptance::plan_facts(ch, head));

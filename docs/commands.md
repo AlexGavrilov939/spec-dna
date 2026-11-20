@@ -397,7 +397,7 @@ line = 88                        # optional
 text = "The constant TIMEOUT has no unit in its name."
 ```
 
-- `scope` is the paths and globs of the plan (the items of `Files` and the `Files:` of the tasks, as SD913 reads them) and the globs of `[change] shared-paths`, sorted.
+- `scope` is the paths and globs of the plan (the items of `Files` and the `Files:` of the tasks, as SD913 reads them) and the globs of `[change] shared-paths`, sorted. A code span of the plan is in `scope` only if it has no white space and contains a `/`, a `.` or a `*`. A word in a code span, such as `next`, is not a path. A bare name with none of these characters, such as `Makefile` or `LICENSE`, is not in `scope`: `scope` is a function of the plan text alone, and no file on the disk changes it. To put such a file in `scope`, add it to `[change] shared-paths`.
 - `paths` is the code paths of the diff of the change against the base that `scope` matches, sorted. A code path is a path of the code tree ([config.md](config.md#test-reports)). A deleted code path stays in the list. Another open change does not change the list, because only the paths of `scope` count. When the diff has no such path, as in a pull request after the code merged, `paths` is the code paths that changed since the commit that added the plan. The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] base`) and `HEAD`.
 - `tree` is the hash of the content of `paths` only: one line `<mode> <object id>\t<path>` for each path, or `absent\t<path>` for a path that the tree does not have. A Markdown edit and a change to another path change nothing.
 - `[[proof]]` lists the requirements that the change adds or changes (the requirements of SD916), with their proof state ([config.md](config.md#proof-levels-and-the-proof-debt)). A requirement that is not in the tree yet, such as the target of an `ADD` line, has the state of its `covers:` tags. A change with no delta lists the requirements whose hash differs from the base.
@@ -409,7 +409,7 @@ A valid record has these rules (SD928): the file is TOML with `format = 1`, no u
 
 The output of the skeleton form is `wrote <path>`, then `acceptor: <n>`, then a line `next:`. With `--json`: `{"slug", "path", "acceptor", "role", "session", "created"}`. With `--brief --json`: `{"slug", "role", "brief", "text"}`, where `brief` is the hash.
 
-What the record does not prove. `session` and `agent` are claims, so the record cannot show that the acceptor is not the builder. It cannot show that the acceptor read the brief, or that it tried hard. The person who acknowledges the record and the evals of the skill are the root of the trust.
+What the record does not prove. `session` and `agent` are claims, so the record cannot show that the acceptor is not the builder. It cannot show that the acceptor read the brief, or that it tried hard. The table `[[proof]]` is a snapshot of the proof states when `accept` ran: no check compares it with the proof states at `finish`. The person who acknowledges the record and the evals of the skill are the root of the trust.
 
 Exit codes: 0 written or printed; 1 a refusal (an edit that `HEAD` does not have, no `plan.md` or `intent.md`, or changed code); 2 usage (a bad slug or role, `--session` with `--brief`); 3 configuration or a different version pin; 4 git or file error; 5 no folder for the slug.
 

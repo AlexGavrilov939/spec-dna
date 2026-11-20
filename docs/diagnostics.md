@@ -275,6 +275,7 @@ Where each code is raised:
 
 - `accept` and `accept --brief` run in each profile. The codes decide only whether `finish` and `check` need a record.
 - The record proves that the work is visible and bound to the code. It does not prove that the acceptor is not the builder: `session` and `agent` are claims, and the brief is a text that anyone can compute.
+- The table `[[proof]]` of the record is a snapshot. No check compares it with the proof states at `finish`.
 - The compare of the brief (SD928) reads `spec-dna.toml` of `HEAD`, not the one of the adding commit. The text of the brief does not read the configuration yet, so this has no effect. Slices S5 and S6 add the owners and the invariants: the compare then needs the configuration of the adding commit.
 
 ## Checks of the layers and of the requirement text

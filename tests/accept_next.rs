@@ -333,3 +333,32 @@ fn too_few_acceptors_and_a_self_accepted_record_leave_the_item_open() {
         "{line}"
     );
 }
+
+/// `finish` reads the record of `HEAD` (step 0 refuses an uncommitted record),
+/// so `next` shows the item done only for a committed record.
+#[test]
+fn an_uncommitted_record_leaves_the_item_open_and_says_commit_the_record() {
+    let r = built("standard");
+    commit_record(&r, "accepted");
+    assert!(accept_line(&next_text(&r)).unwrap().starts_with("[x] "));
+    // A new edit of the committed record: the working tree differs from HEAD.
+    let text = r.read(RECORD);
+    r.write(RECORD, &format!("# a note\n{text}"));
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(
+        line.starts_with("[ ] ") && line.contains("commit the record"),
+        "{line}"
+    );
+    // An untracked record: the commit of it is not made yet.
+    let r = built("standard");
+    commit_record(&r, "accepted");
+    r.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    r.write(RECORD, &text);
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(
+        line.starts_with("[ ] ") && line.contains("commit the record"),
+        "{line}"
+    );
+}
