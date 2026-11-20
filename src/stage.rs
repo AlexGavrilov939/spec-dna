@@ -361,7 +361,7 @@ fn accept_item(
         crate::git::Limited::Absent => None,
         other => {
             return Ok(open(format!(
-                "{} Then commit the record alone, and run `spec-dna finish {slug}`",
+                "{}. Then commit the record alone, and run `spec-dna finish {slug}`",
                 acceptance::unreadable_message(&path, &other)
             )));
         }
@@ -386,8 +386,8 @@ fn accept_item(
     // a check that is off stops neither of them.
     let stale = match &rec {
         Some(r) if on(Code::AcceptanceStale) => {
-            let plan_scope = crate::accept::scope_of(cfg, ch, head);
-            acceptance::stale(cfg, &repo.git, r, diff, &plan_scope, false).map_err(Fatal::Io)?
+            let plan = acceptance::PlanScope::of(ch, head);
+            acceptance::stale(cfg, &repo.git, r, diff, &plan, false).map_err(Fatal::Io)?
         }
         _ => None,
     };
@@ -430,7 +430,8 @@ fn accept_item(
             format!("the record `{path}` is not valid ({first}); the acceptor fixes it")
         }
         Code::AcceptanceStale => format!(
-            "the record `{path}` is stale, because the code changed after the acceptance: delete it, commit, and run `spec-dna accept {slug} --brief` again"
+            "the record `{path}` is stale, because {}: delete it, commit, and run `spec-dna accept {slug} --brief` again",
+            acceptance::stale_cause(messages.first().map_or("", String::as_str))
         ),
         Code::AcceptanceRejected => format!(
             "the record `{path}` says `rejected`: fix each finding in the code, delete the record, commit, and accept again"

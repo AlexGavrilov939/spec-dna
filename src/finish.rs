@@ -678,15 +678,19 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
         acc::first_stop(cfg, ch.class, rec.as_ref(), problems, f.stale.clone())
     {
         let why = match code {
-            Code::AcceptanceInvalid => "the acceptance record is not valid",
-            Code::AcceptanceStale => {
-                "the acceptance record is stale: the code changed after the acceptance"
+            Code::AcceptanceInvalid => "the acceptance record is not valid".to_string(),
+            // The text follows the reason: the scope of the plan, or the code.
+            Code::AcceptanceStale => format!(
+                "the acceptance record is stale: {}",
+                acc::stale_cause(messages.first().map_or("", String::as_str))
+            ),
+            Code::AcceptanceRejected => "the acceptance record says `rejected`".to_string(),
+            Code::SelfAccepted => {
+                "2 acceptor entries have the same session and the same agent".to_string()
             }
-            Code::AcceptanceRejected => "the acceptance record says `rejected`",
-            Code::SelfAccepted => "2 acceptor entries have the same session and the same agent",
-            _ => "the acceptance record has too few acceptors",
+            _ => "the acceptance record has too few acceptors".to_string(),
         };
-        return stop_with(code, why, messages);
+        return stop_with(code, &why, messages);
     }
     Ok(Some(text))
 }

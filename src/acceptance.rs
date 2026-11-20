@@ -389,20 +389,79 @@ pub const STALE_AFTER_FINISH: &str = "revert the commit of `finish`";
 /// The start of the fix in a SD929 message before `finish` (a folder record).
 pub const STALE_BEFORE_FINISH: &str = "delete the record";
 
+/// The plan of a change, as the stale rule reads it: the patterns that its scope
+/// has, and every code span of `Files`. Each reader of the rule builds it from
+/// the plan that it reads: the plan of the head, or for a folder that the diff
+/// deletes, the newest plan of the branch.
+#[derive(Clone, Debug, Default)]
+pub struct PlanScope {
+    /// The patterns of `Files` that a record can hold ([`Change::scope_patterns`]),
+    /// without the globs of `[change] shared-paths`. Sorted, with no duplicate.
+    pub patterns: Vec<String>,
+    /// Every code span of `Files` ([`Change::files`]): the view of SD913.
+    pub files: Vec<String>,
+}
+
+impl PlanScope {
+    pub fn of(ch: &Change, corpus: &Corpus) -> PlanScope {
+        let mut patterns = ch.scope_patterns(corpus);
+        patterns.sort();
+        patterns.dedup();
+        PlanScope {
+            patterns,
+            files: ch.files(corpus),
+        }
+    }
+}
+
+/// The words of a SD929 message for a plan whose scope is not the scope of the
+/// record. [`stale_cause`] reads them.
+const SCOPE_MARK: &str = "the scope of the plan";
+
+/// The words of the SD929 message for a changed path that `Files` covers only
+/// through a pattern that a record cannot hold. [`stale_cause`] reads them.
+const UNCOVERED_MARK: &str = "of the plan only as";
+
+/// The words of a SD929 message for code that changed after the acceptance.
+const CODE_MARKS: [&str; 2] = ["the hash of the code", "the diff has the code path"];
+
+/// What changed after the acceptance, for the text of `next` and `finish`, read
+/// from a SD929 message of [`stale`]: the scope of the plan, the code, or both.
+pub fn stale_cause(message: &str) -> &'static str {
+    let scope = message.contains(SCOPE_MARK) || message.contains(UNCOVERED_MARK);
+    let code = CODE_MARKS.iter().any(|m| message.contains(m));
+    match (scope, code) {
+        (true, true) => "the scope of the plan and the code changed after the acceptance",
+        (true, false) => "the scope of the plan changed after the acceptance",
+        _ => "the code changed after the acceptance",
+    }
+}
+
 /// Why a record is stale: one text for each reason, empty if the record is
-/// fresh. One function decides it for `accept` (the refusal), SD929 in `check`,
-/// `next` and `finish` step 5.2, so no 2 places use 2 rules. A record is stale if
-/// its `scope` is not `plan_scope` (the scope of the plan of the head, from
-/// [`crate::accept::scope_of`]: a pattern that the plan has and the record has
-/// not, or the reverse), or the hash of `paths` differs from the code that `git`
-/// reads (the working tree, or the index for a `staged` `Git`), or the diff has a
-/// code path that `scope` matches and `paths` does not list.
+/// fresh. One function decides it for `accept` (the refusal of a second
+/// acceptor), SD929 in `check`, `next` and `finish` step 5.2, so no 2 places use
+/// 2 rules. A record is stale if:
+///
+/// - the plan has a pattern that `scope` of the record has not, or the record has
+///   a pattern that the plan has not. The globs of `[change] shared-paths` of the
+///   head configuration are left out on both sides: the record does not mark
+///   which globs came from that key, and a change of the key after the
+///   acceptance must not make a record stale (design 0.8.0, D3 item 4). So a
+///   glob that a later commit removes from the key reads as a glob that the plan
+///   lacks, and makes the record stale: write the record again.
+/// - a changed code path is in `Files` of the plan only as a pattern that a
+///   record cannot hold (a bare name, or a path with a space), and neither
+///   `scope` nor `[change] shared-paths` covers it
+///   ([`crate::accept::uncovered_path`]),
+/// - the hash of `paths` differs from the code that `git` reads (the working
+///   tree, or the index for a `staged` `Git`), or
+/// - the diff has a code path that `scope` matches and `paths` does not list.
 pub fn stale_reasons(
     cfg: &Config,
     git: &Git,
     rec: &Record,
     diff: Option<&Diff>,
-    plan_scope: &[String],
+    plan: &PlanScope,
 ) -> Result<Vec<String>, String> {
     let mut why: Vec<String> = Vec::new();
     let quote = |v: Vec<&String>| {
@@ -411,24 +470,32 @@ pub fn stale_reasons(
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let only_plan: Vec<&String> = plan_scope
+    let shared = &cfg.shared_paths;
+    let plan_side: Vec<&String> = plan
+        .patterns
         .iter()
-        .filter(|p| !rec.scope.contains(p))
+        .filter(|p| !shared.contains(p))
         .collect();
-    let only_record: Vec<&String> = rec
-        .scope
+    let rec_side: Vec<&String> = rec.scope.iter().filter(|p| !shared.contains(p)).collect();
+    let only_plan: Vec<&String> = plan_side
         .iter()
-        .filter(|p| !plan_scope.contains(p))
+        .filter(|p| !rec_side.contains(p))
+        .copied()
+        .collect();
+    let only_record: Vec<&String> = rec_side
+        .iter()
+        .filter(|p| !plan_side.contains(p))
+        .copied()
         .collect();
     if !only_plan.is_empty() {
         why.push(format!(
-            "the plan has the pattern {} in its scope, and `scope` of the record has not",
+            "{SCOPE_MARK} has the pattern {}, and `scope` of the record has not",
             quote(only_plan)
         ));
     }
     if !only_record.is_empty() {
         why.push(format!(
-            "`scope` of the record has the pattern {}, and the plan has not",
+            "`scope` of the record has the pattern {}, and {SCOPE_MARK} has not",
             quote(only_record)
         ));
     }
@@ -436,8 +503,8 @@ pub fn stale_reasons(
     let now = record::tree_hash(&entries, &rec.paths);
     if !tree::matches(&rec.tree, &now) {
         why.push(format!(
-            "the hash of the code that `paths` lists is {now}, and the record has {}",
-            rec.tree
+            "{} that `paths` lists is {now}, and the record has {}",
+            CODE_MARKS[0], rec.tree
         ));
     }
     if let Some(diff) = diff {
@@ -447,9 +514,22 @@ pub fn stale_reasons(
         for p in record::select_paths(&rec.scope, &changed, &is_code) {
             if !rec.paths.contains(&p) {
                 why.push(format!(
-                    "the diff has the code path `{p}`, which `scope` matches and `paths` does not list"
+                    "{} `{p}`, which `scope` matches and `paths` does not list",
+                    CODE_MARKS[1]
                 ));
             }
+        }
+        // `scope` and the globs of `shared-paths` are what the record covers.
+        let mut covered = rec.scope.clone();
+        covered.extend(shared.iter().cloned());
+        if let Some((p, pattern)) =
+            crate::accept::uncovered_path(&plan.files, &covered, &changed, &is_code)
+        {
+            why.push(format!(
+                "the changed code path `{p}` is in `Files` {UNCOVERED_MARK} `{pattern}`, which {}, so `scope` of the record does not cover it; {}",
+                crate::accept::scope_cause(&pattern),
+                crate::accept::scope_way(&pattern)
+            ));
         }
     }
     Ok(why)
@@ -462,10 +542,10 @@ pub fn stale(
     git: &Git,
     rec: &Record,
     diff: Option<&Diff>,
-    plan_scope: &[String],
+    plan: &PlanScope,
     after_finish: bool,
 ) -> Result<Option<String>, String> {
-    let why = stale_reasons(cfg, git, rec, diff, plan_scope)?;
+    let why = stale_reasons(cfg, git, rec, diff, plan)?;
     if why.is_empty() {
         return Ok(None);
     }
@@ -877,8 +957,8 @@ pub fn finish_facts(
             brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec).map_err(Fatal::Io)?;
     }
     if !cfg.is_off(Code::AcceptanceStale) {
-        let plan_scope = crate::accept::scope_of(cfg, ch, head);
-        f.stale = stale(cfg, &repo.git, &rec, diff, &plan_scope, false).map_err(Fatal::Io)?;
+        let plan = PlanScope::of(ch, head);
+        f.stale = stale(cfg, &repo.git, &rec, diff, &plan, false).map_err(Fatal::Io)?;
     }
     Ok(Some(f))
 }
@@ -1013,6 +1093,27 @@ mod tests {
             moved_archive("fix", &["docs/fix/acceptance.toml"], &folder, &mut read).unwrap(),
             None
         );
+    }
+
+    /// The text of `next` and `finish` follows the reason of the SD929 message.
+    #[test]
+    fn the_cause_of_a_stale_record_follows_the_reason_of_the_message() {
+        let scope =
+            format!("{SCOPE_MARK} has the pattern `src/x.rs`, and `scope` of the record has not");
+        let uncovered = format!(
+            "the changed code path `Makefile` is in `Files` {UNCOVERED_MARK} `Makefile`, which has no `/`"
+        );
+        let code = format!(
+            "{} that `paths` lists is a, and the record has b",
+            CODE_MARKS[0]
+        );
+        let diff = format!("{} `src/y.rs`, which `scope` matches", CODE_MARKS[1]);
+        assert!(stale_cause(&scope).starts_with("the scope of the plan changed"));
+        assert!(stale_cause(&uncovered).starts_with("the scope of the plan changed"));
+        assert!(stale_cause(&code).starts_with("the code changed"));
+        assert!(stale_cause(&diff).starts_with("the code changed"));
+        let both = format!("{scope}; {code}");
+        assert!(stale_cause(&both).starts_with("the scope of the plan and the code changed"));
     }
 
     #[test]

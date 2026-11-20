@@ -317,9 +317,10 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         // The function that SD929, `next` and `finish` use decides first, so
         // no 2 places use 2 rules. The compare of `paths` stays: `paths` also
         // differs when a path left the diff.
-        let why = crate::acceptance::stale_reasons(&cfg, &repo.git, &r, diff.as_ref(), &scope)
+        let plan = crate::acceptance::PlanScope::of(ch, &head);
+        let why = crate::acceptance::stale_reasons(&cfg, &repo.git, &r, diff.as_ref(), &plan)
             .map_err(Fatal::Io)?;
-        if !why.is_empty() || r.scope != scope || r.paths != paths {
+        if !why.is_empty() || r.paths != paths {
             let why = if why.is_empty() {
                 "its `scope`, `paths` or `tree` differ from the repository now".to_string()
             } else {
@@ -399,6 +400,62 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     Ok(0)
 }
 
+/// The words that tell the user how to write a `Files` pattern that the scope of
+/// a record cannot hold ([`uncovered_path`]).
+pub fn scope_way(p: &str) -> String {
+    if p.trim().contains(char::is_whitespace) {
+        let glob = p.split_whitespace().collect::<Vec<_>>().join("*");
+        format!(
+            "a path of `Files` has no space; write the glob `{glob}` instead (a `*` matches the space), or add the path to `[change] shared-paths`"
+        )
+    } else {
+        "write the path with a `/` or a `.` in `Files` of the plan (the form `./Makefile` works), or add it to `[change] shared-paths`".to_string()
+    }
+}
+
+/// The cause of a pattern that the scope cannot hold.
+pub fn scope_cause(p: &str) -> &'static str {
+    if p.trim().contains(char::is_whitespace) {
+        "has a space"
+    } else {
+        "has no `/`, no `.` and no `*`"
+    }
+}
+
+/// The patterns of `files` (every code span of `Files`, [`Change::files`]) that
+/// the scope of a record cannot hold: a word, a bare name such as `Makefile`,
+/// or a path with a space ([`change::is_scope_pattern`]).
+pub fn dropped_patterns(files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|p| !change::is_scope_pattern(p))
+        .cloned()
+        .collect()
+}
+
+/// The first changed code path that `Files` covers only through a pattern that
+/// the scope of a record cannot hold, and that `scope` does not cover. The
+/// answer is the path and that pattern. The one rule of the refusal of `accept`
+/// and of SD929, so a second place cannot let such a path pass.
+pub fn uncovered_path(
+    files: &[String],
+    scope: &[String],
+    changed: &[String],
+    is_code: &dyn Fn(&str) -> bool,
+) -> Option<(String, String)> {
+    let dropped = dropped_patterns(files);
+    let p = changed
+        .iter()
+        .find(|p| is_code(p) && change::in_scope(&dropped, p) && !change::in_scope(scope, p))?;
+    // The dropped pattern that covers the file names the cause.
+    let pattern = dropped
+        .iter()
+        .find(|d| change::in_scope(std::slice::from_ref(d), p))
+        .cloned()
+        .unwrap_or_default();
+    Some((p.clone(), pattern))
+}
+
 /// Refuses when the plan lists a pattern that the scope of a record cannot
 /// hold, and the record would then leave a changed code file out. The patterns
 /// are the words and the bare names of `Files` (`Makefile`): the scope is a
@@ -412,56 +469,27 @@ fn refuse_uncovered(
     changed: &[String],
     is_code: &dyn Fn(&str) -> bool,
 ) -> Result<(), Fatal> {
-    let dropped: Vec<String> = ch
-        .files(corpus)
-        .into_iter()
-        .filter(|p| !change::is_scope_pattern(p))
-        .collect();
+    let files = ch.files(corpus);
+    let dropped = dropped_patterns(&files);
     if dropped.is_empty() {
         return Ok(());
     }
-    let ways = |p: &str| {
-        if p.trim().contains(char::is_whitespace) {
-            let glob = p.split_whitespace().collect::<Vec<_>>().join("*");
-            format!(
-                "a path of `Files` has no space; write the glob `{glob}` instead (a `*` matches the space), or add the path to `[change] shared-paths`"
-            )
-        } else {
-            "write the path with a `/` or a `.` in `Files` of the plan (the form `./Makefile` works), or add it to `[change] shared-paths`".to_string()
-        }
-    };
-    // The cause of a pattern that the scope cannot hold.
-    let cause = |p: &str| {
-        if p.trim().contains(char::is_whitespace) {
-            "has a space"
-        } else {
-            "has no `/`, no `.` and no `*`"
-        }
-    };
     if scope.is_empty() {
         return Err(Fatal::Refused(format!(
             "the scope of the record is empty: the patterns of `Files` of the plan cannot be in the record ({}); {}",
             dropped
                 .iter()
-                .map(|p| format!("`{p}` {}", cause(p)))
+                .map(|p| format!("`{p}` {}", scope_cause(p)))
                 .collect::<Vec<_>>()
                 .join(", "),
-            ways(&dropped[0])
+            scope_way(&dropped[0])
         )));
     }
-    if let Some(p) = changed
-        .iter()
-        .find(|p| is_code(p) && change::in_scope(&dropped, p) && !change::in_scope(scope, p))
-    {
-        // The dropped pattern that covers the file names the cause.
-        let pattern = dropped
-            .iter()
-            .find(|d| change::in_scope(std::slice::from_ref(d), p))
-            .map_or("", String::as_str);
+    if let Some((p, pattern)) = uncovered_path(&files, scope, changed, is_code) {
         return Err(Fatal::Refused(format!(
             "the changed file `{p}` is in `Files` of the plan only as `{pattern}`, which {}, so the scope of the record does not cover it; {}",
-            cause(pattern),
-            ways(pattern)
+            scope_cause(&pattern),
+            scope_way(&pattern)
         )));
     }
     Ok(())
