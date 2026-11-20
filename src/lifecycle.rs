@@ -2463,6 +2463,8 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
         // field `change` is the slug, the newest number of the slug. The name of
         // a file decides nothing: `fix-2.toml` can be the archive of the change
         // `fix-2`, and it can be the file 2 of the change `fix`.
+        // Only a path of the archive folder counts: a file elsewhere is no
+        // archive file, whatever its name or its text.
         let added: Vec<&str> = ctx
             .diff
             .files
@@ -2470,9 +2472,36 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             .filter(|(_, k)| *k == PathChange::Added)
             .map(|(p, _)| p.as_str())
             .collect();
-        let found = acc::archive_of(&c.slug, &added, &mut |p| ctx.git.head_file(p))?;
+        let in_folder: Vec<&str> = added
+            .iter()
+            .copied()
+            .filter(|p| acc::is_archive_path(p))
+            .collect();
+        let found = acc::archive_of(&c.slug, &in_folder, &mut |p| ctx.git.head_file(p))?;
         let archive = found.as_ref().map(|(p, _)| p.clone());
         let Some(archive) = archive else {
+            // A commit can move the archive file out of its folder: the diff
+            // then adds the record of the change at another path.
+            if on(Code::RecordEdited)
+                && let Some(p) = acc::moved_archive(
+                    &c.slug,
+                    &added,
+                    &|p| acc::record_folder(p, &intent_dirs).is_some(),
+                    &mut |p| ctx.git.head_file(p),
+                )?
+            {
+                out.push(path_diag(
+                    &p,
+                    Code::RecordEdited,
+                    &c.slug,
+                    format!(
+                        "the diff adds the record of the change at `{p}`, outside `{}/`; an archive file is never moved, so put it back at `{}/{}.toml`",
+                        acc::ARCHIVE_DIR,
+                        acc::ARCHIVE_DIR,
+                        c.slug
+                    ),
+                ));
+            }
             out.push(path_diag(
                 &record_path,
                 Code::AcceptanceMissing,

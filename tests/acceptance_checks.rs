@@ -557,6 +557,22 @@ fn a_record_with_an_older_tree_after_a_code_edit_stops_with_sd929() {
     assert!(has(&out, "SD929"), "{out}");
     assert!(!has(&out, "SD928"), "{out}");
     assert!(out.contains("accept"), "the message gives the fix: {out}");
+    // A record in the folder, before any `finish`: the fix is the one of the
+    // message, not "revert the commit of `finish`".
+    let fix = out
+        .lines()
+        .find(|l| l.starts_with("SD929 fix:"))
+        .unwrap_or("");
+    assert!(fix.contains("Delete the record"), "{out}");
+    assert!(!fix.contains("Revert"), "{out}");
+    assert!(!out.contains("revert the commit"), "{out}");
+    let (_, out, err) = run(&r, &["finish", SLUG, "--dry-run"]);
+    let fix = out
+        .lines()
+        .find(|l| l.starts_with("SD929 fix:"))
+        .unwrap_or("");
+    assert!(fix.contains("Delete the record"), "{out}{err}");
+    assert!(!fix.contains("Revert"), "{out}{err}");
 }
 
 #[test]
@@ -929,6 +945,13 @@ fn the_archive_file_of_a_finish_in_the_diff_is_read_for_sd929_sd930_and_sd933() 
     assert_eq!(code, 1, "{out}{err}");
     assert!(has(&out, "SD929"), "{out}");
     assert!(out.contains("revert the commit of `finish`"), "{out}");
+    // An archive file, after `finish`: the fix says to revert the commit.
+    let fix = out
+        .lines()
+        .find(|l| l.starts_with("SD929 fix:"))
+        .unwrap_or("");
+    assert!(fix.contains("Revert the commit of `finish`"), "{out}");
+    assert!(!fix.contains("Delete the record"), "{out}");
     // SD930: the result is `rejected`.
     let r = base_flow();
     let t = commit_record(&r, &["acceptor"], "rejected");
@@ -1516,4 +1539,64 @@ fn the_compare_of_the_record_and_its_archive_reads_crlf_as_lf() {
     let (code, out, err) = run(&r, &["check"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(has(&out, "SD935"), "{out}");
+}
+
+// check: a path of the diff is an archive file only if it is in the archive
+// folder (the same filter that the writer of the path uses).
+
+/// A change that ran `finish`, and a later commit that moves the archive file.
+fn finish_then_move_archive(config_text: &str, to: &str) -> Repo {
+    let r = on_base("0.8.0", config_text, INTENT_TEXT);
+    commit_record(&r, &["acceptor"], "accepted");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("finish");
+    std::fs::create_dir_all(r.dir.join(to).parent().unwrap()).unwrap();
+    r.git(&["mv", ARCHIVE, to]);
+    r.commit("move the archive file");
+    r
+}
+
+#[test]
+fn an_archive_file_that_a_commit_moves_out_of_the_folder_gives_sd927_and_sd935() {
+    for to in ["notes/valve-timeout.toml", "keep/valve-timeout.txt"] {
+        let r = finish_then_move_archive(&config("standard", ""), to);
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 1, "{to}: {out}{err}");
+        assert!(has(&out, "SD927"), "{to}: {out}");
+        let line = out.lines().find(|l| l.contains(" SD935 ")).expect("SD935");
+        assert!(line.starts_with(to), "{to}: {line}");
+        assert!(line.contains(".spec-dna/accepted"), "{to}: {line}");
+        // The diff has no archive file now, so the other record codes are silent.
+        assert!(!has(&out, "SD929"), "{to}: {out}");
+    }
+}
+
+#[test]
+fn a_moved_archive_file_still_gives_sd927_when_sd935_is_off() {
+    let off = config_with("standard", "", "SD935 = \"off\"\n");
+    let r = finish_then_move_archive(&off, "notes/valve-timeout.toml");
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "{out}");
+    assert!(!has(&out, "SD935"), "{out}");
+}
+
+#[test]
+fn a_file_outside_the_archive_folder_is_no_archive_file_and_sd927_stays() {
+    // A person deletes the folder with no `finish` and adds a file that is no
+    // record. With SD935 off, SD927 still reports the missing archive file.
+    for rules in ["", "SD935 = \"off\"\n"] {
+        let r = on_base("0.8.0", &config_with("standard", "", rules), INTENT_TEXT);
+        r.write("src/valve-timeout", "not a record\n");
+        finished_by_hand(&r, None);
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 1, "{out}{err}");
+        assert!(has(&out, "SD927"), "{out}");
+        assert!(
+            !out.contains("the archive file `src/valve-timeout`"),
+            "{out}"
+        );
+        assert!(!has(&out, "SD935"), "no archive file moved: {out}");
+    }
 }

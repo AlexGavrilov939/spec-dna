@@ -82,7 +82,9 @@ pub fn archive_of(
     read: &mut dyn FnMut(&str) -> Read,
 ) -> Result<Option<(String, Vec<u8>)>, String> {
     let mut best: Option<(u32, String, Vec<u8>)> = None;
-    for p in added {
+    // Only a file of the archive folder is an archive file: the filter of the
+    // path that `finish` writes. A file elsewhere is never the archive.
+    for p in added.iter().filter(|p| is_archive_path(p)) {
         // The number orders the files of one change. A file whose name has no
         // number of this slug comes first (a file that a person named).
         let n = archive_number(p, slug).unwrap_or(0);
@@ -95,6 +97,35 @@ pub fn archive_of(
         }
     }
     Ok(best.map(|(_, p, b)| (p, b)))
+}
+
+/// The biggest file that [`moved_archive`] reads: a record is small.
+const MOVED_READ_LIMIT: usize = 256 * 1024;
+
+/// The path outside the archive folder, among the paths that a diff adds, of a
+/// file that reads as the record of the change `slug`: the archive file that a
+/// commit moved out of `.spec-dna/accepted/`. A record in a folder of a change
+/// (`is_folder_record`) is no archive file. `read` gives the bytes of a path.
+pub fn moved_archive(
+    slug: &str,
+    added: &[&str],
+    is_folder_record: &dyn Fn(&str) -> bool,
+    read: &mut dyn FnMut(&str) -> Read,
+) -> Result<Option<String>, String> {
+    for p in added {
+        if is_archive_path(p) || is_folder_record(p) {
+            continue;
+        }
+        let Some(bytes) = read(p)? else { continue };
+        if bytes.len() > MOVED_READ_LIMIT {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        if record::Record::parse(&text).is_ok_and(|r| r.change == slug) {
+            return Ok(Some((*p).to_string()));
+        }
+    }
+    Ok(None)
 }
 
 /// The path of the archive file that `finish` writes for the slug:
@@ -334,6 +365,12 @@ pub fn rejected(rec: &Record) -> Option<String> {
     })
 }
 
+/// The start of the fix in a SD929 message after `finish` (an archive file).
+pub const STALE_AFTER_FINISH: &str = "revert the commit of `finish`";
+
+/// The start of the fix in a SD929 message before `finish` (a folder record).
+pub const STALE_BEFORE_FINISH: &str = "delete the record";
+
 /// SD929: the record is stale. The hash of `paths` differs from the code that
 /// `git` reads (the working tree, or the index for a `staged` `Git`), or the diff
 /// has a code path that `scope` matches and `paths` does not list. `after_finish`
@@ -370,13 +407,14 @@ pub fn stale(
         return Ok(None);
     }
     let slug = &rec.change;
+    // `Diag::fix` reads the mark to choose the fix of the same place.
     let fix = if after_finish {
         format!(
-            "revert the commit of `finish`, merge the base, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
+            "{STALE_AFTER_FINISH}, merge the base, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
         )
     } else {
         format!(
-            "delete the record, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
+            "{STALE_BEFORE_FINISH}, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
         )
     };
     Ok(Some(format!(
@@ -843,6 +881,52 @@ mod tests {
         );
         let mut bad = |_: &str| Ok(Some(b"not a record = = =".to_vec()));
         assert_eq!(archive_of("fix", &[b], &mut bad).unwrap(), None);
+    }
+
+    /// A path outside the archive folder is never the archive of a change, also
+    /// when it reads as the record of the change; `moved_archive` finds it.
+    #[test]
+    fn a_path_outside_the_archive_folder_is_no_archive_and_a_record_there_is_a_moved_one() {
+        let record = b"format = 1\nchange = \"fix\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n".to_vec();
+        for p in ["notes/fix.toml", "keep/fix.txt", "src/fix"] {
+            let mut read = |_: &str| Ok(Some(record.clone()));
+            assert_eq!(archive_of("fix", &[p], &mut read).unwrap(), None, "{p}");
+        }
+        let no_folder = |_: &str| false;
+        let mut read = |p: &str| {
+            Ok(match p {
+                "keep/fix.txt" | "docs/fix/acceptance.toml" => Some(record.clone()),
+                "src/fix" => Some(b"not a record".to_vec()),
+                _ => None,
+            })
+        };
+        let added = ["src/fix", "keep/fix.txt"];
+        assert_eq!(
+            moved_archive("fix", &added, &no_folder, &mut read)
+                .unwrap()
+                .as_deref(),
+            Some("keep/fix.txt")
+        );
+        // Another change, a non-record file, and a path of the archive folder.
+        assert_eq!(
+            moved_archive("other", &added, &no_folder, &mut read).unwrap(),
+            None
+        );
+        assert_eq!(
+            moved_archive("fix", &["src/fix"], &no_folder, &mut read).unwrap(),
+            None
+        );
+        let inside = [".spec-dna/accepted/fix.toml"];
+        assert_eq!(
+            moved_archive("fix", &inside, &no_folder, &mut read).unwrap(),
+            None
+        );
+        // A record in the folder of a change is no moved archive file.
+        let folder = |p: &str| p.ends_with("/acceptance.toml");
+        assert_eq!(
+            moved_archive("fix", &["docs/fix/acceptance.toml"], &folder, &mut read).unwrap(),
+            None
+        );
     }
 
     #[test]
