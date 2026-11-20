@@ -129,7 +129,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 8 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again.
+The parser keeps the list items of 10 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again. The 2 sections of 0.8.0, `Invariants` and `Deviations`, are the exception: only a heading of level 2 starts them, and a heading of another level with such a name reads as an unnamed heading. Thus a plan of 0.7.1 with `### Deviations` under `Order` keeps its tasks.
 
 | Section | Document | Items |
 | --- | --- | --- |
@@ -141,12 +141,52 @@ The parser keeps the list items of 8 sections for each document. The heading tex
 | `Files` | plan | An item is a path or a glob from the repository root. Each code span of the item is a path (`` `package.json`, `pnpm-workspace.yaml`: the workspace `` gives 2 paths), so write no other word in a code span of a `Files` item. An item with no code span is a path if its text is a plain path ([Files and paths](#files-and-paths)). A final `/` matches the folder and all files in it. Another item has no effect. The section can also have a paragraph ([A paragraph under `Files`](#a-paragraph-under-files)) |
 | `Order` | plan | The tasks of the plan, in order, also the tasks under a heading of a lower level. A heading groups tasks and is not a task. A list item with a task box and a task id is a task ([Tasks of a plan](#tasks-of-a-plan)) |
 | `Follow-ups` | incident | A task list: `- [ ]` is open, `- [x]` is done |
+| `Invariants` | spec | One item each: `<doc-id>#<key>@<hash>` for a rule that the change must keep true, or one item `none` ([Invariants](#invariants)) |
+| `Deviations` | plan | One item each: `<id> (<kind>): <text>` for a difference between the work and the plan or the spec ([Deviations](#deviations)) |
 
 Each item has its text, its line, and its byte range in the file. The range starts at the list marker and ends after the last line of the item, with its nested list. Thus a command can edit an item by its byte range. It keeps the line ends (LF or CRLF), a byte order mark and the final newline. Only the top-level items of a section count. A nested list belongs to its item.
 
 A delta line is one list item with one paragraph and no nested list. The key is a slug. The hash is 16 hexadecimal digits, as `show` prints them. A line can wrap. Each key has one line in the delta. An item in another form is an invalid line: the parser keeps it with its reason, and a check reports it later (SD914).
 
 A requirement also has the byte range of its sentence. The sentence is the text after the bold key and its colon. It has no markers `aliases`, `verified-by` and `proof-owed` at its end, and no space at its start or at its end. The hash of a requirement is the hash of this text. [The marker `proof-owed`](#the-marker-proof-owed) is the one that 0.8.0 adds.
+
+### Invariants
+
+The section `Invariants` of a spec lists the rules that the change must keep true. It is on only with `[change] invariants = true` ([config.md](config.md#the-acceptance-record)). Without the key, a section with this name is plain text, and no check reads it. With the key, `spec-dna new spec` writes the section with the item `none`.
+
+An item is `<doc-id>#<key>@<hash>`. The id and the key name a requirement of a document of the type `rule`, and the hash is the hash that `spec-dna show <doc-id>#<key>` prints. The item `none` says that no rule applies. It stands alone. A change with no spec declares no invariant.
+
+- SD936 reports an item that has another form, names no requirement, names a requirement outside a `rule` document, or names a rule that the delta of the same spec adds or removes. Such a rule cannot stay true across the change, and an added rule has no hash to pin.
+- SD937 reports a hash that is not the hash of the rule now. If the delta of the same spec has a `CHANGE` line for the rule, the hash of the item must be the hash of that line, not the hash of the rule now: the line pins the old text, and after `finish` the rule has the new text.
+- The record has one `[[invariant]]` entry for each item, with `id` equal to the item, and `answer` `held`, `not-affected` or `violated`. The two last answers need a `reason`. SD938 reports an item with no answer. An answer `violated` makes the result `rejected`.
+- A spec that a commit added when `spec-dna.toml` pinned a version before 0.8.0 keeps its section as plain text.
+
+```md
+## Invariants
+
+- rules/safety#valve-closed-on-fault@a1b2c3d4e5f60718
+```
+
+### Deviations
+
+The section `Deviations` of a plan lists each difference between the work and the plan or the spec. The builder adds one item for each deviation, in the commit of the work. The edit changes the plan after its approval, as the tick of a box does, and SD910 gives no finding for it. The section needs no key: the record carries the deviations, so they are on where the acceptance is on.
+
+An item is `- <id> (<kind>): <text>`. The id is unique in the section: it has letters, digits, `-` and `_`. The kind is `plan` (the files, the tasks, the order or the approach) or `spec` (the behavior differs from a requirement or a delta line). A `spec` item names a way to fix the difference: `Delta: <verb> <doc-id>#<key>` names a line of the delta of the spec, or `Follow-up: <slug>` names a change folder of the tree. A `plan` item needs neither.
+
+- SD939 reports an item of another form, a kind outside `plan` and `spec`, and a repeated id.
+- SD940 reports a `spec` item that names no line of the delta and no change folder.
+- The acceptor copies each item into the record as `[[deviation]]` (`id`, `kind`, `text`, `verdict`), and the verdict is `accepted` or `rejected`. SD938 reports an item with no entry, or with another text. After `finish`, the record is the only carrier of the deviations. A verdict `rejected` makes the result `rejected`.
+- `finish` prints each deviation ([commands.md](commands.md#finish)). In 0.8.0 the merge of the pull request acknowledges them.
+- A plan that a commit added when `spec-dna.toml` pinned a version before 0.8.0 keeps its section as plain text.
+
+```md
+## Deviations
+
+- d1 (plan): The timeout check moved to `src/sensors.rs`, because the sensor owns the timer.
+- d2 (spec): The valve closes after 2 failed reads, not 1. Delta: CHANGE requirements/valves/closing#sensor-timeout
+```
+
+The parser keeps the items of both sections for each document, so `PARSER_VERSION` is 18.
 
 ### The marker `proof-owed`
 
@@ -241,7 +281,7 @@ A section that states "nothing" gives no SD914 (`Interfaces`), no SD919 (`Concer
 | `prd` | `intent` | `new intent <slug> --template prd` | Problem, Users, Goals, Non-goals, Success measures, Open questions |
 | `rfc` | `intent` | `new intent <slug> --template rfc` | Summary, Motivation, Proposal, Alternatives, Unresolved |
 | `intent` (default) | `intent` | `new intent <slug>` | Intent, Why now, Out of scope. The 3 intent templates have `class: routine` |
-| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Concerns (the item `- [ ] {{An open concern.}}`), Open questions |
+| `spec` (default) | `spec` | `new spec <slug>` | Delta, Interfaces, Decisions, Invariants (only with `[change] invariants`, the item `- none`), Concerns (the item `- [ ] {{An open concern.}}`), Open questions |
 | `plan` (default) | `plan` | `new plan <slug>` | Files (the item `` `{{path}}` ``), Order (2 example tasks, each with `` Files: `{{path}}` ``), Risks, Proof |
 | `madr` (default) | `decision` | `new decision <slug>` | Context and Problem Statement, Considered Options, Decision Outcome, Consequences, Status, Amendments |
 | `post-mortem` (default) | `incident` | `new incident <slug>` | Summary, Timeline, Root cause, Links, Follow-ups (a task list), Eval |

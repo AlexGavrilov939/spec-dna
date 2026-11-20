@@ -120,6 +120,10 @@ pub struct Config {
     /// higher-risk change needs. An integer from 1 to 3. The default is
     /// `DEFAULT_HIGHER_RISK_ACCEPTORS` (design 0.8.0, D3 item 7).
     pub higher_risk_acceptors: u32,
+    /// `[change] invariants`: the spec declares the rules that the change must
+    /// keep true, and SD936 and SD937 read them (design 0.8.0, D6). The default
+    /// is false.
+    pub change_invariants: bool,
     /// `[change] base`: the name of a local branch that is the base of the
     /// change checks when `--base` and `refs/remotes/origin/HEAD` give none
     /// (design 0.6.1, D35 and D36). `None`: the key is absent.
@@ -311,6 +315,7 @@ struct ChangeTable {
     max_fanout: u32,
     max_task_files: u32,
     higher_risk_acceptors: u32,
+    invariants: bool,
     base: Option<String>,
     approval: Approval,
     approvers: Vec<String>,
@@ -328,6 +333,7 @@ impl ChangeTable {
             max_fanout: DEFAULT_MAX_FANOUT,
             max_task_files: DEFAULT_MAX_TASK_FILES,
             higher_risk_acceptors: DEFAULT_HIGHER_RISK_ACCEPTORS,
+            invariants: false,
             base: None,
             approval: Approval::Base,
             approvers: Vec::new(),
@@ -399,6 +405,11 @@ impl ChangeTable {
                 return Err("`change.higher-risk-acceptors` must be an integer from 1 to 3".into());
             }
         };
+        let invariants = match f.take("invariants") {
+            None => false,
+            Some(Value::Boolean(b)) => *b,
+            Some(_) => return Err("`change.invariants` must be a boolean".into()),
+        };
         let base = f.opt_str("base")?;
         if let Some(b) = &base {
             branch_name_problem(b).map_or(Ok(()), |why| {
@@ -447,6 +458,7 @@ impl ChangeTable {
             max_fanout,
             max_task_files,
             higher_risk_acceptors,
+            invariants,
             base,
             approval,
             approvers,
@@ -1035,6 +1047,10 @@ impl Profile {
             "SD927" | "SD928" | "SD929" | "SD930" | "SD931" | "SD933" | "SD935" => {
                 (None, Some(E), Some(E))
             }
+            // The invariants and the deviations (design 0.8.0, D6 and D7). Off
+            // in `lite`. SD936 and SD937 run only with `[change] invariants`
+            // (`configured_severity`). The deviations need no key.
+            "SD936" | "SD937" | "SD938" | "SD939" | "SD940" => (None, Some(E), Some(E)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -1061,7 +1077,8 @@ pub const GROUPS: [(&str, &[&str]); 11] = [
     (
         "acceptance",
         &[
-            "SD927", "SD928", "SD929", "SD930", "SD931", "SD933", "SD935",
+            "SD927", "SD928", "SD929", "SD930", "SD931", "SD933", "SD935", "SD936", "SD937",
+            "SD938", "SD939", "SD940",
         ],
     ),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
@@ -1746,6 +1763,7 @@ impl Config {
             max_fanout: change.max_fanout,
             max_task_files: change.max_task_files,
             higher_risk_acceptors: change.higher_risk_acceptors,
+            change_invariants: change.invariants,
             change_base: change.base,
             change_approval: change.approval,
             change_approvers: change.approvers,
@@ -1787,6 +1805,12 @@ impl Config {
         if (is_change_code(code) || is_acceptance_code(code))
             && self.change_policy == ChangePolicy::None
         {
+            return None;
+        }
+        // SD936 and SD937 read the section `Invariants`, which only the key
+        // `[change] invariants` turns on. No rule of the file can turn them on
+        // without it (design 0.8.0, D6).
+        if matches!(code.code(), "SD936" | "SD937") && !self.change_invariants {
             return None;
         }
         let root = root.map(|r| &self.roots[r]);
@@ -4009,6 +4033,84 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
+    fn the_codes_of_the_invariants_and_the_deviations_have_the_design_rows() {
+        use Severity::Error as E;
+        let change = "[change]\npolicy = \"three-class\"\n";
+        let keyed = "[change]\npolicy = \"three-class\"\ninvariants = true\n";
+        let all = [
+            Code::InvariantInvalid,
+            Code::InvariantStale,
+            Code::RecordIncomplete,
+            Code::DeviationInvalid,
+            Code::DeviationUnresolved,
+        ];
+        for code in all {
+            let groups: Vec<&str> = GROUPS
+                .iter()
+                .filter(|g| g.1.contains(&code.code()))
+                .map(|g| g.0)
+                .collect();
+            assert_eq!(groups, ["acceptance"], "{}", code.code());
+            for (profile, want) in [("lite", None), ("standard", Some(E)), ("strict", Some(E))] {
+                // SD936 and SD937 run only with the key.
+                let keyless = matches!(code, Code::InvariantInvalid | Code::InvariantStale);
+                let c = with(&format!("profile = \"{profile}\""), change).unwrap();
+                let w = if keyless { None } else { want };
+                assert_eq!(c.severity(code, None), w, "{} {profile}", code.code());
+                let c = with(&format!("profile = \"{profile}\""), keyed).unwrap();
+                assert_eq!(
+                    c.severity(code, None),
+                    want,
+                    "{} {profile} key",
+                    code.code()
+                );
+            }
+        }
+        // A rule for the group does not turn SD936 on without the key, and a rule
+        // for the group turns the other codes on in `lite`.
+        let c = with(
+            "profile = \"lite\"",
+            &format!("{change}[rules]\nacceptance = \"warning\"\n"),
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::InvariantInvalid, None), None);
+        assert_eq!(
+            c.severity(Code::DeviationInvalid, None),
+            Some(Severity::Warning)
+        );
+        let c = with(
+            "profile = \"lite\"",
+            &format!("{keyed}[rules]\nSD937 = \"warning\"\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            c.severity(Code::InvariantStale, None),
+            Some(Severity::Warning)
+        );
+        assert_eq!(c.severity(Code::InvariantInvalid, None), None);
+    }
+
+    #[test]
+    fn the_key_invariants_is_a_boolean_that_defaults_to_false() {
+        let text = |keys: &str| format!("[change]\npolicy = \"three-class\"\n{keys}\n");
+        assert!(!with("", &text("")).unwrap().change_invariants);
+        assert!(
+            with("", &text("invariants = true"))
+                .unwrap()
+                .change_invariants
+        );
+        assert!(
+            !with("", &text("invariants = false"))
+                .unwrap()
+                .change_invariants
+        );
+        for bad in ["1", "\"true\"", "[]"] {
+            let e = with("", &text(&format!("invariants = {bad}"))).unwrap_err();
+            assert!(e.contains("`change.invariants` must be a boolean"), "{e}");
+        }
+    }
+
+    #[test]
     fn the_key_higher_risk_acceptors_has_a_default_and_bounds() {
         let text = |keys: &str| format!("[change]\npolicy = \"three-class\"\n{keys}\n");
         let c = with("", &text("")).unwrap();
@@ -4315,6 +4417,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "high-risk-layers",
                 "high-risk-paths",
                 "higher-risk-acceptors",
+                "invariants",
                 "max-fanout",
                 "max-task-files",
                 "policy",
@@ -4332,6 +4435,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ("max-fanout", "\"x\""),
             ("max-task-files", "\"x\""),
             ("higher-risk-acceptors", "\"x\""),
+            ("invariants", "\"x\""),
         ] {
             let e = with("", &format!("[change]\npolicy = \"none\"\n{k} = {bad}\n")).unwrap_err();
             assert!(

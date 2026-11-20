@@ -291,7 +291,10 @@ command writes the files, deletes the folder, and stages the paths with
 plan that is not skipped, and the label `Actual:` of each task of the plan.
 It prints the line `Hours: <total>` (a number, or a range `<low>-<high>`),
 with `, actual <n>` if a task has `Actual:`: put the line in the commit
-message, and keep it in the squash message. It is the only command that
+message, and keep it in the squash message. For a change that needs an
+acceptance record, it prints the line `Deviations: <n>` and one line for each
+deviation of the plan, with the verdict of the record (--json: the list
+`deviations`); the merge of the pull request acknowledges them. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
     ),
@@ -318,7 +321,9 @@ pin or configuration, 4 git or write error, 5 no folder or no file.",
 acceptor is an agent that did not write the code. The first form writes the
 skeleton `acceptance.toml` in the folder of the change: the scope of the plan,
 the code paths of the diff that the scope matches, the hash of their content,
-one [[proof]] for each requirement that the change adds or changes, and one
+one [[proof]] for each requirement that the change adds or changes, one
+[[invariant]] for each item of `Invariants` of the spec (with [change]
+invariants), one [[deviation]] for each item of `Deviations` of the plan, and one
 [[acceptor]] entry with the value pending in each field that the acceptor still
 writes. With --session, the entry names that session; without it, or with an
 empty value, it names `unknown`. A second run adds one [[acceptor]] entry,
@@ -1579,22 +1584,16 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         None => None,
     };
     let mut outcome = check::gate(&cfg, base, life, head);
-    // SD914 is an error only for a spec that the diff touches (design, K3).
-    // With no lifecycle base, no spec is touched.
-    if outcome
-        .head
-        .iter()
-        .any(|d| d.code == diag::Code::DeltaInvalid && d.severity == Severity::Error)
+    // SD914 and SD937 are errors only for a spec that the diff touches (design,
+    // K3 and 0.8.0 D6). With no lifecycle base, no spec is touched.
     {
         let touched: Vec<&str> = diff
             .iter()
             .flat_map(|d| d.files.iter().map(|(p, _)| p.as_str()))
             .collect();
-        for d in &mut outcome.head {
-            if d.code == diag::Code::DeltaInvalid && !touched.contains(&d.path.as_str()) {
-                d.severity = Severity::Warning;
-            }
-        }
+        lifecycle::lower_untouched(&mut outcome.head, &lifecycle::TOUCHED_CODES, &|p| {
+            touched.contains(&p)
+        });
     }
     // SD912 is new when the head has more started changes than the lifecycle
     // base has (K5).
@@ -1801,6 +1800,15 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let early_notes =
         lifecycle::skip_early_plans(&repo.git, &mut outcome.head, &mut outcome.new, a.all)
             .map_err(Fatal::Io)?;
+    // SD936, SD937, SD939 and SD940 skip a spec or a plan that a commit added
+    // under a pin before 0.8.0 (design 0.8.0, D6 and D7).
+    lifecycle::skip_early_sections(
+        &repo.git,
+        change_base.as_deref(),
+        &mut outcome.head,
+        &mut outcome.new,
+    )
+    .map_err(Fatal::Io)?;
 
     let count = |sev: Severity, only_new: bool| {
         outcome
@@ -2591,6 +2599,12 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
     }
     let place_gives_type = root.single_type == Some(ty) || cfg.layers.place_type(&rel) == Some(ty);
+    // With `[change] invariants`, a new spec has the section `Invariants`.
+    let template_text = if ty == DocType::Spec && cfg.change_invariants {
+        templates::with_invariants(&template_text)
+    } else {
+        template_text
+    };
     let text = templates::instantiate(&template_text, ty, &title, !place_gives_type);
     mv::write(&file, &text)?;
     if a.json {
@@ -4008,12 +4022,12 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if !a.dry_run {
         finish::write_plan(&repo.root, &repo.git, &plan).map_err(|e| Fatal::Io(e.message))?;
     }
-    report_finish(slug, &folder, a, &plan);
+    report_finish(slug, &folder, a, &plan, &cfg.pin);
     Ok(0)
 }
 
 /// The report of a plan that no step stopped, written or not (`--dry-run`).
-fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
+fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &str) {
     let diff_of = |w: &finish::Write| init::unified_diff(&w.path, w.old.as_deref(), &w.new, false);
     if a.json {
         let writes = plan.writes.iter().map(|w| {
@@ -4030,16 +4044,30 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
                 .str("diff", "")
                 .end()
         });
+        let mut o = Obj::new()
+            .str("slug", slug)
+            .bool("ok", true)
+            .bool("dry_run", a.dry_run)
+            .num("step", 6)
+            .raw("diagnostics", "[]")
+            .raw("files", &json::array(writes.chain(removes)));
+        // A project of 0.7.1 with no deviation sees the output of 0.7.1.
+        if finish::emits_deviations(pin, plan.deviations.len()) {
+            o = o.raw(
+                "deviations",
+                &json::array(plan.deviations.iter().map(|d| {
+                    Obj::new()
+                        .str("id", &d.id)
+                        .str("kind", &d.kind)
+                        .str("text", &d.text)
+                        .str("verdict", &d.verdict)
+                        .end()
+                })),
+            );
+        }
         println!(
             "{}",
-            Obj::new()
-                .str("slug", slug)
-                .bool("ok", true)
-                .bool("dry_run", a.dry_run)
-                .num("step", 6)
-                .raw("diagnostics", "[]")
-                .raw("files", &json::array(writes.chain(removes)))
-                .raw("hours", &plan.hours.json())
+            o.raw("hours", &plan.hours.json())
                 .raw("actual", &plan.hours.actual_json())
                 .end()
         );
@@ -4114,6 +4142,15 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
         println!(
             "add this line to the commit message of the change; keep it in the squash message"
         );
+    }
+    // Step 5.3: the deviations of the plan, with the verdict of the record. In
+    // 0.8.0 the merge of the pull request acknowledges them.
+    if !plan.deviations.is_empty() {
+        println!("Deviations: {}", plan.deviations.len());
+        for d in &plan.deviations {
+            println!("- {} ({}), {}: {}", d.id, d.kind, d.verdict, d.text);
+        }
+        println!("the merge of the pull request acknowledges the deviations");
     }
 }
 

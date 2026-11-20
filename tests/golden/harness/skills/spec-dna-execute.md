@@ -11,6 +11,7 @@ Commands:
 2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
 3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
 4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
+5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`, in the commit of the work: `- <id> (plan): <text>`, or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`).
 
 Artifact: The code, the tests and the checked task.
 
@@ -20,4 +21,4 @@ If the check fails: Fix the cause in the same task. If a file is outside `Files`
 
 Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:70fedbb8e12077ff -->
+<!-- spec-dna harness v{VERSION} h:8f4ffcadead91290 -->

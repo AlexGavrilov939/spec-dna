@@ -275,6 +275,10 @@ pub struct Plan {
     /// keeps the value if the current file sets the key. `None`: no key, and the
     /// profile `strict` writes 2.
     pub higher_risk_acceptors: Option<u32>,
+    /// `[change] invariants` (design 0.8.0, D6). `--reconfigure` keeps the value
+    /// if the current file sets the key. `None`: no key, and the profile `strict`
+    /// writes `true`.
+    pub invariants: Option<bool>,
     /// `[change] base`. No question asks for it. `--reconfigure` keeps the
     /// value that the file sets. The config loader has checked the name.
     pub change_base: Option<String>,
@@ -511,6 +515,15 @@ impl Plan {
         if let Some(n) = acceptors {
             out.push_str(&format!(
                 "higher-risk-acceptors = {n}  # acceptors that a higher-risk change needs, from 1 to 3\n"
+            ));
+        }
+        // The invariants of a spec (design 0.8.0, D6): `strict` turns them on.
+        let invariants = self
+            .invariants
+            .or((self.profile == Profile::Strict).then_some(true));
+        if let Some(on) = invariants {
+            out.push_str(&format!(
+                "invariants = {on}  # a spec lists the rules that the change must keep true (SD936 and SD937)\n"
             ));
         }
         if let Some(b) = &self.change_base {
@@ -899,6 +912,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         max_fanout: config::DEFAULT_MAX_FANOUT,
         max_task_files: None,
         higher_risk_acceptors: None,
+        invariants: None,
         change_base: None,
         approval: Approval::Base,
         approvers: Vec::new(),
@@ -1029,6 +1043,16 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         })
         .unwrap_or(false)
         .then_some(cfg.higher_risk_acceptors);
+    p.invariants = text
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| {
+            t.get("change")
+                .and_then(toml::Value::as_table)
+                .map(|c| c.contains_key("invariants"))
+        })
+        .unwrap_or(false)
+        .then_some(cfg.change_invariants);
     p.change_base = cfg.change_base.clone();
     p.approval = cfg.change_approval;
     p.approvers = cfg.change_approvers.clone();

@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 17;
+pub const PARSER_VERSION: u32 = 18;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -47,8 +47,8 @@ pub struct ParsedDoc {
     /// Only a `terms` document uses them (SD904).
     pub terms: Vec<TermRow>,
     /// The top-level list items of the sections that carry a change (`Delta`,
-    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`
-    /// and `Open questions`), in the order of the file. The parser
+    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`,
+    /// `Open questions`, `Invariants` and `Deviations`), in the order of the file. The parser
     /// stores them for every document. Only the documents of a change and an
     /// incident use them.
     pub items: Vec<ListItem>,
@@ -70,10 +70,17 @@ pub enum ItemSection {
     FollowUps = 5,
     Order = 6,
     OpenQuestions = 7,
+    /// The section of a spec that lists the rules which the change must keep
+    /// true (design 0.8.0, D6). Appended at the end: the index stores the
+    /// position.
+    Invariants = 8,
+    /// The section of a plan that lists the deviations of the work (design
+    /// 0.8.0, D7).
+    Deviations = 9,
 }
 
 impl ItemSection {
-    pub const ALL: [ItemSection; 8] = [
+    pub const ALL: [ItemSection; 10] = [
         ItemSection::Delta,
         ItemSection::Interfaces,
         ItemSection::Decisions,
@@ -82,7 +89,15 @@ impl ItemSection {
         ItemSection::FollowUps,
         ItemSection::Order,
         ItemSection::OpenQuestions,
+        ItemSection::Invariants,
+        ItemSection::Deviations,
     ];
+
+    /// True for a section that 0.8.0 adds. The parser reads it only at a heading
+    /// of level 2, so a document of 0.7.1 keeps its parse.
+    pub fn is_new(self) -> bool {
+        matches!(self, ItemSection::Invariants | ItemSection::Deviations)
+    }
 
     pub fn heading(self) -> &'static str {
         match self {
@@ -94,6 +109,8 @@ impl ItemSection {
             ItemSection::FollowUps => "Follow-ups",
             ItemSection::Order => "Order",
             ItemSection::OpenQuestions => "Open questions",
+            ItemSection::Invariants => "Invariants",
+            ItemSection::Deviations => "Deviations",
         }
     }
 
@@ -580,7 +597,13 @@ impl ItemScan {
             }
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(h) = self.heading.take() {
-                    let named = ItemSection::from_heading(&h);
+                    let found = ItemSection::from_heading(&h);
+                    // The 2 sections of 0.8.0 are a new name. A document of 0.7.1
+                    // must parse as 0.7.1 parsed it, so a heading with such a name
+                    // reads as an unnamed heading, and it starts its section only
+                    // at level 2, where no `Order` of a lower level holds it.
+                    let new = found.filter(|s| s.is_new());
+                    let named = found.filter(|s| !s.is_new());
                     let level = self.heading_level;
                     self.order_level = match (named, self.order_level) {
                         (Some(ItemSection::Order), _) => Some(level),
@@ -593,6 +616,9 @@ impl ItemScan {
                         (None, Some(_)) => Some(ItemSection::Order),
                         _ => named,
                     };
+                    if self.order_level.is_none() && level == 2 && new.is_some() {
+                        self.section = new;
+                    }
                 }
             }
             Event::Text(t) | Event::Code(t) if self.heading.is_some() => {
@@ -1797,7 +1823,83 @@ mod tests {
             parse("# P\n\n## Hours\n\n- 1.5: t1 code\n- 2: review\n- [ ] 0.5\n\n## Other\n\n- x\n");
         assert!(d.items.is_empty());
         assert_eq!(ItemSection::from_heading("hours"), None);
-        assert_eq!(ItemSection::ALL.len(), 8);
+        assert_eq!(ItemSection::ALL.len(), 10);
+    }
+
+    /// The 2 sections of 0.8.0 are read only at a heading of level 2, and a
+    /// heading of another level reads as any unnamed heading: a plan of 0.7.1 with
+    /// `### Deviations` under `Order` keeps its tasks (the owner rule: an old
+    /// document parses as 0.7.1 parsed it).
+    #[test]
+    fn a_sub_heading_with_the_name_of_a_new_section_keeps_the_tasks_in_order() {
+        for name in ["Deviations", "Invariants", "Logging"] {
+            let d = parse(&format!(
+                "# P\n\n## Order\n\n- [x] t1: One.\n\n### {name}\n\n- [ ] t2: Two.\n"
+            ));
+            let kept: Vec<(ItemSection, &str)> = d
+                .items
+                .iter()
+                .map(|i| (i.section, i.text.as_str()))
+                .collect();
+            assert_eq!(
+                kept,
+                [
+                    (ItemSection::Order, "t1: One."),
+                    (ItemSection::Order, "t2: Two."),
+                ],
+                "{name}"
+            );
+        }
+        // A heading of level 3 with no open `Order` starts nothing.
+        let d = parse("# P\n\n### Deviations\n\n- d1 (plan): x\n\n#### Invariants\n\n- y\n");
+        assert!(d.items.is_empty());
+    }
+
+    #[test]
+    fn a_level_2_heading_of_a_new_section_ends_order_as_an_unnamed_one_did() {
+        let d = parse(
+            "# P\n\n## Order\n\n- [x] t1: One.\n\n## Deviations\n\n- d1 (plan): x\n\n## Invariants\n\n- none\n",
+        );
+        let kept: Vec<(ItemSection, &str)> = d
+            .items
+            .iter()
+            .map(|i| (i.section, i.text.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (ItemSection::Order, "t1: One."),
+                (ItemSection::Deviations, "d1 (plan): x"),
+                (ItemSection::Invariants, "none"),
+            ]
+        );
+        // Under an `Order` of level 1, a heading of level 2 is inside `Order`, as
+        // any unnamed heading of level 2 is.
+        let d = parse("# Order\n\n- [x] t1: One.\n\n## Deviations\n\n- [ ] t2: Two.\n");
+        let kept: Vec<ItemSection> = d.items.iter().map(|i| i.section).collect();
+        assert_eq!(kept, [ItemSection::Order, ItemSection::Order]);
+    }
+
+    #[test]
+    fn the_items_of_invariants_and_deviations_are_kept() {
+        let d = parse(
+            "# S\n\n## Invariants\n\n- rules/a#b@0123456789abcdef\n- none\n\n## deviations\n\n- d1 (plan): text\n\n## Other\n\n- x\n",
+        );
+        let kept: Vec<(ItemSection, &str)> = d
+            .items
+            .iter()
+            .map(|i| (i.section, i.text.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (ItemSection::Invariants, "rules/a#b@0123456789abcdef"),
+                (ItemSection::Invariants, "none"),
+                (ItemSection::Deviations, "d1 (plan): text"),
+            ]
+        );
+        assert_eq!(ItemSection::Invariants.heading(), "Invariants");
+        assert_eq!(ItemSection::Deviations.heading(), "Deviations");
     }
 
     #[test]
@@ -1847,8 +1949,8 @@ mod tests {
     }
 
     #[test]
-    fn parser_version_is_17() {
-        assert_eq!(PARSER_VERSION, 17);
+    fn parser_version_is_18() {
+        assert_eq!(PARSER_VERSION, 18);
     }
 
     /// The hash of a requirement does not cover the marker `proof-owed`, so a

@@ -1011,3 +1011,336 @@ fn the_two_ways_out_work_the_form_with_a_dot_slash_and_shared_paths() {
     let paths = t.lines().find(|l| l.starts_with("paths = ")).unwrap();
     assert!(paths.contains("\"Makefile\""), "{paths}");
 }
+
+// The invariants and the deviations in the skeleton and the brief (design
+// 0.8.0, D6 and D7, slice S5).
+
+const RULE_DOC: &str = "---\nstatus: active\napplies-to: [\"**\"]\n---\n# Safety\n\n## Rules\n\n- **valve-closed**: The controller SHALL close each valve on a fault.\n";
+
+fn s5_config(keys: &str) -> String {
+    config("standard", keys).replace(
+        "[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]",
+        "[layers.rules]\ntypes = [\"rule\"]\nmoves-to = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"rules\"]",
+    )
+}
+
+/// Commits the plan under the pin 0.8.0, then sets the pin of the binary in a
+/// commit of its own. The sections `Invariants` and `Deviations` are read as 0.8.0
+/// reads them only in a file whose adding commit has a pin of 0.8.0 or later.
+fn commit_plan_at_0_8_0(r: &Repo) {
+    let t = r.read("spec-dna.toml");
+    let (_, rest) = t.split_once('\n').unwrap();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{rest}"));
+    r.commit("plan");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{rest}"),
+    );
+    r.commit("move the pin");
+}
+
+/// A pull request whose spec has the section `Invariants` with `items` and whose
+/// plan has the section `Deviations` with `devs` (a section with no text is not
+/// written).
+fn s5_built(keys: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
+    let r = Repo::with_config(&s5_config(keys));
+    r.write(REQ, VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write("README.md", "# Project\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    let (_, out, _) = r.run(&["show", "rules/safety#valve-closed", "--json"]);
+    let h = out
+        .split("\"hash\":\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .unwrap()
+        .to_string();
+    let inv = items(&h);
+    let spec = if inv.is_empty() {
+        SPEC_TEXT.to_string()
+    } else {
+        SPEC_TEXT.replace(
+            "## Concerns",
+            &format!("## Invariants\n\n{inv}\n\n## Concerns"),
+        )
+    };
+    let plan = if devs.is_empty() {
+        PLAN_TEXT.to_string()
+    } else {
+        format!("{PLAN_TEXT}\n## Deviations\n\n{devs}\n")
+    };
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, &spec);
+    r.write(PLAN, &plan);
+    commit_plan_at_0_8_0(&r);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("code");
+    r
+}
+
+fn pin_item(h: &str) -> String {
+    format!("- rules/safety#valve-closed@{h}")
+}
+
+const DEVS: &str = "- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Follow-up: later-change.";
+
+#[test]
+fn with_the_key_the_skeleton_has_one_pending_invariant_entry_for_each_item() {
+    let r = s5_built("invariants = true\n", &pin_item, "");
+    let (_, out, _) = r.run(&["show", "rules/safety#valve-closed", "--json"]);
+    let h = out
+        .split("\"hash\":\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .unwrap();
+    let t = write_record(&r);
+    assert!(
+        t.contains(&format!(
+            "[[invariant]]\nid = \"rules/safety#valve-closed@{h}\"\nanswer = \"pending\"\n"
+        )),
+        "{t}"
+    );
+    assert_eq!(t.matches("[[invariant]]").count(), 1, "{t}");
+    assert_eq!(t.matches("[[deviation]]").count(), 0, "{t}");
+    // A second acceptor adds an acceptor entry and no second answer.
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2", "--role", "second"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(RECORD);
+    assert_eq!(t.matches("[[invariant]]").count(), 1, "{t}");
+    assert_eq!(t.matches("[[acceptor]]").count(), 2, "{t}");
+}
+
+#[test]
+fn without_the_key_the_skeleton_and_the_brief_have_no_invariant() {
+    let r = s5_built("", &pin_item, "");
+    let t = write_record(&r);
+    assert!(!t.contains("[[invariant]]"), "{t}");
+    assert!(!brief(&r, &[]).contains("=== invariants ==="));
+    // With the key the brief lists it, in the order of the file.
+    let r = s5_built("invariants = true\n", &pin_item, "");
+    let b = brief(&r, &[]);
+    assert!(
+        b.contains("=== invariants ===\n- rules/safety#valve-closed@"),
+        "{b}"
+    );
+    assert!(b.find("=== tree ===").unwrap() < b.find("=== invariants ===").unwrap());
+}
+
+#[test]
+fn the_skeleton_and_the_brief_list_the_deviations_with_no_key() {
+    let r = s5_built("", &|_| String::new(), DEVS);
+    let t = write_record(&r);
+    assert_eq!(t.matches("[[deviation]]").count(), 2, "{t}");
+    assert!(
+        t.contains("[[deviation]]\nid = \"d1\"\nkind = \"plan\"\ntext = \"The timeout check moved to `src/sensors.rs`.\"\nverdict = \"pending\"\n"),
+        "{t}"
+    );
+    assert!(t.contains("id = \"d2\"\nkind = \"spec\""), "{t}");
+    let b = brief(&r, &[]);
+    assert!(
+        b.contains("=== deviations ===\n- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Follow-up: later-change.\n"),
+        "{b}"
+    );
+}
+
+#[test]
+fn an_item_that_is_not_valid_gives_no_entry_and_none_gives_no_entry() {
+    let r = s5_built(
+        "invariants = true\n",
+        &|_| "- none".to_string(),
+        "- d1: no kind\n- d2 (plan): fine",
+    );
+    let t = write_record(&r);
+    assert!(!t.contains("[[invariant]]"), "{t}");
+    assert_eq!(t.matches("[[deviation]]").count(), 1, "{t}");
+    assert!(t.contains("id = \"d2\""), "{t}");
+}
+
+#[test]
+fn the_brief_changes_when_an_invariant_or_a_deviation_changes() {
+    let a = brief(&s5_built("invariants = true\n", &pin_item, ""), &[]);
+    let b = brief(
+        &s5_built("invariants = true\n", &pin_item, "- d1 (plan): A note."),
+        &[],
+    );
+    assert_ne!(last_line(&a), last_line(&b));
+    // The same files give the same brief.
+    let c = brief(&s5_built("invariants = true\n", &pin_item, ""), &[]);
+    assert_eq!(last_line(&a), last_line(&c));
+}
+
+/// A pull request whose base already holds the change, added under the pin
+/// `pin`; a later commit of the base sets the pin of the binary. The spec has the
+/// stale pin item and the plan has one deviation. The branch adds the code.
+fn s5_in_base(pin: &str, keys: &str) -> Repo {
+    let cfg = s5_config(keys);
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{cfg}"));
+    r.write(REQ, VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write("README.md", "# Project\n");
+    r.write(INTENT, INTENT_TEXT);
+    r.write(
+        SPEC,
+        &SPEC_TEXT.replace(
+            "## Concerns",
+            "## Invariants\n\n- rules/safety#valve-closed@00112233aabbccdd\n\n## Concerns",
+        ),
+    );
+    r.write(
+        PLAN,
+        &format!("{PLAN_TEXT}\n## Deviations\n\n- d1 (plan): The check moved.\n"),
+    );
+    r.commit("the change");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("code");
+    r
+}
+
+#[test]
+fn a_spec_and_a_plan_of_0_7_1_declare_nothing_to_the_skeleton_and_the_brief() {
+    let r = s5_in_base("0.7.1", "invariants = true\n");
+    let t = write_record(&r);
+    assert!(
+        !t.contains("[[invariant]]") && !t.contains("[[deviation]]"),
+        "{t}"
+    );
+    let b = brief(&r, &[]);
+    assert!(
+        !b.contains("=== invariants ===") && !b.contains("=== deviations ==="),
+        "{b}"
+    );
+}
+
+#[test]
+fn a_spec_and_a_plan_of_0_8_0_in_the_base_declare_their_items() {
+    let r = s5_in_base("0.8.0", "invariants = true\n");
+    let t = write_record(&r);
+    assert!(
+        t.contains("id = \"rules/safety#valve-closed@00112233aabbccdd\"")
+            && t.contains("[[deviation]]\nid = \"d1\""),
+        "{t}"
+    );
+    let b = brief(&r, &[]);
+    assert!(
+        b.contains("=== invariants ===") && b.contains("=== deviations ==="),
+        "{b}"
+    );
+}
+
+#[test]
+fn a_record_over_the_size_limit_names_the_largest_part_and_its_fix() {
+    // Many deviations.
+    let devs: String = (1..=300)
+        .map(|n| format!("- d{n} (plan): The check number {n} moved.\n"))
+        .collect();
+    let r = s5_built("", &|_| String::new(), &devs);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is deviations")
+            && err.contains("`Deviations` of the plan lists 300 items")
+            && err.contains("Shorten the text of each item"),
+        "{err}"
+    );
+    assert!(!err.contains("too many paths"), "{err}");
+    assert!(!r.dir.join(RECORD).exists(), "no write");
+    // One deviation with a long text: the same part, its size is named.
+    let long = format!("- d1 (plan): {}", "long ".repeat(4000));
+    let r = s5_built("", &|_| String::new(), &long);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is deviations (")
+            && err.contains("`Deviations` of the plan lists 1 items"),
+        "{err}"
+    );
+    // Many invariants (the key is on).
+    let inv = |h: &str| -> String {
+        (1..=250)
+            .map(|n| format!("- rules/safety#rule-{n}@{h}\n"))
+            .collect()
+    };
+    let r = s5_built("invariants = true\n", &inv, "");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is invariants")
+            && err.contains("`Invariants` of the spec lists 250 items")
+            && err.contains("List fewer rules"),
+        "{err}"
+    );
+    // A record under the limit is written.
+    let r = s5_built("", &|_| String::new(), "- d1 (plan): fine");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn the_message_of_a_record_over_the_limit_names_the_part_of_the_text_that_would_be_written() {
+    // The paths: the message names the largest part with its size.
+    let r = built_with(&config("standard", "shared-paths = [\"gen/*.txt\"]\n"));
+    for n in 0..500 {
+        r.write(&format!("gen/a_module_with_a_long_name_{n:04}.txt"), "x\n");
+    }
+    r.commit("many files");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is paths (") && err.contains("too many paths"),
+        "{err}"
+    );
+    // The other tables: the record holds a long attempt, and a second acceptor
+    // would push it over the limit.
+    let r = built();
+    write_record(&r);
+    let t = r.read(RECORD);
+    r.write(
+        RECORD,
+        &format!(
+            "{t}\n[[attempt]]\nacceptor = 1\ntext = \"{}\"\noutcome = \"held\"\n",
+            "a".repeat(16_384 - t.len() - 70)
+        ),
+    );
+    assert!(r.read(RECORD).len() <= 16_384);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2", "--role", "second"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is the other tables (")
+            && err.contains("Shorten the text of the attempts"),
+        "{err}"
+    );
+    // The answers of the invariants: a long reason that an acceptor wrote counts
+    // under the invariants, not under the other tables.
+    let r = s5_built("invariants = true\n", &pin_item, "");
+    write_record(&r);
+    let base_len = r.read(RECORD).len();
+    let t = r.read(RECORD).replace(
+        "answer = \"pending\"",
+        &format!(
+            "answer = \"not-affected\"\nreason = \"{}\"",
+            "b".repeat(16_384 - base_len - 60)
+        ),
+    );
+    assert!(t.len() <= 16_384, "{}", t.len());
+    r.write(RECORD, &t);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2", "--role", "second"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is invariants (") && err.contains("shorten the answers"),
+        "{err}"
+    );
+}

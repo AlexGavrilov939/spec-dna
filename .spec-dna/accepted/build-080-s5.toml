@@ -1,0 +1,124 @@
+format = 1
+change = "build-080-s5"
+scope = ["docs/commands.md", "docs/config.md", "docs/diagnostics.md", "docs/glossary.md", "docs/guides/change.md", "docs/harness.md", "docs/init.md", "docs/intent/build-080-s5/acceptance.toml", "docs/profiles.md", "docs/types.md", "schema/spec-dna.schema.json", "src/accept.rs", "src/acceptance.rs", "src/change.rs", "src/check.rs", "src/config.rs", "src/diag.rs", "src/finish.rs", "src/harness_text.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/parse.rs", "src/record.rs", "src/stage.rs", "src/templates.rs", "tests/*.rs", "tests/golden/**"]
+paths = ["src/accept.rs", "src/acceptance.rs", "src/change.rs", "src/config.rs", "src/diag.rs", "src/finish.rs", "src/harness_text.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/parse.rs", "src/record.rs", "src/stage.rs", "src/templates.rs", "tests/accept_cmd.rs", "tests/accept_next.rs", "tests/change_model.rs", "tests/finish.rs", "tests/harness_skills.rs", "tests/init_profiles.rs", "tests/lifecycle_checks.rs", "tests/templates_new.rs", "tests/upgrade_v070.rs"]
+tree = "6c66c14340162069"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+role = "acceptor"
+brief = "4325fde95e72f6f8"
+session = "95b8c89a-a705-46a8-b9a5-0e484b1e2cf7"
+agent = "unknown"
+model = "opus"
+result = "accepted"
+
+[[attempt]]
+acceptor = 1
+text = "Proof on HEAD dd6440b: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (2902 passed, 0 failed, 3 ignored) and `pre-commit run --all-files` exit 0. The tree is clean after them. `accept build-080-s5 --brief` with the tree binary gives the brief 4325fde95e72f6f8, with no invariant and no deviation: the change has no spec, and its plan was added at pin 0.7.1."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD936 with `[change] invariants = true`: a requirement of a `requirements` document, an absent key, an absent document, a short hash, trailing words, an uppercase key, the forms `[[...]]` and `[x](y)`, a nested list and 2 items `none` each give SD936. A valid pin gives none. A pin in backticks with a wrong hash gives SD937."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD937 in a pull request: the base has an open spec that pins `rules/safety#valve-closed` (added at pin 0.8.0). A branch commit edits the rule: `check --base origin/HEAD` gives a warning and exit 0. A commit that also touches the spec: an error and exit 1."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Q45 and the CHANGE rule, on an uncommitted draft spec with `check` against HEAD: an item for a rule that the same delta adds or removes gives SD936 with `remove the item`. A `CHANGE` line with the old hash and the item with that hash give no SD937. The item with another hash gives SD937 that names the hash of the line. With the legacy alias `R-1` in the items and `rules/0001-safety` in the delta, the `CHANGE` and `REMOVE` cases give the same results."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD939 and SD940: no kind, the kind `Plan` and a repeated id give SD939. A `spec` item with no fix, `Delta:` to an absent line, the wrong verb, the verb `UPDATE`, or `Follow-up:` to its own folder gives SD940. `Follow-up:` to another folder, and a `Delta:` line that matches (also on a wrapped line, with a final full stop), resolve the item."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The rule of the pin: a spec and a plan with bad items, committed on the branch at pin 0.7.1, give no SD936 to SD940 with `--base origin/HEAD`, with `--all`, and with no lifecycle base. The same files re-added at pin 0.8.0 give 12 findings, and uncommitted files are read too."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Record mutations, each committed alone, then `finish --dry-run`: a `rejected` deviation or a `violated` invariant with `result = accepted` gives SD928, and `not-affected` with no reason gives SD928. An answer for another hash, a deviation text in another case, a swapped kind and a removed entry each give SD938. An unfilled or empty verdict gives SD928. An uppercase hash, an extra entry and other white space pass."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Step 5.3: 2 deviations with quotes, a backslash, non-ASCII letters, a tab and a wrapped line. The skeleton escapes them. `finish --dry-run` prints `Deviations: 2` and one line for each with its verdict. `--json` has `deviations`. The real `finish` archives them, and `check --base origin/HEAD` of the result shows no SD93x. An archive edit that drops d2 gives SD935 and SD938."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Plan edits after the record: an added d3 stops `next` and `finish` with SD938, and the message names the entry to add. An added bad item stops both with SD939. A d2 that the builder removes from the plan is not printed by `finish`, but the archive keeps it (finding)."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Limits and setup: 180 deviations make `accept` exit 1 and write no file, and the message names the deviations (30563 bytes). `new spec` with the key writes `## Invariants` and `- none` before `Concerns`, and with `invariants = false` it writes no section. With the key off, a bad item gives no SD936 or SD937. `init` writes `invariants = true` only in `strict`, and `check` of the new strict project exits 0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Docs against the code: docs/diagnostics.md line 307 says that a file that a branch commit added gets the rules of 0.8.0. The code (`section_is_read`, since dda23e8) reads the pin of the adding commit in the history of HEAD, and a branch file added at pin 0.7.1 stays plain text, as the attempt on the rule of the pin shows. ADR 0027, docs/types.md and docs/config.md agree with the code (finding)."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Plan against diff: commit 720dfaa adds 8 paths to `Files` of the approved plan, and no deviation item names them (finding). `check --base origin/master` gives no SD910, because the base approves the plan (the rule of 0.6). `src/check.rs` is in `Files` with no diff, which is no defect."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "docs/diagnostics.md"
+line = 307
+text = "The sentence `A file that a commit of the branch added gets the rules of 0.8.0.` is from 720dfaa, and dda23e8 changed the rule. A branch file added at pin 0.7.1 is plain text (`section_is_read`, src/acceptance.rs). Write: a file of the branch reads the pin of its adding commit in the history of `HEAD`."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/lifecycle.rs"
+line = 270
+text = "The doc comment of `skip_early_sections` says `With no base, it removes nothing.` With no base, `sections_skipped` reads the history of `HEAD` and removes the findings of a file added at pin 0.7.1. Repro: no `origin/HEAD`, a spec with a bad item committed at 0.7.1, then `check --all` gives 0 SD936."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/change.rs"
+line = 1232
+text = "`deviation_fix` does not remove backticks: a `Delta:` target or a `Follow-up:` slug in backticks gives SD940, but a pin in backticks is valid in `Invariants`. The message `Delta: is not followed by <verb> <doc-id>#<key>` does not name the cause. `(Delta: ADD x#y)` gives `it has no Delta:`."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/change.rs"
+line = 1148
+text = "The item `none` in backticks gives SD936, but a pin in backticks is valid. A pin as a paragraph with no list marker, or an empty section, declares nothing with the key on: no SD936, no answer for SD938. The form `[[rules/safety#a@<hash>]]` gets the message `the hash must be 16 hexadecimal digits`, which does not name the brackets."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/acceptance.rs"
+line = 432
+text = "`answers_missing` compares only the first `[[deviation]]` entry with an id. A record with 2 entries `d1`, one with the plan text and one with another text, gives no finding, and no rule of a valid record refuses a repeated id."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/main.rs"
+line = 4148
+text = "Step 5.3 prints the deviations of the plan, not of the record. A deviation that the builder removes from the plan after the acceptance is in the archive, but `finish` does not print it, so the merge acknowledges a list without it. The design says that such an entry gives no finding, so the print can name the entries of the record too."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "docs/intent/build-080-s5/plan.md"
+line = 14
+text = "Commit 720dfaa adds 8 paths to `Files` after the approval (`src/parse.rs`, `src/acceptance.rs`, `src/stage.rs`, `src/main.rs`, `src/init.rs`, `docs/glossary.md`, `docs/harness.md`, `docs/init.md`). The gate allows it, and the plan of pin 0.7.1 has no `Deviations` section, but D7 says that the files of the work are a `plan` deviation."

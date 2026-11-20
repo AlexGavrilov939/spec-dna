@@ -597,3 +597,56 @@ fn reconfigure_keeps_higher_risk_acceptors() {
         );
     }
 }
+
+/// The key `[change] invariants` (design 0.8.0, D6): `strict` writes `true`,
+/// `standard` and `lite` write none.
+#[test]
+fn strict_writes_the_key_invariants_and_the_other_profiles_write_none() {
+    for (profile, want) in [("lite", None), ("standard", None), ("strict", Some(true))] {
+        let r = repo();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let got = table(&r)
+            .get("change")
+            .and_then(|c| c.get("invariants"))
+            .and_then(toml::Value::as_bool);
+        assert_eq!(got, want, "{profile}: {}", r.read("spec-dna.toml"));
+        r.commit("adopt spec-dna");
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+    }
+}
+
+#[test]
+fn reconfigure_keeps_the_key_invariants_as_the_file_sets_it() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"strict\"\nharness = \"lean\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    // `standard` with the key that `strict` wrote: the key stays.
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"standard\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(table(&r)["change"]["invariants"].as_bool(), Some(true));
+    assert_eq!(r.read("spec-dna.toml").matches("invariants").count(), 1);
+    // A file that sets `false` keeps `false` in `strict`.
+    let text = r
+        .read("spec-dna.toml")
+        .replace("invariants = true", "invariants = false");
+    r.write("spec-dna.toml", &text);
+    r.commit("turn the key off");
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"strict\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(table(&r)["change"]["invariants"].as_bool(), Some(false));
+}

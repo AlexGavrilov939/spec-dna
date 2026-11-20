@@ -15,7 +15,7 @@
 use crate::accept::{self, Composed, Texts};
 use crate::change::{self, Change};
 use crate::config::{self, Config, Version};
-use crate::diag::Code;
+use crate::diag::{Code, Diag};
 use crate::git::{Git, Limited, read_limited};
 use crate::lifecycle::Diff;
 use crate::model::{Class, Corpus};
@@ -210,25 +210,99 @@ pub fn needs_record(
     if !plan_in_base {
         return Ok(Need::Yes { shallow: false });
     }
-    let Some(commit) = git.added_at(base_rev, plan_path)? else {
-        return Ok(Need::Yes {
+    match pin_when_added(git, base_rev, plan_path)? {
+        None => Ok(Need::Yes {
             shallow: git.is_shallow(),
-        });
+        }),
+        Some(pin) if pin.as_deref().is_some_and(is_before_0_8) => Ok(Need::No(Some(format!(
+            "`{plan_path}` was added when spec-dna.toml pinned {}, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does",
+            pin.unwrap_or_default()
+        )))),
+        Some(_) => Ok(Need::Yes { shallow: false }),
+    }
+}
+
+/// True if a pin is a version before 0.8.0.
+fn is_before_0_8(pin: &str) -> bool {
+    Version::parse(pin).is_some_and(|v| v < FIRST_VERSION)
+}
+
+/// The pin of `spec-dna.toml` in the newest commit that added `path` and that is
+/// an ancestor of `base_rev`. The outer `None`: no such commit (a shallow clone).
+/// The inner `None`: that commit has no pin. The rule of D3 item 1 for a plan,
+/// and the rule of D6 for a spec, both read it here.
+pub fn pin_when_added(
+    git: &Git,
+    base_rev: &str,
+    path: &str,
+) -> Result<Option<Option<String>>, String> {
+    let Some(commit) = git.added_at(base_rev, path)? else {
+        return Ok(None);
     };
     let text = git
         .read_at(&[(commit, config::FILE_NAME.to_string())])?
         .into_iter()
         .next()
         .flatten();
-    let pin = text.and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b)));
-    match pin {
-        Some(pin) if Version::parse(&pin).is_some_and(|v| v < FIRST_VERSION) => {
-            Ok(Need::No(Some(format!(
-                "`{plan_path}` was added when spec-dna.toml pinned {pin}, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does"
-            ))))
-        }
-        _ => Ok(Need::Yes { shallow: false }),
+    Ok(Some(text.and_then(|b| {
+        config::scan_pin(&String::from_utf8_lossy(&b))
+    })))
+}
+
+/// True if the section `Invariants` of a spec, or the section `Deviations` of a
+/// plan, at `path` is read as 0.8.0 reads it. A file that a commit added when
+/// `spec-dna.toml` pinned a version before 0.8.0 keeps the meaning of 0.7.1: the
+/// section is plain text (design 0.8.0, D6 and D7). This is the one rule for
+/// `check`, `finish`, `next`, the skeleton and the brief.
+///
+/// - The pin is the one of the commit that added the file. For a file that the
+///   tree of the base has, it is the newest such commit in the history of the
+///   base. For any other file, a file of the branch or any file with no base, it
+///   is the newest such commit in the history of `HEAD`. So a plan that the branch
+///   adds under a pin of 0.7.1 is plain text too: the owner rule is that a 0.7.1
+///   project gets no new error without a key. (The acceptance for a new plan is the
+///   exception of Q43, and it has its own rule, [`needs_record`].)
+/// - A file with no commit found (a shallow clone, a file that is not committed)
+///   and a commit with no pin get the rules of 0.8.0, the stricter result. A
+///   repository with no commit has none to read.
+///
+/// The reader of the pin is [`added_before`], the one that `skip_early_plans`
+/// (SD923 and SD924, the version 0.7.0) calls too, so the 2 rules read one commit.
+pub fn section_is_read(git: &Git, base_rev: Option<&str>, path: &str) -> Result<bool, String> {
+    if git.commit("HEAD").is_none() {
+        return Ok(true);
     }
+    let rev = match base_rev {
+        Some(rev)
+            if git
+                .read_at(&[(rev.to_string(), path.to_string())])?
+                .into_iter()
+                .next()
+                .flatten()
+                .is_some() =>
+        {
+            rev
+        }
+        _ => "HEAD",
+    };
+    Ok(added_before(git, rev, path, FIRST_VERSION)?.is_none())
+}
+
+/// The pin of `spec-dna.toml` in the newest commit of the history of `rev` that
+/// added `path`, if that pin is a version before `first`. `None` if the pin is
+/// `first` or later, if the commit has no pin, or if no commit is found (a shallow
+/// clone, a file that is not committed): each of these is the stricter result. The
+/// one reader of the pin of an adding commit for `section_is_read` (the version
+/// 0.8.0) and `skip_early_plans` (the version 0.7.0).
+pub fn added_before(
+    git: &Git,
+    rev: &str,
+    path: &str,
+    first: Version,
+) -> Result<Option<String>, String> {
+    Ok(pin_when_added(git, rev, path)?
+        .flatten()
+        .filter(|p| Version::parse(p).is_some_and(|v| v < first)))
 }
 
 /// The message of SD927 for a missing record. `where_` names the place that
@@ -331,18 +405,155 @@ pub fn acceptors_missing(cfg: &Config, class: Class, rec: &Record) -> Option<Str
     })
 }
 
+/// SD938: the declared invariants and deviations that the record does not
+/// answer (design 0.8.0, D6 and D7). An invariant needs an `[[invariant]]` entry
+/// with the same pin: the same `<doc-id>#<key>@<hash>`, so an answer for another
+/// hash of the rule is no answer. A deviation needs a `[[deviation]]` entry with
+/// the same id, kind and text, with each run of white space as one space. An
+/// entry that no plan item names gives no finding. `check`, `finish` and `next`
+/// all call this one function. The messages name the entry to add.
+pub fn answers_missing(rec: &Record, decl: &accept::Declared) -> Vec<String> {
+    let mut out = Vec::new();
+    let answered: Vec<String> = rec
+        .invariants
+        .iter()
+        .filter_map(|v| change::parse_pin(&v.id).ok())
+        .map(|p| p.text())
+        .collect();
+    for pin in &decl.invariants {
+        if !answered.contains(pin) {
+            out.push(format!(
+                "the record has no answer for the invariant `{pin}`; an acceptor adds an entry `[[invariant]]` with `id = \"{pin}\"`, `answer` (`held`, `not-affected` or `violated`) and, for `not-affected` and `violated`, a `reason`, and commits the record alone"
+            ));
+        }
+    }
+    let same = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+    for (id, kind, text) in &decl.deviations {
+        match rec.deviations.iter().find(|d| d.id == *id) {
+            None => out.push(format!(
+                "the record has no entry for the deviation `{id}` of the plan; an acceptor adds an entry `[[deviation]]` with `id = \"{id}\"`, `kind = \"{kind}\"`, `text = {}` and `verdict` (`accepted` or `rejected`), and commits the record alone",
+                record::toml_string(text)
+            )),
+            Some(d) if same(&d.text) != *text => out.push(format!(
+                "the text of the entry `[[deviation]]` `{id}` is not the text of the plan item (`{text}`); copy the text of the plan item into the entry again, and commit the record alone"
+            )),
+            Some(d) if d.kind != *kind => out.push(format!(
+                "the kind `{}` of the entry `[[deviation]]` `{id}` is not the kind `{kind}` of the plan item; copy the kind of the plan item into the entry, and commit the record alone",
+                d.kind
+            )),
+            Some(_) => {}
+        }
+    }
+    out
+}
+
+/// The paths among `paths` whose sections are not read as 0.8.0 reads them
+/// ([`section_is_read`]). The one function that `check`
+/// ([`crate::lifecycle::skip_early_sections`]), `finish` and `next`
+/// ([`sections_of`]) call, with one lookup for each distinct path.
+pub fn sections_skipped(
+    git: &Git,
+    base_rev: Option<&str>,
+    paths: &[&str],
+) -> Result<Vec<String>, String> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for p in paths {
+        if seen.contains(p) {
+            continue;
+        }
+        seen.push(p);
+        if !section_is_read(git, base_rev, p)? {
+            skipped.push((*p).to_string());
+        }
+    }
+    Ok(skipped)
+}
+
+/// What step 5.2 and `next` read besides the record: the findings of the
+/// sections of the spec and the plan (SD936, SD937, SD939 and SD940), and the
+/// items that the record must answer (SD938).
+#[derive(Clone, Debug, Default)]
+pub struct Sections {
+    /// The findings of [`crate::lifecycle::invariant_diags`] and
+    /// [`crate::lifecycle::deviation_diags`] that are on, with the rule of the
+    /// pin applied ([`section_is_read`]).
+    pub diags: Vec<Diag>,
+    pub declared: accept::Declared,
+}
+
+/// The messages of the findings of one code, for a stop: the place, then the text.
+fn section_messages(sec: &Sections, code: Code) -> Vec<String> {
+    sec.diags
+        .iter()
+        .filter(|d| d.code == code)
+        .map(|d| format!("`{}` line {}: {}", d.path, d.line, d.message))
+        .collect()
+}
+
+/// The items that the spec and the plan of the change `ch` declare, with the
+/// rule of the pin applied ([`section_is_read`]): a spec or a plan of 0.7.1 declares
+/// nothing. The one function that `accept` (the skeleton and the brief), the compare
+/// of the brief (SD928), SD938 and `finish` call, so they read the same items.
+pub fn declared_for(
+    cfg: &Config,
+    git: &Git,
+    base_rev: Option<&str>,
+    ch: &Change,
+    corpus: &Corpus,
+) -> Result<accept::Declared, String> {
+    let read = |a: &Option<change::Artifact>| -> Result<bool, String> {
+        match a {
+            Some(a) => section_is_read(git, base_rev, &corpus.docs[a.doc as usize].path),
+            None => Ok(true),
+        }
+    };
+    let mut d = accept::declared(cfg, ch, corpus);
+    if !read(&ch.spec)? {
+        d.invariants.clear();
+    }
+    if !read(&ch.plan)? {
+        d.deviations.clear();
+    }
+    Ok(d)
+}
+
+/// Reads [`Sections`] for the change `ch` of the head tree. `base_rev` is the
+/// lifecycle base. The one function that `finish` (step 5.2) and `next` call, so
+/// they read the same items as `check` does.
+pub fn sections_of(
+    cfg: &Config,
+    git: &Git,
+    base_rev: Option<&str>,
+    ch: &Change,
+    head: &Corpus,
+) -> Result<Sections, String> {
+    let mut diags = crate::lifecycle::invariant_diags(cfg, head, ch);
+    diags.extend(crate::lifecycle::deviation_diags(cfg, head, ch));
+    let mut diags = crate::check::apply_severity(cfg, diags);
+    let paths: Vec<&str> = diags.iter().map(|d| d.path.as_str()).collect();
+    let skipped = sections_skipped(git, base_rev, &paths)?;
+    diags.retain(|d| !skipped.contains(&d.path));
+    Ok(Sections {
+        diags,
+        declared: declared_for(cfg, git, base_rev, ch, head)?,
+    })
+}
+
 /// The first check of the record that stops `finish` step 5.2, and its messages.
 /// `finish` and `next` use this one function, so a check that is off stops
 /// neither. The order is the order of the codes: SD928 (`problems`: the rules of
 /// a valid record, and the compare of the briefs), SD929 (`stale`), SD930,
-/// SD931 and SD933. A record that does not read (`rec` is `None`) stops with
-/// SD928 only; with SD928 off it passes, as no other check can read it.
+/// SD931 and SD933, then SD936, SD937, SD938 (`answers_missing`), SD939 and
+/// SD940. A record that does not read (`rec` is `None`) stops with SD928 only;
+/// with SD928 off it passes, as no other check can read it.
 pub fn first_stop(
     cfg: &Config,
     class: Class,
     rec: Option<&Record>,
     problems: Vec<String>,
     stale: Option<String>,
+    sec: &Sections,
 ) -> Option<(Code, Vec<String>)> {
     let on = |c: Code| !cfg.is_off(c);
     if on(Code::AcceptanceInvalid) && !problems.is_empty() {
@@ -369,6 +580,24 @@ pub fn first_stop(
         && let Some(why) = acceptors_missing(cfg, class, rec)
     {
         return Some((Code::AcceptorMissing, vec![why]));
+    }
+    for code in [Code::InvariantInvalid, Code::InvariantStale] {
+        let found = section_messages(sec, code);
+        if on(code) && !found.is_empty() {
+            return Some((code, found));
+        }
+    }
+    if on(Code::RecordIncomplete) {
+        let found = answers_missing(rec, &sec.declared);
+        if !found.is_empty() {
+            return Some((Code::RecordIncomplete, found));
+        }
+    }
+    for code in [Code::DeviationInvalid, Code::DeviationUnresolved] {
+        let found = section_messages(sec, code);
+        if on(code) && !found.is_empty() {
+            return Some((code, found));
+        }
     }
     None
 }
@@ -658,11 +887,16 @@ fn is_hash(s: &str) -> bool {
     s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The 3 files of a change in one tree, as text. `None` for a missing file.
+/// The 3 files of a change in one tree, as text. `None` for a missing file. With
+/// them, the configuration of the same tree: the brief reads the key `[change]
+/// invariants`, so the compare of an entry needs the key that its adding commit
+/// had. `None`: the tree has no configuration that reads, and the head
+/// configuration stands in.
 struct Files {
     intent: Option<String>,
     spec: Option<String>,
     plan: Option<String>,
+    cfg: Option<Config>,
 }
 
 fn text_of(b: Option<Vec<u8>>) -> Option<String> {
@@ -670,8 +904,15 @@ fn text_of(b: Option<Vec<u8>>) -> Option<String> {
 }
 
 /// The `declared` items of the files of a tree, read as `finish` and `check`
-/// read a change: the 3 files parse into a corpus of their own.
-fn declared_of(cfg: &Config, folder: &str, files: &Files) -> accept::Declared {
+/// read a change: the 3 files parse into a corpus of their own. The rule of the
+/// pin reads the history of the base (`base_rev`), as for the entry itself.
+fn declared_of(
+    cfg: &Config,
+    git: &Git,
+    base_rev: &str,
+    folder: &str,
+    files: &Files,
+) -> Result<accept::Declared, String> {
     let mut docs: Vec<(String, Arc<ParsedDoc>)> = Vec::new();
     for (name, text) in [
         ("intent.md", &files.intent),
@@ -687,8 +928,8 @@ fn declared_of(cfg: &Config, folder: &str, files: &Files) -> accept::Declared {
         .into_iter()
         .find(|c| c.dir == folder)
     {
-        Some(ch) => accept::declared(cfg, &ch, &corpus),
-        None => accept::Declared::default(),
+        Some(ch) => declared_for(cfg, git, Some(base_rev), &ch, &corpus),
+        None => Ok(accept::Declared::default()),
     }
 }
 
@@ -795,10 +1036,11 @@ pub fn brief_problems(
             let mut texts: Vec<Option<String>> = Vec::new();
             match &source {
                 Source::Commit(c) => {
-                    let specs: Vec<(String, String)> = names
+                    let mut specs: Vec<(String, String)> = names
                         .iter()
                         .map(|n| (c.clone(), format!("{folder}/{n}")))
                         .collect();
+                    specs.push((c.clone(), config::FILE_NAME.to_string()));
                     texts.extend(git.read_at(&specs)?.into_iter().map(text_of));
                 }
                 Source::Head => {
@@ -820,6 +1062,7 @@ pub fn brief_problems(
                     intent: it.next().flatten(),
                     spec: it.next().flatten(),
                     plan: it.next().flatten(),
+                    cfg: it.next().flatten().and_then(|t| Config::parse(&t).ok()),
                 },
             ));
         }
@@ -831,9 +1074,10 @@ pub fn brief_problems(
             ));
             continue;
         };
-        let decl = declared_of(cfg, folder, files);
+        let at = files.cfg.as_ref().unwrap_or(cfg);
+        let decl = declared_of(at, git, base_rev, folder, files)?;
         let text = accept::brief_text(
-            cfg,
+            at,
             slug,
             &a.role,
             &Texts {
@@ -932,6 +1176,8 @@ pub struct FinishFacts {
     pub brief_problems: Vec<String>,
     /// The reason of SD929, if the record is stale.
     pub stale: Option<String>,
+    /// The findings of the sections, and the items that the record answers.
+    pub sections: Sections,
     /// The path of the archive file that `finish` writes.
     pub archive: String,
     /// The ignore rule of git for that path, if there is one.
@@ -1012,7 +1258,11 @@ pub fn finish_facts(
         need: need.unwrap_or(Need::No(None)),
         brief_problems: Vec::new(),
         stale: None,
+        sections: Sections::default(),
     };
+    if matches!(f.need, Need::Yes { .. }) {
+        f.sections = sections_of(cfg, &repo.git, base_rev, ch, head).map_err(Fatal::Io)?;
+    }
     let (Need::Yes { .. }, Some(base_rev)) = (&f.need, base_rev) else {
         return Ok(Some(f));
     };

@@ -30,6 +30,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | current truth | The requirements, rules and interfaces of the project, in `requirements/`, `rules/` and `interfaces/`. A delta changes them, and SD921 guards them | | [concepts](concepts.md#layers-and-the-graph) |
 | decision | A MADR record of a choice. After the acceptance, its text is locked, except its amendment, history and live sections | | [types](types.md) |
 | delta | The list of `ADD`, `CHANGE` and `REMOVE` lines in a spec. Each line names a requirement id | | [change guide](guides/change.md) |
+| deviation | A difference between the work and the plan or the spec. The builder lists it as an item of `Deviations` in `plan.md`, the acceptor copies it into the acceptance record with a verdict, and `finish` prints it | | [types](types.md#deviations) |
 | diff risk | The class R0, R1 or R2 of a change of requirement text | change-risk class | [ADR 0001](adr/0001-information-model.md) |
 | discipline | A rule that applies to each task, in one line. spec-dna has 5: test first, cause first, proof before done, review is data and isolated work. Each rule names the skill that holds its detail | | [harness](harness.md#disciplines) |
 | document id | The path of a document in its root, without `.md` | | [concepts](concepts.md#ids-and-requirements) |
@@ -52,6 +53,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | intent | `intent.md`: the request of one change, in the words of its originator | type `change` | [change guide](guides/change.md) |
 | intent folder | `docs/intent/<slug>/`: the folder of one change, with `intent.md`, `spec.md` and `plan.md`. `finish` deletes it | | [change guide](guides/change.md) |
 | interface | An API, an event or a tool schema, in `interfaces/` | type `contract` | [types](types.md) |
+| invariant | A rule of a `rule` document that a change must keep true. A spec lists it as `<doc-id>#<key>@<hash>` in `Invariants` with `[change] invariants`, and the acceptance record answers it | | [types](types.md#invariants) |
 | layer | A named set of document types with a place in the graph of stability | | [concepts](concepts.md#layers-and-the-graph) |
 | level | The longest `moves-to` path from a layer to a layer with no outgoing edge. Level 0 is the most stable | | [concepts](concepts.md#layers-and-the-graph) |
 | live section | A section of an accepted decision that can change without an amendment. The default is `Status` | | [config](config.md) |

@@ -870,22 +870,67 @@ pub fn skeleton(s: &Skeleton) -> String {
         ));
     }
     for id in s.invariants {
-        out.push_str(&format!(
-            "\n[[invariant]]\nid = {}\nanswer = {}\n",
-            toml_string(id),
-            toml_string(PENDING)
-        ));
+        out.push_str(&invariant_block(id));
     }
     for (id, kind, text) in s.deviations {
-        out.push_str(&format!(
-            "\n[[deviation]]\nid = {}\nkind = {}\ntext = {}\nverdict = {}\n",
-            toml_string(id),
-            toml_string(kind),
-            toml_string(text),
-            toml_string(PENDING)
-        ));
+        out.push_str(&deviation_block(id, kind, text));
     }
     out
+}
+
+/// The text of one `[[invariant]]` entry of a skeleton.
+fn invariant_block(id: &str) -> String {
+    format!(
+        "\n[[invariant]]\nid = {}\nanswer = {}\n",
+        toml_string(id),
+        toml_string(PENDING)
+    )
+}
+
+/// The text of one `[[deviation]]` entry of a skeleton.
+fn deviation_block(id: &str, kind: &str, text: &str) -> String {
+    format!(
+        "\n[[deviation]]\nid = {}\nkind = {}\ntext = {}\nverdict = {}\n",
+        toml_string(id),
+        toml_string(kind),
+        toml_string(text),
+        toml_string(PENDING)
+    )
+}
+
+/// The bytes of the parts of the text of a record that grow with the change:
+/// the line `paths`, the `[[invariant]]` entries and the `[[deviation]]` entries,
+/// and the bytes of all other lines. The text can be over [`MAX_BYTES`], so the
+/// function reads the lines and not the record. A record over the limit names the
+/// largest part. The sizes are the sizes of the text that `accept` would write, so
+/// an answer that an acceptor wrote in an entry counts too.
+pub fn text_parts(text: &str) -> TextParts {
+    let mut p = TextParts::default();
+    // The name of the table of the last header, or `None` before the first.
+    let mut table: Option<String> = None;
+    for line in text.split_inclusive('\n') {
+        if let Some((_, name)) = table_header(line) {
+            table = Some(name.to_string());
+        }
+        let n = line.len();
+        match table.as_deref() {
+            Some("invariant") => p.invariants += n,
+            Some("deviation") => p.deviations += n,
+            None if line.starts_with("paths = ") => p.paths += n,
+            _ => p.other += n,
+        }
+    }
+    p
+}
+
+/// The result of [`text_parts`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextParts {
+    pub paths: usize,
+    pub invariants: usize,
+    pub deviations: usize,
+    /// All other bytes: the acceptors, the attempts, the findings and the proofs.
+    pub other: usize,
 }
 
 /// The bytes of a record with each `\r\n` read as `\n` (ADR 0019). With
@@ -969,6 +1014,19 @@ pub fn add_acceptor(text: &str, role: &str, session: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_parts_count_the_lines_of_each_table_also_over_the_limit() {
+        let text = "format = 1\npaths = [\"a\"]\n\n[[acceptor]]\nrole = \"x\"\n\n[[invariant]]\nid = \"i\"\nreason = \"rr\"\n\n[[deviation]]\nid = \"d\"\n\n[[attempt]]\ntext = \"t\"\n";
+        let p = text_parts(text);
+        assert_eq!(p.paths, "paths = [\"a\"]\n".len());
+        assert_eq!(
+            p.invariants,
+            "[[invariant]]\nid = \"i\"\nreason = \"rr\"\n\n".len()
+        );
+        assert_eq!(p.deviations, "[[deviation]]\nid = \"d\"\n\n".len());
+        assert_eq!(p.paths + p.invariants + p.deviations + p.other, text.len());
+    }
 
     const HASH: &str = "9c1b7e0d4a113f2a";
 

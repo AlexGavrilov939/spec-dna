@@ -21,7 +21,7 @@ use crate::config::Config;
 use crate::evidence::{self, Evidence, Proof};
 use crate::json::Obj;
 use crate::lifecycle::{self, Diff};
-use crate::model::{Corpus, Res, canonical};
+use crate::model::{Corpus, Res};
 use crate::record::{self, ProofEntry, Record};
 use crate::repo::{self, Fatal, Repo, Snapshot};
 use crate::tree;
@@ -42,20 +42,37 @@ pub struct Opts<'a> {
 }
 
 /// The items that the spec and the plan declare for the acceptor.
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Declared {
-    /// The ids of the invariants of the spec (D6, slice S5).
+    /// The pins of the invariants of the spec, as `<doc-id>#<key>@<hash>` (D6).
+    /// With no `[change] invariants`, the list is empty.
     pub invariants: Vec<String>,
-    /// The deviations of the plan: id, kind and text (D7, slice S5).
+    /// The deviations of the plan: id, kind and text (D7). The text has each run
+    /// of white space as one space.
     pub deviations: Vec<(String, String, String)>,
 }
 
-/// The items of `Invariants` and `Deviations`.
-///
-/// HOOK of slice S5: the sections arrive with D6 and D7. Until then the lists
-/// are empty, so the skeleton and the brief have no such entry.
-pub fn declared(_cfg: &Config, _ch: &Change, _corpus: &Corpus) -> Declared {
-    Declared::default()
+/// The items of `Invariants` and `Deviations` that the files of a change declare
+/// (design 0.8.0, D6 and D7). The function reads the text of the spec and the
+/// plan and the key `[change] invariants` only, with no git data and no other
+/// document. It applies no rule of the pin: only
+/// [`crate::acceptance::declared_for`] calls it, and that function applies the
+/// rule, so `accept`, the brief, the compare of the brief of SD928, the answers
+/// (SD938) and `finish` read the same items. An item that is not valid gives no
+/// entry: SD936 and SD939 report it.
+pub fn declared(cfg: &Config, ch: &Change, corpus: &Corpus) -> Declared {
+    Declared {
+        invariants: if cfg.change_invariants {
+            ch.invariants(corpus).iter().map(|p| p.text()).collect()
+        } else {
+            Vec::new()
+        },
+        deviations: ch
+            .deviations(corpus)
+            .into_iter()
+            .map(|d| (d.id, d.kind, d.text))
+            .collect(),
+    }
 }
 
 /// The roles of `[owners]` that match a path of `paths` (D5), sorted.
@@ -224,7 +241,8 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     refuse_uncovered(ch, &head, &scope, &changed, &is_code)?;
     let entries = tree::entries(repo, &cfg).map_err(Fatal::Io)?;
     let tree_hash = record::tree_hash(&entries, &paths);
-    let decl = declared(&cfg, ch, &head);
+    let decl = crate::acceptance::declared_for(&cfg, &repo.git, base_rev.as_deref(), ch, &head)
+        .map_err(Fatal::Io)?;
 
     if o.brief {
         let read = |p: &str| -> Result<String, Fatal> {
@@ -344,6 +362,16 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         }
         let n = r.acceptors.len() + 1;
         let text = record::add_acceptor(&old, role, &session);
+        // The reader of a record refuses a text over the limit, so the size check
+        // comes before the check of the new entry.
+        if text.len() > record::MAX_BYTES {
+            return Err(Fatal::Refused(oversize_message(
+                &record_path,
+                text.len(),
+                record::text_parts(&text),
+                (paths.len(), decl.invariants.len(), decl.deviations.len()),
+            )));
+        }
         // The new text must read, and the new entry must be the last acceptor,
         // with the printed number as its position. The entries before it stay.
         // A text that `add_acceptor` cannot place (a line of a multi-line value
@@ -375,13 +403,13 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         (text, 1, true)
     };
     // A record over the size limit is never valid, and the acceptor may not
-    // shorten `paths`. Refuse before any write.
+    // shorten `paths`, the invariants or the deviations. Refuse before any write.
     if text.len() > record::MAX_BYTES {
-        return Err(Fatal::Refused(format!(
-            "the record `{record_path}` would have {} bytes, and a record has at most {} bytes; the cause is too many paths: `paths` lists {} code paths. Split the change into smaller changes, each with its own folder, and accept each one",
+        return Err(Fatal::Refused(oversize_message(
+            &record_path,
             text.len(),
-            record::MAX_BYTES,
-            paths.len()
+            record::text_parts(&text),
+            (paths.len(), decl.invariants.len(), decl.deviations.len()),
         )));
     }
     write_atomic(&full, &text).map_err(|e| Fatal::Io(format!("{record_path}: {e}")))?;
@@ -405,6 +433,49 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         );
     }
     Ok(0)
+}
+
+/// The refusal for a record over [`record::MAX_BYTES`]. It names the largest part
+/// of the text that `accept` would write: the line `paths`, the invariants, the
+/// deviations, or all other tables, with its size, and the fix for that part.
+/// `counts` is the number of paths, of invariants and of deviations.
+fn oversize_message(
+    record_path: &str,
+    bytes: usize,
+    parts: record::TextParts,
+    counts: (usize, usize, usize),
+) -> String {
+    let head = format!(
+        "the record `{record_path}` would have {bytes} bytes, and a record has at most {} bytes",
+        record::MAX_BYTES
+    );
+    let all = [
+        ("paths", parts.paths),
+        ("invariants", parts.invariants),
+        ("deviations", parts.deviations),
+        ("other", parts.other),
+    ];
+    let (name, size) = all.into_iter().max_by_key(|p| p.1).unwrap_or(("paths", 0));
+    let fix = match name {
+        "invariants" => format!(
+            "the cause is the invariants: `Invariants` of the spec lists {} items, and the answers are in the entries. List fewer rules, shorten the answers, or split the change into smaller changes, each with its own folder",
+            counts.1
+        ),
+        "deviations" => format!(
+            "the cause is the deviations: `Deviations` of the plan lists {} items. Shorten the text of each item, list fewer items, or split the change into smaller changes, each with its own folder",
+            counts.2
+        ),
+        "other" => "the cause is the other tables: the entries of the acceptors, the attempts, the findings and the proof entries. Shorten the text of the attempts and the findings, or split the change into smaller changes, each with its own folder".to_string(),
+        _ => format!(
+            "the cause is too many paths: `paths` lists {} code paths. Split the change into smaller changes, each with its own folder, and accept each one",
+            counts.0
+        ),
+    };
+    let named = match name {
+        "other" => "the other tables".to_string(),
+        n => n.to_string(),
+    };
+    format!("{head}; the largest part is {named} ({size} bytes); {fix}")
 }
 
 /// The words that tell the user how to write a `Files` pattern that the scope of
@@ -587,17 +658,6 @@ fn refuse_dirty_code(
     )))
 }
 
-/// A requirement id in a form that two spellings of one document share.
-fn same_target(c: &Corpus, target: &str) -> String {
-    let Some((id, key)) = target.split_once('#') else {
-        return canonical(target);
-    };
-    match c.resolve(id) {
-        Res::Found(d, None, _) => format!("{}#{key}", c.docs[d as usize].id),
-        _ => format!("{}#{key}", canonical(id)),
-    }
-}
-
 /// One `[[proof]]` entry for each requirement of the set of SD916: with a delta,
 /// the targets of its `ADD` and `CHANGE` lines; with no delta, the requirements
 /// whose hash differs from the base in a document that the scope accepts.
@@ -668,11 +728,11 @@ fn proof_entries(
                 )
             }
             None => {
-                let want = same_target(head, &target);
+                let want = change::same_target(head, &target);
                 let mut tagged = false;
                 let mut proofs: Vec<Proof> = Vec::new();
                 for cv in &head.covers {
-                    if !cv.partial && same_target(head, &cv.target) == want {
+                    if !cv.partial && change::same_target(head, &cv.target) == want {
                         tagged = true;
                         proofs.extend(cv.proof.clone());
                     }

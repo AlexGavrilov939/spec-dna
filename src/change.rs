@@ -11,7 +11,7 @@
 
 use crate::glob;
 use crate::hash::{Hash, hash_normalized, hex};
-use crate::model::{Class, Corpus, Doc, DocType, Res, is_slug};
+use crate::model::{Class, Corpus, Doc, DocType, Res, canonical, is_slug};
 use crate::parse::{ItemSection, ListItem, Req, strip_link_destinations, strip_markers};
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
@@ -1069,6 +1069,304 @@ pub fn pending_adds(corpus: &Corpus) -> HashSet<String> {
         }
     }
     out
+}
+
+// The sections `Invariants` and `Deviations` (design 0.8.0, D6 and D7).
+
+/// A requirement id of a rule with the hash that the author read: the form
+/// `<doc-id>#<key>@<hash>` of an item of `Invariants`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pin {
+    /// The id of the document, as the item writes it.
+    pub id: String,
+    pub key: String,
+    /// 16 lowercase hexadecimal digits.
+    pub hash: String,
+}
+
+impl Pin {
+    /// The text of the pin: `<doc-id>#<key>@<hash>`. The record names an
+    /// invariant by this text.
+    pub fn text(&self) -> String {
+        format!("{}#{}@{}", self.id, self.key, self.hash)
+    }
+
+    /// The target as `<id>#<key>`.
+    pub fn target(&self) -> String {
+        format!("{}#{}", self.id, self.key)
+    }
+}
+
+/// Reads the text of a pin. Backticks around it do not count.
+pub fn parse_pin(text: &str) -> Result<Pin, String> {
+    let t = text.trim();
+    let t = t
+        .strip_prefix('`')
+        .and_then(|r| r.strip_suffix('`'))
+        .unwrap_or(t)
+        .trim();
+    let form = "write `<doc-id>#<key>@<hash>`, with the hash that `spec-dna show <doc-id>#<key>` prints, or write the one item `none`";
+    if t.is_empty() || t.contains(char::is_whitespace) {
+        return Err(format!("`{}` is not a pin of a rule; {form}", shown(text)));
+    }
+    let Some((target, hash)) = t.split_once('@') else {
+        return Err(format!("`{t}` has no `@<hash>`; {form}"));
+    };
+    let Some((id, key)) = target.split_once('#') else {
+        return Err(format!("`{t}` is not `<doc-id>#<key>@<hash>`; {form}"));
+    };
+    if id.is_empty() || id.contains(['@', '#']) {
+        return Err(format!("`{t}` has no single document id; {form}"));
+    }
+    if !is_slug(key) {
+        return Err(format!(
+            "`{key}` is not a key: use lowercase letters and digits joined by hyphens"
+        ));
+    }
+    if hash.len() != 16 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("the hash in `{t}` must be 16 hexadecimal digits"));
+    }
+    Ok(Pin {
+        id: id.to_string(),
+        key: key.to_string(),
+        hash: hash.to_ascii_lowercase(),
+    })
+}
+
+/// One item of `Invariants` with the result of its parse. `Ok(None)` is the
+/// item `none`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InvariantLine {
+    pub line: u32,
+    /// The text of the item on one line, for a message.
+    pub text: String,
+    pub parsed: Result<Option<Pin>, String>,
+}
+
+/// The items of the section `Invariants` of a spec. The one item `none` says
+/// that no rule applies. It stands alone, so `none` next to a pin is invalid.
+pub fn invariant_lines(spec: &Doc) -> Vec<InvariantLine> {
+    let items: Vec<&ListItem> = section_items(spec, ItemSection::Invariants).collect();
+    items
+        .iter()
+        .map(|item| {
+            let text = shown(&item.text);
+            let parsed = if item.nested || item.text.lines().any(|l| l.trim().is_empty()) {
+                Err("an item of `Invariants` is one paragraph with no nested list".to_string())
+            } else if is_none_text(&item.text) {
+                if items.len() == 1 {
+                    Ok(None)
+                } else {
+                    Err(
+                        "the item `none` stands alone: remove it, or remove the other items"
+                            .to_string(),
+                    )
+                }
+            } else {
+                parse_pin(&item.text).map(Some)
+            };
+            InvariantLine {
+                line: item.line,
+                text,
+                parsed,
+            }
+        })
+        .collect()
+}
+
+/// The pins of the valid items of `Invariants`, in the order of the file. The
+/// brief, the skeleton of the record and the check of the answers read this
+/// list, so they agree.
+pub fn invariant_pins(spec: &Doc) -> Vec<Pin> {
+    let mut out: Vec<Pin> = Vec::new();
+    for l in invariant_lines(spec) {
+        if let Ok(Some(p)) = l.parsed
+            && !out.contains(&p)
+        {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// The kinds of a deviation.
+pub const DEVIATION_KINDS: [&str; 2] = ["plan", "spec"];
+
+/// How a `spec` deviation fixes the difference.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct DeviationFix {
+    /// `Delta: <verb> <doc-id>#<key>`: the verb and the target.
+    pub delta: Option<(Verb, String)>,
+    /// `Follow-up: <slug>`.
+    pub follow_up: Option<String>,
+    /// True if the text has the label `Delta:` and no valid verb and target
+    /// follow it.
+    pub delta_bad: bool,
+}
+
+/// An item of `Deviations` in a valid form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviationItem {
+    pub id: String,
+    pub kind: String,
+    /// The text after `:`, with each run of white space as one space.
+    pub text: String,
+    pub fix: DeviationFix,
+}
+
+/// One item of `Deviations` with the result of its parse.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviationLine {
+    pub line: u32,
+    pub text: String,
+    pub parsed: Result<DeviationItem, String>,
+}
+
+fn is_deviation_id(id: &str) -> bool {
+    let mut c = id.chars();
+    c.next().is_some_and(|f| f.is_ascii_alphanumeric())
+        && c.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The label `Delta:` and the label `Follow-up:` of a deviation text.
+fn deviation_fix(text: &str) -> DeviationFix {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut fix = DeviationFix::default();
+    for (i, w) in words.iter().enumerate() {
+        match *w {
+            "Delta:" if fix.delta.is_none() && !fix.delta_bad => {
+                let verb = match words.get(i + 1).copied() {
+                    Some("ADD") => Some(Verb::Add),
+                    Some("CHANGE") => Some(Verb::Change),
+                    Some("REMOVE") => Some(Verb::Remove),
+                    _ => None,
+                };
+                let target = words
+                    .get(i + 2)
+                    .map(|t| t.trim_end_matches(['.', ',', ';']))
+                    .filter(|t| {
+                        matches!(t.split_once('#'), Some((a, k)) if !a.is_empty() && is_slug(k))
+                    });
+                match (verb, target) {
+                    (Some(v), Some(t)) => fix.delta = Some((v, t.to_string())),
+                    _ => fix.delta_bad = true,
+                }
+            }
+            "Follow-up:" if fix.follow_up.is_none() => {
+                if let Some(s) = words.get(i + 1) {
+                    let s = s.trim_end_matches(['.', ',', ';']);
+                    if !s.is_empty() {
+                        fix.follow_up = Some(s.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    fix
+}
+
+/// Parses one item of `Deviations`: `<id> (<kind>): <text>`. The id is unique
+/// in the section, and the caller checks that ([`deviation_lines`]).
+pub fn parse_deviation(item: &ListItem) -> Result<DeviationItem, String> {
+    let form = "write `- <id> (<kind>): <text>`, with the kind `plan` or `spec`";
+    if item.nested || item.text.lines().any(|l| l.trim().is_empty()) {
+        return Err("an item of `Deviations` is one paragraph with no nested list".to_string());
+    }
+    let text = item.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some((head, rest)) = text.split_once(':') else {
+        return Err(format!("the item has no `:`; {form}"));
+    };
+    let Some((id, kind)) = head.split_once('(') else {
+        return Err(format!("the item has no `(<kind>)`; {form}"));
+    };
+    let Some(kind) = kind.trim().strip_suffix(')') else {
+        return Err(format!("the kind has no `)`; {form}"));
+    };
+    let (id, kind) = (id.trim(), kind.trim());
+    if !is_deviation_id(id) {
+        return Err(format!(
+            "`{id}` is not an id: use letters, digits, `-` and `_`, and start with a letter or a digit; {form}"
+        ));
+    }
+    if !DEVIATION_KINDS.contains(&kind) {
+        return Err(format!(
+            "the kind `{kind}` of the deviation `{id}` is not `plan` or `spec`"
+        ));
+    }
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Err(format!("the deviation `{id}` has no text after `:`"));
+    }
+    Ok(DeviationItem {
+        id: id.to_string(),
+        kind: kind.to_string(),
+        text: rest.to_string(),
+        fix: deviation_fix(rest),
+    })
+}
+
+/// The items of the section `Deviations` of a plan. A later item with an id that
+/// an earlier item has is invalid.
+pub fn deviation_lines(plan: &Doc) -> Vec<DeviationLine> {
+    let mut seen: HashSet<String> = HashSet::new();
+    section_items(plan, ItemSection::Deviations)
+        .map(|item| {
+            let mut parsed = parse_deviation(item);
+            if let Ok(d) = &parsed
+                && !seen.insert(d.id.clone())
+            {
+                parsed = Err(format!(
+                    "the id `{}` is used already in `Deviations`: one item for each id",
+                    d.id
+                ));
+            }
+            DeviationLine {
+                line: item.line,
+                text: shown(&item.text),
+                parsed,
+            }
+        })
+        .collect()
+}
+
+/// The valid deviations of a plan, in the order of the file.
+pub fn deviation_items(plan: &Doc) -> Vec<DeviationItem> {
+    deviation_lines(plan)
+        .into_iter()
+        .filter_map(|l| l.parsed.ok())
+        .collect()
+}
+
+impl Change {
+    /// The pins of the valid items of `Invariants` of the spec. A change with
+    /// no spec declares none (design 0.8.0, Q18).
+    pub fn invariants(&self, corpus: &Corpus) -> Vec<Pin> {
+        match &self.spec {
+            Some(a) => invariant_pins(&corpus.docs[a.doc as usize]),
+            None => Vec::new(),
+        }
+    }
+
+    /// The valid items of `Deviations` of the plan.
+    pub fn deviations(&self, corpus: &Corpus) -> Vec<DeviationItem> {
+        match &self.plan {
+            Some(a) => deviation_items(&corpus.docs[a.doc as usize]),
+            None => Vec::new(),
+        }
+    }
+}
+
+/// A requirement id in a form that two spellings of one document share: the id
+/// of the document in the tree, or the canonical form of the id.
+pub fn same_target(c: &Corpus, target: &str) -> String {
+    let Some((id, key)) = target.split_once('#') else {
+        return canonical(target);
+    };
+    match c.resolve(id) {
+        Res::Found(d, None, _) => format!("{}#{key}", c.docs[d as usize].id),
+        _ => format!("{}#{key}", canonical(id)),
+    }
 }
 
 #[cfg(test)]
@@ -2192,5 +2490,111 @@ mod tests {
         assert_eq!(q, ["Who owns it?", "Is 5 a limit?"]);
         let c = corpus(&[("docs/intent/x/plan.md", "---\nstatus: draft\n---\n# P\n")]);
         assert!(collect(&c)[0].open_questions(&c).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+    use crate::parse::parse;
+
+    const H: &str = "0123456789abcdef";
+
+    fn doc_of(text: &str) -> Corpus {
+        let cfg =
+            crate::config::Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n")
+                .unwrap();
+        Corpus::build(
+            &cfg,
+            vec!["docs/x.md".to_string()],
+            vec![("docs/x.md".to_string(), std::sync::Arc::new(parse(text)))],
+        )
+    }
+
+    fn inv(body: &str) -> Vec<InvariantLine> {
+        let c = doc_of(&format!("# S\n\n## Invariants\n\n{body}\n"));
+        invariant_lines(&c.docs[0])
+    }
+
+    fn dev(body: &str) -> Vec<DeviationLine> {
+        let c = doc_of(&format!("# P\n\n## Deviations\n\n{body}\n"));
+        deviation_lines(&c.docs[0])
+    }
+
+    #[test]
+    fn a_pin_has_the_form_doc_id_key_hash() {
+        let p = parse_pin(&format!("rules/safety#valve-closed@{}", H.to_uppercase())).unwrap();
+        assert_eq!(p.text(), format!("rules/safety#valve-closed@{H}"));
+        assert_eq!(p.target(), "rules/safety#valve-closed");
+        let ticked = parse_pin(&format!("`rules/safety#a@{H}`")).unwrap();
+        assert_eq!(ticked.text(), format!("rules/safety#a@{H}"));
+        for bad in [
+            "rules/safety#a",
+            "rules/safety@0123456789abcdef",
+            &format!("rules/safety#A@{H}"),
+            "rules/safety#a@0123",
+            &format!("#a@{H}"),
+            &format!("rules/safety#a@{H} because"),
+            "",
+        ] {
+            assert!(parse_pin(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_item_none_stands_alone() {
+        let one = inv("- none");
+        assert_eq!(one[0].parsed, Ok(None));
+        let both = inv(&format!("- none\n- rules/a#b@{H}"));
+        assert!(both[0].parsed.is_err());
+        assert!(both[1].parsed.is_ok());
+        assert!(inv("- Not decided yet").iter().all(|l| l.parsed.is_err()));
+    }
+
+    #[test]
+    fn a_deviation_has_an_id_a_kind_and_a_text() {
+        let l = dev(
+            "- d1 (plan): The check moved to `src/sensors.rs`, because the sensor owns the timer.",
+        );
+        let d = l[0].parsed.as_ref().unwrap();
+        assert_eq!((d.id.as_str(), d.kind.as_str()), ("d1", "plan"));
+        assert!(d.text.starts_with("The check moved"));
+        let l = dev(
+            "- d2 (spec): It closes after 2 reads. Delta: CHANGE requirements/valves/closing#sensor-timeout",
+        );
+        let d = l[0].parsed.as_ref().unwrap();
+        assert_eq!(
+            d.fix.delta,
+            Some((
+                Verb::Change,
+                "requirements/valves/closing#sensor-timeout".to_string()
+            ))
+        );
+        let l = dev("- d3 (spec): Later. Follow-up: next-change.");
+        assert_eq!(
+            l[0].parsed.as_ref().unwrap().fix.follow_up.as_deref(),
+            Some("next-change")
+        );
+        for bad in [
+            "- d1: text",
+            "- d1 (other): text",
+            "- d1 (plan) text",
+            "- d1 (plan):",
+            "- (plan): text",
+            "- d 1 (plan): text",
+        ] {
+            assert!(dev(bad)[0].parsed.is_err(), "{bad}");
+        }
+        let twice = dev("- d1 (plan): a\n- d1 (spec): b");
+        assert!(twice[0].parsed.is_ok());
+        assert!(
+            twice[1]
+                .parsed
+                .as_ref()
+                .unwrap_err()
+                .contains("used already")
+        );
+        let bad_label = dev("- d4 (spec): x. Delta: UPDATE a#b");
+        assert!(bad_label[0].parsed.as_ref().unwrap().fix.delta_bad);
     }
 }

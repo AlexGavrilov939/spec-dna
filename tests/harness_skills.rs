@@ -300,7 +300,7 @@ fn step_back_sentence(artifact: &str) -> String {
 fn specify_and_write_plan_give_the_way_of_the_step_back_to_draft() {
     let s = shown("specify");
     assert!(
-        s.contains(&format!("\n7. {}", step_back_sentence("spec"))),
+        s.contains(&format!("\n8. {}", step_back_sentence("spec"))),
         "{s}"
     );
     let w = shown("write-plan");
