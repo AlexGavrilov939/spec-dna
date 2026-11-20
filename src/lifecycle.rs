@@ -53,8 +53,18 @@ fn no_base_reason(config: &Config, git: &Git, base: Option<&str>) -> String {
     // A base that the user passed is not a base to ask for.
     if let Some(rev) = base {
         return format!(
-            "no base for the change checks: `{rev}` and HEAD have no merge base (a shallow clone, or histories with no common commit); fetch more history of the branch"
+            "no base for the change checks: `{rev}` and HEAD have no merge base (a shallow clone, or histories with no common commit); fetch more history of the branch{}",
+            if git.is_shallow() {
+                " (`fetch-depth: 0`)"
+            } else {
+                ""
+            }
         );
+    }
+    // The base branch is known, and the clone does not reach the merge base: the
+    // fix is the full history.
+    if git.is_shallow() && git.remote_head().is_some() {
+        return "no base for the change checks: the clone is shallow and has no merge base with the base branch; fetch the full history (`fetch-depth: 0`)".to_string();
     }
     match &config.change_base {
         Some(b)

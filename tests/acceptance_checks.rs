@@ -1184,6 +1184,33 @@ fn check_reads_the_plan_facts_from_the_plan_of_the_branch_as_finish_does() {
     assert!(!has(&out, "SD928"), "{out}{err}");
 }
 
+/// A depth-1 clone that has no merge base with the base: `check` skips the change
+/// checks with a note (0.7 behaviour). The note names the fix.
+#[test]
+fn a_depth_1_clone_with_no_merge_base_gives_a_note_that_names_fetch_depth() {
+    let src = base_flow();
+    commit_record(&src, &["acceptor"], "accepted");
+    let dst = Repo::empty();
+    shallow_clone(&src.dir, &dst.dir, 1);
+    let tip = src.git_out(&["rev-parse", "main"]).trim().to_string();
+    dst.git(&[
+        "fetch",
+        "-q",
+        "--depth",
+        "1",
+        "origin",
+        &format!("{tip}:refs/remotes/origin/main"),
+    ]);
+    origin_head(&dst.dir, &tip);
+    let (_, out, err) = run(&dst, &["check"]);
+    let note = err
+        .lines()
+        .find(|l| l.contains("no base for the change checks"))
+        .unwrap_or_else(|| panic!("no note in\n{out}{err}"));
+    assert!(note.contains("fetch-depth: 0"), "{note}");
+    assert!(!has(&out, "SD935") && !has(&out, "SD928"), "{out}");
+}
+
 #[test]
 fn a_shallow_clone_that_cuts_the_history_gives_sd928_that_names_fetch_depth() {
     // With the branch rule, a depth-1 clone with the tip of `main` has no merge
@@ -1251,6 +1278,18 @@ fn a_shallow_clone_of_the_test_merge_gives_sd935_for_an_edited_archive_file() {
             .unwrap_or_else(|| panic!("depth {depth}: no SD935 in\n{out}{err}"));
         assert!(line.starts_with(ARCHIVE), "{line}");
         assert!(line.contains("fetch-depth: 0"), "depth {depth}: {line}");
+        // The archive file is honest here: the fix text must not tell the user
+        // to revert it.
+        let fix = out
+            .lines()
+            .find(|l| l.starts_with("SD935 fix: "))
+            .unwrap_or_else(|| panic!("depth {depth}: no SD935 fix in\n{out}"));
+        assert!(
+            fix.contains("Fetch the full history (`fetch-depth: 0`)")
+                && fix.contains("Do not change the archive file"),
+            "{fix}"
+        );
+        assert!(!fix.contains("Revert"), "{fix}");
     }
     // At depth 4 the oldest commit of the branch has its parent: the compare
     // runs, and the edit is the finding.
@@ -1264,6 +1303,9 @@ fn a_shallow_clone_of_the_test_merge_gives_sd935_for_an_edited_archive_file() {
         .find(|l| l.contains(" SD935 "))
         .unwrap_or_else(|| panic!("no SD935 in\n{out}{err}"));
     assert!(!line.contains("fetch-depth"), "{line}");
+    // The normal fix text stays.
+    let fix = out.lines().find(|l| l.starts_with("SD935 fix: ")).unwrap();
+    assert!(fix.contains("Revert the edit"), "{fix}");
     let honest = base_flow();
     commit_record(&honest, &["acceptor"], "accepted");
     let (code, out, err) = run(&honest, &["finish", SLUG]);

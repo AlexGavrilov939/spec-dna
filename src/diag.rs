@@ -167,6 +167,10 @@ pub struct Diag {
     pub severity: Severity,
 }
 
+/// The fix of SD935 when the history is cut: the finding says that the bytes
+/// cannot be compared, not that they differ.
+pub const CUT_HISTORY_FIX: &str = "Fetch the full history (`fetch-depth: 0`) and run `check` again. Do not change the archive file because of this finding: it is not an edit.";
+
 impl Diag {
     /// The gate compares diagnostics with the base by this fingerprint (ADR
     /// 0001, "Growth controls").
@@ -186,6 +190,17 @@ impl Diag {
         )
     }
 
+    /// The fix text of the finding. It is the fix of the code, with one case:
+    /// SD935 for a cut history (a shallow clone). The archive file is honest
+    /// there, so the fix must not tell the user to revert it.
+    pub fn fix(&self) -> &'static str {
+        if self.code == Code::RecordEdited && self.message.contains(crate::acceptance::CUT_MARK) {
+            CUT_HISTORY_FIX
+        } else {
+            self.code.fix()
+        }
+    }
+
     pub fn json(&self, new: bool) -> String {
         Obj::new()
             .str("code", self.code.code())
@@ -197,7 +212,7 @@ impl Diag {
             .num("line", self.line)
             .str("target", &self.target)
             .str("message", &self.message)
-            .str("fix", self.code.fix())
+            .str("fix", self.fix())
             .end()
     }
 }
@@ -229,6 +244,28 @@ mod tests {
                 c.code()
             );
         }
+    }
+
+    #[test]
+    fn the_fix_of_sd935_for_a_cut_history_does_not_say_revert() {
+        let mut d = Diag {
+            path: ".spec-dna/accepted/a.toml".into(),
+            line: 1,
+            code: Code::RecordEdited,
+            doc: String::new(),
+            target: String::new(),
+            message: "the archive file differs".into(),
+            severity: Severity::Error,
+        };
+        assert_eq!(d.fix(), Code::RecordEdited.fix());
+        assert!(d.fix().contains("Revert the edit"));
+        d.message = format!("the history {} and more", crate::acceptance::CUT_MARK);
+        assert!(!d.fix().contains("Revert"));
+        assert!(d.fix().contains("fetch-depth: 0"));
+        assert!(d.json(false).contains("fetch-depth: 0"));
+        // Another code keeps the fix of the code.
+        d.code = Code::AcceptanceInvalid;
+        assert_eq!(d.fix(), Code::AcceptanceInvalid.fix());
     }
 
     #[test]

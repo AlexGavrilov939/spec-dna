@@ -625,6 +625,10 @@ fn moved_record(git: &Git, base_rev: &str, folder: &str) -> Result<Option<Vec<u8
     Ok(texts.into_iter().rev().flatten().next().or(base_text))
 }
 
+/// The words of the SD935 message for a cut history. `Diag::fix` reads them, so
+/// the finding for a cut history gets its own fix text.
+pub const CUT_MARK: &str = "is cut (a shallow clone)";
+
 /// The SD935 message if the archive file `archive`, which the diff adds with
 /// the bytes `bytes`, is not the record that `finish` moves: the bytes differ
 /// from the folder record, or no folder record is in the history of the branch
@@ -645,7 +649,7 @@ pub fn archive_differs(
     // names the cause. A repository that is not shallow is never cut.
     if git.range_is_cut(base_rev) {
         return Ok(Some(format!(
-            "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the bytes of the archive file `{archive}` cannot be compared with `{rec_path}`; fetch the full history (`fetch-depth: 0`)"
+            "the history of the branch (`{base_rev}` to its tip) {CUT_MARK}, so the bytes of the archive file `{archive}` cannot be compared with `{rec_path}`; fetch the full history (`fetch-depth: 0`)"
         )));
     }
     Ok(match moved_record(git, base_rev, folder)? {
