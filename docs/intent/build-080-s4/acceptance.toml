@@ -1,0 +1,101 @@
+format = 1
+change = "build-080-s4"
+scope = [".claude/agents/ownership.md", "docs/agents.md", "docs/commands.md", "docs/concepts.md", "docs/config.md", "docs/design/0.8.0.md", "docs/diagnostics.md", "docs/evals.md", "docs/glossary.md", "docs/guides/change.md", "docs/guides/upgrade-0.6.md", "docs/harness.md", "docs/init.md", "docs/intent/build-080-s4/acceptance.toml", "docs/profiles.md", "docs/quickstart.md", "schema/spec-dna.schema.json", "src/accept.rs", "src/acceptance.rs", "src/approval.rs", "src/change.rs", "src/check.rs", "src/config.rs", "src/diag.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/finish.rs", "src/git.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/record.rs", "src/stage.rs", "src/tree.rs", "src/upgrade.rs", "src/upgrade_config.rs", "src/verdict.rs", "tests/*.rs", "tests/golden/**"]
+paths = ["src/accept.rs", "src/acceptance.rs", "src/change.rs", "src/config.rs", "src/diag.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/finish.rs", "src/git.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/record.rs", "src/stage.rs", "src/tree.rs", "src/upgrade.rs", "src/upgrade_config.rs", "src/verdict.rs", "tests/accept_archive_owner.rs", "tests/accept_cmd.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/branch_approval.rs", "tests/cli.rs", "tests/config_step4.rs", "tests/eval_ab.rs", "tests/evidence_reports.rs", "tests/finish.rs", "tests/finish_sd913.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/hook_approvals.rs", "tests/init_evals.rs", "tests/init_profiles.rs", "tests/lifecycle_base.rs", "tests/lifecycle_commands.rs", "tests/skill_cmd.rs", "tests/upgrade_cli.rs", "tests/upgrade_config.rs", "tests/upgrade_v061.rs", "tests/upgrade_v070.rs"]
+tree = "3d9daf81d344c5ea"
+result = "rejected"
+acknowledged-by = []
+
+[[acceptor]]
+role = "acceptor"
+brief = "113208e3e1445e42"
+session = "95b8c89a-a705-46a8-b9a5-0e484b1e2cf7"
+agent = "unknown"
+model = "claude-opus-5-5"
+result = "rejected"
+
+[[attempt]]
+acceptor = 1
+text = "The commands of `Proof` on HEAD d690e68: `pre-commit run --all-files` passes each hook, `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass, and `cargo test` gives 2799 passed, 0 failed and 3 ignored in 77 test binaries. The `checker` report and `finish` in the pull request are outside this brief."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The brief. The tree binary gives `brief 113208e3e1445e42` for `accept build-080-s4 --brief`, with the same bytes twice, and `--json` gives the same hash. The skeleton has the `scope`, the `paths` and the tree 3d9daf81d344c5ea of the brief. Each path of the diff against origin/HEAD is in `Files`, and `check --base origin/HEAD` gives no new finding."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A test merge in a scratch repository (HEAD is a merge of `feature` into `main`, and its first parent is `main`). A valid folder record: `check` gives no code, and `next` shows `accept` as done. A wrong `brief` on the branch: SD928 names the commit of the branch, not the merge. After `finish`, a test merge where `main` edits another path gives no SD927, SD929 or SD935, and one where `main` edits `src/a.py` gives SD929 with the revert of `finish`."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "CRLF. With `core.autocrlf = true`, the change files are CRLF on disk, and a CRLF record with an entry that no commit has is staged: `check --staged --base main` gives no SD928."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Shallow clones. Depth 1 with no merge base: `check` prints the note with `fetch-depth: 0`. Depth 3 after a merge of `main` into the branch, so the first-parent line is cut: SD935 names the cut and `fetch-depth: 0`, and the fix text says not to change the archive file, also for an edited archive. It also fires on a good archive file when the kept commits hold the record. docs/diagnostics.md states this limit."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A plan that the base has at pin 0.7.1 (no record needed) and a committed skeleton record: `finish --dry-run` stops at step 5 with SD928. A record that is not committed: `finish` stops at step 0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The hook `protect-approvals`: an entry of `acknowledged-by`, staged or unstaged, is denied for `git commit`. The result of `finish` is allowed. The result of `finish` with an entry added to the archive file is denied."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "`next` and `finish --dry-run` agree for a wrong brief (SD928), a `rejected` record (SD930), a higher-risk change with `higher-risk-acceptors = 2` and 1 entry (SD933) and a code edit after the record (SD929). With `SD928 = \"off\"` and a wrong brief, `next` says that the record passes the checks that are on, and `finish` passes."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Bad input to `accept`: `a/b` and `--role Bad` exit 2, `nope` exits 5, `--brief --session x` exits 2, an uncommitted edit of `plan.md` exits 1, an untracked `lib/new.py` in the scope glob `lib/**` exits 1, and a second run after a code edit exits 1. `--role security-reviewer` is in the first line of the brief."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The rules of the record: 2 entries with session `s1` and agent `agent-7` give SD931, and with agent `unknown` no SD931. 16,385 bytes, `accepted` with an `important` finding, and a finding with `acceptor = 3` each give SD928. `higher-risk-acceptors = 4` exits 3."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A second `accept`: a CRLF record keeps CRLF on each line (31 of 31), and a record with no final newline, with a multi-line string that holds a line `[[acceptor]]`, or with the `[[acceptor]]` table at the end gets entry 2 at the correct place. An inline array `acceptor = [{...}]` gives exit 1 with the message."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "`init` with the harness `lean`: `lite` writes no `acceptor.md` and no skill `spec-dna-accept`, and `standard` and `strict` write both. `strict` writes `higher-risk-acceptors = 2`. The agent file has `model: opus`, `effort: high`, the tools Read, Grep, Glob, Bash and Write, and the sentence `Write only acceptance.toml`."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The archive file outside `.spec-dna/accepted/`. After `finish fix`, `git mv .spec-dna/accepted/fix.toml notes/fix.toml` (or `keep/fix.txt`) and a commit: `check --base main` gives 0 errors and only SD913 for the new path, while the head has no archive file. A folder deleted with no `finish` and an added non-record file `src/fix`: SD935 calls `src/fix` the archive file, and with `SD935 = \"off\"` no SD927 fires (it fires when `src/fix` is absent)."
+outcome = "broke"
+
+[[finding]]
+acceptor = 1
+severity = "important"
+path = "src/lifecycle.rs"
+line = 2466
+text = "`check` takes any file that the diff adds as the archive file of a deleted change. `added` holds each added path of the diff, with no `is_archive_path` filter, and `archive_of` (src/acceptance.rs line 79) takes a file whose field `change` is the slug, or a file that does not read as a record and whose name without `.toml` is the slug. After `finish`, a move of `.spec-dna/accepted/fix.toml` to `notes/fix.toml` or `keep/fix.txt` passes `check` with 0 errors (SD913 is a warning), and the head has no archive file. D3 items 3 and 9 forbid this: the archive folder is the one permanent place, and SD927 needs the archive file in the head. SD935 does not protect the moved file in a later diff. A folder deleted with no `finish` plus an added non-record file `src/fix` gives SD935 on `src/fix` with a fix text about `.spec-dna/accepted/`, and with `SD935 = \"off\"` it hides SD927. Pass only the added paths that `is_archive_path` accepts."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "docs/design/0.8.0.md"
+line = 353
+text = "The step Check of the skill `accept` still says that `spec-dna check --base origin/HEAD` gives no SD928 and no SD929. The skill text (src/harness_text.rs line 214) names `next` and `finish --dry-run` for SD929. The fourth and the fifth record reported this line too."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/diag.rs"
+line = 150
+text = "The fix text of SD929 always says to revert the commit of `finish`. `finish --dry-run` before any `finish` prints this fix line under a message that says to delete the record and accept again, so the 2 lines disagree. d690e68 gave SD935 a fix text that depends on the message; SD929 needs the same for the case before `finish`."
