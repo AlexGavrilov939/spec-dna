@@ -51,6 +51,12 @@ pub struct Config {
     /// `[evidence] tree-exclude`: globs of the paths that the code tree leaves
     /// out. The default is `DEFAULT_TREE_EXCLUDE`. A list replaces it.
     pub evidence_tree_exclude: Vec<String>,
+    /// `[evidence] reliable-runs`: the passes of one case that the level
+    /// `reliable` needs, from 2 to 20 (design 0.8.0, D2).
+    pub evidence_reliable_runs: u32,
+    /// `[evidence] reliable-for`: the changes whose requirements need the level
+    /// `reliable` at `finish`. Not `None` needs `evidence_reports`.
+    pub evidence_reliable_for: ReliableFor,
     /// The document types of the project. Empty: every type.
     pub types: Vec<DocType>,
     /// The number of characters that a document over its hard budget in the
@@ -948,6 +954,12 @@ impl Profile {
             // only with a `[evidence] reports` key that is not empty.
             "SD613" | "SD614" | "SD615" | "SD617" => (None, Some(E), Some(E)),
             "SD616" => (None, Some(W), Some(E)),
+            // The proof levels and the proof debt (design 0.8.0, D2). Off in
+            // `lite`. SD618 and SD619 run on a marker, and SD620 on the key
+            // `reliable-for`.
+            "SD618" => (None, Some(W), Some(W)),
+            "SD619" => (None, Some(W), Some(E)),
+            "SD620" => (None, Some(E), Some(E)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -963,13 +975,14 @@ impl Profile {
 pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
-pub const GROUPS: [(&str, &[&str]); 9] = [
+pub const GROUPS: [(&str, &[&str]); 10] = [
     ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
     ("drift", &["SD606", "SD607"]),
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("reports", &["SD613", "SD614", "SD615", "SD616", "SD617"]),
+    ("proof", &["SD618", "SD619", "SD620"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
     (
@@ -1234,6 +1247,38 @@ pub const DEFAULT_TEST_GLOBS: [&str; 10] = [
     "**/*_spec.*",
 ];
 
+/// The values of `[evidence] reliable-for`: the changes whose requirements need
+/// the level `reliable` (design 0.8.0, D2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReliableFor {
+    /// No change needs it. The default.
+    #[default]
+    None,
+    /// A change of the class `higher-risk`.
+    HigherRisk,
+    /// Each change.
+    All,
+}
+
+impl ReliableFor {
+    pub fn name(self) -> &'static str {
+        match self {
+            ReliableFor::None => "none",
+            ReliableFor::HigherRisk => "higher-risk",
+            ReliableFor::All => "all",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<ReliableFor> {
+        [ReliableFor::None, ReliableFor::HigherRisk, ReliableFor::All]
+            .into_iter()
+            .find(|v| v.name() == s)
+    }
+}
+
+/// The default of `[evidence] reliable-runs`.
+pub const DEFAULT_RELIABLE_RUNS: u32 = 3;
+
 /// The default of `[evidence] tree-exclude`: the paths that the code tree
 /// leaves out (design 0.8.0, D1). Each Markdown file is a document, so an edit
 /// of a document never makes a test report stale.
@@ -1443,6 +1488,8 @@ impl Config {
         let mut evidence_tests = DEFAULT_TEST_GLOBS.map(str::to_string).to_vec();
         let mut evidence_reports: Vec<String> = Vec::new();
         let mut evidence_tree_exclude = DEFAULT_TREE_EXCLUDE.map(str::to_string).to_vec();
+        let mut evidence_reliable_runs = DEFAULT_RELIABLE_RUNS;
+        let mut evidence_reliable_for = ReliableFor::None;
         if let Some(v) = t.take("evidence") {
             let tbl = v.as_table().ok_or("`evidence` must be a table")?;
             let mut f = Fields::new(tbl, "evidence.");
@@ -1462,7 +1509,31 @@ impl Config {
             if f.table.contains_key("tree-exclude") {
                 evidence_tree_exclude = f.opt_strs("tree-exclude")?;
             }
+            if f.table.contains_key("reliable-runs") {
+                let n = f.opt_u32("reliable-runs")?.unwrap_or(DEFAULT_RELIABLE_RUNS);
+                if !(2..=20).contains(&n) {
+                    return Err(format!(
+                        "`evidence.reliable-runs` must be an integer from 2 to 20, not {n}"
+                    ));
+                }
+                evidence_reliable_runs = n;
+            }
+            if f.table.contains_key("reliable-for") {
+                let v = f.opt_str("reliable-for")?.unwrap_or_default();
+                evidence_reliable_for = ReliableFor::from_name(&v).ok_or_else(|| {
+                    format!(
+                        "`evidence.reliable-for` must be \"none\", \"higher-risk\" or \"all\", not \"{v}\""
+                    )
+                })?;
+            }
             f.done()?;
+        }
+        // The reliable level reads the test reports, so it needs them (D2).
+        if evidence_reliable_for != ReliableFor::None && evidence_reports.is_empty() {
+            return Err(
+                "[evidence] reliable-for needs [evidence] reports: set reports, or set reliable-for = \"none\""
+                    .to_string(),
+            );
         }
         let mut conventions: [Vec<String>; DocType::COUNT] = Default::default();
         if let Some(v) = t.take("conventions") {
@@ -1565,6 +1636,8 @@ impl Config {
             evidence_tests,
             evidence_reports,
             evidence_tree_exclude,
+            evidence_reliable_runs,
+            evidence_reliable_for,
             types,
             growth,
             conventions,
@@ -3632,6 +3705,86 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert_eq!(groups, ["reports"], "{}", code.code());
         }
         assert_eq!(Code::REPORT_CODES.len(), 5);
+    }
+
+    #[test]
+    fn the_profile_rows_of_the_proof_codes() {
+        use Severity::{Error as E, Warning as W};
+        // The design table of D2: code, lite, standard, strict. Each code is in
+        // the group `proof` and in no other group.
+        let rows = [
+            (Code::ProofOwed, None, Some(W), Some(W)),
+            (Code::ProofOwedInvalid, None, Some(W), Some(E)),
+            (Code::ProofNotReliable, None, Some(E), Some(E)),
+        ];
+        for (code, lite, standard, strict) in rows {
+            for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
+                let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+                assert_eq!(c.severity(code, None), want, "{} {profile}", code.code());
+            }
+            let groups: Vec<&str> = GROUPS
+                .iter()
+                .filter(|g| g.1.contains(&code.code()))
+                .map(|g| g.0)
+                .collect();
+            assert_eq!(groups, ["proof"], "{}", code.code());
+        }
+        assert_eq!(Code::PROOF_CODES.len(), 3);
+        // The group `evidence` of 0.7.1 and the group `reports` do not set them.
+        for rule in [
+            "evidence = \"error\"",
+            "reports = \"error\"",
+            "changes = \"error\"",
+        ] {
+            let c = with("profile = \"lite\"", &format!("[rules]\n{rule}\n")).unwrap();
+            for code in Code::PROOF_CODES {
+                assert_eq!(c.severity(*code, None), None, "{rule}");
+            }
+        }
+        let c = with("profile = \"lite\"", "[rules]\nproof = \"warning\"\n").unwrap();
+        for code in Code::PROOF_CODES {
+            assert_eq!(c.severity(*code, None), Some(W));
+        }
+    }
+
+    #[test]
+    fn the_keys_of_the_proof_levels_have_defaults_and_checks() {
+        let text = |ev: &str| {
+            format!("spec-dna = \"0.1.0\"\n[evidence]\n{ev}\n[[roots]]\npath = \"docs\"\n")
+        };
+        let c = Config::parse(&text("")).unwrap();
+        assert_eq!(c.evidence_reliable_runs, 3);
+        assert_eq!(c.evidence_reliable_for, ReliableFor::None);
+        let c = Config::parse(&text(
+            "reports = [\"out/*.xml\"]\nreliable-runs = 20\nreliable-for = \"higher-risk\"",
+        ))
+        .unwrap();
+        assert_eq!(c.evidence_reliable_runs, 20);
+        assert_eq!(c.evidence_reliable_for, ReliableFor::HigherRisk);
+        let c = Config::parse(&text("reports = [\"o/*\"]\nreliable-for = \"all\"")).unwrap();
+        assert_eq!(c.evidence_reliable_for, ReliableFor::All);
+        // The bounds of `reliable-runs`.
+        for bad in ["1", "0", "21", "-1", "\"3\"", "3.5"] {
+            let e = Config::parse(&text(&format!("reliable-runs = {bad}"))).unwrap_err();
+            assert!(e.contains("evidence.reliable-runs"), "{bad}: {e}");
+        }
+        let c = Config::parse(&text("reliable-runs = 2")).unwrap();
+        assert_eq!(c.evidence_reliable_runs, 2);
+        // A value that is not in the list.
+        for bad in ["\"sometimes\"", "\"All\"", "true"] {
+            let e = Config::parse(&text(&format!("reports = [\"o/*\"]\nreliable-for = {bad}")))
+                .unwrap_err();
+            assert!(e.contains("evidence.reliable-for"), "{bad}: {e}");
+        }
+        // `reliable-for` other than `none` needs `reports` (design 0.8.0, D2).
+        let want = "[evidence] reliable-for needs [evidence] reports: set reports, or set reliable-for = \"none\"";
+        for ev in [
+            "reliable-for = \"higher-risk\"",
+            "reliable-for = \"all\"\nreports = []",
+        ] {
+            assert_eq!(Config::parse(&text(ev)).unwrap_err(), want, "{ev}");
+        }
+        assert!(Config::parse(&text("reliable-for = \"none\"")).is_ok());
     }
 
     #[test]

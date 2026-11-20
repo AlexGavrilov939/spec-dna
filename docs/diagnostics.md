@@ -21,7 +21,7 @@ The tables below give the severity of each code in the `standard` profile. The p
 
 The gate compares each diagnostic with the base by its fingerprint (code, document id, target). For a moved document, the comparison uses its old id, which the document keeps as an alias.
 
-SD613, SD614, SD615 and SD617 are always new, because the base has no report. SD616 is a state code and never new.
+SD613, SD614, SD615 and SD617 are always new, because the base has no report. SD616 and SD618 are state codes and never new.
 
 The codes SD401 to SD405, SD202, SD605, SD606, SD607, SD702, SD703 and SD921 compare the base tree with the head tree. Thus these diagnostics are always new. SD704 is new only if the root does not enforce budgets and the document is new or grew.
 
@@ -38,6 +38,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD501 to SD507 | Adapters, harness files, configuration, evals and skills | [Adapters, harness, configuration and evals](#adapters-harness-configuration-and-evals-sd501-to-sd507) |
 | SD601 to SD612 | Links, drift, evidence and quality | [Links, drift and quality](#links-drift-and-quality-sd601-to-sd612) |
 | SD613 to SD617 | Test reports | [Test reports](#test-reports-sd613-to-sd617) |
+| SD618 to SD620 | Proof levels and the proof debt | [Proof levels and the proof debt](#proof-levels-and-the-proof-debt-sd618-to-sd620) |
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
@@ -164,6 +165,20 @@ These codes are new in 0.8.0. They run only with a `[evidence] reports` key that
 - A `verified-by` record is a check by a person. The reports do not apply to it, so a requirement with a `verified-by` gives no SD616 and no SD617.
 - A tag that binds to no case gives SD616 or SD617 with the reason "no case of a fresh report binds to the tag". Put the tag above the test, or add `case:<name>`.
 - SD608 and SD916 keep their meaning: no tag and no `verified-by`.
+
+## Proof levels and the proof debt (SD618 to SD620)
+
+These codes are new in 0.8.0. They are in the rule group `proof`, so a rule for the group `evidence` or `reports` does not change them. In `lite`, each of them is off. A rule for the group `proof`, or for one code, turns them on there. The tables give the severity in `standard`. [Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt) describes the states and the marker.
+
+| Code | Name | Severity | Meaning |
+| --- | --- | --- | --- |
+| SD618 | proof-owed | warning | An active requirement has a proof debt (`<!-- proof-owed: <reason> -->` with a reason of the list) and no evidence. It replaces SD608 for that requirement. It is a state code: `check --all` shows it, and it is never new. It is a warning in `strict` too. |
+| SD619 | proof-owed-invalid | warning | The reason of a `proof-owed` marker is not `manual`, `environment`, `external` or `pending`, or an active requirement has the marker and has evidence (a `covers:` tag or a `verified-by`). It is an error in `strict`. The marker of an invalid reason is no debt, so the requirement keeps SD608. |
+| SD620 | proof-not-reliable | error | With `[evidence] reports` and `[evidence] reliable-for`, a requirement that a covered change adds or changes passed fewer times than `[evidence] reliable-runs`. It runs where SD916 and SD617 run: when the diff deletes the folder of the change, and at step 5 of `finish`. |
+
+- SD618 and SD619 run on a marker. No key turns them on. The marker is an act of the author on one requirement, as `verified-by` is.
+- SD620 runs only when `check` reads the reports (`--reports`) and `reliable-for` covers the change. A requirement with no passed case gives SD617 or SD916, not SD620. When SD617 is off, a requirement with a tag and no passed case gives SD620. A requirement with a `verified-by` record and a tag whose bound case failed, was skipped or passed too few times gives SD620 too. A `verified-by` record with no tag is exempt.
+- A debt is never proof. SD916, SD617 and SD620 stop `finish` for a requirement that has a debt, as they stop one that has none.
 
 ## Budgets (SD701 to SD704)
 
@@ -441,7 +456,7 @@ SD506 needs the table `[evals]`, with any `[change] policy`. It reads the files 
 | 2 | SD919 (an open concern), SD922 (an open question) or SD920 (a needed decision that is absent or not `accepted`) |
 | 3 | SD914: a delta line is not valid, its target is absent or in a layer that `moves-to` does not allow, or its hash is not the hash of the requirement. Also SD914: the delta differs from the delta that the base tree has (an approved delta must not change). Also SD914: an interface of `Interfaces` that the diff does not change, or an `ADD` item of `Interfaces` whose document the tree does not have and no delta line adds |
 | 4 | The result would not give the result of a delta line (`check` would report SD915), or two lines edit the same lines of a file |
-| 5 | SD613, SD614 or SD615 (step 5.1: with `[evidence] reports`, a test report is missing, stale or unreadable), SD916 (a requirement that the change adds or changes has no evidence), SD617 (step 5.4: it has a tag, and no bound test case passed in the reports), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
+| 5 | SD613, SD614 or SD615 (step 5.1: with `[evidence] reports`, a test report is missing, stale or unreadable), SD916 (a requirement that the change adds or changes has no evidence), SD617 (step 5.4: it has a tag, and no bound test case passed in the reports), SD620 (step 5.4: with `[evidence] reliable-for`, a requirement passed fewer times than `[evidence] reliable-runs`), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
 
 The base of step 3 is the merge base of `--base` (or of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`, for each policy. An `accepted` change needs it, and without it `finish` exits with code 3. A change that the base tree does not have was added in the same branch: its delta has no approved text to compare.
 

@@ -522,16 +522,28 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         .filter(|c| c.dir != cx.folder)
         .any(|c| cx.diff.is_some_and(|d| d.under(&c.dir).next().is_some()));
     let scope = |p: &str| !others_touched || change::in_scope(&files, p);
-    let mut missing = lifecycle::evidence_missing(&rebuilt, base, head, ch, &scope);
-    // SD617 is a result of the test reports. A project that turned it off keeps
-    // the tags as evidence.
-    missing.retain(|d| d.code != Code::ChangeUnproven || !cx.config.is_off(Code::ChangeUnproven));
+    let reliable = crate::evidence::reliable_for(cx.config, ch.class);
+    let mut missing = lifecycle::evidence_missing(&rebuilt, base, head, ch, &scope, reliable);
+    // SD617 and SD620 are results of the test reports. A project that turned
+    // one off keeps the tags as evidence.
+    missing.retain(|d| {
+        !matches!(d.code, Code::ChangeUnproven | Code::ProofNotReliable)
+            || !cx.config.is_off(d.code)
+    });
     if !missing.is_empty() {
         let unproven = missing.iter().all(|d| d.code == Code::ChangeUnproven);
+        let unreliable = missing.iter().all(|d| d.code == Code::ProofNotReliable);
         return stop(
             5,
             if unproven {
                 "a requirement that the change adds or changes has a tag, and no bound test case passed in the reports (the lines are lines of the result of `finish`)"
+            } else if unreliable {
+                "a requirement that the change adds or changes passed fewer times than `[evidence] reliable-runs` in the reports (the lines are lines of the result of `finish`)"
+            } else if missing
+                .iter()
+                .all(|d| matches!(d.code, Code::ChangeUnproven | Code::ProofNotReliable))
+            {
+                "a requirement that the change adds or changes has a tag that no bound test case proves (SD617), or its bound case passed fewer times than `[evidence] reliable-runs` in the reports (SD620); the lines are lines of the result of `finish`"
             } else {
                 "a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`)"
             },
@@ -1103,12 +1115,28 @@ fn edit_document(
                 if d.verb == Verb::Change {
                     let (s, e) = (r.sentence.start as usize, r.sentence.end as usize);
                     let mut new = sentence(d);
+                    // A line with a marker `proof-owed` replaces the debt: the
+                    // old marker goes, so the requirement has one.
+                    let new_debt = crate::parse::strip_markers_all(&new).3.is_some();
                     // A marker inside the old span (a `mv` puts the alias on
                     // the first line of a wrapped requirement) stays.
                     for m in inner_markers(&text[s..e]) {
-                        if !new.contains(m) {
+                        let debt = m
+                            .trim_start_matches("<!--")
+                            .trim()
+                            .starts_with("proof-owed:");
+                        if !new.contains(m) && !(debt && new_debt) {
                             new.push(' ');
                             new.push_str(m);
+                        }
+                    }
+                    if new_debt {
+                        for (from, to) in trailing_markers(text, e, "proof-owed:") {
+                            edits.push(Edit {
+                                start: from,
+                                end: to,
+                                text: String::new(),
+                            });
                         }
                     }
                     if s == e && !text[..s].ends_with(char::is_whitespace) {
@@ -1208,8 +1236,36 @@ fn edit_document(
     Ok(result)
 }
 
-/// The markers `<!-- aliases: ... -->` and `<!-- verified-by: ... -->` in a
-/// text, as they are written, in the order of the text.
+/// The markers that follow `from` at the end of a sentence, with only space
+/// between them, whose text starts with `kind` (for example `proof-owed:`). Each
+/// item is the byte range of the marker with the space before it.
+fn trailing_markers(text: &str, from: usize, kind: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut at = from;
+    loop {
+        let rest = &text[at..];
+        let ws = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        let tail = &rest[ws..];
+        if !tail.starts_with("<!--") {
+            return out;
+        }
+        let Some(len) = tail[4..].find("-->") else {
+            return out;
+        };
+        let end = at + ws + 4 + len + 3;
+        let inner = text[at + ws + 4..end - 3].trim();
+        if !crate::parse::MARKERS.iter().any(|m| inner.starts_with(m)) {
+            return out;
+        }
+        if inner.starts_with(kind) {
+            out.push((at, end));
+        }
+        at = end;
+    }
+}
+
+/// The markers `<!-- aliases: ... -->`, `<!-- verified-by: ... -->` and
+/// `<!-- proof-owed: ... -->` in a text, as they are written, in the order of the text.
 fn inner_markers(span: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut at = 0;
@@ -1220,7 +1276,7 @@ fn inner_markers(span: &str) -> Vec<&str> {
         };
         let end = start + 4 + len + 3;
         let inner = span[start + 4..end - 3].trim();
-        if inner.starts_with("aliases:") || inner.starts_with("verified-by:") {
+        if crate::parse::MARKERS.iter().any(|m| inner.starts_with(m)) {
             out.push(&span[start..end]);
         }
         at = end;
@@ -1837,6 +1893,35 @@ mod tests {
         assert_eq!(
             write_of(&p, VALVES_PATH).new,
             "---\nstatus: active\n---\n# V\n\n## Requirements\n\n- **k**: The valve SHALL close in 2 seconds. <!-- aliases: old/valves#k --> <!-- verified-by: tests/a.rs -->\n  - nested\n- **m**: The valve SHALL open soon. <!-- verified-by: tests/a.rs -->\n"
+        );
+    }
+
+    #[test]
+    fn a_change_with_a_proof_owed_marker_drops_the_old_one() {
+        let cfg = config("");
+        let valves = "---\nstatus: active\n---\n# V\n\n## Requirements\n\n- **k**: The valve SHALL close. <!-- proof-owed: manual -->\n- **m**: The valve SHALL open <!-- proof-owed: manual --> now.\n- **n**: The valve SHALL drain. <!-- proof-owed: manual -->\n";
+        let at = |k| hash_of(&cfg, valves, k);
+        let s = spec(&[
+            format!(
+                "- CHANGE requirements/valves#k@{}: The valve SHALL close in 2 seconds. <!-- proof-owed: environment -->",
+                at("k")
+            ),
+            format!(
+                "- CHANGE requirements/valves#m@{}: The valve SHALL open soon. <!-- proof-owed: external -->",
+                at("m")
+            ),
+            // No marker in the line: the debt of the requirement stays.
+            format!(
+                "- CHANGE requirements/valves#n@{}: The valve SHALL drain fast.",
+                at("n")
+            ),
+        ]);
+        let covers = ["k", "m", "n"].map(|k| format!("requirements/valves#{k}"));
+        let covers: Vec<&str> = covers.iter().map(String::as_str).collect();
+        let p = run(&cfg, valves, &s, &covers).unwrap();
+        assert_eq!(
+            write_of(&p, VALVES_PATH).new,
+            "---\nstatus: active\n---\n# V\n\n## Requirements\n\n- **k**: The valve SHALL close in 2 seconds. <!-- proof-owed: environment -->\n- **m**: The valve SHALL open soon. <!-- proof-owed: external -->\n- **n**: The valve SHALL drain fast. <!-- proof-owed: manual -->\n"
         );
     }
 

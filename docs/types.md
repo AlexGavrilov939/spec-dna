@@ -146,7 +146,26 @@ Each item has its text, its line, and its byte range in the file. The range star
 
 A delta line is one list item with one paragraph and no nested list. The key is a slug. The hash is 16 hexadecimal digits, as `show` prints them. A line can wrap. Each key has one line in the delta. An item in another form is an invalid line: the parser keeps it with its reason, and a check reports it later (SD914).
 
-A requirement also has the byte range of its sentence. The sentence is the text after the bold key and its colon. It has no markers `aliases` and `verified-by` at its end, and no space at its start or at its end. The hash of a requirement is the hash of this text.
+A requirement also has the byte range of its sentence. The sentence is the text after the bold key and its colon. It has no markers `aliases`, `verified-by` and `proof-owed` at its end, and no space at its start or at its end. The hash of a requirement is the hash of this text. [The marker `proof-owed`](#the-marker-proof-owed) is the one that 0.8.0 adds.
+
+### The marker `proof-owed`
+
+A requirement can end with the marker `<!-- proof-owed: <reason> -->`. It records a proof debt: the requirement has no test or record yet, and the author says why. The reason is one word of a closed list:
+
+| Reason | Use it when |
+| --- | --- |
+| `manual` | A person must look |
+| `environment` | CI has no such device, account or data |
+| `external` | A third party must act |
+| `pending` | The test is not written yet |
+
+```md
+- **sensor-timeout**: When a moisture sensor times out, the controller SHALL close the valve of its bed. <!-- proof-owed: environment -->
+```
+
+- The marker can stand next to the markers `aliases` and `verified-by`, in any order. Write it at the end of the requirement. The parser reads each of the 3 markers anywhere in the sentence, and it removes the marker from the text and the hash. Only a marker at the end leaves the sentence range that `show` gives. A marker in a code span is text, and it is no `proof-owed` marker. The parser reads the first `proof-owed` marker of a requirement. A `CHANGE` line of a delta that has a `proof-owed` marker replaces the old marker of the requirement. A line with no such marker keeps it.
+- The hash of the requirement does not cover the marker. Thus a marker gives no SD914 and no SD921, and `PARSER_VERSION` is 17.
+- A debt is no proof. A requirement with a debt and no evidence gives SD618 in place of SD608. A reason that is not in the list, or a marker on a requirement that has evidence, gives SD619. `finish` still needs evidence for a requirement that the change adds or changes (SD916). [Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt) and [Diagnostics](diagnostics.md#proof-levels-and-the-proof-debt-sd618-to-sd620) give the rules.
 
 ### Tasks of a plan
 

@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 16;
+pub const PARSER_VERSION: u32 = 17;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -270,6 +270,10 @@ pub struct Req {
     pub aliases: Vec<String>,
     /// The paths of an inline `<!-- verified-by: <path>, ... -->` marker.
     pub verified_by: Vec<String>,
+    /// The reason of an inline `<!-- proof-owed: <reason> -->` marker, as
+    /// written and trimmed (design 0.8.0, D2). It can be empty or a word that
+    /// is not a reason: SD619 reports it. The first marker counts.
+    pub proof_owed: Option<String>,
     /// The sentence, whitespace-normalized, without the alias marker.
     pub text: String,
     /// Byte range of the sentence in the source text: after the bold key and
@@ -500,7 +504,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             raw_start += raw.len() - trimmed.len();
             raw = trimmed;
         }
-        let (clean, aliases, verified_by) = strip_markers(raw);
+        let (clean, aliases, verified_by, proof_owed) = strip_markers_all(raw);
         let lead = raw.len() - raw.trim_start().len();
         let sentence = (body_start + raw_start + lead) as u32
             ..(body_start + raw_start + sentence_end(raw).max(lead)) as u32;
@@ -515,6 +519,7 @@ pub fn parse(text: &str) -> ParsedDoc {
             frozen: hash_normalized(&strip_link_destinations(&clean)),
             aliases,
             verified_by,
+            proof_owed,
             text: crate::hash::normalize(&clean),
             sentence,
         });
@@ -678,7 +683,7 @@ impl ItemScan {
 }
 
 /// Returns the end of the sentence in `raw`: the end of the text without the
-/// space and the markers (`aliases` and `verified-by`) at the end.
+/// space and the markers (`aliases`, `verified-by` and `proof-owed`) at the end.
 fn sentence_end(raw: &str) -> usize {
     let mut end = raw.trim_end().len();
     while raw[..end].ends_with("-->")
@@ -689,7 +694,7 @@ fn sentence_end(raw: &str) -> usize {
             break;
         }
         let inner = raw[pos + 4..end - 3].trim();
-        if !(inner.starts_with("aliases:") || inner.starts_with("verified-by:")) {
+        if !MARKERS.iter().any(|m| inner.starts_with(m)) {
             break;
         }
         end = raw[..pos].trim_end().len();
@@ -838,13 +843,63 @@ impl Item {
     }
 }
 
+/// True if byte `pos` of `text` is inside a code span: between a run of `n`
+/// backticks and the next run of exactly `n` backticks (CommonMark). A run with
+/// no closing run is plain text. The marker `proof-owed` in a code span is text
+/// about the marker, so it is no marker.
+fn in_code_span(text: &str, pos: usize) -> bool {
+    let b = text.as_bytes();
+    let run = |i: usize| b[i..].iter().take_while(|c| **c == b'`').count();
+    let mut i = 0;
+    while i < b.len() && i < pos {
+        if b[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let n = run(i);
+        let mut k = i + n;
+        let mut close = None;
+        while k < b.len() {
+            if b[k] == b'`' {
+                let m = run(k);
+                if m == n {
+                    close = Some(k);
+                    break;
+                }
+                k += m;
+            } else {
+                k += 1;
+            }
+        }
+        match close {
+            Some(c) if pos < c + n => return pos >= i + n,
+            Some(c) => i = c + n,
+            None => i += n,
+        }
+    }
+    false
+}
+
+/// The starts of the inner text of the markers that the hash of a requirement
+/// does not cover.
+pub const MARKERS: [&str; 3] = ["aliases:", "verified-by:", "proof-owed:"];
+
 /// Removes the markers `<!-- aliases: a#b, c#d -->` and
 /// `<!-- verified-by: tests/a.rs, tests/b.rs -->` from a requirement, and
 /// returns the aliases and the evidence paths that they list. The hash of a
-/// requirement does not cover the markers.
+/// requirement does not cover the markers. The marker `proof-owed` is removed
+/// too: see `strip_markers_all`.
 pub fn strip_markers(raw: &str) -> (String, Vec<String>, Vec<String>) {
+    let (clean, aliases, verified_by, _) = strip_markers_all(raw);
+    (clean, aliases, verified_by)
+}
+
+/// Like `strip_markers`, and it also returns the reason of the first marker
+/// `<!-- proof-owed: <reason> -->`. The reason is not checked here.
+pub fn strip_markers_all(raw: &str) -> (String, Vec<String>, Vec<String>, Option<String>) {
     let mut aliases = Vec::new();
     let mut verified_by = Vec::new();
+    let mut proof_owed: Option<String> = None;
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(pos) = rest.find("<!--") {
@@ -864,13 +919,17 @@ pub fn strip_markers(raw: &str) -> (String, Vec<String>, Vec<String>) {
             aliases.extend(list(l));
         } else if let Some(l) = inner.strip_prefix("verified-by:") {
             verified_by.extend(list(l));
+        } else if let Some(l) = inner.strip_prefix("proof-owed:")
+            && !in_code_span(raw, raw.len() - rest.len() + pos)
+        {
+            proof_owed.get_or_insert_with(|| l.trim().to_string());
         } else {
             out.push_str(&rest[pos..pos + 4 + close + 3]);
         }
         rest = &after[close + 3..];
     }
     out.push_str(rest);
-    (out, aliases, verified_by)
+    (out, aliases, verified_by, proof_owed)
 }
 
 const BCP14: [&str; 7] = [
@@ -1628,7 +1687,7 @@ mod tests {
 
     #[test]
     fn the_sentence_span_has_the_hash_of_the_requirement() {
-        let lf = "## Requirements\n\n- **a**: The valve SHALL close. <!-- aliases: x#y -->\n- **b**: Wörter [a](../a.md#x)\n  wrap. <!-- verified-by: t.rs --> <!-- aliases: x#z -->\n  - nested\n- **c**: Plain.\n";
+        let lf = "## Requirements\n\n- **a**: The valve SHALL close. <!-- aliases: x#y -->\n- **b**: Wörter [a](../a.md#x)\n  wrap. <!-- verified-by: t.rs --> <!-- aliases: x#z -->\n  - nested\n- **c**: Plain. <!-- proof-owed: manual -->\n";
         for src in [lf.to_string(), lf.replace('\n', "\r\n")] {
             let d = parse(&src);
             assert_eq!(d.reqs.len(), 3);
@@ -1742,7 +1801,79 @@ mod tests {
     }
 
     #[test]
-    fn parser_version_is_16() {
-        assert_eq!(PARSER_VERSION, 16);
+    fn the_reason_of_the_proof_owed_marker_is_kept_as_written() {
+        let src = "## Requirements\n\n- **a**: One. <!-- proof-owed:  manual  -->\n- **b**: Two. <!-- proof-owed: later --> <!-- aliases: x#y --> <!-- proof-owed: manual -->\n- **c**: Three. <!-- proof-owed: -->\n- **d**: Four. <!-- verified-by: t.rs --> <!-- proof-owed: external -->\n- **e**: Five.\n";
+        let d = parse(src);
+        let got: Vec<Option<&str>> = d.reqs.iter().map(|r| r.proof_owed.as_deref()).collect();
+        // The first marker counts, and an empty reason stays empty.
+        assert_eq!(
+            got,
+            [
+                Some("manual"),
+                Some("later"),
+                Some(""),
+                Some("external"),
+                None
+            ]
+        );
+        assert_eq!(d.reqs[1].aliases, ["x#y"]);
+        assert_eq!(d.reqs[3].verified_by, ["t.rs"]);
+        // The markers are out of the text and the span, whatever their order.
+        assert_eq!(d.reqs[1].text, "Two.");
+        assert_eq!(
+            &src[d.reqs[3].sentence.start as usize..d.reqs[3].sentence.end as usize],
+            "Four."
+        );
+    }
+
+    #[test]
+    fn a_proof_owed_marker_in_a_code_span_is_text_and_one_in_the_middle_counts() {
+        let d = parse(
+            "## Requirements\n\n- **a**: Write `<!-- proof-owed: manual -->` to owe the proof.\n- **b**: Write ``<!-- proof-owed: manual -->`` and `x`.\n- **c**: One <!-- proof-owed: manual --> two.\n- **d**: A `tick <!-- proof-owed: manual --> and <!-- proof-owed: external -->` end.\n- **e**: A `code` then <!-- proof-owed: pending -->\n",
+        );
+        let got: Vec<Option<&str>> = d.reqs.iter().map(|r| r.proof_owed.as_deref()).collect();
+        assert_eq!(
+            got,
+            [None, None, Some("manual"), None, Some("pending")],
+            "{:?}",
+            d.reqs.iter().map(|r| &r.text).collect::<Vec<_>>()
+        );
+        // The text of a code span stays in the hash; a marker outside leaves it.
+        assert!(d.reqs[0].text.contains("<!-- proof-owed: manual -->"));
+        assert!(d.reqs[1].text.contains("<!-- proof-owed: manual -->"));
+        assert_eq!(d.reqs[2].text, "One two.");
+        assert!(d.reqs[3].text.contains("<!-- proof-owed: external -->"));
+        assert_eq!(d.reqs[4].text, "A `code` then");
+    }
+
+    #[test]
+    fn parser_version_is_17() {
+        assert_eq!(PARSER_VERSION, 17);
+    }
+
+    /// The hash of a requirement does not cover the marker `proof-owed`, so a
+    /// marker gives no SD914 and no SD921 (design 0.8.0, D2).
+    #[test]
+    fn the_proof_owed_marker_is_not_in_the_hash() {
+        let plain = parse("## Requirements\n\n- **k**: The valve SHALL close.\n");
+        for marker in [
+            "<!-- proof-owed: manual -->",
+            "<!-- proof-owed: later -->",
+            "<!-- proof-owed: -->",
+            "<!--proof-owed:environment-->",
+        ] {
+            let src = format!("## Requirements\n\n- **k**: The valve SHALL close. {marker}\n");
+            let d = parse(&src);
+            assert_eq!(d.reqs[0].hash, plain.reqs[0].hash, "{marker}");
+            assert_eq!(d.reqs[0].frozen, plain.reqs[0].frozen, "{marker}");
+            assert_eq!(d.reqs[0].text, plain.reqs[0].text, "{marker}");
+            // The sentence span stops before the marker, as for the other markers.
+            let r = &d.reqs[0];
+            assert_eq!(
+                &src[r.sentence.start as usize..r.sentence.end as usize],
+                "The valve SHALL close.",
+                "{marker}"
+            );
+        }
     }
 }

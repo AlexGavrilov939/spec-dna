@@ -465,3 +465,74 @@ fn reconfigure_keeps_the_reports_and_the_tree_exclude() {
         Some(1)
     );
 }
+
+/// The key `[evidence] reliable-for` (design 0.8.0, D2): `strict` writes it as a
+/// comment, because the key needs `reports`. `standard` and `lite` write none.
+#[test]
+fn strict_writes_reliable_for_as_a_comment_and_the_other_profiles_write_none() {
+    for (profile, writes) in [("lite", false), ("standard", false), ("strict", true)] {
+        let r = repo();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let text = r.read("spec-dna.toml");
+        assert_eq!(
+            text.contains("# reliable-for = \"higher-risk\""),
+            writes,
+            "{profile}: {text}"
+        );
+        // It is a comment: the table has no key, and `reliable-runs` is absent.
+        assert!(!text.contains("\nreliable-for"), "{profile}: {text}");
+        assert!(!text.contains("reliable-runs"), "{profile}: {text}");
+        let t = table(&r);
+        assert!(
+            t.get("evidence")
+                .and_then(|e| e.get("reliable-for"))
+                .is_none(),
+            "{profile}: {text}"
+        );
+        // The comment is in the table `[evidence]`, under `reports`.
+        if writes {
+            let at = text.find("reports = []").expect("reports");
+            assert!(text[at..].contains("# reliable-for"), "{text}");
+            assert!(
+                text.contains("\"Proof levels and the proof debt\""),
+                "{text}"
+            );
+        }
+        r.commit("adopt spec-dna");
+        for args in [&["check"][..], &["check", "--reports"][..]] {
+            let (code, out, err) = run(&r, args);
+            assert_eq!(code, 0, "{profile} {args:?}: {out}{err}");
+        }
+    }
+}
+
+#[test]
+fn reconfigure_keeps_reliable_for_and_reliable_runs() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"strict\"\nharness = \"lean\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("spec-dna.toml").replace(
+        "reports = []",
+        "reports = [\"out/*.xml\"]\nreliable-runs = 5\nreliable-for = \"all\"",
+    );
+    r.write("spec-dna.toml", &text);
+    r.commit("adopt spec-dna");
+    for profile in ["strict", "standard"] {
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &["--reconfigure"],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let t = table(&r);
+        let ev = &t["evidence"];
+        assert_eq!(ev["reliable-runs"].as_integer(), Some(5), "{profile}");
+        assert_eq!(ev["reliable-for"].as_str(), Some("all"), "{profile}");
+        assert_eq!(r.read("spec-dna.toml").matches("reliable-for").count(), 1);
+    }
+}

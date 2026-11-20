@@ -1472,12 +1472,16 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // not empty, and a report code that is on.
     let want_reports = a.reports
         && !cfg.evidence_reports.is_empty()
-        && diag::Code::REPORT_CODES.iter().any(|c| !cfg.is_off(*c));
+        && diag::Code::REPORT_CODES
+            .iter()
+            .chain([&diag::Code::ProofNotReliable])
+            .any(|c| !cfg.is_off(*c));
     // The `covers:` tags of the test files, for the evidence checks.
     if want_reports
         || !(cfg.is_off(diag::Code::CoversUnresolved)
             && cfg.is_off(diag::Code::RequirementUnverified)
-            && cfg.is_off(diag::Code::DeltaEvidenceMissing))
+            && cfg.is_off(diag::Code::DeltaEvidenceMissing)
+            && diag::Code::PROOF_CODES.iter().all(|c| cfg.is_off(*c)))
     {
         // The working tree and the base, in parallel. The snapshots do not
         // tell whether a test file outside the document roots changed, so the
@@ -3852,7 +3856,10 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // Step 5.1: the test reports, when `[evidence] reports` is set and a report
     // code is on.
     let reads = if !cfg.evidence_reports.is_empty()
-        && diag::Code::REPORT_CODES.iter().any(|c| !cfg.is_off(*c))
+        && diag::Code::REPORT_CODES
+            .iter()
+            .chain([&diag::Code::ProofNotReliable])
+            .any(|c| !cfg.is_off(*c))
     {
         let r = report::read(repo, &cfg)?;
         evidence::bind_covers(&repo.root, &mut head.covers, &r);

@@ -46,6 +46,11 @@ fn pr_with(profile: &str, rules: &str, evidence: &str, tests: &[(&str, &str)]) -
 
 /// Like `pr`, with the text of the configuration.
 fn pr_in(config: &str, tests: &[(&str, &str)]) -> Repo {
+    pr_class_in("higher-risk", config, tests)
+}
+
+/// Like `pr_in`, with the `class` of the intent.
+fn pr_class_in(class: &str, config: &str, tests: &[(&str, &str)]) -> Repo {
     let r = Repo::with_config(config);
     r.write(".gitignore", "reports/\n");
     r.write("docs/requirements/valves.md", VALVES);
@@ -53,7 +58,9 @@ fn pr_in(config: &str, tests: &[(&str, &str)]) -> Repo {
     r.write("tests/test_other.py", "# nothing\n");
     r.write(
         &format!("{FOLDER}/intent.md"),
-        "---\nstatus: accepted\nclass: higher-risk\n---\n# Dose\n\n## Intent\n\nFlush the line.\n",
+        &format!(
+            "---\nstatus: accepted\nclass: {class}\n---\n# Dose\n\n## Intent\n\nFlush the line.\n"
+        ),
     );
     r.write(
         &format!("{FOLDER}/plan.md"),
@@ -1225,4 +1232,361 @@ fn a_folder_of_reports_that_cannot_be_read_is_an_io_error() {
     let (code, out) = check(&r, &[]);
     assert!(has(&out, "SD613"), "{out}");
     assert_eq!(code, 1, "{out}");
+}
+
+// The reliable level (design 0.8.0, D2)
+
+/// The keys of `[evidence]` for the reliable level.
+fn reliable(runs: u32, for_: &str) -> String {
+    format!("{REPORTS}reliable-runs = {runs}\nreliable-for = \"{for_}\"\n")
+}
+
+/// A pull request with the tag above `test_closes_on_timeout`, and one report
+/// file for each item of `children`: the child element of the case. The
+/// reports are stamped.
+fn runs_pr(class: &str, profile: &str, rules: &str, evidence: &str, children: &[&str]) -> Repo {
+    let r = pr_class_in(
+        class,
+        &config_with(profile, rules, evidence),
+        &[("tests/test_valves.py", PY_TEST)],
+    );
+    for (i, child) in children.iter().enumerate() {
+        r.write(
+            &format!("reports/run{i}.xml"),
+            &junit(
+                "pytest",
+                &[("tests.test_valves", "test_closes_on_timeout", child)],
+            ),
+        );
+    }
+    stamp(&r);
+    r
+}
+
+fn proof_counts(r: &Repo) -> String {
+    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let at = out.find("\"proof\":").unwrap_or_else(|| panic!("{out}"));
+    out[at..].split('}').next().unwrap().to_string()
+}
+
+#[test]
+fn three_passes_of_the_case_on_one_tree_make_the_requirement_reliable() {
+    let r = runs_pr(
+        "higher-risk",
+        "strict",
+        "",
+        &reliable(3, "all"),
+        &["", "", ""],
+    );
+    let (code, out) = check(&r, &[]);
+    assert!(!has(&out, "SD620") && !has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let counts = proof_counts(&r);
+    assert!(
+        counts.contains("\"reliable\":1,\"passed_once\":0"),
+        "{counts}"
+    );
+}
+
+#[test]
+fn two_passes_are_passed_once_and_reliable_for_all_gives_sd620() {
+    for profile in ["standard", "strict"] {
+        let r = runs_pr("higher-risk", profile, "", &reliable(3, "all"), &["", ""]);
+        let (code, out) = check(&r, &[]);
+        let found = lines(&out, "SD620");
+        assert_eq!(found.len(), 1, "{profile}: {out}");
+        assert!(
+            found[0].contains(": error SD620 proof-not-reliable"),
+            "{out}"
+        );
+        assert!(found[0].contains("`requirements/valves#flush`"), "{out}");
+        assert!(found[0].contains("`test_closes_on_timeout`"), "{out}");
+        assert!(found[0].contains("passed 2 times"), "{out}");
+        assert!(found[0].contains("`reliable-runs` is 3"), "{out}");
+        assert!(!has(&out, "SD617"), "{out}");
+        assert_eq!(code, 1, "{out}");
+        let counts = proof_counts(&r);
+        assert!(
+            counts.contains("\"reliable\":0,\"passed_once\":1"),
+            "{counts}"
+        );
+    }
+}
+
+#[test]
+fn sd620_needs_the_flag_the_key_and_the_class_that_reliable_for_names() {
+    // No flag: the reports are not read.
+    let r = runs_pr("higher-risk", "strict", "", &reliable(3, "all"), &[""]);
+    let (code, out, err) = r.run(&["check", "--base", "main"]);
+    assert!(!has(&out, "SD620"), "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
+    // `none` (the default): no SD620 with one pass.
+    let r = runs_pr("higher-risk", "strict", "", &reliable(3, "none"), &[""]);
+    let (_, out) = check(&r, &[]);
+    assert!(!has(&out, "SD620"), "{out}");
+    // `higher-risk` covers a higher-risk change and no routine change.
+    for (class, evidence, want) in [
+        ("higher-risk", reliable(3, "higher-risk"), true),
+        ("routine", reliable(3, "higher-risk"), false),
+        ("routine", reliable(3, "all"), true),
+    ] {
+        let r = runs_pr(class, "strict", "", &evidence, &[""]);
+        let (_, out) = check(&r, &[]);
+        assert_eq!(has(&out, "SD620"), want, "{class} {evidence}: {out}");
+    }
+}
+
+#[test]
+fn three_passes_and_one_fail_of_one_case_are_not_proven() {
+    let r = runs_pr(
+        "higher-risk",
+        "strict",
+        "",
+        &reliable(3, "all"),
+        &["", "", "", FAILED],
+    );
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("failed"), "{out}");
+    // A fail is not "passed once": SD620 is silent, SD617 stops the change.
+    assert!(!has(&out, "SD620"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn the_reliable_level_is_off_in_lite_and_a_rule_for_the_group_proof_turns_it_on() {
+    let r = runs_pr("higher-risk", "lite", "", &reliable(3, "all"), &[""]);
+    let (code, out) = check(&r, &[]);
+    assert!(!has(&out, "SD620"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // The reports are read for SD620 alone, with each report code off.
+    let r = runs_pr(
+        "higher-risk",
+        "lite",
+        "proof = \"error\"\n",
+        &reliable(3, "all"),
+        &[""],
+    );
+    let (code, out) = check(&r, &[]);
+    assert!(has(&out, "SD620"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // A rule for the group `reports` does not change SD620.
+    let r = runs_pr(
+        "higher-risk",
+        "standard",
+        "reports = \"off\"\n",
+        &reliable(3, "all"),
+        &[""],
+    );
+    let (_, out) = check(&r, &[]);
+    assert!(has(&out, "SD620"), "{out}");
+}
+
+#[test]
+fn finish_stops_at_step_5_with_sd620_until_the_case_passed_n_times() {
+    let setup = |children: &[&str]| {
+        let r = Repo::with_config(&config("standard", &reliable(3, "all")));
+        r.write(".gitignore", "reports/\n");
+        r.write("docs/requirements/valves.md", VALVES);
+        r.write("src/valves.py", "x = 1\n");
+        r.write(
+            &format!("{FOLDER}/intent.md"),
+            "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nFlush the line.\n",
+        );
+        r.write(
+            &format!("{FOLDER}/plan.md"),
+            "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+        );
+        r.write(
+            &format!("{FOLDER}/spec.md"),
+            &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
+        );
+        r.commit("base");
+        origin_head(&r.dir, "main");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        r.write("tests/test_valves.py", PY_TEST);
+        r.commit("test");
+        for (i, child) in children.iter().enumerate() {
+            r.write(
+                &format!("reports/run{i}.xml"),
+                &junit(
+                    "pytest",
+                    &[("tests.test_valves", "test_closes_on_timeout", child)],
+                ),
+            );
+        }
+        stamp(&r);
+        r
+    };
+    let r = setup(&["", ""]);
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("step 5"), "{err}");
+    assert!(
+        out.contains("SD620") && out.contains("passed 2 times"),
+        "{out}"
+    );
+    assert!(r.dir.join(FOLDER).exists());
+    let r = setup(&["", "", ""]);
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(FOLDER).exists());
+}
+
+#[test]
+fn a_requirement_with_no_pass_gives_sd620_when_sd617_is_off() {
+    // With SD617 on, the requirement is SD617 and no SD620.
+    for child in [SKIPPED, FAILED] {
+        let r = runs_pr("higher-risk", "strict", "", &reliable(3, "all"), &[child]);
+        let (_, out) = check(&r, &[]);
+        assert!(has(&out, "SD617") && !has(&out, "SD620"), "{out}");
+        // SD617 off: a skipped or failed case is fewer than N passes, so it
+        // must not pass the gate while a case that passed once stops it.
+        for (profile, rules) in [
+            ("lite", "proof = \"error\"\n"),
+            ("strict", "SD617 = \"off\"\n"),
+        ] {
+            let r = runs_pr("higher-risk", profile, rules, &reliable(3, "all"), &[child]);
+            let (code, out) = check(&r, &[]);
+            let found = lines(&out, "SD620");
+            assert_eq!(found.len(), 1, "{profile} {child}: {out}");
+            assert!(!has(&out, "SD617"), "{out}");
+            assert!(
+                found[0].contains("skipped") || found[0].contains("failed"),
+                "{out}"
+            );
+            assert_eq!(code, 1, "{profile} {child}: {out}");
+        }
+    }
+}
+
+#[test]
+fn the_message_of_sd620_names_the_case_with_the_fewest_passes() {
+    // `test_a` passed in 3 reports and `test_b` in 2: both bind to the tag by
+    // `case:` with the same word, and the case with 2 passes is named.
+    let r = pr_class_in(
+        "higher-risk",
+        &config_with("strict", "", &reliable(3, "all")),
+        &[(
+            "tests/test_valves.py",
+            "# covers: requirements/valves#flush case:test_x\ndef test_x():\n    assert True\n",
+        )],
+    );
+    for (i, names) in [
+        ["test_x[1]", "test_x[2]"],
+        ["test_x[1]", "test_x[2]"],
+        ["test_x[1]", ""],
+    ]
+    .iter()
+    .enumerate()
+    {
+        let cases: Vec<(&str, &str, &str)> = names
+            .iter()
+            .filter(|n| !n.is_empty())
+            .map(|n| ("tests.test_valves", *n, ""))
+            .collect();
+        r.write(&format!("reports/run{i}.xml"), &junit("pytest", &cases));
+    }
+    stamp(&r);
+    let (_, out) = check(&r, &[]);
+    let found = lines(&out, "SD620");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`test_x[2]` passed 2 times"), "{out}");
+}
+
+#[test]
+fn a_verified_by_record_does_not_hide_a_tag_that_is_below_reliable() {
+    let verified = format!(
+        "{VALVES}- **flush**: The controller SHALL flush the line. <!-- verified-by: tests/test_other.py -->\n"
+    );
+    let setup = |tests: &[(&str, &str)], children: &[&str]| {
+        let r = pr_class_in(
+            "higher-risk",
+            &config_with("strict", "", &reliable(3, "all")),
+            tests,
+        );
+        r.write("docs/requirements/valves.md", &verified);
+        r.commit("verified");
+        for (i, child) in children.iter().enumerate() {
+            r.write(
+                &format!("reports/run{i}.xml"),
+                &junit(
+                    "pytest",
+                    &[("tests.test_valves", "test_closes_on_timeout", child)],
+                ),
+            );
+        }
+        stamp(&r);
+        r
+    };
+    let tag = [("tests/test_valves.py", PY_TEST)];
+    // A tag with a bound case below `reliable` gives SD620, whether the case
+    // failed, was skipped or passed too few times.
+    for (children, want) in [
+        (&[FAILED][..], "failed"),
+        (&[SKIPPED][..], "skipped"),
+        (&["", ""][..], "passed 2 times"),
+    ] {
+        let r = setup(&tag, children);
+        let (code, out) = check(&r, &[]);
+        let found = lines(&out, "SD620");
+        assert_eq!(found.len(), 1, "{want}: {out}");
+        assert!(found[0].contains(want), "{want}: {out}");
+        assert!(!has(&out, "SD617"), "{out}");
+        assert_eq!(code, 1, "{want}: {out}");
+    }
+    let r = setup(&tag, &["", "", ""]);
+    let (code, out) = check(&r, &[]);
+    assert!(!has(&out, "SD620"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // The `verified-by` alone, with no tag, stays exempt.
+    let r = setup(&[], &["", ""]);
+    let (code, out) = check(&r, &[]);
+    assert!(!has(&out, "SD620") && !has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn finish_names_both_causes_when_sd617_and_sd620_stop_it() {
+    let r = Repo::with_config(&config("standard", &reliable(3, "all")));
+    r.write(".gitignore", "reports/\n");
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("src/valves.py", "x = 1\n");
+    r.write(
+        &format!("{FOLDER}/intent.md"),
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nFlush the line.\n",
+    );
+    r.write(
+        &format!("{FOLDER}/plan.md"),
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+    );
+    r.write(
+        &format!("{FOLDER}/spec.md"),
+        &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n- ADD requirements/valves#purge: The controller SHALL purge the line.\n"),
+    );
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(
+        "tests/test_valves.py",
+        "# covers: requirements/valves#flush\ndef test_flushes():\n    assert True\n\n# covers: requirements/valves#purge\ndef test_purges():\n    assert True\n",
+    );
+    r.commit("test");
+    for i in 0..3 {
+        let purge: &[(&str, &str, &str)] = if i < 2 {
+            &[("tests.test_valves", "test_purges", "")]
+        } else {
+            &[]
+        };
+        let mut cases = vec![("tests.test_valves", "test_flushes", SKIPPED)];
+        cases.extend_from_slice(purge);
+        r.write(&format!("reports/run{i}.xml"), &junit("pytest", &cases));
+    }
+    stamp(&r);
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("SD617") && out.contains("SD620"), "{out}");
+    assert!(err.contains("SD617") && err.contains("SD620"), "{err}");
 }

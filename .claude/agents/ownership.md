@@ -220,6 +220,7 @@ tests/cli.rs                         The agent of each command: its cases. TST: 
 tests/config_layers.rs, tests/place.rs, tests/new_place.rs, tests/layer_cmd.rs, tests/templates_new.rs   COR
 tests/sd202.rs                       DIA
 tests/evidence_reports.rs            DIA: the test reports, the stamp, the bind and SD613 to SD617. TST: the fixtures of the 5 runners
+tests/proof_debt.rs                  DIA: the proof debt, SD618 and SD619, and the proof counts of `status` and `stats`. COR: the counts
 tests/layers_checks.rs, tests/sd921.rs, tests/task_checks.rs, tests/lifecycle_checks.rs, tests/lifecycle_base.rs, tests/lifecycle_finished.rs, tests/lifecycle_additions.rs, tests/review_fixes_step2.rs   DIA
 tests/finish.rs                      HYG
 tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
