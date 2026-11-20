@@ -55,9 +55,11 @@ pub struct Declared {
 /// The items of `Invariants` and `Deviations` that the files of a change declare
 /// (design 0.8.0, D6 and D7). The function reads the text of the spec and the
 /// plan and the key `[change] invariants` only, with no git data and no other
-/// document. So `accept`, the brief, the compare of the brief of SD928, the
-/// answers (SD938) and `finish` all call it, and they read the same items. An
-/// item that is not valid gives no entry: SD936 and SD939 report it.
+/// document. It applies no rule of the pin: only
+/// [`crate::acceptance::declared_for`] calls it, and that function applies the
+/// rule, so `accept`, the brief, the compare of the brief of SD928, the answers
+/// (SD938) and `finish` read the same items. An item that is not valid gives no
+/// entry: SD936 and SD939 report it.
 pub fn declared(cfg: &Config, ch: &Change, corpus: &Corpus) -> Declared {
     Declared {
         invariants: if cfg.change_invariants {
@@ -239,7 +241,8 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     refuse_uncovered(ch, &head, &scope, &changed, &is_code)?;
     let entries = tree::entries(repo, &cfg).map_err(Fatal::Io)?;
     let tree_hash = record::tree_hash(&entries, &paths);
-    let decl = declared(&cfg, ch, &head);
+    let decl = crate::acceptance::declared_for(&cfg, &repo.git, base_rev.as_deref(), ch, &head)
+        .map_err(Fatal::Io)?;
 
     if o.brief {
         let read = |p: &str| -> Result<String, Fatal> {
@@ -390,13 +393,23 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         (text, 1, true)
     };
     // A record over the size limit is never valid, and the acceptor may not
-    // shorten `paths`. Refuse before any write.
+    // shorten `paths`, the invariants or the deviations. Refuse before any write.
     if text.len() > record::MAX_BYTES {
-        return Err(Fatal::Refused(format!(
-            "the record `{record_path}` would have {} bytes, and a record has at most {} bytes; the cause is too many paths: `paths` lists {} code paths. Split the change into smaller changes, each with its own folder, and accept each one",
+        return Err(Fatal::Refused(oversize_message(
+            &record_path,
             text.len(),
-            record::MAX_BYTES,
-            paths.len()
+            &record::skeleton_parts(&record::Skeleton {
+                slug,
+                scope: &scope,
+                paths: &paths,
+                tree: &tree_hash,
+                role,
+                session: &session,
+                proofs: &proofs,
+                invariants: &decl.invariants,
+                deviations: &decl.deviations,
+            }),
+            (paths.len(), decl.invariants.len(), decl.deviations.len()),
         )));
     }
     write_atomic(&full, &text).map_err(|e| Fatal::Io(format!("{record_path}: {e}")))?;
@@ -420,6 +433,50 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         );
     }
     Ok(0)
+}
+
+/// The refusal for a record over [`record::MAX_BYTES`]. It names the largest of
+/// the parts that grow with the change (`paths`, the invariants and the
+/// deviations) with its size, and the fix for that part. If no such part is the
+/// largest, the entries of the acceptors and the proof entries are. `counts` is
+/// the number of paths, of invariants and of deviations.
+fn oversize_message(
+    record_path: &str,
+    bytes: usize,
+    parts: &[(&'static str, usize); 3],
+    counts: (usize, usize, usize),
+) -> String {
+    let head = format!(
+        "the record `{record_path}` would have {bytes} bytes, and a record has at most {} bytes",
+        record::MAX_BYTES
+    );
+    let grown: usize = parts.iter().map(|p| p.1).sum();
+    let (name, size) = parts
+        .iter()
+        .copied()
+        .max_by_key(|p| p.1)
+        .unwrap_or(("paths", 0));
+    if bytes.saturating_sub(grown) > size {
+        return format!(
+            "{head}; the largest part is the other tables of the record ({} bytes: the entries of the acceptors, the attempts and the proof entries). Split the change into smaller changes, each with its own folder, and accept each one",
+            bytes - grown
+        );
+    }
+    let fix = match name {
+        "invariants" => format!(
+            "the cause is too many invariants: `Invariants` of the spec lists {} items. List fewer rules, or split the change into smaller changes, each with its own folder",
+            counts.1
+        ),
+        "deviations" => format!(
+            "the cause is the deviations: `Deviations` of the plan lists {} items. Shorten the text of each item, list fewer items, or split the change into smaller changes, each with its own folder",
+            counts.2
+        ),
+        _ => format!(
+            "the cause is too many paths: `paths` lists {} code paths. Split the change into smaller changes, each with its own folder, and accept each one",
+            counts.0
+        ),
+    };
+    format!("{head}; the largest part is {name} ({size} bytes); {fix}")
 }
 
 /// The words that tell the user how to write a `Files` pattern that the scope of

@@ -1586,22 +1586,12 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let mut outcome = check::gate(&cfg, base, life, head);
     // SD914 and SD937 are errors only for a spec that the diff touches (design,
     // K3 and 0.8.0 D6). With no lifecycle base, no spec is touched.
-    let spec_code =
-        |c: diag::Code| matches!(c, diag::Code::DeltaInvalid | diag::Code::InvariantStale);
-    if outcome
-        .head
-        .iter()
-        .any(|d| spec_code(d.code) && d.severity == Severity::Error)
     {
         let touched: Vec<&str> = diff
             .iter()
             .flat_map(|d| d.files.iter().map(|(p, _)| p.as_str()))
             .collect();
-        for d in &mut outcome.head {
-            if spec_code(d.code) && !touched.contains(&d.path.as_str()) {
-                d.severity = Severity::Warning;
-            }
-        }
+        lifecycle::lower_untouched(&mut outcome.head, &|p| touched.contains(&p));
     }
     // SD912 is new when the head has more started changes than the lifecycle
     // base has (K5).
@@ -1813,7 +1803,6 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     lifecycle::skip_early_sections(
         &repo.git,
         change_base.as_deref(),
-        life,
         &mut outcome.head,
         &mut outcome.new,
     )

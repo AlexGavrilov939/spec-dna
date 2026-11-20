@@ -129,7 +129,7 @@ The templates `intent`, `prd` and `rfc` have `class: routine`, so `spec-dna new 
 
 ### Sections that carry list items
 
-The parser keeps the list items of 10 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again.
+The parser keeps the list items of 10 sections for each document. The heading text must be the name of the section. The case and the heading level do not matter. A section ends at the next heading of any level. The one exception is `Order`: it includes each heading of a lower level than its own (`###` under `##`) until a heading of its level or a higher level. Such a heading groups tasks and is not a task. A heading under `Order` that names another section (`### Open questions`) starts that section, and the tasks under the next heading of a lower level are tasks of `Order` again. The 2 sections of 0.8.0, `Invariants` and `Deviations`, are the exception: only a heading of level 2 starts them, and a heading of another level with such a name reads as an unnamed heading. Thus a plan of 0.7.1 with `### Deviations` under `Order` keeps its tasks.
 
 | Section | Document | Items |
 | --- | --- | --- |

@@ -1997,13 +1997,39 @@ fn s5_built(
     invariants: impl Fn(&Repo) -> String,
     deviations: &str,
 ) -> Repo {
-    let r = Repo::with_config(&s5_config(profile, keys, rules));
+    s5_built_with(profile, keys, rules, invariants, deviations, false)
+}
+
+/// Like `s5_built`. With `other_in_base`, the base commit also holds an open
+/// change `other` whose spec pins `rules/safety#valve-closed`. The base commit
+/// pins 0.8.0 and a later commit sets the pin of the binary, so the spec of
+/// `other` is read as 0.8.0 reads it.
+fn s5_built_with(
+    profile: &str,
+    keys: &str,
+    rules: &str,
+    invariants: impl Fn(&Repo) -> String,
+    deviations: &str,
+    other_in_base: bool,
+) -> Repo {
+    let cfg = s5_config(profile, keys, rules);
+    let r = Repo::with_config(&cfg);
     r.write("docs/requirements/valves.md", S5_VALVES);
     r.write("docs/rules/safety.md", S5_RULE);
     r.write("src/valves.py", S5_CODE_OLD);
     r.write("tests/test_valves.py", S5_TEST_OLD);
     r.write("README.md", "# Project\n");
-    r.commit("base");
+    if other_in_base {
+        let h = hash(&r, "rules/safety#valve-closed");
+        s5_write_other(&r, &h);
+        r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{cfg}"));
+        r.commit("base");
+        r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+        r.write("README.md", "# Project, new pin\n");
+        r.commit("move the pin");
+    } else {
+        r.commit("base");
+    }
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     let inv = invariants(&r);
@@ -2038,6 +2064,20 @@ fn s5_built(
     r.write("tests/test_valves.py", S5_TEST_NEW);
     r.commit("code");
     r
+}
+
+/// The open change `other`: its spec pins the rule with the hash `h`.
+fn s5_write_other(r: &Repo, h: &str) {
+    r.write(
+        "docs/intent/other/intent.md",
+        "---\nstatus: accepted\nclass: higher-risk\n---\n# Other\n\n## Intent\n\nAnother change.\n",
+    );
+    r.write(
+        "docs/intent/other/spec.md",
+        &format!(
+            "---\nstatus: draft\n---\n# Other\n\n## Delta\n\n- ADD requirements/valves#other-timeout: The controller SHALL log each timeout.\n\n## Invariants\n\n- rules/safety#valve-closed@{h}\n"
+        ),
+    );
 }
 
 fn s5_one_pin(r: &Repo) -> String {
@@ -2564,14 +2604,11 @@ fn a_reordered_list_of_invariants_after_the_record_keeps_the_record_valid() {
     assert_eq!(code, 0, "{out}{err}");
 }
 
-#[test]
-fn finish_of_a_change_that_edits_a_rule_does_not_stop_on_the_stale_pin_of_another_open_spec() {
-    // Change A has a `CHANGE` line for the rule. Change B is open and pins the
-    // old text of the rule. After step 4 the rule has the new text, so B gets
-    // SD937. The finish diff does not touch B, so the code is no error of the
-    // result of `finish` of A, and it never stops it. The author of B pins the
-    // rule again.
-    let r = s5_built(
+/// Change A has a `CHANGE` line for the rule. The change `other` pins the old text.
+/// With `other_in_base`, `other` is in the base and the diff does not touch it.
+/// Else the branch adds it, so the diff touches it.
+fn s5_edits_the_rule(other_in_base: bool) -> Repo {
+    let r = s5_built_with(
         "standard",
         "invariants = true\n",
         "",
@@ -2580,6 +2617,7 @@ fn finish_of_a_change_that_edits_a_rule_does_not_stop_on_the_stale_pin_of_anothe
             format!("- rules/safety#valve-closed@{h}")
         },
         "",
+        other_in_base,
     );
     let h = hash(&r, "rules/safety#valve-closed");
     let delta = format!(
@@ -2593,27 +2631,50 @@ fn finish_of_a_change_that_edits_a_rule_does_not_stop_on_the_stale_pin_of_anothe
             "{S5_TEST_NEW}\n\n# covers: rules/safety#valve-closed\ndef test_fault():\n    ...\n"
         ),
     );
-    r.write(
-        "docs/intent/other/intent.md",
-        "---\nstatus: accepted\nclass: higher-risk\n---\n# Other\n\n## Intent\n\nAnother change.\n",
-    );
-    r.write(
-        "docs/intent/other/spec.md",
-        &format!(
-            "---\nstatus: draft\n---\n# Other\n\n## Delta\n\n- ADD requirements/valves#other-timeout: The controller SHALL log each timeout.\n\n## Invariants\n\n- rules/safety#valve-closed@{h}\n"
-        ),
-    );
-    r.commit("a change line for the rule, and another open change");
+    if !other_in_base {
+        s5_write_other(&r, &h);
+    }
+    r.commit("a change line for the rule");
     s5_record(&r, |t| t);
+    r
+}
+
+#[test]
+fn finish_lets_the_stale_pin_of_an_untouched_spec_pass_as_check_does() {
+    // `other` is in the base and the diff does not touch it: SD937 is a warning
+    // for `check`, so `finish` of A passes, and `check` of its pull request
+    // accepts the result.
+    let r = s5_edits_the_rule(true);
     let (code, out, err) = s5_finish(&r, &[]);
     assert_eq!(code, 0, "{out}{err}");
     r.commit("finish");
-    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
     let line = out
         .lines()
         .find(|l| l.contains(" SD937 "))
         .unwrap_or_else(|| panic!("{out}"));
-    assert!(line.starts_with("docs/intent/other/spec.md"), "{line}");
+    assert!(
+        line.starts_with("docs/intent/other/spec.md") && line.contains(": warning SD937"),
+        "{line}"
+    );
+    // The other findings (SD910 reason 7: the branch added and finished `A`) are
+    // not the subject here.
+    assert!(!out.contains(": error SD937"), "{out}");
+    let _ = code;
+}
+
+#[test]
+fn finish_stops_on_the_stale_pin_of_a_touched_spec_as_check_gives_an_error() {
+    // The branch adds `other`, so the diff touches it. `check` gives an error for
+    // SD937, and `finish` stops for the same reason.
+    let r = s5_edits_the_rule(false);
+    let (code, out, err) = s5_finish(&r, &["--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("\"step\":5") && out.contains("\"code\":\"SD937\""),
+        "{out}"
+    );
+    assert!(out.contains("docs/intent/other/spec.md"), "{out}");
 }
 
 #[test]
@@ -2637,4 +2698,246 @@ fn a_rejected_deviation_with_the_result_accepted_gives_sd928() {
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("\"code\":\"SD930\""), "{out}");
+}
+
+#[test]
+fn a_sub_heading_with_the_name_of_a_new_section_leaves_the_tasks_in_order_for_finish_and_next() {
+    // A plan of 0.7.1 with a sub-heading under `Order`. The parse of the tasks
+    // must be the parse of 0.7.1 for each name (design 0.8.0, the owner rule).
+    for name in ["Logging", "Deviations", "Invariants"] {
+        let open = format!(
+            "{}\n\n### {name}\n\n{}",
+            task("t1", true, "Hours: 1."),
+            task("t2", false, "Hours: 3.")
+        );
+        let r = with_tasks(&open);
+        let (code, out, err) = fin(&r, &["--json"]);
+        assert_eq!(code, 1, "{name}: {out}{err}");
+        assert!(
+            out.contains("\"step\":0") && out.contains("t2"),
+            "{name}: the open task of the sub-heading stops finish: {out}"
+        );
+        let (code, out, err) = r.run(&["next", "dose"]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert!(!out.contains("deploy"), "{name}: {out}");
+        // With the task done, the hours of both tasks count.
+        let done = format!(
+            "{}\n\n### {name}\n\n{}",
+            task("t1", true, "Hours: 1."),
+            task("t2", true, "Hours: 3.")
+        );
+        let r = with_tasks(&done);
+        let (code, out, err) = fin(&r, &["--dry-run"]);
+        assert_eq!(code, 0, "{name}: {out}{err}");
+        assert_eq!(hours_line(&out), Some("Hours: 4"), "{name}: {out}");
+    }
+}
+
+// The usual flow: the folder of the change is in the base under the pin 0.8.0, and
+// the code comes in a later pull request.
+
+/// The base commit holds the change with the spec items `inv` (a function of the
+/// repository, for a hash) and the plan items `devs`, under the pin 0.8.0. A later
+/// commit of the base sets the pin of the binary. The branch adds the code.
+fn s5_on_base(keys: &str, inv: impl Fn(&Repo) -> String, devs: &str, delta: &str) -> Repo {
+    let cfg = s5_config("standard", keys, "");
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{cfg}"));
+    r.write("docs/requirements/valves.md", S5_VALVES);
+    r.write("docs/rules/safety.md", S5_RULE);
+    r.write("src/valves.py", S5_CODE_OLD);
+    r.write("tests/test_valves.py", S5_TEST_OLD);
+    r.write("README.md", "# Project\n");
+    // `show` reads the working tree, and the pin of this commit is 0.8.0.
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    let items = inv(&r);
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.8.0\"\n{cfg}"));
+    r.write(
+        "docs/intent/valve-timeout/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Valve timeout\n\n## Intent\n\nClose the valve when a sensor times out.\n",
+    );
+    let section = if items.is_empty() {
+        String::new()
+    } else {
+        format!("## Invariants\n\n{items}\n\n")
+    };
+    r.write(
+        S5_SPEC,
+        &format!(
+            "---\nstatus: approved\n---\n# Valve timeout\n\n## Delta\n\n{delta}\n\n## Interfaces\n\nNone.\n\n## Decisions\n\nNone.\n\n{section}## Concerns\n\n- [x] A slow sensor. Resolution: 60 seconds.\n\n## Open questions\n\n- [x] Does the valve reopen? Answer: no.\n"
+        ),
+    );
+    let dev = if devs.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Deviations\n\n{devs}\n")
+    };
+    r.write(
+        S5_PLAN,
+        &format!(
+            "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- [x] t1: Close the valve. Files: `src/valves.py`. Verify: the test passes.\n\n## Risks\n\n- A slow sensor.\n\n## Proof\n\nThe test covers `requirements/valves#sensor-timeout`.\n{dev}"
+        ),
+    );
+    r.commit("the change");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("src/valves.py", S5_CODE_NEW);
+    r.write("tests/test_valves.py", S5_TEST_NEW);
+    r.commit("code");
+    r
+}
+
+#[test]
+fn an_untouched_spec_with_a_stale_pin_is_a_warning_for_check_and_a_stop_for_its_own_finish() {
+    let r = s5_on_base("invariants = true\n", s5_one_pin, "", S5_DELTA);
+    s5_record(&r, |t| t);
+    // The rule changes on the branch. The spec is not in the diff.
+    let rule = S5_RULE.replace(
+        "close each valve on a fault.",
+        "close each valve within 2 seconds of a fault.",
+    );
+    r.write("docs/rules/safety.md", &rule);
+    r.commit("the rule changes");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD937 "))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(line.contains(": warning SD937"), "{line}");
+    assert!(!out.contains(": error SD937"), "{out}");
+    // `finish` of the change stops on the stale pin of its own spec: the author
+    // pins the rule again in a commit of the branch first.
+    let (code, out, err) = s5_finish(&r, &["--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("\"step\":5") && out.contains("\"code\":\"SD937\""),
+        "{out}"
+    );
+}
+
+#[test]
+fn sd939_and_sd940_stop_a_change_whose_folder_is_in_the_base() {
+    let bad = "- d1: no kind\n- d2 (spec): The valve closes after 2 reads.";
+    let r = s5_on_base("", |_| String::new(), bad, S5_DELTA);
+    // The items are in the base already, so only `--all` lists them.
+    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    assert!(
+        out.contains(": error SD939") && out.contains(": error SD940"),
+        "{out}"
+    );
+    // The record answers the valid item, so `finish` stops on SD939 first.
+    s5_record(&r, |t| t);
+    let (code, out, err) = s5_finish(&r, &["--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("\"step\":5") && out.contains("\"code\":\"SD939\""),
+        "{out}"
+    );
+}
+
+#[test]
+fn sd938_stops_a_change_whose_folder_is_in_the_base_until_the_record_answers() {
+    let r = s5_on_base(
+        "invariants = true\n",
+        s5_one_pin,
+        "- d1 (plan): The check moved.",
+        S5_DELTA,
+    );
+    s5_record(&r, |t| {
+        s5_without(&s5_without(&t, "invariant"), "deviation")
+    });
+    let (code, out, err) = s5_finish(&r, &["--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("\"code\":\"SD938\""), "{out}");
+    // The honest record passes.
+    let r = s5_on_base(
+        "invariants = true\n",
+        s5_one_pin,
+        "- d1 (plan): The check moved.",
+        S5_DELTA,
+    );
+    s5_record(&r, |t| t);
+    let (code, out, err) = s5_finish(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn the_item_none_declares_nothing_and_the_change_finishes() {
+    let r = s5_on_base(
+        "invariants = true\n",
+        |_| "- none".to_string(),
+        "",
+        S5_DELTA,
+    );
+    let t = s5_record(&r, |t| t);
+    assert!(!t.contains("[[invariant]]"), "{t}");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert!(!out.contains("SD936") && !out.contains("SD937"), "{out}");
+    let (code, out, err) = s5_finish(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn a_change_line_with_no_hash_and_one_with_an_upper_case_hash() {
+    // A `CHANGE` line with no hash is not a valid delta line (SD914). The item
+    // then compares with the rule now, and `check` does not fail on it.
+    let r = s5_on_base(
+        "invariants = true\n",
+        s5_one_pin,
+        "",
+        &format!(
+            "{S5_DELTA}\n- CHANGE rules/safety#valve-closed: The controller SHALL close each valve within 2 seconds of a fault."
+        ),
+    );
+    let (code, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    assert!(out.contains("SD914"), "{out}");
+    assert!(!out.contains("SD937") && !out.contains("SD936"), "{out}");
+    assert!(code == 0 || code == 1, "{out}");
+    // An upper-case hash in the line and in the item is the same hash.
+    let r = s5_on_base(
+        "invariants = true\n",
+        |r| {
+            let h = hash(r, "rules/safety#valve-closed").to_uppercase();
+            format!("- rules/safety#valve-closed@{h}")
+        },
+        "",
+        &format!(
+            "{S5_DELTA}\n- CHANGE rules/safety#valve-closed@{}: The controller SHALL close each valve within 2 seconds of a fault.",
+            "FD7FFACC58576300"
+        ),
+    );
+    let h = hash(&r, "rules/safety#valve-closed");
+    assert_eq!(h.to_uppercase(), "FD7FFACC58576300", "the fixture hash");
+    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
+    assert!(!out.contains("SD937") && !out.contains("SD936"), "{out}");
+}
+
+#[test]
+fn a_link_for_a_spec_or_a_plan_gives_no_error_exit_in_the_commands_that_read_the_sections() {
+    let r = s5_on_base(
+        "invariants = true\n",
+        s5_one_pin,
+        "- d1 (plan): The check moved.",
+        S5_DELTA,
+    );
+    for path in [S5_SPEC, S5_PLAN] {
+        let full = r.dir.join(path);
+        std::fs::remove_file(&full).unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", &full).unwrap();
+    }
+    for args in [
+        vec!["check", "--base", "main"],
+        vec!["next", S5_SLUG],
+        vec!["accept", S5_SLUG, "--brief"],
+        vec!["finish", S5_SLUG, "--dry-run"],
+    ] {
+        let (code, out, err) = r.run(&args);
+        assert!(
+            code != 4 && code != 101 && code >= 0,
+            "{args:?}: exit {code}: {out}{err}"
+        );
+    }
 }

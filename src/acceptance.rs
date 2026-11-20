@@ -250,20 +250,38 @@ pub fn pin_when_added(
 }
 
 /// True if the section `Invariants` of a spec, or the section `Deviations` of a
-/// plan, at `path` is read as 0.8.0 reads it. A file that the base tree has, and
-/// that a commit added when `spec-dna.toml` pinned a version before 0.8.0, keeps
-/// the meaning of 0.7.1: the section is plain text (design 0.8.0, D6 and D7). A
-/// file that a commit of the branch added gets the rules of 0.8.0, and so does a
-/// file with no commit found. `in_base` tells if the tree of `base_rev` has the
-/// file. With no base, the section is read.
-pub fn section_is_read(
-    git: &Git,
-    base_rev: Option<&str>,
-    in_base: bool,
-    path: &str,
-) -> Result<bool, String> {
-    let (Some(rev), true) = (base_rev, in_base) else {
+/// plan, at `path` is read as 0.8.0 reads it. A file that a commit added when
+/// `spec-dna.toml` pinned a version before 0.8.0 keeps the meaning of 0.7.1: the
+/// section is plain text (design 0.8.0, D6 and D7). This is the one rule for
+/// `check`, `finish`, `next`, the skeleton and the brief.
+///
+/// - With a base (`base_rev`), a file that the tree of the base lacks is a file
+///   of the branch, and it gets the rules of 0.8.0 (Q43). For a file that the
+///   base has, the commit that added it is the newest one in the history of the
+///   base.
+/// - With no base, the commit is the newest one in the history of `HEAD`, as
+///   `skip_early_plans` reads it. No base is needed.
+/// - A file with no commit found (a shallow clone, a file that is not committed)
+///   and a commit with no pin get the rules of 0.8.0, the stricter result. A
+///   repository with no commit has none to read.
+pub fn section_is_read(git: &Git, base_rev: Option<&str>, path: &str) -> Result<bool, String> {
+    if git.commit("HEAD").is_none() {
         return Ok(true);
+    }
+    let rev = match base_rev {
+        Some(rev) => {
+            let in_base = git
+                .read_at(&[(rev.to_string(), path.to_string())])?
+                .into_iter()
+                .next()
+                .flatten()
+                .is_some();
+            if !in_base {
+                return Ok(true);
+            }
+            rev
+        }
+        None => "HEAD",
     };
     Ok(!pin_when_added(git, rev, path)?
         .flatten()
@@ -414,14 +432,12 @@ pub fn answers_missing(rec: &Record, decl: &accept::Declared) -> Vec<String> {
 }
 
 /// The paths among `paths` whose sections are not read as 0.8.0 reads them
-/// ([`section_is_read`]). `base` is the lifecycle tree: a path that it lacks is
-/// a file of the branch. The one function that `check`
+/// ([`section_is_read`]). The one function that `check`
 /// ([`crate::lifecycle::skip_early_sections`]), `finish` and `next`
 /// ([`sections_of`]) call, with one lookup for each distinct path.
 pub fn sections_skipped(
     git: &Git,
     base_rev: Option<&str>,
-    base: Option<&Corpus>,
     paths: &[&str],
 ) -> Result<Vec<String>, String> {
     let mut seen: Vec<&str> = Vec::new();
@@ -431,8 +447,7 @@ pub fn sections_skipped(
             continue;
         }
         seen.push(p);
-        let in_base = base.is_some_and(|b| b.by_path.contains_key(*p));
-        if !section_is_read(git, base_rev, in_base, p)? {
+        if !section_is_read(git, base_rev, p)? {
             skipped.push((*p).to_string());
         }
     }
@@ -460,26 +475,52 @@ fn section_messages(sec: &Sections, code: Code) -> Vec<String> {
         .collect()
 }
 
-/// Reads [`Sections`] for the change `ch` of the head tree. `base` is the
-/// lifecycle tree, and `base_rev` its commit. The one function that `finish`
-/// (step 5.2) and `next` call, so they read the same items as `check` does.
+/// The items that the spec and the plan of the change `ch` declare, with the
+/// rule of the pin applied ([`section_is_read`]): a spec or a plan of 0.7.1 declares
+/// nothing. The one function that `accept` (the skeleton and the brief), the compare
+/// of the brief (SD928), SD938 and `finish` call, so they read the same items.
+pub fn declared_for(
+    cfg: &Config,
+    git: &Git,
+    base_rev: Option<&str>,
+    ch: &Change,
+    corpus: &Corpus,
+) -> Result<accept::Declared, String> {
+    let read = |a: &Option<change::Artifact>| -> Result<bool, String> {
+        match a {
+            Some(a) => section_is_read(git, base_rev, &corpus.docs[a.doc as usize].path),
+            None => Ok(true),
+        }
+    };
+    let mut d = accept::declared(cfg, ch, corpus);
+    if !read(&ch.spec)? {
+        d.invariants.clear();
+    }
+    if !read(&ch.plan)? {
+        d.deviations.clear();
+    }
+    Ok(d)
+}
+
+/// Reads [`Sections`] for the change `ch` of the head tree. `base_rev` is the
+/// lifecycle base. The one function that `finish` (step 5.2) and `next` call, so
+/// they read the same items as `check` does.
 pub fn sections_of(
     cfg: &Config,
     git: &Git,
     base_rev: Option<&str>,
     ch: &Change,
     head: &Corpus,
-    base: Option<&Corpus>,
 ) -> Result<Sections, String> {
     let mut diags = crate::lifecycle::invariant_diags(cfg, head, ch);
     diags.extend(crate::lifecycle::deviation_diags(cfg, head, ch));
     let mut diags = crate::check::apply_severity(cfg, diags);
     let paths: Vec<&str> = diags.iter().map(|d| d.path.as_str()).collect();
-    let skipped = sections_skipped(git, base_rev, base, &paths)?;
+    let skipped = sections_skipped(git, base_rev, &paths)?;
     diags.retain(|d| !skipped.contains(&d.path));
     Ok(Sections {
         diags,
-        declared: accept::declared(cfg, ch, head),
+        declared: declared_for(cfg, git, base_rev, ch, head)?,
     })
 }
 
@@ -847,8 +888,15 @@ fn text_of(b: Option<Vec<u8>>) -> Option<String> {
 }
 
 /// The `declared` items of the files of a tree, read as `finish` and `check`
-/// read a change: the 3 files parse into a corpus of their own.
-fn declared_of(cfg: &Config, folder: &str, files: &Files) -> accept::Declared {
+/// read a change: the 3 files parse into a corpus of their own. The rule of the
+/// pin reads the history of the base (`base_rev`), as for the entry itself.
+fn declared_of(
+    cfg: &Config,
+    git: &Git,
+    base_rev: &str,
+    folder: &str,
+    files: &Files,
+) -> Result<accept::Declared, String> {
     let mut docs: Vec<(String, Arc<ParsedDoc>)> = Vec::new();
     for (name, text) in [
         ("intent.md", &files.intent),
@@ -864,8 +912,8 @@ fn declared_of(cfg: &Config, folder: &str, files: &Files) -> accept::Declared {
         .into_iter()
         .find(|c| c.dir == folder)
     {
-        Some(ch) => accept::declared(cfg, &ch, &corpus),
-        None => accept::Declared::default(),
+        Some(ch) => declared_for(cfg, git, Some(base_rev), &ch, &corpus),
+        None => Ok(accept::Declared::default()),
     }
 }
 
@@ -1011,7 +1059,7 @@ pub fn brief_problems(
             continue;
         };
         let at = files.cfg.as_ref().unwrap_or(cfg);
-        let decl = declared_of(at, folder, files);
+        let decl = declared_of(at, git, base_rev, folder, files)?;
         let text = accept::brief_text(
             at,
             slug,
@@ -1197,7 +1245,7 @@ pub fn finish_facts(
         sections: Sections::default(),
     };
     if matches!(f.need, Need::Yes { .. }) {
-        f.sections = sections_of(cfg, &repo.git, base_rev, ch, head, base).map_err(Fatal::Io)?;
+        f.sections = sections_of(cfg, &repo.git, base_rev, ch, head).map_err(Fatal::Io)?;
     }
     let (Need::Yes { .. }, Some(base_rev)) = (&f.need, base_rev) else {
         return Ok(Some(f));

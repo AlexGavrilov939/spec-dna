@@ -544,24 +544,27 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     // Step 5.3: the deviations. They come from the plan, with the verdict of the
     // record. A change that needs no record has none (a section of an older plan
     // is plain text).
-    if cx
+    if let Some(f) = cx
         .acceptance
-        .is_some_and(|f| matches!(f.need, crate::acceptance::Need::Yes { .. }))
+        .filter(|f| matches!(f.need, crate::acceptance::Need::Yes { .. }))
     {
         let rec = record
             .as_deref()
             .and_then(|t| crate::record::Record::parse(t).ok());
-        out.deviations = ch
-            .deviations(head)
-            .into_iter()
-            .map(|d| Deviation {
+        // The items are the declared ones: the rule of the pin is applied.
+        out.deviations = f
+            .sections
+            .declared
+            .deviations
+            .iter()
+            .map(|(id, kind, text)| Deviation {
                 verdict: rec
                     .as_ref()
-                    .and_then(|r| r.deviations.iter().find(|e| e.id == d.id))
+                    .and_then(|r| r.deviations.iter().find(|e| e.id == *id))
                     .map_or_else(|| "none".to_string(), |e| e.verdict.clone()),
-                id: d.id,
-                kind: d.kind,
-                text: d.text,
+                id: id.clone(),
+                kind: kind.clone(),
+                text: text.clone(),
             })
             .collect();
     }
@@ -1798,14 +1801,18 @@ fn no_new_errors(
     created: &HashSet<String>,
 ) -> Result<(), Failure> {
     type Key = (Code, String, String);
-    // SD937 is an error only for a spec that the diff touches. The result of
-    // `finish` deletes the folder of this change, so each stale pin that it shows
-    // is a pin of another open spec, which this diff does not touch. That spec
-    // gets a warning, and its author pins the rule again (design 0.8.0, D6).
+    // SD914 and SD937 are errors only for a spec that the diff touches, as `check`
+    // reads them ([`lifecycle::lower_untouched`]). The result of `finish` deletes
+    // the folder of this change, so a stale pin that it shows is the pin of another
+    // open spec. If this diff touches that spec, `check` of the pull request gives
+    // an error, so `finish` stops. If not, it is a warning, and the author of that
+    // spec pins the rule again (design 0.8.0, D6).
+    let touched = |p: &str| cx.diff.is_some_and(|d| d.files.iter().any(|(f, _)| f == p));
     let errors = |c: &Corpus| -> Vec<Diag> {
-        check::diagnose_against(cx.config, c, base)
-            .into_iter()
-            .filter(|d| d.severity == Severity::Error && d.code != Code::InvariantStale)
+        let mut all = check::diagnose_against(cx.config, c, base);
+        lifecycle::lower_untouched(&mut all, &touched);
+        all.into_iter()
+            .filter(|d| d.severity == Severity::Error)
             .collect()
     };
     let mut before: HashMap<Key, usize> = HashMap::new();

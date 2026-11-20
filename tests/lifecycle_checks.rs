@@ -1999,3 +1999,85 @@ fn the_rule_of_the_pin_gives_the_same_silence_in_the_3_states_of_a_pull_request(
         }
     }
 }
+
+/// A repository whose first commit holds the change `dose` with the spec items
+/// `inv` and the plan items `devs`, under the pin `pin`. A second commit sets the
+/// pin of the binary. There is no remote and no `origin/HEAD`.
+fn pinned_change(pin: &str, keys: &str, inv: &str, devs: &str) -> Repo {
+    let cfg = inv_config("standard", keys);
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{cfg}"));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write("README.md", "# Project\n");
+    inv_spec(&r, "approved", INV_DELTA, inv);
+    dev_plan(&r, devs);
+    r.commit("the change");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    r
+}
+
+#[test]
+fn a_change_of_0_7_1_gets_no_new_code_with_no_base_either() {
+    // Free text under `Deviations` and `Invariants`, in a change that a commit
+    // added under the pin 0.7.1: no SD936 to SD940 with no `origin/HEAD` and no
+    // `--base`, with the key and without it.
+    for keys in ["", "invariants = true\n"] {
+        let r = pinned_change(
+            "0.7.1",
+            keys,
+            "- The valve stays closed.",
+            "- we moved a file\n- d9 (spec): text",
+        );
+        let (code, out, _) = r.run(&["check", "--all"]);
+        for c in ["SD936", "SD937", "SD938", "SD939", "SD940"] {
+            assert_eq!(codes_of(&out, c), 0, "{keys:?} {c}: {out}");
+        }
+        assert_eq!(code, 0, "{keys:?}: {out}");
+        // With a base the result is the same.
+        let (_, out, _) = r.run(&["check", "--all", "--base", "HEAD~1"]);
+        for c in ["SD936", "SD939", "SD940"] {
+            assert_eq!(codes_of(&out, c), 0, "{keys:?} {c} with a base: {out}");
+        }
+    }
+}
+
+#[test]
+fn a_change_of_0_8_0_still_gets_the_codes_with_no_base_and_with_one() {
+    let r = pinned_change(
+        "0.8.0",
+        "invariants = true\n",
+        "- The valve stays closed.",
+        "- we moved a file",
+    );
+    let (code, out, _) = r.run(&["check", "--all"]);
+    assert_eq!(codes_of(&out, "SD936"), 1, "{out}");
+    assert_eq!(codes_of(&out, "SD939"), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+    let (_, out, _) = r.run(&["check", "--all", "--base", "HEAD~1"]);
+    assert_eq!(codes_of(&out, "SD936"), 1, "{out}");
+    assert_eq!(codes_of(&out, "SD939"), 1, "{out}");
+}
+
+#[test]
+fn a_symlink_for_a_spec_or_a_plan_is_a_finding_not_an_error_exit() {
+    // The section of a file that is a link is not read through the link.
+    let r = inv_repo("standard", "invariants = true\n");
+    inv_spec(&r, "draft", INV_DELTA, "- none");
+    dev_plan(&r, "- d1 (plan): a note");
+    r.commit("the change");
+    std::fs::remove_file(r.dir.join("docs/intent/dose/spec.md")).unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", r.dir.join("docs/intent/dose/spec.md")).unwrap();
+    std::fs::remove_file(r.dir.join("docs/intent/dose/plan.md")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../requirements/valves.md",
+        r.dir.join("docs/intent/dose/plan.md"),
+    )
+    .unwrap();
+    for args in [&["check", "--all"][..], &["next", "dose"][..]] {
+        let (code, out, err) = r.run(args);
+        assert!(code == 0 || code == 1, "{args:?}: exit {code}: {out}{err}");
+    }
+}

@@ -1158,3 +1158,118 @@ fn the_brief_changes_when_an_invariant_or_a_deviation_changes() {
     let c = brief(&s5_built("invariants = true\n", &pin_item, ""), &[]);
     assert_eq!(last_line(&a), last_line(&c));
 }
+
+/// A pull request whose base already holds the change, added under the pin
+/// `pin`; a later commit of the base sets the pin of the binary. The spec has the
+/// stale pin item and the plan has one deviation. The branch adds the code.
+fn s5_in_base(pin: &str, keys: &str) -> Repo {
+    let cfg = s5_config(keys);
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{cfg}"));
+    r.write(REQ, VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write("README.md", "# Project\n");
+    r.write(INTENT, INTENT_TEXT);
+    r.write(
+        SPEC,
+        &SPEC_TEXT.replace(
+            "## Concerns",
+            "## Invariants\n\n- rules/safety#valve-closed@00112233aabbccdd\n\n## Concerns",
+        ),
+    );
+    r.write(
+        PLAN,
+        &format!("{PLAN_TEXT}\n## Deviations\n\n- d1 (plan): The check moved.\n"),
+    );
+    r.commit("the change");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("code");
+    r
+}
+
+#[test]
+fn a_spec_and_a_plan_of_0_7_1_declare_nothing_to_the_skeleton_and_the_brief() {
+    let r = s5_in_base("0.7.1", "invariants = true\n");
+    let t = write_record(&r);
+    assert!(
+        !t.contains("[[invariant]]") && !t.contains("[[deviation]]"),
+        "{t}"
+    );
+    let b = brief(&r, &[]);
+    assert!(
+        !b.contains("=== invariants ===") && !b.contains("=== deviations ==="),
+        "{b}"
+    );
+}
+
+#[test]
+fn a_spec_and_a_plan_of_0_8_0_in_the_base_declare_their_items() {
+    let r = s5_in_base("0.8.0", "invariants = true\n");
+    let t = write_record(&r);
+    assert!(
+        t.contains("id = \"rules/safety#valve-closed@00112233aabbccdd\"")
+            && t.contains("[[deviation]]\nid = \"d1\""),
+        "{t}"
+    );
+    let b = brief(&r, &[]);
+    assert!(
+        b.contains("=== invariants ===") && b.contains("=== deviations ==="),
+        "{b}"
+    );
+}
+
+#[test]
+fn a_record_over_the_size_limit_names_the_largest_part_and_its_fix() {
+    // Many deviations.
+    let devs: String = (1..=300)
+        .map(|n| format!("- d{n} (plan): The check number {n} moved.\n"))
+        .collect();
+    let r = s5_built("", &|_| String::new(), &devs);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is deviations")
+            && err.contains("`Deviations` of the plan lists 300 items")
+            && err.contains("Shorten the text of each item"),
+        "{err}"
+    );
+    assert!(!err.contains("too many paths"), "{err}");
+    assert!(!r.dir.join(RECORD).exists(), "no write");
+    // One deviation with a long text: the same part, its size is named.
+    let long = format!("- d1 (plan): {}", "long ".repeat(4000));
+    let r = s5_built("", &|_| String::new(), &long);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is deviations (")
+            && err.contains("`Deviations` of the plan lists 1 items"),
+        "{err}"
+    );
+    // Many invariants (the key is on).
+    let inv = |h: &str| -> String {
+        (1..=250)
+            .map(|n| format!("- rules/safety#rule-{n}@{h}\n"))
+            .collect()
+    };
+    let r = s5_built("invariants = true\n", &inv, "");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("the largest part is invariants")
+            && err.contains("`Invariants` of the spec lists 250 items")
+            && err.contains("List fewer rules"),
+        "{err}"
+    );
+    // A record under the limit is written.
+    let r = s5_built("", &|_| String::new(), "- d1 (plan): fine");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+}

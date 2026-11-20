@@ -280,7 +280,6 @@ pub fn skip_early_plans(
 pub fn skip_early_sections(
     git: &Git,
     base_rev: Option<&str>,
-    base: Option<&Corpus>,
     head: &mut Vec<Diag>,
     new: &mut Vec<bool>,
 ) -> Result<(), String> {
@@ -293,15 +292,12 @@ pub fn skip_early_sections(
                 | Code::DeviationUnresolved
         )
     };
-    let (Some(rev), Some(base)) = (base_rev, base) else {
-        return Ok(());
-    };
     let paths: Vec<&str> = head
         .iter()
         .filter(|d| mine(d.code))
         .map(|d| d.path.as_str())
         .collect();
-    let early = crate::acceptance::sections_skipped(git, Some(rev), Some(base), &paths)?;
+    let early = crate::acceptance::sections_skipped(git, base_rev, &paths)?;
     if early.is_empty() {
         return Ok(());
     }
@@ -314,6 +310,22 @@ pub fn skip_early_sections(
     let mut at = keep.iter();
     new.retain(|_| *at.next().unwrap_or(&true));
     Ok(())
+}
+
+/// SD914 and SD937 are errors only for a spec that the diff touches (design
+/// 0.6.0, K3, and 0.8.0, D6). For a spec that the diff does not touch, the
+/// severity is a warning. `touched` tells if the diff has a path. This is the one
+/// rule: `check` and `finish` (the result of step 5) both call it, so what `finish`
+/// lets pass, `check` accepts. With no lifecycle base, no spec is touched.
+pub fn lower_untouched(diags: &mut [Diag], touched: &dyn Fn(&str) -> bool) {
+    for d in diags {
+        if matches!(d.code, Code::DeltaInvalid | Code::InvariantStale)
+            && d.severity == crate::diag::Severity::Error
+            && !touched(&d.path)
+        {
+            d.severity = crate::diag::Severity::Warning;
+        }
+    }
 }
 
 /// The files that a change touches: the diff of the head against the base.
@@ -1851,7 +1863,7 @@ struct BranchScope {
     /// The invariants and the deviations that the newest spec and plan of the
     /// branch declare. The base plan can lack a deviation that the work added, so
     /// SD938 reads these.
-    declared: crate::accept::Declared,
+    declared: Result<crate::accept::Declared, String>,
 }
 
 impl DiffChange {
@@ -1875,7 +1887,13 @@ impl DiffChange {
                     scope,
                     facts: crate::acceptance::plan_facts(&newest, &corpus),
                     plan: crate::acceptance::PlanScope::of(&newest, &corpus),
-                    declared: crate::accept::declared(ctx.config, &newest, &corpus),
+                    declared: crate::acceptance::declared_for(
+                        ctx.config,
+                        ctx.git,
+                        Some(ctx.base_rev),
+                        &newest,
+                        &corpus,
+                    ),
                 })
             })
             .as_ref()
@@ -2849,8 +2867,8 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
         // branch for a deleted folder, as `finish` read them, else from the tree.
         if on(Code::RecordIncomplete) {
             let decl = match ch.branch(ctx) {
-                Some(b) => b.declared.clone(),
-                None => crate::accept::declared(cfg, c, ctx.corpus(ch)),
+                Some(b) => b.declared.clone()?,
+                None => acc::declared_for(cfg, ctx.git, Some(ctx.base_rev), c, ctx.corpus(ch))?,
             };
             for m in acc::answers_missing(&rec, &decl) {
                 out.push(path_diag(&archive, Code::RecordIncomplete, &c.slug, m));

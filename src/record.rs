@@ -870,22 +870,52 @@ pub fn skeleton(s: &Skeleton) -> String {
         ));
     }
     for id in s.invariants {
-        out.push_str(&format!(
-            "\n[[invariant]]\nid = {}\nanswer = {}\n",
-            toml_string(id),
-            toml_string(PENDING)
-        ));
+        out.push_str(&invariant_block(id));
     }
     for (id, kind, text) in s.deviations {
-        out.push_str(&format!(
-            "\n[[deviation]]\nid = {}\nkind = {}\ntext = {}\nverdict = {}\n",
-            toml_string(id),
-            toml_string(kind),
-            toml_string(text),
-            toml_string(PENDING)
-        ));
+        out.push_str(&deviation_block(id, kind, text));
     }
     out
+}
+
+/// The text of one `[[invariant]]` entry of a skeleton.
+fn invariant_block(id: &str) -> String {
+    format!(
+        "\n[[invariant]]\nid = {}\nanswer = {}\n",
+        toml_string(id),
+        toml_string(PENDING)
+    )
+}
+
+/// The text of one `[[deviation]]` entry of a skeleton.
+fn deviation_block(id: &str, kind: &str, text: &str) -> String {
+    format!(
+        "\n[[deviation]]\nid = {}\nkind = {}\ntext = {}\nverdict = {}\n",
+        toml_string(id),
+        toml_string(kind),
+        toml_string(text),
+        toml_string(PENDING)
+    )
+}
+
+/// The bytes of the 3 parts of a skeleton that grow with the change: the list
+/// `paths`, the `[[invariant]]` entries and the `[[deviation]]` entries. A record
+/// over [`MAX_BYTES`] names the largest of them.
+pub fn skeleton_parts(s: &Skeleton) -> [(&'static str, usize); 3] {
+    [
+        ("paths", toml_list(s.paths).len()),
+        (
+            "invariants",
+            s.invariants.iter().map(|i| invariant_block(i).len()).sum(),
+        ),
+        (
+            "deviations",
+            s.deviations
+                .iter()
+                .map(|(i, k, t)| deviation_block(i, k, t).len())
+                .sum(),
+        ),
+    ]
 }
 
 /// The bytes of a record with each `\r\n` read as `\n` (ADR 0019). With
