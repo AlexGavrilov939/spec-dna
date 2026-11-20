@@ -414,27 +414,67 @@ impl PlanScope {
     }
 }
 
-/// The words of a SD929 message for a plan whose scope is not the scope of the
-/// record. [`stale_cause`] reads them.
-const SCOPE_MARK: &str = "the scope of the plan";
+/// The words of a SD929 message for a plan that has a pattern that the record
+/// has not. [`stale_cause`] reads them.
+const SCOPE_MARK: &str = "the scope of the plan has the pattern";
+
+/// The words of a SD929 message for a record that has a pattern that neither the
+/// plan nor `[change] shared-paths` has. [`stale_cause`] reads them.
+const RECORD_ONLY_MARK: &str = "neither the plan nor `[change] shared-paths` has it";
 
 /// The words of the SD929 message for a changed path that `Files` covers only
 /// through a pattern that a record cannot hold. [`stale_cause`] reads them.
 const UNCOVERED_MARK: &str = "of the plan only as";
 
+/// The words of the SD929 message for a changed path that only a glob of
+/// `[change] shared-paths` covers, a glob that the base configuration has not.
+/// [`stale_cause`] reads them.
+const SHARED_ADDED_MARK: &str = "shared-paths changed after the acceptance";
+
 /// The words of a SD929 message for code that changed after the acceptance.
 const CODE_MARKS: [&str; 2] = ["the hash of the code", "the diff has the code path"];
 
 /// What changed after the acceptance, for the text of `next` and `finish`, read
-/// from a SD929 message of [`stale`]: the scope of the plan, the code, or both.
-pub fn stale_cause(message: &str) -> &'static str {
-    let scope = message.contains(SCOPE_MARK) || message.contains(UNCOVERED_MARK);
-    let code = CODE_MARKS.iter().any(|m| message.contains(m));
-    match (scope, code) {
-        (true, true) => "the scope of the plan and the code changed after the acceptance",
-        (true, false) => "the scope of the plan changed after the acceptance",
-        _ => "the code changed after the acceptance",
+/// from a SD929 message of [`stale`]. One phrase for each kind of reason in the
+/// message: the scope of the plan, a pattern that the record has and no source
+/// has, a name that `Files` has and a record cannot hold, a new glob of
+/// `shared-paths`, and the code. The text is what changed, so the user fixes the
+/// right thing.
+pub fn stale_cause(message: &str) -> String {
+    let mut phrases: Vec<&str> = Vec::new();
+    if message.contains(SCOPE_MARK) {
+        phrases.push("the scope of the plan changed after the acceptance");
     }
+    if message.contains(RECORD_ONLY_MARK) {
+        phrases
+            .push("the record has a pattern that neither the plan nor `[change] shared-paths` has");
+    }
+    if message.contains(UNCOVERED_MARK) {
+        phrases.push("a changed path is in `Files` only as a bare name or a path with a space");
+    }
+    if message.contains(SHARED_ADDED_MARK) {
+        phrases.push("shared-paths changed after the acceptance");
+    }
+    if CODE_MARKS.iter().any(|m| message.contains(m)) {
+        phrases.push("the code changed after the acceptance");
+    }
+    if phrases.is_empty() {
+        phrases.push("the code changed after the acceptance");
+    }
+    phrases.join(" and ")
+}
+
+/// The globs of `[change] shared-paths` in the configuration of `base_rev`, or
+/// `None` if the base has no configuration that reads.
+pub fn base_shared_paths(git: &Git, base_rev: &str) -> Result<Option<Vec<String>>, String> {
+    let text = git
+        .read_at(&[(base_rev.to_string(), config::FILE_NAME.to_string())])?
+        .into_iter()
+        .next()
+        .flatten();
+    Ok(text
+        .and_then(|b| Config::parse(&String::from_utf8_lossy(&b)).ok())
+        .map(|c| c.shared_paths))
 }
 
 /// Why a record is stale: one text for each reason, empty if the record is
@@ -462,6 +502,7 @@ pub fn stale_reasons(
     rec: &Record,
     diff: Option<&Diff>,
     plan: &PlanScope,
+    base_rev: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let mut why: Vec<String> = Vec::new();
     let quote = |v: Vec<&String>| {
@@ -489,13 +530,13 @@ pub fn stale_reasons(
         .collect();
     if !only_plan.is_empty() {
         why.push(format!(
-            "{SCOPE_MARK} has the pattern {}, and `scope` of the record has not",
+            "{SCOPE_MARK} {}, and `scope` of the record has not",
             quote(only_plan)
         ));
     }
     if !only_record.is_empty() {
         why.push(format!(
-            "`scope` of the record has the pattern {}, and {SCOPE_MARK} has not",
+            "`scope` of the record has the pattern {}, and {RECORD_ONLY_MARK} (the plan dropped it, or the key lost it)",
             quote(only_record)
         ));
     }
@@ -531,6 +572,34 @@ pub fn stale_reasons(
                 crate::accept::scope_way(&pattern)
             ));
         }
+        // A glob of `shared-paths` that the base configuration has not is new
+        // since the acceptance. A changed code path that only such a glob covers
+        // got in with no acceptance. A glob that the base has is as old as the
+        // record: a base commit that adds one changes no record.
+        if let Some(base_shared) = base_rev
+            .map(|r| base_shared_paths(git, r))
+            .transpose()?
+            .flatten()
+        {
+            let added: Vec<String> = shared
+                .iter()
+                .filter(|g| !base_shared.contains(g))
+                .cloned()
+                .collect();
+            for p in changed.iter().filter(|p| is_code(p)) {
+                if change::in_scope(&rec.scope, p) || change::in_scope(&base_shared, p) {
+                    continue;
+                }
+                if let Some(g) = added
+                    .iter()
+                    .find(|g| change::in_scope(std::slice::from_ref(g), p))
+                {
+                    why.push(format!(
+                        "the changed code path `{p}` is covered only by the glob `{g}` of `[change] shared-paths`, which the base configuration has not: {SHARED_ADDED_MARK}; accept again, or revert the change of `shared-paths`"
+                    ));
+                }
+            }
+        }
     }
     Ok(why)
 }
@@ -543,9 +612,10 @@ pub fn stale(
     rec: &Record,
     diff: Option<&Diff>,
     plan: &PlanScope,
+    base_rev: Option<&str>,
     after_finish: bool,
 ) -> Result<Option<String>, String> {
-    let why = stale_reasons(cfg, git, rec, diff, plan)?;
+    let why = stale_reasons(cfg, git, rec, diff, plan, base_rev)?;
     if why.is_empty() {
         return Ok(None);
     }
@@ -958,7 +1028,8 @@ pub fn finish_facts(
     }
     if !cfg.is_off(Code::AcceptanceStale) {
         let plan = PlanScope::of(ch, head);
-        f.stale = stale(cfg, &repo.git, &rec, diff, &plan, false).map_err(Fatal::Io)?;
+        f.stale =
+            stale(cfg, &repo.git, &rec, diff, &plan, Some(base_rev), false).map_err(Fatal::Io)?;
     }
     Ok(Some(f))
 }
@@ -1098,8 +1169,7 @@ mod tests {
     /// The text of `next` and `finish` follows the reason of the SD929 message.
     #[test]
     fn the_cause_of_a_stale_record_follows_the_reason_of_the_message() {
-        let scope =
-            format!("{SCOPE_MARK} has the pattern `src/x.rs`, and `scope` of the record has not");
+        let scope = format!("{SCOPE_MARK} `src/x.rs`, and `scope` of the record has not");
         let uncovered = format!(
             "the changed code path `Makefile` is in `Files` {UNCOVERED_MARK} `Makefile`, which has no `/`"
         );
@@ -1109,11 +1179,28 @@ mod tests {
         );
         let diff = format!("{} `src/y.rs`, which `scope` matches", CODE_MARKS[1]);
         assert!(stale_cause(&scope).starts_with("the scope of the plan changed"));
-        assert!(stale_cause(&uncovered).starts_with("the scope of the plan changed"));
+        assert!(
+            stale_cause(&uncovered).starts_with("a changed path is in `Files` only as a bare name")
+        );
+        assert!(!stale_cause(&uncovered).contains("scope of the plan"));
         assert!(stale_cause(&code).starts_with("the code changed"));
         assert!(stale_cause(&diff).starts_with("the code changed"));
         let both = format!("{scope}; {code}");
-        assert!(stale_cause(&both).starts_with("the scope of the plan and the code changed"));
+        assert_eq!(
+            stale_cause(&both),
+            "the scope of the plan changed after the acceptance and the code changed after the acceptance"
+        );
+        let shared = format!(
+            "the changed code path `lib/a.py` is covered only by the glob `lib/**`: {SHARED_ADDED_MARK}; accept again"
+        );
+        assert_eq!(
+            stale_cause(&shared),
+            "shared-paths changed after the acceptance"
+        );
+        let lost =
+            format!("`scope` of the record has the pattern `lib/**`, and {RECORD_ONLY_MARK}");
+        assert!(stale_cause(&lost).contains("`[change] shared-paths`"));
+        assert!(!stale_cause(&lost).contains("scope of the plan"));
     }
 
     #[test]

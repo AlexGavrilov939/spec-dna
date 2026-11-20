@@ -387,7 +387,8 @@ fn accept_item(
     let stale = match &rec {
         Some(r) if on(Code::AcceptanceStale) => {
             let plan = acceptance::PlanScope::of(ch, head);
-            acceptance::stale(cfg, &repo.git, r, diff, &plan, false).map_err(Fatal::Io)?
+            acceptance::stale(cfg, &repo.git, r, diff, &plan, Some(base_rev), false)
+                .map_err(Fatal::Io)?
         }
         _ => None,
     };

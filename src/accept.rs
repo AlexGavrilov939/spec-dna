@@ -318,8 +318,15 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         // no 2 places use 2 rules. The compare of `paths` stays: `paths` also
         // differs when a path left the diff.
         let plan = crate::acceptance::PlanScope::of(ch, &head);
-        let why = crate::acceptance::stale_reasons(&cfg, &repo.git, &r, diff.as_ref(), &plan)
-            .map_err(Fatal::Io)?;
+        let why = crate::acceptance::stale_reasons(
+            &cfg,
+            &repo.git,
+            &r,
+            diff.as_ref(),
+            &plan,
+            base_rev.as_deref(),
+        )
+        .map_err(Fatal::Io)?;
         if !why.is_empty() || r.paths != paths {
             let why = if why.is_empty() {
                 "its `scope`, `paths` or `tree` differ from the repository now".to_string()

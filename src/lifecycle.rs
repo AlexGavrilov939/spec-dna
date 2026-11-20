@@ -2558,7 +2558,15 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             None => acc::PlanScope::of(c, ctx.corpus(ch)),
         };
         if on(Code::AcceptanceStale)
-            && let Some(m) = acc::stale(cfg, ctx.git, &rec, Some(ctx.diff), &plan, true)?
+            && let Some(m) = acc::stale(
+                cfg,
+                ctx.git,
+                &rec,
+                Some(ctx.diff),
+                &plan,
+                Some(ctx.base_rev),
+                true,
+            )?
         {
             out.push(path_diag(&archive, Code::AcceptanceStale, &c.slug, m));
         }
