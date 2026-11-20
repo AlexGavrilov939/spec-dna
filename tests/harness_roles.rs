@@ -142,6 +142,7 @@ fn full_writes_the_implementer_and_the_code_simplifier() {
         "orchestrator",
         "advisor",
         "verifier",
+        "acceptor",
         "researcher",
         "implementer",
         "code-simplifier",
@@ -160,6 +161,7 @@ fn the_agent_files_match_the_golden_files() {
     for (path, name) in [
         (".claude/agents/fallback-advisor.md", "fallback-advisor.md"),
         (".claude/agents/verifier.md", "verifier.md"),
+        (".claude/agents/acceptor.md", "acceptor.md"),
         (".claude/agents/Explore.md", "Explore.md"),
         (".claude/agents/implementer.md", "implementer.md"),
         (".claude/agents/code-simplifier.md", "code-simplifier.md"),
@@ -231,8 +233,8 @@ fn each_agent_file_ends_with_the_rule_of_the_scratch_folder() {
         assert_eq!(t.matches("Scratch folder:").count(), 1, "{name}");
         seen += 1;
     }
-    // The 5 roles of the level `full`.
-    assert_eq!(seen, 5);
+    // The 6 roles of the level `full`, with the acceptor of the skill `accept`.
+    assert_eq!(seen, 6);
 }
 
 #[test]
@@ -360,7 +362,7 @@ fn an_unknown_role_lists_the_new_names() {
     let (code, out, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{out}{err}");
     assert!(
-        err.contains("unknown role; use orchestrator, advisor, verifier, researcher, implementer, code-simplifier, helper"),
+        err.contains("unknown role; use orchestrator, advisor, verifier, acceptor, researcher, implementer, code-simplifier, helper"),
         "{err}"
     );
 }
@@ -481,4 +483,97 @@ fn an_agent_of_the_project_named_verifier_turns_the_role_off() {
     assert!(cfg.contains("verifier = { claude-code = \"none\""), "{cfg}");
     let claude = r.read("CLAUDE.md");
     assert!(!claude.contains("`verifier`"), "{claude}");
+}
+
+// ---- The agent `acceptor` (design 0.8.0, D3) ----
+
+const ACCEPTOR: &str = ".claude/agents/acceptor.md";
+
+#[test]
+fn lean_in_standard_writes_the_acceptor_with_the_skill_accept() {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join(ACCEPTOR).exists(), "{out}");
+    assert!(out.contains(&format!("wrote {ACCEPTOR}\n")), "{out}");
+    assert!(
+        r.dir
+            .join(".claude/skills/spec-dna-accept/SKILL.md")
+            .exists()
+    );
+    assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("\nacceptor = { claude-code = \"opus\", effort = \"high\" }\n"),
+        "{cfg}"
+    );
+    let page = r.read(".claude/agents/model-team.md");
+    assert!(
+        page.contains("| acceptor | `.claude/agents/acceptor.md` | opus | high |"),
+        "{page}"
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn the_acceptor_is_a_role_of_lean_and_full() {
+    let r = full_repo();
+    assert!(r.dir.join(ACCEPTOR).exists());
+    assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
+}
+
+#[test]
+fn lean_in_lite_writes_neither_the_acceptor_nor_the_skill_nor_a_key() {
+    let r = Repo::new();
+    let (code, out, err) = init_with(&r, "profile = \"lite\"\nharness = \"lean\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(ACCEPTOR).exists(), "{out}");
+    assert!(!r.dir.join(".claude/skills/spec-dna-accept").exists());
+    let cfg = r.read("spec-dna.toml");
+    assert!(!cfg.contains("acceptor"), "{cfg}");
+    let page = r.read(".claude/agents/model-team.md");
+    assert!(!page.contains("acceptor"), "{page}");
+}
+
+#[test]
+fn the_acceptor_goes_with_the_skill_not_with_the_level() {
+    // A skill list with no `accept` writes no agent file, also at `lean`.
+    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(ACCEPTOR).exists(), "{out}");
+    // A skill list with `accept` writes both.
+    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"accept\"]\n");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join(ACCEPTOR).exists(), "{out}");
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The level `none` writes neither.
+    let r = project_with("[harness]\nlevel = \"none\"\n");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(ACCEPTOR).exists(), "{out}");
+}
+
+#[test]
+fn the_acceptor_has_the_tools_of_a_reader_and_one_write_and_no_edit() {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(ACCEPTOR);
+    assert!(t.starts_with("---\nname: acceptor\n"), "{t}");
+    assert!(
+        t.contains("\nmodel: opus\neffort: high\ntools: Read, Grep, Glob, Bash, Write\n"),
+        "{t}"
+    );
+    for w in [
+        "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
+        "Your prompt is the output of `spec-dna accept <slug> --brief`. If it is not, run that command first, and work from its output.",
+        "Write only `acceptance.toml`",
+        "Report each defect as a finding. Do not fix it.",
+    ] {
+        assert!(t.contains(w), "`{w}`\n{t}");
+    }
 }

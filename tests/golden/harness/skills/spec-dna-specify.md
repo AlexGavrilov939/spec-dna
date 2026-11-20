@@ -21,6 +21,6 @@ Check: Stage the new files with `git add`, because `--base` reads tracked files 
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run the check again.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:90870a4f3690cc39 -->
+<!-- spec-dna harness v{VERSION} h:f357438ef8138107 -->

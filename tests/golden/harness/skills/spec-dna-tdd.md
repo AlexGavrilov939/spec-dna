@@ -20,6 +20,6 @@ If `[evidence] reports` is set in `spec-dna.toml`, stage new files with `git add
 
 If the check fails: Add the tag, or fix its id. If the test passes before the code, it proves nothing: change it until it fails.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:4e8527dbf36a1294 -->
+<!-- spec-dna harness v{VERSION} h:ae16529e1ca79d4e -->

@@ -2319,6 +2319,28 @@ mod tests {
         t["rules"].as_table().unwrap().clone()
     }
 
+    /// The arm `without` of the skill `accept` has no agent file `acceptor.md`
+    /// either (design 0.8.0, D57): the role comes with the skill, so the edit of
+    /// the skill list is the whole edit.
+    #[test]
+    fn the_arm_without_of_the_skill_accept_has_no_acceptor_file() {
+        for arm in [HarnessArm::Lean, HarnessArm::Full] {
+            let has_file = |skills: Vec<Skill>| {
+                let mut h = arm.harness().expect("a harness");
+                h.skills = skills;
+                harness::generated_files(&h)
+                    .iter()
+                    .any(|g| g.path == ".claude/agents/acceptor.md")
+            };
+            let with = arm_skills(Kind::Skill(Skill::Accept), Arm::With, arm);
+            let without = arm_skills(Kind::Skill(Skill::Accept), Arm::Without, arm);
+            assert!(with.contains(&Skill::Accept), "{}", arm.name());
+            assert!(!without.contains(&Skill::Accept), "{}", arm.name());
+            assert!(has_file(with), "{}", arm.name());
+            assert!(!has_file(without), "{}", arm.name());
+        }
+    }
+
     #[test]
     fn a_file_with_no_rules_gets_the_table() {
         for text in ["spec-dna = \"0.7.0\"\n", "spec-dna = \"0.7.0\"", ""] {

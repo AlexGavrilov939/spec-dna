@@ -43,6 +43,7 @@ high-risk-layers = ["interfaces", "rules"]  # a delta in these layers makes a ch
 high-risk-paths = []            # globs from the repository root (default: none)
 shared-paths = []               # documents that each change can edit (SD913) (default: none)
 max-fanout = 8                  # documents that one change can touch before SD905 (default)
+higher-risk-acceptors = 1       # the acceptors that a higher-risk change needs, from 1 to 3 (default 1)
 approval = "base"               # "base" or "branch": where an approval can be (default: "base")
 approvers = []                  # the author e-mails of the approval commits, with approval = "branch"
 
@@ -129,7 +130,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `proof`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617, and the group `proof` holds SD618 to SD620. No rule for the group `evidence` changes them. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617, and the group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD931, SD933 and SD935. No rule for the group `evidence` changes the groups `reports` and `proof`, and no rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -139,6 +140,7 @@ sonnet = "high"
 | `change.shared-paths` | array of strings | `[]` | Globs from the repository root, in the form of `high-risk-paths`: the documents that each change can edit, such as a roadmap or a list of open questions. SD913 does not report a path that matches one of them. No other check reads the key. An empty glob is an error (exit code 3). |
 | `change.max-fanout` | integer | `8` | The most requirement documents that one change can touch before SD905. |
 | `change.max-task-files` | integer | `3` | The most paths that one task of an approved plan lists in its label `Files:` before SD924. An integer from 1 to 20, or the exit code is 3. |
+| `change.higher-risk-acceptors` | integer | `1` | The acceptor entries that the acceptance record of a `higher-risk` change needs (SD933). An integer from 1 to 3, or the exit code is 3. A `routine` change needs 1 entry. `init` writes `2` in the profile `strict`. See [the acceptance record](#the-acceptance-record). |
 | `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
 | `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
 | `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
@@ -204,7 +206,7 @@ sonnet = "high"
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
 | `harness.fanout-cap` | integer | `10` | The number of agents that a workflow can start before the hook `fanout-cap` asks the person. `0` disables the hook. |
-| `harness.skills` | list of strings | `[]` | The skills of the workflow pack that `init` writes. Each value is one of the 11 names `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`, and each is listed once. The order of the list does not matter: spec-dna uses the order of this sentence. Each skill is the file `.claude/skills/spec-dna-<skill>/SKILL.md`. The names `intent`, `spec` and `plan` of 0.6 give exit code 3, and `spec-dna upgrade` renames them. With `none`, spec-dna reads the key and ignores it. |
+| `harness.skills` | list of strings | `[]` | The skills of the workflow pack that `init` writes. Each value is one of the 12 names `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `accept`, `finish`, `debug` and `post-mortem`, and each is listed once. The order of the list does not matter: spec-dna uses the order of this sentence. Each skill is the file `.claude/skills/spec-dna-<skill>/SKILL.md`. The names `intent`, `spec` and `plan` of 0.6 give exit code 3, and `spec-dna upgrade` renames them. With `none`, spec-dna reads the key and ignores it. |
 | `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-approvals` | boolean | `false` | `true`: the harness writes the hook `protect-approvals`. The hook denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value ([harness.md](harness.md#spec-dna-hook-protect-approvals)). `init` writes `true` for `strict`, and it keeps the key of a file that has it. The hook needs a layer of the type `intent`. With `none`, spec-dna reads the key and ignores it. |
@@ -360,6 +362,7 @@ high-risk-paths = []                        # globs from the repository root
 shared-paths = ["docs/roadmap.md"]          # documents that each change can edit (SD913)
 max-fanout = 8                              # documents that one change can touch before SD905
 max-task-files = 3                          # paths that one task of an approved plan lists before SD924 (1 to 20)
+higher-risk-acceptors = 1                   # the acceptors that a higher-risk change needs (1 to 3)
 approval = "branch"                         # "base" or "branch": where an approval can be (default: "base")
 approvers = ["owner@example.test"]          # the author e-mails of the approval commits
 base = "main"                               # a local branch, for a repository with no remote (default: none)
@@ -367,7 +370,7 @@ base = "main"                               # a local branch, for a repository w
 
 The table `[change]` sets the change process: the change classes that the project uses, and the strictness of the gate. [The change guide](guides/change.md) gives the process. The key `policy` is required in the table. A project with no `[change]` table has the policy `none`, so an upgrade adds no new gate.
 
-`spec-dna init` writes the table with the 6 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths`, `shared-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). It also writes `approval` and `approvers`: see [Approval in the branch](#approval-in-the-branch). `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
+`spec-dna init` writes the table with the 6 keys `policy`, `gate`, `high-risk-layers`, `high-risk-paths`, `shared-paths` and `max-fanout` for a new project (policy `three-class`, gate `block`), and `init --reconfigure` keeps their values ([init.md](init.md)). It also writes `approval` and `approvers`: see [Approval in the branch](#approval-in-the-branch). In the profile `strict` it also writes `higher-risk-acceptors = 2`. `init` never proposes the key `base`, but `init --reconfigure` keeps it. An unknown key is an error (exit code 3).
 
 `policy` has these values:
 
@@ -377,7 +380,7 @@ The table `[change]` sets the change process: the change classes that the projec
 | `two-class` | `routine`, `higher-risk` | Each change has an intent. It runs the same checks as `three-class`. |
 | `none` | none | No change process: the layers and their checks only. |
 
-With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD926) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
+With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD926) and of the group `acceptance` (SD927 to SD931, SD933 and SD935) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
 
 The key `gate` sets the severity of SD910. The order of the sources for SD910 is:
 
@@ -389,6 +392,12 @@ The key `gate` sets the severity of SD910. The order of the sources for SD910 is
 With `gate = "block"`, a change to the artifact of a stage needs the approval of the earlier artifact. With `approval = "base"`, the base tree must show it. With `approval = "branch"`, an approval commit of an approver in the branch also counts.
 
 `high-risk-layers` and `high-risk-paths` set the minimum class of a change. SD917 reads them. `shared-paths` lists the documents that SD913 does not report: a path that no change owns, such as a roadmap, is not outside the plan of a change. `max-fanout` is the limit of SD905. `max-task-files` is the limit of SD924, and it is the size of a task that a person can review. `init` does not write it, and `init --reconfigure` keeps the value that the file has. An absent key means 3.
+
+### The acceptance record
+
+A change that has a plan needs an acceptance record before `finish`: one TOML file in which an agent that did not write the code says what it tried and what it found ([the command `accept`](commands.md#accept) writes the skeleton, and [the glossary](glossary.md) names the terms). The codes SD927 to SD931, SD933 and SD935 are in the rule group `acceptance`. They are off in `lite` and errors in `standard` and `strict` ([profiles.md](profiles.md)).
+
+`higher-risk-acceptors` is the number of `[[acceptor]]` entries that the record of a `higher-risk` change needs. A `routine` change needs 1 entry. The default is 1. It is an integer from 1 to 3, and another value is an error of the configuration (exit code 3). `init` writes `2` in the profile `strict`, and `init --reconfigure` keeps the value that the file sets. A project that never runs `accept` meets the key only when it sets it.
 
 The lifecycle checks compare the head with the merge base of a base revision and `HEAD`. The base revision is the first of these:
 
@@ -465,7 +474,7 @@ These keys select the parts of the harness that `init` writes besides the agents
 
 | Key | Values | Meaning |
 | --- | --- | --- |
-| `skills` | a list of the 11 names | The skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) when `[change] policy` is not `none` (all 11 at the level `full`, and 3 at most for the profile `lite`), and `[]` when it is `none`. `upgrade` renames an old name to the new names that are on by default. An old name `intent`, `spec` or `plan` is an error (exit code 3): the message names the new names and `spec-dna upgrade`. |
+| `skills` | a list of the 12 names | The skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). Each one is the file `.claude/skills/spec-dna-<name>/SKILL.md`. `[]` writes none. `init` proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) when `[change] policy` is not `none` (all 12 at the level `full`, 11 for `lite`, and 3 at most for the profile `lite` at the level `lean`), and `[]` when it is `none`. `upgrade` renames an old name to the new names that are on by default. An old name `intent`, `spec` or `plan` is an error (exit code 3): the message names the new names and `spec-dna upgrade`. |
 | `review-md` | `true` or `false` | `true` writes `REVIEW.md` in the repository root. |
 | `protect-tests` | `"fix-branches"`, `"always"` or `"off"` | It selects when the hook `protect-tests` asks before an edit of a tracked test file. `"fix-branches"` asks only on a branch that starts with `fix/`. `"always"` removes the branch test. `"off"` writes no hook. An empty `[evidence] tests` list also writes no hook. |
 

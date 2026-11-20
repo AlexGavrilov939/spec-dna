@@ -546,7 +546,7 @@ fn a_review_md_with_no_marker_gives_review_md_false() {
 
 #[test]
 fn a_skill_with_no_marker_leaves_the_default_skills() {
-    // The level `full` proposes the 11 skills, so the test names no default
+    // The level `full` proposes the 12 skills, so the test names no default
     // skill: the file of `specify` has no marker, and the list leaves it out.
     let r = Repo::new();
     r.write(SKILLS[1], "---\nname: spec-dna-specify\n---\nMine.\n");
@@ -554,7 +554,7 @@ fn a_skill_with_no_marker_leaves_the_default_skills() {
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(
-        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]\n"),
+        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"accept\", \"finish\", \"debug\", \"post-mortem\"]\n"),
         "{cfg}"
     );
     assert!(out.contains(&format!("note: {}", SKILLS[1])), "{out}");
@@ -707,7 +707,19 @@ fn the_descriptions_of_the_default_skills_add_their_listing_to_the_prefix_of_eac
                 format!("- {name}: {d}\n").len()
             })
             .sum();
-        (request_bytes(&out), listing)
+        // The skill `accept` brings the agent `acceptor`: its description is
+        // in the listing of the agents (ADR 0025).
+        let acceptor = if r.dir.join(".claude/agents/acceptor.md").exists() {
+            let d = r
+                .read(".claude/agents/acceptor.md")
+                .lines()
+                .find_map(|l| l.strip_prefix("description: ").map(str::to_string))
+                .unwrap();
+            format!("- acceptor: {d}\n").len()
+        } else {
+            0
+        };
+        (request_bytes(&out), listing + acceptor)
     };
     let without = {
         let r = Repo::new();

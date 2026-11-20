@@ -611,8 +611,13 @@ fn a_delta_that_changed_after_it_was_approved_in_the_base_stops_finish() {
     );
     assert_eq!(tree(&r), before);
     // A change that the base does not have is a change of this branch: there
-    // is no approved delta to compare.
-    let r = Fx::default().start();
+    // is no approved delta to compare. The plan is new, so the group
+    // `acceptance` is off: this test is about the delta.
+    let r = Fx {
+        rules: "acceptance = \"off\"\n",
+        ..Fx::default()
+    }
+    .start();
     r.git(&["checkout", "-q", "main"]);
     r.git(&["checkout", "-q", "-b", "born"]);
     let hash_close = hash(&r, "requirements/valves#close");

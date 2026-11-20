@@ -43,15 +43,25 @@ fn plan(status: &str, files: &[&str]) -> String {
 }
 
 fn config(profile: &str, change: &str) -> String {
+    config_rules(profile, change, "")
+}
+
+/// The configuration with the lines `rules` added to `[rules]`.
+fn config_rules(profile: &str, change: &str, rules: &str) -> String {
     format!(
-        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\n{change}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.interfaces]\ntypes = [\"interface\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"interfaces\", \"rules\"]\nkeep = \"until-finished\"\n"
+        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\n{change}\n[rules]\nSD608 = \"off\"\n{rules}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.interfaces]\ntypes = [\"interface\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"interfaces\", \"rules\"]\nkeep = \"until-finished\"\n"
     )
 }
 
 /// The base commit on `main`, `origin/HEAD` on it, and the branch `feature`.
 /// `base` adds the files of the change before the commit.
 fn start_with(profile: &str, change: &str, base: impl Fn(&Repo)) -> Repo {
-    let r = Repo::with_config(&config(profile, change));
+    start_rules(profile, change, "", base)
+}
+
+/// Like `start_with`, with the lines `rules` added to `[rules]`.
+fn start_rules(profile: &str, change: &str, rules: &str, base: impl Fn(&Repo)) -> Repo {
+    let r = Repo::with_config(&config_rules(profile, change, rules));
     r.write("docs/requirements/valves.md", VALVES);
     r.write("docs/requirements/pumps.md", PUMPS);
     r.write("docs/requirements/tanks.md", TANKS);
@@ -381,7 +391,13 @@ fn a_branch_born_change_gives_sd910_with_block() {
 
 #[test]
 fn a_branch_born_change_passes_with_warn() {
-    let r = start_with("standard", "gate = \"warn\"\n", nothing);
+    // The plan is new, so the group `acceptance` is off: the test is about SD910.
+    let r = start_rules(
+        "standard",
+        "gate = \"warn\"\n",
+        "acceptance = \"off\"\n",
+        nothing,
+    );
     born(&r, &["src/dose.py", "docs/requirements/valves.md"]);
     let (code, out) = check(&r);
     let found = lines(&out, "SD910");
@@ -393,7 +409,13 @@ fn a_branch_born_change_passes_with_warn() {
 
 #[test]
 fn a_branch_born_change_with_no_gate_gives_no_sd921() {
-    let r = start_with("standard", "gate = \"off\"\n", nothing);
+    // The plan is new, so the group `acceptance` is off: the test is about SD910.
+    let r = start_rules(
+        "standard",
+        "gate = \"off\"\n",
+        "acceptance = \"off\"\n",
+        nothing,
+    );
     born(&r, &["src/dose.py", "docs/requirements/valves.md"]);
     let (code, out) = check(&r);
     assert!(!has(&out, "SD910") && !has(&out, "SD921"), "{out}");

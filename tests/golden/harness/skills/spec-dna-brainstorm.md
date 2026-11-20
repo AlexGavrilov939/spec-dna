@@ -18,6 +18,6 @@ Check: Stage the new files with `git add`, because `--base` reads tracked files 
 
 If the check fails: Replace each placeholder that the message names. Ask the person for each fact that the request does not give. Run the check again.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:8b2e33e18651e67b -->
+<!-- spec-dna harness v{VERSION} h:2069be7e4b376d60 -->

@@ -900,6 +900,15 @@ impl Git {
     /// gives `None`: its boundary commit shows each file as added, and the
     /// commit is not the true add. The lookup is one `git log`.
     pub fn added_by(&self, path: &str) -> Result<Option<String>, String> {
+        self.added_at("HEAD", path)
+    }
+
+    /// Like `added_by`, for the history of `rev`: the newest commit that is an
+    /// ancestor of `rev` (or `rev` itself) and added the literal path
+    /// (`git log -1 --diff-filter=A <rev> -- <path>`). `None` if no such commit
+    /// exists, or in a shallow clone. A path that a later commit deleted and a
+    /// commit added again gives the newest add.
+    pub fn added_at(&self, rev: &str, path: &str) -> Result<Option<String>, String> {
         if self.is_shallow() {
             return Ok(None);
         }
@@ -912,12 +921,68 @@ impl Git {
             "--no-renames",
             "--diff-filter=A",
             "--format=%H",
-            "HEAD",
+            rev,
             "--",
             &spec,
         ])?;
         let id = String::from_utf8_lossy(&out).trim().to_string();
         Ok((!id.is_empty()).then_some(id))
+    }
+
+    /// The commits of `<base>..HEAD` on the first-parent line, the oldest first
+    /// (`git rev-list --reverse --first-parent`). The acceptance record reads
+    /// its entries in this order (design 0.8.0, D3 item 8).
+    pub fn first_parent_commits(&self, base: &str) -> Result<Vec<String>, String> {
+        let range = format!("{base}..HEAD");
+        let out = self.run(&["rev-list", "--reverse", "--first-parent", &range])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// True if a shallow clone cuts the history of `<base>..HEAD`: the repository
+    /// is shallow, and the oldest commit of the range has no parent that the
+    /// repository has. A real root commit of a shallow repository gives the same
+    /// answer, which is the stricter one.
+    pub fn range_is_cut(&self, base: &str) -> bool {
+        if !self.is_shallow() {
+            return false;
+        }
+        let Ok(commits) = self.first_parent_commits(base) else {
+            return false;
+        };
+        commits.first().is_some_and(|oldest| {
+            self.run(&["rev-parse", "--verify", "-q", &format!("{oldest}^")])
+                .is_err()
+        })
+    }
+
+    /// The ignore rule of git for a path, as `<source>:<line>:<pattern>`, or
+    /// `None` if no rule ignores it (`git check-ignore -v`). A tracked file is
+    /// never ignored.
+    pub fn ignore_rule(&self, path: &str) -> Option<String> {
+        let out = self
+            .cmd(&["check-ignore", "-v", "--", path])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let rule = text.lines().next()?.split('\t').next()?.trim();
+        (!rule.is_empty()).then(|| rule.to_string())
+    }
+
+    /// The root of the repository.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// True if the head tree is the git index (`check --staged`).
+    pub fn is_staged(&self) -> bool {
+        self.staged
     }
 
     /// Returns the commits (id and committer date) that touched a path, the

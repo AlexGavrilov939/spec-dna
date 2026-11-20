@@ -20,6 +20,6 @@ Check: Stage the new files with `git add`, because `--base` reads tracked files 
 
 If the check fails: Add or fix the eval file, or fix the id in `from:`. Run the check again.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:7831d39f3f129c7f -->
+<!-- spec-dna harness v{VERSION} h:78fcbf7bca608706 -->

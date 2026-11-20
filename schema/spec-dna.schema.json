@@ -99,6 +99,13 @@
           "maximum": 20,
           "default": 3
         },
+        "higher-risk-acceptors": {
+          "description": "The acceptor entries that the acceptance record of a higher-risk change needs (SD933). An integer from 1 to 3. Default 1. `init` writes 2 in the profile `strict`.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "default": 1
+        },
         "base": {
           "description": "The name of a local branch. It is the base of the change checks when `--base` and `refs/remotes/origin/HEAD` give none. Use it in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \\`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. If the branch does not exist, the base is unknown, and the commands print a note. Without the key, there is no such base.",
           "type": "string",
@@ -422,7 +429,7 @@
           "maximum": 4294967295
         },
         "skills": {
-          "description": "The skills of the workflow pack that `init` writes, each once. They are written in the order brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, finish, debug, post-mortem. Default: none. The names intent, spec and plan of 0.6 end: `spec-dna upgrade` renames them.",
+          "description": "The skills of the workflow pack that `init` writes, each once. They are written in the order brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, accept, finish, debug, post-mortem. Default: none. The skill `accept` also writes the agent file of the role `acceptor`. The names intent, spec and plan of 0.6 end: `spec-dna upgrade` renames them.",
           "type": "array",
           "uniqueItems": true,
           "items": {
@@ -435,6 +442,7 @@
               "tdd",
               "review",
               "verify",
+              "accept",
               "finish",
               "debug",
               "post-mortem"
@@ -522,6 +530,19 @@
                 "claude-code": {
                   "$ref": "#/$defs/harness-model",
                   "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off)."
+                },
+                "effort": {
+                  "$ref": "#/$defs/harness-effort"
+                }
+              }
+            },
+            "acceptor": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claude-code": {
+                  "$ref": "#/$defs/harness-model",
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The role has an agent file only with the skill `accept` in `skills`."
                 },
                 "effort": {
                   "$ref": "#/$defs/harness-effort"
@@ -944,10 +965,10 @@
       ]
     },
     "rules": {
-      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, reports, proof, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, reports, proof, acceptance, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(references|ids|budgets|drift|evidence|reports|proof|lint|layers|changes|SD[0-9]{3})$"
+        "pattern": "^(references|ids|budgets|drift|evidence|reports|proof|acceptance|lint|layers|changes|SD[0-9]{3})$"
       },
       "additionalProperties": {
         "$ref": "#/$defs/severity"

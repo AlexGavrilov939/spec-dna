@@ -1,4 +1,4 @@
-//! Tests of the 11 skills of the workflow pack and of `REVIEW.md` (ADR 0010,
+//! Tests of the 12 skills of the workflow pack and of `REVIEW.md` (ADR 0010,
 //! 0.7.0 slice 4). The configuration keys `skills` and `review-md` select the
 //! files. Each test uses a temporary repository. No test reads or writes a
 //! file of this repository.
@@ -9,8 +9,8 @@ use common::{Repo, VERSION, normalize_marker};
 use std::fs;
 use std::path::Path;
 
-/// The 11 names, in the order of D2.
-const NAMES: [&str; 11] = [
+/// The 12 names, in the order of D2, with `accept` (D3) before `finish`.
+const NAMES: [&str; 12] = [
     "brainstorm",
     "specify",
     "clarify",
@@ -19,19 +19,22 @@ const NAMES: [&str; 11] = [
     "tdd",
     "review",
     "verify",
+    "accept",
     "finish",
     "debug",
     "post-mortem",
 ];
 
-/// The 7 skills of D2. The tests that name them pin `skills`. A test of the
-/// defaults of `init` reads them with `default_skills`.
-const ON: [&str; 7] = [
+/// The 8 skills of D2, with `accept` (ADR 0025, amendment of ADR 0023). The
+/// tests that name them pin `skills`. A test of the defaults of `init` reads
+/// them with `default_skills`.
+const ON: [&str; 8] = [
     "brainstorm",
     "specify",
     "clarify",
     "write-plan",
     "review",
+    "accept",
     "finish",
     "post-mortem",
 ];
@@ -62,7 +65,11 @@ const APPROVAL_SENTENCE: &str =
     "An agent writes an approval commit only when the owner says so explicitly in the chat.";
 
 /// The rule of Q5, in the same words in each skill.
-const APPROVAL_RULE: &str = "Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.";
+const APPROVAL_RULE: &str = "Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.";
+
+/// The rule of the skill `accept`: the first sentence is for the `status` line of
+/// an artifact, because the acceptor writes `result = "accepted"`.
+const ACCEPT_RULE: &str = "Never set the `status` line of an artifact to `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.";
 
 fn path(name: &str) -> String {
     format!(".claude/skills/spec-dna-{name}/SKILL.md")
@@ -92,7 +99,7 @@ fn list(names: &[&str]) -> String {
     format!("[{}]", q.join(", "))
 }
 
-/// The `[harness]` table with the 11 skills on.
+/// The `[harness]` table with the 12 skills on.
 fn all_on() -> String {
     format!(
         "[harness]\nlevel = \"lean\"\nskills = {}\nreview-md = true\n",
@@ -161,7 +168,7 @@ fn listing_line(name: &str, description: &str) -> String {
     format!("- spec-dna-{name}: {description}\n")
 }
 
-/// Writes the files of the 11 skills with `init` and returns the repository.
+/// Writes the files of the 12 skills with `init` and returns the repository.
 fn written() -> Repo {
     let r = project_with(&all_on());
     let (code, out, err) = r.run(&["init"]);
@@ -175,7 +182,7 @@ fn old_skill_file(name: &str) -> String {
 }
 
 #[test]
-fn init_writes_the_11_skills_and_review_md() {
+fn init_writes_the_12_skills_and_review_md() {
     let r = project_with(&all_on());
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -365,8 +372,8 @@ fn the_front_matter_and_the_sizes_follow_the_budgets_of_d6() {
         assert!(b.len() <= 2500, "{n}: {} bytes", b.len());
         assert!(!b.contains("{{"), "{n}");
     }
-    assert!(all <= 1900, "the listing of the 11 skills: {all} bytes");
-    assert!(on <= 1250, "the listing of the 7 skills on: {on} bytes");
+    assert!(all <= 1900, "the listing of the 12 skills: {all} bytes");
+    assert!(on <= 1250, "the listing of the 8 skills on: {on} bytes");
     let review = r.read("REVIEW.md");
     assert!(review.len() <= 2500, "{} bytes", review.len());
 }
@@ -394,7 +401,17 @@ fn each_body_has_the_5_parts_in_order_and_the_rule_of_q5() {
             b.contains("\nCommands:\n\n1. "),
             "{n}: numbered commands\n{b}"
         );
-        assert!(b.contains(APPROVAL_RULE), "{n}: the rule of Q5\n{b}");
+        // The skill `accept` limits the first sentence to the `status` line: its
+        // acceptor sets `result = "accepted"` in the record.
+        let rule = if n == "accept" {
+            ACCEPT_RULE
+        } else {
+            APPROVAL_RULE
+        };
+        assert!(b.contains(rule), "{n}: the rule of Q5\n{b}");
+        if n == "accept" {
+            assert!(!b.contains("Never set `accepted` or `approved`."), "{b}");
+        }
         // A skill never sets a status that a person gives.
         assert!(!b.contains("status: accepted") && !b.contains("status: approved"));
         assert!(!b.contains("small-fix") && b.is_ascii(), "{n}");
@@ -472,6 +489,15 @@ fn the_skills_run_their_spec_dna_commands_and_name_their_floor() {
         ("tdd", &["covers:", "SD608", "SD916"][..]),
         ("review", &["`spec-dna status`", "git diff"][..]),
         ("verify", &["SD915", "SD916", "`spec-dna check`"][..]),
+        (
+            "accept",
+            &[
+                "`spec-dna accept <slug> --brief`",
+                "`acceptor`",
+                "SD928",
+                "SD929",
+            ][..],
+        ),
         ("finish", &["`spec-dna finish <slug>`"][..]),
         ("debug", &["reproduc", "regression test"][..]),
         ("post-mortem", &["SD918", "from:"][..]),
@@ -521,7 +547,7 @@ fn the_request_bytes_grow_by_the_listing_of_the_skills_only() {
     let (code, out, err) = review.run(&["init", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(request_bytes(&out), base, "{out}");
-    // The 11 skills add the listing bytes.
+    // The 12 skills add the listing bytes.
     let on = project_with(&all_on());
     let (code, out, err) = on.run(&["init", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -533,7 +559,14 @@ fn the_request_bytes_grow_by_the_listing_of_the_skills_only() {
         .map(|n| listing_line(n, description_of(&on.read(&path(n)))).len())
         .sum();
     assert!(listing > 0 && listing <= 1900, "{listing}");
-    assert_eq!(with, base + listing, "{out}");
+    // The skill `accept` brings the agent `acceptor`: its description is in
+    // each request too.
+    let agent = format!(
+        "- acceptor: {}\n",
+        description_of(&on.read(".claude/agents/acceptor.md"))
+    )
+    .len();
+    assert_eq!(with, base + listing + agent, "{out}");
 }
 
 #[test]
@@ -582,7 +615,7 @@ fn an_old_name_gives_exit_code_3_and_names_the_new_names_and_upgrade() {
     let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n");
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
-    // An unknown name lists the 11 names.
+    // An unknown name lists the 12 names.
     let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"nope\"]\n");
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{err}");
@@ -974,4 +1007,70 @@ fn init_removes_an_unedited_old_skill_file_and_keeps_an_edited_one() {
         out.contains(&format!("kept {}: edited by hand (SD501)", path("plan"))),
         "{out}"
     );
+}
+
+#[test]
+fn accept_tells_the_builder_to_pass_the_brief_unchanged_and_the_acceptor_to_work_from_it() {
+    let s = shown("accept");
+    for w in [
+        "1. If you built the change, do not accept it. Run `spec-dna accept <slug> --brief`, with `--role <name>` for each role of `[owners]` that the brief names. Give each whole output, unchanged, as the prompt of one agent `acceptor`. Add no word before or after it. For a `higher-risk` change, prefer an acceptor in a new session.",
+        "2. As the acceptor, work from the brief only. If your prompt is not the output of `spec-dna accept <slug> --brief`, run that command and read its output.",
+        "`spec-dna accept <slug> --session \"$CLAUDE_CODE_SESSION_ID\"`",
+        "Copy the hash of the last line of your brief into `brief` of your entry.",
+        "Commit the record alone, in a call of its own after the write",
+        "the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`",
+        "Artifact: `acceptance.toml` in the folder of the change.",
+        "no SD928 and no SD929",
+        "If the check fails: Fix the record. Never fix the code: write a finding.",
+    ] {
+        assert!(s.contains(w), "`{w}`\n{s}");
+    }
+    // The builder never writes the brief, and the acceptor edits no code.
+    assert!(s.contains("Edit no other file."), "{s}");
+}
+
+#[test]
+fn skill_list_names_accept_as_a_stage_skill_of_deploy_that_is_on_by_default() {
+    let (code, out, err) = Repo::new().run(&["skill", "list", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let item = out
+        .split("{\"name\":\"")
+        .find(|i| i.starts_with("accept\""))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(
+        item.contains("\"kind\":\"stage\"")
+            && item.contains("\"stage\":\"deploy\"")
+            && item.contains("\"default\":\"on\""),
+        "{item}"
+    );
+}
+
+#[test]
+fn the_profile_lite_writes_no_accept_skill_at_any_level() {
+    for level in ["lean", "full"] {
+        let r = Repo::new();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"lite\"\nharness = \"{level}\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        assert!(!r.dir.join(path("accept")).exists(), "{level}");
+        assert!(!r.read("spec-dna.toml").contains("accept"), "{level}");
+        assert!(
+            !r.dir.join(".claude/agents/acceptor.md").exists(),
+            "{level}"
+        );
+    }
+    // `standard` and `strict` write it at the level `lean`.
+    for profile in ["standard", "strict"] {
+        let r = Repo::new();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert!(r.dir.join(path("accept")).exists(), "{profile}: {out}");
+    }
 }

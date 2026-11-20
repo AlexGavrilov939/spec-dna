@@ -213,7 +213,7 @@ fn strict_prints_the_note_of_eval_pack_and_writes_no_pack() {
 }
 
 #[test]
-fn full_proposes_the_11_skills() {
+fn full_proposes_the_12_skills_and_lite_has_no_accept() {
     for profile in ["lite", "standard", "strict"] {
         let r = repo();
         let (code, out, err) = init_with(
@@ -222,8 +222,13 @@ fn full_proposes_the_11_skills() {
             &[],
         );
         assert_eq!(code, 0, "{profile}: {out}{err}");
-        assert_eq!(skills_of(&r), all_skills(), "{profile}");
-        assert_eq!(skill_files(&r), all_skills(), "{profile}");
+        // The profile `lite` has no acceptance, so it has no `accept` (ADR 0025).
+        let want: Vec<String> = all_skills()
+            .into_iter()
+            .filter(|s| profile != "lite" || s != "accept")
+            .collect();
+        assert_eq!(skills_of(&r), want, "{profile}");
+        assert_eq!(skill_files(&r), want, "{profile}");
     }
 }
 
@@ -534,5 +539,61 @@ fn reconfigure_keeps_reliable_for_and_reliable_runs() {
         assert_eq!(ev["reliable-runs"].as_integer(), Some(5), "{profile}");
         assert_eq!(ev["reliable-for"].as_str(), Some("all"), "{profile}");
         assert_eq!(r.read("spec-dna.toml").matches("reliable-for").count(), 1);
+    }
+}
+
+/// The key `[change] higher-risk-acceptors` (design 0.8.0, D3 item 7): `strict`
+/// writes 2, `standard` and `lite` write none.
+#[test]
+fn strict_writes_two_higher_risk_acceptors_and_the_other_profiles_write_none() {
+    for (profile, want) in [("lite", None), ("standard", None), ("strict", Some(2))] {
+        let r = repo();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let t = table(&r);
+        let got = t
+            .get("change")
+            .and_then(|c| c.get("higher-risk-acceptors"))
+            .and_then(toml::Value::as_integer);
+        assert_eq!(got, want, "{profile}: {}", r.read("spec-dna.toml"));
+        r.commit("adopt spec-dna");
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+    }
+}
+
+#[test]
+fn reconfigure_keeps_higher_risk_acceptors() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"strict\"\nharness = \"lean\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r
+        .read("spec-dna.toml")
+        .replace("higher-risk-acceptors = 2", "higher-risk-acceptors = 3");
+    r.write("spec-dna.toml", &text);
+    r.commit("adopt spec-dna");
+    for profile in ["strict", "standard"] {
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\n"),
+            &["--reconfigure"],
+        );
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let t = table(&r);
+        assert_eq!(
+            t["change"]["higher-risk-acceptors"].as_integer(),
+            Some(3),
+            "{profile}"
+        );
+        assert_eq!(
+            r.read("spec-dna.toml")
+                .matches("higher-risk-acceptors")
+                .count(),
+            1
+        );
     }
 }

@@ -1354,8 +1354,9 @@ fn output_text(plan: &Plan, files: &[Entry], proof: &Proof, report: &Report, dry
 /// when only its pin and its table `[spec-dna-sha256]` change to a later
 /// version (ADR 0019), so the pull request can also hold other work. A 0.4 or
 /// 0.5 file is rewritten, and a 0.6 file can have edits of the plan, so the
-/// commit goes in a pull request of its own. A plan that leaves
-/// `spec-dna.toml` as it is has no line.
+/// commit goes in a pull request of its own. The names of new skills that
+/// `upgrade` adds to the list `skills` are no change for SD503 either. A plan
+/// that leaves `spec-dna.toml` as it is has no line.
 fn next_line(plan: &Plan, report: &Report) -> Option<&'static str> {
     plan.config.as_ref()?;
     let later = matches!(
@@ -1363,7 +1364,16 @@ fn next_line(plan: &Plan, report: &Report) -> Option<&'static str> {
         (Some(from), Some(to)) if from < to
     );
     let pin_only = later && !plan.from_old && report.edits.is_empty();
-    Some(if pin_only {
+    let skills_only = later
+        && !plan.from_old
+        && !report.edits.is_empty()
+        && report
+            .edits
+            .iter()
+            .all(|e| e.starts_with(crate::upgrade_config::SKILLS_ADDED));
+    Some(if skills_only {
+        "next: commit the paths above in one commit of their own. spec-dna.toml changes only in the pin and in new skill names, so the pull request can also hold other work (SD503 does not count them)."
+    } else if pin_only {
         "next: commit the paths above in one commit of their own. Only the pin of spec-dna.toml changes, so the pull request can also hold other work (SD503 does not count a pin that moves to a later version)."
     } else {
         "next: commit the paths above in one commit, in a pull request of its own: spec-dna.toml has edits beyond the pin (SD503)."

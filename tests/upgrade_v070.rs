@@ -186,32 +186,42 @@ fn config_diff_lines(out: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_dry_run_names_the_pin_move_and_no_other_edit_of_the_configuration() {
+fn the_dry_run_names_the_pin_move_and_the_new_skill_names_and_no_other_edit_of_the_configuration() {
     let repo = project();
     let before = tree_bytes(&repo.dir);
     let (code, out, err) = run(&repo, &["upgrade", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
-    // The diff of the configuration is the pin line.
+    // The diff of the configuration is the pin line and the list `skills`,
+    // which gets the name `accept` (ADR 0025).
+    let diff = config_diff_lines(&out);
     assert_eq!(
-        config_diff_lines(&out),
+        diff.len(),
+        4,
+        "the pin and the list `skills`: {diff:?}\n{out}"
+    );
+    assert_eq!(
+        diff[..2],
         [
             format!("-spec-dna = \"{}\"", pin_before_binary()),
             format!("+spec-dna = \"{VERSION}\""),
         ],
         "{out}"
     );
-    // The report names no edit beyond the pin, and the line `next:` says
-    // that only the pin changes.
     assert!(
-        !out.contains("edits of spec-dna.toml beyond the pin"),
-        "{out}"
+        diff[2].starts_with("-skills = ")
+            && diff[3].starts_with("+skills = ")
+            && diff[3].contains("\"accept\""),
+        "{diff:?}"
     );
+    // The line `next:` says that the pull request can also hold other work,
+    // because SD503 does not count the pin and the new skill names.
     let next = out
         .lines()
         .find(|l| l.starts_with("next:"))
         .unwrap_or_else(|| panic!("no next line: {out}"));
     assert!(
-        next.contains("Only the pin of spec-dna.toml changes"),
+        next.contains("only in the pin and in new skill names")
+            && next.contains("can also hold other work"),
         "{next}"
     );
     // The other paths are generated files. No document, script or test is
@@ -290,23 +300,36 @@ fn the_skills_of_the_project_stay() {
     assert!(!list.is_empty());
     let (code, out, err) = run(&repo, &["upgrade"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(skills_of(&repo), list, "the list `skills` stays");
-    // No skill file is added or removed, and the report names no rename.
+    // The list stays, and `accept` follows it (ADR 0025): the profile is not
+    // `lite`.
+    let mut want = list.clone();
+    want.push("accept".to_string());
+    assert_eq!(skills_of(&repo), want, "the list `skills` and `accept`");
+    // Only the files of `accept` are new, and the report names no rename.
     let kinds = repo.git_out(&["status", "--porcelain", "-uall", ".claude/skills"]);
     for line in kinds.lines() {
-        assert!(line.starts_with(" M"), "a skill file moved: {line}");
+        assert!(
+            line.starts_with(" M") || line.ends_with(&skill_file("accept")),
+            "a skill file moved: {line}"
+        );
     }
     let files_after: BTreeSet<String> = repo
-        .git_out(&["ls-files", ".claude/skills"])
+        .git_out(&["ls-files", ".claude/skills", "--others", "--cached"])
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(files_before, files_after);
+    let mut want_files = files_before.clone();
+    want_files.insert(skill_file("accept"));
+    assert_eq!(want_files, files_after);
+    assert!(repo.dir.join(".claude/agents/acceptor.md").is_file());
     for name in &list {
         assert!(files_after.contains(&skill_file(name)), "{name}");
     }
     assert!(!out.contains("is off by default in 0.7.0"), "{out}");
-    assert!(!out.contains("`skills` of `[harness]`"), "{out}");
+    assert!(
+        out.contains("added `accept`, new in 0.8.0"),
+        "the report names the new skill: {out}"
+    );
     // Each skill that is on by default and that the list has, stays on.
     for name in on.iter().filter(|n| list.contains(n)) {
         assert!(skills_of(&repo).contains(name), "{name}");
@@ -368,6 +391,8 @@ fn a_skill_that_a_person_turned_off_or_on_stays() {
     repo.commit("a person chose the skills");
     let (code, out, err) = run(&repo, &["upgrade"]);
     assert_eq!(code, 0, "{out}{err}");
+    // `accept` follows the list of the person: the pin is before 0.8.0.
+    new_list.push("accept".to_string());
     assert_eq!(skills_of(&repo), new_list, "{out}");
     assert!(
         !repo.dir.join(skill_file(&dropped)).exists(),
@@ -450,6 +475,55 @@ fn the_upgrade_and_a_code_change_in_one_commit_give_no_sd503_and_no_sd913() {
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(gate_lines(&repo, "SD503"), Vec::<String>::new());
     assert_eq!(gate_lines(&repo, "SD913"), Vec::<String>::new());
+}
+
+/// The real path of a 0.7 project: `upgrade` adds `accept` to the list, writes
+/// its skill and agent files, and the commit of the upgrade, with nothing else
+/// in it, gives no new diagnostic in `standard` and in `strict`. SD503 does not
+/// count the new skill names, so a commit of work can ride with it (ADR 0025).
+#[test]
+fn the_upgrade_alone_adds_accept_and_gives_no_new_diagnostic() {
+    for profile in ["standard", "strict"] {
+        let repo = project();
+        if profile == "strict" {
+            let text = repo.read("spec-dna.toml");
+            repo.write(
+                "spec-dna.toml",
+                &text
+                    .replace("profile = \"standard\"", "profile = \"strict\"")
+                    .replace("approval = \"branch\"", "approval = \"base\""),
+            );
+            repo.commit("strict");
+        }
+        repo.git(&["switch", "-q", "-c", "up"]);
+        let (code, out, err) = run(&repo, &["upgrade", "--dry-run"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert!(
+            config_diff_lines(&out)
+                .iter()
+                .any(|l| l.starts_with("+skills = ") && l.contains("\"accept\"")),
+            "{profile}: {out}"
+        );
+        let next = out
+            .lines()
+            .find(|l| l.starts_with("next:"))
+            .unwrap_or_else(|| panic!("no next line: {out}"));
+        assert!(next.contains("can also hold other work"), "{next}");
+        let (code, out, err) = run(&repo, &["upgrade"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert!(repo.dir.join(".claude/agents/acceptor.md").is_file());
+        assert!(repo.dir.join(skill_file("accept")).is_file());
+        repo.commit("upgrade");
+        let (code, out, err) = run(&repo, &["check", "--base", "main"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert!(
+            out.contains("0 new errors and 0 new warnings"),
+            "{profile}: {out}"
+        );
+        for c in ["SD501", "SD502", "SD503", "SD507", "SD913"] {
+            assert_eq!(gate_lines(&repo, c), Vec::<String>::new(), "{profile}: {c}");
+        }
+    }
 }
 
 /// The negative cases of the test above: they show that the same setup gives

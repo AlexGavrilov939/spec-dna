@@ -271,6 +271,10 @@ pub struct Plan {
     /// `[change] max-task-files`. No question asks for it. `--reconfigure`
     /// keeps the value if the current file sets the key. `None`: no key.
     pub max_task_files: Option<u32>,
+    /// `[change] higher-risk-acceptors` (design 0.8.0, D3 item 7). `--reconfigure`
+    /// keeps the value if the current file sets the key. `None`: no key, and the
+    /// profile `strict` writes 2.
+    pub higher_risk_acceptors: Option<u32>,
     /// `[change] base`. No question asks for it. `--reconfigure` keeps the
     /// value that the file sets. The config loader has checked the name.
     pub change_base: Option<String>,
@@ -497,6 +501,16 @@ impl Plan {
         if let Some(n) = self.max_task_files {
             out.push_str(&format!(
                 "max-task-files = {n}  # tasks of an approved plan: paths in `Files:` before SD924\n"
+            ));
+        }
+        // The acceptance record (design 0.8.0, D3): a `higher-risk` change needs
+        // 2 acceptors in `strict`.
+        let acceptors = self
+            .higher_risk_acceptors
+            .or((self.profile == Profile::Strict).then_some(2));
+        if let Some(n) = acceptors {
+            out.push_str(&format!(
+                "higher-risk-acceptors = {n}  # acceptors that a higher-risk change needs, from 1 to 3\n"
             ));
         }
         if let Some(b) = &self.change_base {
@@ -884,6 +898,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         detected_shared: facts.shared.clone(),
         max_fanout: config::DEFAULT_MAX_FANOUT,
         max_task_files: None,
+        higher_risk_acceptors: None,
         change_base: None,
         approval: Approval::Base,
         approvers: Vec::new(),
@@ -1004,6 +1019,16 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         })
         .unwrap_or(false)
         .then_some(cfg.max_task_files);
+    p.higher_risk_acceptors = text
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| {
+            t.get("change")
+                .and_then(toml::Value::as_table)
+                .map(|c| c.contains_key("higher-risk-acceptors"))
+        })
+        .unwrap_or(false)
+        .then_some(cfg.higher_risk_acceptors);
     p.change_base = cfg.change_base.clone();
     p.approval = cfg.change_approval;
     p.approvers = cfg.change_approvers.clone();
@@ -2169,7 +2194,7 @@ fn models_line(h: &Harness) -> String {
     let lean = Role::ALL.into_iter().filter(|r| !r.full_only());
     let full = Role::ALL.into_iter().filter(|r| r.full_only());
     let mut out = Vec::new();
-    for r in lean.chain(full).filter(|r| h.level.includes(*r)) {
+    for r in lean.chain(full).filter(|r| h.has_role(*r)) {
         let c = h.cfg(r);
         let mut w = format!("{}={}", r.key(), c.model.name());
         if r == Role::Advisor && c.agent != Model::Id("opus".into()) {
@@ -2691,14 +2716,18 @@ fn skill_listing_bytes(skills: &[Skill]) -> usize {
 
 /// The skills that a profile and a level propose (D37, D39, ADR 0023). `on`
 /// gives the default of a skill: the caller passes `|s| s.default_on()`, and a
-/// test passes a fake table. The level `full` proposes the 11 skills and
+/// test passes a fake table. The level `full` proposes the 12 skills and
 /// ignores the verdicts. `lite` proposes `brainstorm`, `write-plan` and
-/// `finish` that are on by default. `standard` and `strict` propose each skill
-/// that is on by default, also a skill outside D2 with the verdict `on`. The
-/// result has the order of D2.
+/// `finish` that are on by default, and never `accept`: the acceptance is off
+/// there (design 0.8.0, D3, answer 4 of the owner). `standard` and `strict`
+/// propose each skill that is on by default, also a skill outside D2 with the
+/// verdict `on`. The result has the order of D2.
 pub fn profile_skills(profile: Profile, level: Level, on: &dyn Fn(Skill) -> bool) -> Vec<Skill> {
     if level == Level::Full {
-        return Skill::ALL.to_vec();
+        return Skill::ALL
+            .into_iter()
+            .filter(|s| *s != Skill::Accept || profile != Profile::Lite)
+            .collect();
     }
     Skill::ALL
         .into_iter()
@@ -3417,8 +3446,8 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.base = b.clone();
     }
 
-    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 11 skills, also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, `acceptor` (it comes with the skill `accept`, and `lite` has neither), the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
+    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 12 skills (11 for `lite`), also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -4795,7 +4824,7 @@ mod tests {
         let d2: Vec<Skill> = Skill::ALL.into_iter().filter(|s| s.in_d2()).collect();
         let n = skill_listing_bytes(&d2);
         assert!(n > 588 && n <= 1250, "{n} bytes");
-        // The 11 skills of the level `full` have 1,900 bytes or fewer.
+        // The 12 skills of the level `full` have 1,900 bytes or fewer.
         let n = skill_listing_bytes(&profile_skills(Profile::Standard, Level::Full, &|_| false));
         assert!(n <= 1900, "{n} bytes");
     }
@@ -4832,10 +4861,10 @@ mod tests {
                 [
                     vec![Brainstorm, WritePlan, Finish],
                     vec![
-                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Finish, PostMortem,
+                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Accept, Finish, PostMortem,
                     ],
                     vec![
-                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Finish, PostMortem,
+                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Accept, Finish, PostMortem,
                     ],
                 ],
             ),
@@ -4853,10 +4882,15 @@ mod tests {
                     "{} with needs_on {needs_on}",
                     profile.name()
                 );
-                // The level `full` ignores the verdicts (D39).
+                // The level `full` ignores the verdicts (D39). `lite` has no
+                // acceptance, so it has no `accept` at any level.
+                let full: Vec<Skill> = Skill::ALL
+                    .into_iter()
+                    .filter(|s| *s != Accept || profile != Profile::Lite)
+                    .collect();
                 assert_eq!(
                     profile_skills(profile, Level::Full, &on),
-                    Skill::ALL.to_vec(),
+                    full,
                     "{} full",
                     profile.name()
                 );

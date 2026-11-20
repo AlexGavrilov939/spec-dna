@@ -767,7 +767,7 @@ pub fn release_json(rows: &[Row]) -> String {
     json::Obj::new().raw("release", &json::array(items)).end()
 }
 
-/// The 11 names of the skills and `agents-line`, the names that a result and
+/// The 12 names of the skills and `agents-line`, the names that a result and
 /// `eval verdict` use.
 pub fn names() -> Vec<&'static str> {
     let mut v: Vec<&'static str> = Skill::ALL.iter().map(|s| s.key()).collect();
@@ -1660,9 +1660,9 @@ mod tests {
     }
 
     #[test]
-    fn the_names_are_the_11_skills_and_agents_line() {
-        assert_eq!(names().len(), 12);
-        assert_eq!(names()[11], "agents-line");
+    fn the_names_are_the_12_skills_and_agents_line() {
+        assert_eq!(names().len(), 13);
+        assert_eq!(names()[12], "agents-line");
     }
 
     // The committed records (`bench/results/evals/*.jsonl`).

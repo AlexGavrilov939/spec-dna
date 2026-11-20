@@ -1,6 +1,6 @@
 # Agent harness
 
-This page is the reference of the Claude Code adapter of the harness: models, the 11 skills of the workflow pack, a review policy and up to 3 hooks. It is for people who configure or check the files that `spec-dna init` writes for Claude Code. [Agents](agents.md) describes the other agents.
+This page is the reference of the Claude Code adapter of the harness: models, the 12 skills of the workflow pack, a review policy and up to 3 hooks. It is for people who configure or check the files that `spec-dna init` writes for Claude Code. [Agents](agents.md) describes the other agents.
 
 One model builds. A stronger model advises. A verifier checks finished work. A small model searches. The skills of the workflow pack carry the steps of a change ([change guide](guides/change.md)). `spec-dna check` reports a generated file that differs from the configuration.
 
@@ -12,7 +12,7 @@ The harness is optional. `init` asks for a level.
 | --- | --- |
 | `none` | Nothing |
 | `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. It proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) |
-| `full` | `lean`, and `implementer` and `code-simplifier`. It proposes the 11 skills, also the skills that are off by default |
+| `full` | `lean`, and `implementer` and `code-simplifier`. It proposes the 12 skills, also the skills that are off by default. The profile `lite` proposes no `accept` at any level |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
 
@@ -24,6 +24,7 @@ A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or
 | `advisor` | Advice at a decision point. It writes no code | `fable` | `advisorModel` in `.claude/settings.json` | `lean`, `full` |
 | | The advisor when the advisor tool is not available | `opus`, `xhigh` | `.claude/agents/fallback-advisor.md` | `lean`, `full` |
 | `verifier` | Runs the tests and checks on finished work and reports defects. It fixes nothing | `opus`, `high` | `.claude/agents/verifier.md` | `lean`, `full` |
+| `acceptor` | Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code | `opus`, `high` | `.claude/agents/acceptor.md`, only with the skill `accept` | `lean`, `full` |
 | `researcher` | Read-only search of the repository and the web | `haiku`, `high` | `.claude/agents/Explore.md` | `lean`, `full` |
 | `implementer` | Code and tests for one delegated task | `sonnet`, `high` | `.claude/agents/implementer.md` | `full` |
 | `code-simplifier` | Removes needless complexity from the diff of a task and keeps the behavior | `sonnet`, `high` | `.claude/agents/code-simplifier.md` | `full` |
@@ -36,6 +37,7 @@ Notes:
 - To keep the built-in `Explore`, set `researcher = { claude-code = "none" }` in `[harness.roles]` and run `spec-dna init --reconfigure`. `init` removes the file if you did not edit it.
 - To use an agent of your own with the name `Explore`, set the same value and write your file. Without it, `init` refuses to replace your file.
 - The `verifier` file has the tools `Read` and `Bash`. Its text says "Do not fix anything; report only."
+- The `acceptor` file has the tools `Read`, `Grep`, `Glob`, `Bash` and `Write`. Its prompt is the output of `spec-dna accept <slug> --brief`, and its text says "Write only `acceptance.toml`" and "Do not fix it" for a defect. The role comes with the skill `accept`: `init` and `upgrade` write the file only where they write that skill, so the profile `lite` gets neither. A configuration with no `accept` in `skills` has no row `acceptor` in `[harness.roles]`, and `init` writes none. The description of the file is part of each request.
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
 - The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
 - spec-dna 0.6 renames the role `reviewer` to `verifier`, and its file `checker.md` to `verifier.md`. The role `spec-writer` ended, and `code-simplifier` is new at level `full`. [Upgrade from 0.5](#upgrade-from-05) gives the steps.
@@ -58,6 +60,7 @@ fanout-cap = 10
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
 verifier = { claude-code = "opus", effort = "high" }
+acceptor = { claude-code = "opus", effort = "high" }
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -65,13 +68,13 @@ helper = { claude-code = "haiku" }
 sonnet = "high"
 ```
 
-A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no `protect-tests` hook. A new configuration from `spec-dna init` has all 3 keys. It has the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) if the change policy is not `none` (the level `full` has all 11), `review-md = true` and `protect-tests = "fix-branches"`. The profile `lite` has fewer skills, no `REVIEW.md` and `protect-tests = "off"`. [init.md](init.md#parts-of-the-harness) gives the defaults.
+A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no `protect-tests` hook. A new configuration from `spec-dna init` has all 3 keys. It has the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) if the change policy is not `none` (the level `full` has all 12, except `accept` in the profile `lite`), `review-md = true` and `protect-tests = "fix-branches"`. The profile `lite` has fewer skills, no `REVIEW.md` and `protect-tests = "off"`. [init.md](init.md#parts-of-the-harness) gives the defaults.
 
 | Key | Meaning |
 | --- | --- |
 | `level` | `none`, `lean` or `full` |
 | `deny` | Tools that no agent of the project gets. A list that removes each tool of a generated agent is an error. `init` proposes `NotebookEdit` if git tracks no notebook. A deny rule removes the tool from each request, so it makes each request smaller |
-| `skills` | The skills of the workflow pack that `init` writes. Each value is one of the 11 names, and each name is listed once. `[]` writes none. `init` writes them in the order of the table in [The workflow pack](#the-workflow-pack-and-reviewmd), also if the list has another order. The names `intent`, `spec` and `plan` of 0.6 give exit code 3 ([Upgrade from 0.6](#upgrade-from-06)) |
+| `skills` | The skills of the workflow pack that `init` writes. Each value is one of the 12 names, and each name is listed once. `[]` writes none. `init` writes them in the order of the table in [The workflow pack](#the-workflow-pack-and-reviewmd), also if the list has another order. The names `intent`, `spec` and `plan` of 0.6 give exit code 3 ([Upgrade from 0.6](#upgrade-from-06)) |
 | `review-md` | `true` writes `REVIEW.md`. `false` writes no file |
 | `protect-tests` | `fix-branches`, `always` or `off`. It selects the hook that asks before an edit of a test file. See [`spec-dna hook protect-tests`](#spec-dna-hook-protect-tests) |
 | `protect-approvals` | `true` or `false`. `true` adds the hook that denies an approval by an agent. See [`spec-dna hook protect-approvals`](#spec-dna-hook-protect-approvals). `init` writes `true` for the profile `strict`. A file with no key has the same effect as `false` |
@@ -132,7 +135,7 @@ A file of your own in `.claude/agents` stays. If its agent name is the name of a
 
 ## The workflow pack and `REVIEW.md`
 
-The workflow pack has 11 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage skill binds to a step that `spec-dna next` names. An event skill binds to an event: a failure or an incident. Each skill is a folder `.claude/skills/spec-dna-<name>/SKILL.md`. `spec-dna next` prints the bare name, for example `write-plan`.
+The workflow pack has 12 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage skill binds to a step that `spec-dna next` names. An event skill binds to an event: a failure or an incident. Each skill is a folder `.claude/skills/spec-dna-<name>/SKILL.md`. `spec-dna next` prints the bare name, for example `write-plan`.
 
 | Skill | Kind and stage | Use | Artifact | Floor | Default |
 | --- | --- | --- | --- | --- | --- |
@@ -144,23 +147,25 @@ The workflow pack has 11 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage
 | `tdd` | Stage `test` | A requirement has no evidence | A test with a `covers:` tag, red before the code | SD608, SD916 | On |
 | `review` | Stage `deploy` | Before a merge | The review of the diff, and the answer to review comments | None | On |
 | `verify` | Stage `deploy` | Before the word "done" | The output of the `Proof` commands and of `check` | `finish` stops on SD915 and SD916 | Off |
+| `accept` | Stage `deploy` | The tasks of a change are done, and `spec-dna next` names `accept` | `acceptance.toml` in the folder of the change | SD927 to SD931, SD933. `finish` stops on them | On, but not in `lite` |
 | `finish` | Stage `closed` | The change is ready to apply | The result of `spec-dna finish` | `finish` | On |
 | `debug` | Event | A test or a command fails, and the cause is not known | A reproduction, a regression test and one fix | None | Off |
 | `post-mortem` | Event | An `incident` has an open follow-up | A new `intent.md` with `from:`, and an eval | SD918 | On |
 
 The floor is a check that fails when the artifact is wrong. It does not check what the skill adds, such as the order of a test and its code. Where the floor is `None`, the text of the skill is the only control.
 
-- The Default column is the default of 0.7.0, from the table of the release ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The 7 skills of the design (D2) are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. A skill of D2 is on unless its verdict is `off`, and no verdict is `off` in 0.7.0. The 4 other skills have no check of what they add, so each needs the verdict `on`: only `tdd` has it. `execute`, `verify` and `debug` have no verdict `on`, so they are off by default. `init` writes a skill only when `skills` lists it, and the level `full` proposes the 11. `spec-dna skill show <name>` prints the text of a skill that is off.
+- The Default column is the default of 0.7.0, from the table of the release ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The 7 skills of the design (D2) are the 2 that replace `spec-dna-intent` and `spec-dna-review` of 0.6, and 5 whose artifact a check reads. The skill `accept` joins them ([ADR 0025](adr/0025-independent-acceptance.md) amends ADR 0023), and `init` proposes it where the acceptance is on, so not in the profile `lite`. A skill of D2 is on unless its verdict is `off`, and no verdict is `off` in 0.7.0. The 4 other skills have no check of what they add, so each needs the verdict `on`: only `tdd` has it. `execute`, `verify` and `debug` have no verdict `on`, so they are off by default. `init` writes a skill only when `skills` lists it, and the level `full` proposes the 12. `spec-dna skill show <name>` prints the text of a skill that is off.
 - `tdd` gives one way for the commit of the red test: the subject `test: <what the test checks> (red)`, and a skip of only the hook that runs the tests, named in the body of the commit. The green commit runs all hooks. `write-plan` tells an agent to write no task for `spec-dna finish`. If the owner reviews the code before `finish`, the plan ends with the task `Review by the owner` (`Files: none`), which a person ticks after the review and before `spec-dna finish` runs. Only the review of the owner ends this task: `write-plan` and `execute` tell an agent never to tick it and never to write `Skip:` for it.
 - Each body has 5 parts in this order: when to use the skill, the commands, the artifact, the check, and the action when the check fails.
 - The text of a skill is static. It holds no value of the configuration, so the file is the same in each project. The binary holds the text, so the pin fixes it.
-- A skill never sets `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat, and that commit changes only the `status` line. The line of `AGENTS.md` has the same words. [The change guide](guides/change.md#choose-the-class) gives who approves each document.
+- A skill never sets `accepted` or `approved`. The skill `accept` limits the first sentence to the `status` line of an artifact, because its acceptor sets `result = "accepted"` in the record. An agent writes an approval commit only when the owner says so explicitly in the chat, and that commit changes only the `status` line. A skill also never adds an entry to `acknowledged-by` of an acceptance record. The line of `AGENTS.md` has the first 2 sentences of the rule, with the same words, and not the third sentence. [The change guide](guides/change.md#choose-the-class) gives who approves each document.
+- `accept` tells the builder to run `spec-dna accept <slug> --brief` and to give the whole output, unchanged, as the prompt of one agent `acceptor`, with no word of its own. The acceptor works from the brief only, runs the `Proof`, tries to break the change, writes the record and commits it alone, in a call of its own. For a `higher-risk` change the skill advises an acceptor in a new session. The advice is no rule, because the gate cannot check a session. A person can write the record by hand, also with the harness level `none`: a skill is no precondition of the gate ([ADR 0006](adr/0006-change-lifecycle.md)).
 - `execute` starts one fresh subagent for each task. Then 2 reviews follow: compliance with the task and `spec.md`, then quality. At the level `full`, `implementer` builds and `code-simplifier` runs the quality review. At the level `lean`, a general subagent builds and `verifier` runs both reviews.
 - The adapter skill `.claude/skills/spec-dna/SKILL.md` is separate. It has its own marker and exists with or without a harness ([init.md](init.md)).
 
 ### Read the text of a skill
 
-`spec-dna skill list` prints the 11 names with their kind, stage, state and default. `spec-dna skill show <name>` prints the body of one skill, with no front matter and no marker. It works for a skill that is off, and for an agent that has no skill folder. Such an agent runs `spec-dna skill show <name>` for the step that `spec-dna next` names. [commands.md](commands.md#skill) gives the output.
+`spec-dna skill list` prints the 12 names with their kind, stage, state and default. `spec-dna skill show <name>` prints the body of one skill, with no front matter and no marker. It works for a skill that is off, and for an agent that has no skill folder. Such an agent runs `spec-dna skill show <name>` for the step that `spec-dna next` names. [commands.md](commands.md#skill) gives the output.
 
 ### Disciplines
 
@@ -190,7 +195,7 @@ Nothing proves that Claude Code selects the spec-dna skill first. No eval has th
 ### Budgets
 
 - A description has 160 characters or fewer, and a body has 2,500 bytes or fewer.
-- The listing of Claude Code (`- spec-dna-<name>: <description>` and a line feed for each skill) has 1,900 bytes or fewer for the 11 skills, and 1,250 bytes or fewer for the 7 skills of the design (D2).
+- The listing of Claude Code (`- spec-dna-<name>: <description>` and a line feed for each skill) has 1,900 bytes or fewer for the 12 skills, and 1,250 bytes or fewer for the 8 skills of the design (D2, with `accept`).
 - The block of disciplines has 700 bytes or fewer. The line of `AGENTS.md`, with its marker, has 400 bytes or fewer.
 - A test fixes each limit.
 
@@ -265,18 +270,20 @@ Set `protect-approvals = true` in `[harness]` (the profile `strict` has it). A p
 
 - a call that runs `spec-dna approve`, also on the word of the owner, and also inside `sh -c`;
 - a call that writes the word `accepted` or `approved` and runs `git commit`. The hook cannot read the edit in that case, so the reason says to run the edit and the commit as 2 calls;
-- a `git commit` while the working tree or the index holds an artifact of a change (`intent.md`, `spec.md` or `plan.md`) with its approval status (`accepted` for an intent, `approved` for a spec or a plan), and the old tree does not. The old tree is `HEAD`, or `HEAD~1` for `--amend`. A new file counts.
+- a `git commit` while the working tree or the index holds an artifact of a change (`intent.md`, `spec.md` or `plan.md`) with its approval status (`accepted` for an intent, `approved` for a spec or a plan), and the old tree does not. The old tree is `HEAD`, or `HEAD~1` for `--amend`. A new file counts;
+- a `git commit` while the working tree or the index holds the record `acceptance.toml` of a change folder with an entry in `acknowledged-by` that the old tree does not have ([commands.md](commands.md#accept)). An agent never acknowledges a record: only a person does. The commit of `finish` passes, because it deletes the record of the folder and adds the same bytes under `.spec-dna/accepted/`.
+- a `git commit` while the working tree or the index holds a new file under `.spec-dna/accepted/` whose bytes are not those of a record that the same commit deletes from a change folder, and a `git commit` that changes a file under `.spec-dna/accepted/` that the old tree has. A delete of such a file passes, so a person can revert the commit of `finish`.
 
 The test is that a status moves to the approval value, not that the commit changes only the status line. With `strict`, `approval` is `base`, and a commit that sets the status and edits the text becomes an approval at the merge. The hook has no exception for a routine plan: a person approves each artifact.
 
-The command that `init` writes has one `--intent '<dir>'` for each folder of the `intent` layer, from the root of the repository, for example `docs/intent`. The hook reads no `spec-dna.toml`. It runs `git` only for a command whose `git` has the subcommand `commit` (`git log --grep commit` is no commit; options such as `-C <dir>` and `-c <name=value>` can come before the subcommand), and then 3 times, and 2 more times for each artifact file that the tree changes. Bad JSON, no git, a git error and a path that it cannot read give no output and exit code 0.
+The command that `init` writes has one `--intent '<dir>'` for each folder of the `intent` layer, from the root of the repository, for example `docs/intent`. The hook reads no `spec-dna.toml`. It runs `git` only for a command whose `git` has the subcommand `commit` (`git log --grep commit` is no commit; options such as `-C <dir>` and `-c <name=value>` can come before the subcommand), and then 3 times, and 2 more times for each artifact file that the tree changes (3 more times for each record). Bad JSON, no git, a git error and a path that it cannot read give no output and exit code 0.
 
 These limits apply:
 
 - The hook reads the text of the command. It is not a shell parser. It does not see an edit and a commit in one call that has no word `accepted` or `approved` (a variable, a script file). It does not see git plumbing (`commit-tree`, `update-ref`), `cherry-pick`, `rebase`, `merge`, `am` or a git alias.
 - The same scan can deny a call that only names the words, for example `grep "spec-dna approve" docs/` or a commit message with the line `spec-dna approve` in a heredoc. The agent then runs the call in another form.
 - The hook expands `~`, `$PWD` and `$CLAUDE_PROJECT_DIR` (also with braces) at the start of the dir of a `cd` or `git -C`. It cannot read another dir with `$` or `~`. The hook then fails closed: it inspects the repository of the `cwd` of the event and of `CLAUDE_PROJECT_DIR` too, and it denies the call if one of them has a pending approval. A commit in a third repository, behind such a dir, passes.
-- The word test of the second rule is on each word before `git commit` in the call. A file or a folder name with `accepted` or `approved`, such as `git add x-approved.md && git commit`, gives a deny. Run the `git add` and the `git commit` as 2 calls.
+- The word test of the second rule is on each word before `git commit` in the call. A file or a folder name with `accepted` or `approved`, such as `git add x-approved.md && git commit`, gives a deny. The path `.spec-dna/accepted/`, where `finish` writes the archive file of an acceptance record, is the one exception: the test ignores it, so `git add .spec-dna/accepted/<slug>.toml && git commit` passes. Run the `git add` and the `git commit` as 2 calls.
 - The hook reads at most 1 MiB of the event. A longer event gives no output (it fails open).
 - It denies a commit that has nothing to do with an approval while the working tree holds a status that a person set by hand. The person commits that status, or runs `spec-dna approve`.
 - It denies a move of a change folder whose artifacts are `accepted` or `approved`, because the new path has an approval status. The person makes the move.
@@ -308,9 +315,9 @@ An eval tests the agent setup of a project: its instruction files, skills, agent
 
 - The main model sets the cost of each request. `opus` at `xhigh` costs more than `sonnet` at `high`.
 - The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
-- `verifier`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request.
+- `verifier`, `acceptor`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request. One acceptance run costs about as much as a `verify` or `review` run (the estimate of design 0.8.0, D3; D62 measures it).
 - The `CLAUDE.md` line is part of each request (about 200 tokens). The line of `AGENTS.md` has 400 bytes or fewer, so it adds about 100 tokens.
-- The descriptions of the skills are part of each request: 1,250 bytes or fewer for the 7 skills of the design (D2), and 1,900 bytes or fewer for the 11 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
+- The descriptions of the skills are part of each request: 1,250 bytes or fewer for the 8 skills of the design (D2, with `accept`), and 1,900 bytes or fewer for the 12 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
 - `init` prints the bytes that the harness adds to each request, with the skill descriptions in the sum.
 
 These options make each request smaller. `init` does not write them, because they remove features that some teams use:
@@ -367,6 +374,6 @@ A 0.6 project that lists the skills `intent`, `spec` or `plan` in `[harness] ski
 | Skill `plan` | `write-plan` |
 | Skill `review` | `review`, with a new text |
 
-`spec-dna upgrade` renames these names in `[harness] skills` before it reads the file. It changes only the value of `skills`, not the type names `intent`, `spec` and `plan` in other keys. It puts the names in the order of the table, and it adds a name only once. It adds a new name only if the name is on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). For each name that it leaves out, the report has a line with the name and the fix: add the name to `skills`. A valid name of the list, such as `review`, stays, also when it is off by default. A list that is not empty also gets each skill that is new in 0.7.0 (`tdd`, `execute`, `verify`, `finish`, `debug` and `post-mortem`) and that `init` proposes for the profile and the level of the project. An empty list stays empty, and the report names each skill that `upgrade` adds. `upgrade` applies no other part of the preset of a profile: use `init --reconfigure` for the other parts. A second run changes nothing. Only `upgrade` renames: `init` gives exit code 3 for an old name in `skills`, and exit code 2 for an old name in an answer, and its message names the new name. A list of many lines that the rename would change in length stays. Then `upgrade` stops with exit code 3 and prints the list that you write by hand.
+`spec-dna upgrade` renames these names in `[harness] skills` before it reads the file. It changes only the value of `skills`, not the type names `intent`, `spec` and `plan` in other keys. It puts the names in the order of the table, and it adds a name only once. It adds a new name only if the name is on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). For each name that it leaves out, the report has a line with the name and the fix: add the name to `skills`. A valid name of the list, such as `review`, stays, also when it is off by default. A list that is not empty also gets each skill that is new in 0.7.0 (`tdd`, `execute`, `verify`, `finish`, `debug` and `post-mortem`) or in 0.8.0 (`accept`) and that `init` proposes for the profile and the level of the project. The profile `lite` gets no `accept`. The agent file `acceptor.md` comes with the skill. After `upgrade` alone, a project of 0.7.1 gets no new diagnostic from the skill or the agent. An empty list stays empty, and the report names each skill that `upgrade` adds. `upgrade` applies no other part of the preset of a profile: use `init --reconfigure` for the other parts. A second run changes nothing. Only `upgrade` renames: `init` gives exit code 3 for an old name in `skills`, and exit code 2 for an old name in an answer, and its message names the new name. A list of many lines that the rename would change in length stays. Then `upgrade` stops with exit code 3 and prints the list that you write by hand.
 
 `init` and `upgrade` remove the unedited file of each old skill: `.claude/skills/spec-dna-intent/SKILL.md`, `.claude/skills/spec-dna-spec/SKILL.md` and `.claude/skills/spec-dna-plan/SKILL.md`. They keep an edited file and name it, and `check` reports SD501. `spec-dna upgrade` writes the files of the new names that the list has. A skill that is off by default stays off until `skills` lists it.

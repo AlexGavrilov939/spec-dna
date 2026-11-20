@@ -4,7 +4,7 @@
 
 use crate::adapters::VERSION;
 use crate::diag::{Code, Severity};
-use crate::harness::Harness;
+use crate::harness::{Harness, Skill};
 use crate::layer::{self, Graph};
 use crate::model::DocType;
 use crate::release;
@@ -116,6 +116,10 @@ pub struct Config {
     /// plan lists before SD924. An integer from 1 to 20. The default is
     /// `DEFAULT_MAX_TASK_FILES` (design 0.7.0, D40).
     pub max_task_files: u32,
+    /// `[change] higher-risk-acceptors`: the acceptor entries that a record of a
+    /// higher-risk change needs. An integer from 1 to 3. The default is
+    /// `DEFAULT_HIGHER_RISK_ACCEPTORS` (design 0.8.0, D3 item 7).
+    pub higher_risk_acceptors: u32,
     /// `[change] base`: the name of a local branch that is the base of the
     /// change checks when `--base` and `refs/remotes/origin/HEAD` give none
     /// (design 0.6.1, D35 and D36). `None`: the key is absent.
@@ -290,6 +294,9 @@ pub const DEFAULT_MAX_FANOUT: u32 = 8;
 /// The default of `[change] max-task-files`.
 pub const DEFAULT_MAX_TASK_FILES: u32 = 3;
 
+/// The default of `[change] higher-risk-acceptors`.
+pub const DEFAULT_HIGHER_RISK_ACCEPTORS: u32 = 1;
+
 /// The default of `[change] high-risk-layers`. A layer that the graph does
 /// not have is dropped.
 pub const DEFAULT_HIGH_RISK_LAYERS: [&str; 2] = ["interfaces", "rules"];
@@ -303,6 +310,7 @@ struct ChangeTable {
     shared_paths: Vec<String>,
     max_fanout: u32,
     max_task_files: u32,
+    higher_risk_acceptors: u32,
     base: Option<String>,
     approval: Approval,
     approvers: Vec<String>,
@@ -319,6 +327,7 @@ impl ChangeTable {
             shared_paths: Vec::new(),
             max_fanout: DEFAULT_MAX_FANOUT,
             max_task_files: DEFAULT_MAX_TASK_FILES,
+            higher_risk_acceptors: DEFAULT_HIGHER_RISK_ACCEPTORS,
             base: None,
             approval: Approval::Base,
             approvers: Vec::new(),
@@ -383,6 +392,13 @@ impl ChangeTable {
                 return Err("`change.max-task-files` must be an integer from 1 to 20".into());
             }
         };
+        let higher_risk_acceptors = match f.take("higher-risk-acceptors") {
+            None => DEFAULT_HIGHER_RISK_ACCEPTORS,
+            Some(Value::Integer(n)) if (1..=3).contains(n) => *n as u32,
+            Some(_) => {
+                return Err("`change.higher-risk-acceptors` must be an integer from 1 to 3".into());
+            }
+        };
         let base = f.opt_str("base")?;
         if let Some(b) = &base {
             branch_name_problem(b).map_or(Ok(()), |why| {
@@ -430,6 +446,7 @@ impl ChangeTable {
             shared_paths,
             max_fanout,
             max_task_files,
+            higher_risk_acceptors,
             base,
             approval,
             approvers,
@@ -767,7 +784,59 @@ pub fn pin_upgrade_only_change(old: &str, new: &str) -> bool {
     ) else {
         return false;
     };
-    from < to && without_pin_and_sums(old) == without_pin_and_sums(new)
+    if from >= to {
+        return false;
+    }
+    let (old, new) = (without_pin_and_sums(old), without_pin_and_sums(new));
+    if old == new {
+        return true;
+    }
+    // `upgrade` also adds the names of the skills that the release gives
+    // (ADR 0025). The list `skills` of `[harness]` on one line may gain
+    // names of skills. Nothing else may change.
+    let ((old_rest, old_list), (new_rest, new_list)) =
+        (without_skills_line(&old), without_skills_line(&new));
+    let (Some(old_list), Some(new_list)) = (old_list, new_list) else {
+        return false;
+    };
+    old_rest == new_rest
+        && old_list.iter().all(|n| new_list.contains(n))
+        && new_list
+            .iter()
+            .all(|n| old_list.contains(n) || Skill::from_key(n).is_some())
+}
+
+/// The text of a configuration without the line `skills = [...]` of the table
+/// `[harness]`, and the names of that list. The list is `None` if the table
+/// has no such line, or if the line is not a list of strings on one line.
+fn without_skills_line(text: &str) -> (String, Option<Vec<String>>) {
+    let mut table = String::new();
+    let mut list = None;
+    let mut kept = String::new();
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            table = trimmed.split('#').next().unwrap_or("").trim().to_string();
+        }
+        let is_key = trimmed
+            .strip_prefix("skills")
+            .is_some_and(|r| r.trim_start().starts_with('='));
+        if table == "[harness]" && is_key {
+            let names = line.parse::<Table>().ok().and_then(|t| {
+                t.get("skills")?
+                    .as_array()?
+                    .iter()
+                    .map(|v| v.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            });
+            if names.is_some() {
+                list = names;
+                continue;
+            }
+        }
+        kept.push_str(line);
+    }
+    (kept, list)
 }
 
 /// True if the text of a `Cargo.toml` is the package `spec-dna` with the
@@ -960,6 +1029,12 @@ impl Profile {
             "SD618" => (None, Some(W), Some(W)),
             "SD619" => (None, Some(W), Some(E)),
             "SD620" => (None, Some(E), Some(E)),
+            // The acceptance record (design 0.8.0, D3). Off in `lite`. The codes
+            // need no key: `accept` and `finish` use them where a change has a
+            // plan that needs a record.
+            "SD927" | "SD928" | "SD929" | "SD930" | "SD931" | "SD933" | "SD935" => {
+                (None, Some(E), Some(E))
+            }
             _ => return Some(code.severity()),
         };
         match self {
@@ -975,7 +1050,7 @@ impl Profile {
 pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
-pub const GROUPS: [(&str, &[&str]); 10] = [
+pub const GROUPS: [(&str, &[&str]); 11] = [
     ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
@@ -983,6 +1058,12 @@ pub const GROUPS: [(&str, &[&str]); 10] = [
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("reports", &["SD613", "SD614", "SD615", "SD616", "SD617"]),
     ("proof", &["SD618", "SD619", "SD620"]),
+    (
+        "acceptance",
+        &[
+            "SD927", "SD928", "SD929", "SD930", "SD931", "SD933", "SD935",
+        ],
+    ),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
     (
@@ -1017,6 +1098,13 @@ fn is_change_code(code: Code) -> bool {
     GROUPS
         .iter()
         .any(|g| g.0 == "changes" && g.1.contains(&code.code()))
+}
+
+/// True for a code of the group `acceptance` (design 0.8.0, D3).
+fn is_acceptance_code(code: Code) -> bool {
+    GROUPS
+        .iter()
+        .any(|g| g.0 == "acceptance" && g.1.contains(&code.code()))
 }
 
 /// Reads a severity value: `"off"` (`None`), `"warning"` or `"error"`.
@@ -1657,6 +1745,7 @@ impl Config {
             shared_paths: change.shared_paths,
             max_fanout: change.max_fanout,
             max_task_files: change.max_task_files,
+            higher_risk_acceptors: change.higher_risk_acceptors,
             change_base: change.base,
             change_approval: change.approval,
             change_approvers: change.approvers,
@@ -1693,9 +1782,11 @@ impl Config {
     }
 
     fn configured_severity(&self, code: Code, root: Option<usize>) -> Option<Severity> {
-        // With no change policy, the codes of the group `changes` have no
-        // meaning. No rule of the file can turn them on.
-        if is_change_code(code) && self.change_policy == ChangePolicy::None {
+        // With no change policy, the codes of the groups `changes` and
+        // `acceptance` have no meaning. No rule of the file can turn them on.
+        if (is_change_code(code) || is_acceptance_code(code))
+            && self.change_policy == ChangePolicy::None
+        {
             return None;
         }
         let root = root.map(|r| &self.roots[r]);
@@ -2825,6 +2916,51 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
+    fn a_pin_upgrade_may_add_skill_names_to_a_list_of_one_line() {
+        let head = "spec-dna = \"0.7.0\"\n\n[harness]\nlevel = \"lean\"\n";
+        let old = format!(
+            "{head}skills = [\"review\", \"finish\"]  # mine\n\n[[roots]]\npath = \"docs\"\n"
+        );
+        let new = |skills: &str| {
+            format!(
+                "spec-dna = \"0.8.0\"\n\n[harness]\nlevel = \"lean\"\nskills = {skills}\n\n[[roots]]\npath = \"docs\"\n"
+            )
+        };
+        // Names that the release added, and the comment stays.
+        assert!(pin_upgrade_only_change(
+            &old,
+            &new("[\"review\", \"finish\", \"accept\"]  # mine")
+        ));
+        assert!(pin_upgrade_only_change(
+            &old,
+            &new("[\"review\", \"accept\", \"finish\"]  # mine")
+        ));
+        // A name that is no skill, a name that goes away, and a list of many
+        // lines count as a change of the file.
+        assert!(!pin_upgrade_only_change(
+            &old,
+            &new("[\"review\", \"finish\", \"nope\"]  # mine")
+        ));
+        assert!(!pin_upgrade_only_change(
+            &old,
+            &new("[\"review\", \"accept\"]  # mine")
+        ));
+        assert!(!pin_upgrade_only_change(
+            &old,
+            &new("[\"review\",\n  \"finish\", \"accept\"]  # mine")
+        ));
+        // Another edit with the new names is a change too.
+        assert!(!pin_upgrade_only_change(
+            &old,
+            &new("[\"review\", \"finish\", \"accept\"]  # mine").replace("lean", "full")
+        ));
+        // The same list under another table is no skill list.
+        let other = "spec-dna = \"0.7.0\"\n\n[x]\nskills = [\"review\"]\n";
+        let other_new = "spec-dna = \"0.8.0\"\n\n[x]\nskills = [\"review\", \"accept\"]\n";
+        assert!(!pin_upgrade_only_change(other, other_new));
+    }
+
+    #[test]
     fn a_pin_line_is_the_key_spec_dna_with_a_string() {
         assert!(is_pin_line("spec-dna = \"1.2.3\""));
         assert!(is_pin_line("  spec-dna='1.2.3' # c\r\n"));
@@ -3788,6 +3924,108 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
+    fn the_profile_rows_of_the_acceptance_codes() {
+        use Severity::Error as E;
+        // The design table of D3: lite off, standard error, strict error. Each
+        // code is in the group `acceptance` and in no other group. The rows need
+        // a change policy: with none, the group is off.
+        let codes = [
+            Code::AcceptanceMissing,
+            Code::AcceptanceInvalid,
+            Code::AcceptanceStale,
+            Code::AcceptanceRejected,
+            Code::SelfAccepted,
+            Code::AcceptorMissing,
+            Code::RecordEdited,
+        ];
+        let change = "[change]\npolicy = \"three-class\"\n";
+        for code in codes {
+            for (profile, want) in [("lite", None), ("standard", Some(E)), ("strict", Some(E))] {
+                let c = with(&format!("profile = \"{profile}\""), change).unwrap();
+                assert_eq!(c.severity(code, None), want, "{} {profile}", code.code());
+                assert_eq!(c.is_off(code), want.is_none());
+            }
+            let groups: Vec<&str> = GROUPS
+                .iter()
+                .filter(|g| g.1.contains(&code.code()))
+                .map(|g| g.0)
+                .collect();
+            assert_eq!(groups, ["acceptance"], "{}", code.code());
+        }
+        // A rule for the group `changes` of 0.7.1 does not change them, and a
+        // rule for the group `acceptance` does, also in `lite`.
+        let c = with(
+            "profile = \"lite\"",
+            &format!("{change}[rules]\nchanges = \"error\"\nevidence = \"error\"\n"),
+        )
+        .unwrap();
+        for code in codes {
+            assert_eq!(c.severity(code, None), None, "{}", code.code());
+        }
+        let c = with(
+            "profile = \"lite\"",
+            &format!("{change}[rules]\nacceptance = \"warning\"\n"),
+        )
+        .unwrap();
+        for code in codes {
+            assert_eq!(c.severity(code, None), Some(Severity::Warning));
+        }
+        let c = with(
+            "profile = \"lite\"",
+            &format!("{change}[rules]\nSD928 = \"error\"\n"),
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::AcceptanceInvalid, None), Some(E));
+        assert_eq!(c.severity(Code::AcceptanceStale, None), None);
+        let c = with(
+            "profile = \"standard\"",
+            &format!("{change}[rules]\nacceptance = \"off\"\n"),
+        )
+        .unwrap();
+        for code in codes {
+            assert!(c.is_off(code), "{}", code.code());
+        }
+    }
+
+    #[test]
+    fn the_policy_none_turns_off_the_acceptance_group_before_the_rules() {
+        for change in ["", "[change]\npolicy = \"none\"\n"] {
+            for rules in ["", "[rules]\nacceptance = \"error\"\nSD927 = \"error\"\n"] {
+                let text = format!(
+                    "spec-dna = \"0.1.0\"\nprofile = \"strict\"\n{change}{rules}[[roots]]\npath = \"docs\"\nrules = {{ acceptance = \"error\", SD928 = \"error\" }}\n"
+                );
+                let c = Config::parse(&text).unwrap();
+                for code in [
+                    Code::AcceptanceMissing,
+                    Code::AcceptanceInvalid,
+                    Code::RecordEdited,
+                ] {
+                    assert_eq!(c.severity(code, Some(0)), None, "{change:?} {rules:?}");
+                    assert_eq!(c.severity(code, None), None);
+                    assert!(c.is_off(code));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_key_higher_risk_acceptors_has_a_default_and_bounds() {
+        let text = |keys: &str| format!("[change]\npolicy = \"three-class\"\n{keys}\n");
+        let c = with("", &text("")).unwrap();
+        assert_eq!(c.higher_risk_acceptors, 1);
+        for n in 1..=3 {
+            let c = with("", &text(&format!("higher-risk-acceptors = {n}"))).unwrap();
+            assert_eq!(c.higher_risk_acceptors, n);
+        }
+        for bad in ["0", "4", "-1", "\"2\"", "1.5", "true"] {
+            let e = with("", &text(&format!("higher-risk-acceptors = {bad}"))).unwrap_err();
+            assert!(e.contains("change.higher-risk-acceptors"), "{bad}: {e}");
+        }
+        // No table: the default.
+        assert_eq!(with("", "").unwrap().higher_risk_acceptors, 1);
+    }
+
+    #[test]
     fn the_profile_rows_of_the_change_codes() {
         use Severity::{Error as E, Warning as W};
         // The design table: code, lite, standard, strict.
@@ -4076,6 +4314,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "gate",
                 "high-risk-layers",
                 "high-risk-paths",
+                "higher-risk-acceptors",
                 "max-fanout",
                 "max-task-files",
                 "policy",
@@ -4092,6 +4331,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ("shared-paths", "1"),
             ("max-fanout", "\"x\""),
             ("max-task-files", "\"x\""),
+            ("higher-risk-acceptors", "\"x\""),
         ] {
             let e = with("", &format!("[change]\npolicy = \"none\"\n{k} = {bad}\n")).unwrap_err();
             assert!(

@@ -433,3 +433,224 @@ fn only_the_subcommand_commit_reads_the_repository() {
         assert_denies(&answer(&r, cmd), &[INTENT]);
     }
 }
+
+// ---- The acknowledgement of an acceptance record (design 0.8.0, D3 item 11) ----
+
+const RECORD: &str = "docs/intent/valve-timeout/acceptance.toml";
+const ARCHIVE: &str = ".spec-dna/accepted/valve-timeout.toml";
+
+/// A record text with the entries of `acknowledged-by` and one finding text.
+fn record(acks: &[&str], finding: &str) -> String {
+    let list: Vec<String> = acks.iter().map(|a| format!("\"{a}\"")).collect();
+    format!(
+        "format = 1\nchange = \"valve-timeout\"\nscope = [\"src/**\"]\npaths = [\"src/a.py\"]\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = [{}]\n\n[[acceptor]]\nrole = \"acceptor\"\nbrief = \"0123456789abcdef\"\nsession = \"s1\"\nagent = \"unknown\"\nresult = \"accepted\"\n\n[[finding]]\nacceptor = 1\nseverity = \"nit\"\npath = \"src/a.py\"\ntext = \"{finding}\"\n",
+        list.join(", ")
+    )
+}
+
+/// The project with a committed record that has the entries `acks`.
+fn with_record(acks: &[&str]) -> Repo {
+    let r = project();
+    r.write(RECORD, &record(acks, "A name has no unit."));
+    r.commit("record");
+    r
+}
+
+#[test]
+fn denies_a_commit_that_adds_an_entry_to_acknowledged_by() {
+    let r = with_record(&[]);
+    r.write(
+        RECORD,
+        &record(&["owner@example.org"], "A name has no unit."),
+    );
+    r.git(&["add", RECORD]);
+    let out = answer(&r, "git commit -m 'acknowledge'");
+    assert_denies(
+        &out,
+        &[
+            RECORD,
+            "`acknowledged-by`",
+            "only a person acknowledges a record",
+        ],
+    );
+    // The same edit in the working tree, with `git commit -a`.
+    let r = with_record(&[]);
+    r.write(
+        RECORD,
+        &record(&["owner@example.org"], "A name has no unit."),
+    );
+    assert_denies(&answer(&r, "git commit -am x"), &[RECORD]);
+    assert_denies(
+        &answer(&r, "git add -A && git commit -m x"),
+        &["`acknowledged-by`"],
+    );
+}
+
+#[test]
+fn denies_a_new_record_that_has_an_entry_and_an_amend_that_keeps_one() {
+    let r = project();
+    r.write(
+        RECORD,
+        &record(&["owner@example.org"], "A name has no unit."),
+    );
+    assert_denies(
+        &answer(&r, "git add -A && git commit -m x"),
+        &[RECORD, "`acknowledged-by`"],
+    );
+    // A person made this commit. The amend of an agent keeps its entry.
+    r.commit("acknowledge");
+    assert_eq!(answer(&r, "git commit -m 'more work'"), "", "a new commit");
+    assert_denies(
+        &answer(&r, "git commit --amend --no-edit"),
+        &["`acknowledged-by`"],
+    );
+}
+
+#[test]
+fn allows_a_commit_of_a_record_that_adds_no_entry() {
+    // A first record with an empty list.
+    let r = project();
+    r.write(RECORD, &record(&[], "A name has no unit."));
+    assert_eq!(answer(&r, "git add -A && git commit -m record"), "");
+    // An edit of a finding keeps the list.
+    let r = with_record(&[]);
+    r.write(RECORD, &record(&[], "A name has no unit, and no comment."));
+    assert_eq!(answer(&r, "git commit -am 'findings'"), "");
+    // An entry that HEAD already has is no new entry.
+    let r = with_record(&["owner@example.org"]);
+    r.write(RECORD, &record(&["owner@example.org"], "Another finding."));
+    assert_eq!(answer(&r, "git commit -am 'findings'"), "");
+    // Removing an entry adds none.
+    r.write(RECORD, &record(&[], "Another finding."));
+    assert_eq!(answer(&r, "git commit -am 'findings'"), "");
+}
+
+#[test]
+fn allows_the_commit_of_finish_that_moves_the_record_to_the_archive() {
+    let r = with_record(&["owner@example.org"]);
+    // `finish` deletes the folder record and writes the same bytes to the archive.
+    let bytes = r.read(RECORD);
+    std::fs::remove_file(r.dir.join(RECORD)).unwrap();
+    r.write(ARCHIVE, &bytes);
+    assert_eq!(answer(&r, "git add -A"), "");
+    assert_eq!(answer(&r, "git commit -m 'feat: finish'"), "");
+    assert_eq!(answer(&r, "git commit -am 'feat: finish'"), "");
+}
+
+/// The project after `finish`: the record is deleted, and the archive file
+/// has the bytes `archive`.
+fn finished(archive: &str) -> Repo {
+    let r = with_record(&[]);
+    std::fs::remove_file(r.dir.join(RECORD)).unwrap();
+    r.write(ARCHIVE, archive);
+    r
+}
+
+#[test]
+fn denies_an_archive_file_that_differs_from_the_record_that_the_commit_deletes() {
+    // A hand edit adds an entry to `acknowledged-by` in the archive file.
+    let edited = record(&["owner@example.org"], "A name has no unit.");
+    let r = finished(&edited);
+    for cmd in [
+        "git add -A && git commit -m 'feat: finish'",
+        "git commit -am 'feat: finish'",
+    ] {
+        assert_denies(&answer(&r, cmd), &[ARCHIVE, "not the record"]);
+    }
+    // The same bytes as the record pass.
+    let same = record(&[], "A name has no unit.");
+    assert_eq!(
+        answer(
+            &finished(&same),
+            "git add -A && git commit -m 'feat: finish'"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn denies_a_new_archive_file_when_the_commit_deletes_no_record() {
+    let r = with_record(&[]);
+    r.write(ARCHIVE, &record(&[], "A name has no unit."));
+    assert_denies(
+        &answer(&r, "git add -A && git commit -m 'forged'"),
+        &[ARCHIVE, "not the record"],
+    );
+}
+
+#[test]
+fn denies_a_commit_that_edits_an_archive_file() {
+    let r = finished(&record(&[], "A name has no unit."));
+    r.commit("feat: finish");
+    // An edit of a committed archive file, in the tree, in the index.
+    r.write(
+        ARCHIVE,
+        &record(&["owner@example.org"], "A name has no unit."),
+    );
+    for cmd in ["git commit -am 'edit'", "git commit -m 'edit'"] {
+        assert_denies(&answer(&r, cmd), &[ARCHIVE, "edits an archive file"]);
+    }
+    r.git(&["add", ARCHIVE]);
+    assert_denies(
+        &answer(&r, "git commit -m 'edit'"),
+        &[ARCHIVE, "edits an archive file"],
+    );
+    // A commit that leaves the file alone passes.
+    r.write(ARCHIVE, &record(&[], "A name has no unit."));
+    r.git(&["add", ARCHIVE]);
+    assert_eq!(answer(&r, "git commit -m 'no change'"), "");
+}
+
+#[test]
+fn the_archive_folder_name_with_no_final_slash_is_no_edit_of_a_status() {
+    let r = finished(&record(&[], "A name has no unit."));
+    assert_eq!(
+        answer(
+            &r,
+            "git add .spec-dna/accepted docs/intent && git commit -m 'feat: finish'"
+        ),
+        ""
+    );
+}
+
+#[test]
+fn the_reason_for_an_entry_does_not_name_a_command_that_does_not_exist_yet() {
+    let r = with_record(&[]);
+    r.write(
+        RECORD,
+        &record(&["owner@example.org"], "A name has no unit."),
+    );
+    let out = answer(&r, "git commit -am 'acknowledge'");
+    assert_denies(&out, &["`acknowledged-by`"]);
+    assert!(!out.contains("spec-dna approve"), "{out}");
+}
+
+#[test]
+fn allows_one_call_that_adds_the_archive_path_and_commits_finish() {
+    // The folder `.spec-dna/accepted/` has the word `accepted` in its name. A
+    // path is no edit of a status, so Rule C does not count it.
+    let r = with_record(&["owner@example.org"]);
+    let bytes = r.read(RECORD);
+    std::fs::remove_file(r.dir.join(RECORD)).unwrap();
+    r.write(ARCHIVE, &bytes);
+    assert_eq!(
+        answer(
+            &r,
+            "git add .spec-dna/accepted/valve-timeout.toml docs/intent && git commit -m 'feat: finish'"
+        ),
+        ""
+    );
+    // The word in text is still an edit.
+    let out = answer(&r, "echo 'status: accepted' >> x && git commit -am m");
+    assert_denies(&out, &["run the edit and the commit as 2 calls"]);
+}
+
+#[test]
+fn denies_one_call_that_writes_accepted_and_commits_the_record() {
+    let r = with_record(&[]);
+    let out = answer(
+        &r,
+        "printf 'result = \"accepted\"' >> docs/intent/valve-timeout/acceptance.toml && git commit -am record",
+    );
+    assert_denies(&out, &["run the edit and the commit as 2 calls"]);
+}

@@ -19,6 +19,7 @@
 //! not look into it. A path is bytes, so a name that is not UTF-8 stays whole.
 
 use crate::config::Config;
+use crate::git::Git;
 use crate::glob;
 use crate::hash::{self, Hash};
 use crate::repo::Repo;
@@ -103,9 +104,24 @@ fn link_text(target: &std::path::Path) -> Vec<u8> {
 
 /// Returns the entries of the code tree of the working tree.
 pub fn entries(repo: &Repo, config: &Config) -> Result<Vec<Entry>, String> {
-    let index = repo.git.index_entries()?;
-    let (modified, deleted) = repo.git.diff_files()?;
+    entries_of(&repo.git, config)
+}
+
+/// Returns the entries of the code tree that a `Git` reads: the working tree, or
+/// the git index for a `staged` `Git` (`check --staged`). The index gives the
+/// mode and the object id of each code path as they are, so a file on disk that
+/// differs from the index does not count.
+pub fn entries_of(git: &Git, config: &Config) -> Result<Vec<Entry>, String> {
+    let index = git.index_entries()?;
     let intent = crate::lifecycle::intent_dirs(config);
+    if git.is_staged() {
+        return Ok(index
+            .into_iter()
+            .filter(|(_, _, path)| is_code_path(config, &String::from_utf8_lossy(path), &intent))
+            .collect());
+    }
+    let root = git.root();
+    let (modified, deleted) = git.diff_files()?;
     let mut keep: Vec<Entry> = Vec::new();
     let mut rehash: Vec<usize> = Vec::new();
     let mut links: Vec<(usize, Vec<u8>)> = Vec::new();
@@ -117,7 +133,7 @@ pub fn entries(repo: &Repo, config: &Config) -> Result<Vec<Entry>, String> {
             continue;
         }
         if modified.contains(text.as_ref()) && mode != "160000" {
-            let on_disk = disk_path(&repo.root, &path);
+            let on_disk = disk_path(root, &path);
             // What is on disk now decides, also when its kind changed. A path
             // that is neither a file nor a link (a folder) keeps the entry of
             // the index.
@@ -135,16 +151,16 @@ pub fn entries(repo: &Repo, config: &Config) -> Result<Vec<Entry>, String> {
     }
     if !rehash.is_empty() {
         let paths: Vec<Vec<u8>> = rehash.iter().map(|&i| keep[i].2.clone()).collect();
-        let ids = repo.git.hash_files(&paths)?;
+        let ids = git.hash_files(&paths)?;
         for (&i, id) in rehash.iter().zip(ids) {
             keep[i].1 = id;
-            if let Some(m) = disk_mode(&disk_path(&repo.root, &keep[i].2)) {
+            if let Some(m) = disk_mode(&disk_path(root, &keep[i].2)) {
                 keep[i].0 = m.to_string();
             }
         }
     }
     for (i, text) in links {
-        keep[i].1 = repo.git.hash_blob(text)?;
+        keep[i].1 = git.hash_blob(text)?;
         keep[i].0 = "120000".to_string();
     }
     Ok(keep)

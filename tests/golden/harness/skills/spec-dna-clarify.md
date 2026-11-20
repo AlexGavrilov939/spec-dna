@@ -18,6 +18,6 @@ Check: Before the approval, confirm that no `- [ ]` item stays in `Concerns` and
 
 If the check fails: Ask the person about the item that the message names. Do not mark an item that has no answer. Add a box to an item that has none.
 
-Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.
+Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.
 
-<!-- spec-dna harness v{VERSION} h:10d45caaed723ea5 -->
+<!-- spec-dna harness v{VERSION} h:e792bfbeea589ab4 -->
