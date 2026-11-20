@@ -64,6 +64,11 @@ acceptor = 1
 text = "A plan with the code span `src/a b.py` in `Files` and a commit of that file: `accept` exits 1 and says that the path has no `/`, no `.` and no `*`."
 outcome = "broke"
 
+[[attempt]]
+acceptor = 1
+text = "A large file in the read of `moved_archive`. The folder deleted with no `finish`, and an added link `src/biglink` to a sparse file of 2,000,000,000 bytes outside the repository: `check` exits 1 with SD927, but its peak memory is 2,010 MB (10 MB without the link). `check --staged` reads the link text and stays at 10 MB."
+outcome = "broke"
+
 [[finding]]
 acceptor = 1
 severity = "important"
@@ -77,3 +82,10 @@ severity = "nit"
 path = "src/accept.rs"
 line = 414
 text = "The refusal for the code span `src/a b.py` in `Files` says that the path is in `Files` only as a name with no `/`, no `.` and no `*`, but the path has a `/` and a `.`. The cause is the white space (`change::is_scope_pattern`), as docs/commands.md line 400 says, so the first way out of the message (write a `/` or a `.`) does not help. Name the white space in the message."
+
+[[finding]]
+acceptor = 1
+severity = "nit"
+path = "src/acceptance.rs"
+line = 119
+text = "`moved_archive` reads each added path whole, and only then tests the limit of 256 KB. Without `--staged`, the read is `std::fs::read` of the working tree, which follows a link. A link to a sparse file of 2 GB took the peak memory of `check` from 10 MB to 2,010 MB. A link to a file with no end, such as `/dev/zero`, would not end (not tried). Test the size before the read, and do not follow a link."
