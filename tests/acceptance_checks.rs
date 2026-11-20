@@ -1126,3 +1126,51 @@ fn a_plan_of_an_older_pin_on_the_base_gives_no_record_code_when_the_folder_is_de
         assert!(!has(&out, c), "{c}: {out}{err}");
     }
 }
+
+// CRLF (ADR 0019): with `core.autocrlf = true` the working tree has CRLF, and
+// git has LF. The record is the same record, so no check reads an edit in it.
+
+/// Sets `core.autocrlf` and writes the record of the folder with CRLF on disk.
+/// `git status` stays clean, as it is with a checkout of `autocrlf`.
+fn crlf_record(r: &Repo, text: &str) {
+    r.git(&["config", "core.autocrlf", "true"]);
+    std::fs::write(r.dir.join(RECORD), text.replace('\n', "\r\n")).unwrap();
+    // The refresh of the index that a checkout does: the blob stays the LF blob.
+    r.git(&["add", "-A"]);
+    assert_eq!(r.git_out(&["status", "--porcelain"]).trim(), "");
+}
+
+#[test]
+fn finish_writes_the_archive_with_lf_when_the_record_has_crlf_on_disk() {
+    let r = built();
+    let text = commit_record(&r, &["acceptor"], "accepted");
+    crlf_record(&r, &text);
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    let bytes = std::fs::read(r.dir.join(ARCHIVE)).unwrap();
+    assert!(!bytes.contains(&b'\r'), "the archive has a CR");
+    assert_eq!(bytes, text.as_bytes());
+    r.commit("finish");
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD935"), "{out}{err}");
+}
+
+#[test]
+fn the_compare_of_the_record_and_its_archive_reads_crlf_as_lf() {
+    // An archive file with CRLF on disk, and the record with LF in git.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    r.git(&["config", "core.autocrlf", "true"]);
+    finished_by_hand(&r, Some(&t.replace('\n', "\r\n")));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!has(&out, "SD935"), "{out}");
+    // A real edit still gives SD935 with CRLF.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    r.git(&["config", "core.autocrlf", "true"]);
+    finished_by_hand(&r, Some(&format!("{t}# edited\n").replace('\n', "\r\n")));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD935"), "{out}");
+}

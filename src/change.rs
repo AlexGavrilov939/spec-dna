@@ -138,6 +138,18 @@ impl Change {
         out
     }
 
+    /// The patterns of [`Change::files`] that the scope of an acceptance record
+    /// has: the one rule [`is_scope_pattern`] picks them. The record, the brief
+    /// and the checks of the record (`scope_of`, `plan_facts`) all read this
+    /// list, so `scope`, `paths` and the codes SD928 and SD929 agree. SD913 and
+    /// the other readers of `files` keep each pattern.
+    pub fn scope_patterns(&self, corpus: &Corpus) -> Vec<String> {
+        self.files(corpus)
+            .into_iter()
+            .filter(|p| is_scope_pattern(p))
+            .collect()
+    }
+
     /// The items of the `Files` section that give no pattern, in the order of
     /// the file: prose, and a code span that is a template placeholder. Each
     /// is on one line and has at most 80 characters. The one item that states
@@ -272,6 +284,17 @@ fn item_patterns(item: &ListItem) -> Vec<String> {
 /// True if a code span can be a pattern. A template placeholder is not one.
 fn usable_code(code: &str) -> bool {
     !code.contains("{{")
+}
+
+/// True if a pattern of the plan is a pattern of the scope of a record: it has
+/// no white space, and it has a `/`, a `.` or a `*` (the rule of
+/// [`plain_path`]). A word in a code span of the prose of a `Files` item, such
+/// as `next`, is no path. A bare name such as `Makefile` is none either: the
+/// scope is a function of the plan text alone, and no file on the disk changes
+/// it. The form `./Makefile` has a `/`, so it is a pattern.
+pub fn is_scope_pattern(p: &str) -> bool {
+    let p = p.trim();
+    !p.contains(char::is_whitespace) && p.contains(['/', '.', '*'])
 }
 
 /// The text on one line, with at most 80 characters, for a message.
@@ -1247,6 +1270,41 @@ mod tests {
         );
         // The item with only a placeholder gives no pattern.
         assert_eq!(ch.files_not_paths(&c), ["`{{path}}`"]);
+    }
+
+    #[test]
+    fn the_scope_patterns_are_the_files_with_a_slash_a_dot_or_a_star() {
+        for yes in [
+            "src/a.rs",
+            "Cargo.toml",
+            "src/**",
+            "*.lock",
+            "./Makefile",
+            "docs/",
+        ] {
+            assert!(is_scope_pattern(yes), "{yes}");
+        }
+        for no in ["next", "Makefile", "LICENSE", "eval run --ab", "a b.rs", ""] {
+            assert!(!is_scope_pattern(no), "{no}");
+        }
+        // The plan lists a word and a bare name in code spans. `files` keeps
+        // them (SD913), and the scope of a record does not. The facts of the
+        // record checks read the same list as the scope: a plan with bare names
+        // only has no path for SD928.
+        let plan = "---\nstatus: approved\n---\n# P\n\n## Files\n\n- `src/a.rs` The step `next` and the file `Makefile`.\n\n## Order\n\n- [ ] t1: Build. Files: `Makefile`, `src/a.rs`. Verify: ok.\n";
+        let c = corpus(&[("docs/intent/x/plan.md", plan)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(ch.files(&c), ["src/a.rs", "next", "Makefile"]);
+        assert_eq!(ch.scope_patterns(&c), ["src/a.rs"]);
+        let facts = crate::acceptance::plan_facts(ch, &c);
+        assert!(facts.has_files && facts.tasks_have_files);
+        let bare = "---\nstatus: approved\n---\n# P\n\n## Files\n\n- `Makefile`, `LICENSE`\n\n## Order\n\n- [ ] t1: Build. Files: `Makefile`. Verify: ok.\n";
+        let c = corpus(&[("docs/intent/x/plan.md", bare)]);
+        let ch = &collect(&c)[0];
+        assert_eq!(ch.files(&c), ["Makefile", "LICENSE"]);
+        assert!(ch.scope_patterns(&c).is_empty());
+        let facts = crate::acceptance::plan_facts(ch, &c);
+        assert!(!facts.has_files && !facts.tasks_have_files);
     }
 
     #[test]

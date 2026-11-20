@@ -582,6 +582,62 @@ fn denies_the_staged_commit_of_finish_when_the_archive_bytes_differ() {
     }
 }
 
+fn crlf(text: &str) -> String {
+    text.replace('\n', "\r\n")
+}
+
+#[test]
+fn a_line_end_of_crlf_is_no_difference_in_the_archive_compare() {
+    // `core.autocrlf = true`: the record is CRLF on disk and LF in HEAD, and
+    // `finish` writes the archive in CRLF. Both orders pass.
+    let lf = record(&["owner@example.org"], "A name has no unit.");
+    assert_eq!(
+        answer(
+            &staged_like_finish(&crlf(&lf), None),
+            "git commit -m 'feat: finish'"
+        ),
+        "",
+        "an archive in CRLF, a record in LF"
+    );
+    let r = project();
+    r.write(RECORD, &crlf(&lf));
+    r.commit("record in CRLF");
+    r.git(&["rm", "-q", RECORD]);
+    r.write(ARCHIVE, &lf);
+    r.git(&["add", ARCHIVE]);
+    assert_eq!(
+        answer(&r, "git commit -m 'feat: finish'"),
+        "",
+        "an archive in LF, a record in CRLF"
+    );
+    // An archive file of the old tree that only changes its line ends is no edit.
+    let r = staged_like_finish(&lf, None);
+    r.commit("feat: finish");
+    r.write(ARCHIVE, &crlf(&lf));
+    assert_eq!(answer(&r, "git commit -am 'line ends'"), "");
+}
+
+#[test]
+fn a_forged_entry_is_denied_also_when_the_file_has_crlf() {
+    let forged = crlf(&record(&["forged@example.org"], "A name has no unit."));
+    assert_denies(
+        &answer(
+            &staged_like_finish(&forged, None),
+            "git commit -m 'feat: finish'",
+        ),
+        &[ARCHIVE, "not the record"],
+    );
+    // An edit of a committed archive file with a real change and CRLF.
+    let lf = record(&[], "A name has no unit.");
+    let r = staged_like_finish(&lf, None);
+    r.commit("feat: finish");
+    r.write(ARCHIVE, &forged);
+    assert_denies(
+        &answer(&r, "git commit -am 'edit'"),
+        &[ARCHIVE, "edits an archive file"],
+    );
+}
+
 /// The project after `finish`: the record is deleted, and the archive file
 /// has the bytes `archive`.
 fn finished(archive: &str) -> Repo {

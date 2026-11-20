@@ -362,3 +362,20 @@ fn an_uncommitted_record_leaves_the_item_open_and_says_commit_the_record() {
         "{line}"
     );
 }
+
+/// CRLF (ADR 0019): with `core.autocrlf = true` the record is CRLF on disk and
+/// LF in `HEAD`, with a clean `git status`. It is the same record.
+#[test]
+fn a_record_with_crlf_on_disk_and_lf_in_head_leaves_the_item_done() {
+    let r = built("standard");
+    commit_record(&r, "accepted");
+    r.git(&["config", "core.autocrlf", "true"]);
+    let text = r.read(RECORD).replace('\n', "\r\n");
+    std::fs::write(r.dir.join(RECORD), text).unwrap();
+    // The refresh of the index that a checkout does: the blob stays the LF blob.
+    r.git(&["add", "-A"]);
+    assert_eq!(r.git_out(&["status", "--porcelain"]).trim(), "");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(line.starts_with("[x] "), "{line}");
+}

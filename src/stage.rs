@@ -362,7 +362,8 @@ fn accept_item(
                 "accept the change: run `spec-dna accept {slug} --brief`, give the whole output, unchanged, to an agent `acceptor`, and commit the record that it writes"
             )));
         }
-        (Some(c), Some(d)) if c == d => c,
+        // CRLF and LF are one record (ADR 0019).
+        (Some(c), Some(d)) if record::to_lf(c.as_bytes()) == record::to_lf(d.as_bytes()) => c,
         _ => {
             return Ok(open(format!(
                 "the record `{path}` has an edit that `HEAD` does not have: commit the record alone, then run `spec-dna finish {slug}`"

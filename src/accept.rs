@@ -115,28 +115,15 @@ pub fn brief_text(
     })
 }
 
-/// The scope of a change: the patterns of the plan (the items of `Files` and
-/// the `Files:` of the tasks, as SD913 reads them) and the globs of
-/// `[change] shared-paths`. It is sorted, with no duplicate, so the order of
-/// the plan does not change the record.
-///
-/// SD913 takes each code span of a `Files` item as a pattern, also a word of the
-/// prose such as `next`. A word matches only a file of that name, so SD913 does
-/// no harm. The scope is written in the record and in the brief, so a pattern
-/// of the plan stays only when it has no white space and contains a `/`, a `.`
-/// or a `*` (the rule of [`crate::change::plain_path`]). The scope is thus a
-/// function of the plan text alone: no file on the disk changes it. A bare name
-/// with none of these characters (`Makefile`, `LICENSE`) is not in the scope. A
-/// `shared-paths` glob stays always.
+/// The scope of a change: the patterns of the plan that
+/// [`Change::scope_patterns`] gives (the items of `Files` and the `Files:` of
+/// the tasks, as SD913 reads them, without a word or a bare name) and the globs
+/// of `[change] shared-paths`. It is sorted, with no duplicate, so the order of
+/// the plan does not change the record. The scope is a function of the plan
+/// text alone: no file on the disk changes it. A `shared-paths` glob stays
+/// always.
 pub fn scope_of(cfg: &Config, ch: &Change, corpus: &Corpus) -> Vec<String> {
-    let mut scope: Vec<String> = ch
-        .files(corpus)
-        .into_iter()
-        .filter(|p| {
-            let p = p.trim();
-            !p.contains(char::is_whitespace) && p.contains(['/', '.', '*'])
-        })
-        .collect();
+    let mut scope = ch.scope_patterns(corpus);
     scope.extend(cfg.shared_paths.iter().cloned());
     scope.sort();
     scope.dedup();
@@ -220,26 +207,21 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         .map(|r| Diff::read(&repo.git, r, false))
         .transpose()
         .map_err(Fatal::Io)?;
-    let mut paths = match &diff {
-        Some(d) => record::select_paths(
-            &scope,
-            &d.files.iter().map(|f| f.0.clone()).collect::<Vec<_>>(),
-            &is_code,
-        ),
-        None => Vec::new(),
-    };
+    let mut changed: Vec<String> = diff
+        .as_ref()
+        .map(|d| d.files.iter().map(|f| f.0.clone()).collect())
+        .unwrap_or_default();
+    let mut paths = record::select_paths(&scope, &changed, &is_code);
     if paths.is_empty() {
         // The code merged before this pull request: take the code paths that
         // changed since the commit that added the plan.
         if let Some(added) = repo.git.added_by(&plan_path).map_err(Fatal::Io)? {
             let since = Diff::read(&repo.git, &added, false).map_err(Fatal::Io)?;
-            paths = record::select_paths(
-                &scope,
-                &since.files.iter().map(|f| f.0.clone()).collect::<Vec<_>>(),
-                &is_code,
-            );
+            changed = since.files.iter().map(|f| f.0.clone()).collect();
+            paths = record::select_paths(&scope, &changed, &is_code);
         }
     }
+    refuse_uncovered(ch, &head, &scope, &changed, &is_code)?;
     let entries = tree::entries(repo, &cfg).map_err(Fatal::Io)?;
     let tree_hash = record::tree_hash(&entries, &paths);
     let decl = declared(&cfg, ch, &head);
@@ -390,6 +372,49 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         );
     }
     Ok(0)
+}
+
+/// Refuses when the plan lists a pattern that the scope of a record cannot
+/// hold, and the record would then leave a changed code file out. The patterns
+/// are the words and the bare names of `Files` (`Makefile`): the scope is a
+/// function of the plan text, and it keeps only a pattern with a `/`, a `.` or
+/// a `*` ([`change::is_scope_pattern`]). Such a record could never be fixed by
+/// its acceptor: an empty `scope` or a code file that no pattern covers.
+fn refuse_uncovered(
+    ch: &Change,
+    corpus: &Corpus,
+    scope: &[String],
+    changed: &[String],
+    is_code: &dyn Fn(&str) -> bool,
+) -> Result<(), Fatal> {
+    let dropped: Vec<String> = ch
+        .files(corpus)
+        .into_iter()
+        .filter(|p| !change::is_scope_pattern(p))
+        .collect();
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    let ways = "write the path with a `/` or a `.` in `Files` of the plan (the form `./Makefile` works), or add it to `[change] shared-paths`";
+    if scope.is_empty() {
+        return Err(Fatal::Refused(format!(
+            "the scope of the record is empty: the patterns of `Files` of the plan ({}) have no `/`, no `.` and no `*`, so the record cannot hold them; {ways}",
+            dropped
+                .iter()
+                .map(|p| format!("`{p}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    if let Some(p) = changed
+        .iter()
+        .find(|p| is_code(p) && change::in_scope(&dropped, p) && !change::in_scope(scope, p))
+    {
+        return Err(Fatal::Refused(format!(
+            "the changed file `{p}` is in `Files` of the plan only as a name with no `/`, no `.` and no `*`, so the scope of the record does not cover it; {ways}"
+        )));
+    }
+    Ok(())
 }
 
 /// Writes a file through a temporary file and a rename, so a reader never sees

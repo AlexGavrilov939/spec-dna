@@ -781,8 +781,6 @@ fn the_scope_leaves_out_the_code_spans_that_are_no_paths() {
 \n## Order\n\n- [x] t1: Close the valve. Files: `src/valves.py`. Verify: the test passes.\n\
 \n## Risks\n\n- A slow sensor.\n\n## Proof\n\nThe test covers `requirements/valves#sensor-timeout`.\n";
     let r = start(&config("standard", ""));
-    r.write("Makefile", "all:\n");
-    r.commit("a makefile");
     r.write(INTENT, INTENT_TEXT);
     r.write(SPEC, SPEC_TEXT);
     r.write(PLAN, plan);
@@ -852,7 +850,6 @@ fn the_scope_and_the_brief_do_not_depend_on_the_disk() {
     // A deleted root file with a dot stays in `paths`. A bare root file is no
     // part of the scope, with the file or without it.
     std::fs::remove_file(r.dir.join("config.ini")).unwrap();
-    std::fs::remove_file(r.dir.join("Makefile")).unwrap();
     r.git(&["add", "-A"]);
     r.commit("delete files");
     let t = write_record(&r);
@@ -892,4 +889,96 @@ fn a_second_run_numbers_the_new_entry_by_its_position_in_a_hand_written_layout()
     let at = |needle: &str| after.find(needle).unwrap();
     assert!(at("session = \"s2\"") < at("session = \"s3\""), "{after}");
     assert!(at("session = \"s3\"") < at("Tried 2."), "{after}");
+}
+
+/// A pull request whose plan has the `Files` lines `files`, and whose code
+/// commit changes only the files that `edit` names. The base has a `Makefile`.
+fn with_files(config_text: &str, files: &str, edit: &[&str]) -> Repo {
+    // The task of the plan lists the first path of `files`.
+    let task = files.split('`').nth(1).unwrap_or("src/valves.py");
+    let plan = PLAN_TEXT
+        .replace("- `src/valves.py`\n- `tests/test_valves.py`\n", files)
+        .replace("Files: `src/valves.py`.", &format!("Files: `{task}`."));
+    let r = Repo::with_config(config_text);
+    r.write(".gitignore", "reports/\n");
+    r.write(REQ, VALVES);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write("Makefile", "all:\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, &plan);
+    r.commit("plan");
+    for f in edit {
+        r.write(f, "changed\n");
+    }
+    r.commit("code");
+    r
+}
+
+#[test]
+fn a_plan_with_bare_names_only_gives_no_record_that_could_never_be_fixed() {
+    let r = with_files(
+        &config("standard", ""),
+        "- `Makefile`, `LICENSE`\n",
+        &["Makefile"],
+    );
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let all = format!("{out}{err}");
+    assert!(all.contains("scope of the record is empty"), "{all}");
+    assert!(
+        all.contains("shared-paths") && all.contains("./Makefile"),
+        "{all}"
+    );
+    assert!(!r.dir.join(RECORD).exists());
+    // The brief refuses in the same way: it would give the same scope.
+    let (code, out, err) = accept(&r, &[SLUG, "--brief"]);
+    assert_eq!(code, 1, "{out}{err}");
+}
+
+#[test]
+fn a_mixed_plan_where_only_a_bare_name_changes_is_refused_with_the_two_ways_out() {
+    let r = with_files(
+        &config("standard", ""),
+        "- `src/valves.py`\n- `Makefile`\n",
+        &["Makefile"],
+    );
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let all = format!("{out}{err}");
+    assert!(
+        all.contains("`Makefile`") && all.contains("no `/`"),
+        "{all}"
+    );
+    assert!(
+        all.contains("shared-paths") && all.contains("./Makefile"),
+        "{all}"
+    );
+}
+
+#[test]
+fn the_two_ways_out_work_the_form_with_a_dot_slash_and_shared_paths() {
+    // The form `./Makefile`.
+    let r = with_files(
+        &config("standard", ""),
+        "- `src/valves.py`\n- `./Makefile`\n",
+        &["Makefile"],
+    );
+    let t = write_record(&r);
+    assert!(t.contains("\"./Makefile\""), "{t}");
+    let paths = t.lines().find(|l| l.starts_with("paths = ")).unwrap();
+    assert!(paths.contains("\"Makefile\""), "{paths}");
+    // The key `shared-paths`.
+    let r = with_files(
+        &config("standard", "shared-paths = [\"Makefile\"]\n"),
+        "- `src/valves.py`\n- `Makefile`\n",
+        &["Makefile"],
+    );
+    let t = write_record(&r);
+    let paths = t.lines().find(|l| l.starts_with("paths = ")).unwrap();
+    assert!(paths.contains("\"Makefile\""), "{paths}");
 }

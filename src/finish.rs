@@ -708,7 +708,9 @@ fn archive(cx: &Ctx, record: Option<String>, out: &mut Plan) -> Result<(), Failu
     out.writes.push(Write {
         path: f.archive.clone(),
         old: None,
-        new: text,
+        // The archive has LF: a working tree with `core.autocrlf` has CRLF, and
+        // git has LF (ADR 0019).
+        new: String::from_utf8_lossy(&crate::record::to_lf(text.as_bytes())).into_owned(),
     });
     out.writes.sort_by(|a, b| a.path.cmp(&b.path));
     out.archive = Some(f.archive.clone());

@@ -1822,7 +1822,10 @@ fn moved_to_approval(
             .filter(|o| o.ok)
             .map(|o| o.stdout);
         let tree = read_limited(&root.join(&path));
-        let new: Vec<String> = index.into_iter().chain(tree).collect();
+        // `core.autocrlf` makes a file CRLF on disk and LF in HEAD, so the
+        // compare reads `\r\n` as `\n` (as SD503 does, ADR 0019).
+        let new: Vec<String> = index.into_iter().chain(tree).map(|s| lf(&s)).collect();
+        let old = old.map(|s| lf(&s));
         match old {
             Some(old) => {
                 // A delete is no edit: a person can revert the commit of `finish`.
@@ -1833,7 +1836,7 @@ fn moved_to_approval(
                 }
             }
             None => {
-                if new.iter().any(|n| !deleted.contains(n)) {
+                if new.iter().any(|n| !deleted.iter().any(|d| lf(d) == *n)) {
                     return Some(format!(
                         "{path} is an archive file that is not the record that this commit deletes from the change folder. Only `spec-dna finish` writes an archive file, with the bytes of the record. Remove the file, and run `spec-dna finish` again."
                     ));
@@ -1842,6 +1845,11 @@ fn moved_to_approval(
         }
     }
     None
+}
+
+/// The text with each `\r\n` read as `\n`.
+fn lf(text: &str) -> String {
+    text.replace("\r\n", "\n")
 }
 
 /// True if the output of `rev-parse --show-toplevel` is a path.

@@ -888,6 +888,20 @@ pub fn skeleton(s: &Skeleton) -> String {
     out
 }
 
+/// The bytes of a record with each `\r\n` read as `\n` (ADR 0019). With
+/// `core.autocrlf`, the working tree has CRLF and git has LF, with a clean
+/// `git status`: it is the same record. A lone `\r` stays.
+pub fn to_lf(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+            continue;
+        }
+        out.push(b);
+    }
+    out
+}
+
 /// The header of a table on one line: `Some((true, name))` for `[[name]]` and
 /// `Some((false, name))` for `[name]`. White space and a comment after `#` do
 /// not count, and the white space inside the brackets does not count. `None` if
@@ -1635,6 +1649,13 @@ mod tests {
             assert!(at("session = \"s2\"") < at("session = \"s3\""), "{out}");
             assert!(at("session = \"s3\"") < at("Tried 2."), "{out}");
         }
+    }
+
+    #[test]
+    fn a_crlf_is_read_as_a_lf_and_a_lone_cr_stays() {
+        assert_eq!(to_lf(b"a\r\nb\n\r\n"), b"a\nb\n\n");
+        assert_eq!(to_lf(b"a\rb\r"), b"a\rb\r");
+        assert_eq!(to_lf(b""), b"");
     }
 
     #[test]

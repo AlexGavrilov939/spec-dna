@@ -160,11 +160,11 @@ pub struct PlanFacts {
 /// Reads the facts from the change and the corpus that has its plan.
 pub fn plan_facts(ch: &Change, corpus: &Corpus) -> PlanFacts {
     PlanFacts {
-        has_files: !ch.files(corpus).is_empty(),
+        has_files: !ch.scope_patterns(corpus).is_empty(),
         tasks_have_files: ch
             .tasks(corpus)
             .iter()
-            .any(|t| !t.duplicate && !t.files.is_empty()),
+            .any(|t| !t.duplicate && t.files.iter().any(|f| crate::change::is_scope_pattern(f))),
     }
 }
 
@@ -552,7 +552,8 @@ pub fn archive_differs(
     }
     let rec_path = format!("{folder}/{}", record::FILE_NAME);
     Ok(match moved_record(git, base_rev, folder)? {
-        Some(old) if old == bytes => None,
+        // CRLF and LF are one record (ADR 0019).
+        Some(old) if record::to_lf(&old) == record::to_lf(bytes) => None,
         Some(_) => Some(format!(
             "the archive file `{archive}` is not the record of the change that `finish` moves: its bytes differ from `{rec_path}`; write the file again with `spec-dna finish`, or revert the edit"
         )),
