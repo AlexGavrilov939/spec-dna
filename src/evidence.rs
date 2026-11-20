@@ -44,14 +44,154 @@ pub struct Cover {
 /// The result of the bind of a tag to the test cases of the reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Proof {
-    /// A bound case passed, and no bound case failed. The name of a case.
-    Passed(String),
+    /// A bound case passed, and no bound case failed. The bound case that
+    /// passed least and its passes: the number of reports in which it passed.
+    /// Each bound case counts, and a case counts once for one report.
+    Passed(String, usize),
     /// Each bound case was skipped. The name of a case.
     Skipped(String),
     /// A bound case failed, or passed after a rerun. The name of the case.
     Failed(String),
     /// No case of the reports binds to the tag.
     Unbound,
+}
+
+/// The proof state of a requirement, from the best to the worst (design 0.8.0,
+/// D2). The order of the variants is the order of the ranking, so `Reliable` is
+/// the least value. The record of an acceptance lists the state of each
+/// requirement, so the type is public.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProofState {
+    /// Passed once, and each bound case that passed has at least
+    /// `[evidence] reliable-runs` passes in the reports of the tree.
+    Reliable,
+    /// A bound case passed in a fresh report, and no bound case failed.
+    PassedOnce,
+    /// A `verified-by` record: a check by a person.
+    Verified,
+    /// A full tag that no fresh report proves: no `reports` key, no fresh
+    /// report, or a case that failed, was skipped or was not found.
+    Tagged,
+    /// A proof debt (`proof-owed` with a reason of the list), and no evidence.
+    Owed,
+    /// No evidence and no debt.
+    None,
+}
+
+impl ProofState {
+    /// The 6 states, best first.
+    pub const ALL: [ProofState; 6] = [
+        ProofState::Reliable,
+        ProofState::PassedOnce,
+        ProofState::Verified,
+        ProofState::Tagged,
+        ProofState::Owed,
+        ProofState::None,
+    ];
+
+    /// The name of the state, as the docs write it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ProofState::Reliable => "reliable",
+            ProofState::PassedOnce => "passed-once",
+            ProofState::Verified => "verified",
+            ProofState::Tagged => "tagged",
+            ProofState::Owed => "owed",
+            ProofState::None => "none",
+        }
+    }
+
+    /// The name of the state as a key of JSON output: a hyphen is `_`.
+    pub fn key(self) -> &'static str {
+        match self {
+            ProofState::PassedOnce => "passed_once",
+            other => other.name(),
+        }
+    }
+}
+
+/// The reasons of a proof debt, a closed list: a person must look (`manual`),
+/// CI has no such device, account or data (`environment`), a third party
+/// (`external`), the test is not written (`pending`).
+pub const OWED_REASONS: [&str; 4] = ["manual", "environment", "external", "pending"];
+
+/// What SD620 needs for one change (design 0.8.0, D2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reliable {
+    /// `[evidence] reliable-runs`: the passes that each bound case needs.
+    pub runs: usize,
+    /// True if SD617 is on. Then SD617 reports a requirement that no bound case
+    /// proves, and SD620 leaves it. With SD617 off, such a requirement has 0
+    /// passes, which is fewer than `runs`, so SD620 reports it.
+    pub sd617_on: bool,
+}
+
+/// The rule of SD620 for a change of class `class`, or `None` when
+/// `[evidence] reliable-for` does not cover the change.
+pub fn reliable_for(config: &Config, class: crate::model::Class) -> Option<Reliable> {
+    use crate::config::ReliableFor;
+    let runs = config.evidence_reliable_runs as usize;
+    let covered = match config.evidence_reliable_for {
+        ReliableFor::All => true,
+        ReliableFor::HigherRisk => class == crate::model::Class::HigherRisk,
+        ReliableFor::None => false,
+    };
+    covered.then(|| Reliable {
+        runs,
+        sd617_on: !config.is_off(Code::ChangeUnproven),
+    })
+}
+
+/// True if a code of the proof levels and the proof debt (SD618 to SD620) is
+/// on. In `lite`, each is off, so `status` and `stats` show no proof line and
+/// read no report (design 0.8.0, profiles).
+pub fn proof_codes_on(config: &Config) -> bool {
+    Code::PROOF_CODES.iter().any(|c| !config.is_off(*c))
+}
+
+/// True if `reason` is one of `OWED_REASONS`, with this spelling.
+pub fn is_owed_reason(reason: &str) -> bool {
+    OWED_REASONS.contains(&reason)
+}
+
+/// The proof state from the facts of one requirement. `verified`: it has a
+/// `verified-by` record. `tagged`: it has a full tag. `owed`: it has a debt with
+/// a valid reason. `proofs`: the result of the bind of each full tag (empty when
+/// the reports are not read). `runs`: `[evidence] reliable-runs`.
+///
+/// A tag that a bound case proves ranks above `verified-by`. A case that failed
+/// in a report makes each tag of the requirement unproven, as for SD616.
+pub fn state_of(
+    verified: bool,
+    tagged: bool,
+    owed: bool,
+    proofs: &[Proof],
+    runs: usize,
+) -> ProofState {
+    let failed = proofs.iter().any(|p| matches!(p, Proof::Failed(_)));
+    let passes: Vec<usize> = proofs
+        .iter()
+        .filter_map(|p| match p {
+            Proof::Passed(_, n) => Some(*n),
+            _ => None,
+        })
+        .collect();
+    if !failed && !passes.is_empty() {
+        return if passes.iter().all(|n| *n >= runs) {
+            ProofState::Reliable
+        } else {
+            ProofState::PassedOnce
+        };
+    }
+    if verified {
+        ProofState::Verified
+    } else if tagged {
+        ProofState::Tagged
+    } else if owed {
+        ProofState::Owed
+    } else {
+        ProofState::None
+    }
 }
 
 /// The characters that a tag word can have around its text.
@@ -598,13 +738,43 @@ impl<'a> Binder<'a> {
         if let Some(n) = named(Outcome::Fail) {
             Proof::Failed(n)
         } else if let Some(n) = named(Outcome::Pass) {
-            Proof::Passed(n)
+            let (name, runs) = least_passes(&bound).unwrap_or((n, 0));
+            Proof::Passed(name, runs)
         } else if let Some(n) = named(Outcome::Skip) {
             Proof::Skipped(n)
         } else {
             Proof::Unbound
         }
     }
+}
+
+/// The bound case that passed least, with its passes. A case is a name with its
+/// `classname` and its file. Its passes are the reports in which it passed
+/// (D2). A case that never passed does not count: a skipped case of one report
+/// is not a fail. `None` when no case passed.
+fn least_passes(bound: &[&Case]) -> Option<(String, usize)> {
+    let mut passes: HashMap<String, (&str, HashSet<&str>)> = HashMap::new();
+    for c in bound.iter().filter(|c| c.outcome == Outcome::Pass) {
+        // The `\0` cannot be in a name, so 2 cases never share a key.
+        let key = format!(
+            "{}\0{}\0{}",
+            c.name,
+            c.classname.as_deref().unwrap_or(""),
+            c.file.as_deref().unwrap_or("")
+        );
+        passes
+            .entry(key)
+            .or_insert_with(|| (c.name.as_str(), HashSet::new()))
+            .1
+            .insert(c.report.as_str());
+    }
+    // The least count first, and the name decides a tie, so the result does
+    // not depend on the order of a hash map.
+    passes
+        .into_values()
+        .map(|(name, reports)| (reports.len(), name))
+        .min()
+        .map(|(n, name)| (name.to_string(), n))
 }
 
 /// Sets the result of the bind on each full tag of `covers`. It reads the test
@@ -751,7 +921,7 @@ impl Evidence {
         {
             return Some(format!("the bound case `{n}` failed in the report"));
         }
-        if proofs.iter().any(|p| matches!(p.1, Proof::Passed(_))) {
+        if proofs.iter().any(|p| matches!(p.1, Proof::Passed(..))) {
             return None;
         }
         if let Some(Proof::Skipped(n)) = proofs
@@ -769,10 +939,170 @@ impl Evidence {
         ))
     }
 
+    /// The reason of the debt of requirement `r`, if the marker `proof-owed` has
+    /// a reason of `OWED_REASONS`.
+    pub fn owed_reason(d: &Doc, r: usize) -> Option<&str> {
+        d.parsed.reqs[r]
+            .proof_owed
+            .as_deref()
+            .filter(|x| is_owed_reason(x))
+    }
+
+    /// The proof state of requirement `r` of document `di`. `runs` is
+    /// `[evidence] reliable-runs`. With no report read, a full tag is `Tagged`.
+    pub fn state(&self, di: u32, d: &Doc, r: usize, runs: usize) -> ProofState {
+        let verified = !d.verified_by.is_empty() || !d.parsed.reqs[r].verified_by.is_empty();
+        let proofs: Vec<Proof> = self
+            .proofs
+            .get(&(di, r))
+            .map(|v| v.iter().map(|p| p.1.clone()).collect())
+            .unwrap_or_default();
+        state_of(
+            verified,
+            self.covers.contains_key(&(di, r)),
+            Evidence::owed_reason(d, r).is_some(),
+            &proofs,
+            runs,
+        )
+    }
+
+    /// The reason why requirement `r` is below `reliable` (SD620), or `None`.
+    /// It is `Some` in 2 cases. The state is `PassedOnce`: the text names the
+    /// bound case with the fewest passes. Or the requirement has a
+    /// `verified-by` record and a full tag with a bound case that failed or was
+    /// skipped: the record does not replace the passes of a tag. A requirement
+    /// with a `verified-by` record and no tag, or a tag that binds to no case,
+    /// is not below `reliable`. A requirement with no pass and no
+    /// `verified-by` is SD617 or SD916.
+    pub fn not_reliable(&self, di: u32, d: &Doc, r: usize, runs: usize) -> Option<String> {
+        let proofs = self.proofs.get(&(di, r))?;
+        match self.state(di, d, r, runs) {
+            ProofState::PassedOnce => {
+                let (name, n) = proofs
+                    .iter()
+                    .filter_map(|p| match &p.1 {
+                        Proof::Passed(name, n) => Some((name, *n)),
+                        _ => None,
+                    })
+                    .min_by_key(|(_, n)| *n)?;
+                Some(format!(
+                    "the bound case `{name}` passed {} in the reports of this code tree, and `reliable-runs` is {runs}; run the tests {runs} times, write one report for each run, then run `spec-dna evidence stamp`",
+                    if n == 1 {
+                        "1 time".to_string()
+                    } else {
+                        format!("{n} times")
+                    }
+                ))
+            }
+            ProofState::Verified => {
+                let (name, what) = proofs.iter().find_map(|p| match &p.1 {
+                    Proof::Failed(n) => Some((n, "failed")),
+                    Proof::Skipped(n) => Some((n, "was skipped")),
+                    _ => None,
+                })?;
+                Some(format!(
+                    "the bound case `{name}` {what} in the reports of this code tree, so it has fewer passes than `reliable-runs` ({runs}); a `verified-by` record does not replace the passes of a tag"
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// The partial `covers:` tags of one requirement, as `<path>:<line>`, in
     /// the order of the tags.
     pub fn partial_of(&self, di: u32, r: usize) -> &[String] {
         self.partial.get(&(di, r)).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The count of the requirements of each proof state, and of the debts of each
+/// reason, for `status` and `stats`. It counts the requirements of the active
+/// documents.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProofCounts {
+    /// One count for each state of `ProofState::ALL`.
+    pub states: [usize; 6],
+    /// One count for each reason of `OWED_REASONS`, for the state `Owed`.
+    pub reasons: [usize; 4],
+    /// The requirements of any document that have a marker `proof-owed`, with
+    /// any reason. A project with none uses no proof debt.
+    pub marked: usize,
+}
+
+impl ProofCounts {
+    /// Counts the requirements of `c`. `ev` is `Evidence::build(c).0`.
+    pub fn of(c: &Corpus, ev: &Evidence, runs: usize) -> ProofCounts {
+        let mut out = ProofCounts::default();
+        for (di, d) in c.docs.iter().enumerate() {
+            out.marked += d
+                .reqs
+                .iter()
+                .filter(|&&ri| d.parsed.reqs[ri].proof_owed.is_some())
+                .count();
+            if !needs_evidence(d) {
+                continue;
+            }
+            for &ri in &d.reqs {
+                let state = ev.state(di as u32, d, ri, runs);
+                out.states[state as usize] += 1;
+                if state == ProofState::Owed
+                    && let Some(i) = Evidence::owed_reason(d, ri)
+                        .and_then(|x| OWED_REASONS.iter().position(|r| *r == x))
+                {
+                    out.reasons[i] += 1;
+                }
+            }
+        }
+        out
+    }
+
+    pub fn count(&self, s: ProofState) -> usize {
+        self.states[s as usize]
+    }
+
+    pub fn owed(&self) -> usize {
+        self.count(ProofState::Owed)
+    }
+
+    /// The line of `status`: `proof: 3 owed (manual 1, environment 2)`. `None`
+    /// when no requirement is owed.
+    pub fn owed_line(&self) -> Option<String> {
+        if self.owed() == 0 {
+            return None;
+        }
+        let parts: Vec<String> = OWED_REASONS
+            .iter()
+            .zip(self.reasons)
+            .filter(|(_, n)| *n > 0)
+            .map(|(r, n)| format!("{r} {n}"))
+            .collect();
+        Some(format!(
+            "proof: {} owed ({})",
+            self.owed(),
+            parts.join(", ")
+        ))
+    }
+
+    /// The object `proof` of `status --json`: `owed` and `by_reason`, with one
+    /// count for each reason of the list.
+    pub fn owed_json(&self) -> String {
+        let mut by = crate::json::Obj::new();
+        for (r, n) in OWED_REASONS.iter().zip(self.reasons) {
+            by = by.num(r, n);
+        }
+        crate::json::Obj::new()
+            .num("owed", self.owed())
+            .raw("by_reason", &by.end())
+            .end()
+    }
+
+    /// The object `proof` of `stats --json`: one count for each state.
+    pub fn states_json(&self) -> String {
+        let mut o = crate::json::Obj::new();
+        for s in ProofState::ALL {
+            o = o.num(s.key(), self.count(s));
+        }
+        o.end()
     }
 }
 
@@ -894,7 +1224,7 @@ mod tests {
             ),
             (
                 Outcome::Pass,
-                Proof::Passed("test_closes_on_timeout".into()),
+                Proof::Passed("test_closes_on_timeout".into(), 1),
             ),
             (
                 Outcome::Fail,
@@ -927,7 +1257,7 @@ mod tests {
         let cases = [case("tests::closes", Some("valves"), None, Outcome::Pass)];
         assert_eq!(
             proof("src/valves.rs", text, None, &cases, &[]),
-            Proof::Passed("tests::closes".into())
+            Proof::Passed("tests::closes".into(), 1)
         );
     }
 
@@ -948,7 +1278,7 @@ mod tests {
                 &cases,
                 &["tests/valves.test.js"]
             ),
-            Proof::Passed("Valves closes on timeout".into())
+            Proof::Passed("Valves closes on timeout".into(), 1)
         );
     }
 
@@ -993,7 +1323,7 @@ mod tests {
         let file = "src/test/java/com/example/ValveTest.java";
         assert_eq!(
             proof(file, text, None, &cases, &[file]),
-            Proof::Passed("flushesFirst".into())
+            Proof::Passed("flushesFirst".into(), 1)
         );
     }
 
@@ -1013,7 +1343,7 @@ mod tests {
         );
         assert_eq!(
             proof("tests/test_v.py", text, Some("test_closes"), &cases, &[]),
-            Proof::Passed("test_closes".into())
+            Proof::Passed("test_closes".into(), 1)
         );
         let cases = [case("closes on timeout", None, None, Outcome::Skip)];
         assert_eq!(
@@ -1089,7 +1419,7 @@ mod tests {
         let cases = [case("test_x", None, None, Outcome::Pass)];
         assert_eq!(
             proof("t/test_x.py", text, None, &cases, &[]),
-            Proof::Passed("test_x".into())
+            Proof::Passed("test_x".into(), 1)
         );
     }
 
@@ -1107,7 +1437,7 @@ mod tests {
         );
         assert_eq!(
             proof("tests/test_b.py", text, None, &cases, &files),
-            Proof::Passed("test_init".into())
+            Proof::Passed("test_init".into(), 1)
         );
     }
 
@@ -1122,7 +1452,7 @@ mod tests {
         )];
         assert_eq!(
             proof("tests/test_a.py", text, None, &cases, &["tests/test_a.py"]),
-            Proof::Passed("test_init".into())
+            Proof::Passed("test_init".into(), 1)
         );
     }
 
@@ -1230,7 +1560,7 @@ mod tests {
         let cases = [case("Widget renders it", None, None, Outcome::Pass)];
         assert_eq!(
             proof("tests/valves.test.js", text, None, &cases, &[]),
-            Proof::Passed("Widget renders it".into())
+            Proof::Passed("Widget renders it".into(), 1)
         );
         // An identifier comes before `def`, `fn` and `func`.
         let go = "// covers: requirements/valves#flush\nfunc TestTimeout(t *testing.T) {\n}\n";
@@ -1355,7 +1685,7 @@ mod tests {
             covers
                 .iter()
                 .enumerate()
-                .all(|(i, c)| c.proof == Some(Proof::Passed(format!("test_a{i}")))),
+                .all(|(i, c)| c.proof == Some(Proof::Passed(format!("test_a{i}"), 1))),
             "each tag binds to the first test below it"
         );
         assert!(took.as_secs_f64() < 2.0, "the bind took {took:?}");
@@ -1373,7 +1703,7 @@ mod tests {
         assert!(
             covers
                 .iter()
-                .all(|c| matches!(c.proof, Some(Proof::Passed(_))))
+                .all(|c| matches!(c.proof, Some(Proof::Passed(..))))
         );
         assert!(took.as_secs_f64() < 10.0, "the bind took {took:?}");
     }
@@ -1396,5 +1726,165 @@ mod tests {
         );
         assert_eq!(covers[0].proof, Some(Proof::Unbound));
         assert_eq!(covers[1].proof, None);
+    }
+
+    fn run_case(name: &str, report: &str, outcome: Outcome) -> Case {
+        Case {
+            name: name.to_string(),
+            classname: Some("tests.test_valves".to_string()),
+            file: None,
+            outcome,
+            report: report.to_string(),
+        }
+    }
+
+    const PY: &str = "# covers: requirements/valves#close\ndef test_x():\n    assert True\n";
+
+    fn runs(cases: &[Case]) -> Proof {
+        proof(
+            "tests/test_valves.py",
+            PY,
+            None,
+            cases,
+            &["tests/test_valves.py"],
+        )
+    }
+
+    #[test]
+    fn the_passes_of_a_case_are_the_reports_in_which_it_passed() {
+        let one = |r: &str| run_case("test_x", r, Outcome::Pass);
+        assert_eq!(
+            runs(&[one("a.xml"), one("b.xml"), one("c.xml")]),
+            Proof::Passed("test_x".into(), 3)
+        );
+        // The same case twice in one report is one pass.
+        assert_eq!(
+            runs(&[one("a.xml"), one("a.xml")]),
+            Proof::Passed("test_x".into(), 1)
+        );
+        // A skip in a report is not a pass and not a fail.
+        assert_eq!(
+            runs(&[
+                one("a.xml"),
+                run_case("test_x", "b.xml", Outcome::Skip),
+                one("c.xml")
+            ]),
+            Proof::Passed("test_x".into(), 2)
+        );
+        // Each bound case counts: the case with the fewest passes decides.
+        let param = |n: &str, r: &str| run_case(&format!("test_x[{n}]"), r, Outcome::Pass);
+        assert_eq!(
+            runs(&[
+                param("1", "a.xml"),
+                param("1", "b.xml"),
+                param("1", "c.xml"),
+                param("2", "a.xml"),
+                param("2", "b.xml"),
+            ]),
+            Proof::Passed("test_x[2]".into(), 2)
+        );
+        // A fail in one report of three is a fail.
+        assert_eq!(
+            runs(&[
+                one("a.xml"),
+                one("b.xml"),
+                run_case("test_x", "c.xml", Outcome::Fail)
+            ]),
+            Proof::Failed("test_x".into())
+        );
+    }
+
+    #[test]
+    fn the_state_is_the_best_state_that_the_facts_give() {
+        use ProofState::*;
+        let passed = |n| vec![Proof::Passed("t".into(), n)];
+        // (verified, tagged, owed, proofs, runs) -> state
+        let rows: Vec<(bool, bool, bool, Vec<Proof>, usize, ProofState)> = vec![
+            (false, true, false, passed(3), 3, Reliable),
+            (false, true, false, passed(5), 3, Reliable),
+            (false, true, false, passed(2), 3, PassedOnce),
+            (false, true, false, passed(1), 2, PassedOnce),
+            // A passed tag is above `verified-by`.
+            (true, true, false, passed(2), 3, PassedOnce),
+            (true, true, false, passed(3), 3, Reliable),
+            // 2 tags: each passed tag must have the passes.
+            (
+                false,
+                true,
+                false,
+                vec![Proof::Passed("a".into(), 3), Proof::Passed("b".into(), 2)],
+                3,
+                PassedOnce,
+            ),
+            // A fail leaves the tag as `tagged`, or `verified` with a record.
+            (
+                false,
+                true,
+                false,
+                vec![Proof::Passed("a".into(), 3), Proof::Failed("b".into())],
+                3,
+                Tagged,
+            ),
+            (
+                true,
+                true,
+                false,
+                vec![Proof::Failed("a".into())],
+                3,
+                Verified,
+            ),
+            (
+                false,
+                true,
+                false,
+                vec![Proof::Skipped("a".into())],
+                3,
+                Tagged,
+            ),
+            (false, true, false, vec![Proof::Unbound], 3, Tagged),
+            // No report is read: a tag is a claim.
+            (false, true, false, vec![], 3, Tagged),
+            (true, false, false, vec![], 3, Verified),
+            (true, false, true, vec![], 3, Verified),
+            // A debt is a state only with no evidence.
+            (false, false, true, vec![], 3, Owed),
+            (false, true, true, vec![], 3, Tagged),
+            (false, false, false, vec![], 3, None),
+        ];
+        for (verified, tagged, owed, proofs, n, want) in rows {
+            assert_eq!(
+                state_of(verified, tagged, owed, &proofs, n),
+                want,
+                "{verified} {tagged} {owed} {proofs:?} {n}"
+            );
+        }
+        // Best first, with the names of the design.
+        let names: Vec<&str> = ProofState::ALL.iter().map(|s| s.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "reliable",
+                "passed-once",
+                "verified",
+                "tagged",
+                "owed",
+                "none"
+            ]
+        );
+        assert!(ProofState::ALL.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn a_reason_is_valid_only_when_it_is_in_the_closed_list() {
+        assert_eq!(
+            OWED_REASONS,
+            ["manual", "environment", "external", "pending"]
+        );
+        for ok in OWED_REASONS {
+            assert!(is_owed_reason(ok));
+        }
+        for bad in ["", "later", "Manual", "manual environment", "manual,"] {
+            assert!(!is_owed_reason(bad), "{bad:?}");
+        }
     }
 }

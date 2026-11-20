@@ -52,6 +52,8 @@ dir = ".spec-dna/templates"     # project templates (default); not a root
 [evidence]
 tests = ["tests/**", "**/*_test.go"]  # test files with `covers:` tags
 reports = ["reports/*.xml"]     # test reports that a tag needs (default: none, so a tag alone proves a requirement)
+# reliable-runs = 3             # the passes of a case for the level `reliable`, from 2 to 20 (default 3)
+# reliable-for = "higher-risk"  # the changes that need `reliable`: "none" (default), "higher-risk" or "all"; needs `reports`
 
 [evals]                         # optional: the agent evals (see "The table `evals`")
 dir = "evals"                   # the folder of the evals (default "evals")
@@ -127,7 +129,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617, and no rule for the group `evidence` changes them. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `proof`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617, and the group `proof` holds SD618 to SD620. No rule for the group `evidence` changes them. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -159,6 +161,8 @@ sonnet = "high"
 | `evidence.tests` | list of globs | the default test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list disables the tags. |
 | `evidence.reports` | list of globs | `[]` | The test report files, as globs from the repository root. Empty: the test reports are off, and a tag alone proves a requirement. With a list, `spec-dna evidence stamp` stamps the reports, and `check --reports` and `finish` read them ([Test reports](#test-reports)). `init` writes `reports = []` with a comment in `standard` and `strict`, and no key in `lite`. |
 | `evidence.tree-exclude` | list of globs | `["**/*.md", "**/*.markdown"]` | The paths that the code tree leaves out, so that an edit of them does not make a report stale. A list replaces the default. A project whose Markdown files are code sets its own list. |
+| `evidence.reliable-runs` | integer from 2 to 20 | `3` | The passes of each bound test case that the level `reliable` needs, in the reports of one code tree ([Proof levels and the proof debt](#proof-levels-and-the-proof-debt)). An integer outside the range is an error (exit code 3). `init` writes no key. |
+| `evidence.reliable-for` | `"none"`, `"higher-risk"` or `"all"` | `"none"` | The changes whose requirements need the level `reliable` at `finish` (SD620): none, the changes of the class `higher-risk`, or each change. A value other than `"none"` needs `evidence.reports`. Without it, the configuration is an error (exit code 3). `init` writes `# reliable-for = "higher-risk"` as a comment in `strict`, and nothing in `standard` and `lite`. |
 | `exclude` | list of globs | `[]` | Repository paths that are not documents. A link to such a path still resolves as a file. |
 | `self-urls` | list of strings | `[]` | URL prefixes that point to this repository, such as its web view. A link that starts with one of these prefixes resolves as a path from the repository root. Each prefix is an `http` or `https` URL that ends in `/`. A `*` matches one full path segment, such as a branch. |
 | `install-source` | string | the public repository | The git source of spec-dna for `cargo install --git`. The value is a URL without spaces, such as `file:///srv/git/spec-dna` or `ssh://git@host/team/spec-dna.git`. The message of a version mismatch gives the install command with this source. Set it when the project installs spec-dna from a local or private clone. |
@@ -615,9 +619,51 @@ A glob of `reports` is a path from the repository root: an absolute path, a driv
 
 A report is unreadable (SD615) in these cases: an unknown format, a parse error (also a `testcase` inside a `testcase`), a `testsuite` whose `tests` count is not its number of `testcase` elements (a cut file), a file over 64 MiB, a `<!DOCTYPE`, and a report or a stamp that git tracks. A report in git can be a hand-written one. Add the reports to `.gitignore`.
 
-What the reports do not prove. A test can pass and still not check the requirement: the tag is a claim of the author. A person or an agent can write a report by hand, because the stamp binds bytes to a tree, not to a run. `check --reports` reads files outside git. Without `--reports`, `check` keeps the rule of 0.7.1, so the hook `check --staged` needs no report.
+What the reports do not prove. A test can pass and still not check the requirement: the tag is a claim of the author. A person or an agent can write a report by hand, because the stamp binds bytes to a tree, not to a run. A copy of a report, with its stamp, counts as one more pass of the level `reliable`. `check --reports` reads files outside git. Without `--reports`, `check` keeps the rule of 0.7.1, so the hook `check --staged` needs no report.
 
 [Diagnostics](diagnostics.md#test-reports-sd613-to-sd617) lists the codes. [The change guide](guides/change.md#test-reports-in-ci) gives the steps for CI.
+
+### Proof levels and the proof debt
+
+Each requirement of an active document has one proof state. The states go from the best to the worst:
+
+| State | Meaning |
+| --- | --- |
+| `reliable` | The state `passed-once`, and each bound case that passed has at least `reliable-runs` passes in the reports of the current code tree, with no fail |
+| `passed-once` | A bound case passed in a fresh report, and no bound case failed |
+| `verified` | A `verified-by` record. A person checked the requirement |
+| `tagged` | A full `covers:` tag that no fresh report proves: no `reports` key, no fresh report, or a case that failed, was skipped or was not found |
+| `owed` | A proof debt and no evidence |
+| `none` | No evidence and no debt |
+
+A tag that a bound case proves is above a `verified-by` record. `status` and `stats` show the states ([status](commands.md#status), [stats](commands.md#stats)). In `lite`, they show no line of the proof and `stats` reads no report, unless a rule turns a code of the group `proof` on.
+
+The level `reliable`. The runner runs the tests `reliable-runs` times, and it writes one report for each run. Each report has its stamp (`spec-dna evidence stamp`). A pass of a case is one report in which it passed. A case that appears twice in one report counts once. spec-dna keeps no ledger and no retry. With `reliable-for` set, `finish` and `check --reports` stop on a requirement of a covered change that passed fewer times than `reliable-runs` (SD620). A requirement that no bound case proves gives SD617. When SD617 is off, it gives SD620, because 0 passes is fewer than `reliable-runs`. The values of `reliable-for` are:
+
+- `none`: no change needs `reliable`. This is the default.
+- `higher-risk`: a change of the class `higher-risk` needs it.
+- `all`: each change needs it.
+
+`reliable-for` needs `reports`. A value other than `none` with an empty or absent `reports` is an error of the configuration (exit code 3): ``[evidence] reliable-for needs [evidence] reports: set reports, or set reliable-for = "none"``. The `lite` profile turns SD620 off. A requirement that has only a `verified-by` record, with no tag, is `verified`, and SD620 does not apply to it. A requirement that has a tag is still below `reliable` when its bound case failed, was skipped or passed fewer times than `reliable-runs`, also when it has a `verified-by` record: the record does not replace the passes of a tag.
+
+The proof debt. A requirement can end with the marker `<!-- proof-owed: <reason> -->`. The reason is one word of a closed list:
+
+| Reason | Use it when |
+| --- | --- |
+| `manual` | A person must look |
+| `environment` | CI has no such device, account or data |
+| `external` | A third party must act |
+| `pending` | The test is not written yet |
+
+The marker is an act of the author on one requirement, as `verified-by` is. It has no key and no profile switch: in `lite` its codes are off, in `standard` they are warnings, and in `strict` SD618 is a warning and SD619 is an error. The hash of the requirement does not cover the marker, so a marker gives no SD914 and no SD921. The marker can stand next to `aliases` and `verified-by` markers. A debt never counts as proof:
+
+- An active requirement with a debt and no evidence gives SD618, in place of SD608. SD618 is a state code, so `check --all` shows it.
+- A marker with a reason that is not in the list, or a marker on a requirement that has evidence, gives SD619. A requirement with an invalid marker keeps SD608.
+- `finish` and `check --reports` stop on a requirement with a debt and no tag with SD916, as they stop on a requirement with no evidence. A debt does not clear SD617 and SD620 either.
+
+A debt has no date and no expiry, because a check reads no clock. `status` and `stats` show the count. The reason is a claim of the author: a person reads it in the review. A copy of a report counts as one more pass: the stamp binds bytes to a tree, not to a run, so the level `reliable` does not prove that the runs were real.
+
+[Diagnostics](diagnostics.md#proof-levels-and-the-proof-debt-sd618-to-sd620) lists the codes.
 
 ## Patterns and globs
 

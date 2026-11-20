@@ -5,7 +5,7 @@
 use crate::config::{Config, Evals};
 use crate::diag::{Code, Diag};
 use crate::evals;
-use crate::evidence::{Evidence, needs_evidence};
+use crate::evidence::{Evidence, OWED_REASONS, is_owed_reason, needs_evidence};
 use crate::layer::Keep;
 use crate::lint::Phrases;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
@@ -526,7 +526,64 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 ));
             }
         }
-        if needs_evidence(d) && ev.of(di, d, ri).is_empty() {
+        // The marker `proof-owed` (design 0.8.0, D2): SD619 for a reason that
+        // is not in the list, and for a debt on a requirement that has
+        // evidence.
+        if let Some(reason) = r.proof_owed.as_deref() {
+            if !is_owed_reason(reason) {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::ProofOwedInvalid,
+                    r.key.clone(),
+                    format!(
+                        "`{}#{}`: the reason {} of `proof-owed` is not in the list: {}",
+                        d.id,
+                        r.key,
+                        if reason.is_empty() {
+                            "(empty)".to_string()
+                        } else {
+                            format!("`{reason}`")
+                        },
+                        OWED_REASONS.join(", ")
+                    ),
+                ));
+            } else if needs_evidence(d)
+                && let Some(at) = ev.of(di, d, ri).first()
+            {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::ProofOwedInvalid,
+                    r.key.clone(),
+                    format!(
+                        "`{}#{}` has the marker `proof-owed: {reason}` and it has evidence ({at}); remove the marker",
+                        d.id, r.key
+                    ),
+                ));
+            }
+        }
+        // SD618 replaces SD608 only where SD618 is on: a marker must not hide
+        // SD608 in a profile or a root that turns the proof debt off.
+        if needs_evidence(d)
+            && ev.of(di, d, ri).is_empty()
+            && config
+                .severity(Code::ProofOwed, config.root_of(&d.path))
+                .is_some()
+            && let Some(reason) = Evidence::owed_reason(d, ri)
+        {
+            // A debt and no evidence: SD618 replaces SD608 (Q5). A state code.
+            out.push(diag(
+                d,
+                r.line,
+                Code::ProofOwed,
+                r.key.clone(),
+                format!(
+                    "`{}#{}` is active, it has no evidence, and its proof is owed (`{reason}`); add a test that covers it, or a `verified-by`, and remove the marker",
+                    d.id, r.key
+                ),
+            ));
+        } else if needs_evidence(d) && ev.of(di, d, ri).is_empty() {
             let message = match ev.partial_of(di, ri).first() {
                 Some(at) => format!(
                     "`{}#{}` is active, and only a partial `covers:` tag names it ({at}); add a test that covers all of it, or a `verified-by`",

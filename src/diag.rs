@@ -34,6 +34,14 @@ macro_rules! codes {
                 Code::RequirementUnproven,
                 Code::ChangeUnproven,
             ];
+            /// The codes of the proof levels and the proof debt (SD618 to
+            /// SD620). SD618 and SD619 run on a marker `proof-owed`, and SD620
+            /// on `[evidence] reliable-for`.
+            pub const PROOF_CODES: &[Code] = &[
+                Code::ProofOwed,
+                Code::ProofOwedInvalid,
+                Code::ProofNotReliable,
+            ];
             /// Finds a code by its `SDnnn` form.
             pub fn from_code(s: &str) -> Option<Code> { Code::ALL.iter().copied().find(|c| c.code() == s) }
             pub fn code(self) -> &'static str { match self { $(Code::$variant => $code),* } }
@@ -44,7 +52,7 @@ macro_rules! codes {
             /// the diff. It is never "new" against the base, and `check --all`
             /// and `status` show it (design 0.6.0, K4, D35).
             pub fn is_state(self) -> bool {
-                matches!(self.code(), "SD911" | "SD616")
+                matches!(self.code(), "SD911" | "SD616" | "SD618")
             }
             /// The prose lint of requirement sentences (SD801-SD805). The
             /// human output of `check` gives one count for each code.
@@ -101,6 +109,9 @@ codes! {
     ReportUnreadable = "SD615", "report-unreadable", Warning, "Write the report in a format that spec-dna reads: a JUnit XML subset or the `spec-dna-report 1` line format, as UTF-8, with no DTD, whole, and not above 64 MiB. Do not commit a report or a stamp: add them to `.gitignore`.";
     RequirementUnproven = "SD616", "requirement-unproven", Warning, "A `covers:` tag names the requirement, and no test case that binds to the tag passed in the report. Make the test run and pass. Put the tag above the test, or add `case:<name>` to the tag. As an alternative, add `<!-- verified-by: <path> -->` for a check by a person.";
     ChangeUnproven = "SD617", "change-unproven", Warning, "A requirement that the change adds or changes has a `covers:` tag, and no test case that binds to the tag passed in the report. Make the test run and pass. Put the tag above the test, or add `case:<name>` to the tag.";
+    ProofOwed = "SD618", "proof-owed", Warning, "The requirement has a proof debt and no evidence. Pay the debt: add a test with a `covers:` tag, or a `<!-- verified-by: <path> -->` marker, and remove the marker `proof-owed`. A debt is no proof, so `finish` still needs evidence for a requirement that the change adds or changes.";
+    ProofOwedInvalid = "SD619", "proof-owed-invalid", Warning, "Write `<!-- proof-owed: <reason> -->` with one reason: manual, environment, external or pending. Remove the marker from a requirement that has evidence.";
+    ProofNotReliable = "SD620", "proof-not-reliable", Warning, "A requirement of the change needs the level `reliable`: each bound case must pass `[evidence] reliable-runs` times on one code tree. Run the tests that many times, write one report for each run, then run `spec-dna evidence stamp`.";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
@@ -195,7 +206,10 @@ mod tests {
             assert!(seen.insert(c.code()), "duplicate {}", c.code());
             assert!(seen.insert(c.name()), "duplicate {}", c.name());
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
-            assert_eq!(c.is_state(), matches!(c.code(), "SD911" | "SD616"));
+            assert_eq!(
+                c.is_state(),
+                matches!(c.code(), "SD911" | "SD616" | "SD618")
+            );
             // Codes from 600 up are warnings. SD702 became an error by a decision at
             // checkpoint 2. SD507 is a warning, because ADR 0016 says that it is
             // never an error.

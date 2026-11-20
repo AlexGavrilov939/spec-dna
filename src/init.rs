@@ -308,6 +308,13 @@ pub struct Plan {
     /// For `--reconfigure`: the `[evidence] tree-exclude` of the current file,
     /// if it sets one. `None`: the default list.
     pub tree_exclude: Option<Vec<String>>,
+    /// For `--reconfigure`: `[evidence] reliable-runs` of the current file, if
+    /// it is not the default. A new project gets none.
+    pub reliable_runs: Option<u32>,
+    /// For `--reconfigure`: `[evidence] reliable-for` of the current file, if it
+    /// is not `none`. A new project gets none: `strict` writes a comment only,
+    /// because the key needs `reports` (design 0.8.0, D2).
+    pub reliable_for: Option<config::ReliableFor>,
     pub language: String,
     pub outcome: Vec<String>,
     pub amendments: Vec<String>,
@@ -899,6 +906,8 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         tests: facts.tests.iter().map(|t| t.0.clone()).collect(),
         reports: Vec::new(),
         tree_exclude: None,
+        reliable_runs: None,
+        reliable_for: None,
         language,
         outcome: facts.outcome_aliases.clone(),
         amendments: facts.amendment_aliases.clone(),
@@ -1024,6 +1033,10 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     p.reports = cfg.evidence_reports.clone();
     p.tree_exclude = (cfg.evidence_tree_exclude != config::DEFAULT_TREE_EXCLUDE)
         .then(|| cfg.evidence_tree_exclude.clone());
+    p.reliable_runs = (cfg.evidence_reliable_runs != config::DEFAULT_RELIABLE_RUNS)
+        .then_some(cfg.evidence_reliable_runs);
+    p.reliable_for = (cfg.evidence_reliable_for != config::ReliableFor::None)
+        .then_some(cfg.evidence_reliable_for);
     p.rows = cfg.roots.iter().map(row_of_root).collect();
     if let Some(h) = &cfg.harness {
         p.harness = h.clone();
@@ -1368,6 +1381,19 @@ pub fn render(plan: &Plan) -> String {
     }
     if let Some(x) = &plan.tree_exclude {
         evidence.push(format!("tree-exclude = {}", toml_list(x)));
+    }
+    // The reliable level (design 0.8.0, D2). The key needs `reports`, so a new
+    // project of `strict` gets a comment, ready to use when it sets `reports`.
+    if let Some(n) = plan.reliable_runs {
+        evidence.push(format!("reliable-runs = {n}"));
+    }
+    match plan.reliable_for {
+        Some(v) => evidence.push(format!("reliable-for = \"{}\"", v.name())),
+        None if plan.profile == Profile::Strict => evidence.push(
+            "# reliable-for = \"higher-risk\"  # needs `reports`: the level `reliable` is N passes of each bound case (docs/config.md, \"Proof levels and the proof debt\")"
+                .to_string(),
+        ),
+        None => {}
     }
     if !evidence.is_empty() {
         out.push_str(&format!("\n[evidence]\n{}\n", evidence.join("\n")));

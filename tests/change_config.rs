@@ -380,3 +380,62 @@ fn an_approver_that_is_no_e_mail_is_exit_code_3() {
         "approval = \"branch\"\napprovers = [\"owner@example.test\"]",
     ));
 }
+
+// The keys of `[evidence]` for the proof levels (design 0.8.0, D2)
+
+fn evidence(keys: &str) -> String {
+    format!("[evidence]\n{keys}\n")
+}
+
+#[test]
+fn reliable_for_without_reports_is_exit_code_3_with_the_fix_in_the_message() {
+    let message = "[evidence] reliable-for needs [evidence] reports: set reports, or set reliable-for = \"none\"";
+    for keys in [
+        "reliable-for = \"higher-risk\"",
+        "reliable-for = \"all\"\nreports = []",
+        "reliable-for = \"all\"\nreliable-runs = 4",
+    ] {
+        let r = repo("", &evidence(keys));
+        for args in [&["check"][..], &["check", "--all"][..], &["status"][..]] {
+            let (code, out, err) = r.run(args);
+            assert_eq!(code, 3, "{keys} {args:?}\n{out}{err}");
+            assert!(err.contains(message), "{keys}\n{err}");
+        }
+    }
+    // `none` needs no report, and a report list makes the other values valid.
+    accepts(&evidence("reliable-for = \"none\""));
+    accepts(&evidence(
+        "reports = [\"out/*.xml\"]\nreliable-for = \"higher-risk\"",
+    ));
+    accepts(&evidence(
+        "reports = [\"out/*.xml\"]\nreliable-for = \"all\"\nreliable-runs = 20",
+    ));
+}
+
+#[test]
+fn reliable_runs_is_an_integer_from_2_to_20_and_reliable_for_takes_3_values() {
+    for bad in ["1", "0", "21", "-1", "\"3\"", "true"] {
+        rejects(
+            &evidence(&format!("reliable-runs = {bad}")),
+            &["evidence.reliable-runs"],
+        );
+    }
+    accepts(&evidence("reliable-runs = 2"));
+    for bad in ["\"sometimes\"", "\"All\""] {
+        rejects(
+            &evidence(&format!("reports = [\"o/*\"]\nreliable-for = {bad}")),
+            &[
+                "evidence.reliable-for",
+                "\"none\"",
+                "\"higher-risk\"",
+                "\"all\"",
+            ],
+        );
+    }
+    for bad in ["true", "1"] {
+        rejects(
+            &evidence(&format!("reports = [\"o/*\"]\nreliable-for = {bad}")),
+            &["evidence.reliable-for"],
+        );
+    }
+}

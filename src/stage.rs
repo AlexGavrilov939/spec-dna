@@ -1059,6 +1059,13 @@ pub fn status(
     };
     let started = lifecycle::started_count(&view.head);
     let follow = follow_ups(&view.head);
+    // The proof debts of the working tree (design 0.8.0, D2). `status` reads no
+    // report, so it counts the debts only.
+    let proof = evidence::ProofCounts::of(
+        &view.head,
+        &Evidence::build(&view.head).0,
+        cfg.evidence_reliable_runs as usize,
+    );
     let walk = match (&view.base, &view.base_rev) {
         (Some(base), Some(rev)) if view.branch => {
             Some(Branch::read(cfg, &repo.git, rev, base, &view.head))
@@ -1142,22 +1149,24 @@ pub fn status(
                 .str("skill", POST_MORTEM)
                 .end()
         });
-        println!(
-            "{}",
-            Obj::new()
-                .str("version", crate::adapters::VERSION)
-                .str("policy", cfg.change_policy.name())
-                .opt_str("base", view.base_rev.as_deref())
-                .num("started", started)
-                .raw(
-                    "max_started",
-                    &max_started.map_or_else(|| "null".to_string(), |m| m.to_string())
-                )
-                .strs("notes", &view.notes)
-                .raw("changes", &json::array(changes))
-                .raw("follow_ups", &json::array(follow_ups))
-                .end()
-        );
+        let mut out = Obj::new()
+            .str("version", crate::adapters::VERSION)
+            .str("policy", cfg.change_policy.name())
+            .opt_str("base", view.base_rev.as_deref())
+            .num("started", started)
+            .raw(
+                "max_started",
+                &max_started.map_or_else(|| "null".to_string(), |m| m.to_string()),
+            )
+            .strs("notes", &view.notes)
+            .raw("changes", &json::array(changes))
+            .raw("follow_ups", &json::array(follow_ups));
+        // The object `proof` is there only when a marker exists, so a project
+        // that uses no proof debt gets the JSON of 0.7.1.
+        if proof.marked > 0 {
+            out = out.raw("proof", &proof.owed_json());
+        }
+        println!("{}", out.end());
         return Ok(0);
     }
     println!(
@@ -1237,6 +1246,11 @@ pub fn status(
             "follow-up {}: {}:{} {} [skill: {POST_MORTEM}]",
             f.incident, f.path, f.line, f.text
         );
+    }
+    if evidence::proof_codes_on(cfg)
+        && let Some(line) = proof.owed_line()
+    {
+        println!("{line}");
     }
     Ok(0)
 }

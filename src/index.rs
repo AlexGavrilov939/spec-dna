@@ -93,6 +93,12 @@ impl W {
         self.u32(s.len() as u32);
         self.0.extend_from_slice(s.as_bytes());
     }
+    fn opt_str(&mut self, s: Option<&str>) {
+        self.u8(s.is_some() as u8);
+        if let Some(s) = s {
+            self.str(s);
+        }
+    }
     fn strs(&mut self, v: &[String]) {
         self.u32(v.len() as u32);
         for s in v {
@@ -121,6 +127,13 @@ impl<'a> R<'a> {
     fn str(&mut self) -> Option<String> {
         let n = self.u32()? as usize;
         String::from_utf8(self.take(n)?.to_vec()).ok()
+    }
+    fn opt_str(&mut self) -> Option<Option<String>> {
+        match self.u8()? {
+            0 => Some(None),
+            1 => Some(Some(self.str()?)),
+            _ => None,
+        }
     }
     fn strs(&mut self) -> Option<Vec<String>> {
         let n = self.u32()? as usize;
@@ -211,6 +224,7 @@ fn doc(w: &mut W, d: &ParsedDoc) {
         w.0.extend_from_slice(&r.frozen);
         w.strs(&r.aliases);
         w.strs(&r.verified_by);
+        w.opt_str(r.proof_owed.as_deref());
         w.str(&r.text);
         w.u32(r.sentence.start);
         w.u32(r.sentence.end);
@@ -325,6 +339,7 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
             frozen: r.hash()?,
             aliases: r.strs()?,
             verified_by: r.strs()?,
+            proof_owed: r.opt_str()?,
             text: r.str()?,
             sentence: r.u32()?..r.u32()?,
         });
@@ -413,6 +428,20 @@ mod tests {
         let mut bytes = encode(&m);
         bytes.pop();
         assert!(decode(&bytes).is_none());
+    }
+
+    #[test]
+    fn round_trip_keeps_the_reason_of_a_debt() {
+        let text = "# T\n\n- **a**: One. <!-- proof-owed: manual -->\n- **b**: Two.\n- **c**: Three. <!-- proof-owed: -->\n";
+        let mut m = HashMap::new();
+        m.insert("p".to_string(), Arc::new(crate::parse::parse(text)));
+        let back = decode(&encode(&m)).unwrap();
+        let got: Vec<Option<&str>> = back["p"]
+            .reqs
+            .iter()
+            .map(|r| r.proof_owed.as_deref())
+            .collect();
+        assert_eq!(got, [Some("manual"), None, Some("")]);
     }
 
     #[test]

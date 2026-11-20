@@ -962,6 +962,9 @@ pub fn stats(
     }
     measured.reverse();
     let rows = indicators(repo, cfg, &measured, shallow)?;
+    // In `lite` each proof code is off: `stats` reads no report there.
+    let proof_on = evidence::proof_codes_on(cfg);
+    let proof = proof_counts(repo, cfg, proof_on)?;
     let finished = measured
         .iter()
         .filter(|m| m.outcome == Some(Outcome::Finished))
@@ -985,7 +988,13 @@ pub fn stats(
                 .opt_str("reason", r.reason.as_deref())
                 .end()
         });
-        println!("{}", Obj::new().raw("indicators", &json::array(list)).end());
+        // The object `proof` is there only for a project that uses the proof
+        // debt or the test reports, so the others get the JSON of 0.7.1.
+        let mut out = Obj::new().raw("indicators", &json::array(list));
+        if proof.marked > 0 || (proof_on && !cfg.evidence_reports.is_empty()) {
+            out = out.raw("proof", &proof.states_json());
+        }
+        println!("{}", out.end());
         return Ok(0);
     }
     println!(
@@ -1021,7 +1030,49 @@ pub fn stats(
             }
         }
     }
+    // The count of each proof state (design 0.8.0, D2). A project that uses
+    // neither a debt nor the test reports gets the output of 0.7.1.
+    if proof_on && (proof.owed() > 0 || !cfg.evidence_reports.is_empty()) {
+        let parts: Vec<String> = evidence::ProofState::ALL
+            .iter()
+            .map(|s| format!("{} {}", s.name(), proof.count(*s)))
+            .collect();
+        println!("proof: {}", parts.join(", "));
+    }
     Ok(0)
+}
+
+/// The count of the requirements of each proof state in the tree of `HEAD`, as
+/// the row of the partial evidence reads it. With `read_reports` and
+/// `[evidence] reports`, it also reads the reports from the disk and binds the
+/// tags, as `check --reports` does. A problem of a report gives no finding
+/// here: a tag that no fresh report proves is `tagged`. A folder of reports
+/// that cannot be read is no report.
+fn proof_counts(
+    repo: &Repo,
+    cfg: &Config,
+    read_reports: bool,
+) -> Result<evidence::ProofCounts, Fatal> {
+    let Some(head) = repo.head_commit() else {
+        return Ok(evidence::ProofCounts::default());
+    };
+    let snap = Snapshot::at(repo, &head)?;
+    let mut corpus = repo::load(repo, cfg, &[&snap], true, false)?
+        .corpora
+        .remove(0);
+    corpus.covers = evidence::load(repo, cfg, Some(&head), false)?;
+    if read_reports
+        && !cfg.evidence_reports.is_empty()
+        && let Ok(reads) = crate::report::read(repo, cfg)
+    {
+        evidence::bind_covers(&repo.root, &mut corpus.covers, &reads);
+    }
+    let (ev, _) = evidence::Evidence::build(&corpus);
+    Ok(evidence::ProofCounts::of(
+        &corpus,
+        &ev,
+        cfg.evidence_reliable_runs as usize,
+    ))
 }
 
 /// The rows of the indicator table of the design, in its order.

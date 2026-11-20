@@ -2294,12 +2294,14 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
         if on(Code::FinishIncomplete) {
             out.extend(finish_incomplete(ctx, ch, sole));
         }
-        if on(Code::DeltaEvidenceMissing) || on(Code::ChangeUnproven) {
+        if on(Code::DeltaEvidenceMissing) || on(Code::ChangeUnproven) || on(Code::ProofNotReliable)
+        {
             let mine = |path: &str| sole || change::in_scope(&ch.files, path);
-            // SD916 and SD617 are 2 checks of one function. A code that is
-            // off gives no diagnostic, so each stays as the profile sets it.
+            // SD916, SD617 and SD620 are 3 checks of one function. A code that
+            // is off gives no diagnostic, so each stays as the profile sets it.
+            let reliable = crate::evidence::reliable_for(ctx.config, ch.change.class);
             out.extend(
-                evidence_missing(ctx.head, ctx.base, ctx.base, &ch.change, &mine)
+                evidence_missing(ctx.head, ctx.base, ctx.base, &ch.change, &mine, reliable)
                     .into_iter()
                     .filter(|d| on(d.code)),
             );
@@ -2415,7 +2417,10 @@ fn req_index(c: &Corpus, id: &str, key: &str) -> Option<(u32, usize)> {
 /// evidence in `head` (a `covers:` tag, a `verified-by` marker or the
 /// `verified-by` of the document). SD617 is the second check: a requirement
 /// that has a tag and no `verified-by` needs a bound test case that passed in
-/// a report. It runs only when the tags carry a result of the bind.
+/// a report. It runs only when the tags carry a result of the bind. SD620 is
+/// the third check: with `reliable` (the passes that `[evidence] reliable-for`
+/// needs for this change), a requirement that passed fewer times is below the
+/// level `reliable`. A debt (`proof-owed`) is no evidence for any of them.
 ///
 /// - With a delta, the requirements are the targets of the `ADD` and `CHANGE`
 ///   lines that `head` applies. A line that `head` does not apply gives no
@@ -2433,6 +2438,7 @@ pub fn evidence_missing(
     source: &Corpus,
     ch: &Change,
     scope: &dyn Fn(&str) -> bool,
+    reliable: Option<crate::evidence::Reliable>,
 ) -> Vec<Diag> {
     let lines = ch.delta(source);
     let mut wanted: Vec<(u32, usize)> = Vec::new();
@@ -2489,10 +2495,28 @@ pub fn evidence_missing(
         } else if let Some(why) = ev.unproven(di, doc, ri) {
             // The requirement has a tag, and the test reports do not prove it
             // (design 0.8.0, D1). `unproven` is `None` when no report is read.
+            // With SD617 off and `reliable-for` on, it has 0 passes: SD620.
+            let code = match reliable {
+                Some(r) if !r.sd617_on => Code::ProofNotReliable,
+                _ => Code::ChangeUnproven,
+            };
             out.push(crate::check::diag(
                 doc,
                 req.line,
-                Code::ChangeUnproven,
+                code,
+                format!("{}#{}", doc.id, req.key),
+                format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and {why}",
+                    ch.slug, doc.id, req.key
+                ),
+            ));
+        } else if let Some(r) = reliable
+            && let Some(why) = ev.not_reliable(di, doc, ri, r.runs)
+        {
+            out.push(crate::check::diag(
+                doc,
+                req.line,
+                Code::ProofNotReliable,
                 format!("{}#{}", doc.id, req.key),
                 format!(
                     "the change `{}` adds or changes the requirement `{}#{}`, and {why}",
