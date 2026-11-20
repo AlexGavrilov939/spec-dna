@@ -929,11 +929,42 @@ impl Git {
         Ok((!id.is_empty()).then_some(id))
     }
 
-    /// The commits of `<base>..HEAD` on the first-parent line, the oldest first
-    /// (`git rev-list --reverse --first-parent`). The acceptance record reads
-    /// its entries in this order (design 0.8.0, D3 item 8).
+    /// The tip of the branch that the lifecycle base `base` starts (design 0.8.0,
+    /// D3 item 8). It is `HEAD`, with one case: on the test merge that a code host
+    /// makes for a pull request, `HEAD` is a merge commit with 2 parents, its
+    /// first parent is the base and its second parent is the tip of the branch.
+    /// The merge commit is no commit of the branch. In every other case (a
+    /// merge of the base into the branch, an octopus merge, a merge whose first
+    /// parent is not the base) the tip is `HEAD`. The result is `HEAD` or a full
+    /// commit id; it is the one source of the range of the branch.
+    pub fn branch_tip(&self, base: &str) -> String {
+        let head = || "HEAD".to_string();
+        let Ok(out) = self.run(&["rev-list", "--no-walk", "--parents", "HEAD"]) else {
+            return head();
+        };
+        let line = String::from_utf8_lossy(&out).trim().to_string();
+        let ids: Vec<&str> = line.split_whitespace().collect();
+        // `HEAD`, then its parents.
+        let [_, first, second] = ids[..] else {
+            return head();
+        };
+        let Ok(base_id) = self.run(&["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")])
+        else {
+            return head();
+        };
+        if String::from_utf8_lossy(&base_id).trim() == first {
+            second.to_string()
+        } else {
+            head()
+        }
+    }
+
+    /// The commits of the branch on the first-parent line, the oldest first:
+    /// the output of `git rev-list --reverse --first-parent <base>..<tip>`, with
+    /// `<tip>` from [`Git::branch_tip`]. On a test merge the range does not hold
+    /// the merge commit. The acceptance record reads its entries in this order.
     pub fn first_parent_commits(&self, base: &str) -> Result<Vec<String>, String> {
-        let range = format!("{base}..HEAD");
+        let range = format!("{base}..{}", self.branch_tip(base));
         let out = self.run(&["rev-list", "--reverse", "--first-parent", &range])?;
         Ok(String::from_utf8_lossy(&out)
             .lines()
@@ -941,7 +972,7 @@ impl Git {
             .collect())
     }
 
-    /// True if a shallow clone cuts the history of `<base>..HEAD`: the repository
+    /// True if a shallow clone cuts the history of the branch ([`Git::first_parent_commits`]): the repository
     /// is shallow, and the oldest commit of the range has no parent that the
     /// repository has. A real root commit of a shallow repository gives the same
     /// answer, which is the stricter one.
@@ -949,8 +980,9 @@ impl Git {
         if !self.is_shallow() {
             return false;
         }
+        // A base that the clone does not have gives an error: the history is cut.
         let Ok(commits) = self.first_parent_commits(base) else {
-            return false;
+            return true;
         };
         commits.first().is_some_and(|oldest| {
             self.run(&["rev-parse", "--verify", "-q", &format!("{oldest}^")])
@@ -2379,6 +2411,157 @@ mod tests {
         t.commit("stranger@example.test", "map");
         let w = t.walk(&base);
         assert_eq!(w.commits[0].author_email, "stranger@example.test");
+    }
+
+    /// A base commit on `main`, then a feature branch of 2 commits.
+    /// Returns the base id and the ids of the 2 branch commits.
+    fn feature_branch(t: &Tmp) -> (String, String, String) {
+        t.write("a.txt", "a\n");
+        let base = t.commit("base@example.test", "base");
+        t.git(&["checkout", "-q", "-b", "feature"]);
+        t.write("f1.txt", "1\n");
+        let f1 = t.commit("dev@example.test", "feature 1");
+        t.write("f2.txt", "2\n");
+        let f2 = t.commit("dev@example.test", "feature 2");
+        (base, f1, f2)
+    }
+
+    /// The test merge that a code host makes: a detached `HEAD` on `main`, and
+    /// a merge commit of the branch (the first parent is `main`).
+    fn test_merge(t: &Tmp) -> String {
+        t.git(&["checkout", "-q", "main"]);
+        t.write("other.txt", "main moves on\n");
+        let main = t.commit("base@example.test", "main moves on");
+        t.git(&["checkout", "-q", "--detach", "main"]);
+        t.git(&[
+            "-c",
+            "user.email=ci@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "test merge",
+            "feature",
+        ]);
+        main
+    }
+
+    #[test]
+    fn the_branch_tip_is_head_for_a_plain_branch() {
+        let t = Tmp::new();
+        let (base, f1, f2) = feature_branch(&t);
+        let g = Git::new(&t.dir);
+        assert_eq!(g.branch_tip(&base), "HEAD");
+        assert_eq!(g.first_parent_commits(&base).unwrap(), [f1, f2]);
+    }
+
+    #[test]
+    fn the_branch_tip_of_a_test_merge_is_its_second_parent() {
+        let t = Tmp::new();
+        let (_, f1, f2) = feature_branch(&t);
+        let main = test_merge(&t);
+        let g = Git::new(&t.dir);
+        // The lifecycle base of a test merge is the first parent.
+        assert_eq!(g.branch_tip(&main), f2);
+        // The branch commits, and not the merge commit.
+        assert_eq!(g.first_parent_commits(&main).unwrap(), [f1, f2]);
+    }
+
+    #[test]
+    fn main_merged_into_the_branch_keeps_head_as_the_tip() {
+        let t = Tmp::new();
+        let (base, f1, f2) = feature_branch(&t);
+        t.git(&["checkout", "-q", "main"]);
+        t.write("other.txt", "main moves on\n");
+        let main = t.commit("base@example.test", "main moves on");
+        t.git(&["checkout", "-q", "feature"]);
+        t.git(&[
+            "-c",
+            "user.email=dev@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge main",
+            "main",
+        ]);
+        let g = Git::new(&t.dir);
+        // The first parent of `HEAD` is the branch, not the base: `HEAD` is the tip.
+        assert_eq!(g.branch_tip(&main), "HEAD");
+        let commits = g.first_parent_commits(&main).unwrap();
+        assert_eq!(commits.len(), 3, "{commits:?} {base} {f1} {f2}");
+        assert_eq!(commits[..2], [f1, f2]);
+    }
+
+    #[test]
+    fn an_octopus_merge_and_a_merge_of_another_branch_keep_head_as_the_tip() {
+        let t = Tmp::new();
+        let (base, _, _) = feature_branch(&t);
+        t.git(&["checkout", "-q", "-b", "other", &base]);
+        t.write("o.txt", "o\n");
+        t.commit("dev@example.test", "other");
+        t.git(&["checkout", "-q", "-b", "third", &base]);
+        t.write("t.txt", "t\n");
+        t.commit("dev@example.test", "third");
+        t.git(&["checkout", "-q", "--detach", "main"]);
+        t.git(&[
+            "-c",
+            "user.email=ci@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "octopus",
+            "feature",
+            "other",
+            "third",
+        ]);
+        let g = Git::new(&t.dir);
+        assert_eq!(g.branch_tip(&base), "HEAD");
+        // A 2-parent merge whose first parent is not the base.
+        t.git(&["checkout", "-q", "other"]);
+        t.git(&[
+            "-c",
+            "user.email=dev@example.test",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge feature",
+            "third",
+        ]);
+        assert_eq!(g.branch_tip(&base), "HEAD");
+    }
+
+    #[test]
+    fn a_shallow_clone_of_a_test_merge_cuts_the_range_at_depth_1_and_2() {
+        let t = Tmp::new();
+        feature_branch(&t);
+        test_merge(&t);
+        let url = format!("file://{}", t.dir.display());
+        let first = t.git(&["rev-parse", "HEAD^1"]);
+        for depth in ["1", "2"] {
+            let clone = std::env::temp_dir()
+                .join(format!("spec-dna-gitmod-{}-tm{depth}", std::process::id()));
+            let _ = fs::remove_dir_all(&clone);
+            let _guard = Tmp { dir: clone.clone() };
+            let work = Tmp::new();
+            // The clone of a detached `HEAD` is the test merge.
+            git_in(
+                &work.dir,
+                &[
+                    "clone",
+                    "-q",
+                    "--depth",
+                    depth,
+                    &url,
+                    clone.to_str().unwrap(),
+                ],
+            );
+            let g = Git::new(&clone);
+            assert!(g.is_shallow(), "depth {depth}");
+            assert!(g.range_is_cut(&first), "depth {depth}");
+        }
     }
 
     #[test]

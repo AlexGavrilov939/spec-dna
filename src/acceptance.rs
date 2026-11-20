@@ -139,7 +139,7 @@ pub enum Need {
 ///
 /// A record is needed when the acceptance is on (SD927 is not off), and the plan
 /// is new:
-/// - a plan that the base tree does not have (a commit of `base..HEAD` added it,
+/// - a plan that the base tree does not have (a commit of the branch added it,
 ///   or no commit did) is always new (Q43). So a branch cannot set the pin back
 ///   for one commit to skip the record;
 /// - a plan that the base tree has is new if the newest commit that added it and
@@ -282,6 +282,48 @@ pub fn acceptors_missing(cfg: &Config, class: Class, rec: &Record) -> Option<Str
     })
 }
 
+/// The first check of the record that stops `finish` step 5.2, and its messages.
+/// `finish` and `next` use this one function, so a check that is off stops
+/// neither. The order is the order of the codes: SD928 (`problems`: the rules of
+/// a valid record, and the compare of the briefs), SD929 (`stale`), SD930,
+/// SD931 and SD933. A record that does not read (`rec` is `None`) stops with
+/// SD928 only; with SD928 off it passes, as no other check can read it.
+pub fn first_stop(
+    cfg: &Config,
+    class: Class,
+    rec: Option<&Record>,
+    problems: Vec<String>,
+    stale: Option<String>,
+) -> Option<(Code, Vec<String>)> {
+    let on = |c: Code| !cfg.is_off(c);
+    if on(Code::AcceptanceInvalid) && !problems.is_empty() {
+        return Some((Code::AcceptanceInvalid, problems));
+    }
+    let rec = rec?;
+    if on(Code::AcceptanceStale)
+        && let Some(why) = stale
+    {
+        return Some((Code::AcceptanceStale, vec![why]));
+    }
+    if on(Code::AcceptanceRejected)
+        && let Some(why) = rejected(rec)
+    {
+        return Some((Code::AcceptanceRejected, vec![why]));
+    }
+    if on(Code::SelfAccepted) {
+        let found = self_accepted(rec);
+        if !found.is_empty() {
+            return Some((Code::SelfAccepted, found));
+        }
+    }
+    if on(Code::AcceptorMissing)
+        && let Some(why) = acceptors_missing(cfg, class, rec)
+    {
+        return Some((Code::AcceptorMissing, vec![why]));
+    }
+    None
+}
+
 /// SD930: the top `result` is `rejected`.
 pub fn rejected(rec: &Record) -> Option<String> {
     (rec.result == "rejected").then(|| {
@@ -414,10 +456,10 @@ enum Source {
 /// - An entry that the record of the base has, by its role, session and brief,
 ///   was compared in its own pull request, so it is not compared again.
 /// - The adding commit is the oldest commit of the latest unbroken run of the
-///   commits of `base..HEAD` (first parent, the oldest first) whose record holds
+///   commits of the branch (`Git::first_parent_commits`: `<base>..<tip>`, first parent, the oldest first; on a test merge the tip is the second parent of `HEAD`) whose record holds
 ///   an entry with the same triple. An entry that no commit holds takes the
 ///   index with `--staged`, else the working tree.
-/// - A shallow clone that cuts `base..HEAD` gives one problem that names
+/// - A shallow clone that cuts the commits of the branch gives one problem that names
 ///   `fetch-depth: 0`.
 pub fn brief_problems(
     cfg: &Config,
@@ -449,7 +491,7 @@ pub fn brief_problems(
     if git.range_is_cut(base_rev) {
         let list: Vec<String> = entries.iter().map(|(i, _)| (i + 1).to_string()).collect();
         return Ok(vec![format!(
-            "the history of `{base_rev}..HEAD` is cut (a shallow clone), so the brief of acceptor {} cannot be compared with its adding commit; fetch the full history (`fetch-depth: 0`)",
+            "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the brief of acceptor {} cannot be compared with its adding commit; fetch the full history (`fetch-depth: 0`)",
             list.join(", ")
         )]);
     }
@@ -510,7 +552,11 @@ pub fn brief_problems(
                 }
                 Source::Head => {
                     for n in names {
-                        texts.push(text_of(git.head_file(&format!("{folder}/{n}"))?));
+                        // A working tree with `core.autocrlf` has CRLF, and `accept
+                        // --brief` reads the files of `HEAD` with LF (ADR 0019).
+                        texts.push(text_of(git.head_file(&format!("{folder}/{n}"))?).map(|t| {
+                            String::from_utf8_lossy(&record::to_lf(t.as_bytes())).into_owned()
+                        }));
                     }
                 }
             }
@@ -563,7 +609,7 @@ pub fn brief_problems(
 // The bytes of an archive file (SD935).
 
 /// The text of the folder record that `finish` moved to `archive`: the newest
-/// text of `<folder>/acceptance.toml` in the commits of `base..HEAD` (first
+/// text of `<folder>/acceptance.toml` in the commits of the branch (see `Git::first_parent_commits`; first
 /// parent), else its text in the base.
 fn moved_record(git: &Git, base_rev: &str, folder: &str) -> Result<Option<Vec<u8>>, String> {
     let rec_path = format!("{folder}/{}", record::FILE_NAME);
@@ -584,7 +630,7 @@ fn moved_record(git: &Git, base_rev: &str, folder: &str) -> Result<Option<Vec<u8
 /// from the folder record, or no folder record is in the history of the branch
 /// or in the base. The rule is one rule for the first commit of `finish` and
 /// for a later commit that edits the file: `finish` writes the folder record,
-/// byte for byte. It returns `None` in a shallow clone that cuts `base..HEAD`:
+/// byte for byte. It returns `None` in a shallow clone that cuts the commits of the branch:
 /// the record cannot be found, and SD928 reports the cut.
 pub fn archive_differs(
     git: &Git,

@@ -15,6 +15,7 @@ status: approved
 - `.claude/agents/ownership.md` The file rows.
 - `src/upgrade_config.rs`, `src/upgrade.rs`, `src/eval_ab.rs`, `src/eval_pack.rs`, `src/eval_records.rs`, `src/verdict.rs` The upgrade of the skill list, the arm `without` of `eval run --ab`, the pack and the verdict names for `accept`.
 - `docs/commands.md`, `docs/config.md`, `docs/diagnostics.md`, `docs/profiles.md`, `docs/harness.md`, `docs/glossary.md`, `docs/guides/change.md`, `docs/guides/upgrade-0.6.md`, `docs/init.md`, `docs/quickstart.md`, `docs/evals.md`, `docs/concepts.md`, `docs/agents.md` The reference pages.
+- `docs/design/0.8.0.md` The sentence of D3 that names the commits of the branch.
 - `docs/intent/build-080-s4/acceptance.toml` The record of this slice.
 
 ## Order

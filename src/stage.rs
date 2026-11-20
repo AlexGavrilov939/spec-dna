@@ -372,53 +372,49 @@ fn accept_item(
     };
     let (rec, mut problems): (Option<Record>, Vec<String>) =
         acceptance::read_record(cfg, &text, slug, acceptance::plan_facts(ch, head));
-    let Some(rec) = rec else {
-        return Ok(open(format!(
-            "the record `{path}` does not read ({}); the acceptor fixes it",
-            problems.first().map_or("", String::as_str)
-        )));
-    };
-    if on(Code::AcceptanceInvalid) {
-        problems.extend(
-            acceptance::brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec)
-                .map_err(Fatal::Io)?,
-        );
-        if let Some(first) = problems.first() {
-            return Ok(open(format!(
-                "the record `{path}` is not valid ({first}); the acceptor fixes it"
-            )));
+    // The checks of `finish` step 5.2, by the one function that `finish` uses:
+    // a check that is off stops neither of them.
+    let stale = match &rec {
+        Some(r) if on(Code::AcceptanceStale) => {
+            acceptance::stale(cfg, &repo.git, r, diff, false).map_err(Fatal::Io)?
         }
-    }
-    if on(Code::AcceptanceStale)
-        && acceptance::stale(cfg, &repo.git, &rec, diff, false)
-            .map_err(Fatal::Io)?
-            .is_some()
+        _ => None,
+    };
+    if on(Code::AcceptanceInvalid)
+        && let Some(r) = &rec
     {
-        return Ok(open(format!(
+        problems.extend(
+            acceptance::brief_problems(cfg, &repo.git, base_rev, &ch.dir, r).map_err(Fatal::Io)?,
+        );
+    }
+    let first = problems.first().cloned().unwrap_or_default();
+    let Some((code, messages)) =
+        acceptance::first_stop(cfg, ch.class, rec.as_ref(), problems, stale)
+    else {
+        return Ok(AcceptItem {
+            done: true,
+            text: format!("the record `{path}` is valid, fresh and accepted"),
+        });
+    };
+    Ok(open(match code {
+        Code::AcceptanceInvalid if rec.is_none() => {
+            format!("the record `{path}` does not read ({first}); the acceptor fixes it")
+        }
+        Code::AcceptanceInvalid => {
+            format!("the record `{path}` is not valid ({first}); the acceptor fixes it")
+        }
+        Code::AcceptanceStale => format!(
             "the record `{path}` is stale, because the code changed after the acceptance: delete it, commit, and run `spec-dna accept {slug} --brief` again"
-        )));
-    }
-    if on(Code::AcceptanceRejected) && rec.result == "rejected" {
-        return Ok(open(format!(
+        ),
+        Code::AcceptanceRejected => format!(
             "the record `{path}` says `rejected`: fix each finding in the code, delete the record, commit, and accept again"
-        )));
-    }
-    if on(Code::SelfAccepted)
-        && let Some(first) = acceptance::self_accepted(&rec).first()
-    {
-        return Ok(open(format!(
-            "the record `{path}` is not accepted ({first}); run `spec-dna accept {slug}` again with another agent"
-        )));
-    }
-    if on(Code::AcceptorMissing)
-        && let Some(why) = acceptance::acceptors_missing(cfg, ch.class, &rec)
-    {
-        return Ok(open(why));
-    }
-    Ok(AcceptItem {
-        done: true,
-        text: format!("the record `{path}` is valid, fresh and accepted"),
-    })
+        ),
+        Code::SelfAccepted => format!(
+            "the record `{path}` is not accepted ({}); run `spec-dna accept {slug}` again with another agent",
+            messages.first().map_or("", String::as_str)
+        ),
+        _ => messages.into_iter().next().unwrap_or_default(),
+    }))
 }
 
 /// The evidence of the requirements that the change adds or changes.

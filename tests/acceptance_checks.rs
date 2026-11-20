@@ -959,12 +959,13 @@ fn a_markdown_edit_after_the_record_gives_no_sd929_in_the_finish_pull_request() 
 }
 
 #[test]
-fn a_base_commit_that_edits_a_listed_path_makes_the_record_stale_in_the_test_merge() {
+fn a_base_commit_that_edits_a_listed_path_makes_the_record_stale_after_main_merges_into_the_branch()
+{
     let r = base_flow();
     let t = commit_record(&r, &["acceptor"], "accepted");
     finished_by_hand(&r, Some(&t));
-    // `main` edits a listed path. The test merge of CI is the merge of `main`
-    // into the branch.
+    // `main` edits a listed path, and `main` merges into the branch. The test
+    // merge of a code host is the other way round: see the twin test below.
     r.git(&["checkout", "-q", "main"]);
     r.write(CODE, &format!("# main\n{CODE_OLD}"));
     r.commit("main edits a listed path");
@@ -977,7 +978,7 @@ fn a_base_commit_that_edits_a_listed_path_makes_the_record_stale_in_the_test_mer
 }
 
 #[test]
-fn a_base_commit_to_another_path_leaves_the_record_fresh() {
+fn a_base_commit_to_another_path_leaves_the_record_fresh_after_main_merges_into_the_branch() {
     let r = base_flow();
     let t = commit_record(&r, &["acceptor"], "accepted");
     finished_by_hand(&r, Some(&t));
@@ -989,6 +990,198 @@ fn a_base_commit_to_another_path_leaves_the_record_fresh() {
     r.git(&["merge", "-q", "-m", "test merge", "main"]);
     let (_, out, err) = run(&r, &["check"]);
     assert!(!has(&out, "SD929"), "{out}{err}");
+}
+
+/// The test merge that a code host makes for a pull request: `main` moves on
+/// with a commit to another path, and `HEAD` is a merge commit of the branch on
+/// the new tip of `main`. The first parent is the base, the second parent is the
+/// tip of the branch (`Git::branch_tip`). The merge is not done on `main`.
+fn in_test_merge(r: &Repo) {
+    r.git(&["checkout", "-q", "main"]);
+    r.write("README.md", "# Project, main moves on\n");
+    r.commit("main moves on");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "--detach", "main"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+}
+
+#[test]
+fn the_test_merge_of_a_branch_that_ran_finish_gives_no_sd935_and_no_sd928() {
+    let r = base_flow();
+    commit_record(&r, &["acceptor"], "accepted");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("finish");
+    in_test_merge(&r);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD935"), "{out}{err}");
+    assert!(!has(&out, "SD928"), "{out}{err}");
+}
+
+#[test]
+fn a_tick_after_the_record_gives_no_sd928_in_the_test_merge() {
+    let r = base_flow();
+    commit_record(&r, &["acceptor"], "accepted");
+    // The plan changes after the record: a task is added and ticked.
+    let plan = r.read(PLAN).replace(
+        "## Risks",
+        "- [x] t2: A later task that a tick closes.\n\n## Risks",
+    );
+    r.write(PLAN, &plan);
+    r.commit("tick");
+    in_test_merge(&r);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD928"), "{out}{err}");
+}
+
+#[test]
+fn a_wrong_brief_in_the_test_merge_names_the_record_commit_of_the_branch() {
+    let r = base_flow();
+    commit_record(&r, &["acceptor"], "accepted");
+    let text = r.read(RECORD);
+    let hash = text
+        .lines()
+        .find_map(|l| l.strip_prefix("brief = \""))
+        .unwrap()
+        .trim_end_matches('"')
+        .to_string();
+    r.write(RECORD, &text.replace(&hash, "0123456789abcdef"));
+    r.commit("a wrong brief");
+    let record_commit = r.git_out(&["rev-parse", "HEAD"]).trim().to_string();
+    in_test_merge(&r);
+    let merge = r.git_out(&["rev-parse", "HEAD"]).trim().to_string();
+    let (_, out, err) = run(&r, &["check"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD928 "))
+        .unwrap_or_else(|| panic!("no SD928 in\n{out}{err}"));
+    assert!(line.contains(&record_commit[..12]), "{line}");
+    assert!(!line.contains(&merge[..12]), "{line}");
+}
+
+#[test]
+fn an_archive_with_other_bytes_gives_sd935_in_the_test_merge() {
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&format!("{t}# edited\n")));
+    in_test_merge(&r);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD935"), "{out}");
+    // The same bytes give none.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    in_test_merge(&r);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD935"), "{out}{err}");
+}
+
+#[test]
+fn a_branch_born_change_with_no_record_gives_sd927_in_the_test_merge() {
+    // The branch adds the plan and deletes the folder with no `finish`.
+    let r = built();
+    finished_by_hand(&r, None);
+    in_test_merge(&r);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "{out}{err}");
+    let sd910 = out
+        .lines()
+        .find(|l| l.contains(" SD910 "))
+        .unwrap_or_else(|| panic!("no SD910 in\n{out}{err}"));
+    assert!(sd910.contains("reason 7"), "{sd910}");
+}
+
+#[test]
+fn a_base_commit_that_edits_a_listed_path_makes_the_record_stale_in_the_test_merge() {
+    // The CI order: `main` edits a listed path, and `HEAD` merges the branch.
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    r.git(&["checkout", "-q", "main"]);
+    r.write(CODE, &format!("# main\n{CODE_OLD}"));
+    r.commit("main edits a listed path");
+    origin_head(&r.dir, "main");
+    in_test_merge(&r);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(has(&out, "SD929"), "{out}{err}");
+    assert!(!has(&out, "SD935"), "{out}{err}");
+    assert!(!has(&out, "SD928"), "{out}{err}");
+}
+
+#[test]
+fn a_base_commit_to_another_path_leaves_the_record_fresh_in_the_test_merge() {
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    in_test_merge(&r);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD929"), "{out}{err}");
+    assert!(!has(&out, "SD935"), "{out}{err}");
+    assert!(!has(&out, "SD928"), "{out}{err}");
+}
+
+#[test]
+fn main_merged_into_the_branch_inside_a_test_merge_gives_no_sd935_and_no_sd928() {
+    let r = base_flow();
+    let t = commit_record(&r, &["acceptor"], "accepted");
+    finished_by_hand(&r, Some(&t));
+    // `main` moves on, and the branch merges it: the branch has a merge commit.
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "y = 2\n");
+    r.commit("main moves on");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "-m", "merge main", "main"]);
+    // Then the code host makes the test merge.
+    in_test_merge(&r);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD935"), "{out}{err}");
+    assert!(!has(&out, "SD928"), "{out}{err}");
+}
+
+/// An entry that no commit holds is checked against the files of the working
+/// tree. With `core.autocrlf` they are CRLF, and `accept --brief` read them as
+/// LF from `HEAD`: the same brief (ADR 0019).
+#[test]
+fn an_uncommitted_entry_is_checked_against_crlf_files_as_lf() {
+    let r = base_flow();
+    let t = record_text(&r, &["acceptor"], "accepted");
+    r.git(&["config", "core.autocrlf", "true"]);
+    for path in [INTENT, SPEC, PLAN] {
+        let crlf = r.read(path).replace('\n', "\r\n");
+        std::fs::write(r.dir.join(path), crlf).unwrap();
+        // The refresh of the index that a checkout does: the blob stays LF.
+        r.git(&["add", path]);
+    }
+    assert_eq!(r.git_out(&["status", "--porcelain"]).trim(), "");
+    r.write(RECORD, &t);
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD928"), "{out}{err}");
+}
+
+/// `check` and `finish` read the facts of the plan from the same plan: the plan
+/// of the branch before the folder goes away. The branch edits `Files` of the
+/// plan of the base.
+#[test]
+fn check_reads_the_plan_facts_from_the_plan_of_the_branch_as_finish_does() {
+    let r = base_flow();
+    let plan = r
+        .read(PLAN)
+        .replace(
+            "- `src/valves.py`\n- `tests/test_valves.py`\n",
+            "- `docs/notes.md`\n",
+        )
+        .replace("Files: `src/valves.py`. ", "");
+    r.write(PLAN, &plan);
+    r.commit("the plan lists a document");
+    commit_record(&r, &["acceptor"], "accepted");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("finish");
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(!has(&out, "SD928"), "{out}{err}");
 }
 
 #[test]

@@ -1532,8 +1532,11 @@ fn diff_changes(ctx: &Ctx) -> Result<Vec<DiffChange>, String> {
             }
         }
     }
+    // The tip of the branch: on the test merge of a code host, the second parent
+    // of `HEAD`, so the range holds the commits of the branch (`Git::branch_tip`).
+    let tip = ctx.git.branch_tip(ctx.base_rev);
     for dir in intent_dirs(ctx.config) {
-        for folder in ctx.git.added_intents(ctx.base_rev, "HEAD", &dir)? {
+        for folder in ctx.git.added_intents(ctx.base_rev, &tip, &dir)? {
             if seen.insert(folder.clone()) {
                 let (change, corpus) = born_change(ctx, &folder);
                 out.push(make(ctx, change, Origin::Born, Side::Born(corpus)));
@@ -1571,6 +1574,9 @@ struct BranchScope {
     paragraph: bool,
     /// The documents that its delta and `Interfaces` name.
     scope: Vec<String>,
+    /// The facts of the plan of the branch for the rules of a record. `finish`
+    /// reads the same plan, before it deletes the folder.
+    facts: crate::acceptance::PlanFacts,
 }
 
 impl DiffChange {
@@ -1592,6 +1598,7 @@ impl DiffChange {
                     not_paths: newest.files_not_paths(&corpus),
                     paragraph: newest.files_paragraph_only(&corpus),
                     scope,
+                    facts: crate::acceptance::plan_facts(&newest, &corpus),
                 })
             })
             .as_ref()
@@ -1679,17 +1686,17 @@ fn scope_paths(
 
 /// The newest artifacts of a change whose folder the diff deletes, as the
 /// branch has them before the deletion. For each of `intent.md`, `spec.md` and
-/// `plan.md`, the last commit of `<base>..HEAD` that touched the file gives the
+/// `plan.md`, the last commit of the branch (`<base>..<tip>`, [`Git::branch_tip`]) that touched the file gives the
 /// text: the file in that commit, or, if the commit deleted it, in its first
 /// parent. `None` if the branch did not touch the folder, or git cannot give
 /// the text (a shallow clone).
 ///
-/// It reads committed text of `<base>..HEAD` only. A partial clone without the
+/// It reads committed text of the branch only. A partial clone without the
 /// blobs, an edit that no commit holds, and an edit that a side branch made and
 /// merged after `finish` give no text. The scope then comes from the base tree
 /// alone, and SD913 can fire.
 fn branch_version(ctx: &Ctx, folder: &str) -> Option<(Change, Corpus)> {
-    let range = format!("{}..HEAD", ctx.base_rev);
+    let range = format!("{}..{}", ctx.base_rev, ctx.git.branch_tip(ctx.base_rev));
     let mut specs: Vec<(String, String)> = Vec::new();
     for name in ["intent.md", "spec.md", "plan.md"] {
         let path = format!("{folder}/{name}");
@@ -1749,7 +1756,7 @@ fn born_change(ctx: &Ctx, folder: &str) -> (Change, Box<Corpus>) {
 }
 
 fn born_corpus(ctx: &Ctx, folder: &str) -> Option<Corpus> {
-    let range = format!("{}..HEAD", ctx.base_rev);
+    let range = format!("{}..{}", ctx.base_rev, ctx.git.branch_tip(ctx.base_rev));
     let log = ctx
         .git
         .file_log(&range, &format!("{folder}/intent.md"))
@@ -2367,11 +2374,18 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
     }
     let intent_dirs = intent_dirs(cfg);
     let mut out = Vec::new();
+    // The facts of the plan: for a change that the diff deletes, the plan of the
+    // branch before the deletion, as `finish` read it (the base plan can differ,
+    // when the branch edited `Files`). For any other change, its plan in the
+    // tree that the checks read.
     let facts_of = |slug: &str| {
         changes
             .iter()
             .find(|c| c.change.slug == slug)
-            .map(|c| acc::plan_facts(&c.change, ctx.corpus(c)))
+            .map(|c| match c.branch(ctx) {
+                Some(b) => b.facts,
+                None => acc::plan_facts(&c.change, ctx.corpus(c)),
+            })
             .unwrap_or_default()
     };
     // A record that the diff adds or changes.

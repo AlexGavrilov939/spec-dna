@@ -229,6 +229,7 @@ tests/finish.rs                      HYG
 tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
 tests/approve_cmd.rs                 COR
 tests/accept_cmd.rs                  COR: `accept`, the skeleton and the brief of the record. HYG is C for the cases of `finish`
+tests/accept_archive_owner.rs         COR: the archive file that belongs to a change by its field `change`
 tests/acceptance_checks.rs           DIA: the record in `finish` (steps 5.2 and 5.5) and in `check`, the archive file and SD927 to SD931, SD933 and SD935. HYG is C for the cases of `finish`
 tests/tree_binary.rs                 COR
 tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR

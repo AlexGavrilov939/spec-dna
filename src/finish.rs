@@ -650,52 +650,19 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
     let facts = acc::plan_facts(ch, cx.head);
     let (rec, mut problems) = acc::read_record(cfg, &text, slug, facts);
     problems.extend(f.brief_problems.iter().cloned());
-    if on(Code::AcceptanceInvalid) && !problems.is_empty() {
-        return stop_with(
-            Code::AcceptanceInvalid,
-            "the acceptance record is not valid",
-            problems,
-        );
-    }
-    let Some(rec) = rec else {
-        return Ok(Some(text));
-    };
-    if on(Code::AcceptanceStale)
-        && let Some(why) = &f.stale
+    if let Some((code, messages)) =
+        acc::first_stop(cfg, ch.class, rec.as_ref(), problems, f.stale.clone())
     {
-        return stop_with(
-            Code::AcceptanceStale,
-            "the acceptance record is stale: the code changed after the acceptance",
-            vec![why.clone()],
-        );
-    }
-    if on(Code::AcceptanceRejected)
-        && let Some(why) = acc::rejected(&rec)
-    {
-        return stop_with(
-            Code::AcceptanceRejected,
-            "the acceptance record says `rejected`",
-            vec![why],
-        );
-    }
-    if on(Code::SelfAccepted) {
-        let found = acc::self_accepted(&rec);
-        if !found.is_empty() {
-            return stop_with(
-                Code::SelfAccepted,
-                "2 acceptor entries have the same session and the same agent",
-                found,
-            );
-        }
-    }
-    if on(Code::AcceptorMissing)
-        && let Some(why) = acc::acceptors_missing(cfg, ch.class, &rec)
-    {
-        return stop_with(
-            Code::AcceptorMissing,
-            "the acceptance record has too few acceptors",
-            vec![why],
-        );
+        let why = match code {
+            Code::AcceptanceInvalid => "the acceptance record is not valid",
+            Code::AcceptanceStale => {
+                "the acceptance record is stale: the code changed after the acceptance"
+            }
+            Code::AcceptanceRejected => "the acceptance record says `rejected`",
+            Code::SelfAccepted => "2 acceptor entries have the same session and the same agent",
+            _ => "the acceptance record has too few acceptors",
+        };
+        return stop_with(code, why, messages);
     }
     Ok(Some(text))
 }

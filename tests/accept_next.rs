@@ -379,3 +379,34 @@ fn a_record_with_crlf_on_disk_and_lf_in_head_leaves_the_item_done() {
     let line = accept_line(&out).unwrap();
     assert!(line.starts_with("[x] "), "{line}");
 }
+
+/// `next` and `finish` share the decision of which checks of the record run. With
+/// SD928 off and SD927 on, `finish` passes a record that does not read, so `next`
+/// shows the item done.
+#[test]
+fn next_skips_the_checks_that_finish_skips() {
+    let cfg = config("standard").replace("SD608 = \"off\"", "SD608 = \"off\"\nSD928 = \"off\"");
+    let r = Repo::with_config(&cfg);
+    base_files(&r);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    change_files(&r);
+    r.commit("plan");
+    add_code(&r);
+    r.write(RECORD, "this is = not a record [\n");
+    r.commit("a record that does not read");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(line.starts_with("[x] "), "{line}");
+    let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // With SD928 on, both stop.
+    let r = built("standard");
+    r.write(RECORD, "this is = not a record [\n");
+    r.commit("a record that does not read");
+    let line = accept_line(&next_text(&r)).map(str::to_string).unwrap();
+    assert!(line.starts_with("[ ] "), "{line}");
+    let (code, _, _) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert_ne!(code, 0);
+}
