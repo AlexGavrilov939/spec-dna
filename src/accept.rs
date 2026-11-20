@@ -21,7 +21,7 @@ use crate::config::Config;
 use crate::evidence::{self, Evidence, Proof};
 use crate::json::Obj;
 use crate::lifecycle::{self, Diff};
-use crate::model::{Corpus, Res, canonical};
+use crate::model::{Corpus, Res};
 use crate::record::{self, ProofEntry, Record};
 use crate::repo::{self, Fatal, Repo, Snapshot};
 use crate::tree;
@@ -42,20 +42,35 @@ pub struct Opts<'a> {
 }
 
 /// The items that the spec and the plan declare for the acceptor.
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Declared {
-    /// The ids of the invariants of the spec (D6, slice S5).
+    /// The pins of the invariants of the spec, as `<doc-id>#<key>@<hash>` (D6).
+    /// With no `[change] invariants`, the list is empty.
     pub invariants: Vec<String>,
-    /// The deviations of the plan: id, kind and text (D7, slice S5).
+    /// The deviations of the plan: id, kind and text (D7). The text has each run
+    /// of white space as one space.
     pub deviations: Vec<(String, String, String)>,
 }
 
-/// The items of `Invariants` and `Deviations`.
-///
-/// HOOK of slice S5: the sections arrive with D6 and D7. Until then the lists
-/// are empty, so the skeleton and the brief have no such entry.
-pub fn declared(_cfg: &Config, _ch: &Change, _corpus: &Corpus) -> Declared {
-    Declared::default()
+/// The items of `Invariants` and `Deviations` that the files of a change declare
+/// (design 0.8.0, D6 and D7). The function reads the text of the spec and the
+/// plan and the key `[change] invariants` only, with no git data and no other
+/// document. So `accept`, the brief, the compare of the brief of SD928, the
+/// answers (SD938) and `finish` all call it, and they read the same items. An
+/// item that is not valid gives no entry: SD936 and SD939 report it.
+pub fn declared(cfg: &Config, ch: &Change, corpus: &Corpus) -> Declared {
+    Declared {
+        invariants: if cfg.change_invariants {
+            ch.invariants(corpus).iter().map(|p| p.text()).collect()
+        } else {
+            Vec::new()
+        },
+        deviations: ch
+            .deviations(corpus)
+            .into_iter()
+            .map(|d| (d.id, d.kind, d.text))
+            .collect(),
+    }
 }
 
 /// The roles of `[owners]` that match a path of `paths` (D5), sorted.
@@ -587,17 +602,6 @@ fn refuse_dirty_code(
     )))
 }
 
-/// A requirement id in a form that two spellings of one document share.
-fn same_target(c: &Corpus, target: &str) -> String {
-    let Some((id, key)) = target.split_once('#') else {
-        return canonical(target);
-    };
-    match c.resolve(id) {
-        Res::Found(d, None, _) => format!("{}#{key}", c.docs[d as usize].id),
-        _ => format!("{}#{key}", canonical(id)),
-    }
-}
-
 /// One `[[proof]]` entry for each requirement of the set of SD916: with a delta,
 /// the targets of its `ADD` and `CHANGE` lines; with no delta, the requirements
 /// whose hash differs from the base in a document that the scope accepts.
@@ -668,11 +672,11 @@ fn proof_entries(
                 )
             }
             None => {
-                let want = same_target(head, &target);
+                let want = change::same_target(head, &target);
                 let mut tagged = false;
                 let mut proofs: Vec<Proof> = Vec::new();
                 for cv in &head.covers {
-                    if !cv.partial && same_target(head, &cv.target) == want {
+                    if !cv.partial && change::same_target(head, &cv.target) == want {
                         tagged = true;
                         proofs.extend(cv.proof.clone());
                     }

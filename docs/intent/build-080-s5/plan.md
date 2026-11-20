@@ -11,6 +11,10 @@ status: approved
 - `schema/spec-dna.schema.json` The key.
 - `tests/*.rs`, `tests/golden/**` The tests and the golden files.
 - `docs/commands.md`, `docs/config.md`, `docs/diagnostics.md`, `docs/profiles.md`, `docs/types.md`, `docs/guides/change.md` The reference pages.
+- `src/parse.rs` The sections `Invariants` and `Deviations` in the parser, and `PARSER_VERSION`.
+- `src/acceptance.rs`, `src/stage.rs` The answers (SD938), the rule of the pin, and the stop of step 5.2 and of `next`.
+- `src/main.rs`, `src/init.rs` The report of `finish` (step 5.3), `new spec`, and the key in `strict`.
+- `docs/glossary.md`, `docs/harness.md`, `docs/init.md` The terms, the codes of the skill `accept`, and the key in `strict`.
 - `docs/intent/build-080-s5/acceptance.toml` The record of this slice.
 
 ## Order

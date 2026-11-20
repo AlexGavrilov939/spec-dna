@@ -659,3 +659,77 @@ fn the_spec_template_writes_a_task_box_in_the_concern() {
         "{text}"
     );
 }
+
+// The section `Invariants` of the spec template (design 0.8.0, D6).
+
+const KEYED: &str = "[change]\npolicy = \"three-class\"\ninvariants = true\n\n";
+
+fn keyed_repo() -> Repo {
+    Repo::with(KEYED, "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n")
+}
+
+#[test]
+fn new_spec_writes_the_section_invariants_with_none_only_with_the_key() {
+    let r = keyed_repo();
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
+    let text = r.read("docs/intent/drip/spec.md");
+    assert!(
+        text.contains("## Decisions\n\n{{The decisions that this change needs.}}\n\n## Invariants\n\n- none\n\n## Concerns\n"),
+        "{text}"
+    );
+    // The section is valid at once: the item `none` gives no SD936.
+    let codes = r.codes();
+    assert!(
+        !codes.iter().any(|c| c == "SD936" || c == "SD937"),
+        "{codes:?}"
+    );
+    // Without the key, the template has no such section.
+    let r = Repo::mixed();
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
+    assert!(!r.read("docs/intent/drip/spec.md").contains("Invariants"));
+    // With the key set to false, none either.
+    let r = Repo::with(
+        "[change]\npolicy = \"three-class\"\ninvariants = false\n\n",
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
+    assert!(!r.read("docs/intent/drip/spec.md").contains("Invariants"));
+}
+
+#[test]
+fn the_key_adds_the_section_to_a_project_template_that_lacks_it_and_keeps_one_that_has_it() {
+    let r = keyed_repo();
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    r.write(
+        "docs/templates/spec.md",
+        "---\ntype: spec\n---\n# Title\n\n## Delta\n\n{{Lines.}}\n\n## Concerns\n\n- [ ] {{A concern.}}\n",
+    );
+    r.write("spec-dna.toml", &format!(
+        "spec-dna = \"{VERSION}\"\n{KEYED}[templates]\ndir = \"docs/templates\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
+    let text = r.read("docs/intent/drip/spec.md");
+    assert!(
+        text.contains("## Delta\n\n{{Lines.}}\n\n## Invariants\n\n- none\n\n## Concerns\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches("## Invariants").count(), 1, "{text}");
+    // A template that has the section keeps its own text.
+    let r = keyed_repo();
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    r.write(
+        "docs/templates/spec.md",
+        "---\ntype: spec\n---\n# Title\n\n## Delta\n\n{{Lines.}}\n\n## Invariants\n\n- {{A rule.}}\n",
+    );
+    r.write("spec-dna.toml", &format!(
+        "spec-dna = \"{VERSION}\"\n{KEYED}[templates]\ndir = \"docs/templates\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
+    let text = r.read("docs/intent/drip/spec.md");
+    assert_eq!(text.matches("## Invariants").count(), 1, "{text}");
+    assert!(text.contains("- {{A rule.}}"), "{text}");
+    assert!(!text.contains("- none"), "{text}");
+}

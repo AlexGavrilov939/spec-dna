@@ -10,7 +10,7 @@ use std::ops::Range;
 
 /// Increase this number when the parsed data changes, so that the index
 /// removes old entries.
-pub const PARSER_VERSION: u32 = 17;
+pub const PARSER_VERSION: u32 = 18;
 
 pub const FLAG_REQUIREMENT: u8 = 1;
 pub const FLAG_BCP14: u8 = 2;
@@ -47,8 +47,8 @@ pub struct ParsedDoc {
     /// Only a `terms` document uses them (SD904).
     pub terms: Vec<TermRow>,
     /// The top-level list items of the sections that carry a change (`Delta`,
-    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`
-    /// and `Open questions`), in the order of the file. The parser
+    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`,
+    /// `Open questions`, `Invariants` and `Deviations`), in the order of the file. The parser
     /// stores them for every document. Only the documents of a change and an
     /// incident use them.
     pub items: Vec<ListItem>,
@@ -70,10 +70,17 @@ pub enum ItemSection {
     FollowUps = 5,
     Order = 6,
     OpenQuestions = 7,
+    /// The section of a spec that lists the rules which the change must keep
+    /// true (design 0.8.0, D6). Appended at the end: the index stores the
+    /// position.
+    Invariants = 8,
+    /// The section of a plan that lists the deviations of the work (design
+    /// 0.8.0, D7).
+    Deviations = 9,
 }
 
 impl ItemSection {
-    pub const ALL: [ItemSection; 8] = [
+    pub const ALL: [ItemSection; 10] = [
         ItemSection::Delta,
         ItemSection::Interfaces,
         ItemSection::Decisions,
@@ -82,6 +89,8 @@ impl ItemSection {
         ItemSection::FollowUps,
         ItemSection::Order,
         ItemSection::OpenQuestions,
+        ItemSection::Invariants,
+        ItemSection::Deviations,
     ];
 
     pub fn heading(self) -> &'static str {
@@ -94,6 +103,8 @@ impl ItemSection {
             ItemSection::FollowUps => "Follow-ups",
             ItemSection::Order => "Order",
             ItemSection::OpenQuestions => "Open questions",
+            ItemSection::Invariants => "Invariants",
+            ItemSection::Deviations => "Deviations",
         }
     }
 
@@ -1797,7 +1808,49 @@ mod tests {
             parse("# P\n\n## Hours\n\n- 1.5: t1 code\n- 2: review\n- [ ] 0.5\n\n## Other\n\n- x\n");
         assert!(d.items.is_empty());
         assert_eq!(ItemSection::from_heading("hours"), None);
-        assert_eq!(ItemSection::ALL.len(), 8);
+        assert_eq!(ItemSection::ALL.len(), 10);
+    }
+
+    /// A heading under `Order` that names a section starts that section. It holds
+    /// for the 2 sections of 0.8.0 too, also in a plan of 0.7.1, so a task under
+    /// `### Deviations` is no task of `Order`.
+    #[test]
+    fn a_heading_deviations_under_order_starts_that_section() {
+        let d = parse("# P\n\n## Order\n\n- [ ] t1: One.\n\n### Deviations\n\n- [ ] t2: Two.\n");
+        let kept: Vec<(ItemSection, &str)> = d
+            .items
+            .iter()
+            .map(|i| (i.section, i.text.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (ItemSection::Order, "t1: One."),
+                (ItemSection::Deviations, "t2: Two."),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_items_of_invariants_and_deviations_are_kept() {
+        let d = parse(
+            "# S\n\n## Invariants\n\n- rules/a#b@0123456789abcdef\n- none\n\n## deviations\n\n- d1 (plan): text\n\n## Other\n\n- x\n",
+        );
+        let kept: Vec<(ItemSection, &str)> = d
+            .items
+            .iter()
+            .map(|i| (i.section, i.text.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (ItemSection::Invariants, "rules/a#b@0123456789abcdef"),
+                (ItemSection::Invariants, "none"),
+                (ItemSection::Deviations, "d1 (plan): text"),
+            ]
+        );
+        assert_eq!(ItemSection::Invariants.heading(), "Invariants");
+        assert_eq!(ItemSection::Deviations.heading(), "Deviations");
     }
 
     #[test]
@@ -1847,8 +1900,8 @@ mod tests {
     }
 
     #[test]
-    fn parser_version_is_17() {
-        assert_eq!(PARSER_VERSION, 17);
+    fn parser_version_is_18() {
+        assert_eq!(PARSER_VERSION, 18);
     }
 
     /// The hash of a requirement does not cover the marker `proof-owed`, so a

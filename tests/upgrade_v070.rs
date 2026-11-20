@@ -523,6 +523,21 @@ fn the_upgrade_alone_adds_accept_and_gives_no_new_diagnostic() {
         for c in ["SD501", "SD502", "SD503", "SD507", "SD913"] {
             assert_eq!(gate_lines(&repo, c), Vec::<String>::new(), "{profile}: {c}");
         }
+        // The key of the invariants is a key of `init`, not of `upgrade`: the
+        // upgrade writes none, also in `strict`, and the codes of D6 and D7 give
+        // no finding for the old change of the fixture (design 0.8.0, D6).
+        assert!(
+            table(&repo)
+                .get("change")
+                .and_then(|c| c.get("invariants"))
+                .is_none(),
+            "{profile}: {}",
+            repo.read("spec-dna.toml")
+        );
+        let (_, all, _) = run(&repo, &["check", "--all"]);
+        for c in ["SD936", "SD937", "SD938", "SD939", "SD940"] {
+            assert!(!all.contains(&format!(" {c} ")), "{profile}: {c}: {all}");
+        }
     }
 }
 

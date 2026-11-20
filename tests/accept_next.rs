@@ -464,3 +464,45 @@ fn next_skips_the_checks_that_finish_skips() {
     let (code, _, _) = r.run(&["finish", SLUG, "--dry-run"]);
     assert_ne!(code, 0);
 }
+
+/// The item runs the checks of the sections too (design 0.8.0, D6 and D7): a
+/// deviation that the record does not copy leaves it open, with the message of
+/// SD938, and a bad item of the plan leaves it open with SD939.
+#[test]
+fn a_deviation_that_the_record_lacks_and_a_bad_deviation_leave_the_item_open() {
+    let with_plan = |devs: &str| {
+        let r = Repo::with_config(&config("standard"));
+        base_files(&r);
+        r.commit("base");
+        origin_head(&r.dir, "main");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        change_files(&r);
+        r.write(PLAN, &format!("{PLAN_TEXT}\n## Deviations\n\n{devs}\n"));
+        r.commit("plan");
+        add_code(&r);
+        r
+    };
+    let r = with_plan("- d1 (plan): The check moved.");
+    commit_record(&r, "accepted");
+    // `commit_record` leaves the verdict `pending`, so the record is not valid.
+    // Answer it, then remove the entry: the answer is missing.
+    let t = r.read(RECORD);
+    let cut = t.find("[[deviation]]").unwrap();
+    let end = t[cut..].find("\n[[attempt]]").map_or(t.len(), |i| cut + i);
+    r.write(RECORD, &format!("{}{}", &t[..cut], &t[end..]));
+    r.commit("an answer is missing");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(
+        line.starts_with("[ ] ") && line.contains("no entry for the deviation `d1`"),
+        "{line}"
+    );
+    let r = with_plan("- d1: no kind");
+    commit_record(&r, "accepted");
+    let out = next_text(&r);
+    let line = accept_line(&out).unwrap();
+    assert!(
+        line.starts_with("[ ] ") && line.contains("is not valid"),
+        "{line}"
+    );
+}

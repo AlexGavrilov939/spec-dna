@@ -27,6 +27,8 @@ An error fails `check` when the error is new against the base. A warning never f
 | `proof` | SD619 (a proof marker that is not valid or stale) | off | warning | error |
 | `proof` | SD620 (a requirement is below the level `reliable`) | off | error | error |
 | `acceptance` | SD927 (acceptance missing), SD928 (acceptance invalid), SD929 (acceptance stale), SD930 (acceptance rejected), SD931 (self-accepted), SD933 (acceptor missing), SD935 (record edited) | off | error | error |
+| `acceptance` | SD938 (record incomplete), SD939 (deviation invalid), SD940 (deviation unresolved) | off | error | error |
+| `acceptance` | SD936 (invariant invalid), SD937 (invariant stale). They run only with `[change] invariants = true`, also when a rule for the group or the code turns them on | off | error | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
 | `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan), SD918 (incident with no eval) | off | warning | warning |
@@ -90,6 +92,7 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 | `[evidence] reports` | not written | `[]`, with a comment | `[]`, with a comment |
 | `[evidence] reliable-for` | not written | not written | `# reliable-for = "higher-risk"`, as a comment |
 | `[change] higher-risk-acceptors` | not written | not written | `2` |
+| `[change] invariants` | not written | not written | `true` |
 
 - `init` detects no test runner, so it writes `reports = []`. The key turns the test reports on when the project lists the globs of its report files ([config.md](config.md#test-reports)). `--reconfigure` keeps the list.
 - `strict` writes `reliable-for` as a comment under `reports`, because the key needs `reports` ([config.md](config.md#proof-levels-and-the-proof-debt)). An active key with an empty `reports` is an error (exit code 3). `--reconfigure` keeps `reliable-for` and `reliable-runs` when the file sets them.

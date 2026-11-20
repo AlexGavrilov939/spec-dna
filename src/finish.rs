@@ -92,6 +92,20 @@ pub struct Plan {
     /// The archive file that step 5.5 adds to `writes`, if the change needed a
     /// record.
     pub archive: Option<String>,
+    /// Step 5.3 (design 0.8.0, D7): the deviations of the plan, for a change that
+    /// needs a record, each with the verdict of the record (`none` if the record
+    /// has no entry for it). `finish` prints them. In 0.8.0 the merge of the pull
+    /// request acknowledges them.
+    pub deviations: Vec<Deviation>,
+}
+
+/// One deviation as step 5.3 reports it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Deviation {
+    pub id: String,
+    pub kind: String,
+    pub text: String,
+    pub verdict: String,
 }
 
 /// The hours of the tasks of a plan (design 0.7.0, section 15). Each task that
@@ -527,6 +541,31 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     // Step 5.2: the acceptance record.
     let record = acceptance(cx, ch, &mut out)?;
 
+    // Step 5.3: the deviations. They come from the plan, with the verdict of the
+    // record. A change that needs no record has none (a section of an older plan
+    // is plain text).
+    if cx
+        .acceptance
+        .is_some_and(|f| matches!(f.need, crate::acceptance::Need::Yes { .. }))
+    {
+        let rec = record
+            .as_deref()
+            .and_then(|t| crate::record::Record::parse(t).ok());
+        out.deviations = ch
+            .deviations(head)
+            .into_iter()
+            .map(|d| Deviation {
+                verdict: rec
+                    .as_ref()
+                    .and_then(|r| r.deviations.iter().find(|e| e.id == d.id))
+                    .map_or_else(|| "none".to_string(), |e| e.verdict.clone()),
+                id: d.id,
+                kind: d.kind,
+                text: d.text,
+            })
+            .collect();
+    }
+
     // Step 5: the evidence, then the check of the whole result.
     let files = ch.files(head);
     let others_touched = changes
@@ -583,8 +622,9 @@ fn record_diag(path: &str, slug: &str, code: Code, message: String) -> Diag {
 
 /// Step 5.2 (design 0.8.0, D3 item 9): for a change that needs a record, the
 /// record of the head is present, valid, fresh, accepted, and has the acceptors
-/// that the change needs. The step stops at the first code of SD927 to SD933 that
-/// is not off, and it reports each finding of that code. It returns the text of
+/// that the change needs, and its sections are valid and answered. The step stops
+/// at the first code of SD927 to SD933 and SD936 to SD940 that is not off, and it
+/// reports each finding of that code. It returns the text of
 /// the record, which step 5.5 moves, or `None` if the folder has no record to move
 /// (a record that no rule needs is returned too, with no check). For a
 /// plan of a version before 0.8.0 it adds the note of the design to the plan.
@@ -674,9 +714,14 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
     let facts = acc::plan_facts(ch, cx.head);
     let (rec, mut problems) = acc::read_record(cfg, &text, slug, facts);
     problems.extend(f.brief_problems.iter().cloned());
-    if let Some((code, messages)) =
-        acc::first_stop(cfg, ch.class, rec.as_ref(), problems, f.stale.clone())
-    {
+    if let Some((code, messages)) = acc::first_stop(
+        cfg,
+        ch.class,
+        rec.as_ref(),
+        problems,
+        f.stale.clone(),
+        &f.sections,
+    ) {
         let why = match code {
             Code::AcceptanceInvalid => "the acceptance record is not valid".to_string(),
             // The text follows the reason: the scope of the plan, or the code.
@@ -688,7 +733,15 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             Code::SelfAccepted => {
                 "2 acceptor entries have the same session and the same agent".to_string()
             }
-            _ => "the acceptance record has too few acceptors".to_string(),
+            Code::AcceptorMissing => "the acceptance record has too few acceptors".to_string(),
+            Code::InvariantInvalid => "an item of `Invariants` is not valid".to_string(),
+            Code::InvariantStale => "the hash of an item of `Invariants` is stale".to_string(),
+            Code::RecordIncomplete => {
+                "the acceptance record does not answer each invariant and each deviation"
+                    .to_string()
+            }
+            Code::DeviationInvalid => "an item of `Deviations` is not valid".to_string(),
+            _ => "a `spec` deviation names no line of the delta and no change folder".to_string(),
         };
         return stop_with(code, &why, messages);
     }
@@ -1745,10 +1798,14 @@ fn no_new_errors(
     created: &HashSet<String>,
 ) -> Result<(), Failure> {
     type Key = (Code, String, String);
+    // SD937 is an error only for a spec that the diff touches. The result of
+    // `finish` deletes the folder of this change, so each stale pin that it shows
+    // is a pin of another open spec, which this diff does not touch. That spec
+    // gets a warning, and its author pins the rule again (design 0.8.0, D6).
     let errors = |c: &Corpus| -> Vec<Diag> {
         check::diagnose_against(cx.config, c, base)
             .into_iter()
-            .filter(|d| d.severity == Severity::Error)
+            .filter(|d| d.severity == Severity::Error && d.code != Code::InvariantStale)
             .collect()
     };
     let mut before: HashMap<Key, usize> = HashMap::new();

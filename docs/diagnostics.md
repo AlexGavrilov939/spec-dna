@@ -44,6 +44,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
 | SD905, SD910 to SD926 | Changes | [Changes](#changes-sd905-and-sd910-to-sd926) |
 | SD927 to SD935 | The acceptance record | [The acceptance record](#the-acceptance-record-sd927-to-sd935) |
+| SD936 to SD940 | Invariants and deviations | [Invariants and deviations](#invariants-and-deviations-sd936-to-sd940) |
 
 ## References and evidence (SD101 to SD106)
 
@@ -266,9 +267,9 @@ A change needs a record when the acceptance is on (SD927 is not off) and its pla
 
 Where each code is raised:
 
-- `finish`, step 5.2: it reads `<folder>/acceptance.toml` of the head and stops at the first code that is not off, in this order: SD927, SD928, SD929, SD930, SD931, SD933. Step 5.5 moves the record to `.spec-dna/accepted/<slug>.toml`, or to `<slug>-2.toml`, `-3` and so on if the file exists. It moves each record that the folder has, also in `lite`, with `acceptance` off, and for a plan of a version before 0.8.0. A rule that needs the record decides only whether `finish` stops: with no rule and no record, `finish` writes no archive file, as before. It stops before it writes if git ignores the path, and the message names the rule (`git check-ignore -v`).
+- `finish`, step 5.2: it reads `<folder>/acceptance.toml` of the head and stops at the first code that is not off, in this order: SD927, SD928, SD929, SD930, SD931, SD933, and then SD936 to SD940 ([invariants and deviations](#invariants-and-deviations-sd936-to-sd940)). Step 5.5 moves the record to `.spec-dna/accepted/<slug>.toml`, or to `<slug>-2.toml`, `-3` and so on if the file exists. It moves each record that the folder has, also in `lite`, with `acceptance` off, and for a plan of a version before 0.8.0. A rule that needs the record decides only whether `finish` stops: with no rule and no record, `finish` writes no archive file, as before. It stops before it writes if git ignores the path, and the message names the rule (`git check-ignore -v`).
 - `check`, where the diff adds or changes a record, in the folder of a change or as an archive file: SD928 and SD931 only. Thus the first of 2 acceptors can commit, and a code fix after a `rejected` record passes `check --staged`. The compare of the brief runs for an entry that the branch adds to the record of the folder. It does not run for an entry that the base already has, nor on an archive file.
-- `check`, where the diff deletes the folder of a change that needs a record, and for a change that the branch added and deleted: SD927, and, for the archive file that the diff adds, SD929, SD930 and SD933. A branch-born change also gets SD910 (reason 7). `check --staged` reads the index, so the hash is the hash of the staged code.
+- `check`, where the diff deletes the folder of a change that needs a record, and for a change that the branch added and deleted: SD927, and, for the archive file that the diff adds, SD929, SD930, SD933 and SD938. A branch-born change also gets SD910 (reason 7). `check --staged` reads the index, so the hash is the hash of the staged code.
 - `check`, for each diff: SD935. It reports a changed or a deleted archive file, an added archive file with the wrong content (see the row of SD935), and, where SD927 is raised, a record of the change that the diff adds outside the archive folder (a moved archive file). The compare of the content cannot run in a shallow clone that cuts the commits of the branch, because it needs the folder record. SD935 then reports the cut on the archive file. Its fix text asks for the full history (`fetch-depth: 0`) and says that the archive file must stay as it is. A repository that is not shallow is never cut.
 - SD913 never reports `acceptance.toml` in the folder of a change or a file of `.spec-dna/accepted/`.
 - The commits of the branch are the output of `git rev-list --reverse --first-parent <base>..<tip>`. The tip is `HEAD`. When `HEAD` is a merge commit with 2 parents and its first parent is the lifecycle base, the tip is the second parent. This merge is the test merge that a code host makes for a pull request, and it is not a commit of the branch. The compare of the brief reads these commits. The adding commit of an entry is the oldest commit of the latest unbroken run of commits whose record holds an entry with the same role, session and brief. A later commit of the record does not move it. An entry that no commit has takes the index with `--staged`, else the working tree.
@@ -282,7 +283,32 @@ Where each code is raised:
 - In a depth-1 clone that has no merge base with the base, `check` skips all the change checks and prints a note that names `fetch-depth: 0` (the behaviour of 0.7). SD928 and SD935 do not run there.
 - After a squash merge on the main branch, `check` with an `origin/HEAD` that is older than that squash reads the main commits as commits of the branch. This is the limit of an older base, as above.
 - An octopus merge has `HEAD` as its tip, so a test merge with more than 2 parents is read as a merge of the main branch into the branch.
-- The compare of the brief (SD928) reads `spec-dna.toml` of `HEAD`, not the one of the adding commit. The text of the brief does not read the configuration yet, so this has no effect. Slices S5 and S6 add the owners and the invariants: the compare then needs the configuration of the adding commit.
+- The compare of the brief (SD928) reads `spec-dna.toml` of the adding commit for the key `[change] invariants`, so a key that a later commit sets does not change the brief of an older entry. If that file does not read, the compare uses the configuration of `HEAD`. The owners (`[owners]`) come in a later slice and will need the same rule.
+
+## Invariants and deviations (SD936 to SD940)
+
+These codes are new in 0.8.0. They are in the rule group `acceptance`, so a rule for the group `changes` does not change them. In `lite`, each of them is off, and a rule for the group `acceptance` or for one code turns them on there, except SD936 and SD937, which also need the key. The severity of each code is an error in `standard` and `strict`. [The section `Invariants` of a spec](types.md#invariants) and [the section `Deviations` of a plan](types.md#deviations) describe the items.
+
+| Code | Name | Severity | Meaning |
+| --- | --- | --- | --- |
+| SD936 | invariant-invalid | error | An item of `Invariants` is not `<doc-id>#<key>@<hash>` or `none`, names no document or no requirement, names a requirement that is not in a `rule` document, or names a rule that the delta of the same spec adds or removes (a rule that the change adds or removes cannot stay true across the change, so the message says to remove the item). The item `none` stands alone. A spec of each status gives it, so the author sees it before the approval. It runs only with `[change] invariants = true` |
+| SD937 | invariant-stale | error | The hash of an item is not the hash of the rule now (the hash that `spec-dna show` prints). If the delta of the same spec has a `CHANGE` line for the rule, the hash of the item must be the hash of that line: the line pins the old text, and after `finish` the rule has the new text. An error for a spec that the diff touches, and a warning for a spec that it does not touch, as SD914. It runs only with `[change] invariants = true` |
+| SD938 | record-incomplete | error | The record has no answer for a declared invariant (an `[[invariant]]` entry with the same `<doc-id>#<key>@<hash>`), or no entry for a deviation of the plan (a `[[deviation]]` entry with the same id, the same kind and the same text, where each run of white space counts as one space). The message names the entry to add. It reads the invariants only with `[change] invariants = true`. An entry that no item names is no finding |
+| SD939 | deviation-invalid | error | An item of `Deviations` is not `- <id> (<kind>): <text>`, has a kind outside `plan` and `spec`, or repeats an id |
+| SD940 | deviation-unresolved | error | A `spec` item names no line of the delta of the spec and no change folder of the tree: it has no `Delta: <verb> <doc-id>#<key>` that matches a line of the delta, and no `Follow-up: <slug>` that names another folder of the `intent` layer |
+
+Where each code is raised:
+
+- `check` reads the head tree for SD936, SD937, SD939 and SD940, in each diff and also with no base. The 4 codes need no base and no history, except the rule of the pin below.
+- `finish`, step 5.2, and the item `accept` of `next`: they stop at the first code that is not off, after SD933, in the order SD936, SD937, SD938, SD939, SD940. Step 5.3 prints the deviations ([finish](commands.md#finish)).
+- `check`, where the diff deletes the folder of a change that needs a record, and for a change that the branch added and deleted: SD938, on the archive file. The items come from the newest spec and plan of the branch, because the plan of the base tree may lack a deviation that the work added. After `finish`, the record is the only carrier of the deviations.
+- One function reads the items for `accept`, the brief, SD928, SD938 and `finish`, so they agree: an item that is not valid gives no entry in the skeleton, and SD936 or SD939 reports it.
+
+The rule of the pin: a spec or a plan that the base tree has, and that a commit added when `spec-dna.toml` pinned a version before 0.8.0, keeps the meaning of 0.7.1. A section `Invariants` or `Deviations` of such a file is plain text, and it gives none of SD936, SD937, SD939 and SD940. A file that a commit of the branch added gets the rules of 0.8.0. A shallow clone with no such commit, and a commit with no pin, also give the rules of 0.8.0. A project that only runs `upgrade` gets no new error: without the key, SD936 and SD937 are off, and the deviations are read only in a new plan.
+
+- The record answers each invariant, and the acceptor states `held`. No check proves that `held` is true, and no check proves that the spec names every rule that applies.
+- The list of deviations is not proved to be complete: the acceptor compares it with the diff, and can miss one.
+- In 0.8.0 the merge of the pull request acknowledges a deviation. No check asks a person for it. The acknowledgement by an approver comes in 0.8.1.
 
 ## Checks of the layers and of the requirement text
 
@@ -301,7 +327,7 @@ Where each code is raised:
 
 The checks of the change codes read these trees:
 
-- SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922 and SD925 read one tree. They need no base and no history.
+- SD905 (the delta part), SD912 (the count), SD914, SD919, SD920 (the absent decision), SD922, SD925, SD936, SD937, SD939 and SD940 read one tree. They need no base and no history.
 - SD923 and SD924 read one tree. They need no base. For a plan with a finding, they also read the history of that plan: the commit that added it, and the pin of `spec-dna.toml` in that commit ([SD923](#checks-of-the-change-lifecycle)).
 - SD926 reads `spec-dna.toml` only. It needs no base and no history. The hidden address of a person, such as `1234+name@users.noreply.github.com`, is not on the list. The target is the item as the file writes it, and the compare of the address ignores case. SD926 is not a state code. It is new when the configuration of the base does not list the address. Against a base that lists it already, `check` shows it only with `--all`.
 - These codes compare the head with the lifecycle base. They do not run if git cannot name this base:
@@ -309,7 +335,8 @@ The checks of the change codes read these trees:
   - SD910, SD913, SD915, SD916, SD917 and SD918;
   - SD920 (a decision that is not `accepted`);
   - SD921;
-  - SD927 to SD931, SD933 and SD935 ([the acceptance record](#the-acceptance-record-sd927-to-sd935)).
+  - SD927 to SD931, SD933 and SD935 ([the acceptance record](#the-acceptance-record-sd927-to-sd935));
+  - SD938 ([invariants and deviations](#invariants-and-deviations-sd936-to-sd940)).
 - SD911 reads the base and the history.
 
 The lifecycle base is the merge base of `--base` (or, without it, of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`. The later merge base with `origin/HEAD` replaces an older `--base` ([commands.md](commands.md#check)), so the walk of SD910 does not read merged pull requests. The diff is the working tree (with `--staged`, the git index) against it. The diagnostics of the checks of the diff are always new. A check reads the artifacts of a change from the head tree. If the diff deletes the folder of a change, it reads them from the base tree. With `[change] approval = "base"`, it reads each approval from the base tree only, so an approval in the same pull request does not count. With `"branch"`, SD910 also reads the commits of `base..HEAD` (see SD910 below).
@@ -498,7 +525,7 @@ SD506 needs the table `[evals]`, with any `[change] policy`. It reads the files 
 | 2 | SD919 (an open concern), SD922 (an open question) or SD920 (a needed decision that is absent or not `accepted`) |
 | 3 | SD914: a delta line is not valid, its target is absent or in a layer that `moves-to` does not allow, or its hash is not the hash of the requirement. Also SD914: the delta differs from the delta that the base tree has (an approved delta must not change). Also SD914: an interface of `Interfaces` that the diff does not change, or an `ADD` item of `Interfaces` whose document the tree does not have and no delta line adds |
 | 4 | The result would not give the result of a delta line (`check` would report SD915), or two lines edit the same lines of a file |
-| 5 | SD613, SD614 or SD615 (step 5.1: with `[evidence] reports`, a test report is missing, stale or unreadable), SD916 (a requirement that the change adds or changes has no evidence), SD617 (step 5.4: it has a tag, and no bound test case passed in the reports), SD620 (step 5.4: with `[evidence] reliable-for`, a requirement passed fewer times than `[evidence] reliable-runs`), SD927, SD928, SD929, SD930, SD931 or SD933 (step 5.2: a change that needs a record has none, or the record is not valid, stale, rejected, self-accepted or short of acceptors), a path of the archive file that git ignores or that has a link (step 5.5), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
+| 5 | SD613, SD614 or SD615 (step 5.1: with `[evidence] reports`, a test report is missing, stale or unreadable), SD916 (a requirement that the change adds or changes has no evidence), SD617 (step 5.4: it has a tag, and no bound test case passed in the reports), SD620 (step 5.4: with `[evidence] reliable-for`, a requirement passed fewer times than `[evidence] reliable-runs`), SD927, SD928, SD929, SD930, SD931, SD933, SD936, SD937, SD938, SD939 or SD940 (step 5.2: a change that needs a record has none, or the record is not valid, stale, rejected, self-accepted or short of acceptors, or a section `Invariants` or `Deviations` is not valid or is not answered), a path of the archive file that git ignores or that has a link (step 5.5), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
 
 The base of step 3 is the merge base of `--base` (or of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`, for each policy. An `accepted` change needs it, and without it `finish` exits with code 3. A change that the base tree does not have was added in the same branch: its delta has no approved text to compare.
 

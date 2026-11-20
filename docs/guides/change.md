@@ -53,12 +53,19 @@ spec-dna show requirements/valves/closing#flush-time
 - CHANGE requirements/valves/closing#flush-time@3f2a9c1b7e0d4a11: The controller SHALL flush a valve line for 30 seconds before it closes the valve.
 ```
 
-The spec has 4 more sections:
+The spec has 4 more sections, and a fifth with the key `invariants`:
 
 - `Interfaces`: each interface that the change edits, as `CHANGE <interface id>: <text>`, and each new interface, as `ADD <interface id>: <text>`. Write `- none` if the change touches no interface.
 - `Decisions`: each decision that the change needs, as `[[decisions/<slug>]]`.
 - `Concerns`: a task list. Resolve each concern (`- [x]`). Write its resolution before the approval (SD919).
 - `Open questions`: a task list. Answer each question (`- [x]`), and write the answer after it, before the approval (SD922).
+- `Invariants`: only with `[change] invariants = true` (`new spec` then writes it with `- none`). List each rule that the change must keep true, as `- <doc-id>#<key>@<hash>`: the id of a requirement of a `rule` document, with the hash that `spec-dna show` prints. Keep `- none` if no rule applies. A rule that the delta of the same spec adds or removes is no invariant (SD936). If the delta changes the rule with a `CHANGE` line, the item has the hash of that line (SD937). The acceptor answers each item in the record.
+
+```md
+## Invariants
+
+- rules/safety#valve-closed-on-fault@a1b2c3d4e5f60718
+```
 
 Open a pull request. The owner runs `spec-dna approve sensor-timeout <artifact>` in it, and merges it.
 
@@ -91,7 +98,7 @@ Write the code in the files of the plan. Link each test to the requirement that 
 // covers: requirements/valves/closing#sensor-timeout
 ```
 
-A `covers:` tag can name an `ADD` requirement before `finish` writes it. If the work differs from the plan, update `plan.md` in the same commit as the work. If the work needs a file that `Files` does not list, the agent stops and asks the person (the skill `execute`). With a yes, add the path to `Files` of `plan.md` in the commit of the edit. A plan with an approval commit in this branch needs a new approval commit first, because a path that a later commit adds to `Files` gives SD910 (reason 8): set the plan back to `draft`, add the path, and approve it again (see [The approval commit](#the-approval-commit)).
+A `covers:` tag can name an `ADD` requirement before `finish` writes it. If the work differs from the plan or the spec, add an item to the section `Deviations` of `plan.md` in the same commit as the work: `- <id> (plan): <text>`, or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (a line of the delta of the spec) or `Follow-up: <slug>` (a change folder of the tree). The acceptor copies each deviation into the record and gives it a verdict, and `finish` prints it. In 0.8.0 the merge of the pull request acknowledges the deviations. If the work needs a file that `Files` does not list, the agent stops and asks the person (the skill `execute`). With a yes, add the path to `Files` of `plan.md` in the commit of the edit. A plan with an approval commit in this branch needs a new approval commit first, because a path that a later commit adds to `Files` gives SD910 (reason 8): set the plan back to `draft`, add the path, and approve it again (see [The approval commit](#the-approval-commit)).
 
 Write the test first, and commit it alone before the code. The `tdd` skill gives the way. The commit of the red test has the subject `test: <what the test checks> (red)`. If a hook of the project runs the tests, that hook rejects the commit, because the test fails. Skip only that hook, for that commit only:
 
@@ -112,7 +119,7 @@ In `standard` and `strict`, a change with a new plan needs an acceptance record 
 
 1. The builder runs `spec-dna accept sensor-timeout --brief` and gives the whole output, unchanged, to one agent `acceptor`. It adds no word of its own. For a `higher-risk` change, the skill advises an acceptor in a new session. This is advice only: the gate cannot check a session.
 2. The acceptor runs the proof, tries to break the change, and runs `spec-dna accept sensor-timeout --session "$CLAUDE_CODE_SESSION_ID"`. It fills in the record, copies the hash of the last line of its brief into `brief`, and commits the record alone. It edits no code.
-3. `finish` reads the record in step 5.2. It stops when the record is absent, not valid, stale, `rejected` or short of acceptors (SD927 to SD933). When it succeeds, step 5.5 moves the record to `.spec-dna/accepted/sensor-timeout.toml`. Commit that file with the rest of the result.
+3. `finish` reads the record in step 5.2. It stops when the record is absent, not valid, stale, `rejected` or short of acceptors (SD927 to SD933), when an item of `Invariants` or `Deviations` is not valid or is stale (SD936, SD937, SD939 and SD940), and when the record has no answer for an invariant or no entry for a deviation (SD938). When it succeeds, step 5.5 moves the record to `.spec-dna/accepted/sensor-timeout.toml`. Commit that file with the rest of the result.
 
 A code edit after the acceptance makes the record stale (SD929), so accept again. A Markdown edit does not. `check` runs the same codes in the pull request: the first acceptor of 2 can commit, and a fix after a `rejected` record passes `check --staged`. A plan that an earlier version added, before 0.8.0, needs no record, and `finish` prints a note. In `lite`, no change needs a record.
 
@@ -259,6 +266,9 @@ Some of these codes are warnings in some profiles. [profiles.md](../profiles.md)
 | SD928 | The record breaks a rule, or the `brief` of an entry is not the brief of its adding commit | Fix the record. For a wrong `brief`, remove the entry and accept again from a new brief |
 | SD929 | The code that the record lists changed after the acceptance | Before `finish`: delete the record and accept again. After `finish`: revert the commit of `finish`, merge the base, accept again, and run `finish` again |
 | SD930, SD931, SD933 | The record says `rejected`, 2 entries have one session and one agent, or the record has too few acceptors | Fix each finding and accept again, use another acceptor, or run `spec-dna accept <slug> --role <name>` for each missing acceptor |
+| SD936, SD937 | With `[change] invariants`: an item of `Invariants` is not valid (it names no rule, or a rule that the delta adds or removes), or its hash is not the hash of the rule now (or of the `CHANGE` line) | Fix the item. Remove an item for a rule that the change adds or removes. Run `spec-dna show <doc-id>#<key>` for the new hash |
+| SD938 | The record has no answer for an invariant of the spec, or no entry with the same text for a deviation of the plan | The acceptor adds the entry that the message names, and commits the record alone |
+| SD939, SD940 | An item of `Deviations` is not `- <id> (<kind>): <text>`, or a `spec` item names no line of the delta and no change folder | Write the kind `plan` or `spec`. Add `Delta: <verb> <doc-id>#<key>` or `Follow-up: <slug>` to a `spec` item |
 | SD935 | The diff changes or deletes a file of `.spec-dna/accepted/` | Revert the edit: the file is the record of a finished change |
 | SD613 to SD615, SD617 | With `[evidence] reports`: a test report is missing, stale or unreadable, or a tag has no passed test case | Run the tests, then `spec-dna evidence stamp`. Put the tag above the test, or add `case:<name>` ([test reports in CI](#test-reports-in-ci)) |
 | SD917 | The class of the intent is too low for the diff | Set a higher class. Add the documents of that class |

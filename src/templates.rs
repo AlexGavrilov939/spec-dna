@@ -508,6 +508,40 @@ pub fn instantiate(text: &str, ty: DocType, title: &str, with_type: bool) -> Str
     out
 }
 
+/// The section that `new spec` adds with `[change] invariants` (design 0.8.0,
+/// D6): the item `none` says that no rule applies, until the author lists one.
+const INVARIANTS_SECTION: &str = "## Invariants\n\n- none\n\n";
+
+/// The text of a spec template with the section `Invariants`, for a project
+/// with `[change] invariants = true`. The section comes before `Concerns`, or at
+/// the end if the template has no such section. A template that has the section
+/// stays as it is.
+pub fn with_invariants(text: &str) -> String {
+    let heading = |l: &str, name: &str| {
+        l.trim_start_matches('#').trim().eq_ignore_ascii_case(name) && l.starts_with('#')
+    };
+    if text.lines().any(|l| heading(l, "Invariants")) {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut done = false;
+    for l in text.split_inclusive('\n') {
+        if !done && heading(l.trim_end(), "Concerns") {
+            out.push_str(INVARIANTS_SECTION);
+            done = true;
+        }
+        out.push_str(l);
+    }
+    if !done {
+        if !out.ends_with("\n\n") {
+            out.push_str(if out.ends_with('\n') { "\n" } else { "\n\n" });
+        }
+        out.push_str(INVARIANTS_SECTION.trim_end_matches('\n'));
+        out.push('\n');
+    }
+    out
+}
+
 /// The H1 of a new `intent.md`, `spec.md` or `plan.md`. A slug is a short
 /// folder name, and no rule makes a title from it, so the author writes the
 /// title. SD306 reports the placeholder until then (design 0.7.0, section 15).
@@ -615,6 +649,26 @@ mod tests {
             .map(|i| i.task)
             .collect();
         assert_eq!(q, [Some(false)]);
+    }
+
+    #[test]
+    fn with_invariants_adds_the_section_once_before_concerns_or_at_the_end() {
+        let t = "# T\n\n## Delta\n\nx\n\n## Concerns\n\n- [ ] c\n";
+        let w = with_invariants(t);
+        assert_eq!(
+            w,
+            "# T\n\n## Delta\n\nx\n\n## Invariants\n\n- none\n\n## Concerns\n\n- [ ] c\n"
+        );
+        assert_eq!(with_invariants(&w), w);
+        // No `Concerns`: at the end, with one blank line before it.
+        assert_eq!(
+            with_invariants("# T\n\n## Delta\n\nx\n"),
+            "# T\n\n## Delta\n\nx\n\n## Invariants\n\n- none\n"
+        );
+        assert_eq!(with_invariants("# T"), "# T\n\n## Invariants\n\n- none\n");
+        // A heading of another level, in another case, counts.
+        let t = "# T\n\n### invariants\n\n- a\n";
+        assert_eq!(with_invariants(t), t);
     }
 
     #[test]

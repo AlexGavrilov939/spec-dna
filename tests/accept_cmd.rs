@@ -1011,3 +1011,150 @@ fn the_two_ways_out_work_the_form_with_a_dot_slash_and_shared_paths() {
     let paths = t.lines().find(|l| l.starts_with("paths = ")).unwrap();
     assert!(paths.contains("\"Makefile\""), "{paths}");
 }
+
+// The invariants and the deviations in the skeleton and the brief (design
+// 0.8.0, D6 and D7, slice S5).
+
+const RULE_DOC: &str = "---\nstatus: active\napplies-to: [\"**\"]\n---\n# Safety\n\n## Rules\n\n- **valve-closed**: The controller SHALL close each valve on a fault.\n";
+
+fn s5_config(keys: &str) -> String {
+    config("standard", keys).replace(
+        "[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]",
+        "[layers.rules]\ntypes = [\"rule\"]\nmoves-to = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"rules\"]",
+    )
+}
+
+/// A pull request whose spec has the section `Invariants` with `items` and whose
+/// plan has the section `Deviations` with `devs` (a section with no text is not
+/// written).
+fn s5_built(keys: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
+    let r = Repo::with_config(&s5_config(keys));
+    r.write(REQ, VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write(CODE, CODE_OLD);
+    r.write(TEST, TEST_OLD);
+    r.write("README.md", "# Project\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    let (_, out, _) = r.run(&["show", "rules/safety#valve-closed", "--json"]);
+    let h = out
+        .split("\"hash\":\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .unwrap()
+        .to_string();
+    let inv = items(&h);
+    let spec = if inv.is_empty() {
+        SPEC_TEXT.to_string()
+    } else {
+        SPEC_TEXT.replace(
+            "## Concerns",
+            &format!("## Invariants\n\n{inv}\n\n## Concerns"),
+        )
+    };
+    let plan = if devs.is_empty() {
+        PLAN_TEXT.to_string()
+    } else {
+        format!("{PLAN_TEXT}\n## Deviations\n\n{devs}\n")
+    };
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, &spec);
+    r.write(PLAN, &plan);
+    r.commit("plan");
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("code");
+    r
+}
+
+fn pin_item(h: &str) -> String {
+    format!("- rules/safety#valve-closed@{h}")
+}
+
+const DEVS: &str = "- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Follow-up: later-change.";
+
+#[test]
+fn with_the_key_the_skeleton_has_one_pending_invariant_entry_for_each_item() {
+    let r = s5_built("invariants = true\n", &pin_item, "");
+    let (_, out, _) = r.run(&["show", "rules/safety#valve-closed", "--json"]);
+    let h = out
+        .split("\"hash\":\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .unwrap();
+    let t = write_record(&r);
+    assert!(
+        t.contains(&format!(
+            "[[invariant]]\nid = \"rules/safety#valve-closed@{h}\"\nanswer = \"pending\"\n"
+        )),
+        "{t}"
+    );
+    assert_eq!(t.matches("[[invariant]]").count(), 1, "{t}");
+    assert_eq!(t.matches("[[deviation]]").count(), 0, "{t}");
+    // A second acceptor adds an acceptor entry and no second answer.
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2", "--role", "second"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(RECORD);
+    assert_eq!(t.matches("[[invariant]]").count(), 1, "{t}");
+    assert_eq!(t.matches("[[acceptor]]").count(), 2, "{t}");
+}
+
+#[test]
+fn without_the_key_the_skeleton_and_the_brief_have_no_invariant() {
+    let r = s5_built("", &pin_item, "");
+    let t = write_record(&r);
+    assert!(!t.contains("[[invariant]]"), "{t}");
+    assert!(!brief(&r, &[]).contains("=== invariants ==="));
+    // With the key the brief lists it, in the order of the file.
+    let r = s5_built("invariants = true\n", &pin_item, "");
+    let b = brief(&r, &[]);
+    assert!(
+        b.contains("=== invariants ===\n- rules/safety#valve-closed@"),
+        "{b}"
+    );
+    assert!(b.find("=== tree ===").unwrap() < b.find("=== invariants ===").unwrap());
+}
+
+#[test]
+fn the_skeleton_and_the_brief_list_the_deviations_with_no_key() {
+    let r = s5_built("", &|_| String::new(), DEVS);
+    let t = write_record(&r);
+    assert_eq!(t.matches("[[deviation]]").count(), 2, "{t}");
+    assert!(
+        t.contains("[[deviation]]\nid = \"d1\"\nkind = \"plan\"\ntext = \"The timeout check moved to `src/sensors.rs`.\"\nverdict = \"pending\"\n"),
+        "{t}"
+    );
+    assert!(t.contains("id = \"d2\"\nkind = \"spec\""), "{t}");
+    let b = brief(&r, &[]);
+    assert!(
+        b.contains("=== deviations ===\n- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Follow-up: later-change.\n"),
+        "{b}"
+    );
+}
+
+#[test]
+fn an_item_that_is_not_valid_gives_no_entry_and_none_gives_no_entry() {
+    let r = s5_built(
+        "invariants = true\n",
+        &|_| "- none".to_string(),
+        "- d1: no kind\n- d2 (plan): fine",
+    );
+    let t = write_record(&r);
+    assert!(!t.contains("[[invariant]]"), "{t}");
+    assert_eq!(t.matches("[[deviation]]").count(), 1, "{t}");
+    assert!(t.contains("id = \"d2\""), "{t}");
+}
+
+#[test]
+fn the_brief_changes_when_an_invariant_or_a_deviation_changes() {
+    let a = brief(&s5_built("invariants = true\n", &pin_item, ""), &[]);
+    let b = brief(
+        &s5_built("invariants = true\n", &pin_item, "- d1 (plan): A note."),
+        &[],
+    );
+    assert_ne!(last_line(&a), last_line(&b));
+    // The same files give the same brief.
+    let c = brief(&s5_built("invariants = true\n", &pin_item, ""), &[]);
+    assert_eq!(last_line(&a), last_line(&c));
+}

@@ -92,11 +92,12 @@ Commands:
 4. Under `Interfaces`, write `- none` or one paragraph if no interface changes. Else write one item for each interface: `CHANGE <id>: <text>` for an interface that exists, `ADD <id>: <text>` for a new one.
 5. Under `Decisions`, link each decision that the change needs: `[[decisions/<slug>]]`.
 6. Write each item of `Concerns` and `Open questions` with a box: `- [ ]` is open. If none applies, write one item `- none`.
-7. To change the spec after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on.
+7. If the spec has the section `Invariants`, list each rule that the change must keep true, or keep `- none`. Write each item as `- <doc-id>#<key>@<hash>`, with the hash from `spec-dna show`. A rule that the delta adds or removes is no invariant.
+8. To change the spec after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on.
 
 Artifact: `spec.md` with `Delta`, `Interfaces`, `Decisions`, `Concerns` and `Open questions`.
 
-Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD914 (an invalid delta or interface item). SD920 (a decision that is absent or not accepted) reports only after the spec is `approved`. Before the approval, read the status of each linked decision. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
+Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD914 (an invalid delta or interface item) and no SD936 (an invalid invariant). SD920 (a decision that is absent or not accepted) reports only after the spec is `approved`. Before the approval, read the status of each linked decision. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Fix each item that the message names. For a new hash, run `spec-dna show <id>#<key>` again. Run the check again.";
 
@@ -142,6 +143,7 @@ Commands:
 2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task.
 3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
 4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
+5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`, in the commit of the work: `- <id> (plan): <text>`, or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`).
 
 Artifact: The code, the tests and the checked task.
 
@@ -201,11 +203,11 @@ Commands:
 
 1. If you built the change, do not accept it. Run `spec-dna accept <slug> --brief`, with `--role <name>` for each role of `[owners]` that the brief names. Give each whole output, unchanged, as the prompt of one agent `acceptor`. Add no word before or after it. For a `higher-risk` change, prefer an acceptor in a new session.
 2. As the acceptor, work from the brief only. If your prompt is not the output of `spec-dna accept <slug> --brief`, run that command and read its output.
-3. Run each command of `Proof`. With `[evidence] reports`, run the tests and `spec-dna evidence stamp` in one command line.
-4. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that it prints as `acceptor` in each of your attempts and findings. Copy the hash of the last line of your brief into `brief` of your entry.
-5. Try to break the change: bad input, limits, errors, each path of `Files`, and each requirement read as a test. Write each try as `[[attempt]]`.
-6. Answer each invariant, and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding if one is wrong.
-7. Read each deviation, and compare it with the diff.
+3. Run each command of `Proof`. With `[evidence] reports`, run the tests and `spec-dna evidence stamp` in one line.
+4. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that it prints as `acceptor` in each attempt and finding. Copy the hash of the last line of your brief into `brief` of your entry.
+5. Try to break the change: bad input, limits, errors, each path of `Files`, each requirement as a test. Write each try as `[[attempt]]`.
+6. Answer each invariant (read its rule with `spec-dna show`), and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding if one is wrong.
+7. Compare each deviation with the diff, and give its verdict.
 8. Write each defect as `[[finding]]` with its path. Set each `result`.
 9. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`. Edit no other file.
 
@@ -220,7 +222,7 @@ const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its task
 Commands:
 
 1. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop.
-2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit.
+2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. It prints `Deviations: <n>` and one line for each: tell the owner, because the merge of the pull request acknowledges them.
 3. Commit the result. If `spec-dna finish` prints a line `Hours:`, put it into the commit message. Keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.
@@ -688,7 +690,7 @@ mod tests {
 
     #[test]
     fn specify_and_write_plan_give_the_way_of_the_step_back_to_draft() {
-        for (skill, n, artifact) in [(Skill::Specify, 7, "spec"), (Skill::WritePlan, 8, "plan")] {
+        for (skill, n, artifact) in [(Skill::Specify, 8, "spec"), (Skill::WritePlan, 8, "plan")] {
             let c = part(skill, "Commands:");
             let want = format!(
                 "{n}. To change the {artifact} after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on."

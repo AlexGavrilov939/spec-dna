@@ -147,7 +147,7 @@ The workflow pack has 12 skills ([ADR 0010](adr/0010-workflow-pack.md)). A stage
 | `tdd` | Stage `test` | A requirement has no evidence | A test with a `covers:` tag, red before the code | SD608, SD916 | On |
 | `review` | Stage `deploy` | Before a merge | The review of the diff, and the answer to review comments | None | On |
 | `verify` | Stage `deploy` | Before the word "done" | The output of the `Proof` commands and of `check` | `finish` stops on SD915 and SD916 | Off |
-| `accept` | Stage `deploy` | The tasks of a change are done, and `spec-dna next` names `accept` | `acceptance.toml` in the folder of the change | SD927 to SD931, SD933. `finish` stops on them | On, but not in `lite` |
+| `accept` | Stage `deploy` | The tasks of a change are done, and `spec-dna next` names `accept` | `acceptance.toml` in the folder of the change | SD927 to SD931, SD933, SD936 to SD940. `finish` stops on them | On, but not in `lite` |
 | `finish` | Stage `closed` | The change is ready to apply | The result of `spec-dna finish` | `finish` | On |
 | `debug` | Event | A test or a command fails, and the cause is not known | A reproduction, a regression test and one fix | None | Off |
 | `post-mortem` | Event | An `incident` has an open follow-up | A new `intent.md` with `from:`, and an eval | SD918 | On |

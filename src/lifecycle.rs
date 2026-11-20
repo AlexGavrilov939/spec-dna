@@ -271,6 +271,51 @@ pub fn skip_early_plans(
     Ok(notes)
 }
 
+/// SD936, SD937, SD939 and SD940 read a section that 0.7.1 did not know. The
+/// function removes the diagnostics of a spec or a plan that the base tree has
+/// and that a commit added when `spec-dna.toml` pinned a version before 0.8.0
+/// ([`crate::acceptance::section_is_read`]): its section keeps the meaning of
+/// 0.7.1. `head` and `new` are the parallel lists of `check`. It runs one lookup
+/// for each such path. With no base, it removes nothing.
+pub fn skip_early_sections(
+    git: &Git,
+    base_rev: Option<&str>,
+    base: Option<&Corpus>,
+    head: &mut Vec<Diag>,
+    new: &mut Vec<bool>,
+) -> Result<(), String> {
+    let mine = |c: Code| {
+        matches!(
+            c,
+            Code::InvariantInvalid
+                | Code::InvariantStale
+                | Code::DeviationInvalid
+                | Code::DeviationUnresolved
+        )
+    };
+    let (Some(rev), Some(base)) = (base_rev, base) else {
+        return Ok(());
+    };
+    let paths: Vec<&str> = head
+        .iter()
+        .filter(|d| mine(d.code))
+        .map(|d| d.path.as_str())
+        .collect();
+    let early = crate::acceptance::sections_skipped(git, Some(rev), Some(base), &paths)?;
+    if early.is_empty() {
+        return Ok(());
+    }
+    let keep: Vec<bool> = head
+        .iter()
+        .map(|d| !(mine(d.code) && early.contains(&d.path)))
+        .collect();
+    let mut at = keep.iter();
+    head.retain(|_| *at.next().unwrap_or(&true));
+    let mut at = keep.iter();
+    new.retain(|_| *at.next().unwrap_or(&true));
+    Ok(())
+}
+
 /// The files that a change touches: the diff of the head against the base.
 #[derive(Clone, Debug, Default)]
 pub struct Diff {
@@ -463,6 +508,10 @@ pub fn tree_checks(
             Code::TaskIncomplete,
             Code::TaskTooLarge,
             Code::CheckboxMissing,
+            Code::InvariantInvalid,
+            Code::InvariantStale,
+            Code::DeviationInvalid,
+            Code::DeviationUnresolved,
         ]
         .iter()
         .all(|&k| config.is_off(k))
@@ -479,6 +528,7 @@ pub fn tree_checks(
             continue;
         }
         task_diags(config, c, ch, &mut out);
+        out.extend(deviation_diags(config, c, ch));
         let Some(spec) = &ch.spec else { continue };
         let d = &c.docs[spec.doc as usize];
         out.extend(question_diags(c, ch));
@@ -521,6 +571,7 @@ pub fn tree_checks(
             }
         }
         interfaces(config, c, d, &mut out);
+        out.extend(invariant_diags(config, c, ch));
         let limit = config.max_fanout as usize;
         if targets.len() > limit {
             out.push(crate::check::diag(
@@ -1099,6 +1150,213 @@ fn decision_ids(text: &str) -> Vec<&str> {
     ids
 }
 
+/// SD936 and SD937 for the section `Invariants` of the spec of a change (design
+/// 0.8.0, D6). They run only with `[change] invariants` (the severity of the two
+/// codes is off without the key), and they read the head tree only, so `check`,
+/// `finish` step 5.2 and `next` use this one function.
+///
+/// - SD936: an item has no valid form, names no document, no requirement or a
+///   requirement outside a `rule` document, or names a rule that the delta of the
+///   same spec adds or removes (Q45). A spec in any status gives it, so the
+///   author sees it before the approval.
+/// - SD937: the hash of an item is not the hash of the rule now. If the delta of
+///   the same spec has a `CHANGE` line for the rule, the hash of the item must be
+///   the hash of that line: the line pins the old text, and after `finish` the
+///   rule has the new text by design.
+pub fn invariant_diags(config: &Config, c: &Corpus, ch: &Change) -> Vec<Diag> {
+    let mut out = Vec::new();
+    let Some(spec) = &ch.spec else { return out };
+    if config.is_off(Code::InvariantInvalid) && config.is_off(Code::InvariantStale) {
+        return out;
+    }
+    let doc = &c.docs[spec.doc as usize];
+    let lines = ch.delta(c);
+    let delta_of = |key: &str| -> Option<&Delta> {
+        lines
+            .iter()
+            .filter_map(|l| l.parsed.as_ref().ok())
+            .find(|d| change::same_target(c, &d.target()) == key)
+    };
+    for l in change::invariant_lines(doc) {
+        let pin = match l.parsed {
+            Ok(None) => continue,
+            Err(reason) => {
+                out.push(crate::check::diag(
+                    doc,
+                    l.line,
+                    Code::InvariantInvalid,
+                    l.text,
+                    format!("the item of `Invariants` is not valid: {reason}"),
+                ));
+                continue;
+            }
+            Ok(Some(p)) => p,
+        };
+        let target = pin.target();
+        let same = change::same_target(c, &target);
+        let line = delta_of(&same);
+        if let Some(d) = line.filter(|d| d.verb != Verb::Change) {
+            let (what, why) = if d.verb == Verb::Add {
+                ("adds", "an added rule has no hash to pin")
+            } else {
+                ("removes", "a removed rule cannot stay true")
+            };
+            out.push(crate::check::diag(
+                doc,
+                l.line,
+                Code::InvariantInvalid,
+                pin.text(),
+                format!(
+                    "the delta of this spec {what} the rule `{target}`, so it is no invariant of this change ({why}); remove the item"
+                ),
+            ));
+            continue;
+        }
+        let problem = match c.resolve(&pin.id) {
+            Res::Found(d, None, _) => {
+                let rule = &c.docs[d as usize];
+                match rule.req(&pin.key) {
+                    None => Err(format!("`{}` has no requirement `{}`", rule.id, pin.key)),
+                    Some(_) if rule.ty != DocType::Rule => Err(format!(
+                        "`{target}` is a requirement of a `{}` document, not a rule; an invariant names a requirement of a `rule` document",
+                        rule.ty.name()
+                    )),
+                    Some(i) => Ok(&rule.parsed.reqs[i]),
+                }
+            }
+            Res::Ambiguous(_) => Err(format!("`{}` names more than one document", pin.id)),
+            _ => Err(format!("`{}` names no document of the tree", pin.id)),
+        };
+        let req = match problem {
+            Ok(r) => r,
+            Err(m) => {
+                out.push(crate::check::diag(
+                    doc,
+                    l.line,
+                    Code::InvariantInvalid,
+                    pin.text(),
+                    m,
+                ));
+                continue;
+            }
+        };
+        if let Some(d) = line {
+            // A `CHANGE` line: the item compares with the hash of the line.
+            if d.hash.as_deref() != Some(pin.hash.as_str()) {
+                out.push(crate::check::diag(
+                    doc,
+                    l.line,
+                    Code::InvariantStale,
+                    pin.text(),
+                    format!(
+                        "the hash `{}` of `{target}` is not the hash `{}` of the CHANGE line of this spec for the rule; the line pins the text that the change replaces, so write the hash of that line in the item",
+                        pin.hash,
+                        d.hash.as_deref().unwrap_or("")
+                    ),
+                ));
+            }
+        } else if !change::hash_matches(req, &pin.hash) {
+            out.push(crate::check::diag(
+                doc,
+                l.line,
+                Code::InvariantStale,
+                pin.text(),
+                format!(
+                    "the hash `{}` of `{target}` is not the hash of the rule now (`{}`); run `spec-dna show {target}`, read the rule again, and write the new hash in the item",
+                    pin.hash,
+                    hex(&req.hash)
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// SD939 and SD940 for the section `Deviations` of the plan of a change (design
+/// 0.8.0, D7). They need no key: the record carries the deviations. `check`,
+/// `finish` step 5.2 and `next` use this one function.
+///
+/// - SD939: an item is not `- <id> (<kind>): <text>`, has a kind outside `plan`
+///   and `spec`, or repeats an id.
+/// - SD940: a `spec` item names no line of the delta of the spec and no change
+///   folder of the tree. The label `Delta: <verb> <doc-id>#<key>` names a line, and
+///   the label `Follow-up: <slug>` names a folder.
+pub fn deviation_diags(config: &Config, c: &Corpus, ch: &Change) -> Vec<Diag> {
+    let mut out = Vec::new();
+    let Some(plan) = &ch.plan else { return out };
+    if config.is_off(Code::DeviationInvalid) && config.is_off(Code::DeviationUnresolved) {
+        return out;
+    }
+    let doc = &c.docs[plan.doc as usize];
+    let lines = ch.delta(c);
+    let folders: Vec<String> = change::collect(c)
+        .into_iter()
+        .filter(|o| o.dir != ch.dir)
+        .map(|o| o.slug)
+        .collect();
+    for l in change::deviation_lines(doc) {
+        let d = match l.parsed {
+            Ok(d) => d,
+            Err(reason) => {
+                out.push(crate::check::diag(
+                    doc,
+                    l.line,
+                    Code::DeviationInvalid,
+                    l.text,
+                    format!("the item of `Deviations` is not valid: {reason}"),
+                ));
+                continue;
+            }
+        };
+        if d.kind != "spec" {
+            continue;
+        }
+        let by_delta = d.fix.delta.as_ref().is_some_and(|(verb, target)| {
+            let want = change::same_target(c, target);
+            lines
+                .iter()
+                .filter_map(|l| l.parsed.as_ref().ok())
+                .any(|x| x.verb == *verb && change::same_target(c, &x.target()) == want)
+        });
+        let by_folder = d
+            .fix
+            .follow_up
+            .as_ref()
+            .is_some_and(|s| folders.contains(s));
+        if by_delta || by_folder {
+            continue;
+        }
+        let cause = if let Some((verb, target)) = &d.fix.delta {
+            format!(
+                "`Delta: {} {target}` names no line of the delta of this change",
+                match verb {
+                    Verb::Add => "ADD",
+                    Verb::Change => "CHANGE",
+                    Verb::Remove => "REMOVE",
+                }
+            )
+        } else if d.fix.delta_bad {
+            "`Delta:` is not followed by `<verb> <doc-id>#<key>` with the verb ADD, CHANGE or REMOVE"
+                .to_string()
+        } else if let Some(s) = &d.fix.follow_up {
+            format!("`Follow-up: {s}` names no change folder of the tree")
+        } else {
+            "it has no `Delta:` and no `Follow-up:`".to_string()
+        };
+        out.push(crate::check::diag(
+            doc,
+            l.line,
+            Code::DeviationUnresolved,
+            d.id.clone(),
+            format!(
+                "the `spec` deviation `{}` is not resolved: {cause}; write `Delta: <verb> <doc-id>#<key>` with a line that the delta of the spec has, or `Follow-up: <slug>` with a change folder of the tree",
+                d.id
+            ),
+        ));
+    }
+    out
+}
+
 /// SD912: more changes than `max-started` of the `intent` layer have an
 /// `accepted` intent. The diagnostic is on `spec-dna.toml`, as the one of SD902
 /// is, so the rules of a root do not apply.
@@ -1386,6 +1644,7 @@ pub fn base_checks(
             Code::SelfAccepted,
             Code::AcceptorMissing,
             Code::RecordEdited,
+            Code::RecordIncomplete,
         ]
         .iter()
         .any(|&k| on(k))
@@ -1589,6 +1848,10 @@ struct BranchScope {
     facts: crate::acceptance::PlanFacts,
     /// The plan of the branch as the stale rule of a record reads it.
     plan: crate::acceptance::PlanScope,
+    /// The invariants and the deviations that the newest spec and plan of the
+    /// branch declare. The base plan can lack a deviation that the work added, so
+    /// SD938 reads these.
+    declared: crate::accept::Declared,
 }
 
 impl DiffChange {
@@ -1612,6 +1875,7 @@ impl DiffChange {
                     scope,
                     facts: crate::acceptance::plan_facts(&newest, &corpus),
                     plan: crate::acceptance::PlanScope::of(&newest, &corpus),
+                    declared: crate::accept::declared(ctx.config, &newest, &corpus),
                 })
             })
             .as_ref()
@@ -2379,6 +2643,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
         Code::SelfAccepted,
         Code::AcceptorMissing,
         Code::RecordEdited,
+        Code::RecordIncomplete,
     ]
     .iter()
     .any(|&k| on(k));
@@ -2579,6 +2844,17 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             && let Some(m) = acc::acceptors_missing(cfg, c.class, &rec)
         {
             out.push(path_diag(&archive, Code::AcceptorMissing, &c.slug, m));
+        }
+        // SD938: the answers. The items come from the newest spec and plan of the
+        // branch for a deleted folder, as `finish` read them, else from the tree.
+        if on(Code::RecordIncomplete) {
+            let decl = match ch.branch(ctx) {
+                Some(b) => b.declared.clone(),
+                None => crate::accept::declared(cfg, c, ctx.corpus(ch)),
+            };
+            for m in acc::answers_missing(&rec, &decl) {
+                out.push(path_diag(&archive, Code::RecordIncomplete, &c.slug, m));
+            }
         }
     }
     // A change of the archive folder.

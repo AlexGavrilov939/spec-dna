@@ -1399,3 +1399,603 @@ fn sd913_skips_a_path_of_shared_paths() {
     r.write("src/other.py", "y = 1\n");
     assert_eq!(outside(&r), ["src/other.py"]);
 }
+
+// The invariants and the deviations (design 0.8.0, D6 and D7, slice S5)
+
+const RULE_DOC: &str = "---\nstatus: active\napplies-to: [\"**\"]\n---\n# Safety\n\n## Rules\n\n- **valve-closed**: The controller SHALL close each valve on a fault.\n- **alarm-sounds**: The controller SHALL sound the alarm on a fault.\n";
+
+fn inv_config(profile: &str, keys: &str) -> String {
+    format!(
+        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\n{keys}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.rules]\ntypes = [\"rule\"]\nmoves-to = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"rules\"]\nkeep = \"until-finished\"\n"
+    )
+}
+
+fn inv_repo(profile: &str, keys: &str) -> Repo {
+    let r = Repo::with_config(&inv_config(profile, keys));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write("README.md", "# Project\n");
+    r
+}
+
+const INV_DELTA: &str =
+    "- ADD requirements/valves#timeout: The controller SHALL close the valve after a timeout.";
+
+/// The change `dose` with a spec that has the delta `delta` and the section
+/// `Invariants` with `items`.
+fn inv_spec(r: &Repo, status: &str, delta: &str, items: &str) {
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Change\n\n## Intent\n\nText.\n",
+    );
+    r.write(
+        "docs/intent/dose/spec.md",
+        &format!(
+            "---\nstatus: {status}\n---\n# Spec\n\n## Delta\n\n{delta}\n\n## Invariants\n\n{items}\n"
+        ),
+    );
+}
+
+fn pin(r: &Repo, key: &str) -> String {
+    format!(
+        "rules/safety#{key}@{}",
+        hash(r, &format!("rules/safety#{key}"))
+    )
+}
+
+/// A pull request: the base on `main`, then the branch `feature`. The base commit
+/// pins 0.8.0, as a project that adopted 0.8.0 has it, and a later commit moves
+/// the pin to the version of the binary.
+fn on_branch(r: &Repo) {
+    let cfg = r.read("spec-dna.toml");
+    r.write(
+        "spec-dna.toml",
+        &cfg.replacen(
+            &format!("spec-dna = \"{VERSION}\""),
+            "spec-dna = \"0.8.0\"",
+            1,
+        ),
+    );
+    r.commit("base");
+    r.write("spec-dna.toml", &cfg);
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+}
+
+fn codes_of(out: &str, code: &str) -> usize {
+    out.lines()
+        .filter(|l| l.contains(&format!(" {code} ")))
+        .count()
+}
+
+#[test]
+fn an_item_of_a_requirements_document_gives_sd936() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let h = hash(&r, "requirements/valves#close");
+    inv_spec(
+        &r,
+        "draft",
+        INV_DELTA,
+        &format!("- requirements/valves#close@{h}"),
+    );
+    let (code, out) = check(&r);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(severities(&out, "SD936"), ["error"], "{out}");
+    let m = messages(&out, "SD936");
+    assert!(m[0].contains("not a rule"), "{}", m[0]);
+    assert!(m[0].contains("docs/intent/dose/spec.md:"), "{}", m[0]);
+}
+
+#[test]
+fn a_bad_item_a_missing_rule_and_a_missing_key_give_sd936() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let h = hash(&r, "rules/safety#valve-closed");
+    let items = format!(
+        "- The valve stays closed.\n- rules/safety#nothing@{h}\n- rules/absent#valve-closed@{h}\n- rules/safety#valve-closed"
+    );
+    inv_spec(&r, "draft", INV_DELTA, &items);
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 4, "{out}");
+    assert_eq!(codes_of(&out, "SD937"), 0, "{out}");
+}
+
+#[test]
+fn the_item_none_is_valid_alone_and_not_with_a_pin() {
+    let r = inv_repo("standard", "invariants = true\n");
+    inv_spec(&r, "draft", INV_DELTA, "- none");
+    let (code, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    assert_eq!(code, 0, "{out}");
+    let p = pin(&r, "valve-closed");
+    inv_spec(&r, "draft", INV_DELTA, &format!("- none\n- {p}"));
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 1, "{out}");
+    assert!(messages(&out, "SD936")[0].contains("stands alone"), "{out}");
+}
+
+#[test]
+fn a_good_pin_gives_no_sd936_and_no_sd937_also_with_crlf_line_ends() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let p = pin(&r, "valve-closed");
+    inv_spec(&r, "approved", INV_DELTA, &format!("- {p}"));
+    let (code, out) = check(&r);
+    assert_eq!(code, 0, "{out}");
+    let spec = r.read("docs/intent/dose/spec.md").replace('\n', "\r\n");
+    r.write("docs/intent/dose/spec.md", &spec);
+    let (code, out) = check(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_rule_that_the_same_delta_adds_or_removes_is_no_invariant_before_the_approval() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let h = hash(&r, "rules/safety#valve-closed");
+    // REMOVE: the rule exists, so only the delta can name it.
+    let delta = format!("- REMOVE rules/safety#valve-closed@{h}");
+    inv_spec(
+        &r,
+        "draft",
+        &delta,
+        &format!("- rules/safety#valve-closed@{h}"),
+    );
+    let (_, out) = check(&r);
+    let m = messages(&out, "SD936");
+    assert_eq!(m.len(), 1, "{out}");
+    assert!(
+        m[0].contains("removes the rule") && m[0].contains("remove the item"),
+        "{}",
+        m[0]
+    );
+    // ADD: the rule is new, so it has no hash to pin. The text says the cause.
+    let delta = "- ADD rules/safety#new-rule: The controller SHALL log each fault.";
+    inv_spec(&r, "draft", delta, &format!("- rules/safety#new-rule@{h}"));
+    let (_, out) = check(&r);
+    let m = messages(&out, "SD936");
+    assert_eq!(m.len(), 1, "{out}");
+    assert!(
+        m[0].contains("adds the rule") && m[0].contains("remove the item"),
+        "{}",
+        m[0]
+    );
+    assert_eq!(codes_of(&out, "SD937"), 0, "{out}");
+}
+
+#[test]
+fn a_change_line_for_the_rule_is_allowed_and_the_item_compares_with_the_line() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let old = hash(&r, "rules/safety#valve-closed");
+    let delta = format!(
+        "- CHANGE rules/safety#valve-closed@{old}: The controller SHALL close each valve within 2 seconds of a fault."
+    );
+    inv_spec(
+        &r,
+        "approved",
+        &delta,
+        &format!("- rules/safety#valve-closed@{old}"),
+    );
+    let (code, out) = check(&r);
+    assert_eq!(code, 0, "{out}");
+    // The rule has new text now (the state after `finish`): the item still
+    // equals the line, so no SD937.
+    let new_rule = RULE_DOC.replace(
+        "close each valve on a fault",
+        "close each valve within 2 seconds of a fault",
+    );
+    r.write("docs/rules/safety.md", &new_rule);
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD937"), 0, "{out}");
+    // Another hash than the line: SD937. It names the hash of the line.
+    let other = hash(&r, "rules/safety#alarm-sounds");
+    inv_spec(
+        &r,
+        "approved",
+        &delta,
+        &format!("- rules/safety#valve-closed@{other}"),
+    );
+    let (_, out) = check(&r);
+    let m = messages(&out, "SD937");
+    assert_eq!(m.len(), 1, "{out}");
+    assert!(
+        m[0].contains("CHANGE line") && m[0].contains(&old),
+        "{}",
+        m[0]
+    );
+}
+
+#[test]
+fn an_old_hash_is_sd937_error_for_a_touched_spec_and_a_warning_for_an_untouched_one() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let p = pin(&r, "valve-closed");
+    inv_spec(&r, "approved", INV_DELTA, &format!("- {p}"));
+    on_branch(&r);
+    // The rule changes on the branch: the spec is not in the diff.
+    let new_rule = RULE_DOC.replace(
+        "close each valve on a fault.",
+        "close each valve within 2 seconds of a fault.",
+    );
+    r.write("docs/rules/safety.md", &new_rule);
+    r.commit("the rule changes");
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(severities(&out, "SD937"), ["warning"], "{out}");
+    assert_eq!(code, 0, "{out}");
+    // The spec is in the diff: an error, with the new hash in the message.
+    let spec = r
+        .read("docs/intent/dose/spec.md")
+        .replace("## Invariants", "## Invariants\n");
+    r.write("docs/intent/dose/spec.md", &spec);
+    r.commit("touch the spec");
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(severities(&out, "SD937"), ["error"], "{out}");
+    assert_eq!(code, 1, "{out}");
+    let now = hash(&r, "rules/safety#valve-closed");
+    assert!(messages(&out, "SD937")[0].contains(&now), "{out}");
+}
+
+#[test]
+fn the_codes_need_the_key_and_the_profile() {
+    let setup = |r: &Repo| {
+        let items = "- requirements/valves#close@0123456789abcdef\n- not a pin".to_string();
+        inv_spec(r, "draft", INV_DELTA, &items);
+    };
+    let fresh = |cfg: &str| {
+        let r = Repo::with_config(cfg);
+        r.write("docs/requirements/valves.md", VALVES);
+        r.write("docs/rules/safety.md", RULE_DOC);
+        setup(&r);
+        r
+    };
+    // No key: no SD936 and no SD937 in any profile, also with a group rule.
+    for profile in ["lite", "standard", "strict"] {
+        for rules in ["", "acceptance = \"error\"\n"] {
+            let cfg = inv_config(profile, "").replace("[rules]\n", &format!("[rules]\n{rules}"));
+            let (_, out) = check(&fresh(&cfg));
+            assert_eq!(
+                codes_of(&out, "SD936") + codes_of(&out, "SD937"),
+                0,
+                "{profile} {out}"
+            );
+        }
+    }
+    // The key in `lite` gives nothing, as the profile is off.
+    let (_, out) = check(&fresh(&inv_config("lite", "invariants = true\n")));
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    // The key in `lite` and a rule for the code: it runs.
+    let cfg = inv_config("lite", "invariants = true\n")
+        .replace("[rules]\n", "[rules]\nSD936 = \"warning\"\n");
+    let (_, out) = check(&fresh(&cfg));
+    assert_eq!(severities(&out, "SD936"), ["warning", "warning"], "{out}");
+    // `standard` and `strict` with the key: errors.
+    for profile in ["standard", "strict"] {
+        let (_, out) = check(&fresh(&inv_config(profile, "invariants = true\n")));
+        assert_eq!(
+            severities(&out, "SD936"),
+            ["error", "error"],
+            "{profile} {out}"
+        );
+    }
+}
+
+#[test]
+fn a_spec_that_a_commit_added_at_pin_0_7_1_keeps_its_free_text_and_a_new_spec_does_not() {
+    let free = "- The controller keeps the valve closed.\n- Another note.";
+    let keyed = inv_config("standard", "invariants = true\n");
+    // The spec comes on `main` under the pin 0.7.1, and a later commit pins the
+    // version of the binary (a project that upgraded and set the key).
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.7.1\"\n{keyed}"));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write("README.md", "# Project\n");
+    inv_spec(&r, "approved", INV_DELTA, free);
+    r.commit("spec at 0.7.1");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{keyed}"),
+    );
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("src/a.py", "x = 1\n");
+    r.commit("code");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    // A spec that the branch adds is always read.
+    let r = inv_repo("standard", "invariants = true\n");
+    on_branch(&r);
+    inv_spec(&r, "draft", INV_DELTA, free);
+    r.commit("spec");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(codes_of(&out, "SD936"), 2, "{out}");
+}
+
+/// The test merge of a code host: `main` moves on with a commit to another
+/// path, and `HEAD` is a merge commit of the branch.
+fn in_test_merge(r: &Repo) {
+    r.git(&["checkout", "-q", "main"]);
+    let n = r.git_out(&["rev-list", "--count", "main"]);
+    r.write("README.md", &format!("# Project, main moves on {n}\n"));
+    r.commit("main moves on");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "--detach", "main"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+}
+
+#[test]
+fn the_invariant_codes_give_the_same_result_on_the_test_merge_and_after_main_merged_in() {
+    let r = inv_repo("standard", "invariants = true\n");
+    on_branch(&r);
+    inv_spec(
+        &r,
+        "draft",
+        INV_DELTA,
+        &format!("- {}", pin(&r, "valve-closed")),
+    );
+    r.commit("an honest spec");
+    in_test_merge(&r);
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(code, 0, "{out}");
+    // A defect: the same on the test merge.
+    r.git(&["checkout", "-q", "feature"]);
+    inv_spec(
+        &r,
+        "draft",
+        INV_DELTA,
+        "- rules/safety#valve-closed@0123456789abcdef",
+    );
+    r.commit("a stale pin");
+    in_test_merge(&r);
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(severities(&out, "SD937"), ["error"], "{out}");
+    // `main` merged into the branch, with a commit to another path.
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "-m", "merge main", "main"]);
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(severities(&out, "SD937"), ["error"], "{out}");
+}
+
+// SD939 and SD940
+
+const PLAN_DEV: &str = "## Files\n\n- `src/dose.py`\n\n## Order\n\n- [ ] t1: Code. Files: `src/dose.py`. Verify: the test passes.\n\n## Risks\n\n- None.\n\n## Proof\n\nThe test.\n";
+
+fn dev_plan(r: &Repo, items: &str) {
+    r.write(
+        "docs/intent/dose/plan.md",
+        &format!("---\nstatus: draft\n---\n# Plan\n\n{PLAN_DEV}\n## Deviations\n\n{items}\n"),
+    );
+}
+
+#[test]
+fn a_bad_deviation_item_gives_sd939() {
+    for bad in [
+        "- d1: text",
+        "- d1 (other): text",
+        "- d1 (plan) text",
+        "- d1 (plan):",
+        "- d1 (plan): a\n- d1 (plan): b",
+    ] {
+        let r = inv_repo("standard", "");
+        inv_spec(&r, "approved", INV_DELTA, "- none");
+        dev_plan(&r, bad);
+        let (code, out) = check(&r);
+        assert_eq!(codes_of(&out, "SD939"), 1, "{bad}: {out}");
+        assert_eq!(severities(&out, "SD939"), ["error"], "{bad}: {out}");
+        assert_eq!(code, 1, "{bad}: {out}");
+    }
+    let r = inv_repo("standard", "");
+    dev_plan(
+        &r,
+        "- d1 (plan): The check moved.\n- d2 (plan): The order changed.",
+    );
+    let (code, out) = check(&r);
+    assert_eq!(
+        codes_of(&out, "SD939") + codes_of(&out, "SD940"),
+        0,
+        "{out}"
+    );
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_spec_deviation_needs_a_delta_line_or_a_follow_up_folder() {
+    let r = inv_repo("standard", "");
+    inv_spec(&r, "approved", INV_DELTA, "- none");
+    // No label.
+    dev_plan(&r, "- d1 (spec): The valve closes after 2 reads.");
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 1, "{out}");
+    assert_eq!(severities(&out, "SD940"), ["error"], "{out}");
+    // A delta line of the spec: fine. A delta line that the spec has not: SD940.
+    dev_plan(
+        &r,
+        "- d1 (spec): The valve closes after 2 reads. Delta: ADD requirements/valves#timeout",
+    );
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 0, "{out}");
+    dev_plan(
+        &r,
+        "- d1 (spec): The valve closes after 2 reads. Delta: CHANGE requirements/valves#timeout",
+    );
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 1, "{out}");
+    assert!(
+        messages(&out, "SD940")[0].contains("no line of the delta"),
+        "{out}"
+    );
+    dev_plan(
+        &r,
+        "- d1 (spec): x. Delta: UPDATE requirements/valves#timeout",
+    );
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 1, "{out}");
+    // A change folder of the tree: fine. A folder that does not exist: SD940.
+    r.write(
+        "docs/intent/later/intent.md",
+        "---\nstatus: draft\nclass: routine\n---\n# Later\n\n## Intent\n\nText.\n",
+    );
+    dev_plan(&r, "- d1 (spec): x. Follow-up: later");
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 0, "{out}");
+    dev_plan(&r, "- d1 (spec): x. Follow-up: nothing-here");
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 1, "{out}");
+    assert!(
+        messages(&out, "SD940")[0].contains("`Follow-up: nothing-here`"),
+        "{out}"
+    );
+    // A `plan` item needs neither.
+    dev_plan(&r, "- d1 (plan): x.");
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 0, "{out}");
+}
+
+#[test]
+fn the_deviation_codes_are_off_in_lite_and_on_in_standard_and_strict_with_no_key() {
+    for (profile, want) in [("lite", 0), ("standard", 2), ("strict", 2)] {
+        let r = inv_repo(profile, "");
+        inv_spec(&r, "approved", INV_DELTA, "- none");
+        dev_plan(&r, "- d1: text\n- d2 (spec): text");
+        let (_, out) = check(&r);
+        assert_eq!(
+            codes_of(&out, "SD939") + codes_of(&out, "SD940"),
+            want,
+            "{profile} {out}"
+        );
+    }
+}
+
+#[test]
+fn a_plan_that_a_commit_added_at_pin_0_7_1_keeps_a_section_deviations_of_plain_text() {
+    let plain = inv_config("standard", "");
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.7.1\"\n{plain}"));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("README.md", "# Project\n");
+    inv_spec(&r, "approved", INV_DELTA, "- none");
+    dev_plan(&r, "- It went well.\n- d9 (spec): text");
+    r.commit("plan at 0.7.1");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{plain}"),
+    );
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("src/dose.py", "x = 1\n");
+    r.commit("code");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(
+        codes_of(&out, "SD939") + codes_of(&out, "SD940"),
+        0,
+        "{out}"
+    );
+    // A plan that the branch adds is always read.
+    let r = inv_repo("standard", "");
+    on_branch(&r);
+    inv_spec(&r, "draft", INV_DELTA, "- none");
+    dev_plan(&r, "- It went well.");
+    r.commit("plan");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(codes_of(&out, "SD939"), 1, "{out}");
+}
+
+#[test]
+fn the_deviation_codes_give_the_same_result_on_the_test_merge() {
+    let r = inv_repo("standard", "");
+    on_branch(&r);
+    inv_spec(&r, "draft", INV_DELTA, "- none");
+    dev_plan(&r, "- d1 (plan): An honest note.");
+    r.commit("plan");
+    in_test_merge(&r);
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(
+        codes_of(&out, "SD939") + codes_of(&out, "SD940"),
+        0,
+        "{out}"
+    );
+    r.git(&["checkout", "-q", "feature"]);
+    dev_plan(&r, "- d1 (spec): No fix.");
+    r.commit("a spec deviation with no fix");
+    in_test_merge(&r);
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    assert_eq!(codes_of(&out, "SD940"), 1, "{out}");
+}
+
+/// The output of `check --base main` in the 3 states of a pull request: the tip
+/// of the branch, the test merge of a code host, and the branch after `main`
+/// merged into it. `main` moves on with a commit to another path before the last
+/// 2 states. The repository is on the branch `feature`.
+fn three_states(r: &Repo) -> [String; 3] {
+    let tip = r.run(&["check", "--base", "main"]).1;
+    in_test_merge(r);
+    let merge = r.run(&["check", "--base", "main"]).1;
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "-m", "merge main", "main"]);
+    let merged_in = r.run(&["check", "--base", "main"]).1;
+    [tip, merge, merged_in]
+}
+
+#[test]
+fn each_defect_of_the_new_codes_gives_the_same_code_in_the_3_states_of_a_pull_request() {
+    // (setup, code, number of findings)
+    type Setup<'a> = &'a dyn Fn(&Repo);
+    let cases: [(&str, Setup); 3] = [
+        ("SD936", &|r| {
+            inv_spec(
+                r,
+                "draft",
+                INV_DELTA,
+                "- requirements/valves#close@0123456789abcdef",
+            );
+        }),
+        ("SD939", &|r| {
+            inv_spec(r, "draft", INV_DELTA, "- none");
+            dev_plan(r, "- d1: no kind");
+        }),
+        ("SD940", &|r| {
+            inv_spec(r, "draft", INV_DELTA, "- none");
+            dev_plan(r, "- d1 (spec): no fix");
+        }),
+    ];
+    for (code, setup) in cases {
+        let r = inv_repo("standard", "invariants = true\n");
+        on_branch(&r);
+        setup(&r);
+        r.commit("a defect");
+        for (state, out) in three_states(&r).iter().enumerate() {
+            assert_eq!(codes_of(out, code), 1, "{code} in state {state}: {out}");
+        }
+    }
+}
+
+#[test]
+fn the_rule_of_the_pin_gives_the_same_silence_in_the_3_states_of_a_pull_request() {
+    let free = "- The controller keeps the valve closed.";
+    let keyed = inv_config("standard", "invariants = true\n");
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"0.7.1\"\n{keyed}"));
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("docs/rules/safety.md", RULE_DOC);
+    r.write("README.md", "# Project\n");
+    inv_spec(&r, "approved", INV_DELTA, free);
+    dev_plan(&r, "- It went well.");
+    r.commit("spec and plan at 0.7.1");
+    r.write(
+        "spec-dna.toml",
+        &format!("spec-dna = \"{VERSION}\"\n{keyed}"),
+    );
+    r.write("README.md", "# Project, new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("src/a.py", "x = 1\n");
+    r.commit("code");
+    for (state, out) in three_states(&r).iter().enumerate() {
+        for code in ["SD936", "SD937", "SD939", "SD940"] {
+            assert_eq!(codes_of(out, code), 0, "{code} in state {state}: {out}");
+        }
+    }
+}

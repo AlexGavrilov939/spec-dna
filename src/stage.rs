@@ -320,7 +320,7 @@ fn accept_items(
         if let (Some(Need::Yes { .. }), Some(base_rev)) = (&need, base_rev) {
             out.insert(
                 ch.slug.clone(),
-                accept_item(repo, cfg, &ch, head, base_rev, diff)?,
+                accept_item(repo, cfg, &ch, head, base, base_rev, diff)?,
             );
         }
     }
@@ -338,6 +338,7 @@ fn accept_item(
     cfg: &Config,
     ch: &Change,
     head: &Corpus,
+    base: Option<&Corpus>,
     base_rev: &str,
     diff: Option<&Diff>,
 ) -> Result<AcceptItem, Fatal> {
@@ -400,8 +401,10 @@ fn accept_item(
         );
     }
     let first = problems.first().cloned().unwrap_or_default();
+    let sections = acceptance::sections_of(cfg, &repo.git, Some(base_rev), ch, head, base)
+        .map_err(Fatal::Io)?;
     let Some((code, messages)) =
-        acceptance::first_stop(cfg, ch.class, rec.as_ref(), problems, stale)
+        acceptance::first_stop(cfg, ch.class, rec.as_ref(), problems, stale, &sections)
     else {
         // With each check on, the record is valid, fresh and accepted. With a check
         // off, the text says only that the checks that are on passed.
@@ -411,6 +414,9 @@ fn accept_item(
             Code::AcceptanceRejected,
             Code::SelfAccepted,
             Code::AcceptorMissing,
+            Code::RecordIncomplete,
+            Code::DeviationInvalid,
+            Code::DeviationUnresolved,
         ]
         .into_iter()
         .all(on);
