@@ -1903,7 +1903,12 @@ fn record_commit(r: &Repo) {
 fn as_person(r: &Repo, who: &str, args: &[&str]) -> (i32, String, String) {
     r.run_env(
         args,
-        &[("GIT_AUTHOR_EMAIL", who), ("GIT_COMMITTER_EMAIL", who)],
+        &[
+            ("GIT_AUTHOR_NAME", "Test"),
+            ("GIT_COMMITTER_NAME", "Test"),
+            ("GIT_AUTHOR_EMAIL", who),
+            ("GIT_COMMITTER_EMAIL", who),
+        ],
         &[],
     )
 }
@@ -2597,4 +2602,20 @@ fn approve_in_a_shallow_clone_says_that_the_walk_stopped() {
     assert_eq!(code, 1, "{out}{err}");
     assert!(!out.contains("already"), "{out}");
     assert!(err.contains("fetch-depth: 0"), "{err}");
+}
+
+#[test]
+fn approve_with_no_git_identity_says_to_set_user_email() {
+    // No `user.email` and no `GIT_AUTHOR_EMAIL`: the message names the fix, and the
+    // exit code is 4 (a git error), as for a failed commit. This holds for each
+    // artifact and for the record.
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    for artifact in ["acceptance", "plan"] {
+        let (code, out, err) = r.run(&["approve", "valve-timeout", artifact]);
+        assert_eq!(code, 4, "{artifact}: {out}{err}");
+        assert!(err.contains("user.email"), "{artifact}: {err}");
+        assert!(err.contains("GIT_AUTHOR_EMAIL"), "{artifact}: {err}");
+        assert!(!err.contains("panicked"), "{artifact}: {err}");
+    }
 }
