@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Build of 0.8.0 part B, slice S6: the agent roles of [owners]: plan
 
