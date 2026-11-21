@@ -24,10 +24,11 @@
 use crate::change;
 use crate::config::Config;
 use crate::frontmatter;
-use crate::git::{Git, PathChange};
+use crate::git::{BranchWalk, Git, PathChange};
 use crate::lifecycle::intent_dirs;
 use crate::model::Corpus;
 use crate::parse::{ParsedDoc, parse};
+use crate::record;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -271,25 +272,9 @@ impl Branch {
         };
         b.n = walk.commits.len();
         b.commits = walk.commits.iter().map(|c| c.commit.clone()).collect();
-        // The first stop of D13: an incomplete history of a shallow clone.
-        if walk.shallow
-            && (walk.merge_base.is_none() || walk.commits.iter().any(|c| c.parents.is_empty()))
-        {
-            b.stop = Some(Fail::new(Reason::Shallow));
+        if let Some(f) = walk_stop(git, base_rev, &walk) {
+            b.stop = Some(f);
             return b;
-        }
-        // The second stop: a merge commit that merges another branch. It is
-        // neutral if the branch took the base (each parent after the first is
-        // in the history of the base), or if its first parent is the base (the
-        // test merge of a code host).
-        for c in &walk.commits {
-            if c.parents.len() > 1
-                && c.parents[0] != base_rev
-                && !c.parents[1..].iter().all(|p| git.is_ancestor(p, base_rev))
-            {
-                b.stop = Some(Fail::at(Reason::Merge, &c.commit));
-                return b;
-            }
         }
         let dirs = intent_dirs(config);
         let approvers: HashSet<String> = config
@@ -606,6 +591,231 @@ impl Branch {
     }
 }
 
+/// The stops of D13 for a walk of the commits of `base_rev..HEAD`, or `None`. The
+/// first stop is an incomplete history of a shallow clone. The second is a merge
+/// commit that merges another branch: it is neutral if the branch took the base
+/// (each parent after the first is in the history of the base), or if its first
+/// parent is the base (the test merge of a code host).
+fn walk_stop(git: &Git, base_rev: &str, walk: &BranchWalk) -> Option<Fail> {
+    if walk.shallow
+        && (walk.merge_base.is_none() || walk.commits.iter().any(|c| c.parents.is_empty()))
+    {
+        return Some(Fail::new(Reason::Shallow));
+    }
+    walk.commits
+        .iter()
+        .find(|c| {
+            c.parents.len() > 1
+                && c.parents[0] != base_rev
+                && !c.parents[1..].iter().all(|p| git.is_ancestor(p, base_rev))
+        })
+        .map(|c| Fail::at(Reason::Merge, &c.commit))
+}
+
+// The acknowledgement of the acceptance record (design 0.8.0, D3 item 10).
+
+/// What the walk of the commits finds about the record of one change with
+/// `[change] approval = "branch"`. It is independent of the walk of the status
+/// of the artifacts ([`Branch`]): the record is no artifact, and it has no status.
+#[derive(Clone, Debug, Default)]
+pub struct AckWalk {
+    /// Set if the walk cannot run (D13). Then no entry counts.
+    pub stop: Option<Fail>,
+    /// The entries of `acknowledged-by` that count, in lower case. An entry counts
+    /// when its commit added it, its author has that e-mail, the commit changes
+    /// the `acknowledged-by` line of the record alone, and no later commit changes
+    /// the record. The commit of `finish` moves the same bytes to the archive, so
+    /// it is no later change. The entries of the record in the base tree count: the
+    /// pull request that added them walked them.
+    pub counted: Vec<String>,
+    /// The commits that change the record and another path, each with the first
+    /// other path. The commit is empty for the staged changes of `check --staged`.
+    pub mixed: Vec<(String, String)>,
+}
+
+fn lower(list: Vec<String>) -> Vec<String> {
+    list.into_iter().map(|e| e.to_lowercase()).collect()
+}
+
+/// One change of the record text by a commit (or by the staged changes). `old` is
+/// the text before, `only_record` is true if the commit changes no other path, and
+/// `author` is the e-mail of the author, if it is known.
+fn ack_step(
+    counted: &mut Vec<String>,
+    old: Option<&str>,
+    new: &str,
+    only_record: bool,
+    author: Option<&str>,
+) {
+    let ack_only = only_record
+        && old.is_some_and(|o| {
+            record::ack_line(o).is_some()
+                && record::ack_line(new).is_some()
+                && record::without_ack(o) == record::without_ack(new)
+        });
+    if !ack_only {
+        // Another change of the record: no entry outlives the text it acknowledged.
+        counted.clear();
+        return;
+    }
+    let old_list = lower(record::ack_entries(old.unwrap_or_default()));
+    let new_list = lower(record::ack_entries(new));
+    counted.retain(|e| new_list.contains(e));
+    let added: Vec<&String> = new_list.iter().filter(|e| !old_list.contains(e)).collect();
+    if let [one] = added.as_slice()
+        && author.is_none_or(|a| a.eq_ignore_ascii_case(one))
+        && !counted.contains(one)
+    {
+        counted.push((*one).clone());
+    }
+}
+
+/// Walks the commits of `base_rev..HEAD` for the record at `record` (a path from
+/// the repository root). With a `staged` `Git` the staged changes are one more
+/// commit after the last, with the author that `git commit` would use.
+pub fn ack_walk(git: &Git, base_rev: &str, record: &str) -> Result<AckWalk, String> {
+    let mut out = AckWalk::default();
+    let walk = match git.branch_walk(base_rev, "HEAD") {
+        Ok(w) => w,
+        Err(_) => {
+            out.stop = Some(Fail::new(Reason::Shallow));
+            return Ok(out);
+        }
+    };
+    if let Some(f) = walk_stop(git, base_rev, &walk) {
+        out.stop = Some(f);
+        return Ok(out);
+    }
+    let base_text = git
+        .read_at(&[(base_rev.to_string(), record.to_string())])?
+        .into_iter()
+        .next()
+        .flatten();
+    let mut counted: Vec<String> = base_text
+        .map(|b| lower(record::ack_entries(&String::from_utf8_lossy(&b))))
+        .unwrap_or_default();
+    // The texts of the record, in one batch.
+    let mut specs: Vec<(String, String)> = Vec::new();
+    for c in walk.commits.iter().filter(|c| c.parents.len() <= 1) {
+        if let Some((_, k)) = c.paths.iter().find(|(p, _)| p == record)
+            && *k != PathChange::Deleted
+        {
+            specs.push((c.commit.clone(), record.to_string()));
+            if *k == PathChange::Modified && c.parents.len() == 1 {
+                specs.push((c.parents[0].clone(), record.to_string()));
+            }
+        }
+    }
+    let texts = match git.read_at(&specs) {
+        Ok(t) if t.iter().all(Option::is_some) => t,
+        _ => {
+            out.stop = Some(Fail::new(Reason::Shallow));
+            return Ok(out);
+        }
+    };
+    let text_at: HashMap<(&str, &str), String> = specs
+        .iter()
+        .zip(&texts)
+        .filter_map(|((c, p), t)| {
+            t.as_ref().map(|t| {
+                (
+                    (c.as_str(), p.as_str()),
+                    String::from_utf8_lossy(t).into_owned(),
+                )
+            })
+        })
+        .collect();
+    for c in &walk.commits {
+        let Some((_, kind)) = c.paths.iter().find(|(p, _)| p == record) else {
+            continue;
+        };
+        if c.parents.len() > 1 {
+            // A merge commit that carries the record itself (a new file, or a fix of
+            // a conflict). The paths of a merge are the paths that differ from each
+            // parent, so a path that the merge only takes from the base is not here.
+            // The record with another path in one commit is SD932, as in any commit.
+            if let Some((p, _)) = c.paths.iter().find(|(p, _)| p != record) {
+                out.mixed.push((c.commit.clone(), p.clone()));
+            }
+            counted.clear();
+            continue;
+        }
+        if *kind == PathChange::Deleted {
+            // The commit of `finish` deletes the folder and adds the archive file
+            // with the same bytes. Any other deletion ends the record.
+            let moved = c
+                .paths
+                .iter()
+                .any(|(p, k)| *k == PathChange::Added && crate::acceptance::is_archive_path(p));
+            if !moved {
+                counted.clear();
+            }
+            continue;
+        }
+        let other = c
+            .paths
+            .iter()
+            .find(|(p, _)| p != record)
+            .map(|(p, _)| p.clone());
+        if let Some(p) = &other {
+            out.mixed.push((c.commit.clone(), p.clone()));
+        }
+        let new = text_at.get(&(c.commit.as_str(), record));
+        let old = (*kind == PathChange::Modified && c.parents.len() == 1)
+            .then(|| text_at.get(&(c.parents[0].as_str(), record)))
+            .flatten();
+        ack_step(
+            &mut counted,
+            old.map(String::as_str),
+            new.map_or("", String::as_str),
+            other.is_none(),
+            Some(&c.author_email),
+        );
+    }
+    // The staged changes (the hook `check --staged`) are one more commit, with the
+    // rules of a commit of the walk: a deletion of the record is no edit, and the
+    // commit of `finish` keeps the entries that count.
+    if git.is_staged() {
+        let paths = git.diff_paths("HEAD", false)?;
+        if let Some((_, kind)) = paths.iter().find(|(p, _)| p == record) {
+            if *kind == PathChange::Deleted {
+                let moved = paths
+                    .iter()
+                    .any(|(p, k)| *k == PathChange::Added && crate::acceptance::is_archive_path(p));
+                if !moved {
+                    counted.clear();
+                }
+            } else if let Some(new) = git.head_file(record)? {
+                let other = paths
+                    .iter()
+                    .find(|(p, _)| p != record)
+                    .map(|(p, _)| p.clone());
+                if let Some(p) = &other {
+                    out.mixed.push((String::new(), p.clone()));
+                }
+                let old = git
+                    .read_at(&[("HEAD".to_string(), record.to_string())])?
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .map(|b| String::from_utf8_lossy(&b).into_owned());
+                let author = git.author_email().ok();
+                ack_step(
+                    &mut counted,
+                    old.as_deref(),
+                    &String::from_utf8_lossy(&new),
+                    other.is_none(),
+                    author.as_deref(),
+                );
+            }
+        }
+    }
+    counted.sort();
+    counted.dedup();
+    out.counted = counted;
+    Ok(out)
+}
+
 /// The status of each artifact of a tree, by path.
 fn statuses(base: &Corpus) -> HashMap<String, String> {
     let mut out = HashMap::new();
@@ -734,6 +944,91 @@ mod tests {
             f.sentence()
                 .starts_with("reason 9: the working tree set `docs/a/plan.md` back to `draft`")
         );
+    }
+
+    fn rec_text(ack: &str, extra: &str) -> String {
+        format!("format = 2\nacknowledged-by = [{ack}]\n{extra}")
+    }
+
+    #[test]
+    fn an_entry_counts_only_for_an_approval_commit_of_its_author() {
+        let (a, b) = ("\"a@x.test\"", "\"b@x.test\"");
+        let mut counted: Vec<String> = Vec::new();
+        let old = rec_text("", "");
+        // An approval commit of its author.
+        ack_step(
+            &mut counted,
+            Some(&old),
+            &rec_text(a, ""),
+            true,
+            Some("A@X.test"),
+        );
+        assert_eq!(counted, ["a@x.test"]);
+        // A second approver keeps the first entry.
+        ack_step(
+            &mut counted,
+            Some(&rec_text(a, "")),
+            &rec_text(&format!("{a}, {b}"), ""),
+            true,
+            Some("b@x.test"),
+        );
+        assert_eq!(counted, ["a@x.test", "b@x.test"]);
+        // An entry that is not the author does not count, and the others stay.
+        let mut c2 = counted.clone();
+        ack_step(
+            &mut c2,
+            Some(&rec_text(&format!("{a}, {b}"), "")),
+            &rec_text(&format!("{a}, {b}, \"c@x.test\""), ""),
+            true,
+            Some("b@x.test"),
+        );
+        assert_eq!(c2, ["a@x.test", "b@x.test"]);
+        // A removal keeps the entries that stay.
+        let mut c3 = counted.clone();
+        ack_step(
+            &mut c3,
+            Some(&rec_text(&format!("{a}, {b}"), "")),
+            &rec_text(b, ""),
+            true,
+            Some("b@x.test"),
+        );
+        assert_eq!(c3, ["b@x.test"]);
+        // Another change of the record clears each entry.
+        let mut c4 = counted.clone();
+        ack_step(
+            &mut c4,
+            Some(&rec_text(&format!("{a}, {b}"), "")),
+            &rec_text(&format!("{a}, {b}"), "x = 1\n"),
+            true,
+            Some("a@x.test"),
+        );
+        assert!(c4.is_empty());
+        // The commit changes another path too: no approval commit.
+        let mut c5: Vec<String> = Vec::new();
+        ack_step(
+            &mut c5,
+            Some(&old),
+            &rec_text(a, ""),
+            false,
+            Some("a@x.test"),
+        );
+        assert!(c5.is_empty());
+        // A new record (no old text) is no approval commit.
+        ack_step(&mut c5, None, &rec_text(a, ""), true, Some("a@x.test"));
+        assert!(c5.is_empty());
+        // The staged changes with no known author: one added entry counts.
+        ack_step(&mut c5, Some(&old), &rec_text(a, ""), true, None);
+        assert_eq!(c5, ["a@x.test"]);
+        // 2 entries added in one commit: none counts.
+        let mut c6: Vec<String> = Vec::new();
+        ack_step(
+            &mut c6,
+            Some(&old),
+            &rec_text(&format!("{a}, {b}"), ""),
+            true,
+            Some("a@x.test"),
+        );
+        assert!(c6.is_empty());
     }
 
     #[test]

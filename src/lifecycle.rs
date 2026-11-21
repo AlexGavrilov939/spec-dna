@@ -2856,7 +2856,11 @@ fn record_checks(
             .unwrap_or_default()
     };
     // A record that the diff adds or changes.
-    if on(Code::AcceptanceInvalid) || on(Code::SelfAccepted) || on(Code::AcceptanceRerun) {
+    if on(Code::AcceptanceInvalid)
+        || on(Code::SelfAccepted)
+        || on(Code::AcceptanceRerun)
+        || on(Code::RecordCommitInvalid)
+    {
         for (p, kind) in &ctx.diff.files {
             if *kind == PathChange::Deleted {
                 continue;
@@ -2903,6 +2907,19 @@ fn record_checks(
                     out.push(path_diag(p, Code::AcceptanceInvalid, &slug, m));
                 }
             }
+            // The acknowledgement with `branch` (D3 item 10): each commit that adds or
+            // edits the record changes the record alone, and each entry counts.
+            if let Some((dir, _)) = &folder
+                && on(Code::RecordCommitInvalid)
+                && nc.approval_branch(cfg)
+            {
+                let entries = crate::record::ack_entries(&text);
+                let f =
+                    acc::ack_facts(cfg, nc, ctx.git, ctx.base_rev, (dir, &slug), (&entries, 0))?;
+                for m in f.invalid {
+                    out.push(path_diag(p, Code::RecordCommitInvalid, &slug, m));
+                }
+            }
             // The stop rule (D74): the record comes after 2 rejected records.
             if let (Some(rec), Some((dir, _)), true) = (&rec, &folder, on(Code::AcceptanceRerun))
                 && nc.approval_branch(cfg)
@@ -2946,6 +2963,46 @@ fn record_checks(
         // of the branch and SD917 (item 4).
         let plan_path = &ctx.corpus(ch).docs[plan.doc as usize].path;
         let minimum = || minimum_for(ctx, changes, ch, nc);
+        // The scope of the plan as `finish` read it: the newest plan of the
+        // branch for a deleted folder, else the plan of the tree.
+        let plan = match ch.branch(ctx) {
+            Some(b) => b.plan.clone(),
+            None => acc::PlanScope::of(c, ctx.corpus(ch)),
+        };
+        // The roles of `[owners]` read the role paths of the change (D70 item 7).
+        let roles = if nc.has_owners(cfg) {
+            let scope_of = |p: &acc::PlanScope| {
+                let mut s = p.patterns.clone();
+                s.extend(cfg.shared_paths.iter().cloned());
+                s.sort();
+                s.dedup();
+                s
+            };
+            let others: Vec<Vec<String>> = changes
+                .iter()
+                .filter(|o| o.change.dir != c.dir)
+                .filter(|o| ctx.diff.under(&o.change.dir).next().is_some())
+                .map(|o| {
+                    scope_of(&match o.branch(ctx) {
+                        Some(b) => b.plan.clone(),
+                        None => acc::PlanScope::of(&o.change, ctx.corpus(o)),
+                    })
+                })
+                .collect();
+            acc::change_roles(
+                nc,
+                &acc::RoleInput {
+                    cfg,
+                    git: ctx.git,
+                    diff: ctx.diff,
+                    scope: &scope_of(&plan),
+                    other_scopes: &others,
+                    plan_path,
+                },
+            )?
+        } else {
+            Vec::new()
+        };
         let decision = acc::decide(
             &acc::ClassInput {
                 nc,
@@ -2957,7 +3014,7 @@ fn record_checks(
             },
             plan_path,
             deleted,
-            &nc.matched_roles(cfg, &[]),
+            &roles,
         )?;
         let acc::Need::Yes {
             shallow,
@@ -3039,6 +3096,7 @@ fn record_checks(
                         acc::ARCHIVE_DIR,
                         c.slug
                     ),
+                    &roles,
                     shallow,
                     branch_cut,
                 ),
@@ -3059,12 +3117,6 @@ fn record_checks(
             // SD928 reports a record that does not read.
             continue;
         };
-        // The scope of the plan as `finish` read it: the newest plan of the
-        // branch for a deleted folder, else the plan of the tree.
-        let plan = match ch.branch(ctx) {
-            Some(b) => b.plan.clone(),
-            None => acc::PlanScope::of(c, ctx.corpus(ch)),
-        };
         if on(Code::AcceptanceStale)
             && let Some(m) = acc::stale(
                 cfg,
@@ -3084,9 +3136,31 @@ fn record_checks(
             out.push(path_diag(&archive, Code::AcceptanceRejected, &c.slug, m));
         }
         if on(Code::AcceptorMissing)
-            && let Some(m) = acc::acceptors_missing(class, nc.higher_risk_acceptors, &rec)
+            && let Some(m) = acc::acceptors_missing(class, nc.higher_risk_acceptors, &roles, &rec)
         {
             out.push(path_diag(&archive, Code::AcceptorMissing, &c.slug, m));
+        }
+        // SD932 and SD934 with `branch`: the walk reads the commits of the folder
+        // record, and the commit of `finish` keeps the entries that count.
+        if (on(Code::RecordCommitInvalid) || on(Code::AckMissing)) && nc.approval_branch(cfg) {
+            let f = acc::ack_facts(
+                cfg,
+                nc,
+                ctx.git,
+                ctx.base_rev,
+                (&c.dir, &c.slug),
+                (&rec.acknowledged_by, rec.deviations.len()),
+            )?;
+            if on(Code::RecordCommitInvalid) {
+                for m in f.invalid {
+                    out.push(path_diag(&archive, Code::RecordCommitInvalid, &c.slug, m));
+                }
+            }
+            if on(Code::AckMissing)
+                && let Some(m) = f.missing
+            {
+                out.push(path_diag(&archive, Code::AckMissing, &c.slug, m));
+            }
         }
         // SD938: the answers. The items come from the newest spec and plan of the
         // branch for a deleted folder, as `finish` read them, else from the tree.

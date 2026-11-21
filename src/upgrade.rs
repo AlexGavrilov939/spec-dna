@@ -265,7 +265,12 @@ pub fn source_of(text: &str) -> Result<Source, Fatal> {
         // A 0.5 text with a 0.6 pin: the 0.5 docs told a person to set the
         // pin by hand (D137).
         PinClass::Model06 | PinClass::Binary => match Config::parse(text) {
-            Ok(c) => Ok(Source::Current(Box::new(c))),
+            Ok(c) => {
+                // Each command that reads the configuration warns for a person in
+                // `[owners]` (design 0.8.0, D77).
+                crate::owners::print_warnings(&c.owners);
+                Ok(Source::Current(Box::new(c)))
+            }
             Err(e) => OldConfig::read(text)
                 .map(|o| Source::Old(Box::new(o)))
                 .map_err(|_| Fatal::Config(format!("{file}: {e}"))),

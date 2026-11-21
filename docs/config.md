@@ -148,6 +148,8 @@ sonnet = "high"
 | `change.base` | string | none | The name of a local branch, such as `"main"`. It is the base of the change checks when `--base` and `origin/HEAD` give none, as in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. A bad name is exit code 3. |
 | `change.approval` | string | `"base"` | `"base"` or `"branch"`. With `"branch"`, an approval commit of an approver in the branch also counts, if it comes before the work that it approves. It needs a full git history and a not empty `change.approvers`. With `profile = "strict"` it is an error (exit code 3): `strict` reads the approvals of the base only. |
 | `change.approvers` | array of strings | none | The author e-mails of the approval commits that count with `approval = "branch"`. The compare ignores case. An item is an e-mail: it is not empty, has no `*` and has an `@`. With `approval = "branch"` the list is not empty, or the exit code is 3. |
+| `owners` | table | `{}` | The agent roles that must review a change that edits a path. See [The table `owners`](#the-table-owners). |
+| `owners."<glob>"` | list of strings | none | The role names for the glob. A glob has the form of `change.high-risk-paths`. A role name is `[a-z][a-z0-9-]*` with 40 characters or fewer. An entry `@<login>` or an e-mail names a person: it gives a warning and has no effect in 0.8.0. Each other entry gives exit code 3. |
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. Two names that differ only in case (`valves` and `Valves`) are an error (exit code 3), because a file system that ignores case gives one folder for both. The compare changes only the letters A to Z. `new` and `mv` stop with exit code 2 for a path whose area differs from a name of `areas` only in case. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
@@ -386,7 +388,7 @@ The table `[change]` sets the change process: the change classes that the projec
 | `two-class` | `routine`, `higher-risk` | Each change has an intent. It runs the same checks as `three-class`. |
 | `none` | none | No change process: the layers and their checks only. |
 
-With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD926) and of the group `acceptance` (SD927 to SD931, SD933 and SD935 to SD941) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
+With `policy = "none"`, the codes of the group `changes` (SD905 and SD910 to SD926) and of the group `acceptance` (SD927 to SD941) are off. spec-dna disables them before it reads `[rules]`, so a rule of the file cannot enable them. SD921 (a requirement of a `forever` layer changed with no intent folder) is one of them. In `lite` it is off by default, so a project that sets a policy and runs `lite` can enable it with `[rules] changes = "warning"`.
 
 The key `gate` sets the severity of SD910. The order of the sources for SD910 is:
 
@@ -401,7 +403,7 @@ With `gate = "block"`, a change to the artifact of a stage needs the approval of
 
 ### The acceptance record
 
-A change that needs an acceptance record needs it before `finish`: one TOML file in which an agent that did not write the code says what it tried and what it found ([the command `accept`](commands.md#accept) writes the skeleton, and [the glossary](glossary.md) names the terms). The codes SD927 to SD931, SD933 and SD935 to SD941 are in the rule group `acceptance`. They are off in `lite` and errors in `standard` and `strict` ([profiles.md](profiles.md)).
+A change that needs an acceptance record needs it before `finish`: one TOML file in which an agent that did not write the code says what it tried and what it found ([the command `accept`](commands.md#accept) writes the skeleton, and [the glossary](glossary.md) names the terms). The codes SD927 to SD941 are in the rule group `acceptance`. They are off in `lite` and errors in `standard` and `strict` ([profiles.md](profiles.md)).
 
 `acceptance-for` selects the changes that need a record. With `"none"`, no change needs one by this key. With `"higher-risk"`, a change needs one when its class for the acceptance is `higher-risk`. With `"all"`, each change that has a plan needs one. The default depends on the profile: `"all"` in `strict`, and `"higher-risk"` in `standard` and `lite`. `init` writes the key in no profile, so a change of `profile` also changes the default. In `lite` the codes are off, so the key has an effect only with a rule that turns on the group `acceptance`. Another value than the 3 is an error of the configuration (exit code 3).
 
@@ -446,6 +448,8 @@ A change of `base` edits `spec-dna.toml`, so SD503 applies: make it a change of 
 
 `approvers` lists the author e-mails of such a commit. The compare ignores case and needs an exact match, so a person who hides an e-mail on the code host lists the `noreply` address too. List persons only. The address of an agent or a bot, such as `noreply@anthropic.com` or an address that ends with `[bot]@users.noreply.github.com`, gives the warning SD926 (`approver-agent`), because a commit of that author can come from an agent. An e-mail is not a proof of identity. [ADR 0012](adr/0012-approval-in-the-branch.md) states the limit: the code host is the control.
 
+With `approval = "branch"`, a record that has a deviation needs the acknowledgement of an approver (SD934). The command `spec-dna approve <slug> acceptance` adds the e-mail of its author to `acknowledged-by` of the record and commits the record alone. SD932 checks each commit that adds or edits the record ([the acknowledgement](diagnostics.md#the-acknowledgement-with-branch)). With `base`, the merge of the pull request acknowledges the deviations, and spec-dna does not use SD932 or SD934. Both codes read `approval` as the stricter of the head and the base tree.
+
 With `approval = "branch"`, the word of the owner for a third acceptance run is a new approval commit of `plan.md` by an approver: SD941 stops the third record until then ([the stop rule](diagnostics.md#the-stop-rule)). The rule reads `approval` as the stricter of the head and the base tree, so a branch cannot turn it off with its own `spec-dna.toml`.
 
 These values are an error (exit code 3):
@@ -457,6 +461,28 @@ These values are an error (exit code 3):
 `approval = "branch"` needs the full history of the branch. A shallow clone gives the result of `base`, and when the merge base is not reachable SD910 reports reason 5. Use `fetch-depth: 0` in a workflow that runs `check`.
 
 `init` writes `approval = "branch"` for `lite` and `standard`. The approvers come from `--approver <e-mail>` (it can repeat), the key `approvers` of an answers file, or the answer to the approvers prompt of question 5. If none of them gives a list, `init` uses your `git config user.email`, but never the address of an agent or a bot. It writes `approval = "base"` for `strict`. If there is no person to list (git has no `user.email`, or its e-mail is the address of an agent or a bot), it writes `approval = "base"` and no `approvers`, and it prints a note. An address of an agent or a bot in `--approver` or in the answers gives exit code 2. An upgraded project keeps `base`. A change of these keys edits `spec-dna.toml`, so SD503 applies.
+
+## The table `owners`
+
+`[owners]` maps a glob from the repository root to a list of role names. A change that edits a path that a glob matches needs an [acceptance record](#the-acceptance-record). In that record, an acceptor entry names each matched role in `roles`. A role has no file of its own. It is a word that the record repeats. The acceptor reads the matched paths as a reviewer of that role.
+
+```toml
+[owners]
+"src/auth/**" = ["security-reviewer"]
+"migrations/**" = ["db-reviewer"]
+```
+
+- A glob has the form of `change.high-risk-paths`, with the match of [Patterns and globs](#patterns-and-globs). A glob is not empty and is not absolute. A glob has no `\`, `.` or `..` segment.
+- A role name is `[a-z][a-z0-9-]*` with 40 characters or fewer. A person entry (`@<login>` or an e-mail) is no role in 0.8.0, and the table keeps it out of the roles. The persons of `[owners]` come in 0.8.1.
+- A person entry gives a warning. Each command that loads the configuration prints the warning once on the standard error, and the exit code does not change: ``warning: [owners] "<glob>": "<entry>" names a person; 0.8.0 checks agent roles only, so this entry needs nothing; the persons of [owners] come in 0.8.1``.
+- Each other entry gives exit code 3, for example `Security Reviewer` or a bare `@`. A bad glob and a value that is not a list of strings also give exit code 3. The message gives the form of a role.
+- Each glob that matches a role path applies. The order of the globs does not matter, so the matched roles are the union of the roles of these globs.
+- The role paths of a change are the code paths of the diff that the `scope` of the change matches. They also include each code path of the diff that no `scope` of a change of the diff matches. A path that `Files` leaves out thus still needs its role (SD913 warns).
+- The diff can have no code path in `scope` (a pull request with only `finish`). The role paths are then the code paths in `scope` that changed since the commit that added the plan. A glob that matches only Markdown needs no role. A path that the diff does not change needs no role.
+- A matched role makes a record necessary for a `routine` change, and also with `acceptance-for = "none"`. The table is the union of the head table and the table of the base tree. A branch thus cannot drop a glob to skip a role.
+- SD933 needs each matched role in the union of the `roles` of the entries. One entry with `roles = ["db-reviewer", "security-reviewer"]` answers both roles, so one pass answers each role.
+- Without `--role`, the roles of `accept --brief` are the matched roles, sorted, or `acceptor` when no role matches. `--role <name>` names the roles of one entry instead, and it can come more than once.
+- In `lite` the group `acceptance` is off, so the table has no effect unless a rule turns the group on. `init` writes no table.
 
 ## The table `templates`
 

@@ -26,7 +26,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `proof` | SD618 (a proof debt and no evidence) | off | warning | warning |
 | `proof` | SD619 (a proof marker that is not valid or stale) | off | warning | error |
 | `proof` | SD620 (a requirement is below the level `reliable`) | off | error | error |
-| `acceptance` | SD927 (acceptance missing), SD928 (acceptance invalid), SD929 (acceptance stale), SD930 (acceptance rejected), SD931 (self-accepted), SD933 (acceptor missing), SD935 (record edited), SD941 (acceptance rerun: with `approval = "branch"` only) | off | error | error |
+| `acceptance` | SD927 (acceptance missing), SD928 (acceptance invalid), SD929 (acceptance stale), SD930 (acceptance rejected), SD931 (self-accepted), SD932 (record commit invalid: with `approval = "branch"` only), SD933 (acceptor missing), SD934 (ack missing: with `approval = "branch"` only), SD935 (record edited), SD941 (acceptance rerun: with `approval = "branch"` only) | off | error | error |
 | `acceptance` | SD938 (record incomplete), SD939 (deviation invalid), SD940 (deviation unresolved) | off | error | error |
 | `acceptance` | SD936 (invariant invalid), SD937 (invariant stale). They run only with `[change] invariants = true`, also when a rule for the group or the code turns them on | off | error | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |

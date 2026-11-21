@@ -35,13 +35,15 @@ pub const ARCHIVE_DIR: &str = ".spec-dna/accepted";
 /// The codes of the record that `check` reads in the diff and `finish` reads in
 /// step 5.2. The configuration of the need decides which of them are on
 /// ([`NeedConfig::gate`]).
-pub const CODES: [Code; 9] = [
+pub const CODES: [Code; 11] = [
     Code::AcceptanceMissing,
     Code::AcceptanceInvalid,
     Code::AcceptanceStale,
     Code::AcceptanceRejected,
     Code::SelfAccepted,
+    Code::RecordCommitInvalid,
     Code::AcceptorMissing,
+    Code::AckMissing,
     Code::RecordEdited,
     Code::RecordIncomplete,
     Code::AcceptanceRerun,
@@ -303,6 +305,32 @@ impl NeedConfig {
             || matches!(&self.base, BaseConfig::Parsed(b) if b.change_approval == config::Approval::Branch)
     }
 
+    /// True if the head or the base table of `[owners]` has a role.
+    pub fn has_owners(&self, head: &Config) -> bool {
+        !head.owners.is_empty()
+            || matches!(&self.base, BaseConfig::Parsed(b) if !b.owners.is_empty())
+    }
+
+    /// The approvers of the head and of the base tree. A branch cannot drop an
+    /// approver, as it cannot lower `approval`.
+    pub fn approvers(&self, head: &Config) -> Vec<String> {
+        let mut out = head.change_approvers.clone();
+        if let BaseConfig::Parsed(b) = &self.base {
+            for a in &b.change_approvers {
+                if !out.iter().any(|o| o.eq_ignore_ascii_case(a)) {
+                    out.push(a.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// True if the base tree has `approval = "branch"` and the head has not: the
+    /// branch lowered the mode, and the stricter value stays.
+    pub fn approval_lowered(&self, head: &Config) -> bool {
+        head.change_approval != config::Approval::Branch && self.approval_branch(head)
+    }
+
     /// The roles of `[owners]` that match one of `role_paths`, in the union of the
     /// head and the base table (D77). See [`matched_roles`].
     pub fn matched_roles(&self, head: &Config, role_paths: &[String]) -> Vec<String> {
@@ -416,12 +444,11 @@ pub fn need_config_of_head(head: &Config) -> NeedConfig {
 
 // The roles of `[owners]` (D70 item 7 and D77).
 
-/// The roles of `[owners]` that match one of `role_paths`, sorted. The table
-/// `[owners]` is built in slice S6, so no configuration has one now, and the
-/// result is empty. The need, SD933 and the brief all read the roles through this
-/// one function, so S6 changes this body only.
-pub fn matched_roles(_cfg: &Config, _role_paths: &[String]) -> Vec<String> {
-    Vec::new()
+/// The roles of `[owners]` that match one of `role_paths`, sorted. The need,
+/// SD933 and the brief all read the roles through this one function. A person
+/// entry of the table is no role ([`crate::owners`]).
+pub fn matched_roles(cfg: &Config, role_paths: &[String]) -> Vec<String> {
+    cfg.owners.matched(role_paths)
 }
 
 /// The code paths that a role of `[owners]` reads for one change (D70 item 7):
@@ -433,9 +460,8 @@ pub fn matched_roles(_cfg: &Config, _role_paths: &[String]) -> Vec<String> {
 /// - when the diff has no code path in `scope`, the code paths in `scope` that
 ///   changed since the commit that added the plan (`since_plan`).
 ///
-/// The result is sorted, with no duplicate. Slice S6 passes it to
-/// [`NeedConfig::matched_roles`] and to the brief.
-#[allow(dead_code)] // The reader is the table `[owners]` of slice S6.
+/// The result is sorted, with no duplicate. [`change_roles`] passes it to
+/// [`NeedConfig::matched_roles`].
 pub fn role_paths(
     diff_code: &[String],
     scope: &[String],
@@ -460,6 +486,55 @@ pub fn role_paths(
     out.sort();
     out.dedup();
     out
+}
+
+/// What the roles of one change read.
+pub struct RoleInput<'a> {
+    pub cfg: &'a Config,
+    pub git: &'a Git,
+    /// The diff of the head against the lifecycle base.
+    pub diff: &'a Diff,
+    /// The scope of the change ([`accept::scope_of`]).
+    pub scope: &'a [String],
+    /// The scopes of the other changes that the diff touches.
+    pub other_scopes: &'a [Vec<String>],
+    /// The path of the plan, for the paths since the commit that added it.
+    pub plan_path: &'a str,
+}
+
+/// The roles of `[owners]` that one change needs (D70 item 7 and D77): the roles
+/// that match a role path ([`role_paths`]), in the union of the head table and
+/// the base table ([`NeedConfig::matched_roles`]). The need, SD933, `next`, `finish`
+/// and `accept` all call this one function. With no table in the head and in the
+/// base, it reads no git data and gives no role.
+pub fn change_roles(nc: &NeedConfig, i: &RoleInput) -> Result<Vec<String>, String> {
+    if !nc.has_owners(i.cfg) {
+        return Ok(Vec::new());
+    }
+    let dirs = crate::lifecycle::intent_dirs(i.cfg);
+    let is_code = |p: &str| tree::is_code_path(i.cfg, p, &dirs);
+    let diff_code: Vec<String> = i
+        .diff
+        .files
+        .iter()
+        .map(|f| f.0.clone())
+        .filter(|p| is_code(p))
+        .collect();
+    let others: Vec<&[String]> = i.other_scopes.iter().map(Vec::as_slice).collect();
+    // The paths since the commit that added the plan count only when the diff has
+    // no code path in `scope` (a pull request with only `finish`).
+    let mut since: Vec<String> = Vec::new();
+    if !diff_code.iter().any(|p| change::in_scope(i.scope, p))
+        && let Some(added) = i.git.added_by(i.plan_path)?
+    {
+        since = Diff::read(i.git, &added, false)?
+            .files
+            .into_iter()
+            .map(|f| f.0)
+            .filter(|p| is_code(p))
+            .collect();
+    }
+    Ok(nc.matched_roles(i.cfg, &role_paths(&diff_code, i.scope, &others, &since)))
 }
 
 // The class of the change for the acceptance (D70 items 2 to 4).
@@ -588,6 +663,8 @@ pub fn record_class(i: &ClassInput) -> Result<RecordClass, String> {
 pub struct Decision {
     pub need: Need,
     pub class: Class,
+    /// The roles of `[owners]` that the change needs ([`change_roles`]).
+    pub roles: Vec<String>,
 }
 
 /// The rule "a change that needs a record" (D70 item 1), for a change that has a
@@ -610,6 +687,7 @@ pub fn decide(
         return Ok(Decision {
             need: Need::No(None),
             class,
+            roles: roles.to_vec(),
         });
     }
     let reason = !roles.is_empty()
@@ -622,6 +700,7 @@ pub fn decide(
         return Ok(Decision {
             need: Need::No(None),
             class,
+            roles: roles.to_vec(),
         });
     }
     let need = match plan_is_new(i.git, i.base_rev, plan_path, plan_in_base)? {
@@ -631,7 +710,11 @@ pub fn decide(
         },
         other => other,
     };
-    Ok(Decision { need, class })
+    Ok(Decision {
+        need,
+        class,
+        roles: roles.to_vec(),
+    })
 }
 
 /// True if a pin is a version before 0.8.0.
@@ -720,10 +803,27 @@ pub fn added_before(
 
 /// The message of SD927 for a missing record. `where_` names the place that
 /// should have it.
-pub fn missing_message(slug: &str, where_: &str, shallow: bool, branch_cut: bool) -> String {
+pub fn missing_message(
+    slug: &str,
+    where_: &str,
+    roles: &[String],
+    shallow: bool,
+    branch_cut: bool,
+) -> String {
     let mut m = format!(
         "the change `{slug}` needs an acceptance record, and {where_}; start an agent `acceptor` with the prompt that `spec-dna next` prints, `cd '<root>' && spec-dna accept {slug} --brief`, and commit the record that it writes"
     );
+    if !roles.is_empty() {
+        m.push_str(&format!(
+            "; the table `[owners]` needs the {} {}",
+            if roles.len() == 1 { "role" } else { "roles" },
+            roles
+                .iter()
+                .map(|r| format!("`{r}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     if shallow {
         m.push_str(
             "; the clone is shallow, so the commit that added the plan is not in the history: fetch the full history (`fetch-depth: 0`)",
@@ -820,20 +920,131 @@ pub fn self_accepted(rec: &Record) -> Vec<String> {
 /// SD933: the record has fewer acceptor entries than the class of the change
 /// needs (D70 item 3): 1 for a `routine` change, and `higher_risk` (the value of
 /// `[change] higher-risk-acceptors` of [`NeedConfig`]) for a `higher-risk` change.
-/// The roles of `[owners]` are a later slice, so none adds to the count.
-pub fn acceptors_missing(class: Class, higher_risk: u32, rec: &Record) -> Option<String> {
+/// A role of `[owners]` that matches a role path (`roles`) needs an entry that
+/// names it in `roles`, and one entry can name more than one role (D77). The
+/// count and the roles are 2 rules, and one entry can count for both.
+pub fn acceptors_missing(
+    class: Class,
+    higher_risk: u32,
+    roles: &[String],
+    rec: &Record,
+) -> Option<String> {
     let needed = match class {
         Class::Routine => 1,
         Class::HigherRisk => higher_risk as usize,
     };
-    (rec.acceptors.len() < needed).then(|| {
-        format!(
-            "the record has {} acceptor entries, and a {} change needs {needed}; run `spec-dna accept {} [--role <name>]` for each missing acceptor",
+    let mut why: Vec<String> = Vec::new();
+    if rec.acceptors.len() < needed {
+        why.push(format!(
+            "the record has {} acceptor entries, and a {} change needs {needed}",
             rec.acceptors.len(),
-            class.name(),
+            class.name()
+        ));
+    }
+    let lacking: Vec<&String> = roles
+        .iter()
+        .filter(|r| !rec.acceptors.iter().any(|a| a.roles.contains(r)))
+        .collect();
+    if !lacking.is_empty() {
+        why.push(format!(
+            "no acceptor entry has the role {} of `[owners]` in `roles`",
+            lacking
+                .iter()
+                .map(|r| format!("`{r}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    (!why.is_empty()).then(|| {
+        format!(
+            "{}; run `spec-dna accept {} [--role <name>]` for each missing acceptor",
+            why.join("; "),
             rec.change
         )
     })
+}
+
+// The acknowledgement with `branch` (design 0.8.0, D3 item 10): SD932 and SD934.
+
+/// What the walk of the commits finds about the acknowledgement of one record.
+#[derive(Clone, Debug, Default)]
+pub struct AckFacts {
+    /// True with `[change] approval = "branch"`: the acknowledgement is an entry of
+    /// `acknowledged-by`. With `base`, the merge acknowledges.
+    pub branch: bool,
+    /// The messages of SD932: a commit that changes the record and another path,
+    /// an entry that does not count, or a walk that cannot run.
+    pub invalid: Vec<String>,
+    /// The message of SD934: the record has a deviation and no entry of an approver
+    /// counts.
+    pub missing: Option<String>,
+}
+
+/// SD932 and SD934 for the record of the change in `folder`, with
+/// `[change] approval = "branch"` only (D74 item 7 names the same limit for SD941).
+/// `entries` are the entries of `acknowledged-by` of the record at the head (the
+/// folder record, or the archive file after `finish`), and `deviations` is the number
+/// of its `[[deviation]]` entries. The walk reads the commits of the folder record:
+/// the commit of `finish` moves the same bytes to the archive and keeps the entries.
+/// The result is empty with `base`, and when git names no base.
+pub fn ack_facts(
+    cfg: &Config,
+    nc: &NeedConfig,
+    git: &Git,
+    base_rev: &str,
+    (folder, slug): (&str, &str),
+    (entries, deviations): (&[String], usize),
+) -> Result<AckFacts, String> {
+    let mut facts = AckFacts::default();
+    if !nc.approval_branch(cfg) {
+        return Ok(facts);
+    }
+    facts.branch = true;
+    let path = format!("{folder}/{}", record::FILE_NAME);
+    let walk = crate::approval::ack_walk(git, base_rev, &path)?;
+    if let Some(f) = &walk.stop {
+        facts.invalid.push(format!(
+            "the walk of the commits of the branch cannot run, so no commit of the record counts ({}); the record needs `acknowledged-by` that an approval commit added",
+            f.sentence()
+        ));
+    }
+    for (commit, other) in &walk.mixed {
+        let who = if commit.is_empty() {
+            "the staged changes change".to_string()
+        } else {
+            format!("the commit {} changes", &commit[..commit.len().min(12)])
+        };
+        facts.invalid.push(format!(
+            "{who} `{path}` and `{other}`; a commit that adds or edits the record changes the record alone, so split it into 2 commits"
+        ));
+    }
+    let head: Vec<String> = entries.iter().map(|e| e.to_lowercase()).collect();
+    if walk.stop.is_none() {
+        for (entry, low) in entries.iter().zip(&head) {
+            if !walk.counted.contains(low) {
+                facts.invalid.push(format!(
+                    "the entry `{entry}` of `acknowledged-by` does not count: an approval commit of its author must add it and change nothing else, and no later commit may change the record; the record changed after the entry, or the commit is not an approval commit. Ask an approver to run `spec-dna approve {slug} acceptance` again"
+                ));
+            }
+        }
+    }
+    let approvers = nc.approvers(cfg);
+    let approved = approvers
+        .iter()
+        .any(|a| head.contains(&a.to_lowercase()) && walk.counted.contains(&a.to_lowercase()));
+    if deviations > 0 && !approved {
+        facts.missing = Some(format!(
+            "the record of the change `{slug}` has {deviations} deviation{} and no acknowledgement of an approver ({}); an approver runs `spec-dna approve {slug} acceptance`, and the approval commit changes `acknowledged-by` alone",
+            if deviations == 1 { "" } else { "s" },
+            approvers.join(", ")
+        ));
+        if nc.approval_lowered(cfg)
+            && let Some(m) = &mut facts.missing
+        {
+            m.push_str("; the base has `approval = \"branch\"`, and a branch cannot lower it");
+        }
+    }
+    Ok(facts)
 }
 
 /// SD938: the declared invariants and deviations that the record does not
@@ -978,17 +1189,17 @@ pub fn sections_of(
 /// `finish` and `next` use this one function, so a check that is off stops
 /// neither. The order is the order of the codes: SD928 (`problems`: the rules of
 /// a valid record, and the compare of the briefs), SD929 (`stale`), SD930,
-/// SD931 and SD933, then SD936, SD937, SD938 (`answers_missing`), SD939 and
-/// SD940. A record that does not read (`rec` is `None`) stops with SD928 only;
+/// SD931, SD932 and SD933, then SD936, SD937, SD938 (`answers_missing`), SD939 and
+/// SD940, then SD934 (part 5.3 of step 5: a stop prints `step 5`). A record that does not read (`rec` is `None`) stops with SD928 only;
 /// with SD928 off it passes, as no other check can read it.
 pub fn first_stop(
     cfg: &Config,
-    (class, higher_risk): (Class, u32),
+    (class, higher_risk, roles): (Class, u32, &[String]),
     rec: Option<&Record>,
     problems: Vec<String>,
     stale: Option<String>,
     sec: &Sections,
-    rerun: Option<&str>,
+    (rerun, ack): (Option<&str>, &AckFacts),
 ) -> Option<(Code, Vec<String>)> {
     let on = |c: Code| !cfg.is_off(c);
     if on(Code::AcceptanceInvalid) && !problems.is_empty() {
@@ -1011,8 +1222,11 @@ pub fn first_stop(
             return Some((Code::SelfAccepted, found));
         }
     }
+    if on(Code::RecordCommitInvalid) && !ack.invalid.is_empty() {
+        return Some((Code::RecordCommitInvalid, ack.invalid.clone()));
+    }
     if on(Code::AcceptorMissing)
-        && let Some(why) = acceptors_missing(class, higher_risk, rec)
+        && let Some(why) = acceptors_missing(class, higher_risk, roles, rec)
     {
         return Some((Code::AcceptorMissing, vec![why]));
     }
@@ -1039,6 +1253,12 @@ pub fn first_stop(
         if on(code) && !found.is_empty() {
             return Some((code, found));
         }
+    }
+    // Part 5.3: the acknowledgement of the deviations of the record.
+    if on(Code::AckMissing)
+        && let Some(why) = &ack.missing
+    {
+        return Some((Code::AckMissing, vec![why.clone()]));
     }
     None
 }
@@ -2424,6 +2644,8 @@ pub struct FinishFacts {
     /// The class of the change for the acceptance ([`record_class`]). `finish`
     /// reads it for SD933 and for SD620.
     pub class: Class,
+    /// The roles of `[owners]` that the change needs, for SD933 and SD927.
+    pub roles: Vec<String>,
     /// The value of `[change] higher-risk-acceptors` that SD933 reads: the larger
     /// of the head and the base ([`NeedConfig`]).
     pub acceptors: u32,
@@ -2435,6 +2657,8 @@ pub struct FinishFacts {
     pub runs: Option<(usize, usize)>,
     /// The text of SD941, if the record needs the word of the owner.
     pub rerun: Option<String>,
+    /// SD932 and SD934, with `[change] approval = \"branch\"` ([`ack_facts`]).
+    pub ack: AckFacts,
     /// The problems of the compare of the briefs (SD928).
     pub brief_problems: Vec<String>,
     /// The reason of SD929, if the record is stale.
@@ -2509,9 +2733,31 @@ pub fn need_for_change(
             .any(|c| diff.under(&c.dir).next().is_some());
         crate::lifecycle::minimum_is_higher_risk(&facts, ch, head, false, sole)
     };
-    // Slice S6 builds the role paths of the change ([`role_paths`]). Until then the
-    // table `[owners]` is empty, so no role matches.
-    let roles = nc.matched_roles(cfg, &[]);
+    // The roles of `[owners]` that match a role path of the change (D70 item 7).
+    let roles = if nc.has_owners(cfg) {
+        let none = Diff::default();
+        let diff = diff.unwrap_or(&none);
+        let scope = accept::scope_of(cfg, ch, head);
+        let other_scopes: Vec<Vec<String>> = change::collect(head)
+            .iter()
+            .filter(|c| c.dir != ch.dir && diff.under(&c.dir).next().is_some())
+            .map(|c| accept::scope_of(cfg, c, head))
+            .collect();
+        change_roles(
+            nc,
+            &RoleInput {
+                cfg,
+                git: &repo.git,
+                diff,
+                scope: &scope,
+                other_scopes: &other_scopes,
+                plan_path,
+            },
+        )
+        .map_err(Fatal::Io)?
+    } else {
+        Vec::new()
+    };
     decide(
         &ClassInput {
             nc,
@@ -2558,9 +2804,9 @@ pub fn finish_facts(
     if decision.is_none() && record == RecordFile::Absent {
         return Ok(None);
     }
-    let (need, class) = match decision {
-        Some(d) => (d.need, d.class),
-        None => (Need::No(None), ch.class),
+    let (need, class, roles) = match decision {
+        Some(d) => (d.need, d.class, d.roles),
+        None => (Need::No(None), ch.class, Vec::new()),
     };
     let archive = next_archive_path(&ch.slug, &|p| repo.root.join(p).exists());
     let gate = nc.gate().clone();
@@ -2570,10 +2816,12 @@ pub fn finish_facts(
         archive,
         need,
         class,
+        roles,
         acceptors: nc.higher_risk_acceptors,
         gate,
         runs: None,
         rerun: None,
+        ack: AckFacts::default(),
         brief_problems: Vec::new(),
         stale: None,
         sections: Sections::default(),
@@ -2613,6 +2861,17 @@ pub fn finish_facts(
     if !gate.is_off(Code::AcceptanceInvalid) {
         f.brief_problems =
             brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec).map_err(Fatal::Io)?;
+    }
+    if !gate.is_off(Code::RecordCommitInvalid) || !gate.is_off(Code::AckMissing) {
+        f.ack = ack_facts(
+            cfg,
+            &nc,
+            &repo.git,
+            base_rev,
+            (&ch.dir, &ch.slug),
+            (&rec.acknowledged_by, rec.deviations.len()),
+        )
+        .map_err(Fatal::Io)?;
     }
     if !gate.is_off(Code::AcceptanceStale) {
         let plan = PlanScope::of(ch, head);
@@ -2975,11 +3234,11 @@ mod tests {
     fn the_count_of_acceptors_follows_the_class_and_the_key() {
         let one = rec(&[("acceptor", "s1", "unknown")]);
         let two = rec(&[("acceptor", "s1", "unknown"), ("acceptor", "s2", "unknown")]);
-        assert!(acceptors_missing(Class::Routine, 3, &one).is_none());
-        assert!(acceptors_missing(Class::HigherRisk, 2, &one).is_some());
-        assert!(acceptors_missing(Class::HigherRisk, 2, &two).is_none());
-        assert!(acceptors_missing(Class::HigherRisk, 3, &two).is_some());
-        assert!(acceptors_missing(Class::HigherRisk, 1, &one).is_none());
+        assert!(acceptors_missing(Class::Routine, 3, &[], &one).is_none());
+        assert!(acceptors_missing(Class::HigherRisk, 2, &[], &one).is_some());
+        assert!(acceptors_missing(Class::HigherRisk, 2, &[], &two).is_none());
+        assert!(acceptors_missing(Class::HigherRisk, 3, &[], &two).is_some());
+        assert!(acceptors_missing(Class::HigherRisk, 1, &[], &one).is_none());
     }
 
     /// D70 item 7: the role paths of one change.
@@ -3022,14 +3281,36 @@ mod tests {
     }
 
     #[test]
-    fn the_roles_of_owners_are_empty_until_slice_s6() {
+    fn no_table_gives_no_role_and_a_table_gives_the_matched_roles() {
         let cfg = Config::parse(
             "spec-dna = \"0.1.0\"\n[change]\npolicy = \"three-class\"\n[[roots]]\npath = \"docs\"\n",
         )
         .unwrap();
         assert!(matched_roles(&cfg, &["src/a.rs".to_string()]).is_empty());
         let nc = need_config_of_head(&cfg);
+        assert!(!nc.has_owners(&cfg));
         assert!(nc.matched_roles(&cfg, &["src/a.rs".to_string()]).is_empty());
+        let cfg = Config::parse(
+            "spec-dna = \"0.1.0\"\n[change]\npolicy = \"three-class\"\n[owners]\n\"src/**\" = [\"b-role\", \"a-role\"]\n[[roots]]\npath = \"docs\"\n",
+        )
+        .unwrap();
+        let nc = need_config_of_head(&cfg);
+        assert!(nc.has_owners(&cfg));
+        assert_eq!(
+            nc.matched_roles(&cfg, &["src/a.rs".to_string()]),
+            ["a-role", "b-role"]
+        );
+    }
+
+    #[test]
+    fn sd933_needs_each_role_in_the_union_of_the_roles_of_the_entries() {
+        let one = rec(&[("a-role", "s1", "unknown")]);
+        let roles = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(acceptors_missing(Class::Routine, 1, &roles(&["a-role"]), &one).is_none());
+        let m = acceptors_missing(Class::Routine, 1, &roles(&["a-role", "b-role"]), &one).unwrap();
+        assert!(m.contains("`b-role`") && !m.contains("`a-role`"), "{m}");
+        // The role rule and the count are 2 rules: one entry counts for both.
+        assert!(acceptors_missing(Class::HigherRisk, 2, &roles(&["a-role"]), &one).is_some());
     }
 
     fn standard(change: &str, rules: &str) -> Config {
@@ -3092,7 +3373,7 @@ mod tests {
 
     #[test]
     fn the_message_of_a_missing_record_names_the_prompt_line_not_a_paste_of_the_brief() {
-        let m = missing_message("demo", "`x` is absent", false, false);
+        let m = missing_message("demo", "`x` is absent", &[], false, false);
         assert!(
             m.contains("`cd '<root>' && spec-dna accept demo --brief`"),
             "{m}"
@@ -3109,12 +3390,12 @@ mod tests {
 
     #[test]
     fn the_message_of_a_missing_record_names_the_shallow_clone_only_when_it_is_one() {
-        let plain = missing_message("demo", "`x` is absent", false, false);
+        let plain = missing_message("demo", "`x` is absent", &[], false, false);
         assert!(plain.contains("accept demo --brief") && !plain.contains("fetch-depth"));
-        let shallow = missing_message("demo", "`x` is absent", true, false);
+        let shallow = missing_message("demo", "`x` is absent", &[], true, false);
         assert!(shallow.contains("fetch-depth: 0"));
         assert!(!shallow.contains("cuts the branch"));
-        let cut = missing_message("demo", "`x` is absent", false, true);
+        let cut = missing_message("demo", "`x` is absent", &[], false, true);
         assert!(cut.contains("cuts the branch") && cut.contains("fetch-depth: 0"));
         assert!(!cut.contains("added the plan"));
     }

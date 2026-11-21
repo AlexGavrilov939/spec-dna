@@ -61,6 +61,7 @@ mod lint;
 mod model;
 mod mv;
 mod out;
+mod owners;
 mod parse;
 mod rank;
 mod record;
@@ -294,13 +295,14 @@ with `, actual <n>` if a task has `Actual:`: put the line in the commit
 message, and keep it in the squash message. For a change that needs an
 acceptance record, it prints the line `Deviations: <n>` and one line for each
 `[[deviation]]` entry of the record, with its verdict (--json: the list
-`deviations`); the merge of the pull request acknowledges them. It is the only command that
+`deviations`); with approval = base, the merge of the pull request acknowledges
+them, and with approval = branch, an entry of acknowledged-by does. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
     ),
     (
         "approve",
-        "approve <slug> intent|spec|plan [--json]",
+        "approve <slug> intent|spec|plan|acceptance [--json]",
         "Sets the status line of one artifact of the change <slug> and commits
 that file alone: intent to accepted, spec or plan to approved. It is for a
 person: run it in a terminal of your own. The file must be tracked and have
@@ -311,7 +313,10 @@ the author of the commit (git user.email, or GIT_AUTHOR_EMAIL) must be in
 [change] approvers. The commit message is `docs: approve the <artifact> of
 <slug>`. The command passes no --no-verify and no --no-gpg-sign. If git
 fails to commit, the file gets its old text back. An artifact that already
-has the approval status needs no commit. Exit codes: 1 a refusal, 2 usage, 3
+has the approval status needs no commit. With the artifact acceptance and
+approval = branch, it adds the e-mail of the author to acknowledged-by in
+acceptance.toml and commits that file alone; it first removes in a commit of
+its own each entry that no longer counts. Exit codes: 1 a refusal, 2 usage, 3
 pin or configuration, 4 git or write error, 5 no folder or no file.",
     ),
     (
@@ -3305,7 +3310,7 @@ fn next(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     stage::next(repo, &cfg, slug, a.base.as_deref(), a.json, !a.no_cache)
 }
 
-/// `approve <slug> intent|spec|plan`: the status commit of a person
+/// `approve <slug> intent|spec|plan|acceptance`: the status commit of a person
 /// (`approve.rs`).
 fn approve(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 2, 2)?;
@@ -4214,7 +4219,13 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
                 println!("- {} ({}), {}: {}", d.id, d.kind, d.verdict, text);
             }
         }
-        println!("the merge of the pull request acknowledges the deviations");
+        if plan.ack_branch {
+            println!(
+                "an approver acknowledged the deviations in `acknowledged-by` (`spec-dna approve {slug} acceptance`)"
+            );
+        } else {
+            println!("the merge of the pull request acknowledges the deviations");
+        }
     }
 }
 

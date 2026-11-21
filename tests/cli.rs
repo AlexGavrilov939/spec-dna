@@ -5349,11 +5349,14 @@ fn help_lists_approve() {
     };
     let (code, all) = run(&["--help"]);
     assert_eq!(code, Some(0));
-    assert!(all.contains("approve <slug> intent|spec|plan"), "{all}");
+    assert!(
+        all.contains("approve <slug> intent|spec|plan|acceptance"),
+        "{all}"
+    );
     let (code, one) = run(&["approve", "--help"]);
     assert_eq!(code, Some(0), "{one}");
     assert!(
-        one.starts_with("usage: spec-dna approve <slug> intent|spec|plan [--json]\n"),
+        one.starts_with("usage: spec-dna approve <slug> intent|spec|plan|acceptance [--json]\n"),
         "{one}"
     );
 }

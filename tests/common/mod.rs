@@ -289,7 +289,18 @@ impl Repo {
         remove: &[&str],
     ) -> (i32, String, String) {
         let mut cmd = Command::new(BIN);
-        cmd.args(args).current_dir(&self.dir);
+        // The same isolated git configuration as `git_cmd`: no global or system file,
+        // so a test never reads the identity of the machine. CI has none. A test that
+        // needs an identity sets `GIT_AUTHOR_*` and `GIT_COMMITTER_*` itself.
+        cmd.args(args)
+            .current_dir(&self.dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            // Git must not guess an identity from the user name and the host name: a
+            // machine of a developer does, and a CI runner does not.
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "user.useConfigOnly")
+            .env("GIT_CONFIG_VALUE_0", "true");
         for (name, value) in set {
             cmd.env(name, value);
         }

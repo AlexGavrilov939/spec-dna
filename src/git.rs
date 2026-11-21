@@ -628,7 +628,9 @@ impl Git {
     /// The e-mail of the author of the next commit (`git var
     /// GIT_AUTHOR_IDENT`): the environment variables `GIT_AUTHOR_*` count.
     pub fn author_email(&self) -> Result<String, String> {
-        let out = self.run(&["var", "GIT_AUTHOR_IDENT"])?;
+        let out = self.run(&["var", "GIT_AUTHOR_IDENT"]).map_err(|_| {
+            "git has no author identity: set `user.email` and `user.name` in the git config (`git config user.email <e-mail>`), or set `GIT_AUTHOR_EMAIL` and `GIT_AUTHOR_NAME`".to_string()
+        })?;
         let ident = String::from_utf8_lossy(&out);
         let start = ident.rfind('<').ok_or("git gave no author e-mail")?;
         let end = ident[start..]

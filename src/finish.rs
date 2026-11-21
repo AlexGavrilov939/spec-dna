@@ -100,6 +100,9 @@ pub struct Plan {
     /// more (design 0.8.0, D74 item 7). `finish` prints `Acceptance runs: <n>, <r>
     /// rejected`.
     pub runs: Option<(usize, usize)>,
+    /// True with `[change] approval = "branch"`: an approver acknowledges the
+    /// deviations with an entry of `acknowledged-by`, and not the merge.
+    pub ack_branch: bool,
     /// Step 5.3 (design 0.8.0, D7 and D78): the `[[deviation]]` entries of the
     /// record, for a change that needs a record, each with its verdict. If no
     /// record reads, they are the declared items of the plan, with the verdict
@@ -677,6 +680,7 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
         return Ok(None);
     };
     out.runs = f.runs;
+    out.ack_branch = f.ack.branch;
     let (shallow, branch_cut) = match &f.need {
         Need::No(note) => {
             out.notes.extend(note.clone());
@@ -756,6 +760,7 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
                 vec![acc::missing_message(
                     slug,
                     &format!("`{path}` is absent"),
+                    &f.roles,
                     shallow,
                     branch_cut,
                 )],
@@ -768,12 +773,12 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
     problems.extend(f.brief_problems.iter().cloned());
     if let Some((code, messages)) = acc::first_stop(
         gate,
-        (f.class, f.acceptors),
+        (f.class, f.acceptors, &f.roles),
         rec.as_ref(),
         problems,
         f.stale.clone(),
         &f.sections,
-        f.rerun.as_deref(),
+        (f.rerun.as_deref(), &f.ack),
     ) {
         let why = match code {
             Code::AcceptanceInvalid => "the acceptance record is not valid".to_string(),
@@ -786,7 +791,15 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             Code::SelfAccepted => {
                 "2 acceptor entries have the same session and the same agent".to_string()
             }
+            Code::RecordCommitInvalid => {
+                "a commit of the acceptance record is not a valid record commit, or an entry of `acknowledged-by` does not count"
+                    .to_string()
+            }
             Code::AcceptorMissing => "the acceptance record has too few acceptors".to_string(),
+            Code::AckMissing => {
+                "the deviations of the acceptance record need the acknowledgement of an approver: run `spec-dna approve <slug> acceptance`"
+                    .to_string()
+            }
             Code::AcceptanceRerun => {
                 "the record comes after 2 rejected records: a third run needs the word of the owner"
                     .to_string()

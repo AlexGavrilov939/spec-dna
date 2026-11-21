@@ -209,7 +209,7 @@ const FINISH_PARTS: &str = r"When to use: The change is ready to apply. Its task
 Commands:
 
 1. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop.
-2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge of the pull request acknowledges them.
+2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge acknowledges them, or, with `approval = branch`, an approver does it with `spec-dna approve <slug> acceptance`.
 3. Commit the result. If `spec-dna finish` prints a line `Hours:`, put it into the commit message. Keep it in the squash message.
 
 Artifact: The result of `spec-dna finish`: the delta applied, and the folder of the change deleted.

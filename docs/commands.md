@@ -318,7 +318,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 ## approve
 
 ```text
-spec-dna approve <slug> intent|spec|plan [--json]
+spec-dna approve <slug> intent|spec|plan|acceptance [--json]
 ```
 
 `approve` is the command of a person for an approval commit. It sets the `status` line of one artifact of the change `<slug>` to its approval value (`accepted` for an intent, `approved` for a spec or a plan), and it commits that file alone. The commit changes the `status` line and no other byte, so it is an approval commit of the branch rule ([config.md](config.md#approval-in-the-branch)). The command makes no check of the person: run it in a terminal of your own. The hook `protect-approvals` ([harness.md](harness.md#spec-dna-hook-protect-approvals)) denies it for an agent.
@@ -338,6 +338,25 @@ The steps, in this order. A refusal gives exit code 1, and nothing changes:
 
 The output is `approved <path> in <12 characters of the commit> (author <e-mail>)`. With `--json`: `{"slug", "artifact", "path", "status", "commit", "author"}`. `commit` is the full id, or `null` when the artifact already had the approval value.
 
+**`approve <slug> acceptance`** is the acknowledgement of the acceptance record with `approval = "branch"`. It adds the e-mail of its author to `acknowledged-by` of `<folder>/acceptance.toml`. It commits that file alone, with the message `docs: acknowledge the acceptance record of <slug>`. A record that has a deviation needs this acknowledgement (SD934), and SD932 checks the commit. The steps, in this order. A refusal gives exit code 1, and nothing changes:
+
+1. The pin is the version of the binary, and the project has a layer of the type `intent`. Else exit code 3.
+2. `approval` is `branch`. With `base`, the command refuses, because the merge of the pull request acknowledges the record there.
+3. The folder `<intent folder>/<slug>/` and the file `acceptance.toml` exist. Else exit code 5.
+4. The record is tracked, and it has the same text in `HEAD`, in the index and in the working tree. Commit the text first.
+5. The e-mail of the author is in `[change] approvers`. The compare ignores case.
+6. The record reads. A record that does not read is a refusal. A record whose `acknowledged-by` list is not on one line is also a refusal.
+7. The walk of the commits finds the entries that count. If the author counts and no entry is stale, the command prints `<path> is already acknowledged by <e-mail>` and ends with exit code 0, with no commit.
+8. The command removes each stale entry first, in a commit of its own, `docs: clear the stale acknowledgements of the record of <slug>`. A stale entry is an entry that a later commit left behind, because that commit changed the record. The approver thus acknowledges the new text.
+9. The approval commit adds the author.
+10. If a commit fails, the command writes the old text back and exits with code 4. A failure of the approval commit keeps the commit that removed the stale entries.
+
+The output is `acknowledged <path> in <12 characters of the commit> (author <e-mail>)`. With `--json`, the fields are the fields of the other artifacts. `artifact` is `acceptance`, `status` is `acknowledged`, and `commit` is the id of the last commit, or `null` when the author already counted.
+
+The walk needs a base (`origin/HEAD` or `change.base`) and a history that it can read. If the walk cannot run, the command treats each listed entry as an entry that counts, so it removes none. The same holds when the walk stops (a shallow clone, or a merge commit that merges another branch).
+
+For the form `acceptance`, exit code 1 is a refusal of step 2 or of steps 4 to 6 of its own list.
+
 Exit codes: 0 committed, or already approved; 1 a refusal of steps 3 to 7; 2 usage (the slug or the artifact name is bad, or an option is unknown); 3 configuration; 4 git or file error; 5 no folder or no file.
 
 ## accept
@@ -349,7 +368,7 @@ spec-dna accept <slug> --follow-up [--session <id>] [--base <rev>] [--json]
 spec-dna accept <slug> --follow-up --brief [--base <rev>] [--json]
 ```
 
-`accept` is the command of the acceptance record. The acceptor is an agent that did not write the code of the change `<slug>`. It tries to break the change, and it writes one record in the file `acceptance.toml` in the folder of the change. The command works in each profile. The codes SD927 to SD940 decide only whether `finish` and `check` need a record ([diagnostics.md](diagnostics.md#the-acceptance-record-sd927-to-sd935) and [diagnostics.md](diagnostics.md#invariants-and-deviations-sd936-to-sd940)). A change needs a record when the acceptance is on and `[change] acceptance-for` asks for it: in `standard`, only a `higher-risk` change, and in `strict`, each change that has a plan ([config.md](config.md#the-acceptance-record)).
+`accept` is the command of the acceptance record. The acceptor is an agent that did not write the code of the change `<slug>`. It tries to break the change, and it writes one record in the file `acceptance.toml` in the folder of the change. The command works in each profile. The codes SD927 to SD941 decide only whether `finish` and `check` need a record ([diagnostics.md](diagnostics.md#the-acceptance-record-sd927-to-sd935) and [diagnostics.md](diagnostics.md#invariants-and-deviations-sd936-to-sd940)). A change needs a record when the acceptance is on, its plan is new, and `[change] acceptance-for` asks for it or a role of `[owners]` matches a role path of the change: in `standard`, only a `higher-risk` change or a matched role, and in `strict`, each change that has a plan ([config.md](config.md#the-acceptance-record) and [config.md](config.md#the-table-owners)).
 
 Both forms refuse (exit code 1) while the folder of the change, except `acceptance.toml`, or `spec-dna.toml` has an edit that `HEAD` does not have, in the index or in the working tree. An untracked file in the folder counts. The message says: commit the work, then accept.
 
@@ -490,7 +509,7 @@ A change has no stage field. The stage is the first row of this table that match
 - In the stage `deploy`, `next` has one item `review` before `finish`. For a change that needs an acceptance record ([accept](#accept)), it is the record item, with the skill `review`. For another change, `next` names the review of 0.7.1.
 - A change needs a record when 3 conditions hold, as in `finish` and `check`.
   - The acceptance is on (not in the profile `lite`).
-  - `[change] acceptance-for` asks for a record (in `standard`, only a `higher-risk` change).
+  - `[change] acceptance-for` asks for a record (in `standard`, only a `higher-risk` change), or a role of `[owners]` matches a role path of the change.
   - The plan is new. A plan that a pin before 0.8.0 added, or a repository with no lifecycle base, has no item.
 - The record item is open (`[ ]`) while the folder of the change has no record. Its text is the prompt of the acceptor: ``start one agent `acceptor` with the prompt `cd '<root>' && spec-dna accept <slug> --brief`, and add no word; it writes and commits the record``.
   - `<root>` is the absolute root of the repository where `next` runs. It is one shell word in single quotes (a `'` in the root becomes `'\''`).
@@ -617,13 +636,28 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
     - The result keeps CRLF, a BOM and the final newline of each file.
     - A line that the tree applies already is skipped, so a second run changes nothing.
 6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document. With `[evidence] reports`, step 5 has 2 more parts, and the numbers of the steps stay. Step 5.1 runs first: each test report must be present, readable and fresh (SD613 to SD615). Step 5.4 is the check of the evidence: a requirement that has a tag also needs a bound test case that passed in the reports (SD617). With `[evidence] reliable-for`, a requirement of a covered change that passed fewer times than `[evidence] reliable-runs` stops step 5.4 with SD620 ([Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt)). A proof debt (`proof-owed`) is no evidence for SD916, SD617 and SD620. Run the tests and `spec-dna evidence stamp` before `finish`, in the same checkout ([Test reports](config.md#test-reports)). The steps are off in `lite`.
-7. Steps 5.2 and 5.5: the acceptance record ([accept](#accept)). They run in `standard` and `strict`, and in `lite` only with a rule that turns the group `acceptance` on. A change needs a record when `[change] acceptance-for` asks for it and its plan is new: the branch added it, or the commit that added it on the base pinned 0.8.0 or later ([diagnostics.md](diagnostics.md#the-acceptance-record-sd927-to-sd935)). A closed change and a change with no plan need none. For a plan of an older pin, `finish` prints on stderr ``note: `<plan>` was added when spec-dna.toml pinned <pin>, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does``, and it runs no step 5.2.
+7. Steps 5.2 and 5.5: the acceptance record ([accept](#accept)). They run in `standard` and `strict`, and in `lite` only with a rule that turns the group `acceptance` on. A change needs a record when `[change] acceptance-for` asks for it, or a role of [`[owners]`](config.md#the-table-owners) matches a role path of the change, and its plan is new: the branch added it, or the commit that added it on the base pinned 0.8.0 or later ([diagnostics.md](diagnostics.md#the-acceptance-record-sd927-to-sd935)). A closed change and a change with no plan need none. For a plan of an older pin, `finish` prints on stderr ``note: `<plan>` was added when spec-dna.toml pinned <pin>, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does``, and it runs no step 5.2.
 
-    Step 5.2 comes after step 5.1 and before the evidence (step 5.4). It reads `<folder>/acceptance.toml` of `HEAD`, and it stops at the first code that is not off: SD927 (no record), SD928 (the record is not valid, or the `brief` of an entry is not the brief of its adding commit), SD929 (the code that the record lists changed), SD930 (the result is `rejected`), SD931 (2 acceptors with one session and one agent) and SD933 (too few acceptors), then SD941 (with `approval = "branch"`: the record comes after 2 rejected records and no approval of the plan comes after the second), then SD936 (an item of `Invariants` that is not valid), SD937 (a stale hash of an item), SD938 (an invariant with no answer, or a deviation with no entry or another text in the record), SD939 (an item of `Deviations` that is not valid) and SD940 (a `spec` deviation that names no line of the delta and no change folder).
+    Step 5.2 comes after step 5.1 and before the evidence (step 5.4). It reads `<folder>/acceptance.toml` of `HEAD`. It stops at the first code that is not off, in this order:
+
+    - SD927: no record.
+    - SD928: the record is not valid, or the `brief` of an entry is not the brief of its adding commit.
+    - SD929: the code that the record lists changed.
+    - SD930: the result is `rejected`.
+    - SD931: 2 acceptors have one session and one agent.
+    - SD932: with `approval = "branch"`, a commit of the record also changes another path, or an entry of `acknowledged-by` does not count.
+    - SD933: the record has too few acceptors, or no entry for a role of `[owners]` that matches.
+    - SD941: with `approval = "branch"`, the record comes after 2 rejected records, and no approval of the plan comes after the second.
+    - SD936: an item of `Invariants` is not valid.
+    - SD937: the hash of an item of `Invariants` is stale.
+    - SD938: an invariant has no answer, or a deviation has no entry or another text in the record.
+    - SD939: an item of `Deviations` is not valid.
+    - SD940: a `spec` deviation names no line of the delta and no change folder.
+    - SD934: with `approval = "branch"`, a deviation has no acknowledgement of an approver (part 5.3 of step 5: a stop prints `step 5`).
 
     After step 5.2, `finish` prints the line `Acceptance runs: <n>, <r> rejected` when the branch has 2 or more acceptance records (`n`), and `r` of them say `rejected`, in each mode and also with `--dry-run`. It is the count of D74: a record is one life of `acceptance.toml` in the commits of the branch ([the stop rule](diagnostics.md#the-stop-rule)). The line comes with a second line that tells the author to add it to the commit message of the change. The merge of the pull request acknowledges the runs, as it acknowledges a deviation. With `--json`, the object has the key `acceptance_runs` with `{"runs", "rejected"}` in the same case.
 
-    Step 5.3 comes after step 5.2. For a change that needs a record, `finish` prints the deviations of the record after the line `Hours:` (also with `--dry-run`), as the line `Deviations: <n>`, then one line `- <id> (<kind>), <verdict>: <text>` for each, and a last line that says that the merge of the pull request acknowledges them. It lists each `[[deviation]]` entry of the record in the order of the record, with its verdict. Thus the merge acknowledges the list that the record holds. SD938 already stops at a plan item that the record does not answer. If the record does not read (SD928 is off), the list holds the items of the plan with no answer. The text output then says that the record did not read and shows no verdict. In `--json`, each object has the verdict `none` and the extra key `"record":"unread"`. The text of an entry shows on one line. A change with no deviation prints nothing. In 0.8.0 no check asks for the acknowledgement.
+    Step 5.3 comes after step 5.2. For a change that needs a record, `finish` prints the deviations of the record after the line `Hours:` (also with `--dry-run`), as the line `Deviations: <n>`, then one line `- <id> (<kind>), <verdict>: <text>` for each, and a last line that says who acknowledges them: the merge of the pull request with `approval = "base"`, and the entry of an approver in `acknowledged-by` with `approval = "branch"`. It lists each `[[deviation]]` entry of the record in the order of the record, with its verdict. Thus the acknowledgement covers the list that the record holds. SD938 already stops at a plan item that the record does not answer. If the record does not read (SD928 is off), the list holds the items of the plan with no answer. The text output then says that the record did not read and shows no verdict. In `--json`, each object has the verdict `none` and the extra key `"record":"unread"`. The text of an entry shows on one line. A change with no deviation prints nothing. With `approval = "branch"`, SD934 asks for the acknowledgement of an approver, and `approve <slug> acceptance` gives it ([approve](#approve)).
 
     Step 5.5 comes last. It moves each record that the folder has, also in `lite` and for a plan of an older pin, where no rule needs it. With no record and no need, it writes nothing. It moves the record to `.spec-dna/accepted/<slug>.toml`, or to `<slug>-2.toml`, `<slug>-3.toml` and so on if the file exists. The archive file is one of the files that `finish` writes, so `--dry-run` lists it, and `finish` stages it.
 

@@ -143,6 +143,10 @@ pub struct Config {
     /// The line of the key `approvers` in the `[change]` table of the text
     /// that `parse` read, for SD926. The value is 1 if the key is absent.
     pub change_approvers_line: u32,
+    /// `[owners]`: a glob and the agent roles that must review the change when a
+    /// role path matches it (design 0.8.0, D5 and D77). The default is the empty
+    /// table, which has no effect.
+    pub owners: crate::owners::Owners,
 }
 
 /// The author addresses of agents and bots (owner review of 0.7.0, item 1).
@@ -1101,9 +1105,8 @@ impl Profile {
             // The acceptance record (design 0.8.0, D3). Off in `lite`. The codes
             // need no key: `accept` and `finish` use them where a change has a
             // plan that needs a record.
-            "SD927" | "SD928" | "SD929" | "SD930" | "SD931" | "SD933" | "SD935" | "SD941" => {
-                (None, Some(E), Some(E))
-            }
+            "SD927" | "SD928" | "SD929" | "SD930" | "SD931" | "SD932" | "SD933" | "SD934"
+            | "SD935" | "SD941" => (None, Some(E), Some(E)),
             // The invariants and the deviations (design 0.8.0, D6 and D7). Off
             // in `lite`. SD936 and SD937 run only with `[change] invariants`
             // (`configured_severity`). The deviations need no key.
@@ -1134,8 +1137,8 @@ pub const GROUPS: [(&str, &[&str]); 11] = [
     (
         "acceptance",
         &[
-            "SD927", "SD928", "SD929", "SD930", "SD931", "SD933", "SD935", "SD936", "SD937",
-            "SD938", "SD939", "SD940", "SD941",
+            "SD927", "SD928", "SD929", "SD930", "SD931", "SD932", "SD933", "SD934", "SD935",
+            "SD936", "SD937", "SD938", "SD939", "SD940", "SD941",
         ],
     ),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
@@ -1774,6 +1777,10 @@ impl Config {
                     .into(),
             );
         }
+        let owners = match t.take("owners") {
+            Some(v) => crate::owners::Owners::parse(v)?,
+            None => crate::owners::Owners::default(),
+        };
         t.done()?;
         // The hook `protect-tests` reads the globs of the base, so the
         // harness keeps them.
@@ -1828,6 +1835,7 @@ impl Config {
             change_approval: change.approval,
             change_approvers: change.approvers,
             change_approvers_line: approvers_line(text),
+            owners,
         };
         // The hook `protect-approvals` reads the folders of the `intent`
         // layer, so the harness keeps them.
@@ -3350,6 +3358,35 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     }
 
     #[test]
+    fn the_table_owners_is_in_the_schema_and_the_parser_reads_it() {
+        // Design 0.8.0, D77: a role, a person (a warning, no role) and the errors.
+        let schema = crate::json::parse(SCHEMA).unwrap();
+        assert!(matches!(
+            schema.get("properties").get("owners"),
+            crate::json::Value::Obj(_)
+        ));
+        assert!(with("", "").unwrap().owners.is_empty());
+        let ok = with(
+            "",
+            "[owners]\n\"src/a/**\" = [\"security-reviewer\", \"@lead\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            ok.owners.matched(&["src/a/x.rs".to_string()]),
+            ["security-reviewer"]
+        );
+        assert_eq!(ok.owners.warnings().len(), 1);
+        assert!(with("owners = true", "").is_err());
+        for bad in [
+            "[owners]\n\"src/a\" = [\"Role\"]\n",
+            "[owners]\n\"src/a\" = \"role\"\n",
+            "[owners]\n\"/src/a\" = [\"role\"]\n",
+        ] {
+            assert!(with("", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn area_names_compare_in_lowercase_ascii() {
         assert!(same_area_name("Valves", "valves"));
         assert!(!same_area_name("valves", "valve"));
@@ -4032,7 +4069,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             Code::AcceptanceStale,
             Code::AcceptanceRejected,
             Code::SelfAccepted,
+            Code::RecordCommitInvalid,
             Code::AcceptorMissing,
+            Code::AckMissing,
             Code::RecordEdited,
         ];
         let change = "[change]\npolicy = \"three-class\"\n";
