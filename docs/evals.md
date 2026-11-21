@@ -75,7 +75,7 @@ An eval is the file `<dir>/<id>.json`. A JSON file directly in `<dir>` is an eva
 | `max-budget-usd` | yes | - | The budget of one run. A number above 0, and at most `[evals] max-total-usd` |
 | `runs` | no | `[evals] runs` | An integer from 1 to 100. `--runs` overrides it |
 | `pass-at` | no | the runs of the eval | The runs that must pass for the eval to pass. An integer from 1 to the runs of the eval |
-| `skill` | no | none | The skill that `eval run --ab` measures with this eval. One of the 12 names of the pack, such as `tdd` or `write-plan`. `eval run` without `--ab` does not read it. [The pack](#the-pack-and-the-measure-of-a-skill) gives its use |
+| `skill` | no | none | The skill that `eval run --ab` measures with this eval. One of the 11 names of the pack, such as `tdd` or `write-plan`. `eval run` without `--ab` does not read it. [The pack](#the-pack-and-the-measure-of-a-skill) gives its use |
 | `checks` | yes | - | A list that is not empty. Each item has exactly `name` (`[a-z0-9][a-z0-9-]{0,63}`, once in the file) and `run` (not empty). A check passes on exit code 0 |
 
 On a `fix/` branch, the hook `protect-tests` can ask before an edit of a test file ([harness.md](harness.md#spec-dna-hook-protect-tests)). A run with `claude -p` cannot answer, so Claude Code denies the edit.
@@ -209,7 +209,7 @@ In `--arms` and `--harness`, the runner passes `--model` and `--effort` with the
 
 ### `--harness`
 
-`eval run --harness <arm>` runs the plain evals with one arm. The result has the key `harness`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level (the default skills of [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). Then the edit of `--ab` adds the measured skill to the arm `with` and removes it from the arm `without`, in the files and in `[harness] skills`. A skill runs beside the other default skills, as for a user. `--resume` of `--ab` refuses a file that has another harness (a file of 0.7.1 has `project`). `--ab` without `--harness` keeps the copy of 0.7.1.
+`eval run --harness <arm>` runs the plain evals with one arm. The result has the key `harness`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level (the default skills of [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). Then the edit of `--ab` adds the measured skill to the arm `with` and removes it from the arm `without`, in the files and in `[harness] skills`. A skill runs beside the other default skills, as for a user. The text of the skill files follows the key `profile` of the `spec-dna.toml` of the copy: the text of 0.7.1 for `lite`, else the text of this release. Then the skill `review` of the arm `with` brings the agent `acceptor`, except in `lite`. `--resume` of `--ab` refuses a file that has another harness (a file of 0.7.1 has `project`). `--ab` without `--harness` keeps the copy of 0.7.1.
 
 ### `--arms`
 
@@ -242,7 +242,7 @@ spec-dna eval verdict --compare <treatment>,<control> <result file> [--json]
 
 ### The pack
 
-`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of 11 skills and 2 evals of the pair `agents-line` (the skill `accept` has none yet), 57 in total. Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, or `agents-line`. The ids of `verify`, `brainstorm` and `execute` are `<skill>-6` to `<skill>-10`. Both arms passed each run of the first 5 evals of each of these skills, so they could not show a gain, and 5 new evals replace them. A task of a new eval does not name a rule of its skill. Each new eval has one trap that an agent with no skill text falls into, and a shell check that finds it. [The traps](#the-traps-of-the-harder-evals) lists them. Each eval runs 4 times (`"runs": 4`). The files are these:
+`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of 11 skills and 2 evals of the pair `agents-line` (57 in total). Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, or `agents-line`. The ids of `verify`, `brainstorm` and `execute` are `<skill>-6` to `<skill>-10`. Both arms passed each run of the first 5 evals of each of these skills, so they could not show a gain, and 5 new evals replace them. A task of a new eval does not name a rule of its skill. Each new eval has one trap that an agent with no skill text falls into, and a shell check that finds it. [The traps](#the-traps-of-the-harder-evals) lists them. Each eval runs 4 times (`"runs": 4`). The files are these:
 
 | File | Content |
 | --- | --- |
@@ -290,7 +290,7 @@ spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>
 `--ab` takes one target:
 
 - a skill, such as `tdd`, to run the 5 evals of that skill;
-- `all`, to run each skill that the pack has (the 11 skills that a full pack has, 440 runs; `accept` has no eval yet). It does not include `agents-line`;
+- `all`, to run each skill that the pack has (the 11 skills that a full pack has, 440 runs). It does not include `agents-line`;
 - `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs `tdd-1`, `debug-1` and `execute-10` (a plain edit of a task of a plan, with a commit; the pair used `execute-1` until 0.7.0, and uses `execute-10` since 0.7.1), and the 2 evals `agents-line-1` and `agents-line-2` (they have the key `skill` with the value `agents-line`). `agents-line-1` is a long task that moves a document, and the line tells the agent to run `spec-dna check` before a commit. `agents-line-2` has a plan that is a draft, and the line says that an agent writes an approval only when the owner says so.
 
 `--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval. An eval of `execute`, the evals `verify-6` to `verify-10`, and `tdd-1` and `debug-1`, have `max-turns` 40 (the confirmation run of `tdd` uses `tdd-1` with this higher cap too, because the cap is one value of the eval and the pair `agents-line` shares `tdd-1` with `tdd`): the pilot showed that the line of `AGENTS.md` costs 3 to 7 turns that only run `spec-dna`, and a cap of 25 turns stopped correct work.
@@ -401,7 +401,7 @@ The floor comes first: a verdict needs at least 5 evals and at least 15 complete
 spec-dna eval verdict [--json]
 ```
 
-`eval verdict` prints one line for each of the 12 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file","below_floor"}]}`. A name whose file is below the floor shows `(below the floor)` after the source.
+`eval verdict` prints one line for each of the 11 skills and for `agents-line`, in this form: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source. The source is `project <file>`, `release` or `-`. For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name. A file of a stopped run has no verdict for an incomplete skill, so it does not hide an older verdict. If no file holds the name, it reads the table of the release that the binary holds. The command starts no agent, needs no `[evals]` table, and gives exit code 3 for a bad configuration. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file","below_floor"}]}`. A name whose file is below the floor shows `(below the floor)` after the source.
 
 ```text
 spec-dna eval verdict --release [--json]
@@ -427,7 +427,7 @@ A release keeps the result of its runs as records in `bench/results/evals/`. A r
 
 | Key | Value |
 | --- | --- |
-| `skill` | The name of the item of the result file: one of the 12 skills, or `agents-line`. The group `tdd` and the group `agents-line` both have `tdd-1`, and `skill` keeps them apart |
+| `skill` | The name of the item of the result file: one of the 11 skills, or `agents-line`. The group `tdd` and the group `agents-line` both have `tdd-1`, and `skill` keeps them apart |
 | `eval` | The eval id |
 | `run` | The run number of the pair, from 1 to 100 |
 | `arm` | `with` or `without` |

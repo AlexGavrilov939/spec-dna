@@ -1779,6 +1779,8 @@ impl Config {
         // harness keeps them.
         let harness = harness.map(|mut h| {
             h.tests = evidence_tests.clone();
+            // The text of a skill is a function of the profile (design 0.8.0, D76).
+            h.profile = profile;
             h
         });
         let mut cfg = Config {
@@ -3018,11 +3020,17 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         // Names that the release added, and the comment stays.
         assert!(pin_upgrade_only_change(
             &old,
-            &new("[\"review\", \"finish\", \"accept\"]  # mine")
+            &new("[\"review\", \"finish\", \"debug\"]  # mine")
         ));
         assert!(pin_upgrade_only_change(
             &old,
-            &new("[\"review\", \"accept\", \"finish\"]  # mine")
+            &new("[\"review\", \"debug\", \"finish\"]  # mine")
+        ));
+        // The skill `accept` of 0.8.0 part A merged into `review` (design 0.8.0,
+        // D71): it is no skill, so a list with it is a change of the file.
+        assert!(!pin_upgrade_only_change(
+            &old,
+            &new("[\"review\", \"finish\", \"accept\"]  # mine")
         ));
         // A name that is no skill, a name that goes away, and a list of many
         // lines count as a change of the file.
@@ -3032,20 +3040,20 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         ));
         assert!(!pin_upgrade_only_change(
             &old,
-            &new("[\"review\", \"accept\"]  # mine")
+            &new("[\"review\", \"debug\"]  # mine")
         ));
         assert!(!pin_upgrade_only_change(
             &old,
-            &new("[\"review\",\n  \"finish\", \"accept\"]  # mine")
+            &new("[\"review\",\n  \"finish\", \"debug\"]  # mine")
         ));
         // Another edit with the new names is a change too.
         assert!(!pin_upgrade_only_change(
             &old,
-            &new("[\"review\", \"finish\", \"accept\"]  # mine").replace("lean", "full")
+            &new("[\"review\", \"finish\", \"debug\"]  # mine").replace("lean", "full")
         ));
         // The same list under another table is no skill list.
         let other = "spec-dna = \"0.7.0\"\n\n[x]\nskills = [\"review\"]\n";
-        let other_new = "spec-dna = \"0.8.0\"\n\n[x]\nskills = [\"review\", \"accept\"]\n";
+        let other_new = "spec-dna = \"0.8.0\"\n\n[x]\nskills = [\"review\", \"debug\"]\n";
         assert!(!pin_upgrade_only_change(other, other_new));
     }
 
@@ -4478,6 +4486,26 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     /// The schema and the parser accept the same keys. For each key of the
     /// schema, the parser must not call the key unknown, and an invented key
     /// must be unknown.
+    #[test]
+    fn the_schema_lists_the_skills_of_the_workflow_pack_and_no_other() {
+        // `accept` merged into `review` (design 0.8.0, D71), so the enum of `skills`
+        // is the 11 names of `Skill::ALL`.
+        let schema = crate::json::parse(SCHEMA).unwrap();
+        let skills = schema
+            .get("properties")
+            .get("harness")
+            .get("properties")
+            .get("skills")
+            .get("items")
+            .get("enum");
+        let mut in_schema: Vec<&str> = skills.as_arr().iter().filter_map(|v| v.as_str()).collect();
+        in_schema.sort_unstable();
+        let mut want: Vec<&str> = Skill::ALL.iter().map(|s| s.key()).collect();
+        want.sort_unstable();
+        assert_eq!(in_schema, want);
+        assert!(!in_schema.contains(&"accept"));
+    }
+
     #[test]
     fn the_schema_and_the_parser_accept_the_same_keys() {
         let schema = crate::json::parse(SCHEMA).unwrap();

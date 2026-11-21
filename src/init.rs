@@ -388,6 +388,9 @@ impl Plan {
     /// the profile (D37, ADR 0023).
     fn set_profile(&mut self, profile: Profile) {
         self.profile = profile;
+        // The text of a skill and the agent `acceptor` follow the profile (design
+        // 0.8.0, D71 and D76).
+        self.harness.profile = profile;
         self.apply_preset(profile);
     }
 
@@ -2740,18 +2743,15 @@ fn skill_listing_bytes(skills: &[Skill]) -> usize {
 
 /// The skills that a profile and a level propose (D37, D39, ADR 0023). `on`
 /// gives the default of a skill: the caller passes `|s| s.default_on()`, and a
-/// test passes a fake table. The level `full` proposes the 12 skills and
+/// test passes a fake table. The level `full` proposes the 11 skills and
 /// ignores the verdicts. `lite` proposes `brainstorm`, `write-plan` and
-/// `finish` that are on by default, and never `accept`: the acceptance is off
-/// there (design 0.8.0, D3, answer 4 of the owner). `standard` and `strict`
-/// propose each skill that is on by default, also a skill outside D2 with the
-/// verdict `on`. The result has the order of D2.
+/// `finish` that are on by default. `standard` and `strict` propose each skill
+/// that is on by default, also a skill outside D2 with the verdict `on`. The
+/// result has the order of D2. The skill `accept` merged into `review` (design
+/// 0.8.0, D71), so no profile has a skill for the acceptance.
 pub fn profile_skills(profile: Profile, level: Level, on: &dyn Fn(Skill) -> bool) -> Vec<Skill> {
     if level == Level::Full {
-        return Skill::ALL
-            .into_iter()
-            .filter(|s| *s != Skill::Accept || profile != Profile::Lite)
-            .collect();
+        return Skill::ALL.to_vec();
     }
     Skill::ALL
         .into_iter()
@@ -3470,8 +3470,8 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.base = b.clone();
     }
 
-    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, `acceptor` (it comes with the skill `accept`, and `lite` has neither), the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
-    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 12 skills (11 for `lite`), also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, `acceptor` (it comes with the skill `review`, and `lite` has none), the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
+    io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 11 skills, also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
     }
@@ -3794,6 +3794,10 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
         // takes the fresh defaults. The level `none` stays the default.
         let (h, notes) = harness_defaults(repo, &existing);
         plan.harness = h;
+        // The defaults have the profile `standard`: the profile of the plan
+        // decides the text of a skill and the agent `acceptor` (design 0.8.0, D71
+        // and D76).
+        plan.harness.profile = plan.profile;
         plan.harness_notes = notes;
         plan.parts = Parts::derived();
         if was_none {
@@ -3861,6 +3865,8 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // text, so `check` finds no difference.
     let mut new_harness = plan.harness.clone();
     new_harness.tests = parsed.evidence_tests.clone();
+    // The text of a skill is a function of the profile (design 0.8.0, D76).
+    new_harness.profile = parsed.profile;
     // The hook `protect-approvals` reads the folders of the `intent` layer, as
     // `check` reads them from this text.
     new_harness.intent_dirs = crate::lifecycle::intent_dirs(&parsed);
@@ -4848,7 +4854,7 @@ mod tests {
         let d2: Vec<Skill> = Skill::ALL.into_iter().filter(|s| s.in_d2()).collect();
         let n = skill_listing_bytes(&d2);
         assert!(n > 588 && n <= 1250, "{n} bytes");
-        // The 12 skills of the level `full` have 1,900 bytes or fewer.
+        // The 11 skills of the level `full` have 1,900 bytes or fewer.
         let n = skill_listing_bytes(&profile_skills(Profile::Standard, Level::Full, &|_| false));
         assert!(n <= 1900, "{n} bytes");
     }
@@ -4885,10 +4891,10 @@ mod tests {
                 [
                     vec![Brainstorm, WritePlan, Finish],
                     vec![
-                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Accept, Finish, PostMortem,
+                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Finish, PostMortem,
                     ],
                     vec![
-                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Accept, Finish, PostMortem,
+                        Brainstorm, Specify, Clarify, WritePlan, Tdd, Finish, PostMortem,
                     ],
                 ],
             ),
@@ -4906,12 +4912,8 @@ mod tests {
                     "{} with needs_on {needs_on}",
                     profile.name()
                 );
-                // The level `full` ignores the verdicts (D39). `lite` has no
-                // acceptance, so it has no `accept` at any level.
-                let full: Vec<Skill> = Skill::ALL
-                    .into_iter()
-                    .filter(|s| *s != Accept || profile != Profile::Lite)
-                    .collect();
+                // The level `full` ignores the verdicts (D39).
+                let full: Vec<Skill> = Skill::ALL.to_vec();
                 assert_eq!(
                     profile_skills(profile, Level::Full, &on),
                     full,

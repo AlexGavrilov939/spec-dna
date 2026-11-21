@@ -149,7 +149,7 @@ Reference: [commands.md](commands.md#context).
 
 spec-dna is a command-line tool, so each agent that can run a shell command can use it. The agent follows 2 steps: it runs `spec-dna context <file>` before an edit, and `spec-dna check` before the work is complete. `spec-dna init` writes these steps into the instruction file of the agent. Codex, Cursor and many other agents read `AGENTS.md`, and Claude Code reads `CLAUDE.md`.
 
-For Claude Code, more adapters add the spec-dna skill, a harness and evals. The harness has roles with their models, the 12 skills of the workflow pack, hooks and `REVIEW.md`. [agents.md](agents.md) lists the parts for each agent.
+For Claude Code, more adapters add the spec-dna skill, a harness and evals. The harness has roles with their models, the 11 skills of the workflow pack, hooks and `REVIEW.md`. [agents.md](agents.md) lists the parts for each agent.
 
 `check` reports a generated file that a person edited (SD501), so the files of an adapter stay in agreement with the configuration.
 

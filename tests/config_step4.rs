@@ -153,7 +153,7 @@ fn the_harness_keys_of_step_4_have_values() {
     for (cfg, want) in [
         (
             "skills = [\"brainstorm\", \"nope\"]",
-            "`harness.skills`: unknown skill `nope`; use brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, accept, finish, debug, post-mortem",
+            "`harness.skills`: unknown skill `nope`; use brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, finish, debug, post-mortem",
         ),
         (
             "skills = [\"specify\", \"specify\"]",

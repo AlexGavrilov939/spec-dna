@@ -835,6 +835,12 @@ fn the_help_lists_the_command_and_its_options() {
     ] {
         assert!(out.contains(word), "{word}: {out}");
     }
+    // The builder gives no paste: the acceptor runs the prompt line of `next`.
+    assert!(
+        out.contains("cd '<root>' && spec-dna accept <slug> --brief"),
+        "{out}"
+    );
+    assert!(!out.contains("Give the whole output"), "{out}");
     let (_, all, _) = r.run(&["--help"]);
     assert!(all.contains("accept <slug>"), "{all}");
 }

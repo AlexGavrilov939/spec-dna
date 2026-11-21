@@ -130,7 +130,7 @@ fn a_routine_change_in_standard_needs_no_record_and_next_names_the_review_of_0_7
     let (code, out, err) = finish(&r);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!r.dir.join(".spec-dna").exists(), "no archive file");
-    // `next` names the review and no `accept`. Run it before `finish`.
+    // `next` names the review of 0.7.1 and no `accept`. Run it before `finish`.
     let r = built(&config("standard", "", ""), INTENT_TEXT);
     let (code, out, err) = r.run(&["next", SLUG, "--json"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -139,6 +139,11 @@ fn a_routine_change_in_standard_needs_no_record_and_next_names_the_review_of_0_7
     let (code, out, err) = r.run(&["next", SLUG]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!out.contains("[skill: accept]"), "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.ends_with("[skill: review]") && l.contains("review the diff against")),
+        "{out}"
+    );
 }
 
 #[test]
@@ -149,7 +154,13 @@ fn a_higher_risk_change_in_standard_needs_a_record() {
     assert!(has(&out, "SD927"), "{out}");
     let (code, out, err) = r.run(&["next", SLUG]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("[skill: accept]"), "{out}");
+    // One item `review` holds the record item (D71 item 2).
+    assert!(!out.contains("[skill: accept]"), "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.ends_with("[skill: review]") && l.contains("spec-dna accept")),
+        "{out}"
+    );
 }
 
 #[test]

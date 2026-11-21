@@ -335,8 +335,9 @@ writes no file. It prints the brief: one text that is a function of the
 committed files of the repository, with the first line
 `spec-dna-brief 2 <slug> <roles>` (the roles are those of --role, with `,`
 between them, and `acceptor` without --role) and the hash of the text on the
-last line. Give the whole output of --brief, unchanged, as the prompt of the
-acceptor. Both forms refuse (exit 1) while the
+last line. The prompt of the acceptor is one line, which `spec-dna next`
+prints: `cd '<root>' && spec-dna accept <slug> --brief`. The acceptor runs it
+and reads the output as its brief. Both forms refuse (exit 1) while the
 folder of the change, except acceptance.toml, or spec-dna.toml has an edit that
 HEAD does not have: commit the work, then accept. The base is the merge base of
 --base (default: origin/HEAD, then [change] base) and HEAD. Exit codes: 0
@@ -504,7 +505,7 @@ them. A verdict needs 5 evals and 15 complete pairs: below that it is
 inconclusive, with below_floor true. `eval verdict --compare <treatment>,<control>
 <result file>` gives the verdict of 2 arms of a result of --arms, on the complete
 waves (exit code 2 for names that are not 2 arms of the file, 3 for another
-file). `eval verdict` prints one line for each of the 12 skills and for agents-line:
+file). `eval verdict` prints one line for each of the 11 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",
@@ -513,12 +514,14 @@ holds the name, then the table of the release. It starts no agent.",
         "skill",
         "skill list [--json]\nskill show <name> [--json]",
         "Prints the skills of the workflow pack. It reads no document and writes
-nothing. `skill list` prints one line for each of the 12 skills, in the order
+nothing. `skill list` prints one line for each of the 11 skills, in the order
 of the design: the name, the kind (stage or event), the stage (or -), the
 state in the project and the default. The state is on or off, as `[harness]
 skills` of spec-dna.toml has it, or - if the project has no spec-dna.toml.
 `skill show <name>` prints the body of the skill, with no front matter and no
-marker. It works for a skill that is off. The adapter skill spec-dna and a
+marker. It works for a skill that is off. The body follows the key profile of the
+project: the profile lite has the text of 0.7.1, and a folder with no
+spec-dna.toml has the text of standard. The adapter skill spec-dna and a
 name of 0.6 (intent, spec, plan) are no name of the pack. With --json, `list`
 prints {\"skills\":[{\"name\",\"kind\",\"stage\",\"state\",\"default\"}]}, with null for
 no stage or no state, and `show` prints {\"name\",\"kind\",\"stage\",\"body\"}.
@@ -3417,7 +3420,13 @@ fn skill(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
                     harness::skill_keys()
                 )));
             };
-            let body = harness_text::skill_body(name).unwrap_or_default();
+            // A directory outside a project reads no configuration, so it gets the
+            // default profile (design 0.8.0, D76 item 1).
+            let profile = match Repo::discover(cwd) {
+                Ok(repo) if repo.config_path().is_file() => repo.load_config()?.profile,
+                _ => config::Profile::Standard,
+            };
+            let body = harness_text::skill_body(name, profile).unwrap_or_default();
             let body = body.trim_matches('\n');
             if a.json {
                 println!(
@@ -3441,7 +3450,7 @@ fn skill(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
     }
 }
 
-/// Prints the table of the 12 skills. `on` is the list of `[harness] skills`,
+/// Prints the table of the 11 skills. `on` is the list of `[harness] skills`,
 /// or `None` for a project with no configuration.
 fn skill_list(on: Option<&[harness::Skill]>, json: bool) {
     let state = |s: harness::Skill| on.map(|l| if l.contains(&s) { "on" } else { "off" });
@@ -4003,6 +4012,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         )?,
         None => None,
     };
+    let accept_on = acceptance::need_on(&cfg, &repo.git, base_rev.as_deref()).map_err(Fatal::Io)?;
     let cx = finish::Ctx {
         config: &cfg,
         head: &head,
@@ -4015,6 +4025,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         path_problem: &path_problem,
         reports: reads.as_ref(),
         acceptance: facts.as_ref(),
+        accept_on,
     };
     let plan = match finish::plan(&cx) {
         Ok(p) => p,

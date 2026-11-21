@@ -1,5 +1,5 @@
 //! `spec-dna eval pack`: the evals that measure each skill (ADR 0016, design
-//! D32 and D35). The pack has 5 evals for each of 11 skills (`accept` has none yet) and 2 evals of
+//! D32 and D35). The pack has 5 evals for each of 11 skills and 2 evals of
 //! the pair `agents-line`, 57 in total,
 //! with small fixtures that hold no data of a consumer project (rule zero).
 //! The command writes each eval as `<[evals] dir>/pack/<id>.json`, and the
@@ -300,9 +300,9 @@ mod tests {
     fn the_pack_has_5_evals_for_each_skill_and_2_of_agents_line() {
         let evals = all();
         assert_eq!(evals.len(), 57);
-        // The evals of `accept` are the work of D62 (design 0.8.0), so the pack
-        // has none yet.
-        for skill in Skill::ALL.into_iter().filter(|s| *s != Skill::Accept) {
+        // The evals of the steps of the record in `review` are the work of D62
+        // (design 0.8.0), so the pack has the 5 evals of 0.7.1 for it.
+        for skill in Skill::ALL {
             let n = evals.iter().filter(|e| e.skill == skill.key()).count();
             assert_eq!(n, 5, "{}", skill.key());
         }

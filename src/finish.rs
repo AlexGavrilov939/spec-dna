@@ -60,6 +60,10 @@ pub struct Ctx<'a> {
     /// The facts of the acceptance record that `main` read with git (design
     /// 0.8.0, D3). `None`: steps 5.2 and 5.5 run no check, as in 0.7.1.
     pub acceptance: Option<&'a crate::acceptance::FinishFacts>,
+    /// True if the need rule turns the acceptance on (`acceptance::need_on`: the
+    /// head or the base has SD927 on). Then a task that names `spec-dna accept
+    /// <slug>` closes with `finish` (design 0.8.0, D75 item 6).
+    pub accept_on: bool,
 }
 
 /// A file that `finish` writes.
@@ -367,7 +371,11 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         let open: Vec<change::PlanTask> = ch
             .tasks(head)
             .into_iter()
-            .filter(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(&ch.slug))
+            .filter(|t| {
+                !t.closed()
+                    && !t.duplicate
+                    && !t.closes_with_finish_or_accept(&ch.slug, cx.accept_on)
+            })
             .collect();
         if !open.is_empty() {
             return stop(0, open_tasks_reason(&open, &ch.slug), Vec::new());
@@ -2120,6 +2128,7 @@ mod tests {
             path_problem: &|_| None,
             reports: None,
             acceptance: None,
+            accept_on: !cfg.is_off(Code::AcceptanceMissing),
         })
     }
 

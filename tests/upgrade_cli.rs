@@ -2114,9 +2114,7 @@ fn upgrade_renames_the_skills_of_0_6_and_a_second_run_changes_nothing() {
     assert!(
         toml.contains(&format!(
             "skills = {}\n",
-            // The pin is before 0.8.0, so `accept` follows `review` (ADR 0025).
             renamed(&["brainstorm", "specify", "clarify", "write-plan"])
-                .replace("\"review\"]", "\"review\", \"accept\"]")
         )),
         "{toml}"
     );

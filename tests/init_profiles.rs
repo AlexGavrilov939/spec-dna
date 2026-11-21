@@ -213,7 +213,7 @@ fn strict_prints_the_note_of_eval_pack_and_writes_no_pack() {
 }
 
 #[test]
-fn full_proposes_the_12_skills_and_lite_has_no_accept() {
+fn full_proposes_the_11_skills_in_each_profile() {
     for profile in ["lite", "standard", "strict"] {
         let r = repo();
         let (code, out, err) = init_with(
@@ -222,11 +222,11 @@ fn full_proposes_the_12_skills_and_lite_has_no_accept() {
             &[],
         );
         assert_eq!(code, 0, "{profile}: {out}{err}");
-        // The profile `lite` has no acceptance, so it has no `accept` (ADR 0025).
-        let want: Vec<String> = all_skills()
-            .into_iter()
-            .filter(|s| profile != "lite" || s != "accept")
-            .collect();
+        // The skill `accept` merged into `review` (design 0.8.0, D71), so each
+        // profile has the same 11 skills.
+        let want: Vec<String> = all_skills();
+        assert_eq!(want.len(), 11, "{want:?}");
+        assert!(!want.iter().any(|s| s == "accept"), "{want:?}");
         assert_eq!(skills_of(&r), want, "{profile}");
         assert_eq!(skill_files(&r), want, "{profile}");
     }

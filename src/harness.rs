@@ -9,7 +9,7 @@
 //! tell a manual edit (SD501) from an old text (SD502).
 
 use crate::adapters::VERSION;
-use crate::config::Fields;
+use crate::config::{Fields, Profile};
 use crate::diag::{Code, Diag};
 use crate::harness_text;
 use crate::hash::{hash_normalized, hex};
@@ -61,8 +61,9 @@ pub enum Role {
     Orchestrator,
     Advisor,
     Verifier,
-    /// The agent that accepts a finished change (design 0.8.0, D3). It comes
-    /// with the skill `accept`: see `Harness::has_role`.
+    /// The agent that reviews a finished change and writes its record (design
+    /// 0.8.0, D3 and D71). It comes with the skill `review` where the acceptance
+    /// is on: see `Harness::has_role`.
     Acceptor,
     Researcher,
     Implementer,
@@ -299,8 +300,6 @@ pub enum Skill {
     Tdd,
     Review,
     Verify,
-    /// The independent acceptance of a finished change (design 0.8.0, D3).
-    Accept,
     Finish,
     Debug,
     PostMortem,
@@ -360,7 +359,7 @@ pub fn gone_skill_answer_message(name: &str) -> Option<String> {
 }
 
 impl Skill {
-    pub const ALL: [Skill; 12] = [
+    pub const ALL: [Skill; 11] = [
         Skill::Brainstorm,
         Skill::Specify,
         Skill::Clarify,
@@ -369,7 +368,6 @@ impl Skill {
         Skill::Tdd,
         Skill::Review,
         Skill::Verify,
-        Skill::Accept,
         Skill::Finish,
         Skill::Debug,
         Skill::PostMortem,
@@ -386,7 +384,6 @@ impl Skill {
             Skill::Tdd => "tdd",
             Skill::Review => "review",
             Skill::Verify => "verify",
-            Skill::Accept => "accept",
             Skill::Finish => "finish",
             Skill::Debug => "debug",
             Skill::PostMortem => "post-mortem",
@@ -421,18 +418,17 @@ impl Skill {
             Skill::Specify | Skill::Clarify => Some(Stage::Design),
             Skill::WritePlan | Skill::Execute => Some(Stage::Build),
             Skill::Tdd => Some(Stage::Test),
-            Skill::Review | Skill::Verify | Skill::Accept => Some(Stage::Deploy),
+            Skill::Review | Skill::Verify => Some(Stage::Deploy),
             Skill::Finish => Some(Stage::Closed),
             Skill::Debug | Skill::PostMortem => None,
         }
     }
 
-    /// True for the 8 skills that D2 turns on: the 7 of D2 and `accept` (ADR
-    /// 0025, amendment of ADR 0023). This is a fact of the design, and it does
-    /// not change with a table of verdicts. The 4 other skills (`execute`,
-    /// `tdd`, `verify` and `debug`) are off in D2 until a verdict gives them
-    /// `on`. `init` proposes `accept` only where the acceptance is on, so not in
-    /// the profile `lite`.
+    /// True for the 7 skills that D2 turns on. This is a fact of the design, and
+    /// it does not change with a table of verdicts. The 4 other skills
+    /// (`execute`, `tdd`, `verify` and `debug`) are off in D2 until a verdict
+    /// gives them `on`. The skill `accept` of part A merged into `review` (design
+    /// 0.8.0, D71), so it is not a skill.
     pub fn in_d2(self) -> bool {
         !matches!(
             self,
@@ -450,7 +446,7 @@ impl Skill {
     }
 }
 
-/// The 12 names, with commas, for a message.
+/// The 11 names, with commas, for a message.
 pub fn skill_keys() -> String {
     let keys: Vec<&str> = Skill::ALL.iter().map(|s| s.key()).collect();
     keys.join(", ")
@@ -497,6 +493,10 @@ pub struct Harness {
     pub efforts: Vec<(String, Effort)>,
     /// The stage skills to write, in the order of `Skill`.
     pub skills: Vec<Skill>,
+    /// The profile of the project (design 0.8.0, D76). The text of a skill is a
+    /// function of it. `Config::parse` and `init` set it, and `toml_section`
+    /// does not write it. `Harness::new` and `parse` give `standard`.
+    pub profile: Profile,
     /// True: write `REVIEW.md`.
     pub review_md: bool,
     pub protect_tests: Protect,
@@ -592,6 +592,7 @@ impl Harness {
             roles: Role::ALL.iter().map(|r| RoleCfg::new(*r)).collect(),
             efforts: vec![("sonnet".into(), Effort::High)],
             skills: Vec::new(),
+            profile: Profile::Standard,
             review_md: false,
             protect_tests: Protect::Off,
             protect_approvals: None,
@@ -617,11 +618,13 @@ impl Harness {
     }
 
     /// Returns true if the level includes the role and the configuration uses
-    /// it. The role `acceptor` comes with the skill `accept`: a configuration
-    /// with no such skill has no role of that name (design 0.8.0, D3).
+    /// it. The role `acceptor` comes with the skill `review` where the acceptance
+    /// is on: a configuration with no such skill has no role of that name, and the
+    /// profile `lite` has none at any level (design 0.8.0, D71 item 4).
     pub fn has_role(&self, role: Role) -> bool {
         self.level.includes(role)
-            && (role != Role::Acceptor || self.skills.contains(&Skill::Accept))
+            && (role != Role::Acceptor
+                || (self.profile != Profile::Lite && self.skills.contains(&Skill::Review)))
     }
 
     /// Returns true if the level includes the role and the role is not off.
@@ -1015,7 +1018,7 @@ Report:
         tools: &["Read", "Grep", "Glob", "Bash", "Write"],
         omit_claude_md: false,
         description: "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
-        body: r#"Your prompt is the output of `spec-dna accept <slug> --brief`. If it is not, run that command first, and work from its output.
+        body: r#"Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first, and read its output as your brief. Start each shell call with that `cd '<root>' &&`, and stop when the `cd` fails. Put each test repository under your scratch folder, never in another checkout.
 
 1. Run each command of `Proof`. With `[evidence] reports`, run the tests and `spec-dna evidence stamp` in one command line.
 2. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that it prints as `acceptor` in each of your attempts and findings. Copy the hash of the last line of your brief into `brief` of your entry.
@@ -1023,7 +1026,7 @@ Report:
 4. Answer each invariant, and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding with the path of the summary if it is wrong.
 5. Read each deviation, and compare it with the diff.
 6. Write each defect as `[[finding]]` with its path. Set each `result`.
-7. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`.
+7. Commit the record alone. This commit is part of your task, and it is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`. Make it in one call of this shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`, with the literal path of `acceptance.toml`. A new record is not tracked, so `git commit` alone refuses its path. Join the parts with `&&` only. Use no option but `-m`, no other command in that call, and no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.
 
 Write only `acceptance.toml`. Report each defect as a finding. Do not fix it."#,
     },
@@ -1178,13 +1181,14 @@ fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) 
 }
 
 /// The text of a stage skill file: the front matter, the body and the marker.
-/// The text is static, so the file is the same in each project.
-fn render_skill(skill: Skill) -> String {
+/// The text is a function of the skill and the profile (D76), so the file is
+/// the same in each project of one profile.
+fn render_skill(skill: Skill, profile: Profile) -> String {
     let s = format!(
         "---\nname: {}\ndescription: {}\n---\n\n{}\n",
         skill.name(),
         harness_text::description(skill),
-        harness_text::body(skill)
+        harness_text::body(skill, profile)
     );
     format!("{s}\n{}\n", marker_text(&s))
 }
@@ -1405,7 +1409,7 @@ pub fn generated_files(h: &Harness) -> Vec<Generated> {
     for skill in &h.skills {
         out.push(Generated {
             path: skill.path(),
-            text: render_skill(*skill),
+            text: render_skill(*skill, h.profile),
             agent: None,
             skill: Some(*skill),
             note: format!("skill {}", skill.name()),
@@ -2508,8 +2512,9 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
                 line_of(text, m.start),
                 "file",
                 format!(
-                    "the harness file (v{}) differs from what spec-dna {VERSION} generates for the configuration",
-                    m.version
+                    "the harness file (v{}) differs from what spec-dna {VERSION} generates for the configuration (profile `{}`); a change of the profile changes the text, so run `spec-dna init --reconfigure`",
+                    m.version,
+                    h.profile.name()
                 ),
             )),
             Some(_) => {}
@@ -2569,7 +2574,7 @@ pub fn check(h: &Harness, files: &[(String, String)]) -> Vec<Diag> {
                     CLAUDE,
                     line,
                     "line",
-                    format!("the model-team line (v{}) differs from what spec-dna {VERSION} generates for the configuration", l.version),
+                    format!("the model-team line (v{}) differs from what spec-dna {VERSION} generates for the configuration (profile `{}`)", l.version, h.profile.name()),
                 ));
             }
         }
@@ -4250,7 +4255,6 @@ opus = "xhigh"
             ("tdd", "stage", Some("test"), false),
             ("review", "stage", Some("deploy"), true),
             ("verify", "stage", Some("deploy"), false),
-            ("accept", "stage", Some("deploy"), true),
             ("finish", "stage", Some("closed"), true),
             ("debug", "event", None, false),
             ("post-mortem", "event", None, true),
@@ -4316,6 +4320,8 @@ opus = "xhigh"
         let want = [
             ".claude/agents/fallback-advisor.md",
             ".claude/agents/verifier.md",
+            // The agent `acceptor` comes with the skill `review` (D71 item 4).
+            ".claude/agents/acceptor.md",
             ".claude/agents/Explore.md",
             ".claude/skills/spec-dna-brainstorm/SKILL.md",
             ".claude/skills/spec-dna-review/SKILL.md",
@@ -4362,14 +4368,14 @@ opus = "xhigh"
         let off = plan_of(&with_skills(""));
         assert_eq!(plan_of(&with_skills("review-md = true")), off);
         let all = plan_of(&with_skills(
-            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"accept\", \"finish\", \"post-mortem\"]",
+            "skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"review\", \"finish\", \"post-mortem\"]",
         ));
         let listing: usize = Skill::ALL
             .iter()
             .filter(|s| s.in_d2())
             .map(|s| format!("- {}: {}\n", s.name(), harness_text::description(*s)).len())
             .sum();
-        // The skill `accept` brings the agent `acceptor`: its description is in
+        // The skill `review` brings the agent `acceptor`: its description is in
         // each request too.
         let acceptor = Role::Acceptor.agent().unwrap();
         let agent = format!("- {}: {}\n", acceptor.name, acceptor.description).len();

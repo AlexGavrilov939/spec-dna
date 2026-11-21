@@ -485,22 +485,24 @@ fn an_agent_of_the_project_named_verifier_turns_the_role_off() {
     assert!(!claude.contains("`verifier`"), "{claude}");
 }
 
-// ---- The agent `acceptor` (design 0.8.0, D3) ----
+// ---- The agent `acceptor` (design 0.8.0, D3 and D71) ----
 
 const ACCEPTOR: &str = ".claude/agents/acceptor.md";
 
 #[test]
-fn lean_in_standard_writes_the_acceptor_with_the_skill_accept() {
+fn lean_in_standard_writes_the_acceptor_with_the_skill_review() {
     let r = Repo::new();
     let (code, out, err) = r.run(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(r.dir.join(ACCEPTOR).exists(), "{out}");
     assert!(out.contains(&format!("wrote {ACCEPTOR}\n")), "{out}");
+    // The skill `accept` merged into `review` (D71): the agent comes with `review`.
     assert!(
         r.dir
-            .join(".claude/skills/spec-dna-accept/SKILL.md")
+            .join(".claude/skills/spec-dna-review/SKILL.md")
             .exists()
     );
+    assert!(!r.dir.join(".claude/skills/spec-dna-accept").exists());
     assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
     let cfg = r.read("spec-dna.toml");
     assert!(
@@ -538,13 +540,13 @@ fn lean_in_lite_writes_neither_the_acceptor_nor_the_skill_nor_a_key() {
 
 #[test]
 fn the_acceptor_goes_with_the_skill_not_with_the_level() {
-    // A skill list with no `accept` writes no agent file, also at `lean`.
-    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n");
+    // A skill list with no `review` writes no agent file, also at `lean`.
+    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\"]\n");
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!r.dir.join(ACCEPTOR).exists(), "{out}");
-    // A skill list with `accept` writes both.
-    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"accept\"]\n");
+    // A skill list with `review` writes both.
+    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n");
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(r.dir.join(ACCEPTOR).exists(), "{out}");
@@ -570,11 +572,31 @@ fn the_acceptor_has_the_tools_of_a_reader_and_one_write_and_no_edit() {
     );
     for w in [
         "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
-        "Your prompt is the output of `spec-dna accept <slug> --brief`. If it is not, run that command first, and work from its output.",
-        "7. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner.",
+        "Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`",
+        "7. Commit the record alone. This commit is part of your task, and it is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner.",
         "Write only `acceptance.toml`",
         "Report each defect as a finding. Do not fix it.",
     ] {
         assert!(t.contains(w), "`{w}`\n{t}");
     }
+}
+
+/// D75 items 1 to 4: the agent runs its prompt line first, starts each shell call
+/// with the `cd` of that line, keeps its test repositories under its scratch
+/// folder, and commits the record alone with a path, so rule D of the hook passes.
+#[test]
+fn the_acceptor_runs_the_prompt_line_and_commits_the_record_with_its_path() {
+    let r = Repo::new();
+    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(ACCEPTOR);
+    for part in [
+        "Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first, and read its output as your brief.",
+        "Start each shell call with that `cd '<root>' &&`, and stop when the `cd` fails.",
+        "Put each test repository under your scratch folder, never in another checkout.",
+        "Make it in one call of this shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`, with the literal path of `acceptance.toml`. A new record is not tracked, so `git commit` alone refuses its path. Join the parts with `&&` only. Use no option but `-m`, no other command in that call, and no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.",
+    ] {
+        assert!(t.contains(part), "{part}\n{t}");
+    }
+    assert!(!t.contains("Your prompt is the output of"), "{t}");
 }

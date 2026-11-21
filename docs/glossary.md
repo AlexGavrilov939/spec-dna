@@ -5,7 +5,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | Term | Meaning | Name in 0.5 | Page |
 | --- | --- | --- | --- |
 | acceptance record | The file `acceptance.toml` in the folder of a change, then `.spec-dna/accepted/<slug>.toml`. An acceptor writes it: what it tried, what it found and its result. It binds to the code paths of the change by a hash. A change needs one when `[change] acceptance-for` asks for it | | [commands](commands.md#accept) |
-| acceptor | An agent that did not write the code of a change. It starts from the brief, reviews the change, tries to break it, and writes the acceptance record. It edits no code | | [commands](commands.md#accept) |
+| acceptor | An agent that did not write the code of a change. It runs the prompt line that `next` gives, reads the brief as the output, reviews the change, tries to break it, and writes and commits the acceptance record. It edits no code | | [commands](commands.md#accept) |
 | adapter | A part of spec-dna for one agent or one file format: the line in `AGENTS.md` (`agents-md`) or `CLAUDE.md` (`claude-md`), the skill (`skill`), or the `claude-code` adapter of the harness, the evals and the transcripts | | [agents](agents.md) |
 | advisor | A second, stronger model that the main model consults before a decision | | [harness](harness.md) |
 | alias | An earlier id of a document or a requirement. A reference to an alias resolves to the current id | | [concepts](concepts.md#ids-and-requirements) |
@@ -19,7 +19,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch | | [concepts](concepts.md#the-change-lifecycle) |
 | batch | The records of one result file of `eval run --ab`, in one file `bench/results/evals/<stamp>-<target>.jsonl`. For each name, the newest batch that has records of the name gives the row of the table of the release | | [evals](evals.md#the-records-of-a-release) |
 | blocker | A finding of an acceptance record that breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`, loses data, or opens a security hole. It gives the result `rejected`. The other findings are notes | | [commands](commands.md#accept) |
-| brief | The text that `spec-dna accept <slug> --brief` prints. It has the task of the acceptor, the change files, the scope, the paths and the tree. The last line has the hash of this text. The builder gives it to the acceptor unchanged | | [commands](commands.md#accept) |
+| brief | The text that `spec-dna accept <slug> --brief` prints. It has the task of the acceptor, the change files, the scope, the paths and the tree. The last line has the hash of this text. The acceptor runs the command and reads the text as its output | | [commands](commands.md#accept) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
 | change class | The weight of a change: `small-fix`, `routine` or `higher-risk` | | [change guide](guides/change.md#choose-the-class) |
@@ -101,4 +101,4 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | verdict | The result of the measure of a skill: `on`, `off` or `inconclusive`. `eval verdict` prints it, or `unmeasured` | | [evals](evals.md#the-verdict) |
 | `verified-by` | A front matter field with the paths of the tests or verification records of a document | | [config](config.md#evidence) |
 | `verifier` | The subagent that checks finished work. It runs the tests, reads the diff and reports each defect. It fixes nothing | role `reviewer` | [harness](harness.md#roles) |
-| workflow pack | The set of 12 skills of spec-dna: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `accept`, `finish`, `debug` and `post-mortem`. `spec-dna skill list` shows which are on by default | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
+| workflow pack | The set of 11 skills of spec-dna: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `finish`, `debug` and `post-mortem`. `spec-dna skill list` shows which are on by default | | [harness](harness.md#the-workflow-pack-and-reviewmd) |

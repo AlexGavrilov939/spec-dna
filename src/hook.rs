@@ -1467,6 +1467,12 @@ fn program_then(words: &[String], name: &str, after: &str) -> Option<usize> {
 /// skipped (`-C <dir>`, `-c <name=value>`, and the others), so `git log --grep
 /// commit` is no commit.
 fn git_commit(words: &[String]) -> Option<(usize, usize)> {
+    git_subcommand(words).filter(|(_, i)| words[*i] == "commit")
+}
+
+/// The index of the word `git` and of its subcommand in a segment. The options of
+/// `git` before the subcommand are skipped, as for [`git_commit`].
+fn git_subcommand(words: &[String]) -> Option<(usize, usize)> {
     let g = words.iter().position(|w| program(w) == "git")?;
     let mut i = g + 1;
     while let Some(w) = words.get(i) {
@@ -1476,7 +1482,7 @@ fn git_commit(words: &[String]) -> Option<(usize, usize)> {
             _ => break,
         }
     }
-    (words.get(i).map(String::as_str) == Some("commit")).then_some((g, i))
+    words.get(i).map(|_| (g, i))
 }
 
 fn deny(reason: &str) -> String {
@@ -1598,6 +1604,14 @@ pub fn approvals(
             .to_string(),
     };
     let start = PathBuf::from(start);
+    // Rule D: a call of the agent `acceptor` commits the record alone.
+    if v.get("agent_type").as_str() == Some("acceptor")
+        && let Some(why) = acceptor_commit(command, &opts.intent, &start, project, git)
+    {
+        return Some(deny(&format!(
+            "a commit of the agent `acceptor` commits the record `acceptance.toml` of a change alone, in a call of its own: {why}"
+        )));
+    }
     // The folder that the commit runs in. `None`: a `cd` or a `-C` has a target
     // that the hook cannot read, so the hook fails closed (see `fallbacks`).
     let mut dir = Some(start.clone());
@@ -1640,6 +1654,494 @@ pub fn approvals(
         }
     }
     None
+}
+
+/// True if rule D reads the call: the text has the word `commit`, or it has the
+/// word `git` and a dynamic construct outside single quotes (`$`, a backtick,
+/// `*`, `?`, `[` or `{`). The scan ignores the case, and it removes a `\` before
+/// a line feed, then `'`, `"` and `\`, so `GIT`, `g''it`, `c\ommit` and
+/// `comm\<LF>it` count. The words are the runs of letters and digits, so they
+/// count also inside a quote, a `bash -c` script, an `eval` or a here-document.
+/// A command that is built from variables or escapes, and has neither the word
+/// `git` nor the word `commit`, is not read: this is a text filter, not a proof.
+fn mentions_git_commit(command: &str) -> bool {
+    let joined = command.replace("\\\r\n", "").replace("\\\n", "");
+    let plain: String = joined
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+        .flat_map(char::to_lowercase)
+        .collect();
+    let (mut git, mut commit) = (false, false);
+    for w in plain.split(|c: char| !c.is_alphanumeric()) {
+        match w {
+            "git" => git = true,
+            "commit" => commit = true,
+            _ => {}
+        }
+    }
+    commit || (git && dynamic_outside_single_quotes(&joined))
+}
+
+/// True if the text has `$`, a backtick, `*`, `?`, `[` or `{` outside a
+/// single-quoted word and not after a `\`.
+fn dynamic_outside_single_quotes(text: &str) -> bool {
+    let (mut single, mut double) = (false, false);
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if single {
+            single = c != '\'';
+            continue;
+        }
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '"' => double = !double,
+            '\'' if !double => single = true,
+            '$' | '`' | '*' | '?' | '[' | '{' => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The one shape of a call that commits a record, for the reason of each deny of
+/// rule D.
+const RULE_D_SHAPE: &str = "write the commit of the record as one call of this shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. The `cd` and the `git add` are optional. `<path>` is the literal path of the one `acceptance.toml`. Join the parts with `&&` only. Use no `;`, `||`, `|`, `&`, `$`, backtick, `#`, `\\`, `<`, `>`, `(`, `)`, `{`, `}`, `~`, `*`, `?`, `[` or `]` outside a quoted word, and no other command, option or `git` verb. The hook reads each call that has the word `commit`, or the word `git` with `$`, a backtick, `*`, `?`, `[` or `{` outside single quotes: split any other command from it, or write its value in full";
+
+/// Splits a command for rule D with a strict grammar, or says why it cannot.
+/// The words are separated by white space, and `&&` is the only operator. A
+/// single-quoted word keeps each character, and the exact sequence `'\''` between
+/// 2 single-quoted parts puts a `'` in the word (`next` writes a root with a
+/// quote so). A double-quoted word keeps each character, but `$`, a backtick and
+/// `\` are errors in it. Outside a quote, each of `;`, `|`, a single `&`, `(`,
+/// `)`, `{`, `}`, `<`, `>`, `$`, a backtick, `#`, `\`, `~`, `*`, `?`, `[`, `]`, a
+/// line feed and a carriage return is an error. So the text of a message is a
+/// word and is never read as an operator, an option, a path or a pattern.
+fn strict_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
+    let chars: Vec<char> = command.chars().collect();
+    let mut segments: Vec<Vec<String>> = Vec::new();
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_word = false;
+    let mut i = 0;
+    let bad = |c: char| {
+        format!(
+            "the call has `{}` outside a quoted word, which the hook does not read",
+            c.escape_default()
+        )
+    };
+    let unended = || "the call has a quote that does not end".to_string();
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        match c {
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.get(i) {
+                        // The sequence `'\''`: the closing quote, a `\'`, the opening
+                        // quote of the next part.
+                        Some('\'') if chars.get(i + 1..i + 4) == Some(&['\\', '\'', '\''][..]) => {
+                            cur.push('\'');
+                            i += 4;
+                        }
+                        Some('\'') => {
+                            i += 1;
+                            break;
+                        }
+                        Some(c) => {
+                            cur.push(*c);
+                            i += 1;
+                        }
+                        None => return Err(unended()),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.get(i) {
+                        Some('"') => {
+                            i += 1;
+                            break;
+                        }
+                        Some(c @ ('$' | '`' | '\\')) => {
+                            return Err(format!(
+                                "the call has `{c}` in a double-quoted word, which the hook does not read; use a single-quoted word"
+                            ));
+                        }
+                        Some(c) => {
+                            cur.push(*c);
+                            i += 1;
+                        }
+                        None => return Err(unended()),
+                    }
+                }
+            }
+            ' ' | '\t' => {
+                if in_word {
+                    words.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            '&' if chars.get(i) == Some(&'&') => {
+                i += 1;
+                if in_word {
+                    words.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+                if words.is_empty() {
+                    return Err("the call has `&&` with no command before it".into());
+                }
+                segments.push(std::mem::take(&mut words));
+            }
+            ';' | '|' | '&' | '(' | ')' | '{' | '}' | '<' | '>' | '$' | '`' | '#' | '\\' | '~'
+            | '*' | '?' | '[' | ']' | '\n' | '\r' => return Err(bad(c)),
+            c => {
+                cur.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(cur);
+    }
+    if words.is_empty() {
+        return Err("the call has `&&` with no command after it".into());
+    }
+    segments.push(words);
+    Ok(segments)
+}
+
+/// The path arguments of a `git commit` that rule D allows, or why not. Rule D
+/// allows only these options: `-m` and `--message` (with the text), `-s` and
+/// `--signoff`, `-n` and `--no-verify`, and `--` before the paths. Git accepts an
+/// abbreviated long option, so only the exact names pass. The text of a message
+/// is the value of its option: it is never read as an option or a path.
+fn commit_paths(args: &[String]) -> Result<Vec<String>, String> {
+    let refuse = |w: &str| {
+        format!(
+            "the option `{w}` can commit more than the record, or change the commit; the hook allows only `-m`, `--message`, `-s`, `--signoff`, `-n` and `--no-verify`"
+        )
+    };
+    let mut paths: Vec<String> = Vec::new();
+    let mut only_paths = false;
+    let mut i = 0;
+    while i < args.len() {
+        let w = args[i].as_str();
+        i += 1;
+        if only_paths || !w.starts_with('-') || w == "-" {
+            paths.push(w.to_string());
+        } else if w == "--" {
+            only_paths = true;
+        } else if let Some(long) = w.strip_prefix("--") {
+            let (name, value) = match long.split_once('=') {
+                Some((n, _)) => (n, true),
+                None => (long, false),
+            };
+            match name {
+                "message" => {
+                    if !value {
+                        i += 1;
+                    }
+                }
+                "signoff" | "no-verify" if !value => {}
+                _ => return Err(refuse(w)),
+            }
+        } else {
+            let shorts: Vec<char> = w[1..].chars().collect();
+            for (k, c) in shorts.iter().enumerate() {
+                match c {
+                    's' | 'n' => {}
+                    'm' => {
+                        // The rest of the word is the text, or the next word is.
+                        if k + 1 == shorts.len() {
+                            i += 1;
+                        }
+                        break;
+                    }
+                    _ => return Err(refuse(w)),
+                }
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// True if `p` is a literal path: no glob character, and no pathspec magic.
+fn literal_path(p: &str) -> bool {
+    !p.starts_with(':') && !p.contains(['*', '?', '[', ']', '{', '}', '\\'])
+}
+
+/// The id of the repository of the folder `dir`: its common git folder, which a
+/// linked worktree shares with the main checkout. `None`: not a repository.
+fn repo_id(dir: &Path, git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>) -> Option<PathBuf> {
+    let out = git(dir, &["rev-parse", "--git-common-dir"]).filter(|o| o.ok)?;
+    let common = PathBuf::from(out.stdout.trim_end_matches(['\n', '\r']));
+    let common = if common.is_absolute() {
+        common
+    } else {
+        dir.join(common)
+    };
+    Some(std::fs::canonicalize(&common).unwrap_or(common))
+}
+
+/// A `git` segment of a call that rule D reads.
+struct GitSeg {
+    /// The folder of `-C`, as written.
+    dash_c: Option<String>,
+    verb: String,
+    args: Vec<String>,
+}
+
+/// Rule D of `protect-approvals` (design 0.8.0, D75 item 5): for a call of the
+/// agent `acceptor` that has the words `git` and `commit` anywhere, it returns
+/// why the call is not the one allowed shape that commits the record of a change
+/// alone ([`RULE_D_SHAPE`]). The hook does not interpret a shell. The whole call
+/// must match this grammar, and each other call is denied:
+///
+/// ```text
+/// call := [ cd <absolute path> && ] [ git [-C <path>] add <record> && ]
+///         git [-C <path>] commit <options> [<record>]
+/// ```
+///
+/// Only `&&` joins the parts ([`strict_segments`]). The options of `commit` are
+/// those of [`commit_paths`]. The rule guards the repository of the project (the
+/// repository of the `cwd` of the event and of `CLAUDE_PROJECT_DIR`, with its
+/// linked worktrees). A folder that is the worktree of another existing
+/// repository, such as a scratch repository of the agent, is not guarded: rule D
+/// reads no part of the call there. A folder that is no repository is denied. The
+/// hook reads the text of the command, and the index when the commit has no path
+/// argument. A commit in a script file, through an alias or a git hook, by
+/// another tool, an index that `git update-index` changes, and each write of a
+/// file, are outside what it reads.
+fn acceptor_commit(
+    command: &str,
+    intent: &[String],
+    start: &Path,
+    project: Option<&Path>,
+    git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>,
+) -> Option<String> {
+    if !mentions_git_commit(command) {
+        return None;
+    }
+    let reason = |why: String| Some(format!("{why}; {RULE_D_SHAPE}"));
+    let segments = match strict_segments(command) {
+        Ok(s) => s,
+        Err(why) => return reason(why),
+    };
+    // The parts of the call, in the grammar.
+    let mut cd: Option<&str> = None;
+    let mut gits: Vec<GitSeg> = Vec::new();
+    for (n, words) in segments.iter().enumerate() {
+        match words[0].as_str() {
+            "cd" if n == 0 => {
+                match &words[1..] {
+                    [path] if path.starts_with('/') && literal_path(path) => cd = Some(path),
+                    _ => {
+                        return reason(
+                            "`cd` takes one literal absolute path, with no option, and only as the first part of the call"
+                                .to_string(),
+                        );
+                    }
+                };
+            }
+            "git" => {
+                let mut rest = &words[1..];
+                let mut dash_c = None;
+                if let [first, path, tail @ ..] = rest
+                    && first == "-C"
+                {
+                    if !literal_path(path) {
+                        return reason(format!(
+                            "the `-C` folder `{path}` is a pattern, not a literal path"
+                        ));
+                    }
+                    dash_c = Some(path.clone());
+                    rest = tail;
+                }
+                let Some((verb, args)) = rest.split_first() else {
+                    return reason("`git` has no verb".to_string());
+                };
+                if verb.starts_with('-') {
+                    return reason(format!(
+                        "the `git` option `{verb}` is not allowed; only `-C <path>` is"
+                    ));
+                }
+                gits.push(GitSeg {
+                    dash_c,
+                    verb: verb.clone(),
+                    args: args.to_vec(),
+                });
+            }
+            other => {
+                return reason(format!(
+                    "the part `{other}` is not `git`, or a first `cd`, and the hook reads no other command"
+                ));
+            }
+        }
+    }
+    let commits = gits.iter().filter(|g| g.verb == "commit").count();
+    if commits != 1 || gits.last().is_none_or(|g| g.verb != "commit") {
+        return reason("the call must hold one `git commit`, as its last part".to_string());
+    }
+    // The repositories that rule D guards. With none that git can read, each
+    // repository is guarded.
+    let mut guarded: Vec<PathBuf> = Vec::new();
+    for dir in [Some(start), project].into_iter().flatten() {
+        guarded.extend(repo_id(dir, git));
+    }
+    let mut dir = start.to_path_buf();
+    if let Some(target) = cd {
+        dir = PathBuf::from(target);
+        if repo_id(&dir, git).is_none() {
+            return reason(format!(
+                "the `cd` folder `{target}` does not exist, or it is no folder of a git repository"
+            ));
+        }
+    }
+    // The paths (from the top of the repository) that the `git add` of the call
+    // stages.
+    let mut staged: Vec<String> = Vec::new();
+    for seg in &gits {
+        let here = match &seg.dash_c {
+            Some(c) => dir.join(c),
+            None => dir.clone(),
+        };
+        let Some(id) = repo_id(&here, git) else {
+            return reason(format!(
+                "the folder `{}` of `git {}` does not exist, or it is no folder of a git repository",
+                here.display(),
+                seg.verb
+            ));
+        };
+        if !guarded.is_empty() && !guarded.contains(&id) {
+            // Another repository, such as a scratch repository of the agent.
+            continue;
+        }
+        let Some(out) =
+            git(&here, &["rev-parse", "--show-toplevel", "--show-prefix"]).filter(|o| o.ok)
+        else {
+            return reason(format!("the folder `{}` cannot be read", here.display()));
+        };
+        let mut lines = out.stdout.lines();
+        let top = PathBuf::from(lines.next().unwrap_or(""));
+        let prefix = lines.next().unwrap_or("").to_string();
+        let rel = |p: &str| repo_path(&top, &prefix, p);
+        let is_record = |p: &str| literal_path(p) && record_slug(&rel(p), intent).is_some();
+        match seg.verb.as_str() {
+            "add" => {
+                let [path] = seg.args.as_slice() else {
+                    return reason(
+                        "`git add` names one path, with no option: the record".to_string(),
+                    );
+                };
+                if !is_record(path) {
+                    return reason(format!(
+                        "`git add` names `{path}`, which is not the literal path of the record"
+                    ));
+                }
+                if !staged.is_empty() {
+                    return reason("the call has more than one `git add`".to_string());
+                }
+                staged.push(rel(path));
+            }
+            "commit" => {
+                let paths = match commit_paths(&seg.args) {
+                    Ok(p) => p,
+                    Err(why) => return reason(why),
+                };
+                if let [a, b, ..] = paths.as_slice() {
+                    return reason(format!(
+                        "the commit names more than one path (`{a}` and `{b}`)"
+                    ));
+                }
+                if let Some(p) = paths.first()
+                    && !is_record(p)
+                {
+                    return reason(if literal_path(p) {
+                        format!("the path `{p}` is not the record")
+                    } else {
+                        format!("the path `{p}` is a pattern, not the record")
+                    });
+                }
+                // One record only: D75 item 5 says "one `acceptance.toml`".
+                let mut records: Vec<String> = staged.clone();
+                records.extend(paths.iter().map(|p| rel(p)));
+                records.sort();
+                records.dedup();
+                if let [a, b, ..] = records.as_slice() {
+                    return reason(format!("the call handles the records `{a}` and `{b}`"));
+                }
+                if paths.is_empty() {
+                    let Some(out) = git(
+                        &here,
+                        &["diff", "--cached", "--name-only", "--no-renames", "-z"],
+                    )
+                    .filter(|o| o.ok) else {
+                        return reason("the index cannot be read, so the hook cannot show that it holds the record alone".to_string());
+                    };
+                    let held: Vec<String> = split_z(&out.stdout).collect();
+                    if let Some(p) = held.iter().find(|p| record_slug(p, intent).is_none()) {
+                        return reason(format!("the index holds `{p}`, which is not the record"));
+                    }
+                    let mut records = held;
+                    records.extend(staged.iter().cloned());
+                    records.sort();
+                    records.dedup();
+                    if let [a, b, ..] = records.as_slice() {
+                        return reason(format!("the index holds the records `{a}` and `{b}`"));
+                    }
+                }
+            }
+            other => {
+                return reason(format!("the `git` verb `{other}` is not `add` or `commit`"));
+            }
+        }
+    }
+    None
+}
+
+/// The path `p` of a word of a command that runs in the folder `prefix` of the
+/// repository `top` (`git rev-parse --show-prefix`), as a path from the top. `.`
+/// and `..` are folded by the text, with no read of the disk. An absolute path
+/// below `top` loses that prefix. A path outside `top` stays as it is.
+fn repo_path(top: &Path, prefix: &str, p: &str) -> String {
+    let joined = if Path::new(p).is_absolute() {
+        let abs = Path::new(p);
+        match abs.strip_prefix(top) {
+            Ok(rest) => rest.to_path_buf(),
+            // A link in the path (`/var` for `/private/var`): read the real path
+            // of the file, or of its folder when the file is new.
+            Err(_) => real_below(abs, top).unwrap_or_else(|| abs.to_path_buf()),
+        }
+    } else {
+        Path::new(prefix).join(p)
+    };
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out.to_string_lossy().into_owned()
+}
+
+/// The part of the absolute path `abs` below `top`, with the links of `abs`
+/// resolved by the disk. `None` when it is not below `top`.
+fn real_below(abs: &Path, top: &Path) -> Option<PathBuf> {
+    let name = abs.file_name()?;
+    let real = match std::fs::canonicalize(abs) {
+        Ok(r) => r,
+        Err(_) => std::fs::canonicalize(abs.parent()?).ok()?.join(name),
+    };
+    let top = std::fs::canonicalize(top).unwrap_or_else(|_| top.to_path_buf());
+    real.strip_prefix(top).ok().map(Path::to_path_buf)
 }
 
 /// The repositories to inspect when a folder cannot be read: the `cwd` of the

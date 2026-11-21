@@ -1,8 +1,9 @@
-//! Tests of the item `accept` of `spec-dna next` (design 0.8.0, D3 item 9 and
-//! the paragraph "The agent file"). `next` names `accept` in the stage `deploy`,
-//! after `review` and before `finish`, with the skill `accept`. It names it only
-//! for a change that needs a record, and it names it again after a code edit.
-//! The fixtures use example names only.
+//! Tests of the item `review` of `spec-dna next` for a change that needs a record
+//! (design 0.8.0, D3 item 9 and D71 item 2). In the stage `deploy`, `next` has
+//! one item `review`, before `finish`, with the skill `review`. For a change that
+//! needs a record, that item is the record item, and it opens again after a code
+//! edit. There is no item with the skill `accept`. The fixtures use example
+//! names only.
 
 mod common;
 
@@ -105,10 +106,12 @@ fn items(out: &str) -> Vec<&str> {
     out.lines().skip(2).collect()
 }
 
+/// The one item `review`, if it is the item of the record: the item of 0.7.1
+/// says "review the diff against".
 fn accept_line(out: &str) -> Option<&str> {
     items(out)
         .into_iter()
-        .find(|l| l.ends_with("[skill: accept]"))
+        .find(|l| l.ends_with("[skill: review]") && !l.contains("review the diff against"))
 }
 
 /// The hash of the brief of the change.
@@ -144,7 +147,7 @@ fn commit_record(r: &Repo, result: &str) {
 }
 
 #[test]
-fn next_names_accept_between_review_and_finish_with_the_skill_accept() {
+fn next_has_one_review_item_before_finish_and_no_item_accept() {
     let r = built("standard");
     let out = next_text(&r);
     let lines = items(&out);
@@ -154,25 +157,35 @@ fn next_names_accept_between_review_and_finish_with_the_skill_accept() {
             .position(|l| l.ends_with(tail))
             .unwrap_or_else(|| panic!("no `{tail}` in\n{out}"))
     };
-    let (review, accept, finish) = (
+    let (verify, review, finish) = (
+        at("[skill: verify]"),
         at("[skill: review]"),
-        at("[skill: accept]"),
         at("[skill: finish]"),
     );
-    assert!(review + 1 == accept && accept + 1 == finish, "{out}");
+    assert!(verify + 1 == review && review + 1 == finish, "{out}");
+    // D71 item 2: one item `review`, not 2 items.
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.ends_with("[skill: review]"))
+            .count(),
+        1,
+        "{out}"
+    );
+    assert!(!out.contains("[skill: accept]"), "{out}");
     let line = accept_line(&out).unwrap();
     assert!(line.starts_with("[ ] "), "{line}");
     assert!(
         line.contains("spec-dna accept valve-timeout --brief"),
         "{line}"
     );
-    assert!(line.contains("`acceptor`"), "{line}");
+    assert!(line.contains("with the prompt `cd '"), "{line}");
     // `finish` stays the last item: the next gate.
     assert!(lines.last().unwrap().ends_with("[skill: finish]"), "{out}");
 }
 
 #[test]
-fn next_json_gives_accept_as_the_skill_of_the_item() {
+fn next_json_has_no_accept_skill_and_one_review_item() {
     let r = built("standard");
     let json = next_json(&r);
     let skills: Vec<&str> = json
@@ -180,12 +193,33 @@ fn next_json_gives_accept_as_the_skill_of_the_item() {
         .skip(1)
         .map(|s| s.split('"').next().unwrap())
         .collect();
-    let at = |n: &str| skills.iter().position(|s| *s == n).unwrap();
-    assert!(
-        at("review") < at("accept") && at("accept") < at("finish"),
+    assert!(!skills.contains(&"accept"), "{json}");
+    assert_eq!(
+        skills.iter().filter(|s| **s == "review").count(),
+        1,
         "{json}"
     );
+    let at = |n: &str| skills.iter().position(|s| *s == n).unwrap();
+    assert!(at("review") < at("finish"), "{json}");
     assert!(json.contains("\"stage\":\"deploy\""), "{json}");
+    // D71 item 2: the skill names are the 9 names of 0.7.1.
+    for name in &skills {
+        assert!(
+            [
+                "brainstorm",
+                "specify",
+                "clarify",
+                "write-plan",
+                "execute",
+                "tdd",
+                "review",
+                "verify",
+                "finish"
+            ]
+            .contains(name),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -196,35 +230,53 @@ fn in_lite_next_has_no_accept_item() {
         accept_line(&out).is_none() && !out.contains("spec-dna accept"),
         "{out}"
     );
+    // The review item of 0.7.1 stays.
+    assert!(
+        items(&out)
+            .iter()
+            .any(|l| l.ends_with("[skill: review]") && l.contains("review the diff against")),
+        "{out}"
+    );
     assert!(
         items(&out).last().unwrap().ends_with("[skill: finish]"),
         "{out}"
     );
 }
 
-/// Without the item, the output is the output of 0.7.1 byte for byte: the
-/// output of `standard` less the line of `accept` is the output of `lite`,
-/// except for the id of the base commit, which differs in each repository.
+/// Without the record item, the output is the output of 0.7.1 byte for byte: the
+/// output of `lite` and the output of a plan of an earlier version have the same
+/// lines, review line included. The output of `standard` has the same lines less
+/// the review line, which is the record item. The id of the base commit differs in
+/// each repository, so the 2nd line is out.
 #[test]
-fn the_output_with_no_need_is_the_output_with_the_accept_line_removed() {
-    // The 2nd line names the base commit, and it differs in each repository.
+fn the_record_item_replaces_only_the_review_line_and_no_need_gives_the_output_of_0_7_1() {
     let no_base = |text: &str| -> String {
         text.split_inclusive('\n')
-            .filter(|l| !l.starts_with("base ") && !l.trim_end().ends_with("[skill: accept]"))
+            .filter(|l| !l.starts_with("base "))
+            .collect()
+    };
+    let no_review = |text: &str| -> String {
+        no_base(text)
+            .split_inclusive('\n')
+            .filter(|l| !l.trim_end().ends_with("[skill: review]"))
             .collect()
     };
     let standard = next_text(&built("standard"));
     let lite = next_text(&built("lite"));
     assert_eq!(
-        no_base(&standard),
-        no_base(&lite),
+        no_review(&standard),
+        no_review(&lite),
         "{standard}\n---\n{lite}"
     );
-    // A plan of an earlier version has the same lines as `lite`.
+    // The record item is the one line `review` of `standard`.
+    assert!(accept_line(&standard).is_some(), "{standard}");
+    assert!(accept_line(&lite).is_none(), "{lite}");
+    // A plan of an earlier version has the same lines as `lite`, with the review
+    // line of 0.7.1.
     let old = next_text(&on_base("0.7.1"));
     assert_eq!(no_base(&old), no_base(&lite), "{old}\n---\n{lite}");
     let (s, l) = (next_json(&built("standard")), next_json(&built("lite")));
-    assert!(s.contains("\"skill\":\"accept\""), "{s}");
+    assert!(!s.contains("\"skill\":\"accept\""), "{s}");
     assert!(!l.contains("\"skill\":\"accept\""), "{l}");
 }
 
@@ -524,4 +576,248 @@ fn a_deviation_that_the_record_lacks_and_a_bad_deviation_leave_the_item_open() {
         line.starts_with("[ ] ") && line.contains("is not valid"),
         "{line}"
     );
+}
+
+// D71 item 2 and D75 items 1 and 6, D73 item 10: the prompt line, the follow-up line
+// and the open task of the acceptance.
+
+/// The absolute root of the repository, as `next` prints it.
+fn root_of(r: &Repo) -> String {
+    std::fs::canonicalize(&r.dir)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The configuration with the harness at the level `lean` and the skill `review`:
+/// the project has the agent `acceptor`.
+fn with_agent(profile: &str) -> String {
+    format!(
+        "{}\n[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n",
+        config(profile)
+    )
+}
+
+fn built_with_config(cfg: &str) -> Repo {
+    let r = Repo::with_config(cfg);
+    base_files(&r);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    change_files(&r);
+    r.commit("plan");
+    add_code(&r);
+    r
+}
+
+fn record_item(r: &Repo) -> String {
+    let out = next_text(r);
+    accept_line(&out)
+        .unwrap_or_else(|| panic!("no record item in\n{out}"))
+        .to_string()
+}
+
+#[test]
+fn the_item_gives_the_prompt_line_with_the_absolute_root_and_no_word_to_add() {
+    // The project has no agent `acceptor`: any agent that did not build the change.
+    let r = built("standard");
+    let want = format!(
+        "[ ] start one agent that did not build the change with the prompt `cd '{}' && spec-dna accept valve-timeout --brief`, and add no word; it writes and commits the record [skill: review]",
+        root_of(&r)
+    );
+    assert_eq!(record_item(&r), want);
+    // The project has the agent `acceptor`.
+    let r = built_with_config(&with_agent("standard"));
+    let want = format!(
+        "[ ] start one agent `acceptor` with the prompt `cd '{}' && spec-dna accept valve-timeout --brief`, and add no word; it writes and commits the record [skill: review]",
+        root_of(&r)
+    );
+    assert_eq!(record_item(&r), want);
+    // The text no longer asks the builder to give the whole output to an agent.
+    assert!(!record_item(&r).contains("give the whole output"));
+}
+
+#[test]
+fn a_root_with_a_space_and_a_quote_is_one_shell_word() {
+    let mut r = built("standard");
+    let old = r.dir.clone();
+    let parent = old.parent().unwrap().to_path_buf();
+    let new = parent.join(format!("spec dna's root {}", std::process::id()));
+    std::fs::rename(&old, &new).unwrap();
+    r.dir = new;
+    let root = root_of(&r);
+    let quoted = root.replace('\'', "'\\''");
+    let item = record_item(&r);
+    assert!(
+        item.contains(&format!(
+            "`cd '{quoted}' && spec-dna accept valve-timeout --brief`"
+        )),
+        "{item}"
+    );
+    assert!(root.contains(' ') && root.contains('\''));
+}
+
+#[test]
+fn lite_with_a_rule_for_the_group_names_an_agent_that_did_not_build_the_change() {
+    let cfg = config("lite").replace("SD608 = \"off\"", "SD608 = \"off\"\nacceptance = \"error\"");
+    let r = built_with_config(&format!(
+        "{cfg}\n[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n"
+    ));
+    let item = record_item(&r);
+    assert!(
+        item.starts_with("[ ] start one agent that did not build the change with the prompt `cd '"),
+        "{item}"
+    );
+}
+
+/// A committed record with one note on `src/valves.py`.
+fn commit_record_with_note(r: &Repo) {
+    let (code, out, err) = r.run(&["accept", SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let hash = brief_hash(r);
+    let text = r
+        .read(RECORD)
+        .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
+        .replace("result = \"pending\"", "result = \"accepted\"");
+    r.write(
+        RECORD,
+        &format!(
+            "{text}\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n\n[[finding]]\nacceptor = 1\nseverity = \"note\"\npath = \"src/valves.py\"\nline = 3\ntext = \"The constant has no unit.\"\n"
+        ),
+    );
+    r.commit("record");
+}
+
+#[test]
+fn a_fix_of_a_note_path_names_the_follow_up_and_any_other_edit_names_a_full_run() {
+    let r = built_with_config(&with_agent("standard"));
+    commit_record_with_note(&r);
+    assert!(record_item(&r).starts_with("[x] "));
+    // A fix of the path of the open note: the follow-up.
+    r.write(CODE, &format!("{CODE_NEW}\n# the unit is seconds\n"));
+    r.commit("fix");
+    let item = record_item(&r);
+    let want = format!(
+        "[ ] the record is stale after a fix of an open note: start one agent `acceptor` with the prompt `cd '{}' && spec-dna accept valve-timeout --follow-up --brief`, and add no word; it writes and commits the follow-up [skill: review]",
+        root_of(&r)
+    );
+    assert_eq!(item, want);
+    // The item names the follow-up only when `accept --follow-up` does not refuse.
+    let (code, out, err) = r.run(&["accept", SLUG, "--follow-up", "--brief"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Another edit, on a path that no open note names: a full run.
+    let r = built_with_config(&with_agent("standard"));
+    commit_record_with_note(&r);
+    r.write(TEST, &format!("{TEST_NEW}\n# an edit\n"));
+    r.commit("another edit");
+    let item = record_item(&r);
+    assert!(!item.contains("--follow-up"), "{item}");
+    assert!(
+        item.contains("is stale")
+            && item.contains("prompt `cd '")
+            && item.contains("accept valve-timeout --brief`"),
+        "{item}"
+    );
+    let (code, _, _) = r.run(&["accept", SLUG, "--follow-up", "--brief"]);
+    assert_eq!(code, 1);
+}
+
+// The open task of the acceptance (D75 item 6).
+
+const ACCEPT_TASK: &str = "- [ ] t2: Run spec-dna accept valve-timeout from the brief.\n";
+
+fn with_accept_task(cfg: &str, task: &str) -> Repo {
+    let r = Repo::with_config(cfg);
+    base_files(&r);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    let plan = PLAN_TEXT.replace("## Risks", &format!("{task}\n## Risks"));
+    r.write(PLAN, &plan);
+    r.commit("plan");
+    add_code(&r);
+    r
+}
+
+#[test]
+fn an_open_task_that_names_accept_closes_with_finish_where_the_acceptance_is_on() {
+    let r = with_accept_task(&config("standard"), ACCEPT_TASK);
+    // `next` shows the stage `deploy`, with the task counted for `finish`.
+    let (code, json, err) = r.run(&["next", SLUG, "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(json.contains("\"stage\":\"deploy\""), "{json}");
+    // `finish --dry-run` reaches step 5 (the record is missing), not step 0.
+    let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("step 5") && !err.contains("step 0"), "{err}");
+    // With the record, `finish` passes.
+    commit_record(&r, "accepted");
+    let (code, out, err) = r.run(&["finish", SLUG]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn the_task_stays_open_in_lite_and_for_another_slug() {
+    // `lite`: the acceptance is off, so the task stops step 0, as in 0.7.1.
+    let r = with_accept_task(&config("lite"), ACCEPT_TASK);
+    let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("step 0"), "{err}");
+    let (_, json, _) = r.run(&["next", SLUG, "--json"]);
+    assert!(json.contains("\"stage\":\"build\""), "{json}");
+    // Another slug, and a command with another text, are no such task.
+    for task in [
+        "- [ ] t2: Run spec-dna accept other-change from the brief.\n",
+        "- [ ] t2: Accept the change by hand.\n",
+    ] {
+        let r = with_accept_task(&config("standard"), task);
+        let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+        assert_eq!(code, 1, "{out}{err}");
+        assert!(err.contains("step 0"), "{task}: {err}");
+    }
+}
+
+#[test]
+fn an_edit_that_head_does_not_have_asks_for_the_commit_before_a_follow_up() {
+    let r = built_with_config(&with_agent("standard"));
+    commit_record_with_note(&r);
+    // The fix is not committed: `accept --follow-up` would refuse.
+    r.write(CODE, &format!("{CODE_NEW}\n# the unit is seconds\n"));
+    let item = record_item(&r);
+    assert!(
+        item.contains("is stale")
+            && item.contains("commit the work, then run `spec-dna next` again"),
+        "{item}"
+    );
+    assert!(
+        !item.contains("--follow-up") && !item.contains("delete it"),
+        "{item}"
+    );
+    let (code, _, _) = r.run(&["accept", SLUG, "--follow-up", "--brief"]);
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn a_branch_that_turns_sd927_off_does_not_change_the_gate_of_the_open_task() {
+    // The base has the acceptance on. The branch turns SD927 off in its own
+    // `spec-dna.toml`. The need rule reads the stricter of the head and the base
+    // (D70 item 6), so the task closes with `finish` as before, and step 5.2
+    // still asks for the record.
+    let r = with_accept_task(&config("standard"), ACCEPT_TASK);
+    let off = r
+        .read("spec-dna.toml")
+        .replace("SD608 = \"off\"", "SD608 = \"off\"\nSD927 = \"off\"");
+    r.write("spec-dna.toml", &off);
+    r.commit("the branch turns SD927 off");
+    let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(!err.contains("step 0"), "{err}");
+    let (_, json, _) = r.run(&["next", SLUG, "--json"]);
+    assert!(json.contains("\"stage\":\"deploy\""), "{json}");
+    // The base has the acceptance off, and the head too: the task stays open.
+    let r = with_accept_task(&config("lite"), ACCEPT_TASK);
+    let (_, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert!(err.contains("step 0"), "{out}{err}");
 }

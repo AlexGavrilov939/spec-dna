@@ -6,17 +6,17 @@ status: approved
 ## Files
 
 - `src/harness.rs`, `src/harness_text.rs`, `src/hook.rs`, `src/init.rs`, `src/upgrade_config.rs`, `src/eval_ab.rs`, `src/eval_pack.rs` The skill, the role, the hook and the profile text.
-- `src/stage.rs`, `src/change.rs`, `src/finish.rs`, `src/main.rs` The items of `next` and the open task.
+- `src/stage.rs`, `src/change.rs`, `src/finish.rs`, `src/main.rs`, `src/accept.rs`, `src/acceptance.rs`, `src/config.rs`, `src/diag.rs`, `src/verdict.rs`, `src/eval_records.rs` The items of `next`, the open task and the texts that name the prompt line.
 - `tests/golden/harness/**` The golden files, with the new folder `skills-0.7.1`.
 - `tests/*.rs` The tests of D71, D75 and D76.
-- `docs/harness.md`, `docs/commands.md`, `docs/init.md`, `docs/profiles.md`, `docs/evals.md` The reference pages.
+- `docs/*.md`, `docs/guides/change.md`, `schema/spec-dna.schema.json` The reference pages.
 
 ## Order
 
-- [ ] t1: Freeze the skill texts of 0.7.1 for `lite`, give `body` the profile, and add the golden test against the files of `v0.7.1` (D76). Files: `src/harness_text.rs`, `src/harness.rs`, `src/main.rs`, `src/eval_ab.rs`, `tests/golden/harness/skills-0.7.1`. Verify: each of the 11 skills rendered with `lite` equals its file of 0.7.1. Hours: 8.
-- [ ] t2: Merge `accept` into `review`, write the agent `acceptor` with `review`, and give `next` the one item (D71). Files: `src/harness.rs`, `src/harness_text.rs`, `src/stage.rs`, `src/init.rs`, `src/upgrade_config.rs`. Verify: `cargo test --test harness_skills --test harness_roles --test accept_next` passes. Hours: 8.
-- [ ] t3: Build the prompt line, the item of a person after 2 rejected records, the open task of D75 item 6 and rule D of the hook. Files: `src/stage.rs`, `src/change.rs`, `src/finish.rs`, `src/hook.rs`. Verify: `cargo test --test finish --test hook_approvals --test accept_next` passes. Hours: 6.
-- [ ] t4: Update the reference pages. Files: `docs/harness.md`, `docs/commands.md`, `docs/init.md`, `docs/profiles.md`, `docs/evals.md`. Verify: `pre-commit run --all-files` passes. Hours: 2.
+- [x] t1: Freeze the skill texts of 0.7.1 for `lite`, give `body` the profile, and add the golden test against the files of `v0.7.1` (D76). Files: `src/harness_text.rs`, `src/harness.rs`, `src/main.rs`, `src/eval_ab.rs`, `tests/golden/harness/skills-0.7.1`. Verify: each of the 11 skills rendered with `lite` equals its file of 0.7.1. Hours: 8.
+- [x] t2: Merge `accept` into `review`, write the agent `acceptor` with `review`, and give `next` the one item (D71). Files: `src/harness.rs`, `src/harness_text.rs`, `src/stage.rs`, `src/init.rs`, `src/upgrade_config.rs`. Verify: `cargo test --test harness_skills --test harness_roles --test accept_next` passes. Hours: 8.
+- [x] t3: Build the prompt line, the item of a person after 2 rejected records, the open task of D75 item 6 and rule D of the hook. Files: `src/stage.rs`, `src/change.rs`, `src/finish.rs`, `src/hook.rs`. Verify: `cargo test --test finish --test hook_approvals --test accept_next` passes. Hours: 6.
+- [x] t4: Update the reference pages. Files: `docs/harness.md`, `docs/commands.md`, `docs/init.md`, `docs/profiles.md`, `docs/evals.md`. Verify: `pre-commit run --all-files` passes. Hours: 2.
 
 ## Risks
 

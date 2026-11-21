@@ -1881,14 +1881,14 @@ fn a_bare_name_or_a_spaced_path_that_gets_in_after_the_record_makes_it_stale() {
             let (_, out, err) = run(&r, &["next", SLUG]);
             assert!(
                 out.lines()
-                    .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: accept]")),
+                    .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: review]")),
                 "{kind} {plan_on_base}: fresh before the edit: {out}{err}"
             );
             add_pattern_and_file(&r, pattern, pattern, text);
             let (_, out, err) = run(&r, &["next", SLUG]);
             let line = out
                 .lines()
-                .find(|l| l.ends_with("[skill: accept]"))
+                .find(|l| l.ends_with("[skill: review]"))
                 .unwrap_or_else(|| panic!("{out}{err}"));
             assert!(
                 line.starts_with("[ ] ") && line.contains("stale"),
@@ -1956,7 +1956,7 @@ fn a_bare_name_in_files_that_no_commit_edits_leaves_the_record_fresh() {
     let (_, out, err) = run(&r, &["next", SLUG]);
     assert!(
         out.lines()
-            .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: accept]")),
+            .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: review]")),
         "{out}{err}"
     );
 }
@@ -2008,7 +2008,7 @@ fn a_shared_path_before_finish_leaves_the_record_fresh_in_next_and_finish() {
     let (_, out, err) = run(&r, &["next", SLUG]);
     assert!(
         out.lines()
-            .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: accept]")),
+            .any(|l| l.starts_with("[x] ") && l.ends_with("[skill: review]")),
         "{out}{err}"
     );
     let (code, out, err) = run(&r, &["finish", SLUG]);
@@ -2083,7 +2083,7 @@ fn a_shared_glob_added_after_the_record_with_a_file_that_only_it_covers_is_stale
         let (_, out, err) = run(&r, &["next", SLUG]);
         let line = out
             .lines()
-            .find(|l| l.ends_with("[skill: accept]"))
+            .find(|l| l.ends_with("[skill: review]"))
             .unwrap_or_else(|| panic!("{out}{err}"));
         assert!(
             line.starts_with("[ ] ") && line.contains("stale"),
@@ -2152,7 +2152,7 @@ fn a_bare_name_that_the_plan_always_had_gives_its_own_cause_in_next_and_finish()
     let (_, out, err) = run(&r, &["next", SLUG]);
     let line = out
         .lines()
-        .find(|l| l.ends_with("[skill: accept]"))
+        .find(|l| l.ends_with("[skill: review]"))
         .unwrap_or_else(|| panic!("{out}{err}"));
     assert!(line.starts_with("[ ] ") && line.contains("stale"), "{line}");
     assert!(

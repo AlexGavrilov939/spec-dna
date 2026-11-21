@@ -610,7 +610,7 @@ pub fn records(bytes: &[u8]) -> Result<(Vec<String>, Vec<String>), Fatal> {
             .get("name")
             .as_str()
             .filter(|n| known.contains(n))
-            .ok_or_else(|| bad("name", "one of the 12 skills or `agents-line`"))?;
+            .ok_or_else(|| bad("name", "one of the 11 skills or `agents-line`"))?;
         if names.iter().any(|n| n == name) {
             return Err(bad("name", "each name once"));
         }

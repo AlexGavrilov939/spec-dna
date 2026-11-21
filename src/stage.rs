@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 /// The names of the skills that a step of the lifecycle uses, in this order.
 /// The skills themselves come in 0.7.0. The names are fixed: `next` prints
 /// them as data, and a later version writes the skills under these names.
-pub const SKILLS: [&str; 10] = [
+pub const SKILLS: [&str; 9] = [
     "brainstorm",
     "specify",
     "clarify",
@@ -35,7 +35,6 @@ pub const SKILLS: [&str; 10] = [
     "tdd",
     "review",
     "verify",
-    "accept",
     "finish",
 ];
 
@@ -56,18 +55,16 @@ pub enum Step {
     Test,
     /// The first item of the Deploy stage: run the proof of the plan.
     Verify,
-    /// The review item of the Deploy stage.
+    /// The review item of the Deploy stage. For a change that needs an acceptance
+    /// record, it is the record item (design 0.8.0, D71 item 2).
     Review,
-    /// The item of the Deploy stage that asks for the acceptance record, after
-    /// the review and before `finish` (design 0.8.0, D3).
-    Accept,
     /// A closed change, or a change that is ready to apply its delta.
     Finish,
 }
 
 /// The skill of each step. A test checks that each skill of `SKILLS` is here
 /// once.
-pub const STEP_SKILL: [(Step, &str); 10] = [
+pub const STEP_SKILL: [(Step, &str); 9] = [
     (Step::Plan, "brainstorm"),
     (Step::Specify, "specify"),
     (Step::Clarify, "clarify"),
@@ -76,7 +73,6 @@ pub const STEP_SKILL: [(Step, &str); 10] = [
     (Step::Test, "tdd"),
     (Step::Review, "review"),
     (Step::Verify, "verify"),
-    (Step::Accept, "accept"),
     (Step::Finish, "finish"),
 ];
 
@@ -188,7 +184,7 @@ pub struct Tasks {
 }
 
 /// The progress of the tasks of a change, whatever its stage.
-pub fn tasks(ch: &Change, head: &Corpus) -> Tasks {
+pub fn tasks(ch: &Change, head: &Corpus, accept_on: bool) -> Tasks {
     let all: Vec<PlanTask> = ch
         .tasks(head)
         .into_iter()
@@ -199,10 +195,10 @@ pub fn tasks(ch: &Change, head: &Corpus) -> Tasks {
         skipped: all.iter().filter(|t| t.skipped()).count(),
         finish: all
             .iter()
-            .filter(|t| !t.closed() && t.closes_with_finish(&ch.slug))
+            .filter(|t| !t.closed() && t.closes_with_finish_or_accept(&ch.slug, accept_on))
             .count(),
         total: all.len(),
-        next: ch.next_open_task(head),
+        next: ch.next_open_task_in(head, accept_on),
     }
 }
 
@@ -236,13 +232,17 @@ pub struct View {
     /// True with `[change] approval = "branch"`. Then an approval line also
     /// tells an approver to commit the `status` line alone (design 0.7.0, D7).
     pub branch: bool,
-    /// The item `accept` of each change that needs an acceptance record, by
+    /// The record item of each change that needs an acceptance record, by
     /// slug (design 0.8.0, D3 item 1). A change that needs none has no entry,
     /// so `next` prints no item for it.
     pub accept: HashMap<String, AcceptItem>,
+    /// True if a task that names `spec-dna accept <slug>` closes with `finish`:
+    /// the acceptance is on (SD927 is not off, design 0.8.0, D75 item 6).
+    pub accept_tasks: bool,
 }
 
-/// The item `accept` of a change that needs a record.
+/// The record item of a change that needs a record. `next` prints it as the one
+/// item `review` (design 0.8.0, D71 item 2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcceptItem {
     /// True if the record is valid, fresh and `accepted`.
@@ -290,6 +290,8 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
         base_rev.as_deref(),
         diff.as_ref(),
     )?;
+    let accept_tasks =
+        acceptance::need_on(cfg, &repo.git, base_rev.as_deref()).map_err(Fatal::Io)?;
     Ok(View {
         head,
         base: base_corpus,
@@ -298,6 +300,7 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
         notes,
         branch: cfg.change_approval == Approval::Branch,
         accept,
+        accept_tasks,
     })
 }
 
@@ -390,6 +393,31 @@ fn accept_item(
     Ok(item)
 }
 
+/// The prompt of the acceptor (design 0.8.0, D75 item 1): the command with the
+/// absolute root of the repository, as one shell word in single quotes (a `'` in
+/// the root becomes `'\''`). The acceptor runs it as its first call, so the builder
+/// writes about 80 bytes and no word of the brief. With `follow_up`, it is the
+/// command of the follow-up (D73 item 10).
+fn prompt_line(root: &std::path::Path, slug: &str, follow_up: bool) -> String {
+    let root = root.to_string_lossy().replace('\'', "'\\''");
+    let form = if follow_up { " --follow-up" } else { "" };
+    format!("cd '{root}' && spec-dna accept {slug}{form} --brief")
+}
+
+/// Who runs the prompt: the agent `acceptor` where the harness writes it, else any
+/// agent that did not build the change (D71 item 4).
+fn acceptor_phrase(cfg: &Config) -> &'static str {
+    if cfg
+        .harness
+        .as_ref()
+        .is_some_and(|h| h.on(crate::harness::Role::Acceptor))
+    {
+        "one agent `acceptor`"
+    } else {
+        "one agent that did not build the change"
+    }
+}
+
 /// The item `accept` for the record of the change, with no stop rule.
 fn accept_item_of_record(
     repo: &Repo,
@@ -434,7 +462,9 @@ fn accept_item_of_record(
     let text = match (committed, on_disk) {
         (None, None) => {
             return Ok(open(format!(
-                "accept the change: run `spec-dna accept {slug} --brief`, give the whole output, unchanged, to an agent `acceptor`, and commit the record that it writes"
+                "start {} with the prompt `{}`, and add no word; it writes and commits the record",
+                acceptor_phrase(head_cfg),
+                prompt_line(&repo.root, slug, false)
             )));
         }
         // CRLF and LF are one record (ADR 0019).
@@ -513,10 +543,45 @@ fn accept_item_of_record(
         Code::AcceptanceInvalid => {
             format!("the record `{path}` is not valid ({first}); the acceptor fixes it")
         }
-        Code::AcceptanceStale => format!(
-            "the record `{path}` is stale, because {}: delete it, commit, and run `spec-dna accept {slug} --brief` again",
-            acceptance::stale_cause(messages.first().map_or("", String::as_str))
-        ),
+        Code::AcceptanceStale => {
+            let cause = acceptance::stale_cause(messages.first().map_or("", String::as_str));
+            let who = acceptor_phrase(head_cfg);
+            // A fix of a note after the record needs no full run (D73 item 10). The
+            // item names the follow-up only when `accept --follow-up` does not refuse.
+            let follow = if cause == "the code changed after the acceptance" {
+                let intent_dirs = lifecycle::intent_dirs(head_cfg);
+                let is_code = |p: &str| crate::tree::is_code_path(head_cfg, p, &intent_dirs);
+                let scope = crate::accept::scope_of(head_cfg, ch, head);
+                let changed: Vec<String> = diff
+                    .map(|d| d.files.iter().map(|f| f.0.clone()).collect())
+                    .unwrap_or_default();
+                crate::accept::follow_up_check(&crate::accept::FollowCtx {
+                    repo,
+                    cfg: head_cfg,
+                    slug,
+                    folder: &ch.dir,
+                    base_rev: Some(base_rev),
+                    scope: &scope,
+                    changed: &changed,
+                    is_code: &is_code,
+                })?
+            } else {
+                crate::accept::FollowCheck::Refused(String::new())
+            };
+            match follow {
+                crate::accept::FollowCheck::Callable => format!(
+                    "the record is stale after a fix of an open note: start {who} with the prompt `{}`, and add no word; it writes and commits the follow-up",
+                    prompt_line(&repo.root, slug, true)
+                ),
+                crate::accept::FollowCheck::Uncommitted => format!(
+                    "the record `{path}` is stale, because {cause}: commit the work, then run `spec-dna next` again"
+                ),
+                crate::accept::FollowCheck::Refused(_) => format!(
+                    "the record `{path}` is stale, because {cause}: delete it, commit, and start {who} with the prompt `{}` again",
+                    prompt_line(&repo.root, slug, false)
+                ),
+            }
+        }
         Code::AcceptanceRejected => format!(
             "the record `{path}` says `rejected`: fix each finding in the code, delete the record, commit, and accept again"
         ),
@@ -822,7 +887,7 @@ impl<'a> Ctx<'a> {
         let no_files = !higher && plan == "approved" && ch.no_files(head);
         let changed = self.files_changed(ch);
         let all_tasks_closed = {
-            let t = tasks(ch, head);
+            let t = tasks(ch, head, self.view.accept_tasks);
             t.done + t.skipped + t.finish == t.total
         };
         let build_done = all_tasks_closed && (no_files || changed == Some(true));
@@ -856,7 +921,7 @@ impl<'a> Ctx<'a> {
                 ));
             }
             // The tasks of the plan, also if the plan is a draft.
-            let t = tasks(ch, head);
+            let t = tasks(ch, head, self.view.accept_tasks);
             if t.total > 0 {
                 let skipped = match t.skipped {
                     0 => String::new(),
@@ -927,7 +992,7 @@ impl<'a> Ctx<'a> {
             // plan.
             if approved
                 && let Some(task) = next_task.as_ref().filter(|t| t.by_person())
-                && only_person_open(ch, head)
+                && only_person_open(ch, head, self.view.accept_tasks)
                 && !items[after_task..].iter().any(|i| !i.done && !i.person)
             {
                 items.push(person_item(
@@ -999,18 +1064,18 @@ impl<'a> Ctx<'a> {
             Step::Verify,
             format!("run the proof of {dir}/plan.md: the commands of its `Proof` section"),
         ));
-        items.push(item(
-            false,
-            Step::Review,
-            format!("review the diff against {dir}/plan.md"),
-        ));
-        if let Some(a) = self.view.accept.get(slug) {
-            items.push(if a.person {
-                person_item(Step::Accept, a.text.clone())
-            } else {
-                item(a.done, Step::Accept, a.text.clone())
-            });
-        }
+        // One item `review` (design 0.8.0, D71 item 2). For a change that needs a
+        // record, it is the record item: the agent that reviews the change writes
+        // the record. For another change, it is the item of 0.7.1.
+        items.push(match self.view.accept.get(slug) {
+            Some(a) if a.person => person_item(Step::Review, a.text.clone()),
+            Some(a) => item(a.done, Step::Review, a.text.clone()),
+            None => item(
+                false,
+                Step::Review,
+                format!("review the diff against {dir}/plan.md"),
+            ),
+        });
         items.push(item(
             false,
             Step::Finish,
@@ -1024,10 +1089,12 @@ impl<'a> Ctx<'a> {
 
 /// True if each open task of the plan is a task of a person. A task that
 /// closes with `finish`, a duplicate and a closed task are not open.
-fn only_person_open(ch: &Change, head: &Corpus) -> bool {
+fn only_person_open(ch: &Change, head: &Corpus, accept_on: bool) -> bool {
     ch.tasks(head)
         .iter()
-        .filter(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(&ch.slug))
+        .filter(|t| {
+            !t.closed() && !t.duplicate && !t.closes_with_finish_or_accept(&ch.slug, accept_on)
+        })
         .all(PlanTask::by_person)
 }
 
@@ -1360,7 +1427,7 @@ pub fn status(
             Some(Row {
                 ch,
                 report: cx.derive(ch),
-                tasks: tasks(ch, &view.head),
+                tasks: tasks(ch, &view.head, view.accept_tasks),
                 partial: cx.partial(ch),
                 areas,
                 stale: stale.contains(&ch.slug),
@@ -1538,7 +1605,6 @@ mod tests {
                 "tdd",
                 "review",
                 "verify",
-                "accept",
                 "finish"
             ]
         );
@@ -1567,7 +1633,6 @@ mod tests {
             (Step::Test, "tdd"),
             (Step::Verify, "verify"),
             (Step::Review, "review"),
-            (Step::Accept, "accept"),
             (Step::Finish, "finish"),
         ];
         for (step, name) in want {

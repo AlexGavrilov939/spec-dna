@@ -442,7 +442,7 @@
           "maximum": 4294967295
         },
         "skills": {
-          "description": "The skills of the workflow pack that `init` writes, each once. They are written in the order brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, accept, finish, debug, post-mortem. Default: none. The skill `accept` also writes the agent file of the role `acceptor`. The names intent, spec and plan of 0.6 end: `spec-dna upgrade` renames them.",
+          "description": "The skills of the workflow pack that `init` writes, each once. They are written in the order brainstorm, specify, clarify, write-plan, execute, tdd, review, verify, finish, debug, post-mortem. Default: none. The skill `review` also writes the agent file of the role `acceptor` where the acceptance is on. The names intent, spec and plan of 0.6 end: `spec-dna upgrade` renames them.",
           "type": "array",
           "uniqueItems": true,
           "items": {
@@ -455,7 +455,6 @@
               "tdd",
               "review",
               "verify",
-              "accept",
               "finish",
               "debug",
               "post-mortem"
@@ -555,7 +554,7 @@
               "properties": {
                 "claude-code": {
                   "$ref": "#/$defs/harness-model",
-                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The role has an agent file only with the skill `accept` in `skills`."
+                  "description": "The model of the role for Claude Code: an alias (`opus`), a model id, `inherit` or `none` (the role is off). The role has an agent file only with the skill `review` in `skills`, and not in the profile `lite`."
                 },
                 "effort": {
                   "$ref": "#/$defs/harness-effort"

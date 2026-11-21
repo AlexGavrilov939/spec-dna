@@ -3217,7 +3217,7 @@ fn init_asks_on_a_terminal() {
         "9. Budget level (default, relaxed, tight, off) [default]: ",
         "11. CI step (github, gitlab, none), hook (pre-commit, husky, lefthook, none) and base branch [github, pre-commit, main]: ",
         "12. Agent harness (none, lean, full) [lean]: ",
-        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,execute,tdd,review,verify,accept,finish,debug,post-mortem review-md=true protect-tests=fix-branches]: ",
+        "12. Harness parts (skills=<names or none> review-md=<true or false> protect-tests=<fix-branches, always or off>) [skills=brainstorm,specify,clarify,write-plan,execute,tdd,review,verify,finish,debug,post-mortem review-md=true protect-tests=fix-branches]: ",
         "13. Models (role=model[:effort] ...) [orchestrator=opus:xhigh advisor=fable verifier=opus:high acceptor=opus:high researcher=haiku:high helper=haiku implementer=sonnet:high code-simplifier=sonnet:high]: ",
         "14. Evals (none, skeleton) [skeleton]: ",
         "Agent harness: full (for Claude Code)",
@@ -5128,13 +5128,13 @@ fn eval_pack_and_eval_run_ab_need_the_evals_table_and_eval_verdict_does_not() {
     assert_eq!(code, 3, "{err}");
     let (code, out, err) = r.run(&["eval", "verdict"]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out.lines().count(), 13, "{out}");
+    assert_eq!(out.lines().count(), 12, "{out}");
     assert!(out.starts_with("brainstorm "), "{out}");
     assert!(out.ends_with(" release\n"), "{out}");
     assert!(out.contains("\nagents-line "), "{out}");
-    // The skill `accept` has no measure in the table of the release yet.
-    assert_eq!(out.matches("unmeasured").count(), 1, "{out}");
-    assert!(out.contains("\naccept unmeasured -\n"), "{out}");
+    // The skill `accept` merged into `review` (design 0.8.0, D71): it has no line.
+    assert_eq!(out.matches("unmeasured").count(), 0, "{out}");
+    assert!(!out.contains("accept"), "{out}");
 }
 
 // The status of a generated index (D29 of 0.7.0)
